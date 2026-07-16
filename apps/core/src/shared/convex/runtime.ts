@@ -14,10 +14,12 @@ export const runtimeQueries = {
   getSandboxReservation: internal.runtime.getSandboxReservation,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
+  getIngressConversationState: internal.runtimeIngress.getConversationState,
+  getIngressStatus: internal.runtimeIngress.getStatus,
+  isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
 } as const;
 
 export const runtimeMutations = {
-  acquireLease: internal.runtime.acquireLease,
   appendConversationEvent: internal.runtime.appendConversationEvent,
   claimEvent: internal.runtime.claimEvent,
   claimSandboxReservation: internal.runtime.claimSandboxReservation,
@@ -26,14 +28,21 @@ export const runtimeMutations = {
   createAsyncToolResult: internal.runtime.createAsyncToolResult,
   deleteAccountRuntimeData: internal.runtime.deleteAccountRuntimeData,
   deleteSandboxReservation: internal.runtime.deleteSandboxReservation,
-  enqueueIngress: internal.runtime.enqueueIngress,
   releaseClaim: internal.runtime.releaseClaim,
-  releaseLease: internal.runtime.releaseLease,
   saveSandboxReservation: internal.runtime.saveSandboxReservation,
   sealAsyncToolGroup: internal.runtime.sealAsyncToolGroup,
-  takeIngress: internal.runtime.takeIngress,
   updateAsyncAgentResult: internal.runtime.updateAsyncAgentResult,
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
+  acceptIngress: internal.runtimeIngress.accept,
+  acquireIngressClear: internal.runtimeIngress.acquireClear,
+  appendFencedConversationEvent: internal.runtimeIngress.appendConversationEvent,
+  applyIngressSteering: internal.runtimeIngress.applySteering,
+  clearFencedConversation: internal.runtimeIngress.clearConversation,
+  releaseIngressOwner: internal.runtimeIngress.releaseOwner,
+  renewIngressOwner: internal.runtimeIngress.renewOwner,
+  setIngressChannelMode: internal.runtimeIngress.setChannelMode,
+  settleIngress: internal.runtimeIngress.settle,
+  takeNextIngress: internal.runtimeIngress.takeNext,
 } as const;
 
 type RuntimeQueryName = keyof typeof runtimeQueries;

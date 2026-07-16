@@ -7,36 +7,42 @@ import {
   runtimeQueries,
 } from "../src/shared/convex/runtime.ts";
 
-const MODULE = "runtime";
 type RegisteredFunction = {
   isInternal?: boolean;
   isMutation?: boolean;
   isQuery?: boolean;
 };
 
-const registeredFunctions = require("@broods/convex/runtime") as Record<
-  string,
-  RegisteredFunction | undefined
->;
+const registeredModules = {
+  runtime: require("@broods/convex/runtime"),
+  runtimeIngress: require("@broods/convex/runtimeIngress"),
+} as Record<string, Record<string, RegisteredFunction | undefined>>;
+
+function registered(
+  ref: Parameters<typeof getFunctionName>[0],
+): RegisteredFunction | undefined {
+  const [moduleName, functionName] = getFunctionName(ref).split(":");
+  return moduleName && functionName
+    ? registeredModules[moduleName]?.[functionName]
+    : undefined;
+}
 
 describe("runtime persistence function mapping", () => {
   it("addresses every query at the runtime module", () => {
-    for (const [name, ref] of Object.entries(runtimeQueries)) {
-      expect(registeredFunctions[name]).toMatchObject({
+    for (const ref of Object.values(runtimeQueries)) {
+      expect(registered(ref)).toMatchObject({
         isInternal: true,
         isQuery: true,
       });
-      expect(getFunctionName(ref)).toBe(`${MODULE}:${name}`);
     }
   });
 
   it("addresses every mutation at the runtime module", () => {
-    for (const [name, ref] of Object.entries(runtimeMutations)) {
-      expect(registeredFunctions[name]).toMatchObject({
+    for (const ref of Object.values(runtimeMutations)) {
+      expect(registered(ref)).toMatchObject({
         isInternal: true,
         isMutation: true,
       });
-      expect(getFunctionName(ref)).toBe(`${MODULE}:${name}`);
     }
   });
 });

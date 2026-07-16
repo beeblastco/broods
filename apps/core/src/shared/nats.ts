@@ -17,14 +17,10 @@
  * sequence (`JsMsg.seq`) for stream readers, or the envelope `sequence`/`eventId`
  * for core subscribers; dedup a core→stream switch by either.
  *
- * The stream is a RESUME buffer for an in-flight turn, not the source of truth —
- * the conversation history DB is. JetStream exists only so a client that drops
- * mid-stream can reconnect and resume a still-streaming turn. So it holds as
- * little as possible: as soon as a turn finishes and is persisted to the DB, the
- * server purges that conversation from the stream ({@link LiveNatsPublisher.purge}) —
- * a later reconnect reads the finished turn from the DB, so replay would be
- * pointless. A short `max_age` only backstops turns that never persist cleanly
- * (e.g. an error/crash before the server purges).
+ * The stream is a short-lived RESUME buffer, not the source of truth — the
+ * conversation/status database is. Output is retained until `max_age`; one event
+ * never purges the conversation-scoped subject because later FIFO work may still
+ * be publishing or attachable there.
  *
  * Transport is selected by the `NATS_URL` scheme via {@link connectNats}:
  *   - `wss://` / `ws://` -> WebSocket (`nats.ws`), for out-of-cluster callers
@@ -74,17 +70,13 @@ export interface NatsStreamEvent {
 }
 
 // One stream covers every conversation; per-subject retention bounds growth.
-// These are the storage knobs. The stream is ONLY an in-flight resume buffer —
-// the conversation history DB is the source of truth — so the server purges a
-// conversation as soon as its turn is persisted (see LiveNatsPublisher.purge).
-// max_age is just the backstop for turns that never persist cleanly; they expire
-// quickly instead of piling up, since the final result is already in the DB.
+// These are the storage knobs. The stream is only a short replay buffer; durable
+// status and conversation history remain the source of truth.
 const RESPONSE_STREAM_NAME = "WS_RESPONSES";
 const RESPONSE_SUBJECT_WILDCARD = "v1.*.*.ws.response.*";
 const RESPONSE_STREAM_STORAGE = StorageType.File; // Memory = faster/cheaper, lost on restart
 const NANOS_PER_MS = 1_000_000;
-// Backstop window only: purge-on-persist clears finished turns, so this just
-// caps the buffer for turns that never persist cleanly. Kept very short (3 min).
+// Three minutes permits reconnect/attach without retaining token output long term.
 const RESPONSE_STREAM_MAX_AGE_MS = 3 * 60 * 1000;
 const RESPONSE_STREAM_MAX_MSGS_PER_SUBJECT = 2_000;
 // Dedup window for Nats-Msg-Id-tagged publishes (retries within it collapse).
@@ -235,22 +227,6 @@ export class LiveNatsPublisher implements NatsPublisher {
       });
     } catch {
       // Publishing is best-effort per event; close() drains queued writes.
-    }
-  }
-
-  /**
-   * Drop this conversation's buffered messages from the stream. Call this once
-   * the turn is finished and persisted to the conversation DB: the stream is only
-   * an in-flight resume buffer, so a finished+saved turn has no reason to stay —
-   * a later reconnect reads it from the DB. Best-effort; max_age backstops it.
-   */
-  async purge(): Promise<void> {
-    try {
-      const connection = await this.getConnection();
-      const jsm = await connection.jetstreamManager();
-      await jsm.streams.purge(RESPONSE_STREAM_NAME, { filter: this.subject });
-    } catch {
-      // Best-effort: a failed purge just leaves the buffer to expire via max_age.
     }
   }
 
@@ -467,8 +443,8 @@ export async function readConversationStream(options: {
 
 /**
  * How many messages are currently buffered for a conversation. 0 means the
- * server has purged it (the turn finished and was persisted) — a reconnecting
- * client should then read the finished turn from the conversation DB, not resume.
+ * no replay output is retained for the subject. A reconnecting client should use
+ * the durable terminal status/result instead of assuming token replay exists.
  */
 export async function conversationBufferedCount(options: {
   connection: NatsConnection;
@@ -493,6 +469,32 @@ export async function conversationBufferedCount(options: {
   } catch {
     return 0;
   }
+}
+
+/** Snapshot the replay stream identity and sequence range for cursor validation. */
+export async function conversationReplaySnapshot(options: {
+  connection: NatsConnection;
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+}): Promise<{
+  generation: string;
+  firstSequence: number;
+  lastSequence: number;
+  bufferedCount: number;
+}> {
+  await ensureResponseStream(options.connection);
+  const jsm = await options.connection.jetstreamManager();
+  const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
+  const info = await jsm.streams.info(RESPONSE_STREAM_NAME, { subjects_filter: subject });
+  const created = typeof info.created === "string" ? info.created : String(info.created);
+
+  return {
+    generation: Buffer.from(created, "utf8").toString("base64url"),
+    firstSequence: info.state.first_seq,
+    lastSequence: info.state.last_seq,
+    bufferedCount: (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0,
+  };
 }
 
 // Map a resume cursor to a JetStream consumer start policy: by sequence (last

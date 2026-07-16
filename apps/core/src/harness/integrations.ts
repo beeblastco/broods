@@ -82,6 +82,7 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
+import type { IngressMode } from "./ingress.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
@@ -118,6 +119,10 @@ export interface DirectInboundEvent {
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
+  requestedMode: IngressMode;
+  idempotencyKey: string;
+  // Server-issued fencing token added only after durable admission.
+  ownerGeneration?: number;
   connectionId?: string;
   // One-turn system events from the direct request. Model overrides are already folded into agentConfig.
   ephemeralSystem?: SystemModelMessage[];
@@ -1295,6 +1300,14 @@ async function parseDirectPayload(
     record.connectionId.trim().length > 0
       ? record.connectionId.trim()
       : undefined;
+  const requestedMode = parseIngressMode(record.mode) ?? "reject";
+  const idempotencyKey =
+    record.idempotencyKey === undefined
+      ? rawEventId
+      : normalizeDirectIdentifier(
+          "idempotencyKey",
+          String(record.idempotencyKey),
+        );
 
   return {
     accountId: account.accountId,
@@ -1312,9 +1325,25 @@ async function parseDirectPayload(
     ),
     publicConversationKey: rawConversationKey,
     events,
+    requestedMode: requestedMode,
+    idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
   };
+}
+
+/** Validates the optional public ingress mode. */
+function parseIngressMode(value: unknown): IngressMode | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "reject" ||
+    value === "followup" ||
+    value === "collect" ||
+    value === "steer"
+  ) {
+    return value;
+  }
+  throw new Error("mode must be reject, followup, collect, or steer");
 }
 
 /**

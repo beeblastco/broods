@@ -112,6 +112,21 @@ test("parses only valid gateway websocket messages", () => {
   expect(
     parseGatewayMessage(JSON.stringify({ type: "execute", agentId: "   " })),
   ).toBeNull();
+  expect(parseGatewayMessage(JSON.stringify({
+    type: "control",
+    requestId: "request-2",
+    eventId: "event-2",
+    mode: "steer",
+    input: "change direction",
+  }))).toMatchObject({ type: "control", mode: "steer" });
+  expect(parseGatewayMessage(JSON.stringify({
+    type: "attach",
+    requestId: "attach-1",
+    agentId: "agent_123",
+    conversationKey: "conversation-1",
+    eventId: "event-1",
+    afterCursor: "ws-responses:generation:42",
+  }))).toMatchObject({ type: "attach", afterCursor: "ws-responses:generation:42" });
 });
 
 test("rejects invalid agent websocket messages and closes the socket", () => {
@@ -123,6 +138,7 @@ test("rejects invalid agent websocket messages and closes the socket", () => {
       corePath: "/v1/agents/agent_1",
       token: "runtime-key",
       coreBaseUrl: "https://core.example",
+      accountId: "account-1",
     },
     send: (value: string) => sent.push(JSON.parse(value)),
     close: (code: number, reason: string) => closes.push([code, reason]),
@@ -152,6 +168,7 @@ test("rejects a second active agent run on the same websocket", () => {
       corePath: "/v1/agents/agent_1",
       token: "runtime-key",
       coreBaseUrl: "https://core.example",
+      accountId: "account-1",
     },
     send: (value: string) => sent.push(JSON.parse(value)),
     close: () => {},

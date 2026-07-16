@@ -76,6 +76,7 @@ import { stripReasoningFromMessages } from "./pruning.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
 import {
   stripEnvelopeFieldsFromMessages,
+  type ConversationIngressEvent,
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
@@ -104,6 +105,28 @@ type TrackedSpan = {
   startTimeMs: number;
   attributes: Record<string, string | number | boolean>;
 };
+
+/** Revalidates the fencing token immediately before any executable tool starts. */
+function wrapToolsWithOwnerFence(tools: ToolSet, session: Session): ToolSet {
+  const wrapped: ToolSet = {};
+  for (const [name, tool] of Object.entries(tools)) {
+    const originalExecute = tool.execute;
+    if (typeof originalExecute !== "function") {
+      wrapped[name] = tool;
+      continue;
+    }
+    wrapped[name] = {
+      ...tool,
+      execute: async (input: unknown, options: unknown) => {
+        await session.assertCurrentOwner?.();
+        return (
+          originalExecute as (value: unknown, execution: unknown) => unknown
+        )(input, options);
+      },
+    } as ToolSet[string];
+  }
+  return wrapped;
+}
 
 /** Publish a span update to the live traces subject. Best-effort, non-blocking. */
 // Returns once the span's bytes have been handed to the NATS client; callers that
@@ -465,7 +488,10 @@ export async function runAgentLoop(
   } satisfies ToolSet;
   // Wrap tool execution so tool.call.started hooks can deny/edit args and
   // tool.result hooks can transform output (no-op when no such hooks exist).
-  const tools = wrapToolsWithHooks(builtTools, hooks);
+  const tools = wrapToolsWithOwnerFence(
+    wrapToolsWithHooks(builtTools, hooks),
+    session,
+  );
   const policyToolApproval = await createPolicyToolApproval(
     agentConfig,
     {
@@ -787,7 +813,35 @@ export async function runAgentLoop(
       recordOutputs: false,
     },
     stopWhen: isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
-    prepareStep: async () => {
+    prepareStep: async ({ messages }) => {
+      if (!(await session.renewConversationLease())) {
+        throw new Error(
+          "Conversation ownership changed before the next model step",
+        );
+      }
+      const steering = await session.applySteeringIngress();
+      let stepMessages = messages;
+      if (steering) {
+        const steeringEvents = steering.events as ConversationIngressEvent[];
+        const steeringSystem =
+          await session.appendIngressEvents(steeringEvents);
+        turnContext.ephemeralSystem.push(...steeringSystem);
+        stepMessages = [
+          ...messages,
+          ...steeringEvents.filter(
+            (
+              event,
+            ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
+              event.role !== "system",
+          ),
+        ];
+        logInfo("Steering ingress applied at AI SDK step boundary", {
+          eventId: session.eventId,
+          conversationKey: session.conversationKey,
+          steeringEventCount: steering.contributingEventIds.length,
+          appliedMode: steering.appliedMode,
+        });
+      }
       // `systemContextSnapshot` is the persisted system-message snapshot from
       // session.ts. Refresh it before each step so dynamic system context added
       // during a tool loop is included without replaying the full conversation.
@@ -799,6 +853,7 @@ export async function runAgentLoop(
 
       return {
         instructions: refreshed.system,
+        ...(steering ? { messages: stepMessages } : {}),
       };
     },
     onChunk: ({ chunk }) => {

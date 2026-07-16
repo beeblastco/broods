@@ -210,6 +210,7 @@ if (import.meta.main) {
             corePath: url.pathname.slice(0, -"/ws".length),
             token,
             coreBaseUrl: resolved.coreBaseUrl,
+            accountId: resolved.scope.accountId,
           } satisfies AgentTestGatewayData,
         });
 

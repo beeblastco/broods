@@ -91,9 +91,9 @@ export const agentConfigsFields = {
    * Ownership marker. `"cli"` means a `broods/` project is the source of
    * truth: the dashboard may still edit it, but those edits are overwritten on
    * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
-   * means the account REST API owns it — its config is re-mirrored onto the
-   * canvas on every API write and dashboard edits are locked. Unset (or
-   * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
+   * means the account REST API owns it and mirrors its config onto the canvas.
+   * Unset (or `"dashboard"`) means the dashboard owns it and neither sync
+   * prunes it.
    */
   managedBy: v.optional(
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
@@ -729,18 +729,87 @@ export const runtimeConversationEventsFields = {
   cursor: v.string(),
   event: v.any(),
 };
-/** Dedupe claims, conversation leases, and pending ingress buffers. */
+/** Context-only webhook event dedupe claims. */
 export const runtimeClaimsFields = {
   accountId: v.optional(v.string()),
   key: v.string(),
-  kind: v.union(
-    v.literal("event"),
-    v.literal("lease"),
-    v.literal("pendingIngress"),
-  ),
+  kind: v.literal("event"),
+  expiresAt: v.number(),
+};
+/** Public concurrency policy selected for one ingress request. */
+export const ingressModeValidator = v.union(
+  v.literal("reject"),
+  v.literal("followup"),
+  v.literal("collect"),
+  v.literal("steer"),
+);
+/** Mode actually applied after the coordinator reaches a runnable boundary. */
+export const appliedIngressModeValidator = v.union(
+  v.literal("reject"),
+  v.literal("followup"),
+  v.literal("collect"),
+  v.literal("steer"),
+);
+/** Durable lifecycle for accepted ingress. */
+export const ingressStatusValidator = v.union(
+  v.literal("accepted"),
+  v.literal("queued"),
+  v.literal("applied"),
+  v.literal("processing"),
+  v.literal("completed"),
+  v.literal("failed"),
+  v.literal("expired"),
+);
+/** Fenced ownership and FIFO counters for one runtime conversation. */
+export const runtimeConversationCoordinatorsFields = {
+  accountId: v.string(),
+  agentId: v.string(),
+  conversationKey: v.string(),
+  nextSequence: v.number(),
+  ownerGeneration: v.number(),
   ownerEventId: v.optional(v.string()),
-  conversationKey: v.optional(v.string()),
-  queued: v.optional(v.array(v.any())),
+  leaseExpiresAt: v.optional(v.number()),
+  queuedCount: v.number(),
+  queuedBytes: v.number(),
+  channelMode: v.optional(ingressModeValidator),
+  updatedAt: v.number(),
+};
+/** One accepted transport-neutral ingress item in the conversation FIFO. */
+export const runtimeIngressEnvelopesFields = {
+  accountId: v.string(),
+  agentId: v.string(),
+  conversationKey: v.string(),
+  sequence: v.number(),
+  eventId: v.string(),
+  identity: v.string(),
+  idempotencyKey: v.string(),
+  payloadDigest: v.string(),
+  events: v.array(v.any()),
+  delivery: v.any(),
+  requestedMode: ingressModeValidator,
+  appliedMode: v.optional(appliedIngressModeValidator),
+  appliedToEventId: v.optional(v.string()),
+  applicationId: v.optional(v.string()),
+  ownerGeneration: v.optional(v.number()),
+  status: ingressStatusValidator,
+  sizeBytes: v.number(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  expiresAt: v.number(),
+  statusExpiresAt: v.number(),
+  error: v.optional(v.string()),
+  result: v.optional(v.any()),
+};
+/** Provenance for one steering, follow-up, or collected application. */
+export const runtimeIngressApplicationsFields = {
+  accountId: v.string(),
+  conversationKey: v.string(),
+  applicationId: v.string(),
+  appliedMode: appliedIngressModeValidator,
+  appliedToEventId: v.string(),
+  contributingEventIds: v.array(v.string()),
+  ownerGeneration: v.number(),
+  createdAt: v.number(),
   expiresAt: v.number(),
 };
 /** Public async-agent polling and approval state. */
@@ -1085,6 +1154,40 @@ export default defineSchema({
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  runtimeConversationCoordinators: defineTable(
+    runtimeConversationCoordinatorsFields,
+  )
+    .index("by_conversationKey", ["conversationKey"])
+    .index("by_accountId", ["accountId"])
+    .index("by_leaseExpiresAt", ["leaseExpiresAt"]),
+  runtimeIngressEnvelopes: defineTable(runtimeIngressEnvelopesFields)
+    .index("by_identity", ["identity"])
+    .index("by_eventId", ["eventId"])
+    .index("by_conversationKey_and_sequence", ["conversationKey", "sequence"])
+    .index("by_conversationKey_and_status_and_sequence", [
+      "conversationKey",
+      "status",
+      "sequence",
+    ])
+    .index("by_conversationKey_and_status_and_requestedMode_and_sequence", [
+      "conversationKey",
+      "status",
+      "requestedMode",
+      "sequence",
+    ])
+    .index("by_conversationKey_and_appliedToEventId_and_sequence", [
+      "conversationKey",
+      "appliedToEventId",
+      "sequence",
+    ])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"])
+    .index("by_statusExpiresAt", ["statusExpiresAt"]),
+  runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
+    .index("by_applicationId", ["applicationId"])
+    .index("by_conversationKey_and_createdAt", ["conversationKey", "createdAt"])
     .index("by_accountId", ["accountId"])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncAgentResults: defineTable(runtimeAsyncAgentResultsFields)

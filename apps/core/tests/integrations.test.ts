@@ -740,6 +740,8 @@ describe("direct API ingress", () => {
       publicAccess: true,
     });
     expect(directEvent.publicEventId).toBe("one");
+    expect(directEvent.requestedMode).toBe("reject");
+    expect(directEvent.idempotencyKey).toBe("one");
     expect(directEvent.conversationKey).toBe(
       "acct:acct_test:agent:agent_test:api:alpha",
     );
@@ -755,6 +757,36 @@ describe("direct API ingress", () => {
         content: [{ type: "text", text: "hello" }],
       },
     ]);
+  });
+
+  it("parses explicit ingress mode and idempotency identity", async () => {
+    const handledEvents: DirectInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "steer-1",
+          conversationKey: "alpha",
+          mode: "steer",
+          idempotencyKey: "client-operation-1",
+          events: [{ role: "user", content: "change direction" }],
+        },
+        { authorization: "Bearer secret" },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+          return { statusCode: 202, body: "{}" };
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(handledEvents[0]).toMatchObject({
+      requestedMode: "steer",
+      idempotencyKey: "client-operation-1",
+      publicEventId: "steer-1",
+      publicConversationKey: "alpha",
+    });
   });
 
   it("passes top-level system as ephemeral AI SDK system messages", async () => {

@@ -1,14 +1,13 @@
-# Queue and Steer Ingress (Proposed v1)
+# Queue and Steer Ingress (v1)
 
-Status: **Proposed** for [issue #71](https://github.com/beeblastco/broods/issues/71).
+Status: **Accepted and implemented** for [issue #71](https://github.com/beeblastco/broods/issues/71).
 
 This decision defines one concurrency contract for direct HTTP, async HTTP,
-WebSocket, and channel ingress. It is a contract for later implementation, not a
-description of behavior already available.
+WebSocket, and channel ingress.
 
 ## Context
 
-Broods currently serializes work with a per-conversation lease. A busy direct
+Before this change, Broods serialized work with a per-conversation lease. A busy direct
 SSE request is rejected with `409`; an async request can be accepted and later
 fail as busy. Channel messages use a transactional pending buffer and are
 collected into the next turn. The WebSocket gateway permits one active execute
@@ -22,11 +21,13 @@ there is no transition mode. It does not add distributed cancellation.
 
 ## Decision
 
-### Steering is not interruption
+### Steering is boundary interruption, not abort
 
-`steer` means **boundary steering**: add accepted input after the current AI SDK
+`steer` interrupts the active run's current direction at the next safe model
+boundary, then continues the same run with the new input. Concretely, it adds
+accepted input after the current AI SDK
 step (including its complete in-flight tool batch) and before the next model
-call. It never stops a model call or tool that is already running.
+call. It does not abort a model call or tool that is already running.
 
 Hard interrupt, abort, and distributed cancellation are separate semantics and
 are out of issue #71 v1. They require their own ownership, tool cleanup,
@@ -103,7 +104,7 @@ interface IngressEnvelope extends Omit<IngressCandidate, "requestedMode"> {
 
 interface IngressApplication {
   applicationId: string;
-  appliedMode: "followup" | "collect" | "steer";
+  appliedMode: IngressMode;
   appliedToEventId: string;
   contributingEventIds: string[];
   ownerGeneration: number;
@@ -165,23 +166,24 @@ Every lease acquisition or recovery atomically increments a monotonic
 per-conversation `ownerGeneration` and returns it as a fencing token. The
 generation survives lease deletion. The owner must renew the lease, and every
 dequeue/application, conversation-history write, status transition, result
-commit, stream publish, outbox write/claim, and lease release includes the token
-and fails unless it still matches the current generation.
+commit, and lease release includes the token and fails unless it still matches
+the current generation. Stream publication and channel replies revalidate the
+same token immediately before the external side effect.
 
-Externally visible replies and callbacks go through a durable fenced outbox with
-deterministic effect IDs; workers do not send them directly. Only the current
-generation can claim an effect, and the dispatcher revalidates the generation
-immediately before delivery and supplies the effect ID as provider idempotency
-metadata when supported. Tool/provider calls also revalidate before starting.
-An external call already in flight when ownership changes cannot be revoked, but
-its stale result, output, and follow-on effects are rejected; true remote abort
-remains outside v1.
+The runtime revalidates the current generation immediately before starting a
+tool or externally visible channel reply. Conversation writes, terminal results,
+dequeue/application, and releases are transactional fenced mutations. An
+external call already in flight when ownership changes cannot be revoked, but
+its stale result and follow-on writes are rejected; true remote abort remains
+outside v1. Channel/provider delivery remains best-effort and must use the
+provider's idempotency metadata when that surface supports it.
 
-After a process crash, the lease expires and a new generation marks elapsed
-envelopes `expired` and resumes the remaining FIFO. Stale workers cannot apply an
-envelope or commit outputs after recovery. A failed owner releases or times out
-its lease without leaving accepted work permanently `accepted`, `queued`,
-`applied`, or `processing`.
+After a process crash, maintenance marks elapsed work `expired`. The next owner
+acquires a higher generation and drains the remaining pre-crash FIFO before
+releasing the conversation. Stale workers cannot apply an envelope or commit
+outputs after recovery. A failed owner releases or times out its lease without
+leaving accepted work permanently `accepted`, `queued`, `applied`, or
+`processing`.
 
 ```mermaid
 flowchart LR
@@ -198,9 +200,13 @@ flowchart LR
 
 Every accepted async ingress therefore reaches `completed`, `failed`, or
 `expired`. Each status record includes `requestedMode`, the actual `appliedMode`,
-and `appliedToEventId` through its `IngressApplication`. A `steer` that misses
+and `appliedToEventId` from its envelope/application record. A `steer` that misses
 its boundary records `requestedMode: "steer"`, `appliedMode: "followup"`, and the
 event ID of the follow-up turn.
+
+An idle request records its immediately applied policy and its own event ID. An
+idle `steer` records `appliedMode: "followup"` because there is no active run to
+steer; it starts a normal turn.
 
 ### AI SDK boundary
 
@@ -214,6 +220,12 @@ No injection occurs inside a model stream or between tool calls in a parallel
 tool batch. If the current run has finished, reached its step limit, entered an
 approval/terminal path, or otherwise has no next model call, the coordinator
 atomically converts the envelope to `followup`.
+
+This matches the AI SDK contract: [`prepareStep`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text)
+runs before a step and may replace the step's messages, while completed tool
+results are included in the messages for the following step. The SDK's
+[`onStepFinish`](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#onstepfinish-callback)
+fires only after the step's text, tool calls, and tool results are available.
 
 ### HTTP and status
 
@@ -294,8 +306,8 @@ status/result rather than recreating token-by-token output. An attached socket
 does not own the run, and status remains pollable for seven days independently
 of JetStream's short output-retention window.
 
-Because the current purge is conversation-scoped, the v1 gateway/core lifecycle
-must delay it until every attachable event on that conversation is terminal. A
+Because purge is conversation-scoped, the gateway/core lifecycle does not purge
+on individual event completion. A
 single event finishing must not erase another active event's replay range. After
 the last terminal status/result is durable, purge may remove the conversation's
 token output; the seven-day status and idempotency records remain.
@@ -343,9 +355,9 @@ idempotency keys/identities, or raw request headers.
 
 ## Implementation sequence
 
-Implement the contract in this dependency order:
+The implementation follows this dependency order:
 
-1. Durable Convex envelope, FIFO, idempotency, lease, status, and fenced-outbox
+1. Durable Convex envelope, FIFO, idempotency, lease, status, and owner-fencing
    primitives.
 2. Core conversation coordinator and AI SDK step-boundary steering.
 3. Direct/async HTTP behavior, then SDK types/client and OpenAPI.
@@ -370,8 +382,8 @@ conflicting meanings for attach, completion, and stream retention.
   the development contract has no transition mode.
 - Hard cancellation remains visibly unsupported instead of being approximated by
   disconnecting a gateway reader.
-- The implementation requires a coordinator and durable status transitions
-  before transport-specific features can ship.
+- Transport-specific behavior is layered on the durable coordinator and status
+  transitions rather than maintaining separate in-memory queues.
 
 There are no unresolved v1 decision blockers. Queue limits and TTLs are
 configuration values, but the defaults above are sufficient for implementation

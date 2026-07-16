@@ -23,10 +23,7 @@ import {
 } from "../shared/domain/workspace-config.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
-import {
-  channelScopeKeyFromConversation,
-  conversationLeaseKey,
-} from "../shared/runtime-keys.ts";
+import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
@@ -50,10 +47,14 @@ import {
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
+import {
+  applySteering,
+  DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  settleIngress,
+  takeNextIngress,
+  type AppliedIngress,
+} from "./ingress.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
-
-// Default conversation lease TTL of 15 minutes.
-const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
 
 export type ConversationIngressEvent =
   // `metadata` is opaque hook data persisted on the stored-event envelope,
@@ -181,6 +182,9 @@ export class Session {
     // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
     public readonly projectSlug?: string,
     public readonly environmentSlug?: string,
+    // Monotonic Convex fencing token. Present for every coordinator-admitted run;
+    // absent only on context-only writes that do not execute a model turn.
+    public readonly ownerGeneration?: number,
   ) {}
 
   async claim(): Promise<boolean> {
@@ -206,48 +210,73 @@ export class Session {
     });
   }
 
-  async acquireConversationLease(): Promise<boolean> {
-    return runtime.mutate("acquireLease", {
-      key: this.conversationLeaseKey(),
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS,
-    });
-  }
-
   async releaseConversationLease(): Promise<void> {
-    await runtime.mutate("releaseLease", {
-      key: this.conversationLeaseKey(),
-      ownerEventId: this.eventId,
-    });
-  }
-
-  /**
-   * Buffer ingress events for a conversation whose turn is already in progress so
-   * the lease holder can answer them after its current reply. The Convex mutation
-   * appends concurrent ingress transactionally without clobbering queued events.
-   */
-  async enqueuePendingIngress(
-    events: ConversationIngressEvent[],
-  ): Promise<void> {
-    if (events.length === 0) {
-      return;
-    }
-    await runtime.mutate("enqueueIngress", {
-      key: this.pendingIngressKey(),
+    if (this.ownerGeneration === undefined) return;
+    await runtime.mutate("releaseIngressOwner", {
       conversationKey: this.conversationKey,
-      events,
-      ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
     });
   }
 
-  /**
-   * Atomically remove and return every buffered ingress event for this
-   * conversation. A concurrent enqueue either lands in this transaction's batch
-   * or remains queued for the next drain, so nothing is lost or double-read.
-   */
-  async takePendingIngress(): Promise<ConversationIngressEvent[]> {
-    return runtime.mutate("takeIngress", { key: this.pendingIngressKey() });
+  /** Renews the current fenced owner before another model/tool boundary. */
+  async renewConversationLease(): Promise<boolean> {
+    if (this.ownerGeneration === undefined) return true;
+
+    return runtime.mutate("renewIngressOwner", {
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+      leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+    });
+  }
+
+  /** Rejects a side effect when this run no longer owns the conversation. */
+  async assertCurrentOwner(): Promise<void> {
+    if (this.ownerGeneration === undefined) return;
+    const current = await runtime.query<boolean>("isCurrentIngressOwner", {
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+    if (!current) throw new Error("Stale conversation owner generation");
+  }
+
+  /** Applies all queued steer envelopes to this active event. */
+  async applySteeringIngress(): Promise<AppliedIngress | null> {
+    if (this.ownerGeneration === undefined) return null;
+
+    return applySteering({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+  }
+
+  /** Takes the next durable FIFO application after this event finishes. */
+  async takeNextIngress(): Promise<AppliedIngress | null> {
+    if (this.ownerGeneration === undefined) return null;
+
+    return takeNextIngress({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+  }
+
+  /** Marks this event and every applied contributor terminal. */
+  async settleIngress(
+    status: "completed" | "failed",
+    options: { result?: unknown; error?: string } = {},
+  ): Promise<void> {
+    if (this.ownerGeneration === undefined) return;
+    await settleIngress({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+      status: status,
+      ...options,
+    });
   }
 
   async appendIngressEvents(
@@ -583,11 +612,21 @@ export class Session {
     event: StoredConversationEvent,
   ): Promise<string> {
     const createdAt = this.nextCreatedAt();
-    await runtime.mutate("appendConversationEvent", {
-      conversationKey: this.conversationKey,
-      cursor: createdAt,
-      event,
-    });
+    if (this.ownerGeneration !== undefined) {
+      await runtime.mutate("appendFencedConversationEvent", {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+        cursor: createdAt,
+        event: event,
+      });
+    } else {
+      await runtime.mutate("appendConversationEvent", {
+        conversationKey: this.conversationKey,
+        cursor: createdAt,
+        event: event,
+      });
+    }
     return createdAt;
   }
 
@@ -693,15 +732,6 @@ export class Session {
     }
 
     return null;
-  }
-
-  private conversationLeaseKey(): string {
-    return conversationLeaseKey(this.conversationKey);
-  }
-
-  /** Key for the per-conversation buffer of messages queued while a turn ran. */
-  private pendingIngressKey(): string {
-    return `pending:${conversationLeaseKey(this.conversationKey)}`;
   }
 
   // Namespace of the default (first) workspace, used for memory/skill staging

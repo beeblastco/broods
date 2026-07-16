@@ -10,6 +10,10 @@ import { logError } from "./log.ts";
 export interface CommandContext {
   conversationKey: string;
   channel: ChannelActions;
+  accountId?: string;
+  agentId?: string;
+  eventId?: string;
+  text?: string;
 }
 
 interface DiscordCommandOption {
@@ -61,23 +65,106 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      for (
-        let batchNumber = 0;
-        batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
-        batchNumber += 1
-      ) {
-        const result = await runtime.mutate<{
-          deleted: number;
-          hasMore: boolean;
-        }>("clearConversation", {
-          conversationKey: ctx.conversationKey,
-        });
-        if (!result.hasMore) return "Context cleared. Starting fresh.";
+      if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
+        throw new Error("Clear requires account, agent, and event scope");
       }
-
-      throw new Error(
-        `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
+      const ownerGeneration = await runtime.mutate<number | null>(
+        "acquireIngressClear",
+        {
+          accountId: ctx.accountId,
+          agentId: ctx.agentId,
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          leaseTtlMs: 15 * 60 * 1000,
+        },
       );
+      if (ownerGeneration === null) {
+        return "Cannot clear while a turn or queued message is active. Try again after it finishes.";
+      }
+      try {
+        for (
+          let batchNumber = 0;
+          batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
+          batchNumber += 1
+        ) {
+          const result = await runtime.mutate<{
+            deleted: number;
+            hasMore: boolean;
+          }>("clearFencedConversation", {
+            conversationKey: ctx.conversationKey,
+            ownerEventId: ctx.eventId,
+            ownerGeneration: ownerGeneration,
+          });
+          if (!result.hasMore) return "Context cleared. Starting fresh.";
+        }
+
+        throw new Error(
+          `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
+        );
+      } finally {
+        await runtime.mutate("releaseIngressOwner", {
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          ownerGeneration: ownerGeneration,
+        });
+      }
+    },
+  },
+  {
+    aliases: ["/steer"],
+    description: "Steer the active turn at the next model boundary",
+    discord: {
+      names: ["steer"],
+      description: "Steer the active turn at the next model boundary",
+      options: [
+        {
+          type: 3,
+          name: "text",
+          description: "Guidance for the active turn",
+          required: true,
+        },
+      ],
+    },
+    async execute() {
+      return "Usage: /steer <message>";
+    },
+  },
+  {
+    aliases: ["/queue"],
+    description: "Set queue mode: reject, followup, collect, or steer",
+    discord: {
+      names: ["queue"],
+      description: "Set the conversation queue mode",
+      options: [
+        {
+          type: 3,
+          name: "mode",
+          description: "reject, followup, collect, or steer",
+          required: true,
+        },
+      ],
+    },
+    async execute(ctx) {
+      if (!ctx.accountId || !ctx.agentId) {
+        throw new Error("Queue mode requires account and agent scope");
+      }
+      const mode = ctx.text?.trim().split(/\s+/)[1]?.toLowerCase();
+      if (
+        mode !== "reject" &&
+        mode !== "followup" &&
+        mode !== "collect" &&
+        mode !== "steer"
+      ) {
+        return "Usage: /queue <reject|followup|collect|steer>";
+      }
+      await runtime.mutate("setIngressChannelMode", {
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        conversationKey: ctx.conversationKey,
+        mode: mode,
+      });
+
+      return `Queue mode set to ${mode}.`;
     },
   },
   {

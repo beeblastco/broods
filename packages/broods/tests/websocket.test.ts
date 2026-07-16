@@ -199,6 +199,49 @@ test("websocket client subscribes to the core service and forwards server messag
   expect(done).toBe(true);
 });
 
+test("websocket client sends correlated control and attach frames", async () => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const subscription = client.subscribe({
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    sessionId: "conversation-1",
+    input: "start",
+  });
+  await Promise.resolve();
+  subscription.sendControl({
+    requestId: "request-2",
+    eventId: "event-2",
+    mode: "steer",
+    input: "change direction",
+  });
+  expect(JSON.parse(FakeWebSocket.instances[0]!.sent[1]!)).toMatchObject({
+    type: "control",
+    requestId: "request-2",
+    mode: "steer",
+  });
+  subscription.close();
+
+  const attached = client.attach({
+    endpointId: "agent_1",
+    requestId: "attach-1",
+    agentId: "agent_1",
+    conversationKey: "conversation-1",
+    eventId: "event-1",
+    afterCursor: "ws-responses:generation:42",
+  });
+  await Promise.resolve();
+  expect(JSON.parse(FakeWebSocket.instances[1]!.sent[0]!)).toMatchObject({
+    type: "attach",
+    requestId: "attach-1",
+    afterCursor: "ws-responses:generation:42",
+  });
+  attached.close();
+});
+
 test("websocket client can build scoped URLs from generated agent references", async () => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",

@@ -79,7 +79,7 @@ paths:
         - Direct API
       summary: Sync direct API (SSE)
       description: |
-        Run a synchronous direct agent turn. Returns an SSE stream with Vercel AI SDK stream events.
+        Run a synchronous direct agent turn. An idle request owns an SSE stream. When a conversation is busy, `reject` returns 409; an explicitly queued `followup`, `collect`, or `steer` request returns 202 JSON and is observed through its status URL. Steered output remains on the active stream.
 
         The SSE stream uses the [Vercel AI SDK wire protocol](https://sdk.vercel.ai/docs/ai-sdk-core/streaming#data-stream-protocol). Common event types include `step-start`, `text`, `tool-call`, `tool-result`, `tool-approval-request`, `step-finish`, and `finish`. When `model.output` is configured, a final `structured-output` event carries the parsed JSON value.
       requestBody:
@@ -161,6 +161,16 @@ paths:
 
                     event: 0
                     data: {"type":"finish","finishReason":"stop"}
+        '202':
+          description: Busy-conversation ingress durably accepted without a second SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngressAccepted'
+        '409':
+          description: Conversation busy in reject mode, or idempotency identity reused with a different payload
+        '429':
+          description: Per-conversation FIFO capacity exceeded; no ingress was persisted
         '403':
           description: Agent has not opted into public access (secure by default)
           content:
@@ -190,7 +200,7 @@ paths:
       tags:
         - Direct API
       summary: Async direct API
-      description: Queue an async direct agent turn. Returns immediately with a status URL for polling. The async worker runs the same account-scoped harness code in the background.
+      description: Durably accept an async direct agent turn and return a status URL. Busy requests use the requested mode; omitted mode defaults to `reject` and returns 409 without persistence.
       requestBody:
         required: true
         content:
@@ -211,19 +221,23 @@ paths:
                           text: Generate a summary of today's news
       responses:
         '202':
-          description: Async job accepted
+          description: Async ingress durably accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  statusUrl:
-                    type: string
-                    format: uri
+                $ref: '#/components/schemas/IngressAccepted'
               examples:
                 accepted:
                   value:
+                    eventId: async-unique-id
+                    conversationKey: conversation-identifier
+                    status: processing
+                    requestedMode: reject
                     statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
+        '409':
+          description: Conversation busy in reject mode, or idempotency conflict
+        '429':
+          description: Per-conversation FIFO capacity exceeded
         '403':
           description: Agent has not opted into public access (secure by default)
           content:
@@ -253,7 +267,7 @@ paths:
       tags:
         - Direct API
       summary: Poll async status
-      description: Poll the status of an async job. Responses are backed by the account-scoped `runtimeAsyncAgentResults` Convex record.
+      description: Poll the durable, account-and-agent-scoped ingress envelope. Every accepted request reaches completed, failed, or expired.
       parameters:
         - name: eventId
           in: path
@@ -271,11 +285,7 @@ paths:
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/StatusProcessing'
-                  - $ref: '#/components/schemas/StatusAwaitingApproval'
-                  - $ref: '#/components/schemas/StatusCompleted'
-                  - $ref: '#/components/schemas/StatusFailed'
+                $ref: '#/components/schemas/IngressStatus'
               examples:
                 processing:
                   summary: Job still running
@@ -301,7 +311,7 @@ paths:
                     eventId: unique-id-for-dedup
                     conversationKey: conversation-identifier
                     status: completed
-                    response:
+                    result:
                       answer: done
                 failed:
                   summary: Job failed
@@ -2027,6 +2037,14 @@ components:
         conversationKey:
           type: string
           description: Selects the account-scoped persisted direct conversation
+        mode:
+          type: string
+          enum: [reject, followup, collect, steer]
+          default: reject
+          description: Busy-conversation behavior. Steer injects at the next AI SDK step boundary and falls back to followup if the active run has no boundary left.
+        idempotencyKey:
+          type: string
+          description: Stable retry identity scoped to account, agent, and conversation. Defaults to eventId and remains bound for the seven-day status window.
         events:
           type: array
           description: Vercel AI SDK-style messages
@@ -2304,8 +2322,9 @@ components:
           type: string
           description: Reason for approval or denial
 
-    StatusProcessing:
+    IngressAccepted:
       type: object
+      required: [eventId, conversationKey, status, requestedMode, statusUrl]
       properties:
         eventId:
           type: string
@@ -2313,9 +2332,17 @@ components:
           type: string
         status:
           type: string
+          enum: [accepted, queued, applied, processing]
+        requestedMode:
+          type: string
+          enum: [reject, followup, collect, steer]
+        statusUrl:
+          type: string
+          format: uri
 
-    StatusAwaitingApproval:
+    IngressStatus:
       type: object
+      required: [eventId, conversationKey, status, requestedMode]
       properties:
         eventId:
           type: string
@@ -2323,42 +2350,16 @@ components:
           type: string
         status:
           type: string
-        approvals:
-          type: array
-          items:
-            type: object
-            properties:
-              approvalId:
+          enum: [accepted, queued, applied, processing, completed, failed, expired]
+        requestedMode:
                 type: string
-              toolCallId:
+          enum: [reject, followup, collect, steer]
+        appliedMode:
                 type: string
-              toolName:
-                type: string
-              input:
-                type: object
-
-    StatusCompleted:
-      type: object
-      properties:
-        eventId:
+          enum: [reject, followup, collect, steer]
+        appliedToEventId:
           type: string
-        conversationKey:
-          type: string
-        status:
-          type: string
-        response:
-          type: object
-          description: Parsed JSON value when structured output is configured
-
-    StatusFailed:
-      type: object
-      properties:
-        eventId:
-          type: string
-        conversationKey:
-          type: string
-        status:
-          type: string
+        result: {}
         error:
           type: string
 
@@ -3219,7 +3220,7 @@ components:
               type: string
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:
@@ -3263,7 +3264,7 @@ components:
               description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:
@@ -3293,7 +3294,7 @@ components:
               type: string
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:
@@ -3321,7 +3322,7 @@ components:
                 type: string
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:
@@ -3350,7 +3351,7 @@ components:
               description: Optional staff user ID for replies
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:
@@ -3381,7 +3382,7 @@ components:
               description: Optional Zalo user IDs allowed to trigger the agent. When omitted or empty, any private sender is accepted.
             workspaceScope:
               type: object
-              description: Hierarchical workspace isolation scope for workspaces with `isolation: true`.
+              description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
               required: [level]
               properties:
                 alias:

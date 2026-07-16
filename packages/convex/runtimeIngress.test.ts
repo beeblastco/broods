@@ -1,0 +1,306 @@
+/// <reference types="vite/client" />
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import schema from "./schema";
+
+const modules = import.meta.glob("./**/*.ts");
+
+/** Creates an isolated Convex test runtime. */
+function runtimeTest() {
+  return convexTest(schema, modules);
+}
+
+/** Creates one active account for ingress tests. */
+async function createActiveAccount(t: ReturnType<typeof runtimeTest>) {
+  const now = Date.now();
+
+  return await t.run(async (ctx) =>
+    await ctx.db.insert("accounts", {
+      orgId: `org-${crypto.randomUUID()}`,
+      username: `user-${crypto.randomUUID()}`,
+      secretHash: crypto.randomUUID(),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    })
+  );
+}
+
+/** Builds one fully scoped conversation key. */
+function conversationKeyFor(accountId: string): string {
+  return `acct:${accountId}:agent:test-agent:api:test-conversation`;
+}
+
+/** Builds the common admission arguments for one candidate. */
+function admission(options: {
+  accountId: Id<"accounts">;
+  conversationKey: string;
+  eventId: string;
+  mode: "reject" | "followup" | "collect" | "steer";
+  idempotencyKey?: string;
+  payloadDigest?: string;
+  sizeBytes?: number;
+}) {
+  return {
+    accountId: options.accountId,
+    agentId: "test-agent",
+    conversationKey: options.conversationKey,
+    eventId: options.eventId,
+    idempotencyKey: options.idempotencyKey ?? options.eventId,
+    payloadDigest: options.payloadDigest ?? `digest:${options.eventId}`,
+    events: [{ role: "user", content: options.eventId }],
+    delivery: { kind: "async" },
+    requestedMode: options.mode,
+    sizeBytes: options.sizeBytes ?? 32,
+    leaseTtlMs: 60_000,
+    envelopeTtlMs: 60_000,
+    statusTtlMs: 7 * 24 * 60 * 60 * 1000,
+    maxQueuedCount: 100,
+    maxQueuedBytes: 1024 * 1024,
+  };
+}
+
+describe("runtime ingress", () => {
+  test("atomically owns, rejects, queues, and deduplicates candidates", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "owner", mode: "reject" }),
+    );
+    expect(owner).toMatchObject({
+      outcome: "owner",
+      ownerGeneration: 1,
+      status: "processing",
+      sequence: 1,
+    });
+    expect(await t.query(internal.runtimeIngress.getStatus, {
+      accountId,
+      agentId: "test-agent",
+      eventId: "owner",
+    })).toMatchObject({
+      requestedMode: "reject",
+      appliedMode: "reject",
+      appliedToEventId: "owner",
+    });
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({ accountId, conversationKey, eventId: "rejected", mode: "reject" }),
+      ),
+    ).toEqual({ outcome: "rejected" });
+    const queued = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "queued", mode: "followup" }),
+    );
+    expect(queued).toMatchObject({ outcome: "queued", status: "queued", sequence: 2 });
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({ accountId, conversationKey, eventId: "queued", mode: "followup" }),
+      ),
+    ).toMatchObject({ outcome: "duplicate", eventId: "queued", status: "queued" });
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          accountId,
+          conversationKey,
+          eventId: "different-event-id",
+          idempotencyKey: "queued",
+          payloadDigest: "different",
+          mode: "followup",
+        }),
+      ),
+    ).toEqual({ outcome: "conflict", eventId: "queued" });
+    const rows = await t.run(async (ctx) =>
+      await ctx.db.query("runtimeIngressEnvelopes").collect()
+    );
+    expect(rows.map((row) => row.eventId)).toEqual(["owner", "queued"]);
+  });
+
+  test("applies steering at the current fenced owner boundary", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "owner", mode: "reject" }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "steer-1", mode: "steer" }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "steer-2", mode: "steer" }),
+    );
+    const applied = await t.mutation(internal.runtimeIngress.applySteering, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      leaseTtlMs: 60_000,
+    });
+    expect(applied).toMatchObject({
+      appliedMode: "steer",
+      appliedToEventId: "owner",
+      contributingEventIds: ["steer-1", "steer-2"],
+    });
+    expect(applied?.events.map((event) => event.content)).toEqual(["steer-1", "steer-2"]);
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "completed",
+      result: "done",
+    });
+    for (const eventId of ["owner", "steer-1", "steer-2"]) {
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId: accountId,
+          agentId: "test-agent",
+          eventId: eventId,
+        }),
+      ).toMatchObject({ status: "completed", result: "done" });
+    }
+  });
+
+  test("collects contiguous FIFO contributors and falls back missed steer to followup", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "owner", mode: "reject" }),
+    );
+    for (const eventId of ["collect-1", "collect-2"]) {
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({ accountId, conversationKey, eventId, mode: "collect" }),
+      );
+    }
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "late-steer", mode: "steer" }),
+    );
+    const collected = await t.mutation(internal.runtimeIngress.takeNext, {
+      conversationKey: conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      leaseTtlMs: 60_000,
+    });
+    expect(collected).toMatchObject({
+      eventId: "collect-1",
+      appliedMode: "collect",
+      contributingEventIds: ["collect-1", "collect-2"],
+    });
+    const followup = await t.mutation(internal.runtimeIngress.takeNext, {
+      conversationKey: conversationKey,
+      ownerEventId: "collect-1",
+      ownerGeneration: owner.ownerGeneration!,
+      leaseTtlMs: 60_000,
+    });
+    expect(followup).toMatchObject({
+      eventId: "late-steer",
+      requestedMode: "steer",
+      appliedMode: "followup",
+    });
+  });
+
+  test("rejects stale owner writes after a new generation acquires the conversation", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const first = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "first", mode: "reject" }),
+    );
+    expect(
+      await t.mutation(internal.runtimeIngress.releaseOwner, {
+        conversationKey: conversationKey,
+        ownerEventId: "first",
+        ownerGeneration: first.ownerGeneration!,
+      }),
+    ).toBe(true);
+    const second = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "second", mode: "reject" }),
+    );
+    expect(second.ownerGeneration).toBe(2);
+    await expect(
+      t.mutation(internal.runtimeIngress.appendConversationEvent, {
+        conversationKey: conversationKey,
+        ownerEventId: "first",
+        ownerGeneration: first.ownerGeneration!,
+        cursor: "001",
+        event: { role: "user", content: "stale" },
+      }),
+    ).rejects.toThrow("Stale conversation owner generation");
+  });
+
+  test("returns capacity without silently dropping accepted FIFO rows", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({ accountId, conversationKey, eventId: "owner", mode: "reject" }),
+    );
+    const first = {
+      ...admission({ accountId, conversationKey, eventId: "one", mode: "followup", sizeBytes: 60 }),
+      maxQueuedCount: 1,
+      maxQueuedBytes: 100,
+    };
+    expect(await t.mutation(internal.runtimeIngress.accept, first)).toMatchObject({ outcome: "queued" });
+    const second = {
+      ...admission({ accountId, conversationKey, eventId: "two", mode: "followup", sizeBytes: 1 }),
+      maxQueuedCount: 1,
+      maxQueuedBytes: 100,
+    };
+    expect(await t.mutation(internal.runtimeIngress.accept, second)).toEqual({ outcome: "capacity" });
+    const queued = await t.run(async (ctx) =>
+      await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+          q.eq("conversationKey", conversationKey).eq("status", "queued"),
+        )
+        .collect()
+    );
+    expect(queued.map((row) => row.eventId)).toEqual(["one"]);
+  });
+
+  test("maintenance terminalizes expired accepted queue work", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtimeIngress.accept, admission({
+      accountId,
+      conversationKey,
+      eventId: "owner",
+      mode: "reject",
+    }));
+    await t.mutation(internal.runtimeIngress.accept, admission({
+      accountId,
+      conversationKey,
+      eventId: "queued",
+      mode: "followup",
+    }));
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex("by_eventId", (q) => q.eq("eventId", "queued"))
+        .unique();
+      await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+    });
+
+    expect(await t.mutation(internal.runtimeIngress.maintain, {})).toMatchObject({ expired: 1 });
+    expect(await t.query(internal.runtimeIngress.getStatus, {
+      accountId,
+      agentId: "test-agent",
+      eventId: "queued",
+    })).toMatchObject({ status: "expired" });
+  });
+});

@@ -70,6 +70,10 @@ let streamTextScenario:
 
 const streamTextMock = mock(
   (options: {
+    prepareStep?: (args: { messages: unknown[] }) => Promise<{
+      instructions?: unknown;
+      messages?: unknown[];
+    }>;
     onStepStart?: (args: {
       stepNumber: number;
       model: { provider: string; modelId: string };
@@ -501,6 +505,88 @@ afterEach(() => {
 });
 
 describe("runAgentLoop", () => {
+  it("injects durable steering only through the next AI SDK prepareStep boundary", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const appendIngressEvents = mock(async () => []);
+    const applySteeringIngress = mock(async () => ({
+      eventId: "owner",
+      events: [{ role: "user", content: "new direction" }],
+      delivery: { kind: "http" },
+      requestedMode: "steer",
+      appliedMode: "steer",
+      appliedToEventId: "owner",
+      contributingEventIds: ["steer-1"],
+      ownerGeneration: 3,
+    }));
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "acct:test:agent:test:api:conversation",
+        eventId: "owner",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        statelessSandbox: () => undefined,
+        statelessPermissionMode: () => "ask",
+        persistModelMessages: async () => [],
+        renewConversationLease: async () => true,
+        applySteeringIngress,
+        appendIngressEvents,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "original" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+    );
+
+    const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
+    expect(prepareStep).toBeFunction();
+    const prepared = await prepareStep!({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "bash",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "bash",
+              output: { type: "text", value: "done" },
+            },
+          ],
+        },
+      ],
+    });
+    expect(prepared.messages?.at(-1)).toEqual({
+      role: "user",
+      content: "new direction",
+    });
+    expect(applySteeringIngress).toHaveBeenCalledTimes(1);
+    expect(appendIngressEvents).toHaveBeenCalledWith([
+      { role: "user", content: "new direction" },
+    ]);
+    await stream.consumeStream();
+  });
+
   it("sends the error hook when the model finishes with empty text", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");

@@ -184,130 +184,6 @@ export const releaseClaim = internalMutation({
 });
 
 /**
- * Acquires an expired or absent conversation lease transactionally.
- * @returns whether this invocation acquired the lease
- */
-export const acquireLease = internalMutation({
-  args: {
-    key: v.string(),
-    conversationKey: v.string(),
-    ownerEventId: v.string(),
-    ttlSeconds: v.number(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
-    const existing = await ctx.db
-      .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
-      .unique();
-    const now = Math.floor(Date.now() / 1000);
-    if (existing && existing.expiresAt >= now) {
-      return false;
-    }
-    if (existing) await ctx.db.delete(existing._id);
-    await ctx.db.insert("runtimeClaims", {
-      accountId: accountId,
-      key: args.key,
-      kind: "lease",
-      ownerEventId: args.ownerEventId,
-      conversationKey: args.conversationKey,
-      expiresAt: now + args.ttlSeconds,
-    });
-
-    return true;
-  },
-});
-
-/**
- * Releases a conversation lease only for its current owner.
- * @returns null after the release attempt
- */
-export const releaseLease = internalMutation({
-  args: { key: v.string(), ownerEventId: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
-      .unique();
-    const accountId =
-      row?.accountId ??
-      (row?.conversationKey
-        ? accountIdFromKey(row.conversationKey)
-        : undefined);
-    if (accountId) await requireActiveAccount(ctx, accountId);
-    if (row?.kind === "lease" && row.ownerEventId === args.ownerEventId)
-      await ctx.db.delete(row._id);
-
-    return null;
-  },
-});
-
-/**
- * Appends ingress events to a conversation's transactional pending buffer.
- * @returns null after the events are queued
- */
-export const enqueueIngress = internalMutation({
-  args: {
-    key: v.string(),
-    conversationKey: v.string(),
-    events: v.array(v.any()),
-    ttlSeconds: v.number(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.conversationKey);
-    await requireActiveAccount(ctx, accountId);
-    const row = await ctx.db
-      .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
-      .unique();
-    const patch = {
-      queued: [...(row?.queued ?? []), ...args.events],
-      expiresAt: Math.floor(Date.now() / 1000) + args.ttlSeconds,
-    };
-    if (row) await ctx.db.patch(row._id, patch);
-    else
-      await ctx.db.insert("runtimeClaims", {
-        accountId: accountId,
-        key: args.key,
-        kind: "pendingIngress",
-        conversationKey: args.conversationKey,
-        ...patch,
-      });
-
-    return null;
-  },
-});
-
-/**
- * Atomically drains and removes a pending ingress buffer.
- * @returns the queued ingress events, or an empty array when none exist
- */
-export const takeIngress = internalMutation({
-  args: { key: v.string() },
-  returns: v.array(v.any()),
-  handler: async (ctx, args) => {
-    const row = await ctx.db
-      .query("runtimeClaims")
-      .withIndex("by_key", (q) => q.eq("key", args.key))
-      .unique();
-    if (!row || row.kind !== "pendingIngress") {
-      return [];
-    }
-    const accountId =
-      row.accountId ??
-      (row.conversationKey ? accountIdFromKey(row.conversationKey) : undefined);
-    if (accountId) await requireActiveAccount(ctx, accountId);
-    await ctx.db.delete(row._id);
-
-    return row.queued ?? [];
-  },
-});
-
-/**
  * Appends one ordered event to a runtime conversation.
  * @returns null after the event is persisted
  */
@@ -820,6 +696,18 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeClaims")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
+    const coordinatorRows = await ctx.db
+      .query("runtimeConversationCoordinators")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(100);
+    const ingressRows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(100);
+    const applicationRows = await ctx.db
+      .query("runtimeIngressApplications")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(100);
     const agentRows = await ctx.db
       .query("runtimeAsyncAgentResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -839,6 +727,9 @@ export const deleteAccountRuntimeData = internalMutation({
     for (const row of [
       ...conversationRows,
       ...claimRows,
+      ...coordinatorRows,
+      ...ingressRows,
+      ...applicationRows,
       ...agentRows,
       ...toolRows,
       ...groupRows,
@@ -848,7 +739,11 @@ export const deleteAccountRuntimeData = internalMutation({
 
     return {
       conversationsDeleted: conversationRows.length,
-      processedEventsDeleted: claimRows.length,
+      processedEventsDeleted:
+        claimRows.length +
+        coordinatorRows.length +
+        ingressRows.length +
+        applicationRows.length,
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
       asyncToolGroupDeleted: groupRows.length,
@@ -856,6 +751,9 @@ export const deleteAccountRuntimeData = internalMutation({
       totalDeleted:
         conversationRows.length +
         claimRows.length +
+        coordinatorRows.length +
+        ingressRows.length +
+        applicationRows.length +
         agentRows.length +
         toolRows.length +
         groupRows.length +
