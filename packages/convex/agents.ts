@@ -165,66 +165,35 @@ export const create = internalMutation({
 });
 
 /**
- * Public query: the agents belonging to one project.
+ * Lists the agents this project owns, for the project's scheduler.
  *
  * `agents` rows are account-scoped and carry no projectId; the link is
  * `agentConfigs.projectId`, so this resolves project → configs → agents.
- * Agents whose config row is missing (created while the account had no org,
- * see `backfillCanvasLinks`) belong to no project and are absent here.
+ * Agents whose config row is missing belong to no project and are absent.
+ * @param projectId the project to list agents for
  */
 export const listForProject = query({
     args: { projectId: v.id("projects") },
     returns: v.array(agentDoc),
     handler: async (ctx, args) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
 
         // Gate on project membership: projectId arrives from the URL, so an
         // unauthorized id must return nothing rather than another org's agents.
-        const project = await getProjectForRole(ctx, authUser.id, args.projectId);
-        if (!project) return [];
+        const project = await getProjectForRole(ctx, user.id, args.projectId);
+        if (!project?.orgId) return [];
 
-        return await agentsInProject(ctx, args.projectId);
-    },
-});
+        const account = await ctx.db
+            .query("accounts")
+            .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+            .unique();
+        if (!account) return [];
 
-/**
- * Re-runs the canvas back-sync for every agent on an account that has no
- * `agentConfigs` row, putting it under the account's project.
- *
- * Agents created while their account was unadopted (`orgId` was a synthetic
- * `external:<name>` string) silently skipped the back-sync, because it bails
- * when `normalizeId("orgs", account.orgId)` returns null. They exist and run,
- * but belong to no project, so nothing project-scoped can see them. Idempotent
- * — back-sync returns early for agents already linked to a config.
- */
-export const backfillCanvasLinks = internalMutation({
-    args: { accountId: v.id("accounts") },
-    returns: v.object({ scanned: v.number(), linked: v.number() }),
-    handler: async (ctx, args) => {
-        const agents = await ctx.db
-            .query("agents")
-            .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-            .collect();
-
-        let linked = 0;
-        for (const agent of agents) {
-            const existing = await ctx.db
-                .query("agentConfigs")
-                .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
-                .first();
-            if (existing) continue;
-
-            await backSyncCanvasFromAgentRow(ctx, agent._id);
-
-            const now = await ctx.db
-                .query("agentConfigs")
-                .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
-                .first();
-            if (now) linked += 1;
-        }
-
-        return { scanned: agents.length, linked: linked };
+        return await agentsInProject(ctx, args.projectId, account._id);
     },
 });
 

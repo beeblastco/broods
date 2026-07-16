@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Renders the table of cron jobs for the active org with per-row edit and
- * delete actions. Delete is a typed-confirm modal; edit opens the shared
- * CronDialog in edit mode.
+ * Renders this project's cron jobs with per-row edit and delete actions.
+ * Delete is a typed-confirm modal; edit opens the shared CronDialog in edit
+ * mode.
  */
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
@@ -125,6 +125,7 @@ export function CronsTable({ crons, agents }: Props) {
                                     <Button
                                         variant="ghost"
                                         size="icon-xs"
+                                        aria-label={`Edit ${job.name}`}
                                         className="cursor-pointer text-muted-foreground hover:text-foreground"
                                         onClick={() => setEditing(job)}
                                     >
@@ -133,6 +134,7 @@ export function CronsTable({ crons, agents }: Props) {
                                     <Button
                                         variant="ghost"
                                         size="icon-xs"
+                                        aria-label={`Delete ${job.name}`}
                                         className="cursor-pointer text-muted-foreground hover:text-destructive"
                                         onClick={() => {
                                             setError(null);

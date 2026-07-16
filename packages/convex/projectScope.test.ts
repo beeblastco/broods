@@ -88,12 +88,31 @@ async function seed(tt: T) {
         const agentB = await mkAgent("other-agent");
         const stranded = await mkAgent("pre-adoption-agent");
 
+        // An agent on a different account entirely, pointed at by a config row
+        // in this project — agentConfigs.agentId is a loose string, so a stale
+        // or hand-edited row can name anything that resolves.
+        const foreignAccountId = await ctx.db.insert("accounts", {
+            orgId: "org-other",
+            username: "someone-elses-account",
+            secretHash: "hash-other",
+            status: "active" as const,
+            createdAt: now,
+            updatedAt: now,
+        });
+        const foreignAgent = await ctx.db.insert("agents", {
+            accountId: foreignAccountId,
+            name: "someone-elses-agent",
+            createdAt: now,
+            updatedAt: now,
+        });
+
         await mkConfig(projectA, envA1, agentA1, "cust1");
         // Second environment of the same project: must still be found.
         await mkConfig(projectA, envA2, agentA2, "cust2");
         await mkConfig(projectB, envB, agentB, "other");
         // A config row whose agentId never resolves must not crash the scan.
         await mkConfig(projectA, envA1, "not-a-real-id", "dangling");
+        await mkConfig(projectA, envA1, foreignAgent, "foreign");
 
         const cronA1 = await mkCron(agentA1, "cron-a1");
         await mkCron(agentB, "cron-b");
@@ -101,7 +120,7 @@ async function seed(tt: T) {
 
         return {
             accountId, projectA, projectB,
-            agentA1, agentA2, agentB, stranded,
+            agentA1, agentA2, agentB, stranded, foreignAgent,
             cronA1, cronStranded,
         };
     });
@@ -112,7 +131,7 @@ describe("agentsInProject", () => {
         const tt = t();
         const s = await seed(tt);
 
-        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA));
+        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA, s.accountId));
         expect(found.map((a) => a._id).sort()).toEqual([s.agentA1, s.agentA2].sort());
     });
 
@@ -120,8 +139,18 @@ describe("agentsInProject", () => {
         const tt = t();
         const s = await seed(tt);
 
-        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA));
+        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA, s.accountId));
         expect(found.map((a) => a._id)).not.toContain(s.agentB);
+    });
+
+    test("excludes an agent owned by another account", async () => {
+        const tt = t();
+        const s = await seed(tt);
+
+        // Otherwise another account's agent metadata surfaces in this
+        // project's scheduler and offers a picker option that cannot work.
+        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA, s.accountId));
+        expect(found.map((a) => a._id)).not.toContain(s.foreignAgent);
     });
 
     test("omits agents with no config row rather than throwing", async () => {
@@ -129,7 +158,7 @@ describe("agentsInProject", () => {
         const s = await seed(tt);
 
         // The pre-adoption agents' state: real, running, but in no project.
-        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA));
+        const found = await tt.run((ctx) => agentsInProject(ctx, s.projectA, s.accountId));
         expect(found.map((a) => a._id)).not.toContain(s.stranded);
     });
 });

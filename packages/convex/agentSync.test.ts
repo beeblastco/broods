@@ -178,10 +178,8 @@ describe("backSyncCanvasFromAgentRow", () => {
         // state the two pre-adoption dev agents were in.
         expect(await configFor(tt, agentId)).toBeNull();
     });
-});
 
-describe("backfillCanvasLinks", () => {
-    test("links agents stranded by an unadopted account, and is idempotent", async () => {
+    test("an agent recreated after adoption lands in the project", async () => {
         const tt = t();
         const accountId = await tt.run(
             async (ctx) =>
@@ -197,7 +195,8 @@ describe("backfillCanvasLinks", () => {
         const stranded = await createAgent(tt, accountId, "beeblast-agent-cust1");
         expect(await configFor(tt, stranded)).toBeNull();
 
-        // Adopt: bind the account to a real org with an owner.
+        // Adopt the account, then delete and re-create the agent the way the
+        // owning app's sync does when it finds its agent gone.
         const { orgId } = await seedOrg(tt, {
             orgName: "beeblast",
             slug: "beeblast",
@@ -211,14 +210,16 @@ describe("backfillCanvasLinks", () => {
                 .unique();
             await ctx.db.delete(placeholder!._id);
             await ctx.db.patch(accountId, { orgId: orgId });
+            await ctx.db.delete(stranded);
         });
 
-        const first = await tt.mutation(internal.agents.backfillCanvasLinks, { accountId });
-        expect(first).toEqual({ scanned: 1, linked: 1 });
-        expect(await configFor(tt, stranded)).not.toBeNull();
+        const recreated = await createAgent(tt, accountId, "beeblast-agent-cust1");
 
-        // Re-running must not duplicate the config row.
-        const second = await tt.mutation(internal.agents.backfillCanvasLinks, { accountId });
-        expect(second).toEqual({ scanned: 1, linked: 0 });
+        const config = await configFor(tt, recreated);
+        expect(config).not.toBeNull();
+        await tt.run(async (ctx) => {
+            const project = await ctx.db.get(config!.projectId);
+            expect(project?.orgId).toBe(orgId);
+        });
     });
 });

@@ -28,7 +28,7 @@ import { Textarea } from "@/app/components/ui/textarea";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useAction } from "convex/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const SCHEDULE_REGEX = /^(cron|rate|at)\(.+\)$/;
 
@@ -88,6 +88,7 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
 
     const [pending, setPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const submittingRef = useRef(false);
 
     const scheduleValid = SCHEDULE_REGEX.test(scheduleExpression.trim());
     const canSubmit =
@@ -99,6 +100,12 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
 
     async function handleSubmit() {
         if (!canSubmit) return;
+        // `pending` only blocks the next render, so two fast clicks can both
+        // pass canSubmit and double-create the job. This ref closes in the
+        // same tick.
+        if (submittingRef.current) return;
+
+        submittingRef.current = true;
         setPending(true);
         setError(null);
         try {
@@ -130,6 +137,7 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
         } catch (err) {
             setError(err instanceof Error ? err.message : "Save failed");
         } finally {
+            submittingRef.current = false;
             setPending(false);
         }
     }
@@ -168,14 +176,14 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
                     </div>
 
                     <div className="grid gap-1">
-                        <Label className="text-xs text-muted-foreground">Agent</Label>
+                        <Label htmlFor="cj-agent" className="text-xs text-muted-foreground">Agent</Label>
                         {agents.length === 0 ? (
                             <p className="text-xs text-destructive">
                                 No agents available. Create one before scheduling jobs.
                             </p>
                         ) : (
                             <Select value={agentId} onValueChange={setAgentId}>
-                                <SelectTrigger className="w-full cursor-pointer">
+                                <SelectTrigger id="cj-agent" className="w-full cursor-pointer">
                                     <SelectValue placeholder="Pick an agent" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -262,12 +270,12 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
                         </div>
 
                         <div className="grid gap-1">
-                            <Label className="text-xs text-muted-foreground">Status</Label>
+                            <Label htmlFor="cj-status" className="text-xs text-muted-foreground">Status</Label>
                             <Select
                                 value={status}
                                 onValueChange={(v) => setStatus(v as "active" | "paused")}
                             >
-                                <SelectTrigger className="w-full cursor-pointer">
+                                <SelectTrigger id="cj-status" className="w-full cursor-pointer">
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -284,7 +292,7 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
                 <DialogFooter>
                     <Button
                         variant="outline"
-                        className="cursor-pointer"
+                        className="cursor-pointer disabled:cursor-not-allowed"
                         onClick={onClose}
                         disabled={pending}
                     >

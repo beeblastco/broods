@@ -80,24 +80,28 @@ export const listForActiveOrg = query({
 });
 
 /**
- * Public query: lists cron jobs whose agent belongs to `projectId`.
+ * Lists the cron jobs whose agent belongs to `projectId`, for that project's
+ * scheduler page.
  *
  * A cron has no projectId of its own — it points at an agent, and the agent's
  * project comes from `agentConfigs`. Deriving it rather than storing a copy is
  * what keeps a cron from ever claiming a different project than the agent it
- * actually runs. Crons whose agent has no config row (created before the
- * account was adopted) belong to no project and are absent here.
+ * actually runs. Crons whose agent has no config row belong to no project and
+ * are absent here.
+ * @param projectId the project to list cron jobs for
  */
 export const listForProject = query({
     args: { projectId: v.id("projects") },
     returns: v.array(cronDoc),
     handler: async (ctx, args) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
+        // Check authenticated user
+        const user = await authKit.getAuthUser(ctx);
+        if (!user) {
+            throw new Error("User not found or not authenticated");
+        }
 
-        const project = await getProjectForRole(ctx, authUser.id, args.projectId);
-        if (!project) return [];
-        if (!project.orgId) return [];
+        const project = await getProjectForRole(ctx, user.id, args.projectId);
+        if (!project?.orgId) return [];
 
         const account = await ctx.db
             .query("accounts")

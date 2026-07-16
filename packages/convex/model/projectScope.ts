@@ -16,15 +16,19 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 type Ctx = QueryCtx | MutationCtx;
 
 /**
- * The agents belonging to `projectId`, across every environment.
+ * The agents that `accountId` owns and that belong to `projectId`, across
+ * every environment.
  *
- * Agents with no `agentConfigs` row belong to no project and are absent —
- * that is the state of agents created while their account had no org (see
- * `agents.backfillCanvasLinks`).
+ * Both halves are required. `agentConfigs.agentId` is a loose `v.string()`,
+ * so a stale or hand-edited row can name an agent on another account; without
+ * the accountId check that agent's metadata would surface in this project's
+ * scheduler and offer an unusable picker option. Agents with no config row
+ * belong to no project and are absent.
  */
 export async function agentsInProject(
     ctx: Ctx,
     projectId: Id<"projects">,
+    accountId: Id<"accounts">,
 ): Promise<Doc<"agents">[]> {
     // Prefix scan on the compound index: every environment of this project.
     const configs = await ctx.db
@@ -35,24 +39,27 @@ export async function agentsInProject(
     const agents: Doc<"agents">[] = [];
     for (const config of configs) {
         if (!config.agentId) continue;
-        // agentConfigs.agentId is a loose v.string(), so it can hold a stale or
-        // malformed id that no longer resolves.
         const normalized = ctx.db.normalizeId("agents", config.agentId);
         if (!normalized) continue;
         const agent = await ctx.db.get(normalized);
-        if (agent) agents.push(agent);
+        if (!agent) continue;
+        if (agent.accountId !== accountId) continue;
+
+        agents.push(agent);
     }
 
     return agents;
 }
 
-/** The crons whose agent belongs to `projectId`. */
+/** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
 export async function cronsInProject(
     ctx: Ctx,
     projectId: Id<"projects">,
     accountId: Id<"accounts">,
 ): Promise<Doc<"crons">[]> {
-    const agentIds = new Set((await agentsInProject(ctx, projectId)).map((agent) => agent._id));
+    const agentIds = new Set(
+        (await agentsInProject(ctx, projectId, accountId)).map((agent) => agent._id),
+    );
 
     const crons = await ctx.db
         .query("crons")

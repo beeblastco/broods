@@ -55,7 +55,8 @@ export default function CronsPage({
                     className="cursor-pointer disabled:cursor-not-allowed"
                     // A cron runs an agent, so with none in this project the
                     // dialog's picker would be empty and the form unsubmittable.
-                    disabled={!account || account.status !== "active" || agents?.length === 0}
+                    // Undefined means still loading, which is also not usable yet.
+                    disabled={!account || account.status !== "active" || !agents?.length}
                     onClick={() => setCreateOpen(true)}
                 >
                     <Plus className="size-4 mr-1" />
