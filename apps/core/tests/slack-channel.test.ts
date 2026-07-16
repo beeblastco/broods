@@ -303,7 +303,9 @@ describe("slack channel adapter", () => {
       .filter((chunk): chunk is Extract<typeof chunk, { type: string }> =>
         typeof chunk === "object" && chunk !== null && "details" in chunk)
       .map((chunk) => (chunk as { details?: string }).details);
-    expect(details.join("")).toBe("The user is asking.");
+    // Each delta must stream as its own append — a joined match would also
+    // pass if the stream buffered everything into one update.
+    expect(details).toEqual(["The", " user is", " asking."]);
 
     const complete = chunks.at(-1);
     expect(complete).toEqual({
@@ -327,7 +329,9 @@ describe("slack channel adapter", () => {
       .filter((chunk) => typeof chunk === "object" && chunk !== null && "details" in chunk)
       .map((chunk) => (chunk as { details: string }).details);
     expect(details).toHaveLength(1);
-    expect(details[0]).toBe(`${"x".repeat(1200)}...`);
+    // The ellipsis is inside the 1200-char budget, not appended past it.
+    expect(details[0]).toBe(`${"x".repeat(1197)}...`);
+    expect(details[0]!.length).toBe(1200);
   });
 
   it("keeps direct messages channel-scoped instead of thread-scoped", async () => {

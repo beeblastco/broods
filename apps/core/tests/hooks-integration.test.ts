@@ -125,6 +125,88 @@ describe("code hooks end-to-end (real isolate)", () => {
 });
 
 describe("channel.message.received rewrite reaches the session", () => {
+  // Full wiring: webhook → processChannelMessage → real hook in a live isolate
+  // → handleChannelRequest. The regression this pins: the rewrite landed only
+  // in `content` while the session reads `events`, so it never reached the
+  // model despite every unit underneath passing.
+  realRunnerIt("forwards the rewritten ingress events to the channel handler", async () => {
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "test-bundles";
+    const { createIncomingEventRouter } = await import("../src/harness/integrations.ts");
+    const { setStorageForTests, resetStorageForTests } = await import("../src/shared/storage.ts");
+    const { coreRequest } = await import("./helpers/http.ts");
+
+    const hookRecord = indexFor(["channel.message.received"]).get("channel.message.received")![0]!;
+    setStorageForTests({
+      accountHooks: { getById: async () => hookRecord },
+    } as unknown as Parameters<typeof setStorageForTests>[0]);
+
+    const channels = {
+      telegram: { botToken: "bot-token", webhookSecret: "telegram-secret", allowedChatIds: [123] },
+    };
+    const handled: Array<{ content: unknown; events: unknown }> = [];
+    try {
+      const waited: Promise<unknown>[] = [];
+      const route = createIncomingEventRouter({
+        accountLoader: async () => ({
+          accountId: "acct_test",
+          username: "test-account",
+          secretHash: "hash",
+          status: "active" as const,
+          config: { channels },
+          createdAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+        }),
+        agentLoader: async () => ({
+          accountId: "acct_test",
+          agentId: "agent_test",
+          name: "Hooked agent",
+          status: "active" as const,
+          config: {
+            channels,
+            hooks: { code: [{ hookId: hookRecord.hookId, enabled: true }] },
+          },
+          createdAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+        }),
+        deploymentLoader: async () => null,
+        waitUntil: (promise) => waited.push(Promise.resolve(promise)),
+      });
+
+      await route(
+        coreRequest(
+          "POST",
+          "/webhooks/acct_test/agent_test/telegram",
+          { "x-telegram-bot-api-secret-token": "telegram-secret" },
+          {
+            update_id: 7,
+            message: {
+              message_id: 9,
+              date: 1713916800,
+              text: "hello",
+              chat: { id: 123, type: "private" },
+              from: { id: 456, is_bot: false, username: "alice" },
+            },
+          },
+        ),
+        {
+          handleDirectRequest: async () => new Response("ok"),
+          handleChannelRequest: async (event: { content: unknown; events: unknown }) => {
+            handled.push({ content: event.content, events: event.events });
+          },
+        },
+      );
+      await Promise.all(waited);
+    } finally {
+      resetStorageForTests();
+    }
+
+    // The test bundle uppercases the text; both the content AND the ingress
+    // events the session persists must carry the rewrite.
+    expect(handled).toHaveLength(1);
+    expect(handled[0]!.content).toBe("HELLO");
+    expect(handled[0]!.events).toEqual([{ role: "user", content: "HELLO" }]);
+  });
+
   // The session persists and builds the turn from the ingress events, not from
   // `content` — a rewrite that only lands in `content` never reaches the model.
   it("rewrites the newest user ingress event", async () => {

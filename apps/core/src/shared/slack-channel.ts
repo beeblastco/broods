@@ -573,7 +573,13 @@ export async function* toSlackStream(
         const text = (event.text ?? event.delta ?? "") as string;
         if (text && reasoningChars < SLACK_TASK_TEXT_LIMIT) {
           const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
-          const details = text.length <= remaining ? text : `${text.slice(0, remaining)}...`;
+          // The ellipsis counts against the budget; with under 4 characters
+          // left there is no room for it, so the clip ends the text plain.
+          const details = text.length <= remaining
+            ? text
+            : remaining > 3
+              ? `${text.slice(0, remaining - 3)}...`
+              : text.slice(0, remaining);
           reasoningChars += details.length;
           yield {
             type: "task_update",
