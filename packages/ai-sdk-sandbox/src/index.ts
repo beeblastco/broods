@@ -30,8 +30,9 @@ export interface BroodsSandboxWriteFileOptions extends BroodsSandboxFileOptions 
 /**
  * One live sandbox resource owned by an injected Broods driver.
  *
- * The driver owns provider-specific credentials, persistence, and error
- * classification. This package only adapts the resource to Harness v1.
+ * A future core-owned driver delegates provider credentials, reservation,
+ * persistence, and cleanup to the existing sandbox runtime. This package only
+ * adapts that resource to Harness v1.
  */
 export interface BroodsSandboxDriverSession {
   readonly id: string;
@@ -79,7 +80,13 @@ export interface BroodsSandboxDriverCreateResult {
   readonly isFirstCreate: boolean;
 }
 
-/** The only boundary a future core integration needs to implement. */
+/**
+ * The only boundary a future core integration needs to implement.
+ *
+ * That implementation should adapt core's `createSandboxExecutor()` and reuse
+ * its existing reservation and cleanup paths, not introduce another provider
+ * registry or persistence layer.
+ */
 export interface BroodsSandboxDriver {
   /** Rejecting after allocation must clean up that partial resource internally. */
   createSession(options: BroodsSandboxDriverCreateOptions): PromiseLike<BroodsSandboxDriverCreateResult>;
