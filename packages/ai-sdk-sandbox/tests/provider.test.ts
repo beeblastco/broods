@@ -165,6 +165,7 @@ describe("BroodsSandboxProvider", () => {
     const content = new ReadableStream<Uint8Array>({
       cancel(reason) {
         cancelReason = reason;
+        return new Promise<void>(() => {});
       },
     });
     const failure = new DOMException("write cancelled", "AbortError");
@@ -175,6 +176,7 @@ describe("BroodsSandboxProvider", () => {
 
     await expect(write).rejects.toBe(failure);
     expect(cancelReason).toBe(failure);
+    expect(content.locked).toBe(false);
     expect(writes).toBe(0);
   });
 
