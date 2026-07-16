@@ -3,7 +3,7 @@
 /** Dropdown selector for switching between project environments and creating new ones. */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
@@ -68,12 +68,13 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
   );
 }
 
-/** Dropdown to list, switch, and create project environments. */
+/**
+ * Dropdown to list, switch, and create project environments. The Initialize
+ * Production panel opens only when the user selects a Production environment
+ * that has no deployment region yet, so nothing else can prompt for one.
+ */
 export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpenProductionPanel = searchParams.get("initialize") === "production";
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { environmentId, setEnvironmentId } = useEnvironment();
 
@@ -86,7 +87,7 @@ export function EnvironmentSelector() {
   const initializeProduction = useMutation(api.environment.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [productionOpen, setProductionOpen] = useState(shouldOpenProductionPanel);
+  const [productionOpen, setProductionOpen] = useState(false);
   const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
@@ -97,14 +98,6 @@ export function EnvironmentSelector() {
 
   const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
   const productionEnv = environments?.find((env) => environmentKind(env) === "production");
-
-  useEffect(() => {
-    if (!projectId || !environments || !shouldOpenProductionPanel) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("initialize");
-    const suffix = next.toString();
-    router.replace(`/${projectId}${suffix ? `?${suffix}` : ""}`, { scroll: false });
-  }, [environments, shouldOpenProductionPanel, projectId, router, searchParams]);
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {

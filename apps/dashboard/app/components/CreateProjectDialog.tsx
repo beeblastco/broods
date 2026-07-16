@@ -32,7 +32,11 @@ export async function randomProjectName(): Promise<string> {
     });
 }
 
-/** Dialog that creates a new project and navigates to it on success. */
+/**
+ * Dialog that creates a new project and navigates to its Development canvas on
+ * success. Initializing Production is left to the environment selector, since a
+ * project this new has no Development configuration to copy into it.
+ */
 export function CreateProjectDialog({
     open,
     onOpenChange,
@@ -80,7 +84,7 @@ export function CreateProjectDialog({
         try {
             const id = await createProject({ name: name.trim(), description: undefined });
             handleOpenChange(false);
-            router.push(`/${id}?initialize=production`);
+            router.push(`/${id}`);
         } finally {
             setIsCreating(false);
         }
