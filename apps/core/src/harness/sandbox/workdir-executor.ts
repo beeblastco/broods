@@ -359,9 +359,20 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       }
     }
     const created = await this.#client.sandboxes.create(this.#createOptions(request, true));
-    if (await claimSandboxInstance("sandbox", ns, created.id)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, created.id, "metadata" in request ? request.metadata : undefined);
-      return { sandbox: created, isFirstCreate: true };
+    try {
+      if (await claimSandboxInstance("sandbox", ns, created.id)) {
+        await upsertSandboxInstance(this.#config.controlPlane, "sandbox", ns, created.id, "metadata" in request ? request.metadata : undefined);
+        return { sandbox: created, isFirstCreate: true };
+      }
+    } catch (error) {
+      // The claim may already have committed even when its caller rejects. Tear
+      // down both sides conditionally so a failed acquisition cannot leak the
+      // newly created sandbox or erase a concurrent winner's reservation.
+      await Promise.allSettled([
+        created.delete(),
+        deleteSandboxInstance("sandbox", ns, created.id),
+      ]);
+      throw error;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.

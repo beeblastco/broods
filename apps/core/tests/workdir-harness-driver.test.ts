@@ -107,6 +107,16 @@ describe("WorkdirHarnessDriver", () => {
     }]);
   });
 
+  test("drains all buffered output after a Workdir process exits", async () => {
+    const expected = "x".repeat((64 * 1024 * 2) + 17);
+    const fake = fakeWorkdir({ processStdout: encoder.encode(expected) });
+    const executor = fakeExecutor(fake.sandbox, true);
+    const driver = new WorkdirHarnessDriver(driverOptions(), executor.value as never);
+    const { session } = await driver.createSession({ identity: "bootstrap-v1" });
+
+    expect((await session.runCommand({ command: "generate output" })).stdout).toBe(expected);
+  });
+
   test("rejects a spawned process wait when its signal aborts after launch", async () => {
     const launched = Promise.withResolvers<void>();
     const fake = fakeWorkdir({ processRunsUntilKilled: true, onLaunch: launched.resolve });
@@ -184,7 +194,11 @@ function fakeExecutor(sandbox: Sandbox, isFirstCreate: boolean, afterAcquire?: (
   };
 }
 
-function fakeWorkdir(options: { processRunsUntilKilled?: boolean; onLaunch?: () => void } = {}) {
+function fakeWorkdir(options: {
+  processRunsUntilKilled?: boolean;
+  processStdout?: Uint8Array;
+  onLaunch?: () => void;
+} = {}) {
   const files = new Map<string, Uint8Array>();
   const temporaryFiles = new Map<string, string>();
   const processes = new Map<string, { stdout: Uint8Array; stderr: Uint8Array; exitCode: number; running: boolean }>();
@@ -198,7 +212,7 @@ function fakeWorkdir(options: { processRunsUntilKilled?: boolean; onLaunch?: () 
       if (command.includes("setsid bash") && processRoot) {
         launchEnvs.push(execOptions?.env);
         processes.set(processRoot, {
-          stdout: encoder.encode("hello\n"),
+          stdout: options.processStdout ?? encoder.encode("hello\n"),
           stderr: encoder.encode("warning\n"),
           exitCode: 0,
           running: options.processRunsUntilKilled === true,
@@ -221,7 +235,8 @@ function fakeWorkdir(options: { processRunsUntilKilled?: boolean; onLaunch?: () 
         const process = processes.get(processRoot);
         const stream = command.includes(".stderr") ? process?.stderr : process?.stdout;
         const skip = Number(command.match(/ skip=(\d+)/)?.[1] ?? 0);
-        return result(Buffer.from(stream?.slice(skip) ?? new Uint8Array()).toString("base64"));
+        const count = Number(command.match(/ count=(\d+)/)?.[1] ?? 0);
+        return result(Buffer.from(stream?.slice(skip, skip + count) ?? new Uint8Array()).toString("base64"));
       }
 
       if (command.includes("echo \"done $(cat") && processRoot) {

@@ -79,12 +79,16 @@ const saveSandboxInstanceMock = mock(async (_provider: string, _key: string, ext
 const deleteSandboxInstanceMock = mock(async () => {
   storedSandboxExternalId = null;
 });
+const upsertSandboxInstanceMock = mock(async () => {});
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
+}));
+mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  upsertSandboxInstance: upsertSandboxInstanceMock,
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -140,6 +144,7 @@ beforeEach(() => {
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
+  upsertSandboxInstanceMock.mockClear();
 });
 
 afterEach(() => {
@@ -465,6 +470,20 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
     expect(existing.sandbox.id).toBe("sbx_new");
     expect(existing.isFirstCreate).toBe(false);
     expect(fetchCalls.some((call) => call.method === "POST" && call.path === "/v1/sandboxes")).toBe(false);
+  });
+
+  it("cleans up a newly claimed reservation when post-claim persistence fails", async () => {
+    upsertSandboxInstanceMock.mockImplementationOnce(async () => {
+      throw new Error("post-claim persistence failed");
+    });
+    const executor = await newExecutor({ provider: "sandbox", persistent: true, options: { workdirUrl: BASE } });
+
+    await expect(executor.acquireHarnessReservation({ reservationKey: "harness:session-1" }))
+      .rejects.toThrow("post-claim persistence failed");
+
+    expect(fetchCalls.some((call) => call.method === "DELETE" && call.path === "/v1/sandboxes/sbx_new")).toBe(true);
+    expect(deleteSandboxInstanceMock).toHaveBeenCalledWith("sandbox", "harness:session-1", "sbx_new");
+    expect(storedSandboxExternalId).toBeNull();
   });
 
   it("resumes only an existing Harness reservation", async () => {
