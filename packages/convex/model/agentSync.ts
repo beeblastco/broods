@@ -20,6 +20,7 @@ import {
     substituteEnvPlaceholders,
     toNestedAgentConfig,
 } from "./agentConfigCodec";
+import { uniqueProjectSlug } from "../lib/slug";
 import { loadAgentRuntimeSecrets, saveAgentRuntimeSecrets } from "./agentRuntimeSecrets";
 import { getActiveOrgForUser } from "./ownership/org";
 
@@ -188,12 +189,74 @@ export async function refreshAgentConfigsForEnvironmentVariable(
 }
 
 /**
+ * Resolves the project + environment an account's API-created agents belong
+ * to, creating them when the org has none.
+ *
+ * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
+ * projects in both, so an authId-keyed lookup can drop A's agent into B's
+ * project. The project is created on demand and named after the account, so
+ * an org that never went through dashboard onboarding (an adopted service
+ * account) still gets one meaningful project rather than a random empty one.
+ */
+async function ensureCanvasTarget(
+    ctx: MutationCtx,
+    orgId: Id<"orgs">,
+    account: Doc<"accounts">,
+    authId: string,
+): Promise<{ project: Doc<"projects">; environment: Doc<"environments"> }> {
+    const now = Date.now();
+
+    // Oldest project in the org, so repeated calls converge on one target
+    // instead of scattering agents across whichever project sorted first.
+    const existingProject = await ctx.db
+        .query("projects")
+        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+        .first();
+
+    const project =
+        existingProject ??
+        (await ctx.db.get(
+            await ctx.db.insert("projects", {
+                authId: authId,
+                orgId: orgId,
+                name: account.username,
+                description: `Agents provisioned through the ${account.username} account API.`,
+                slug: await uniqueProjectSlug(ctx, authId, account.username),
+                updatedAt: now,
+            }),
+        ))!;
+
+    // by_projectId, not by_authId_and_projectId: the environment may have been
+    // created by a different org member than the one we're syncing as.
+    const existingEnvironment = await ctx.db
+        .query("environments")
+        .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
+        .first();
+
+    const environment =
+        existingEnvironment ??
+        (await ctx.db.get(
+            await ctx.db.insert("environments", {
+                authId: authId,
+                projectId: project._id,
+                name: "Development",
+                kind: "development",
+                isDefault: true,
+                updatedAt: now,
+            }),
+        ))!;
+
+    return { project, environment };
+}
+
+/**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
  * the canvas), provision a matching `agentConfigs` row + canvas node on the
- * org owner's default project/environment so the agent appears on the
- * canvas immediately. Silently no-ops when:
+ * account's project/environment so the agent appears on the canvas
+ * immediately. This is what puts an API-created agent under a project at all
+ * — `agentConfigs.projectId` is the only link between the account plane and
+ * the project plane. Silently no-ops when:
  *   - no org/owner can be found for the account
- *   - the owner has no projects/environments yet
  *   - an agentConfigs row already references this agent
  *
  * The created agentConfigs row is intentionally minimal (name + agentId
@@ -210,7 +273,7 @@ export async function backSyncCanvasFromAgentRow(
 
     const existingConfig = await ctx.db
         .query("agentConfigs")
-        .filter((q) => q.eq(q.field("agentId"), agentRowId as unknown as string))
+        .withIndex("by_agentId", (q) => q.eq("agentId", agentRowId))
         .first();
     if (existingConfig) return;
 
@@ -236,19 +299,7 @@ export async function backSyncCanvasFromAgentRow(
     const user = await ctx.db.get(membership.userId);
     if (!user) return;
 
-    const project = await ctx.db
-        .query("projects")
-        .withIndex("by_authId", (q) => q.eq("authId", user.authId))
-        .first();
-    if (!project) return;
-
-    const environment = await ctx.db
-        .query("environments")
-        .withIndex("by_authId_and_projectId", (q) =>
-            q.eq("authId", user.authId).eq("projectId", project._id),
-        )
-        .first();
-    if (!environment) return;
+    const { project, environment } = await ensureCanvasTarget(ctx, orgId, account, user.authId);
 
     // Decrypt the API-supplied config blob (if any) so canvas fields mirror
     // what the API caller actually configured (provider, modelId, system

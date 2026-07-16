@@ -162,6 +162,46 @@ export const create = internalMutation({
     },
 });
 
+/**
+ * Re-runs the canvas back-sync for every agent on an account that has no
+ * `agentConfigs` row, putting it under the account's project.
+ *
+ * Agents created while their account was unadopted (`orgId` was a synthetic
+ * `external:<name>` string) silently skipped the back-sync, because it bails
+ * when `normalizeId("orgs", account.orgId)` returns null. They exist and run,
+ * but belong to no project, so nothing project-scoped can see them. Idempotent
+ * — back-sync returns early for agents already linked to a config.
+ */
+export const backfillCanvasLinks = internalMutation({
+    args: { accountId: v.id("accounts") },
+    returns: v.object({ scanned: v.number(), linked: v.number() }),
+    handler: async (ctx, args) => {
+        const agents = await ctx.db
+            .query("agents")
+            .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+            .collect();
+
+        let linked = 0;
+        for (const agent of agents) {
+            const existing = await ctx.db
+                .query("agentConfigs")
+                .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+                .first();
+            if (existing) continue;
+
+            await backSyncCanvasFromAgentRow(ctx, agent._id);
+
+            const now = await ctx.db
+                .query("agentConfigs")
+                .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+                .first();
+            if (now) linked += 1;
+        }
+
+        return { scanned: agents.length, linked: linked };
+    },
+});
+
 export const update = internalMutation({
     args: {
         accountId: v.id("accounts"),

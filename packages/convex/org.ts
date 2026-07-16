@@ -497,6 +497,12 @@ export const adoptExternalAccount = internalMutation({
             ownerAuthId: owner.authId,
             plan: "free",
             createdAt: now,
+            // An adopted org is not a first-time signup: without this,
+            // project.getOrCreateDefault treats the owner's first dashboard
+            // visit as onboarding and mints a randomly-named empty project.
+            // This account's agents get their project from the back-sync path
+            // instead, named after the account.
+            onboardedAt: now,
         });
         const membershipId = await ctx.db.insert("orgMembers", {
             orgId: orgId,
