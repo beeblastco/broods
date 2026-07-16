@@ -30,6 +30,12 @@ errors pass through unchanged so the future integration remains responsible for
 classification and retry policy. If creation rejects before returning a session
 handle, the driver cleans up any partially allocated resource.
 
+File writes intentionally collect the full input stream into a `Uint8Array`
+because that is the current driver contract. Large artifact writes therefore use
+memory proportional to the file size; supporting bounded-memory writes will
+require a future streaming driver contract rather than a change to this adapter
+alone.
+
 ## Ownership and lifecycle
 
 - `createSession` returns an adapter-owned session. `stop` and `destroy` are
