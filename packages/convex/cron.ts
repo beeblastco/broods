@@ -10,6 +10,7 @@ import { v } from "convex/values";
 import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { accountIdForProject } from "./model/auditEvents";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { cronsInProject } from "./model/projectScope";
@@ -101,15 +102,12 @@ export const listForProject = query({
         }
 
         const project = await getProjectForRole(ctx, user.id, args.projectId);
-        if (!project?.orgId) return [];
+        if (!project) return [];
 
-        const account = await ctx.db
-            .query("accounts")
-            .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
-            .unique();
-        if (!account) return [];
+        const accountId = await accountIdForProject(ctx, args.projectId);
+        if (!accountId) return [];
 
-        return await cronsInProject(ctx, args.projectId, account._id);
+        return await cronsInProject(ctx, args.projectId, accountId);
     },
 });
 

@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob, substituteEnvPlaceholders } from "./model/agentConfigCodec";
+import { accountIdForProject } from "./model/auditEvents";
 import { backSyncCanvasFromAgentRow, mirrorAgentRowOntoConfig } from "./model/agentSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
@@ -185,15 +186,12 @@ export const listForProject = query({
         // Gate on project membership: projectId arrives from the URL, so an
         // unauthorized id must return nothing rather than another org's agents.
         const project = await getProjectForRole(ctx, user.id, args.projectId);
-        if (!project?.orgId) return [];
+        if (!project) return [];
 
-        const account = await ctx.db
-            .query("accounts")
-            .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
-            .unique();
-        if (!account) return [];
+        const accountId = await accountIdForProject(ctx, args.projectId);
+        if (!accountId) return [];
 
-        return await agentsInProject(ctx, args.projectId, account._id);
+        return await agentsInProject(ctx, args.projectId, accountId);
     },
 });
 

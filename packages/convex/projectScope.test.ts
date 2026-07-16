@@ -119,9 +119,16 @@ async function seed(tt: T) {
         const cronStranded = await mkCron(stranded, "cron-stranded");
 
         return {
-            accountId, projectA, projectB,
-            agentA1, agentA2, agentB, stranded, foreignAgent,
-            cronA1, cronStranded,
+            accountId: accountId,
+            projectA: projectA,
+            projectB: projectB,
+            agentA1: agentA1,
+            agentA2: agentA2,
+            agentB: agentB,
+            stranded: stranded,
+            foreignAgent: foreignAgent,
+            cronA1: cronA1,
+            cronStranded: cronStranded,
         };
     });
 }
