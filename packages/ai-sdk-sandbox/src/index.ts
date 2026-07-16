@@ -333,17 +333,14 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
         const reason = abortSignal.reason ?? new DOMException("Aborted", "AbortError");
         try {
           const cancellation = reader.cancel(reason);
-          void cancellation
-            .finally(() => {
-              try {
-                reader.releaseLock();
-              } catch {
-                // A pending read still owns the lock; cancellation will settle it.
-              }
-            })
-            .catch(() => undefined);
+          void cancellation.catch(() => undefined);
         } catch {
           // Preserve the signal's abort reason even if stream cancellation fails.
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+          // Preserve the signal's abort reason even if the reader cannot unlock.
         }
         reject(reason);
       };
