@@ -38,6 +38,25 @@ describe("workspace config", () => {
       .toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
   });
 
+  it("normalizes the harness memory toggle and validates its shape", () => {
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } }))
+      .toEqual({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } });
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { enabled: true, memory: {} } }))
+      .toEqual({ storage: { provider: "s3" }, harness: { enabled: true } });
+    expect(() => normalizeWorkspaceConfig({ harness: { memory: true } }))
+      .toThrow("config.harness.memory must be an object");
+    expect(() => normalizeWorkspaceConfig({ harness: { memory: { enabled: "yes" } } }))
+      .toThrow("config.harness.memory.enabled must be a boolean");
+  });
+
+  it("defaults the memory harness on and lets either toggle turn it off", async () => {
+    const { workspaceMemoryHarnessEnabled } = await import("../src/shared/domain/workspace-config.ts");
+    expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" } })).toBe(true);
+    expect(workspaceMemoryHarnessEnabled(undefined)).toBe(true);
+    expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" }, harness: { enabled: false } })).toBe(false);
+    expect(workspaceMemoryHarnessEnabled({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } })).toBe(false);
+  });
+
   it("accepts boolean workspace isolation and rejects old string modes", () => {
     expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, isolation: true }))
       .toEqual({ storage: { provider: "s3" }, isolation: true });

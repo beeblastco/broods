@@ -1371,11 +1371,16 @@ paths:
                       type: object
                       properties:
                         enabled: { type: boolean }
+                        memory:
+                          type: object
+                          description: Structured memory harness (memory_save + memory/MEMORY.md index). Rides on the harness; defaults to enabled.
+                          properties:
+                            enabled: { type: boolean }
             examples:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: true, harness: { enabled: true } }
+                  config: { storage: { provider: s3 }, isolation: true, harness: { enabled: true, memory: { enabled: true } } }
       responses:
         '201': { description: Workspace created }
     get:

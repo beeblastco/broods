@@ -33,7 +33,7 @@ export interface WorkspaceStorageConfig {
 export interface WorkspaceConfig {
     storage: WorkspaceStorageConfig;
     isolation?: boolean;
-    harness?: { enabled?: boolean };
+    harness?: { enabled?: boolean; memory?: { enabled?: boolean } };
 }
 
 /**
@@ -55,14 +55,27 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     assertOptionalBoolean(config.isolation, "config.isolation");
     const isolation = config.isolation as boolean | undefined;
 
-    let harness: { enabled?: boolean } | undefined;
+    let harness: { enabled?: boolean; memory?: { enabled?: boolean } } | undefined;
     if (config.harness !== undefined) {
         if (!isPlainObject(config.harness)) {
             throw new Error("config.harness must be an object");
         }
         assertOptionalBoolean(config.harness.enabled, "config.harness.enabled");
-        if (config.harness.enabled !== undefined) {
-            harness = { enabled: config.harness.enabled as boolean };
+        let memory: { enabled?: boolean } | undefined;
+        if (config.harness.memory !== undefined) {
+            if (!isPlainObject(config.harness.memory)) {
+                throw new Error("config.harness.memory must be an object");
+            }
+            assertOptionalBoolean(config.harness.memory.enabled, "config.harness.memory.enabled");
+            if (config.harness.memory.enabled !== undefined) {
+                memory = { enabled: config.harness.memory.enabled as boolean };
+            }
+        }
+        if (config.harness.enabled !== undefined || memory) {
+            harness = {
+                ...(config.harness.enabled !== undefined ? { enabled: config.harness.enabled as boolean } : {}),
+                ...(memory ? { memory: memory } : {}),
+            };
         }
     }
 

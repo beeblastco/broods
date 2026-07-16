@@ -3,13 +3,34 @@
 Session history and workspace memory are related but separate:
 
 - Session is persisted conversation history and the model-visible context projection for a single conversation.
-- Workspace memory is a developer convention: files like `MEMORY.md`, `TASKS.md`, or `notes/*.md` that the agent reads and updates through the `bash` tool.
+- Workspace memory is structured: one markdown file per fact in the workspace's `memory/` folder, indexed by `memory/MEMORY.md`.
 
-The harness still loads `MEMORY.md` into the system prompt when the file exists. It no
-longer exposes separate memory or task-list tools. When a workspace has
-`harness.enabled` unset or true, the harness also adds short MEMORY/TASKS workflow
-instructions by default; the agent then manages memory and task files as ordinary
-markdown files in the mounted workspace.
+The harness loads the `memory/MEMORY.md` index into the system prompt when it exists,
+and (for sandbox-backed workspaces) exposes a `memory_save` tool that writes one
+entry per fact. Each entry carries YAML frontmatter:
+
+```markdown
+---
+name: owner-prefers-short-replies
+description: "The workspace owner prefers short, chat-like replies"
+metadata:
+  node_type: memory
+  type: feedback
+  originSessionId: slack:T0A6U9DLZV2:C0BGCKWF3PZ
+---
+
+Keep replies to a few sentences unless asked for detail.
+```
+
+`originSessionId` is the conversation scope (channel/thread key) the fact was learned
+in, so agents that share a workspace across channels can tell where a memory came
+from. A `<memory>` system block ships with the workspace harness: it states today's
+date (time awareness), the current conversation's scope, and the save/recall rules
+(the index holds one-line summaries — read the linked file before relying on it;
+current instructions always outrank memory). Set `harness.memory.enabled: false` on
+the workspace to keep the plain file tools but drop the memory tool and guidance;
+`TASKS.md` and other files remain an ordinary developer convention managed through
+the file tools.
 
 ## Mental Model
 
@@ -19,10 +40,10 @@ flowchart TD
   Session --> Claim["ProcessedEvents<br/>event claim + conversation lease"]
   Session --> History["Conversations table<br/>persisted model messages"]
   Session --> Context["createTurnContext()"]
-  Context --> Memory{"MEMORY.md exists?"}
-  Memory -->|"yes"| MemoryPrompt["System prompt<br/>current MEMORY.md"]
+  Context --> Memory{"memory/MEMORY.md exists?"}
+  Memory -->|"yes"| MemoryPrompt["System prompt<br/>current memory index"]
   Context --> HarnessPrompt{"workspace harness enabled?"}
-  HarnessPrompt -->|"yes"| Prompt["System prompt<br/>MEMORY/TASKS guidance"]
+  HarnessPrompt -->|"yes"| Prompt["System prompt<br/>workspace + memory guidance"]
   HarnessPrompt -->|"no"| Custom["Agent/system prompt only"]
   History --> Prune["pruning.ts<br/>drop old transient clutter"]
   History --> Compact["compaction.ts<br/>optional summary when context is large"]
@@ -32,8 +53,10 @@ flowchart TD
   MemoryPrompt --> Turn
   Custom --> Turn
   ModelMessages --> Turn
-  Turn --> Bash["bash tool"]
-  Bash --> Files["Workspace files<br/>MEMORY.md / TASKS.md / project files"]
+  Turn --> Save["memory_save tool"]
+  Turn --> Bash["bash / file tools"]
+  Save --> Files["Workspace files<br/>memory/MEMORY.md index + memory/*.md entries"]
+  Bash --> Files
 ```
 
 ## Workspace Sharing
@@ -126,7 +149,7 @@ The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/bee
 
 ## Configure It
 
-Create a workspace with automatic `MEMORY.md` loading and default MEMORY/TASKS harness instructions:
+Create a workspace with the full harness — automatic `memory/MEMORY.md` index loading, the `memory_save` tool, and the workspace/memory guidance:
 
 ```ts
 import { defineWorkspace } from "broods";
@@ -135,12 +158,24 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: true },
+    harness: { enabled: true }, // memory rides along by default
   },
 });
 ```
 
-Disable only the MEMORY/TASKS harness instructions while still loading an existing `MEMORY.md`:
+Keep the workspace harness but opt out of the structured memory (no `memory_save`, no `<memory>` guidance; the index is still loaded when the file exists):
+
+```ts
+export const notesNoMemory = defineWorkspace({
+  name: "notes",
+  config: {
+    storage: { provider: "s3" },
+    harness: { memory: { enabled: false } },
+  },
+});
+```
+
+Disable the harness guidance entirely (also disables memory) while still loading an existing `memory/MEMORY.md`:
 
 ```ts
 export const notesBare = defineWorkspace({
