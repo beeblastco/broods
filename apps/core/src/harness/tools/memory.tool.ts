@@ -123,12 +123,11 @@ Usage notes:
             content ?? "",
             "",
           ].join("\n");
-          const indexHeader = "# Memory Index\n";
+          const indexHeader = "# Memory Index";
           const indexLine = `- [${cleanTitle}](${slug}.md) — ${cleanDescription}`;
 
           const qFile = shellQuote(filePath);
           const qIndex = shellQuote(MEMORY_INDEX_PATH);
-          const qIndexTmp = shellQuote(`${MEMORY_INDEX_PATH}.tmp`);
           // Anchored to the entry-defining shape `- [title](slug.md) — ` so a line
           // that merely cross-references this slug in its description never matches.
           // Safe as a BRE: the slug charset is [a-z0-9-] and the title has no `]`.
@@ -137,12 +136,15 @@ Usage notes:
           // the S3 Files server before the sandbox freezes. The entry's index line
           // is REPLACED (matched by its anchored defining line), so re-saving a
           // title updates the summary future turns see instead of keeping the
-          // stale line.
+          // stale line. The workspace is a mountpoint-s3 FUSE mount, which rejects
+          // O_APPEND and rename() with EPERM — every file op here must be a whole
+          // read or a single create/truncate write stream: the surviving index
+          // lines are captured into a shell variable, then the index is rewritten
+          // in one `>` pass. No `>>`, no `mv`, no temp files.
           const code =
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
-            `{ [ -f ${qIndex} ] || printf '%s\\n' ${shellQuote(indexHeader)} > ${qIndex}; } && ` +
-            `{ grep -v ${shellQuote(indexLinePattern)} ${qIndex} > ${qIndexTmp} || true; } && ` +
-            `printf '%s\\n' ${shellQuote(indexLine)} >> ${qIndexTmp} && mv ${qIndexTmp} ${qIndex} && ` +
+            `index_body=$({ [ -f ${qIndex} ] && grep -v ${shellQuote(indexLinePattern)} ${qIndex}; } || printf '%s' ${shellQuote(indexHeader)}) && ` +
+            `printf '%s\\n%s\\n' "$index_body" ${shellQuote(indexLine)} > ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {
             onSandboxCpu: context.onSandboxCpu,
