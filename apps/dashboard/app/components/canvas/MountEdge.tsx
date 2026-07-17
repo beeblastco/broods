@@ -2,7 +2,10 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
-import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
+import {
+  isCodeManagedEdgeId,
+  isCodeManagedOwner,
+} from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
   BaseEdge,
@@ -38,11 +41,9 @@ export function MountEdge({
   const [hovered, setHovered] = useState(false);
   const endpointOwnership = useStore((s) => {
     const sourceData = s.nodeLookup.get(source)?.data as
-      | { managedBy?: string }
-      | undefined;
+      { managedBy?: string } | undefined;
     const targetData = s.nodeLookup.get(target)?.data as
-      | { managedBy?: string }
-      | undefined;
+      { managedBy?: string } | undefined;
 
     return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
   });
@@ -72,7 +73,8 @@ export function MountEdge({
   // delete-hover or the trash button — only a passive lock affordance.
   const locked =
     isCodeManagedEdgeId(id) ||
-    (sourceManagedBy === "cli" && targetManagedBy === "cli");
+    (isCodeManagedOwner(sourceManagedBy) &&
+      isCodeManagedOwner(targetManagedBy));
   const stroke = hovered && !locked ? MOUNT_COLOR_HOVER : MOUNT_COLOR;
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 

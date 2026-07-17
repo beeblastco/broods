@@ -12,6 +12,15 @@ export function isCodeManagedEdgeId(id: string): boolean {
   );
 }
 
+/**
+ * True for an ownership marker whose resource is managed by code — a
+ * `broods/` project (`"cli"`) or the account REST API (`"api"`). Both are
+ * re-synced from their source of truth, so the dashboard locks them.
+ */
+export function isCodeManagedOwner(managedBy: unknown): boolean {
+  return managedBy === "cli" || managedBy === "api";
+}
+
 /** Return true when an edge is explicitly marked as code-managed. */
 export function isCodeManagedEdge(edge: {
   id: string;
@@ -20,5 +29,5 @@ export function isCodeManagedEdge(edge: {
   if (isCodeManagedEdgeId(edge.id)) return true;
   if (!edge.data || typeof edge.data !== "object") return false;
 
-  return (edge.data as { managedBy?: string }).managedBy === "cli";
+  return isCodeManagedOwner((edge.data as { managedBy?: string }).managedBy);
 }

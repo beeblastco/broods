@@ -2,7 +2,10 @@
 
 import { EdgeDeleteButton } from "@/app/components/canvas/EdgeDeleteButton";
 import { LockedEdgeBadge } from "@/app/components/canvas/LockedEdgeBadge";
-import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
+import {
+  isCodeManagedEdgeId,
+  isCodeManagedOwner,
+} from "@/app/components/canvas/edgeOwnership";
 import { useEdgeFanOffset } from "@/app/components/canvas/useEdgeFanOffset";
 import {
   BaseEdge,
@@ -83,7 +86,8 @@ export function DeletableEdge({
   // Code-managed edges can't be deleted here: no red delete-hover, no trash.
   const locked =
     isCodeManagedEdgeId(id) ||
-    (sourceManagedBy === "cli" && targetManagedBy === "cli");
+    (isCodeManagedOwner(sourceManagedBy) &&
+      isCodeManagedOwner(targetManagedBy));
   const edgeStyle =
     hovered && !locked
       ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }

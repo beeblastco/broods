@@ -246,8 +246,12 @@ async function materializeRuntimeNodes(
               )
               .first();
       if (existing && existing.accountId === account._id) {
-        // Code owns CLI-managed rows; dashboard edits are not written back.
-        if (existing.managedBy !== "cli" && changed) {
+        // Code owns CLI/API-managed rows; dashboard edits are not written back.
+        if (
+          existing.managedBy !== "cli" &&
+          existing.managedBy !== "api" &&
+          changed
+        ) {
           await ctx.db.patch(existing._id, {
             projectId: projectId,
             environmentId: environmentId,
@@ -312,7 +316,11 @@ async function materializeRuntimeNodes(
             )
             .first();
     if (existing && existing.accountId === account._id) {
-      if (existing.managedBy !== "cli" && changed) {
+      if (
+        existing.managedBy !== "cli" &&
+        existing.managedBy !== "api" &&
+        changed
+      ) {
         await ctx.db.patch(existing._id, {
           projectId: projectId,
           environmentId: environmentId,
@@ -384,7 +392,7 @@ async function pruneOrphanedDashboardRows(
 
   for (const row of [...workspaces, ...sandboxes]) {
     if (row.accountId !== account._id) continue;
-    if (row.managedBy === "cli") continue;
+    if (row.managedBy === "cli" || row.managedBy === "api") continue;
     if (referenced.has(row._id)) continue;
     await ctx.db.delete(row._id);
   }

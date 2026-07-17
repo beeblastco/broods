@@ -1,8 +1,8 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -236,5 +236,159 @@ describe("backSyncCanvasFromAgentRow", () => {
       const project = await ctx.db.get(config!.projectId);
       expect(project?.orgId).toBe(orgId);
     });
+  });
+});
+
+describe("syncApiAgentCanvasWiring", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  /** Account-scoped rows shaped like the account REST API creates them. */
+  const seedWiringFixtures = (tt: T, accountId: Id<"accounts">) =>
+    tt.run(async (ctx) => {
+      const now = Date.now();
+      const workspaceId = await ctx.db.insert("workspaceConfigs", {
+        accountId,
+        name: "beeblast-ws-cust1",
+        config: { storage: { provider: "s3" }, isolation: true },
+        createdAt: now,
+        updatedAt: now,
+      });
+      const sandboxId = await ctx.db.insert("sandboxConfigs", {
+        accountId,
+        name: "beeblast-sandbox",
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("skills", {
+        accountId,
+        name: "crm-sync",
+        s3Key: "skills/crm-sync.zip",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return { workspaceId, sandboxId };
+    });
+
+  const layoutFor = (tt: T, config: Doc<"agentConfigs">) =>
+    tt.run(async (ctx) =>
+      ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+          q
+            .eq("projectId", config.projectId)
+            .eq("environmentId", config.environmentId),
+        )
+        .unique(),
+    );
+
+  test("mirrors sandbox/workspace/skill wiring as locked api nodes and edges", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+    const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
+
+    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+      agentId,
+      config: {
+        model: { provider: "custom", modelId: "Qwen3.6-27B" },
+        sandbox: sandboxId,
+        workspaces: [{ name: "memory", workspaceId: workspaceId }],
+        skills: { enabled: true, allowed: ["beeblast/crm-sync"] },
+      },
+    });
+
+    const config = await configFor(tt, agentId);
+    // The API path owns this config; the canvas locks it accordingly.
+    expect(config!.managedBy).toBe("api");
+
+    const layout = await layoutFor(tt, config!);
+    const nodes = layout!.nodes as Array<{
+      id: string;
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    const agentNode = nodes.find((n) => n.data.agentConfigId === config!._id)!;
+    expect(agentNode.data.managedBy).toBe("api");
+
+    const workspaceNode = nodes.find((n) => n.type === "workspace")!;
+    expect(workspaceNode.data.resourceId).toBe(workspaceId);
+    // The agent's ref name, not the row name — a canvas round-trip must
+    // derive the same mount the runtime uses.
+    expect(workspaceNode.data.mountName).toBe("memory");
+    expect(workspaceNode.data.managedBy).toBe("api");
+    // The agent-level default sandbox makes the workspace writable.
+    expect(workspaceNode.data.readOnly).toBe(false);
+
+    const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
+    expect(sandboxNode.data.resourceId).toBe(sandboxId);
+    const skillNode = nodes.find((n) => n.type === "skill")!;
+    expect(skillNode.data.resourceId).toBe("crm-sync");
+
+    const edges = layout!.edges as Array<{ source: string; target: string }>;
+    for (const target of [workspaceNode.id, sandboxNode.id, skillNode.id]) {
+      expect(edges).toContainEqual(
+        expect.objectContaining({ source: agentNode.id, target: target }),
+      );
+    }
+
+    // Referenced account-scoped rows are adopted into the canvas environment
+    // so the dashboard's save path accepts (and never edits) them.
+    await tt.run(async (ctx) => {
+      const workspace = await ctx.db.get(workspaceId);
+      expect(workspace!.environmentId).toBe(config!.environmentId);
+      expect(workspace!.managedBy).toBe("api");
+      const sandbox = await ctx.db.get(sandboxId);
+      expect(sandbox!.environmentId).toBe(config!.environmentId);
+      expect(sandbox!.managedBy).toBe("api");
+    });
+  });
+
+  test("re-sync prunes wiring the API config no longer declares", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+    const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
+
+    const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    const seed = (config: Record<string, unknown>) =>
+      tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+        agentId,
+        config,
+      });
+    await seed({
+      sandbox: sandboxId,
+      workspaces: [{ name: "memory", workspaceId: workspaceId }],
+    });
+    await seed({ sandbox: sandboxId });
+
+    const config = await configFor(tt, agentId);
+    const layout = await layoutFor(tt, config!);
+    const nodes = layout!.nodes as Array<{
+      id: string;
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    // The dropped workspace ref takes its node and edge with it; the sandbox
+    // the config still declares survives.
+    expect(nodes.find((n) => n.type === "workspace")).toBeUndefined();
+    const sandboxNode = nodes.find((n) => n.type === "sandbox")!;
+    expect(sandboxNode.data.resourceId).toBe(sandboxId);
+    const edges = layout!.edges as Array<{ source: string; target: string }>;
+    expect(edges.some((e) => e.target === sandboxNode.id)).toBe(true);
+    expect(edges).toHaveLength(1);
   });
 });

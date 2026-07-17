@@ -25,6 +25,7 @@ import {
   loadAgentRuntimeSecrets,
   saveAgentRuntimeSecrets,
 } from "./agentRuntimeSecrets";
+import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -129,15 +130,13 @@ export async function pushEncryptedConfigToAgentRow(
     maxTurns: config.maxTurns,
     outputFormat: config.outputFormat as Record<string, unknown> | undefined,
     providerOptions: config.providerOptions as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
     memoryToolEnabled: config.memoryToolEnabled,
     searchToolEnabled: config.searchToolEnabled,
     searchToolConfig: config.searchToolConfig as
-      | Record<string, unknown>
-      | undefined,
+      Record<string, unknown> | undefined,
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
   const resolved = substituteEnvPlaceholders(nested, variables);
@@ -358,6 +357,7 @@ export async function backSyncCanvasFromAgentRow(
     searchToolEnabled: flat?.searchToolEnabled ?? false,
     searchToolConfig: flat?.searchToolConfig,
     extraConfig: flat?.extraConfig,
+    managedBy: "api",
     updatedAt: now,
   });
 
@@ -376,6 +376,7 @@ export async function backSyncCanvasFromAgentRow(
       label: agent.name,
       status: "idle" as const,
       agentConfigId: configId,
+      managedBy: "api" as const,
     },
   };
 
@@ -394,6 +395,14 @@ export async function backSyncCanvasFromAgentRow(
       updatedAt: now,
     });
   }
+
+  // Draw the wiring the config blob declares (sandbox, workspaces, skills)
+  // as locked canvas nodes/edges next to the agent node.
+  await syncApiAgentCanvasWiring(ctx, {
+    accountId: agent.accountId,
+    projectId: project._id,
+    environmentId: environment._id,
+  });
 }
 
 /**
@@ -429,11 +438,17 @@ export async function mirrorAgentRowOntoConfig(
         )
       : null;
   const flat = decrypted ? fromNestedAgentConfig(decrypted) : null;
+  // The public API just wrote this agent, so the API owns it from here on —
+  // except CLI-managed configs, whose ownership the next `broods deploy`
+  // re-asserts anyway.
+  const ownership =
+    linkedConfig.managedBy === "cli" ? {} : { managedBy: "api" as const };
   if (!flat) {
     // At minimum mirror name/description, even when we can't decrypt.
     await ctx.db.patch(linkedConfig._id, {
       name: agent.name,
       description: agent.description,
+      ...ownership,
       updatedAt: Date.now(),
     });
     return;
@@ -454,8 +469,23 @@ export async function mirrorAgentRowOntoConfig(
     searchToolEnabled: flat.searchToolEnabled ?? linkedConfig.searchToolEnabled,
     searchToolConfig: flat.searchToolConfig,
     extraConfig: flat.extraConfig,
+    ...ownership,
     updatedAt: Date.now(),
   });
+
+  // Re-mirror the wiring (sandbox, workspaces, skills) onto the canvas so the
+  // Architecture view tracks what the API caller just configured.
+  if (
+    linkedConfig.managedBy !== "cli" &&
+    linkedConfig.projectId &&
+    linkedConfig.environmentId
+  ) {
+    await syncApiAgentCanvasWiring(ctx, {
+      accountId: agent.accountId,
+      projectId: linkedConfig.projectId,
+      environmentId: linkedConfig.environmentId,
+    });
+  }
 }
 
 /**

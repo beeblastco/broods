@@ -121,12 +121,7 @@ const ToolTestTab = dynamic(loadToolTestTab, {
 });
 
 type NodeType =
-  | "agent"
-  | "database"
-  | "tool"
-  | "workspace"
-  | "sandbox"
-  | "skill";
+  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 type HeaderStatusBadge = {
   text: string;
   color: string;
@@ -193,8 +188,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const agentConfigId = nodeData?.agentConfigId as
-    | Id<"agentConfigs">
-    | undefined;
+    Id<"agentConfigs"> | undefined;
   const nodeId = node?.id;
   const canQueryToolStatus =
     isTool && !!projectId && !!environmentId && !!nodeId;
@@ -589,11 +583,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       ? { projectId: projectId, environmentId: environmentId }
       : "skip",
   );
-  const isCliManaged = isAgent
-    ? agentConfig?.managedBy === "cli"
+  const codeOwner = isAgent
+    ? agentConfig?.managedBy
     : resourceId && resourceOwnership
-      ? resourceOwnership[resourceId] === "cli"
-      : (nodeData as { managedBy?: string } | undefined)?.managedBy === "cli";
+      ? resourceOwnership[resourceId]
+      : (nodeData as { managedBy?: string } | undefined)?.managedBy;
+  const isCodeManaged = codeOwner === "cli" || codeOwner === "api";
   const isOwnershipLoading =
     (isAgent && !!agentConfigId && agentConfig === undefined) ||
     ((isWorkspace || isSandbox) &&
@@ -613,7 +608,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     ? agentConfig?.name
     : (nodeData?.mountName ?? nodeData?.label);
   const collidesWithCode =
-    !isCliManaged &&
+    !isCodeManaged &&
     !!currentResourceName &&
     !!cliManagedNames &&
     (isAgent || isWorkspace || isSandbox) &&
@@ -622,7 +617,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     );
 
   async function handleDelete() {
-    if (isCliManaged || isOwnershipLoading) return;
+    if (isCodeManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
       await removeConfig({ configId: agentConfigId });
     }
@@ -839,10 +834,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
       <Separator />
 
-      {isCliManaged && (
+      {isCodeManaged && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            Managed by broods packages, edits sync on deploy, delete is locked.
+            {codeOwner === "api"
+              ? "Managed through the account API, edits re-sync on every API write, delete is locked."
+              : "Managed by broods packages, edits sync on deploy, delete is locked."}
           </p>
         </div>
       )}
@@ -1084,8 +1081,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               nodeName={resolvedName}
               openDeleteDialogToken={deleteRequestToken}
               onDelete={handleDelete}
-              managedByCode={isCliManaged}
-              deleteLocked={isCliManaged || isOwnershipLoading}
+              managedByCode={isCodeManaged}
+              codeOwner={codeOwner === "api" ? "api" : "cli"}
+              deleteLocked={isCodeManaged || isOwnershipLoading}
             />
           </TabsContent>
         </Tabs>

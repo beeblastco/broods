@@ -90,11 +90,14 @@ export const agentConfigsFields = {
   /**
    * Ownership marker. `"cli"` means a `broods/` project is the source of
    * truth: the dashboard may still edit it, but those edits are overwritten on
-   * the next CLI sync and deleting it from the dashboard is blocked. Unset (or
-   * `"dashboard"`) means the dashboard owns it and the CLI never prunes it. The
-   * CLI stamps `"cli"` on every sync.
+   * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
+   * means the account REST API owns it — its config is re-mirrored onto the
+   * canvas on every API write and dashboard edits are locked. Unset (or
+   * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
    */
-  managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
   updatedAt: v.number(),
 };
 
@@ -264,7 +267,9 @@ export const agentPoliciesFields = {
   document: v.any(),
   status: v.union(v.literal("active"), v.literal("deleted")),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
   createdAt: v.number(),
   updatedAt: v.number(),
   deletedAt: v.optional(v.number()),
@@ -365,7 +370,9 @@ export const sandboxConfigsFields = {
   /** Prebuilt snapshot/image id this sandbox launches from, when pinned (see `sandboxSnapshotsFields`). */
   snapshotId: v.optional(v.string()),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
   createdAt: v.number(),
   updatedAt: v.number(),
 };
@@ -530,7 +537,9 @@ export const workspaceConfigsFields = {
   description: v.optional(v.string()),
   config: v.any(),
   /** Ownership marker; see `agentConfigsFields.managedBy`. */
-  managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
   createdAt: v.number(),
   updatedAt: v.number(),
 };

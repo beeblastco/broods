@@ -15,6 +15,7 @@ import {
   backSyncCanvasFromAgentRow,
   mirrorAgentRowOntoConfig,
 } from "./model/agentSync";
+import { syncApiAgentCanvasWiring } from "./model/apiCanvasSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { agentsInProject } from "./model/projectScope";
@@ -367,6 +368,16 @@ export const remove = internalMutation({
         }
       }
       await ctx.db.delete(linkedConfig._id);
+
+      // Recompute the API-managed wiring so workspace/sandbox/skill nodes
+      // no remaining API agent references disappear with their agent.
+      if (linkedConfig.projectId && linkedConfig.environmentId) {
+        await syncApiAgentCanvasWiring(ctx, {
+          accountId: agent.accountId,
+          projectId: linkedConfig.projectId,
+          environmentId: linkedConfig.environmentId,
+        });
+      }
     }
 
     await ctx.db.delete(normalized);

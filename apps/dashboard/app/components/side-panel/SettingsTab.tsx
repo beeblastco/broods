@@ -6,12 +6,7 @@ import { Button } from "@/app/components/ui/button";
 import { useState } from "react";
 
 type NodeType =
-  | "agent"
-  | "database"
-  | "tool"
-  | "workspace"
-  | "sandbox"
-  | "skill";
+  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 
 /** Delete warning copy per node type. */
 const DELETE_DESCRIPTIONS: Record<
@@ -66,14 +61,17 @@ export function SettingsTab({
   openDeleteDialogToken,
   onDelete,
   managedByCode = false,
+  codeOwner,
   deleteLocked = managedByCode,
 }: {
   nodeType: NodeType;
   nodeName: string;
   openDeleteDialogToken: number;
   onDelete: () => Promise<void>;
-  /** When true, this resource is owned by a broods/ project: delete is locked. */
+  /** When true, this resource is code-owned (CLI or account API): delete is locked. */
   managedByCode?: boolean;
+  /** Which code surface owns the resource; picks the Danger Zone guidance. */
+  codeOwner?: "cli" | "api";
   /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
 }) {
@@ -119,7 +117,13 @@ export function SettingsTab({
                   Danger Zone
                 </p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  {managedByCode ? (
+                  {managedByCode && codeOwner === "api" ? (
+                    <>
+                      Managed through the account API. Delete it via{" "}
+                      <span className="font-mono">DELETE /v1/…</span> (or the
+                      SDK) instead.
+                    </>
+                  ) : managedByCode ? (
                     <>
                       Managed by code in{" "}
                       <span className="font-mono">broods/</span>. Delete it from
