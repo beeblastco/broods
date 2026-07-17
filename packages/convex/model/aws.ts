@@ -59,7 +59,8 @@ interface AssumedCredentials {
   sessionToken: string;
 }
 
-let cached: { credentials: AssumedCredentials; expiresAt: number } | null = null;
+let cached: { credentials: AssumedCredentials; expiresAt: number } | null =
+  null;
 
 /**
  * Assume ConvexAwsRole and return short-lived credentials, reusing a cached set
@@ -75,7 +76,10 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
   const access = awsAccess();
   const sts = new STSClient({
     region: access.region,
-    credentials: { accessKeyId: access.accessKeyId, secretAccessKey: access.secretAccessKey },
+    credentials: {
+      accessKeyId: access.accessKeyId,
+      secretAccessKey: access.secretAccessKey,
+    },
   });
   const result = await sts.send(
     new AssumeRoleCommand({
@@ -86,7 +90,11 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
     }),
   );
   const credentials = result.Credentials;
-  if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
+  if (
+    !credentials?.AccessKeyId ||
+    !credentials.SecretAccessKey ||
+    !credentials.SessionToken
+  ) {
     throw new Error("AssumeRole returned no credentials");
   }
 
@@ -97,7 +105,9 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
   };
   cached = {
     credentials: resolved,
-    expiresAt: credentials.Expiration ? credentials.Expiration.getTime() : Date.now() + 3600_000,
+    expiresAt: credentials.Expiration
+      ? credentials.Expiration.getTime()
+      : Date.now() + 3600_000,
   };
 
   return resolved;
@@ -110,7 +120,10 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
 export async function s3Client(): Promise<S3Client> {
   const access = awsAccess();
 
-  return new S3Client({ region: access.region, credentials: await assumeCredentials() });
+  return new S3Client({
+    region: access.region,
+    credentials: await assumeCredentials(),
+  });
 }
 
 /**
@@ -120,5 +133,8 @@ export async function s3Client(): Promise<S3Client> {
 export async function schedulerClient(): Promise<SchedulerClient> {
   const access = awsAccess();
 
-  return new SchedulerClient({ region: access.region, credentials: await assumeCredentials() });
+  return new SchedulerClient({
+    region: access.region,
+    credentials: await assumeCredentials(),
+  });
 }

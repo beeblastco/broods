@@ -5,10 +5,10 @@ on:
     branches:
       - main
     paths:
-      - 'packages/broods/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/publish-npm.yaml'
+      - "packages/broods/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
 
 concurrency:

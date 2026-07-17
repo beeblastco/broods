@@ -9,11 +9,7 @@ Broods uses [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/
 Define a Slack channel with `defineSlackChannel` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineSlackChannel,
-  env,
-} from "broods";
+import { defineAgent, defineSlackChannel, env } from "broods";
 
 export const slack = defineSlackChannel({
   botToken: env.SLACK_BOT_TOKEN,

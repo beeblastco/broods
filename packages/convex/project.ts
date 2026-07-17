@@ -16,40 +16,132 @@ import { projectsFields } from "./schema";
 type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
 
 const RANDOM_ADJECTIVES = [
-    "amber", "azure", "brave", "calm", "cedar", "coral", "crisp", "dusk",
-    "ember", "fern", "fleet", "frosted", "golden", "grand", "hazy", "hollow",
-    "indigo", "jade", "keen", "lofty", "lunar", "mellow", "misty", "navy",
-    "noble", "ochre", "onyx", "pale", "quiet", "rapid", "raven", "rugged",
-    "rustic", "sage", "silver", "slate", "solar", "still", "swift", "teal",
-    "vast", "velvet", "vivid", "warm", "wild", "winter", "wooden", "zenith",
+  "amber",
+  "azure",
+  "brave",
+  "calm",
+  "cedar",
+  "coral",
+  "crisp",
+  "dusk",
+  "ember",
+  "fern",
+  "fleet",
+  "frosted",
+  "golden",
+  "grand",
+  "hazy",
+  "hollow",
+  "indigo",
+  "jade",
+  "keen",
+  "lofty",
+  "lunar",
+  "mellow",
+  "misty",
+  "navy",
+  "noble",
+  "ochre",
+  "onyx",
+  "pale",
+  "quiet",
+  "rapid",
+  "raven",
+  "rugged",
+  "rustic",
+  "sage",
+  "silver",
+  "slate",
+  "solar",
+  "still",
+  "swift",
+  "teal",
+  "vast",
+  "velvet",
+  "vivid",
+  "warm",
+  "wild",
+  "winter",
+  "wooden",
+  "zenith",
 ];
 const RANDOM_NOUNS = [
-    "arc", "bay", "bloom", "bolt", "brook", "cave", "cliff", "cloud",
-    "comet", "cove", "creek", "dawn", "delta", "dune", "dusk", "echo",
-    "field", "fjord", "flame", "flare", "forge", "frost", "gale", "glen",
-    "grove", "haven", "hill", "isle", "knoll", "lagoon", "lake", "leaf",
-    "mesa", "moon", "moss", "peak", "pine", "ridge", "rift", "river",
-    "shore", "sky", "slate", "snow", "star", "stone", "tide", "trail",
-    "vale", "vault", "wave", "wind", "wood", "yard", "zephyr", "zone",
+  "arc",
+  "bay",
+  "bloom",
+  "bolt",
+  "brook",
+  "cave",
+  "cliff",
+  "cloud",
+  "comet",
+  "cove",
+  "creek",
+  "dawn",
+  "delta",
+  "dune",
+  "dusk",
+  "echo",
+  "field",
+  "fjord",
+  "flame",
+  "flare",
+  "forge",
+  "frost",
+  "gale",
+  "glen",
+  "grove",
+  "haven",
+  "hill",
+  "isle",
+  "knoll",
+  "lagoon",
+  "lake",
+  "leaf",
+  "mesa",
+  "moon",
+  "moss",
+  "peak",
+  "pine",
+  "ridge",
+  "rift",
+  "river",
+  "shore",
+  "sky",
+  "slate",
+  "snow",
+  "star",
+  "stone",
+  "tide",
+  "trail",
+  "vale",
+  "vault",
+  "wave",
+  "wind",
+  "wood",
+  "yard",
+  "zephyr",
+  "zone",
 ];
 
 /** Generate a random adjective-noun project name, e.g. "amber-cove". */
 function randomProjectName(): string {
-    const adj = RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
-    const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
-    return `${adj}-${noun}`;
+  const adj =
+    RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
+  const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
+  return `${adj}-${noun}`;
 }
 
 const projectDoc = v.object({
-    ...projectsFields,
-    _id: v.id("projects"),
-    _creationTime: v.number(),
+  ...projectsFields,
+  _id: v.id("projects"),
+  _creationTime: v.number(),
 });
 
 async function requireAuth(ctx: Ctx) {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-    return authUser;
+  const authUser = await authKit.getAuthUser(ctx);
+  if (!authUser) throw new Error("User not found or not authenticated");
+  return authUser;
 }
 
 /**
@@ -57,15 +149,15 @@ async function requireAuth(ctx: Ctx) {
  * Returns null when the user has no membership yet (legacy / first-load flow).
  */
 async function getCallerActiveOrgId(ctx: Ctx, authId: string) {
-    const user = await ctx.db
-        .query("users")
-        .withIndex("by_authId", (q) => q.eq("authId", authId))
-        .unique();
-    if (!user) return null;
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return null;
 
-    const org = await getActiveOrgForUser(ctx, user._id);
+  const org = await getActiveOrgForUser(ctx, user._id);
 
-    return org?._id ?? null;
+  return org?._id ?? null;
 }
 
 /**
@@ -74,28 +166,28 @@ async function getCallerActiveOrgId(ctx: Ctx, authId: string) {
  * orgId-less projects owned by authId so older accounts keep working.
  */
 async function listProjects(ctx: Ctx, authId: string) {
-    const orgId = await getCallerActiveOrgId(ctx, authId);
+  const orgId = await getCallerActiveOrgId(ctx, authId);
 
-    // No active org: surface only the caller's legacy, orgId-less projects.
-    if (orgId === null) {
-        const ownedByAuth = await ctx.db
-            .query("projects")
-            .withIndex("by_authId", (q) => q.eq("authId", authId))
-            .collect();
+  // No active org: surface only the caller's legacy, orgId-less projects.
+  if (orgId === null) {
+    const ownedByAuth = await ctx.db
+      .query("projects")
+      .withIndex("by_authId", (q) => q.eq("authId", authId))
+      .collect();
 
-        return ownedByAuth
-            .filter((p) => !p.orgId)
-            .sort((a, b) => b.updatedAt - a.updatedAt);
-    }
+    return ownedByAuth
+      .filter((p) => !p.orgId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
 
-    // Active org set: return only that org's projects, never another org's
-    // or another caller's orgId-less projects.
-    const orgProjects = await ctx.db
-        .query("projects")
-        .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-        .collect();
+  // Active org set: return only that org's projects, never another org's
+  // or another caller's orgId-less projects.
+  const orgProjects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
 
-    return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
+  return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /**
@@ -108,59 +200,59 @@ async function listProjects(ctx: Ctx, authId: string) {
  * been onboarded but currently has no projects.
  */
 export const getOrCreateDefault = mutation({
-    args: {},
-    returns: v.union(v.id("projects"), v.null()),
-    handler: async (ctx) => {
-        const authUser = await requireAuth(ctx);
+  args: {},
+  returns: v.union(v.id("projects"), v.null()),
+  handler: async (ctx) => {
+    const authUser = await requireAuth(ctx);
 
-        const existing = (await listProjects(ctx, authUser.id))[0];
-        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+    const existing = (await listProjects(ctx, authUser.id))[0];
+    const orgId = await getCallerActiveOrgId(ctx, authUser.id);
 
-        if (existing) {
-            // Lazy-backfill the flag for legacy orgs whose projects predate it,
-            // so the first-time path doesn't silently re-trigger.
-            if (orgId) {
-                const org = await ctx.db.get(orgId);
-                if (org && !org.onboardedAt) {
-                    await ctx.db.patch(orgId, { onboardedAt: Date.now() });
-                }
-            }
-            return existing._id;
+    if (existing) {
+      // Lazy-backfill the flag for legacy orgs whose projects predate it,
+      // so the first-time path doesn't silently re-trigger.
+      if (orgId) {
+        const org = await ctx.db.get(orgId);
+        if (org && !org.onboardedAt) {
+          await ctx.db.patch(orgId, { onboardedAt: Date.now() });
         }
+      }
+      return existing._id;
+    }
 
-        if (orgId) {
-            const org = await ctx.db.get(orgId);
-            if (org?.onboardedAt) {
-                return null;
-            }
-        }
+    if (orgId) {
+      const org = await ctx.db.get(orgId);
+      if (org?.onboardedAt) {
+        return null;
+      }
+    }
 
-        const now = Date.now();
-        const name = randomProjectName();
-        const projectId = await ctx.db.insert("projects", {
-            authId: authUser.id,
-            orgId: orgId ?? undefined,
-            name: name,
-            description: undefined,
-            slug: await uniqueProjectSlug(ctx, authUser.id, name),
-            updatedAt: now,
-        });
+    const now = Date.now();
+    const name = randomProjectName();
+    const projectId = await ctx.db.insert("projects", {
+      authId: authUser.id,
+      orgId: orgId ?? undefined,
+      name: name,
+      description: undefined,
+      slug: await uniqueProjectSlug(ctx, authUser.id, name),
+      updatedAt: now,
+    });
 
-        await ctx.db.insert("environments", {
-            authId: authUser.id,
-            projectId,
-            name: "Development",
-            kind: "development",
-            isDefault: true,
-            updatedAt: now,
-        });
+    await ctx.db.insert("environments", {
+      authId: authUser.id,
+      projectId,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: now,
+    });
 
-        if (orgId) {
-            await ctx.db.patch(orgId, { onboardedAt: now });
-        }
+    if (orgId) {
+      await ctx.db.patch(orgId, { onboardedAt: now });
+    }
 
-        return projectId;
-    },
+    return projectId;
+  },
 });
 
 /**
@@ -169,14 +261,14 @@ export const getOrCreateDefault = mutation({
  * empty list rather than tripping the dashboard's React error boundary.
  */
 export const list = query({
-    args: {},
-    returns: v.array(projectDoc),
-    handler: async (ctx) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
+  args: {},
+  returns: v.array(projectDoc),
+  handler: async (ctx) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) return [];
 
-        return listProjects(ctx, authUser.id);
-    },
+    return listProjects(ctx, authUser.id);
+  },
 });
 
 /**
@@ -185,35 +277,37 @@ export const list = query({
  * does not crash the gallery.
  */
 export const listWithPreview = query({
-    args: {},
-    returns: v.array(v.object({
-        _id: v.id("projects"),
-        name: v.string(),
-        canvas: v.null(),
-        deployedAgentCount: v.number(),
-    })),
-    handler: async (ctx) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) return [];
+  args: {},
+  returns: v.array(
+    v.object({
+      _id: v.id("projects"),
+      name: v.string(),
+      canvas: v.null(),
+      deployedAgentCount: v.number(),
+    }),
+  ),
+  handler: async (ctx) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) return [];
 
-        const projects = await listProjects(ctx, authUser.id);
+    const projects = await listProjects(ctx, authUser.id);
 
-        return projects.map((p) => ({
-            _id: p._id,
-            name: p.name,
-            canvas: null,
-            deployedAgentCount: 0,
-        }));
-    },
+    return projects.map((p) => ({
+      _id: p._id,
+      name: p.name,
+      canvas: null,
+      deployedAgentCount: 0,
+    }));
+  },
 });
 
 export const getById = query({
-    args: { projectId: v.id("projects") },
-    returns: v.union(v.null(), projectDoc),
-    handler: async (ctx, { projectId }) => {
-        const authUser = await requireAuth(ctx);
-        return getOwnedProject(ctx, authUser.id, projectId);
-    },
+  args: { projectId: v.id("projects") },
+  returns: v.union(v.null(), projectDoc),
+  handler: async (ctx, { projectId }) => {
+    const authUser = await requireAuth(ctx);
+    return getOwnedProject(ctx, authUser.id, projectId);
+  },
 });
 
 /**
@@ -225,112 +319,129 @@ export const getById = query({
  * @returns the matching ids, or null when the project is not visible to the caller
  */
 export const resolveTarget = query({
-    args: { project: v.string(), environment: v.optional(v.string()) },
-    returns: v.union(v.null(), v.object({
-        projectId: v.id("projects"),
-        environmentId: v.union(v.null(), v.id("environments")),
-    })),
-    handler: async (ctx, { project, environment }) => {
-        const authUser = await requireAuth(ctx);
-        const needle = project.trim().toLowerCase();
-        const match = (await listProjects(ctx, authUser.id)).find((entry) =>
-            entry.name.toLowerCase() === needle || entry.slug.toLowerCase() === needle,
-        );
-        if (!match) return null;
+  args: { project: v.string(), environment: v.optional(v.string()) },
+  returns: v.union(
+    v.null(),
+    v.object({
+      projectId: v.id("projects"),
+      environmentId: v.union(v.null(), v.id("environments")),
+    }),
+  ),
+  handler: async (ctx, { project, environment }) => {
+    const authUser = await requireAuth(ctx);
+    const needle = project.trim().toLowerCase();
+    const match = (await listProjects(ctx, authUser.id)).find(
+      (entry) =>
+        entry.name.toLowerCase() === needle ||
+        entry.slug.toLowerCase() === needle,
+    );
+    if (!match) return null;
 
-        const environments = await ctx.db
-            .query("environments")
-            .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
-            .collect();
-        const wanted = environment?.trim().toLowerCase();
-        const target =
-            (wanted ? environments.find((entry) => entry.name.toLowerCase() === wanted) : undefined) ??
-            environments.find((entry) => entry.isDefault) ??
-            null;
+    const environments = await ctx.db
+      .query("environments")
+      .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
+      .collect();
+    const wanted = environment?.trim().toLowerCase();
+    const target =
+      (wanted
+        ? environments.find((entry) => entry.name.toLowerCase() === wanted)
+        : undefined) ??
+      environments.find((entry) => entry.isDefault) ??
+      null;
 
-        return { projectId: match._id, environmentId: target?._id ?? null };
-    },
+    return { projectId: match._id, environmentId: target?._id ?? null };
+  },
 });
 
 export const create = mutation({
-    args: {
-        name: v.string(),
-        description: v.optional(v.string()),
-    },
-    returns: v.id("projects"),
-    handler: async (ctx, { name, description }) => {
-        const authUser = await requireAuth(ctx);
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  returns: v.id("projects"),
+  handler: async (ctx, { name, description }) => {
+    const authUser = await requireAuth(ctx);
 
-        const trimmedName = name.trim();
-        if (!trimmedName) throw new Error("Project name is required.");
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error("Project name is required.");
 
-        const now = Date.now();
-        const orgId = await getCallerActiveOrgId(ctx, authUser.id);
-        const projectId = await ctx.db.insert("projects", {
-            authId: authUser.id,
-            orgId: orgId ?? undefined,
-            name: trimmedName,
-            description: description?.trim() || undefined,
-            slug: await uniqueProjectSlug(ctx, authUser.id, trimmedName),
-            updatedAt: now,
-        });
+    const now = Date.now();
+    const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+    const projectId = await ctx.db.insert("projects", {
+      authId: authUser.id,
+      orgId: orgId ?? undefined,
+      name: trimmedName,
+      description: description?.trim() || undefined,
+      slug: await uniqueProjectSlug(ctx, authUser.id, trimmedName),
+      updatedAt: now,
+    });
 
-        await ctx.db.insert("environments", {
-            authId: authUser.id,
-            projectId,
-            name: "Development",
-            kind: "development",
-            isDefault: true,
-            updatedAt: now,
-        });
+    await ctx.db.insert("environments", {
+      authId: authUser.id,
+      projectId,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: now,
+    });
 
-        return projectId;
-    },
+    return projectId;
+  },
 });
 
 export const update = mutation({
-    args: {
-        projectId: v.id("projects"),
-        name: v.string(),
-        description: v.optional(v.string()),
-    },
-    returns: v.id("projects"),
-    handler: async (ctx, { projectId, name, description }) => {
-        const authUser = await requireAuth(ctx);
+  args: {
+    projectId: v.id("projects"),
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  returns: v.id("projects"),
+  handler: async (ctx, { projectId, name, description }) => {
+    const authUser = await requireAuth(ctx);
 
-        const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
-        if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error("Project not found.");
 
-        const trimmedName = name.trim();
-        if (!trimmedName) throw new Error("Project name is required.");
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error("Project name is required.");
 
-        const slug =
-            trimmedName === project.name
-                ? project.slug
-                : await uniqueProjectSlug(ctx, authUser.id, trimmedName);
+    const slug =
+      trimmedName === project.name
+        ? project.slug
+        : await uniqueProjectSlug(ctx, authUser.id, trimmedName);
 
-        await ctx.db.patch(projectId, {
-            name: trimmedName,
-            description: description?.trim() || undefined,
-            slug,
-            updatedAt: Date.now(),
-        });
+    await ctx.db.patch(projectId, {
+      name: trimmedName,
+      description: description?.trim() || undefined,
+      slug,
+      updatedAt: Date.now(),
+    });
 
-        return projectId;
-    },
+    return projectId;
+  },
 });
 
 export const remove = mutation({
-    args: { projectId: v.id("projects") },
-    returns: v.id("projects"),
-    handler: async (ctx, { projectId }) => {
-        const authUser = await requireAuth(ctx);
+  args: { projectId: v.id("projects") },
+  returns: v.id("projects"),
+  handler: async (ctx, { projectId }) => {
+    const authUser = await requireAuth(ctx);
 
-        const project = await getProjectForRole(ctx, authUser.id, projectId, "admin");
-        if (!project) throw new Error("Project not found.");
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error("Project not found.");
 
-        await purgeProject(ctx, projectId);
+    await purgeProject(ctx, projectId);
 
-        return projectId;
-    },
+    return projectId;
+  },
 });

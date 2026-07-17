@@ -3,7 +3,14 @@
  * Cover installation auth and outbound REST routing here.
  */
 
-import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  setSystemTime,
+} from "bun:test";
 import type { GitHubSource } from "../src/shared/github-channel.ts";
 import { createGitHubChannel } from "../src/shared/github-channel.ts";
 
@@ -44,21 +51,30 @@ describe("github outbound actions", () => {
       jsonResponse(201, { id: 8001 }),
     ]);
 
-    const actions = createGitHubActions(createSource({
-      threadId: "github:owner/repo:issue:7",
-      issueNumber: 7,
-      messageId: "77",
-      commentId: 77,
-      target: "issue_comment",
-    }), Buffer.from(TEST_PRIVATE_KEY).toString("base64"));
+    const actions = createGitHubActions(
+      createSource({
+        threadId: "github:owner/repo:issue:7",
+        issueNumber: 7,
+        messageId: "77",
+        commentId: 77,
+        target: "issue_comment",
+      }),
+      Buffer.from(TEST_PRIVATE_KEY).toString("base64"),
+    );
 
     await actions.sendText("hello from bun");
     await actions.reactToMessage();
 
     expect(calls).toHaveLength(3);
-    expect(calls[0]?.url).toBe("https://api.github.com/app/installations/99/access_tokens");
-    expect(calls[1]?.url).toBe("https://api.github.com/repos/owner/repo/issues/7/comments");
-    expect(calls[2]?.url).toBe("https://api.github.com/repos/owner/repo/issues/comments/77/reactions");
+    expect(calls[0]?.url).toBe(
+      "https://api.github.com/app/installations/99/access_tokens",
+    );
+    expect(calls[1]?.url).toBe(
+      "https://api.github.com/repos/owner/repo/issues/7/comments",
+    );
+    expect(calls[2]?.url).toBe(
+      "https://api.github.com/repos/owner/repo/issues/comments/77/reactions",
+    );
 
     expect(calls[1]?.jsonBody).toEqual({ body: "hello from bun" });
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
@@ -79,13 +95,15 @@ describe("github outbound actions", () => {
       jsonResponse(201, { id: 8002 }),
     ]);
 
-    const actions = createGitHubActions(createSource({
-      threadId: "github:owner/repo:12:rc:55",
-      target: "pull_request_review_comment",
-      pullNumber: 12,
-      messageId: "56",
-      commentId: 56,
-    }));
+    const actions = createGitHubActions(
+      createSource({
+        threadId: "github:owner/repo:12:rc:55",
+        target: "pull_request_review_comment",
+        pullNumber: 12,
+        messageId: "56",
+        commentId: 56,
+      }),
+    );
 
     await actions.sendText("reply body");
     await actions.reactToMessage();
@@ -109,20 +127,26 @@ describe("github outbound actions", () => {
       jsonResponse(201, { id: 8003 }),
     ]);
 
-    const actions = createGitHubActions(createSource({
-      threadId: "github:owner/repo:12",
-      issueNumber: 12,
-      messageId: "77",
-      commentId: 77,
-      target: "issue_comment",
-    }));
+    const actions = createGitHubActions(
+      createSource({
+        threadId: "github:owner/repo:12",
+        issueNumber: 12,
+        messageId: "77",
+        commentId: 77,
+        target: "issue_comment",
+      }),
+    );
 
     await actions.sendText("follow-up");
     await actions.reactToMessage();
 
     expect(calls).toHaveLength(3);
-    expect(calls[1]?.url).toBe("https://api.github.com/repos/owner/repo/issues/12/comments");
-    expect(calls[2]?.url).toBe("https://api.github.com/repos/owner/repo/issues/comments/77/reactions");
+    expect(calls[1]?.url).toBe(
+      "https://api.github.com/repos/owner/repo/issues/12/comments",
+    );
+    expect(calls[2]?.url).toBe(
+      "https://api.github.com/repos/owner/repo/issues/comments/77/reactions",
+    );
     expect(calls[1]?.jsonBody).toEqual({ body: "follow-up" });
     expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
   });
@@ -134,22 +158,28 @@ describe("github outbound actions", () => {
       jsonResponse(201, { id: 7004 }),
     ]);
 
-    const actions = createGitHubActions(createSource({
-      threadId: "github:owner/repo:12",
-      target: "pull_request",
-      issueNumber: 12,
-      pullNumber: 12,
-    }));
+    const actions = createGitHubActions(
+      createSource({
+        threadId: "github:owner/repo:12",
+        target: "pull_request",
+        issueNumber: 12,
+        pullNumber: 12,
+      }),
+    );
 
     expect(actions.stream).toBeDefined();
-    const messageId = await actions.stream!((async function* () {
-      yield "hello";
-      yield " github";
-    })());
+    const messageId = await actions.stream!(
+      (async function* () {
+        yield "hello";
+        yield " github";
+      })(),
+    );
 
     expect(messageId).toBe("7004");
     expect(calls).toHaveLength(2);
-    expect(calls[1]?.url).toBe("https://api.github.com/repos/owner/repo/issues/12/comments");
+    expect(calls[1]?.url).toBe(
+      "https://api.github.com/repos/owner/repo/issues/12/comments",
+    );
     expect(calls[1]?.jsonBody).toEqual({ body: "hello github" });
   });
 });
@@ -161,7 +191,10 @@ interface FetchCall {
   url: string;
 }
 
-function createFetchMock(calls: FetchCall[], responses: Response[]): typeof fetch {
+function createFetchMock(
+  calls: FetchCall[],
+  responses: Response[],
+): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const response = responses.shift();
     if (!response) {
@@ -172,7 +205,8 @@ function createFetchMock(calls: FetchCall[], responses: Response[]): typeof fetc
       url: String(input),
       method: init?.method ?? "GET",
       headers: normalizeHeaders(init?.headers),
-      jsonBody: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      jsonBody:
+        typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
     });
 
     return response;
@@ -190,8 +224,16 @@ function createSource(overrides: Partial<GitHubSource>): GitHubSource {
   };
 }
 
-function createGitHubActions(source: GitHubSource, privateKey = TEST_PRIVATE_KEY) {
-  return createGitHubChannel("webhook-secret", "app-123", privateKey, null).actions({
+function createGitHubActions(
+  source: GitHubSource,
+  privateKey = TEST_PRIVATE_KEY,
+) {
+  return createGitHubChannel(
+    "webhook-secret",
+    "app-123",
+    privateKey,
+    null,
+  ).actions({
     eventId: "gh:test",
     conversationKey: source.threadId,
     channelName: "github",
@@ -221,7 +263,9 @@ function jsonResponse(status: number, body: Record<string, unknown>): Response {
   });
 }
 
-function normalizeHeaders(headers: RequestInit["headers"] | undefined): Record<string, string> {
+function normalizeHeaders(
+  headers: RequestInit["headers"] | undefined,
+): Record<string, string> {
   if (!headers) {
     return {};
   }
@@ -235,6 +279,9 @@ function normalizeHeaders(headers: RequestInit["headers"] | undefined): Record<s
   }
 
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]),
+    Object.entries(headers).map(([key, value]) => [
+      key.toLowerCase(),
+      String(value),
+    ]),
   );
 }

@@ -9,12 +9,12 @@ import { api } from "./broods/_generated/api";
 const client = new BroodsClient();
 
 // Stream the response from the agent and print it to stdout.
-for await (const chunk of client.stream(api.agents.myAgent, { 
+for await (const chunk of client.stream(api.agents.myAgent, {
   input: [
     "1. Run tools to write fib.py that prints the first 10 Fibonacci numbers, then run python3 fib.py.",
     "2. Run tools to write fib.js that does the same, then run node fib.js.",
     "3. Run `ls -1` on its own to show what files are present in the sandbox, and then run `cat` on each file to show their contents.",
-  ].join("\n") 
+  ].join("\n"),
 })) {
   switch (chunk.type) {
     case "reasoning-delta":
@@ -36,10 +36,14 @@ for await (const chunk of client.stream(api.agents.myAgent, {
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
-      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
       break;
     case "finish":
-      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
       break;
   }
 }

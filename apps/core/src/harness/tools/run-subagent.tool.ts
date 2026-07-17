@@ -3,17 +3,28 @@
  * Keep model-facing input validation here; execution orchestration lives in the harness.
  */
 
-import { jsonSchema, tool, type JSONSchema7, type JSONValue, type ModelMessage, type SystemModelMessage, type ToolSet } from "ai";
+import {
+  jsonSchema,
+  tool,
+  type JSONSchema7,
+  type JSONValue,
+  type ModelMessage,
+  type SystemModelMessage,
+  type ToolSet,
+} from "ai";
 
 const MAX_SUBAGENT_TASKS = 10;
 const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
 type RunSubagentMode = "ephemeral" | "persistent";
 
-export function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7 {
+export function buildRunSubagentInputSchema(
+  mode?: RunSubagentMode,
+): JSONSchema7 {
   const taskProperties: Record<string, JSONSchema7> = {
     agentId: {
       type: "string",
-      description: "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
+      description:
+        "Exact predefined subagent id to use. Include it when a listed subagent is suitable; omit only for a virtual one-shot subagent.",
     },
     prompt: {
       type: "string",
@@ -24,7 +35,8 @@ export function buildRunSubagentInputSchema(mode?: RunSubagentMode): JSONSchema7
   if (mode === "persistent") {
     taskProperties.conversationKey = {
       type: "string",
-      description: "Existing subagent conversation key to resume. Omit to start a new persistent conversation.",
+      description:
+        "Existing subagent conversation key to resume. Omit to start a new persistent conversation.",
     };
   }
 
@@ -84,7 +96,9 @@ export default function runSubagentTool(context: {
         "Returns task ids immediately so you can continue working while results are injected into the parent conversation later.",
         "Use an available predefined agentId when a listed subagent matches the task; omit agentId only for a virtual one-shot subagent.",
         ...(context.mode === "persistent"
-          ? ["Use conversationKey to resume an existing persistent subagent conversation; omit it to start a new one."]
+          ? [
+              "Use conversationKey to resume an existing persistent subagent conversation; omit it to start a new one.",
+            ]
           : []),
       ].join(" "),
       inputSchema: jsonSchema(buildRunSubagentInputSchema(context.mode)),
@@ -102,8 +116,15 @@ export default function runSubagentTool(context: {
   };
 }
 
-function normalizeInput(input: unknown, mode?: RunSubagentMode): RunSubagentTaskInput[] {
-  if (!input || typeof input !== "object" || !Array.isArray((input as { tasks?: unknown }).tasks)) {
+function normalizeInput(
+  input: unknown,
+  mode?: RunSubagentMode,
+): RunSubagentTaskInput[] {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    !Array.isArray((input as { tasks?: unknown }).tasks)
+  ) {
     throw new Error("tasks must be a non-empty array");
   }
 
@@ -112,13 +133,19 @@ function normalizeInput(input: unknown, mode?: RunSubagentMode): RunSubagentTask
     throw new Error("tasks must include at least one subagent task");
   }
   if (tasks.length > MAX_SUBAGENT_TASKS) {
-    throw new Error(`tasks must include at most ${MAX_SUBAGENT_TASKS} subagent tasks`);
+    throw new Error(
+      `tasks must include at most ${MAX_SUBAGENT_TASKS} subagent tasks`,
+    );
   }
 
   return tasks.map((task, index) => normalizeTask(task, index, mode));
 }
 
-function normalizeTask(value: unknown, index: number, mode?: RunSubagentMode): RunSubagentTaskInput {
+function normalizeTask(
+  value: unknown,
+  index: number,
+  mode?: RunSubagentMode,
+): RunSubagentTaskInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`tasks[${index}] must be an object`);
   }
@@ -131,13 +158,22 @@ function normalizeTask(value: unknown, index: number, mode?: RunSubagentMode): R
   }
 
   const prompt = normalizeRequiredString(task.prompt, `tasks[${index}].prompt`);
-  const agentId = normalizeOptionalString(task.agentId, `tasks[${index}].agentId`);
+  const agentId = normalizeOptionalString(
+    task.agentId,
+    `tasks[${index}].agentId`,
+  );
   if (mode !== "persistent" && task.conversationKey !== undefined) {
-    throw new Error(`tasks[${index}].conversationKey is only supported in persistent mode`);
+    throw new Error(
+      `tasks[${index}].conversationKey is only supported in persistent mode`,
+    );
   }
-  const conversationKey = mode === "persistent"
-    ? normalizeOptionalString(task.conversationKey, `tasks[${index}].conversationKey`)
-    : undefined;
+  const conversationKey =
+    mode === "persistent"
+      ? normalizeOptionalString(
+          task.conversationKey,
+          `tasks[${index}].conversationKey`,
+        )
+      : undefined;
 
   return {
     ...(agentId ? { agentId } : {}),
@@ -153,7 +189,10 @@ function normalizeRequiredString(value: unknown, name: string): string {
   return value.trim();
 }
 
-function normalizeOptionalString(value: unknown, name: string): string | undefined {
+function normalizeOptionalString(
+  value: unknown,
+  name: string,
+): string | undefined {
   if (value === undefined) {
     return undefined;
   }

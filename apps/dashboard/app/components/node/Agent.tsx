@@ -12,56 +12,70 @@ import { useMemo } from "react";
 const DEFAULT_AGENT_COLOR = "rgb(168, 85, 247)";
 
 type OutputFormatConfig = {
-    type?: string;
-    schema?: unknown;
+  type?: string;
+  schema?: unknown;
 };
 
 /** Returns whether the agent config is using a non-text model output format. */
 function isStructuredOutputEnabled(outputFormat: unknown): boolean {
-    if (!outputFormat || typeof outputFormat !== "object" || Array.isArray(outputFormat)) {
-        return false;
-    }
+  if (
+    !outputFormat ||
+    typeof outputFormat !== "object" ||
+    Array.isArray(outputFormat)
+  ) {
+    return false;
+  }
 
-    const { type } = outputFormat as OutputFormatConfig;
+  const { type } = outputFormat as OutputFormatConfig;
 
-    return type === undefined || type === "json_schema" || type === "object" || type === "array" || type === "choice" || type === "json";
+  return (
+    type === undefined ||
+    type === "json_schema" ||
+    type === "object" ||
+    type === "array" ||
+    type === "choice" ||
+    type === "json"
+  );
 }
 
 /** Agent node representing an AI agent on the canvas. */
 export function AgentNode({ id, data }: NodeProps) {
-    const nodeData = data as BaseNodeData;
-    const agentConfigId = nodeData.agentConfigId as Id<"agentConfigs"> | undefined;
-    const healthStatus = useAgentHealth(agentConfigId);
-    const agentConfig = useQuery(
-        api.agentConfig.getById,
-        agentConfigId ? { configId: agentConfigId } : "skip",
-    );
-    const featureRows = useMemo(() => {
-        if (!isStructuredOutputEnabled(agentConfig?.outputFormat)) {
-            return undefined;
-        }
+  const nodeData = data as BaseNodeData;
+  const agentConfigId = nodeData.agentConfigId as
+    | Id<"agentConfigs">
+    | undefined;
+  const healthStatus = useAgentHealth(agentConfigId);
+  const agentConfig = useQuery(
+    api.agentConfig.getById,
+    agentConfigId ? { configId: agentConfigId } : "skip",
+  );
+  const featureRows = useMemo(() => {
+    if (!isStructuredOutputEnabled(agentConfig?.outputFormat)) {
+      return undefined;
+    }
 
-        return [{ key: "structured-output", label: "structured output" }];
-    }, [agentConfig?.outputFormat]);
-    // Surface the secure-by-default public-access opt-in so the node's globe can
-    // reflect it (green only when the agent is actually reachable publicly).
-    const publicAccess =
-        ((agentConfig?.extraConfig as Record<string, unknown> | undefined)?.publicAccess) === true;
-    const withColor: BaseNodeData = {
-        ...nodeData,
-        config: { ...nodeData.config, publicAccess },
-        properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
-    };
+    return [{ key: "structured-output", label: "structured output" }];
+  }, [agentConfig?.outputFormat]);
+  // Surface the secure-by-default public-access opt-in so the node's globe can
+  // reflect it (green only when the agent is actually reachable publicly).
+  const publicAccess =
+    (agentConfig?.extraConfig as Record<string, unknown> | undefined)
+      ?.publicAccess === true;
+  const withColor: BaseNodeData = {
+    ...nodeData,
+    config: { ...nodeData.config, publicAccess },
+    properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
+  };
 
-    return (
-        <BaseNode
-            id={id}
-            nodeType="agent"
-            data={withColor}
-            icon={null}
-            agentStatus={healthStatus}
-            featureRows={featureRows}
-            showSideHandles={true}
-        />
-    );
+  return (
+    <BaseNode
+      id={id}
+      nodeType="agent"
+      data={withColor}
+      icon={null}
+      agentStatus={healthStatus}
+      featureRows={featureRows}
+      showSideHandles={true}
+    />
+  );
 }

@@ -3,7 +3,10 @@
  * Keep turn context assembly, model invocation, and tools orchestration here.
  */
 
-import { NoSuchProviderReferenceError, UnsupportedFunctionalityError } from "@ai-sdk/provider";
+import {
+  NoSuchProviderReferenceError,
+  UnsupportedFunctionalityError,
+} from "@ai-sdk/provider";
 import {
   context as otelContextApi,
   trace as otelTraceApi,
@@ -27,8 +30,20 @@ import {
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { collectSecretValues, logError, logInfo, logWarn, redact, redactSensitiveText } from "../shared/log.ts";
-import { ensureObservabilityStream, flushObservabilityNats, getObservabilityNatsConn, tracesSubject } from "../shared/nats.ts";
+import {
+  collectSecretValues,
+  logError,
+  logInfo,
+  logWarn,
+  redact,
+  redactSensitiveText,
+} from "../shared/log.ts";
+import {
+  ensureObservabilityStream,
+  flushObservabilityNats,
+  getObservabilityNatsConn,
+  tracesSubject,
+} from "../shared/nats.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
   forceFlushOtel,
@@ -41,9 +56,16 @@ import {
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
-import { createAgentHookDispatcher, wrapToolsWithHooks, type HookDispatcher } from "./hook-dispatcher.ts";
+import {
+  createAgentHookDispatcher,
+  wrapToolsWithHooks,
+  type HookDispatcher,
+} from "./hook-dispatcher.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
-import { createPolicyToolApproval, createRuntimeToolApproval } from "./policy.ts";
+import {
+  createPolicyToolApproval,
+  createRuntimeToolApproval,
+} from "./policy.ts";
 import {
   modelOutputFromModelConfig,
   modelSettingsFromModelConfig,
@@ -90,16 +112,22 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const ctx = getObservabilityContext();
   // Skip traffic that cannot be resolved to a deployment. No dashboard trace
   // subscription exists for that scope; Tempo still receives the OTel span.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return Promise.resolve();
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment)
+    return Promise.resolve();
 
-  const subject = tracesSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
+  const subject = tracesSubject(
+    ctx.accountId,
+    ctx.project,
+    ctx.environment,
+    ctx.endpointId,
+  );
 
   return connPromise
     .then(async (conn) => {
       // Ensure the durable stream exists so even the first span of a cold
       // container is captured for replay; memoized, so this is ~free after the
       // first call. If it fails the live publish still reaches subscribers.
-      await ensureObservabilityStream(conn).catch(() => { });
+      await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, SPAN_ENCODER.encode(JSON.stringify(row)));
     })
     .catch(() => {
@@ -161,7 +189,9 @@ export async function runAgentLoop(
   let systemContextSnapshot = turnContext.systemContextSnapshot;
   const configuredModel = resolveConfiguredModel(agentConfig);
   const lifecycle = createAgentLifecycleEmitter(session, agentConfig);
-  const hooks = options.hooks ?? await createAgentHookDispatcher(session.accountId, agentConfig);
+  const hooks =
+    options.hooks ??
+    (await createAgentHookDispatcher(session.accountId, agentConfig));
 
   // Task-scoped usage accumulators — written by hooks/callbacks, read at finalize.
   let taskCacheWriteTokens = 0;
@@ -223,33 +253,50 @@ export async function runAgentLoop(
   // A normal run is a "task". Both are roots, so each gets its own scaled waterfall.
   const subagentParent = options.subagentParent;
   const rootSpanName = subagentParent ? "agent.subtask" : "agent.task";
-  const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent ? "subtask" : "task";
+  const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent
+    ? "subtask"
+    : "task";
   const tracer = getTracer();
   const otelRootSpan = tracer.startSpan(rootSpanName, {
     startTime: runStartedAt,
     attributes: observabilityAttributes(observabilityScope),
   });
   const otelSpanCtx = otelRootSpan.spanContext();
-  const traceId = /[^0]/.test(otelSpanCtx.traceId) ? otelSpanCtx.traceId : mintTraceId();
-  const rootSpanId = /[^0]/.test(otelSpanCtx.spanId) ? otelSpanCtx.spanId : mintSpanId();
-  const rootOtelContext = otelTraceApi.setSpan(otelContextApi.active(), otelRootSpan);
+  const traceId = /[^0]/.test(otelSpanCtx.traceId)
+    ? otelSpanCtx.traceId
+    : mintTraceId();
+  const rootSpanId = /[^0]/.test(otelSpanCtx.spanId)
+    ? otelSpanCtx.spanId
+    : mintSpanId();
+  const rootOtelContext = otelTraceApi.setSpan(
+    otelContextApi.active(),
+    otelRootSpan,
+  );
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
     traceId,
     otelContext: rootOtelContext,
-    secretValues: collectSecretValues([agentConfig, statelessSandbox, resolvedWorkspaces]),
+    secretValues: collectSecretValues([
+      agentConfig,
+      statelessSandbox,
+      resolvedWorkspaces,
+    ]),
   });
 
   const traceAttribute = (value: unknown): string => {
-    const safeValue = redact(value, getObservabilityContext()?.secretValues ?? []);
+    const safeValue = redact(
+      value,
+      getObservabilityContext()?.secretValues ?? [],
+    );
     let serialized: string;
     try {
-      serialized = safeValue === undefined
-        ? ""
-        : typeof safeValue === "string"
-          ? safeValue
-          : JSON.stringify(safeValue);
+      serialized =
+        safeValue === undefined
+          ? ""
+          : typeof safeValue === "string"
+            ? safeValue
+            : JSON.stringify(safeValue);
     } catch {
       serialized = String(safeValue);
     }
@@ -267,7 +314,10 @@ export async function runAgentLoop(
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
     ...(subagentParent
-      ? { "parent.task_id": subagentParent.parentTaskId, "parent.trace_id": subagentParent.parentTraceId }
+      ? {
+          "parent.task_id": subagentParent.parentTaskId,
+          "parent.trace_id": subagentParent.parentTraceId,
+        }
       : {}),
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
@@ -290,19 +340,38 @@ export async function runAgentLoop(
   // phases that wrap the model loop (cold start, context prepare, compaction) so
   // a slow turn can be attributed to non-model work. Best-effort: telemetry must
   // never break the run, and a noop tracer/unscoped run simply emits nothing.
-  const emitPhaseSpan = (phaseName: string, label: string, startMs: number, endMs: number): void => {
+  const emitPhaseSpan = (
+    phaseName: string,
+    label: string,
+    startMs: number,
+    endMs: number,
+  ): void => {
     try {
       const durationMs = Math.max(0, endMs - startMs);
-      const attributes = { "phase.name": label, "phase.duration_ms": durationMs };
-      const phaseSpan = tracer.startSpan(phaseName, {
-        startTime: startMs,
-        attributes: { ...observabilityAttributes(observabilityScope), ...attributes },
-      }, rootOtelContext);
+      const attributes = {
+        "phase.name": label,
+        "phase.duration_ms": durationMs,
+      };
+      const phaseSpan = tracer.startSpan(
+        phaseName,
+        {
+          startTime: startMs,
+          attributes: {
+            ...observabilityAttributes(observabilityScope),
+            ...attributes,
+          },
+        },
+        rootOtelContext,
+      );
       const spanContext = phaseSpan.spanContext();
       phaseSpan.end(endMs);
       publishSpan({
-        traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
-        spanId: /[^0]/.test(spanContext.spanId) ? spanContext.spanId : mintSpanId(),
+        traceId: /[^0]/.test(spanContext.traceId)
+          ? spanContext.traceId
+          : traceId,
+        spanId: /[^0]/.test(spanContext.spanId)
+          ? spanContext.spanId
+          : mintSpanId(),
         parentSpanId: rootSpanId,
         name: phaseName,
         kind: "phase",
@@ -325,62 +394,92 @@ export async function runAgentLoop(
   // turn context the handler assembled before this loop began.
   const coldStart = consumeColdStart(runStartedAt);
   if (coldStart) {
-    emitPhaseSpan("phase.cold_start", "Cold start", coldStart.startMs, coldStart.startMs + coldStart.durationMs);
+    emitPhaseSpan(
+      "phase.cold_start",
+      "Cold start",
+      coldStart.startMs,
+      coldStart.startMs + coldStart.durationMs,
+    );
   }
   if (turnContext.timings) {
-    emitPhaseSpan("phase.context_prepare", "Context prepare", turnContext.timings.prepareStartedMs, turnContext.timings.prepareEndedMs);
+    emitPhaseSpan(
+      "phase.context_prepare",
+      "Context prepare",
+      turnContext.timings.prepareStartedMs,
+      turnContext.timings.prepareEndedMs,
+    );
     if (turnContext.timings.compaction) {
-      emitPhaseSpan("phase.compaction", "Compaction", turnContext.timings.compaction.startedMs, turnContext.timings.compaction.endedMs);
+      emitPhaseSpan(
+        "phase.compaction",
+        "Compaction",
+        turnContext.timings.compaction.startedMs,
+        turnContext.timings.compaction.endedMs,
+      );
     }
   }
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
   const builtTools = {
-    ...await createTools({
-      accountId: session.accountId,
-      conversationKey: session.conversationKey,
-      workspaces: resolvedWorkspaces,
-      statelessSandbox: statelessSandbox,
-      statelessPermissionMode: session.statelessPermissionMode(),
-      modelProviderName: configuredModel.providerName,
-      modelProvider: configuredModel.provider,
-      session: session,
-      dispatchAsyncTools: options.dispatchAsyncTools,
-      onSandboxCpu: recordSandboxCpu,
-      approvalRequirements: configuredApprovals,
-      policyToolIdsByName,
-      sandboxMetadata: {
-        traceId: traceId,
-        taskId: session.eventId,
-        ...(session.agentId ? { agentId: session.agentId } : {}),
+    ...(await createTools(
+      {
+        accountId: session.accountId,
         conversationKey: session.conversationKey,
+        workspaces: resolvedWorkspaces,
+        statelessSandbox: statelessSandbox,
+        statelessPermissionMode: session.statelessPermissionMode(),
+        modelProviderName: configuredModel.providerName,
+        modelProvider: configuredModel.provider,
+        session: session,
+        dispatchAsyncTools: options.dispatchAsyncTools,
+        onSandboxCpu: recordSandboxCpu,
+        approvalRequirements: configuredApprovals,
+        policyToolIdsByName,
+        sandboxMetadata: {
+          traceId: traceId,
+          taskId: session.eventId,
+          ...(session.agentId ? { agentId: session.agentId } : {}),
+          conversationKey: session.conversationKey,
+        },
+        // The handler owns subagent lifecycle, so the loop only forwards the
+        // dispatcher into the tool registry for this one model run. Ephemeral
+        // system messages are request-local, so pass the current turn copy into
+        // child dispatch instead of expecting the coordinator to reload it.
+        ...(options.dispatchSubagents
+          ? {
+              dispatchSubagents: (tasks, messages) =>
+                options.dispatchSubagents!(
+                  tasks,
+                  stripReasoningFromMessages(messages),
+                  turnContext.ephemeralSystem,
+                ),
+            }
+          : {}),
       },
-      // The handler owns subagent lifecycle, so the loop only forwards the
-      // dispatcher into the tool registry for this one model run. Ephemeral
-      // system messages are request-local, so pass the current turn copy into
-      // child dispatch instead of expecting the coordinator to reload it.
-      ...(options.dispatchSubagents
-        ? {
-          dispatchSubagents: (tasks, messages) =>
-            options.dispatchSubagents!(tasks, stripReasoningFromMessages(messages), turnContext.ephemeralSystem),
-        }
-        : {}),
-    }, agentConfig),
+      agentConfig,
+    )),
   } satisfies ToolSet;
   // Wrap tool execution so tool.call.started hooks can deny/edit args and
   // tool.result hooks can transform output (no-op when no such hooks exist).
   const tools = wrapToolsWithHooks(builtTools, hooks);
-  const policyToolApproval = await createPolicyToolApproval(agentConfig, {
-    accountId: session.accountId,
-    project: session.projectSlug,
-    environment: session.environmentSlug,
-    endpointId: session.endpointId,
-    agentId: session.agentId,
-    conversationKey: session.conversationKey,
-    delivery: session.delivery?.kind ?? "direct",
-    channel: session.delivery?.kind === "channel" ? session.delivery.channelName : undefined,
-  }, resolvedWorkspaces, { toolIdsByName: policyToolIdsByName });
+  const policyToolApproval = await createPolicyToolApproval(
+    agentConfig,
+    {
+      accountId: session.accountId,
+      project: session.projectSlug,
+      environment: session.environmentSlug,
+      endpointId: session.endpointId,
+      agentId: session.agentId,
+      conversationKey: session.conversationKey,
+      delivery: session.delivery?.kind ?? "direct",
+      channel:
+        session.delivery?.kind === "channel"
+          ? session.delivery.channelName
+          : undefined,
+    },
+    resolvedWorkspaces,
+    { toolIdsByName: policyToolIdsByName },
+  );
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals,
     workspaces: resolvedWorkspaces,
@@ -408,13 +507,17 @@ export async function runAgentLoop(
     parentSpanId: string,
     attributes: Record<string, string | number | boolean>,
   ): TrackedSpan => {
-    const otelSpan = tracer.startSpan(name, {
-      startTime: startTimeMs,
-      attributes: {
-        ...observabilityAttributes(observabilityScope),
-        ...attributes,
+    const otelSpan = tracer.startSpan(
+      name,
+      {
+        startTime: startTimeMs,
+        attributes: {
+          ...observabilityAttributes(observabilityScope),
+          ...attributes,
+        },
       },
-    }, parentContext);
+      parentContext,
+    );
     const spanContext = otelSpan.spanContext();
 
     return {
@@ -422,7 +525,9 @@ export async function runAgentLoop(
       otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
       name,
       traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
-      spanId: /[^0]/.test(spanContext.spanId) ? spanContext.spanId : mintSpanId(),
+      spanId: /[^0]/.test(spanContext.spanId)
+        ? spanContext.spanId
+        : mintSpanId(),
       parentSpanId,
       startTimeMs,
       attributes,
@@ -492,7 +597,10 @@ export async function runAgentLoop(
     const endTimeMs = runStartedAt + durationMs;
     for (const tracked of [...toolSpans.values(), ...stepSpans.values()]) {
       if (status === "failed") {
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: sanitizedError?.message });
+        tracked.otelSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: sanitizedError?.message,
+        });
       }
       tracked.otelSpan.end(endTimeMs);
       publishSpan({
@@ -521,10 +629,16 @@ export async function runAgentLoop(
     // so the dashboard reads final usage straight off the trace stream.
     const cpuUsecByType = new Map<string, number>();
     for (const sample of sandboxUsageByKey.values()) {
-      cpuUsecByType.set(sample.type, (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec);
+      cpuUsecByType.set(
+        sample.type,
+        (cpuUsecByType.get(sample.type) ?? 0) + sample.cpuUsec,
+      );
     }
     const sandboxCpuAttributes = Object.fromEntries(
-      [...cpuUsecByType.entries()].map(([type, cpuUsec]) => [`sandbox.cpu_usec.${type}`, cpuUsec]),
+      [...cpuUsecByType.entries()].map(([type, cpuUsec]) => [
+        `sandbox.cpu_usec.${type}`,
+        cpuUsec,
+      ]),
     );
     const rootSpanRow: ObservabilitySpanRow = {
       traceId,
@@ -558,11 +672,17 @@ export async function runAgentLoop(
     // End the root OTel span (durable Tempo export).
     try {
       otelRootSpan.setAttributes(
-        rootSpanRow.attributes as Record<string, string | number | boolean | undefined>,
+        rootSpanRow.attributes as Record<
+          string,
+          string | number | boolean | undefined
+        >,
       );
       if (status === "failed") {
         if (sanitizedError) otelRootSpan.recordException(sanitizedError);
-        otelRootSpan.setStatus({ code: SpanStatusCode.ERROR, message: sanitizedError?.message });
+        otelRootSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: sanitizedError?.message,
+        });
       } else {
         otelRootSpan.setStatus({ code: SpanStatusCode.OK });
       }
@@ -596,7 +716,10 @@ export async function runAgentLoop(
         totalTokens: taskTokens.totalTokens,
         runtimeKind: "lambda",
         runtimeWallMs: durationMs,
-        runtimeMemoryMb: parseInt(process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0", 10),
+        runtimeMemoryMb: parseInt(
+          process.env.AWS_LAMBDA_FUNCTION_MEMORY_SIZE ?? "0",
+          10,
+        ),
         sandboxUsage: [...sandboxUsageByKey.values()],
         stepCount,
         toolCallCount,
@@ -629,12 +752,15 @@ export async function runAgentLoop(
     applyAgentStartedMutation(turnContext, mutation);
   }
 
-  logInfo(`Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`, {
-    eventType: "model.invocation.started",
-    ...logContext,
-    messageCount: turnContext.messages.length,
-    enabledTools: Object.keys(tools),
-  });
+  logInfo(
+    `Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`,
+    {
+      eventType: "model.invocation.started",
+      ...logContext,
+      messageCount: turnContext.messages.length,
+      enabledTools: Object.keys(tools),
+    },
+  );
 
   const stream = streamText({
     maxOutputTokens: 16000,
@@ -649,7 +775,11 @@ export async function runAgentLoop(
     // SDK-native OTel spans (via the @ai-sdk/otel integration registered in
     // initOtel). Inputs/outputs are off: the harness's own span rows already
     // carry redacted response/tool payloads for the dashboard.
-    telemetry: { functionId: "harness.agent", recordInputs: false, recordOutputs: false },
+    telemetry: {
+      functionId: "harness.agent",
+      recordInputs: false,
+      recordOutputs: false,
+    },
     stopWhen: isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async () => {
       // `systemContextSnapshot` is the persisted system-message snapshot from
@@ -687,7 +817,11 @@ export async function runAgentLoop(
         bump(textWindow);
       } else if (chunk.type === "reasoning-delta") {
         bump(reasoningWindow);
-      } else if (chunk.type === "tool-input-start" || chunk.type === "tool-input-delta" || chunk.type === "tool-call") {
+      } else if (
+        chunk.type === "tool-input-start" ||
+        chunk.type === "tool-input-delta" ||
+        chunk.type === "tool-call"
+      ) {
         bump(toolInputWindow);
       }
     },
@@ -730,13 +864,16 @@ export async function runAgentLoop(
       if (stepNumber !== undefined && !stepStartedAt.has(stepNumber)) {
         stepStartedAt.set(stepNumber, now);
       }
-      const parent = stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
+      const parent =
+        stepNumber !== undefined ? stepSpans.get(stepNumber) : undefined;
       const attributes = {
         "tool.name": toolCall.toolName,
         "tool.call_id": toolCall.toolCallId,
         "tool.state": "running",
         "tool.input": traceAttribute(toolCall.input),
-        ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
+        ...(stepNumber !== undefined
+          ? { "agent.step_number": stepNumber }
+          : {}),
       };
       const tracked = startTrackedSpan(
         "tool.call",
@@ -772,24 +909,34 @@ export async function runAgentLoop(
       const stepNumber = toolStepNumbers.get(toolCall.toolCallId);
       toolStepNumbers.delete(toolCall.toolCallId);
       const durationMs = toolExecutionMs;
-      const output = toolOutput.type === "tool-result" ? toolOutput.output : undefined;
-      const error = toolOutput.type === "tool-error" ? toolOutput.error : undefined;
+      const output =
+        toolOutput.type === "tool-result" ? toolOutput.output : undefined;
+      const error =
+        toolOutput.type === "tool-error" ? toolOutput.error : undefined;
       // Close the tool.call span.
       const toolEndMs = Date.now();
-      const tracked = toolSpans.get(toolCall.toolCallId) ?? startTrackedSpan(
-        "tool.call",
-        toolEndMs - (durationMs ?? 0),
-        rootOtelContext,
-        rootSpanId,
-        { "tool.name": toolCall.toolName, "tool.call_id": toolCall.toolCallId },
-      );
+      const tracked =
+        toolSpans.get(toolCall.toolCallId) ??
+        startTrackedSpan(
+          "tool.call",
+          toolEndMs - (durationMs ?? 0),
+          rootOtelContext,
+          rootSpanId,
+          {
+            "tool.name": toolCall.toolName,
+            "tool.call_id": toolCall.toolCallId,
+          },
+        );
       const toolDurationMs = toolEndMs - tracked.startTimeMs;
       const outputErrorText = toolOutputErrorText(output);
-      const toolSucceeded = toolOutput.type === "tool-result" && !outputErrorText;
-      const errorText = toolSucceeded ? undefined : redactSensitiveText(
-        outputErrorText ?? errorMessage(error),
-        getObservabilityContext()?.secretValues,
-      );
+      const toolSucceeded =
+        toolOutput.type === "tool-result" && !outputErrorText;
+      const errorText = toolSucceeded
+        ? undefined
+        : redactSensitiveText(
+            outputErrorText ?? errorMessage(error),
+            getObservabilityContext()?.secretValues,
+          );
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
@@ -802,7 +949,10 @@ export async function runAgentLoop(
       } else {
         const spanError = new Error(errorText);
         tracked.otelSpan.recordException(spanError);
-        tracked.otelSpan.setStatus({ code: SpanStatusCode.ERROR, message: errorText });
+        tracked.otelSpan.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: errorText,
+        });
       }
       tracked.otelSpan.end(toolEndMs);
       const toolSpanRow: ObservabilitySpanRow = {
@@ -824,14 +974,20 @@ export async function runAgentLoop(
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
           ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
-          ...(stepNumber !== undefined ? { "agent.step_number": stepNumber } : {}),
+          ...(stepNumber !== undefined
+            ? { "agent.step_number": stepNumber }
+            : {}),
         },
         ...(errorText ? { error: errorText } : {}),
       };
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
-      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber, durationMs, success: toolSucceeded });
+      recordToolCallSummary(toolCallSummaries, toolCall, {
+        stepNumber,
+        durationMs,
+        success: toolSucceeded,
+      });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -849,15 +1005,21 @@ export async function runAgentLoop(
       };
 
       if (toolSucceeded) {
-        logInfo(`Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`, details);
+        logInfo(
+          `Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`,
+          details,
+        );
         return;
       }
 
-      logError(`Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`, {
-        ...details,
-        error: errorText ?? errorMessage(error),
-        errorDetails: serializeError(error),
-      });
+      logError(
+        `Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`,
+        {
+          ...details,
+          error: errorText ?? errorMessage(error),
+          errorDetails: serializeError(error),
+        },
+      );
     },
     onStepEnd: async ({
       stepNumber,
@@ -873,7 +1035,8 @@ export async function runAgentLoop(
       reasoningText,
     }) => {
       const startedAt = stepStartedAt.get(stepNumber);
-      const durationMs = startedAt === undefined ? undefined : Date.now() - startedAt;
+      const durationMs =
+        startedAt === undefined ? undefined : Date.now() - startedAt;
       stepStartedAt.delete(stepNumber);
       const stepText = (text ?? "").trim();
       if (stepText) {
@@ -887,20 +1050,30 @@ export async function runAgentLoop(
       // by the AI SDK; cast to the shape extractCacheWriteTokens expects.
       const meta = providerMetadata as Record<string, unknown> | undefined;
       const stepTokens = usageTokenTotals(usage);
-      taskCacheWriteTokens += stepTokens.cacheWriteTokens || extractCacheWriteTokens(configuredModel.providerName, meta);
+      taskCacheWriteTokens +=
+        stepTokens.cacheWriteTokens ||
+        extractCacheWriteTokens(configuredModel.providerName, meta);
 
       // Provider coercion warnings (e.g. an unsupported `reasoning` level or a
       // dropped setting) are silent in the stream; surface them in Loki.
       if (warnings && warnings.length > 0) {
-        logWarn(`Model call warning on step ${stepNumber}: ${warnings.map((warning) => formatCallWarning(warning)).filter(Boolean).join("; ")}`, {
-          eventType: "model.step.warnings",
-          ...logContext,
-          stepNumber: stepNumber,
-          warnings: warnings.map((warning) => redactSensitiveText(
-            formatCallWarning(warning),
-            getObservabilityContext()?.secretValues,
-          )),
-        });
+        logWarn(
+          `Model call warning on step ${stepNumber}: ${warnings
+            .map((warning) => formatCallWarning(warning))
+            .filter(Boolean)
+            .join("; ")}`,
+          {
+            eventType: "model.step.warnings",
+            ...logContext,
+            stepNumber: stepNumber,
+            warnings: warnings.map((warning) =>
+              redactSensitiveText(
+                formatCallWarning(warning),
+                getObservabilityContext()?.secretValues,
+              ),
+            ),
+          },
+        );
       }
 
       await lifecycle.emit("agent.step.finished", {
@@ -919,29 +1092,37 @@ export async function runAgentLoop(
           toolCallCount: toolCalls.length,
         });
       }
-      await Promise.all(toolResults.map((toolResult) =>
-        lifecycle.emit("tool.result", {
+      await Promise.all(
+        toolResults.map((toolResult) =>
+          lifecycle.emit("tool.result", {
+            stepNumber: stepNumber,
+            toolResult: toLifecycleValue(toolResult),
+          }),
+        ),
+      );
+      logInfo(
+        `Agent step ${stepNumber} finished: ${finishReason}, ${toolCalls.length} tool call(s), ${formatUsageSummary(usage)}, ${formatDuration(durationMs)}`,
+        {
+          eventType: "model.step.finished",
+          ...logContext,
           stepNumber: stepNumber,
-          toolResult: toLifecycleValue(toolResult),
-        })
-      ));
-      logInfo(`Agent step ${stepNumber} finished: ${finishReason}, ${toolCalls.length} tool call(s), ${formatUsageSummary(usage)}, ${formatDuration(durationMs)}`, {
-        eventType: "model.step.finished",
-        ...logContext,
-        stepNumber: stepNumber,
-        finishReason: finishReason,
-        rawFinishReason: rawFinishReason,
-        durationMs: durationMs,
-        toolCallCount: toolCalls.length,
-        toolCalls: toolCalls.map(({ toolCallId, toolName }) => ({ toolCallId, toolName })),
-        usage: usage,
-        responseMetadata: {
-          id: response.id,
-          modelId: response.modelId,
-          timestamp: response.timestamp.toISOString(),
+          finishReason: finishReason,
+          rawFinishReason: rawFinishReason,
+          durationMs: durationMs,
+          toolCallCount: toolCalls.length,
+          toolCalls: toolCalls.map(({ toolCallId, toolName }) => ({
+            toolCallId,
+            toolName,
+          })),
+          usage: usage,
+          responseMetadata: {
+            id: response.id,
+            modelId: response.modelId,
+            timestamp: response.timestamp.toISOString(),
+          },
+          providerMetadata,
         },
-        providerMetadata,
-      });
+      );
 
       // Publish the model.step span (tree: agent.task -> model.step -> tool.call).
       // Tool spans reference this stepSpanId as their parent; without it they
@@ -957,12 +1138,21 @@ export async function runAgentLoop(
         //               child tool.call spans). Absent when no chunk was observed.
         const firstTokenMs = firstChunkAt.get(stepNumber);
         const lastTokenMs = lastModelChunkAt.get(stepNumber) ?? firstTokenMs;
-        const ttftMs = firstTokenMs !== undefined ? Math.max(0, firstTokenMs - tracked.startTimeMs) : undefined;
-        const streamMs = firstTokenMs !== undefined && lastTokenMs !== undefined
-          ? Math.max(0, lastTokenMs - firstTokenMs)
-          : undefined;
-        const toolWaitMs = lastTokenMs !== undefined ? Math.max(0, stepEndMs - lastTokenMs) : undefined;
-        const windowMs = (window: StreamWindow | undefined): number | undefined =>
+        const ttftMs =
+          firstTokenMs !== undefined
+            ? Math.max(0, firstTokenMs - tracked.startTimeMs)
+            : undefined;
+        const streamMs =
+          firstTokenMs !== undefined && lastTokenMs !== undefined
+            ? Math.max(0, lastTokenMs - firstTokenMs)
+            : undefined;
+        const toolWaitMs =
+          lastTokenMs !== undefined
+            ? Math.max(0, stepEndMs - lastTokenMs)
+            : undefined;
+        const windowMs = (
+          window: StreamWindow | undefined,
+        ): number | undefined =>
           window ? Math.max(0, window.last - window.first) : undefined;
         const reasoningMs = windowMs(reasoningWindow.get(stepNumber));
         const textMs = windowMs(textWindow.get(stepNumber));
@@ -982,10 +1172,16 @@ export async function runAgentLoop(
           "agent.tool_call_count": toolCalls.length,
           ...(ttftMs !== undefined ? { "model.ttft_ms": ttftMs } : {}),
           ...(streamMs !== undefined ? { "model.stream_ms": streamMs } : {}),
-          ...(toolWaitMs !== undefined ? { "model.tool_wait_ms": toolWaitMs } : {}),
-          ...(reasoningMs !== undefined ? { "model.reasoning_stream_ms": reasoningMs } : {}),
+          ...(toolWaitMs !== undefined
+            ? { "model.tool_wait_ms": toolWaitMs }
+            : {}),
+          ...(reasoningMs !== undefined
+            ? { "model.reasoning_stream_ms": reasoningMs }
+            : {}),
           ...(textMs !== undefined ? { "model.text_stream_ms": textMs } : {}),
-          ...(toolInputMs !== undefined ? { "model.tool_input_stream_ms": toolInputMs } : {}),
+          ...(toolInputMs !== undefined
+            ? { "model.tool_input_stream_ms": toolInputMs }
+            : {}),
           "model.input_tokens": stepTokens.inputTokens,
           "model.output_tokens": stepTokens.outputTokens,
           "model.reasoning_tokens": stepTokens.reasoningTokens,
@@ -1049,16 +1245,19 @@ export async function runAgentLoop(
       didFail = true;
       failureText = errorText;
       terminalError = error instanceof Error ? error : new Error(errorText);
-      logError(`Agent loop failed after ${formatDuration(Date.now() - runStartedAt)}${tools.toolsUsed.length > 0 ? ` using ${tools.toolsUsed.join(", ")}` : ""}: ${errorText}`, {
-        eventType: "model.invocation.failed",
-        ...logContext,
-        durationMs: Date.now() - runStartedAt,
-        toolsUsed: tools.toolsUsed,
-        toolUsage: tools.toolUsage,
-        toolCalls: tools.toolCalls,
-        error: errorText,
-        errorDetails: serializeError(error),
-      });
+      logError(
+        `Agent loop failed after ${formatDuration(Date.now() - runStartedAt)}${tools.toolsUsed.length > 0 ? ` using ${tools.toolsUsed.join(", ")}` : ""}: ${errorText}`,
+        {
+          eventType: "model.invocation.failed",
+          ...logContext,
+          durationMs: Date.now() - runStartedAt,
+          toolsUsed: tools.toolsUsed,
+          toolUsage: tools.toolUsage,
+          toolCalls: tools.toolCalls,
+          error: errorText,
+          errorDetails: serializeError(error),
+        },
+      );
 
       await lifecycle.emit("agent.failed", {
         error: errorText,
@@ -1066,7 +1265,7 @@ export async function runAgentLoop(
         toolUsage: toLifecycleValue(tools.toolUsage),
         toolCalls: toLifecycleValue(tools.toolCalls),
       });
-      await reply?.onErrorText(errorText).catch(() => { });
+      await reply?.onErrorText(errorText).catch(() => {});
     },
     onEnd: async ({
       response,
@@ -1123,18 +1322,21 @@ export async function runAgentLoop(
           didFail = true;
           failureText = errorText;
           terminalError = new Error(errorText);
-          logError(`${errorText}${tools.toolsUsed.length > 0 ? `; tools used: ${tools.toolsUsed.join(", ")}` : ""}`, {
-            eventType: "model.invocation.failed",
-            ...logContext,
-            durationMs: Date.now() - runStartedAt,
-            finishReason: finishReason,
-            stepCount: stepCount,
-            toolCallCount: toolCallCount,
-            toolsUsed: tools.toolsUsed,
-            toolUsage: tools.toolUsage,
-            toolCalls: tools.toolCalls,
-            usage: usage,
-          });
+          logError(
+            `${errorText}${tools.toolsUsed.length > 0 ? `; tools used: ${tools.toolsUsed.join(", ")}` : ""}`,
+            {
+              eventType: "model.invocation.failed",
+              ...logContext,
+              durationMs: Date.now() - runStartedAt,
+              finishReason: finishReason,
+              stepCount: stepCount,
+              toolCallCount: toolCallCount,
+              toolsUsed: tools.toolsUsed,
+              toolUsage: tools.toolUsage,
+              toolCalls: tools.toolCalls,
+              usage: usage,
+            },
+          );
           await lifecycle.emit("agent.failed", {
             error: errorText,
             finishReason: finishReason,
@@ -1144,14 +1346,17 @@ export async function runAgentLoop(
             toolUsage: toLifecycleValue(tools.toolUsage),
             toolCalls: toLifecycleValue(tools.toolCalls),
           });
-          await reply?.onErrorText(errorText).catch(() => { });
+          await reply?.onErrorText(errorText).catch(() => {});
           return;
         }
 
         // The invocation (and its token spend) is real even if structured-output
         // parsing or reply delivery below fails, so record the metric line once
         // here; a later failure adds its own model.invocation.failed line.
-        logInfo(`Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(usage)}, ${formatDuration(finishLog.durationMs)}`, finishLog);
+        logInfo(
+          `Model invocation finished: ${finishReason}, ${stepCount} step(s), ${toolCallCount} tool call(s), ${tools.toolsUsed.length > 0 ? `tools ${tools.toolsUsed.join(", ")}, ` : ""}${formatUsageSummary(usage)}, ${formatDuration(finishLog.durationMs)}`,
+          finishLog,
+        );
 
         if (approvals.length > 0) {
           approvalSummaries = approvals;
@@ -1165,15 +1370,24 @@ export async function runAgentLoop(
           // a returned { approve } to auto-resolve is a follow-up: it re-enters the
           // approval continuation flow, which stays owned by the handler.
           if (hooks.hasHooksFor("agent.approval.required")) {
-            await hooks.runMutation("agent.approval.required", { approvals: toLifecycleValue(approvals) });
+            await hooks.runMutation("agent.approval.required", {
+              approvals: toLifecycleValue(approvals),
+            });
           }
           await reply?.onApprovalRequired?.(approvals);
           return;
         }
 
         if (modelOutput) {
-          finalResponse = await modelOutput.parseCompleteOutput({ text }, { response, usage, finishReason }) as JSONValue;
-          finalResponse = await foldAgentFinished(hooks, finalResponse, finishReason);
+          finalResponse = (await modelOutput.parseCompleteOutput(
+            { text },
+            { response, usage, finishReason },
+          )) as JSONValue;
+          finalResponse = await foldAgentFinished(
+            hooks,
+            finalResponse,
+            finishReason,
+          );
           await reply?.onFinalText(finalResponse);
           await lifecycle.emit("agent.finished", {
             finishReason: finishReason,
@@ -1225,7 +1439,7 @@ export async function runAgentLoop(
         if (hooks.hasHooksFor("agent.failed")) {
           await hooks.runMutation("agent.failed", { error: errorText });
         }
-        await reply?.onErrorText(errorText).catch(() => { });
+        await reply?.onErrorText(errorText).catch(() => {});
       } finally {
         await finalizeUsage(
           didFail ? "failed" : "completed",
@@ -1248,7 +1462,9 @@ export async function runAgentLoop(
     if (usageFinalized) return;
     if (!finishObserved) {
       didFail = true;
-      terminalError ??= new Error("Model stream ended without a completion callback");
+      terminalError ??= new Error(
+        "Model stream ended without a completion callback",
+      );
       failureText ??= terminalError.message;
     }
     await finalizeUsage(
@@ -1297,19 +1513,26 @@ function errorMessage(error: unknown): string {
   const rawMessage = error instanceof Error ? error.message : String(error);
   // This text reaches the end user via reply.onErrorText, so it must pass the
   // same secret scrubbing the telemetry path applies before any sink sees it.
-  const message = redactSensitiveText(rawMessage, getObservabilityContext()?.secretValues);
+  const message = redactSensitiveText(
+    rawMessage,
+    getObservabilityContext()?.secretValues,
+  );
   // Provider-managed assets (uploadFile/uploadSkill provider references) are
   // per-provider: switching config.model.provider mid-conversation invalidates
   // them. Return an actionable message instead of the bare provider error.
   if (NoSuchProviderReferenceError.isInstance(error)) {
-    return `${message} The conversation references a file or skill uploaded to a different ` +
+    return (
+      `${message} The conversation references a file or skill uploaded to a different ` +
       `provider's storage. Re-upload it for the "${error.provider}" provider, switch ` +
-      `config.model.provider back, or attach the content as workspace (S3) files instead.`;
+      `config.model.provider back, or attach the content as workspace (S3) files instead.`
+    );
   }
   if (UnsupportedFunctionalityError.isInstance(error)) {
-    return `${message} The configured model provider does not support this capability; ` +
+    return (
+      `${message} The configured model provider does not support this capability; ` +
       `use a provider that does, or attach the content as workspace (S3) files instead of ` +
-      `provider uploads.`;
+      `provider uploads.`
+    );
   }
   return message;
 }
@@ -1339,7 +1562,9 @@ function formatCallWarning(warning: {
 }
 
 function formatDuration(durationMs: number | undefined): string {
-  return typeof durationMs === "number" ? `${durationMs}ms` : "unknown duration";
+  return typeof durationMs === "number"
+    ? `${durationMs}ms`
+    : "unknown duration";
 }
 
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
@@ -1352,7 +1577,8 @@ function toolOutputErrorText(output: unknown): string | undefined {
     return undefined;
   }
   const maybeOutput = output as { type?: unknown; value?: unknown };
-  return maybeOutput.type === "error-text" && typeof maybeOutput.value === "string"
+  return maybeOutput.type === "error-text" &&
+    typeof maybeOutput.value === "string"
     ? maybeOutput.value
     : undefined;
 }
@@ -1367,25 +1593,38 @@ function applyAgentStartedMutation(
   if (!mutation) {
     return;
   }
-  if (typeof mutation.system === "string" && mutation.system.trim().length > 0) {
-    const message: SystemModelMessage = { role: "system", content: mutation.system };
+  if (
+    typeof mutation.system === "string" &&
+    mutation.system.trim().length > 0
+  ) {
+    const message: SystemModelMessage = {
+      role: "system",
+      content: mutation.system,
+    };
     turnContext.system = [...turnContext.system, message];
     turnContext.ephemeralSystem = [...turnContext.ephemeralSystem, message];
   }
   // Hooks are non-fatal, so a malformed messages override is dropped rather
   // than passed to streamText where it would fail the run.
-  if (Array.isArray(mutation.messages) && mutation.messages.every(isModelMessageShape)) {
+  if (
+    Array.isArray(mutation.messages) &&
+    mutation.messages.every(isModelMessageShape)
+  ) {
     turnContext.messages = mutation.messages as ModelMessage[];
   } else if (mutation.messages !== undefined) {
-    logWarn("Ignoring agent.started hook messages override: entries are not model messages");
+    logWarn(
+      "Ignoring agent.started hook messages override: entries are not model messages",
+    );
   }
 }
 
 function isModelMessageShape(entry: unknown): boolean {
-  return isPlainObject(entry)
-    && typeof entry.role === "string"
-    && ["system", "user", "assistant", "tool"].includes(entry.role)
-    && entry.content !== undefined;
+  return (
+    isPlainObject(entry) &&
+    typeof entry.role === "string" &&
+    ["system", "user", "assistant", "tool"].includes(entry.role) &&
+    entry.content !== undefined
+  );
 }
 
 // Fold an agent.finished hook's { output } into the final response. On the
@@ -1403,10 +1642,14 @@ async function foldAgentFinished(
     finishReason,
     response: toLifecycleValue(response),
   });
-  return mutation && "output" in mutation ? (mutation.output as JSONValue) : response;
+  return mutation && "output" in mutation
+    ? (mutation.output as JSONValue)
+    : response;
 }
 
-function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalRequestOutput[] {
+function extractApprovalRequests(
+  steps: Array<StepResult<ToolSet>>,
+): ApprovalRequestOutput[] {
   return steps.flatMap((step) =>
     step.content.flatMap((part) => {
       if (part.type !== "tool-approval-request") {
@@ -1414,11 +1657,13 @@ function extractApprovalRequests(steps: Array<StepResult<ToolSet>>): ApprovalReq
       }
 
       return [part];
-    })
+    }),
   );
 }
 
-function summarizeApprovalRequest(request: ApprovalRequestOutput): ToolApprovalSummary {
+function summarizeApprovalRequest(
+  request: ApprovalRequestOutput,
+): ToolApprovalSummary {
   return {
     approvalId: request.approvalId,
     toolCallId: request.toolCall.toolCallId,
@@ -1445,13 +1690,18 @@ function recordToolCallSummary(
   });
 }
 
-function toolCallIdentity(toolCall: unknown): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
+function toolCallIdentity(
+  toolCall: unknown,
+): Pick<ToolCallSummary, "toolCallId" | "toolName"> | null {
   if (!toolCall || typeof toolCall !== "object") {
     return null;
   }
 
   const record = toolCall as Record<string, unknown>;
-  if (typeof record.toolCallId !== "string" || typeof record.toolName !== "string") {
+  if (
+    typeof record.toolCallId !== "string" ||
+    typeof record.toolName !== "string"
+  ) {
     return null;
   }
 
@@ -1462,13 +1712,18 @@ function toolCallIdentity(toolCall: unknown): Pick<ToolCallSummary, "toolCallId"
 }
 
 function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>) {
-  const toolCalls = [...summaries.values()].sort((left, right) =>
-    (left.stepNumber ?? 0) - (right.stepNumber ?? 0) || left.toolCallId.localeCompare(right.toolCallId)
+  const toolCalls = [...summaries.values()].sort(
+    (left, right) =>
+      (left.stepNumber ?? 0) - (right.stepNumber ?? 0) ||
+      left.toolCallId.localeCompare(right.toolCallId),
   );
-  const toolUsage = toolCalls.reduce<Record<string, number>>((counts, toolCall) => {
-    counts[toolCall.toolName] = (counts[toolCall.toolName] ?? 0) + 1;
-    return counts;
-  }, {});
+  const toolUsage = toolCalls.reduce<Record<string, number>>(
+    (counts, toolCall) => {
+      counts[toolCall.toolName] = (counts[toolCall.toolName] ?? 0) + 1;
+      return counts;
+    },
+    {},
+  );
 
   return {
     toolsUsed: Object.keys(toolUsage).sort(),
@@ -1482,7 +1737,10 @@ function withApprovalToolCalls(
   approvalRequests: ApprovalRequestOutput[],
 ): ModelMessage[] {
   const toolCallsById = new Map(
-    approvalRequests.map((request) => [request.toolCall.toolCallId, request.toolCall]),
+    approvalRequests.map((request) => [
+      request.toolCall.toolCallId,
+      request.toolCall,
+    ]),
   );
 
   return messages.map((message) => {
@@ -1496,7 +1754,10 @@ function withApprovalToolCalls(
         .map((part) => part.toolCallId),
     );
     const content = message.content.flatMap((part) => {
-      if (part.type !== "tool-approval-request" || existingToolCallIds.has(part.toolCallId)) {
+      if (
+        part.type !== "tool-approval-request" ||
+        existingToolCallIds.has(part.toolCallId)
+      ) {
         return [part];
       }
 
@@ -1529,8 +1790,16 @@ function serializeError(error: unknown): Record<string, unknown> {
 
   const errorObject = error as Record<string, unknown>;
   const details: Record<string, unknown> = {
-    name: typeof errorObject.name === "string" ? errorObject.name : error instanceof Error ? error.name : undefined,
-    message: typeof errorObject.message === "string" ? errorObject.message : errorMessage(error),
+    name:
+      typeof errorObject.name === "string"
+        ? errorObject.name
+        : error instanceof Error
+          ? error.name
+          : undefined,
+    message:
+      typeof errorObject.message === "string"
+        ? errorObject.message
+        : errorMessage(error),
   };
 
   for (const key of ["status", "statusCode", "requestId"]) {

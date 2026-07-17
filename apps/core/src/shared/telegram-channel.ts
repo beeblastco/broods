@@ -3,10 +3,18 @@
  * Implements Telegram auth, message normalization, and reply actions through the Chat SDK Telegram adapter.
  */
 
-import { TelegramAdapter, type TelegramMessage, type TelegramUpdate } from "@chat-adapter/telegram";
+import {
+  TelegramAdapter,
+  type TelegramMessage,
+  type TelegramUpdate,
+} from "@chat-adapter/telegram";
 import { ConsoleLogger, fromFullStream } from "chat";
 import { timingSafeEqual } from "node:crypto";
-import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
+import type {
+  ChannelActions,
+  ChannelAdapter,
+  ChannelParseResult,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -93,14 +101,23 @@ export function createTelegramChannel(
           }
         },
         sendTyping: () => transport.startTyping(source.threadId),
-        reactToMessage: () => transport.addReaction(source.threadId, source.messageId, reactionEmoji),
+        reactToMessage: () =>
+          transport.addReaction(
+            source.threadId,
+            source.messageId,
+            reactionEmoji,
+          ),
         ...(source.chatId > 0
           ? {
-            stream: async (textStream, options) => {
-              const result = await transport.stream(source.threadId, fromFullStream(textStream), options);
-              return result?.id ?? null;
-            },
-          }
+              stream: async (textStream, options) => {
+                const result = await transport.stream(
+                  source.threadId,
+                  fromFullStream(textStream),
+                  options,
+                );
+                return result?.id ?? null;
+              },
+            }
           : {}),
       };
     },
@@ -132,9 +149,10 @@ function splitTelegramRawText(text: string): string[] {
       candidate.lastIndexOf("\n"),
       candidate.lastIndexOf(" "),
     );
-    const boundary = splitAt > TELEGRAM_SAFE_RAW_CHUNK_SIZE * 0.5
-      ? splitAt
-      : TELEGRAM_SAFE_RAW_CHUNK_SIZE;
+    const boundary =
+      splitAt > TELEGRAM_SAFE_RAW_CHUNK_SIZE * 0.5
+        ? splitAt
+        : TELEGRAM_SAFE_RAW_CHUNK_SIZE;
     chunks.push(remaining.slice(0, boundary).trim());
     remaining = remaining.slice(boundary).trim();
   }
@@ -159,7 +177,9 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
     chatId: source.chatId,
     messageId: source.messageId,
     threadId: source.threadId,
-    fromUserId: typeof source.fromUserId === "number" ? source.fromUserId : undefined,
-    fromUsername: typeof source.fromUsername === "string" ? source.fromUsername : undefined,
+    fromUserId:
+      typeof source.fromUserId === "number" ? source.fromUserId : undefined,
+    fromUsername:
+      typeof source.fromUsername === "string" ? source.fromUsername : undefined,
   };
 }

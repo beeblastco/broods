@@ -26,45 +26,49 @@ type Ctx = QueryCtx | MutationCtx;
  * belong to no project and are absent.
  */
 export async function agentsInProject(
-    ctx: Ctx,
-    projectId: Id<"projects">,
-    accountId: Id<"accounts">,
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  accountId: Id<"accounts">,
 ): Promise<Doc<"agents">[]> {
-    // Prefix scan on the compound index: every environment of this project.
-    const configs = await ctx.db
-        .query("agentConfigs")
-        .withIndex("by_projectId_and_environmentId", (q) => q.eq("projectId", projectId))
-        .collect();
+  // Prefix scan on the compound index: every environment of this project.
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_projectId_and_environmentId", (q) =>
+      q.eq("projectId", projectId),
+    )
+    .collect();
 
-    const agents: Doc<"agents">[] = [];
-    for (const config of configs) {
-        if (!config.agentId) continue;
-        const normalized = ctx.db.normalizeId("agents", config.agentId);
-        if (!normalized) continue;
-        const agent = await ctx.db.get(normalized);
-        if (!agent) continue;
-        if (agent.accountId !== accountId) continue;
+  const agents: Doc<"agents">[] = [];
+  for (const config of configs) {
+    if (!config.agentId) continue;
+    const normalized = ctx.db.normalizeId("agents", config.agentId);
+    if (!normalized) continue;
+    const agent = await ctx.db.get(normalized);
+    if (!agent) continue;
+    if (agent.accountId !== accountId) continue;
 
-        agents.push(agent);
-    }
+    agents.push(agent);
+  }
 
-    return agents;
+  return agents;
 }
 
 /** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
 export async function cronsInProject(
-    ctx: Ctx,
-    projectId: Id<"projects">,
-    accountId: Id<"accounts">,
+  ctx: Ctx,
+  projectId: Id<"projects">,
+  accountId: Id<"accounts">,
 ): Promise<Doc<"crons">[]> {
-    const agentIds = new Set(
-        (await agentsInProject(ctx, projectId, accountId)).map((agent) => agent._id),
-    );
+  const agentIds = new Set(
+    (await agentsInProject(ctx, projectId, accountId)).map(
+      (agent) => agent._id,
+    ),
+  );
 
-    const crons = await ctx.db
-        .query("crons")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-        .collect();
+  const crons = await ctx.db
+    .query("crons")
+    .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+    .collect();
 
-    return crons.filter((cron) => agentIds.has(cron.agentId));
+  return crons.filter((cron) => agentIds.has(cron.agentId));
 }

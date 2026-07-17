@@ -6,14 +6,18 @@
  */
 
 import type { ObservabilityLogEntry } from "../../../../packages/broods/src/observability-contracts.ts";
-import { ensureObservabilityStream, getObservabilityNatsConn, logsSubject } from "./nats.ts";
+import {
+  ensureObservabilityStream,
+  getObservabilityNatsConn,
+  logsSubject,
+} from "./nats.ts";
 import { emitOtelLog, getObservabilityContext } from "./otel.ts";
 
 // Keys are matched after normalizing to lowercase with hyphens/underscores
 // stripped, against three lists: exact, prefix, and suffix.
 const DENY_EXACT: ReadonlySet<string> = new Set([
   "authorization",
-  "xapikey",        // x-api-key / x_api_key
+  "xapikey", // x-api-key / x_api_key
   "apikey",
   "secret",
   "token",
@@ -74,17 +78,20 @@ function isRedactedKey(key: string): boolean {
 
 const BEARER_SECRET_PATTERN = /\bBearer\s+[^\s,;]+/gi;
 const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
-const QUERY_SECRET_PATTERN = /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
+const QUERY_SECRET_PATTERN =
+  /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
 const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
 
 function isSensitiveEnvName(name: string): boolean {
   const normalized = name.toLowerCase().replace(/[-_]/g, "");
-  return isRedactedKey(name) ||
+  return (
+    isRedactedKey(name) ||
     normalized.includes("credential") ||
     normalized.includes("authorization") ||
     normalized.endsWith("headers") ||
     normalized.endsWith("providerconfigjson") ||
-    normalized.endsWith("toolsjson");
+    normalized.endsWith("toolsjson")
+  );
 }
 
 function sensitiveEnvValues(): string[] {
@@ -94,7 +101,10 @@ function sensitiveEnvValues(): string[] {
     if (value.length >= 4) values.push(value);
     const authValue = value.match(/\b(?:Basic|Bearer)\s+([^,\s]+)/i)?.[1];
     if (authValue && authValue.length >= 4) values.push(authValue);
-    if (value.trimStart().startsWith("{") || value.trimStart().startsWith("[")) {
+    if (
+      value.trimStart().startsWith("{") ||
+      value.trimStart().startsWith("[")
+    ) {
       try {
         values.push(...collectSecretValues(JSON.parse(value)));
       } catch {
@@ -108,8 +118,9 @@ function sensitiveEnvValues(): string[] {
 
 function redactString(value: string, secretValues: readonly string[]): string {
   let redacted = value;
-  const uniqueSecrets = [...new Set(secretValues.filter((secret) => secret.length >= 4))]
-    .sort((left, right) => right.length - left.length);
+  const uniqueSecrets = [
+    ...new Set(secretValues.filter((secret) => secret.length >= 4)),
+  ].sort((left, right) => right.length - left.length);
   for (const secret of uniqueSecrets) {
     redacted = redacted.split(secret).join("[redacted]");
   }
@@ -122,18 +133,28 @@ function redactString(value: string, secretValues: readonly string[]): string {
 }
 
 /** Redact a free-form string using sensitive env values plus task-local secrets. */
-export function redactSensitiveText(value: string, additionalSecretValues: readonly string[] = []): string {
-  return redactString(value, [...sensitiveEnvValues(), ...additionalSecretValues]);
+export function redactSensitiveText(
+  value: string,
+  additionalSecretValues: readonly string[] = [],
+): string {
+  return redactString(value, [
+    ...sensitiveEnvValues(),
+    ...additionalSecretValues,
+  ]);
 }
 
 /**
  * Deep-redact an arbitrary value. Sensitive keys are replaced wholesale, while
  * every nested string is scrubbed against the supplied secret-value set.
  */
-export function redact(value: unknown, secretValues: readonly string[] = sensitiveEnvValues()): unknown {
+export function redact(
+  value: unknown,
+  secretValues: readonly string[] = sensitiveEnvValues(),
+): unknown {
   if (typeof value === "string") return redactString(value, secretValues);
   if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map((item) => redact(item, secretValues));
+  if (Array.isArray(value))
+    return value.map((item) => redact(item, secretValues));
 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -154,26 +175,41 @@ export function collectSecretValues(value: unknown): string[] {
     }
 
     const record = current as Record<string, unknown>;
-    const namedKey = typeof record.key === "string"
-      ? record.key
-      : typeof record.name === "string"
-        ? record.name
-        : undefined;
-    if (namedKey && isRedactedKey(namedKey) && typeof record.value === "string") {
+    const namedKey =
+      typeof record.key === "string"
+        ? record.key
+        : typeof record.name === "string"
+          ? record.name
+          : undefined;
+    if (
+      namedKey &&
+      isRedactedKey(namedKey) &&
+      typeof record.value === "string"
+    ) {
       secrets.add(record.value);
     }
 
     for (const [key, nested] of Object.entries(record)) {
       const normalizedKey = key.toLowerCase().replace(/[-_]/g, "");
-      if (["env", "envvars", "environmentvariables", "runtimevariables"].includes(normalizedKey)) {
+      if (
+        ["env", "envvars", "environmentvariables", "runtimevariables"].includes(
+          normalizedKey,
+        )
+      ) {
         if (Array.isArray(nested)) {
           for (const entry of nested) {
-            if (entry && typeof entry === "object" && typeof (entry as { value?: unknown }).value === "string") {
+            if (
+              entry &&
+              typeof entry === "object" &&
+              typeof (entry as { value?: unknown }).value === "string"
+            ) {
               secrets.add((entry as { value: string }).value);
             }
           }
         } else if (nested && typeof nested === "object") {
-          for (const envValue of Object.values(nested as Record<string, unknown>)) {
+          for (const envValue of Object.values(
+            nested as Record<string, unknown>,
+          )) {
             if (typeof envValue === "string") secrets.add(envValue);
           }
         }
@@ -202,13 +238,18 @@ function publishNats(
   // malformed subject is wasted. Durable OTLP + stdout still capture the line.
   if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return;
 
-  const subject = logsSubject(ctx.accountId, ctx.project, ctx.environment, ctx.endpointId);
+  const subject = logsSubject(
+    ctx.accountId,
+    ctx.project,
+    ctx.environment,
+    ctx.endpointId,
+  );
 
   connPromise
     .then(async (conn) => {
       // Ensure the durable stream captures this line for dashboard replay;
       // memoized, so ~free after the first call. Live publish proceeds regardless.
-      await ensureObservabilityStream(conn).catch(() => { });
+      await ensureObservabilityStream(conn).catch(() => {});
       conn.publish(subject, ENCODER.encode(JSON.stringify(entry)));
     })
     .catch(() => {
@@ -228,7 +269,9 @@ function emit(
 
   // Build the full structured entry, then redact the message and data payload.
   const redactedMessage = redactString(message, secretValues);
-  const redactedData = data ? (redact(data, secretValues) as Record<string, unknown>) : undefined;
+  const redactedData = data
+    ? (redact(data, secretValues) as Record<string, unknown>)
+    : undefined;
   const entry: Record<string, unknown> = {
     ...redactedData,
     time: new Date(ts).toISOString(),
@@ -236,7 +279,13 @@ function emit(
     message: redactedMessage,
     service,
     "service.name": service,
-    ...(ctx ? { traceId: ctx.traceId, accountId: ctx.accountId, endpointId: ctx.endpointId } : {}),
+    ...(ctx
+      ? {
+          traceId: ctx.traceId,
+          accountId: ctx.accountId,
+          endpointId: ctx.endpointId,
+        }
+      : {}),
   };
 
   // 1. stdout — always, unmodified entry
@@ -264,7 +313,10 @@ function emit(
   }
 }
 
-export function logDebug(message: string, data?: Record<string, unknown>): void {
+export function logDebug(
+  message: string,
+  data?: Record<string, unknown>,
+): void {
   emit("DEBUG", message, data);
 }
 
@@ -276,6 +328,9 @@ export function logWarn(message: string, data?: Record<string, unknown>): void {
   emit("WARN", message, data);
 }
 
-export function logError(message: string, data?: Record<string, unknown>): void {
+export function logError(
+  message: string,
+  data?: Record<string, unknown>,
+): void {
   emit("ERROR", message, data);
 }

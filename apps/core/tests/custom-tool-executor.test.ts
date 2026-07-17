@@ -9,8 +9,11 @@ import { describe, expect, it, mock } from "bun:test";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
-const bundleSource = "export default { name: 'echo', execute(ctx, input) { return input; } };";
-const readS3BytesMock = mock(async () => new TextEncoder().encode(bundleSource) as Uint8Array);
+const bundleSource =
+  "export default { name: 'echo', execute(ctx, input) { return input; } };";
+const readS3BytesMock = mock(
+  async () => new TextEncoder().encode(bundleSource) as Uint8Array,
+);
 
 // Spread the real module first: mock.module replaces it for the whole test
 // process, so overriding only readS3Bytes strips every other export from the
@@ -23,7 +26,8 @@ mock.module("../src/shared/s3.ts", () => ({
 
 describe("createRunnerPayload", () => {
   it("inlines the bundle and merges default + agent config", async () => {
-    const { createRunnerPayload } = await import("../src/harness/tools/custom-tool-executor.ts");
+    const { createRunnerPayload } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
@@ -41,7 +45,8 @@ describe("createRunnerPayload", () => {
   });
 
   it("lets agent config override the tool default config", async () => {
-    const { createRunnerPayload } = await import("../src/harness/tools/custom-tool-executor.ts");
+    const { createRunnerPayload } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
@@ -55,10 +60,17 @@ describe("createRunnerPayload", () => {
 
 describe("runner frame protocol", () => {
   it("parses NDJSON frames and rejects non-protocol lines", async () => {
-    const { parseToolRunnerFrame } = await import("../src/harness/tools/custom-tool-executor.ts");
+    const { parseToolRunnerFrame } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
 
-    expect(parseToolRunnerFrame('{"t":"chunk","output":{"n":1}}')).toEqual({ t: "chunk", output: { n: 1 } });
-    expect(parseToolRunnerFrame('{"t":"final","result":42}')).toEqual({ t: "final", result: 42 });
+    expect(parseToolRunnerFrame('{"t":"chunk","output":{"n":1}}')).toEqual({
+      t: "chunk",
+      output: { n: 1 },
+    });
+    expect(parseToolRunnerFrame('{"t":"final","result":42}')).toEqual({
+      t: "final",
+      result: 42,
+    });
     expect(parseToolRunnerFrame('{"t":"end"}')).toEqual({ t: "end" });
     expect(parseToolRunnerFrame("")).toBeNull();
     expect(parseToolRunnerFrame("curl: (7) connection refused")).toBeNull();
@@ -66,7 +78,8 @@ describe("runner frame protocol", () => {
   });
 
   it("FrameQueue yields whole frames as lines arrive, then flushes on close", async () => {
-    const { FrameQueue } = await import("../src/harness/tools/custom-tool-executor.ts");
+    const { FrameQueue } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
     const queue = new FrameQueue();
     const collected: unknown[] = [];
     const consume = (async () => {

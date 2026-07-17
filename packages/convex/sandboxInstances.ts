@@ -17,9 +17,9 @@ import { getActiveAccountForUser } from "./org";
 import { sandboxInstancesFields } from "./schema";
 
 const sandboxInstanceDoc = v.object({
-    ...sandboxInstancesFields,
-    _id: v.id("sandboxInstances"),
-    _creationTime: v.number(),
+  ...sandboxInstancesFields,
+  _id: v.id("sandboxInstances"),
+  _creationTime: v.number(),
 });
 
 /**
@@ -28,24 +28,25 @@ const sandboxInstanceDoc = v.object({
  * @returns the account's instance rows, or `[]` when no org/account resolves.
  */
 export const listForActiveOrg = query({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.id("environments"),
-    },
-    returns: v.array(sandboxInstanceDoc),
-    handler: async (ctx, args) => {
-        const account = await getActiveAccountForUser(ctx);
-        if (!account) return [];
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+  },
+  returns: v.array(sandboxInstanceDoc),
+  handler: async (ctx, args) => {
+    const account = await getActiveAccountForUser(ctx);
+    if (!account) return [];
 
-        return await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_accountId_projectId_and_environmentId", (q) =>
-                q.eq("accountId", account._id)
-                    .eq("projectId", args.projectId)
-                    .eq("environmentId", args.environmentId),
-            )
-            .take(100);
-    },
+    return await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_accountId_projectId_and_environmentId", (q) =>
+        q
+          .eq("accountId", account._id)
+          .eq("projectId", args.projectId)
+          .eq("environmentId", args.environmentId),
+      )
+      .take(100);
+  },
 });
 
 /**
@@ -63,80 +64,96 @@ export const listForActiveOrg = query({
  * @param snapshotId the snapshot/image the instance launched from, when pinned.
  */
 export const upsert = internalMutation({
-    args: {
-        accountId: v.id("accounts"),
-        projectId: v.optional(v.id("projects")),
-        environmentId: v.optional(v.id("environments")),
-        provider: sandboxInstancesFields.provider,
-        reservationKey: v.string(),
-        externalId: v.string(),
-        name: v.string(),
-        specs: sandboxInstancesFields.specs,
-        sandboxConfigId: v.optional(v.id("sandboxConfigs")),
-        snapshotId: v.optional(v.string()),
-        egress: sandboxInstancesFields.egress,
-        permissionMode: sandboxInstancesFields.permissionMode,
-        createdByTraceId: sandboxInstancesFields.createdByTraceId,
-        createdByTaskId: sandboxInstancesFields.createdByTaskId,
-        lastUsedTraceId: sandboxInstancesFields.lastUsedTraceId,
-        lastUsedTaskId: sandboxInstancesFields.lastUsedTaskId,
-        agentId: sandboxInstancesFields.agentId,
-        conversationKey: sandboxInstancesFields.conversationKey,
-        workspaceName: sandboxInstancesFields.workspaceName,
-        workspaceId: sandboxInstancesFields.workspaceId,
-    },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        const existing = await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_reservationKey", (q) => q.eq("reservationKey", args.reservationKey))
-            .unique();
-        if (existing && existing.accountId !== args.accountId) return null;
+  args: {
+    accountId: v.id("accounts"),
+    projectId: v.optional(v.id("projects")),
+    environmentId: v.optional(v.id("environments")),
+    provider: sandboxInstancesFields.provider,
+    reservationKey: v.string(),
+    externalId: v.string(),
+    name: v.string(),
+    specs: sandboxInstancesFields.specs,
+    sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+    snapshotId: v.optional(v.string()),
+    egress: sandboxInstancesFields.egress,
+    permissionMode: sandboxInstancesFields.permissionMode,
+    createdByTraceId: sandboxInstancesFields.createdByTraceId,
+    createdByTaskId: sandboxInstancesFields.createdByTaskId,
+    lastUsedTraceId: sandboxInstancesFields.lastUsedTraceId,
+    lastUsedTaskId: sandboxInstancesFields.lastUsedTaskId,
+    agentId: sandboxInstancesFields.agentId,
+    conversationKey: sandboxInstancesFields.conversationKey,
+    workspaceName: sandboxInstancesFields.workspaceName,
+    workspaceId: sandboxInstancesFields.workspaceId,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    if (existing && existing.accountId !== args.accountId) return null;
 
-        const now = Date.now();
-        const fields = {
-            externalId: args.externalId,
-            name: args.name,
-            specs: args.specs,
-            status: "running" as const,
-            lastUsedAt: now,
-            ...(args.projectId ? { projectId: args.projectId } : {}),
-            ...(args.environmentId ? { environmentId: args.environmentId } : {}),
-            ...(args.sandboxConfigId ? { sandboxConfigId: args.sandboxConfigId } : {}),
-            ...(args.snapshotId ? { snapshotId: args.snapshotId } : {}),
-            ...(args.egress ? { egress: args.egress } : {}),
-            ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
-            ...(args.lastUsedTraceId ? { lastUsedTraceId: args.lastUsedTraceId } : {}),
-            ...(args.lastUsedTaskId ? { lastUsedTaskId: args.lastUsedTaskId } : {}),
-            ...(args.agentId ? { agentId: args.agentId } : {}),
-            ...(args.conversationKey ? { conversationKey: args.conversationKey } : {}),
-            ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
-            ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
-        };
-        if (existing) {
-            await ctx.db.patch(existing._id, {
-                ...fields,
-                ...(!existing.createdByTraceId && args.createdByTraceId ? { createdByTraceId: args.createdByTraceId } : {}),
-                ...(!existing.createdByTaskId && args.createdByTaskId ? { createdByTaskId: args.createdByTaskId } : {}),
-            });
+    const now = Date.now();
+    const fields = {
+      externalId: args.externalId,
+      name: args.name,
+      specs: args.specs,
+      status: "running" as const,
+      lastUsedAt: now,
+      ...(args.projectId ? { projectId: args.projectId } : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      ...(args.sandboxConfigId
+        ? { sandboxConfigId: args.sandboxConfigId }
+        : {}),
+      ...(args.snapshotId ? { snapshotId: args.snapshotId } : {}),
+      ...(args.egress ? { egress: args.egress } : {}),
+      ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
+      ...(args.lastUsedTraceId
+        ? { lastUsedTraceId: args.lastUsedTraceId }
+        : {}),
+      ...(args.lastUsedTaskId ? { lastUsedTaskId: args.lastUsedTaskId } : {}),
+      ...(args.agentId ? { agentId: args.agentId } : {}),
+      ...(args.conversationKey
+        ? { conversationKey: args.conversationKey }
+        : {}),
+      ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
+      ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ...fields,
+        ...(!existing.createdByTraceId && args.createdByTraceId
+          ? { createdByTraceId: args.createdByTraceId }
+          : {}),
+        ...(!existing.createdByTaskId && args.createdByTaskId
+          ? { createdByTaskId: args.createdByTaskId }
+          : {}),
+      });
 
-            return null;
-        }
+      return null;
+    }
 
-        await ctx.db.insert("sandboxInstances", {
-            accountId: args.accountId,
-            ...(args.projectId ? { projectId: args.projectId } : {}),
-            ...(args.environmentId ? { environmentId: args.environmentId } : {}),
-            provider: args.provider,
-            reservationKey: args.reservationKey,
-            createdAt: now,
-            ...(args.createdByTraceId ? { createdByTraceId: args.createdByTraceId } : {}),
-            ...(args.createdByTaskId ? { createdByTaskId: args.createdByTaskId } : {}),
-            ...fields,
-        });
+    await ctx.db.insert("sandboxInstances", {
+      accountId: args.accountId,
+      ...(args.projectId ? { projectId: args.projectId } : {}),
+      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      provider: args.provider,
+      reservationKey: args.reservationKey,
+      createdAt: now,
+      ...(args.createdByTraceId
+        ? { createdByTraceId: args.createdByTraceId }
+        : {}),
+      ...(args.createdByTaskId
+        ? { createdByTaskId: args.createdByTaskId }
+        : {}),
+      ...fields,
+    });
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -144,24 +161,26 @@ export const upsert = internalMutation({
  * instance owned by the active account and created from the supplied sandbox row.
  */
 export const isControllable = internalQuery({
-    args: {
-        accountId: v.id("accounts"),
-        sandboxConfigId: v.id("sandboxConfigs"),
-        reservationKey: v.string(),
-    },
-    returns: v.boolean(),
-    handler: async (ctx, args) => {
-        const instance = await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_reservationKey", (q) => q.eq("reservationKey", args.reservationKey))
-            .unique();
+  args: {
+    accountId: v.id("accounts"),
+    sandboxConfigId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", args.reservationKey),
+      )
+      .unique();
 
-        return Boolean(
-            instance &&
-            instance.accountId === args.accountId &&
-            instance.sandboxConfigId === args.sandboxConfigId,
-        );
-    },
+    return Boolean(
+      instance &&
+      instance.accountId === args.accountId &&
+      instance.sandboxConfigId === args.sandboxConfigId,
+    );
+  },
 });
 
 /**
@@ -173,14 +192,14 @@ export const isControllable = internalQuery({
  * @returns the account's instance rows
  */
 export const listForAccount = internalQuery({
-    args: { accountId: v.id("accounts") },
-    returns: v.array(sandboxInstanceDoc),
-    handler: async (ctx, args) => {
-        return await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
-            .take(1000);
-    },
+  args: { accountId: v.id("accounts") },
+  returns: v.array(sandboxInstanceDoc),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(1000);
+  },
 });
 
 /**
@@ -192,29 +211,31 @@ export const listForAccount = internalQuery({
  * @param status the new lifecycle status.
  */
 export const setStatus = internalMutation({
-    args: {
-        accountId: v.id("accounts"),
-        reservationKey: v.string(),
-        status: sandboxInstancesFields.status,
-    },
-    returns: v.null(),
-    handler: async (ctx, { accountId, reservationKey, status }) => {
-        const instance = await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_reservationKey", (q) => q.eq("reservationKey", reservationKey))
-            .unique();
-        if (!instance || instance.accountId !== accountId) return null;
+  args: {
+    accountId: v.id("accounts"),
+    reservationKey: v.string(),
+    status: sandboxInstancesFields.status,
+  },
+  returns: v.null(),
+  handler: async (ctx, { accountId, reservationKey, status }) => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", reservationKey),
+      )
+      .unique();
+    if (!instance || instance.accountId !== accountId) return null;
 
-        const now = Date.now();
-        await ctx.db.patch(instance._id, {
-            status,
-            lastUsedAt: now,
-            ...(status === "suspended" ? { suspendedAt: now } : {}),
-            ...(status === "terminating" ? { terminatedAt: now } : {}),
-        });
+    const now = Date.now();
+    await ctx.db.patch(instance._id, {
+      status,
+      lastUsedAt: now,
+      ...(status === "suspended" ? { suspendedAt: now } : {}),
+      ...(status === "terminating" ? { terminatedAt: now } : {}),
+    });
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -224,20 +245,22 @@ export const setStatus = internalMutation({
  * @param reservationKey the broods reconnection key.
  */
 export const remove = internalMutation({
-    args: {
-        accountId: v.id("accounts"),
-        reservationKey: v.string(),
-    },
-    returns: v.null(),
-    handler: async (ctx, { accountId, reservationKey }) => {
-        const instance = await ctx.db
-            .query("sandboxInstances")
-            .withIndex("by_reservationKey", (q) => q.eq("reservationKey", reservationKey))
-            .unique();
-        if (instance && instance.accountId === accountId) {
-            await ctx.db.delete(instance._id);
-        }
+  args: {
+    accountId: v.id("accounts"),
+    reservationKey: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { accountId, reservationKey }) => {
+    const instance = await ctx.db
+      .query("sandboxInstances")
+      .withIndex("by_reservationKey", (q) =>
+        q.eq("reservationKey", reservationKey),
+      )
+      .unique();
+    if (instance && instance.accountId === accountId) {
+      await ctx.db.delete(instance._id);
+    }
 
-        return null;
-    },
+    return null;
+  },
 });

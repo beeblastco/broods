@@ -88,7 +88,9 @@ export function createPancakeChannel(
     // a ?secret= query parameter instead.
     authenticate(req) {
       const provided = new URLSearchParams(req.rawQueryString).get("secret");
-      return Boolean(provided) && timingSafeStringEqual(provided!, webhookSecret);
+      return (
+        Boolean(provided) && timingSafeStringEqual(provided!, webhookSecret)
+      );
     },
 
     parse(req): ChannelParseResult | Promise<ChannelParseResult> {
@@ -96,12 +98,19 @@ export function createPancakeChannel(
     },
 
     actions(msg): ChannelActions {
-      return createPancakeActions(pageAccessToken, toPancakeSource(msg.source), senderId);
+      return createPancakeActions(
+        pageAccessToken,
+        toPancakeSource(msg.source),
+        senderId,
+      );
     },
   };
 }
 
-function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseResult {
+function parsePancakeWebhook(
+  req: ChannelRequest,
+  pageId: string,
+): ChannelParseResult {
   const payload = JSON.parse(req.body) as PancakeWebhookPayload;
   logInfo("Pancake webhook received", {
     configuredPageId: pageId,
@@ -110,8 +119,11 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
     conversationId: payload.data?.conversation?.id,
     messageId: payload.data?.message?.id,
     messageType: payload.data?.message?.type,
-    fromId: payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
-    fromName: payload.data?.message?.from?.name ?? payload.data?.conversation?.from?.name,
+    fromId:
+      payload.data?.message?.from?.id ?? payload.data?.conversation?.from?.id,
+    fromName:
+      payload.data?.message?.from?.name ??
+      payload.data?.conversation?.from?.name,
     pageCustomerId: payload.data?.message?.from?.page_customer_id,
     tagIds: normalizePancakeTagIds(payload.data?.conversation?.tags),
   });
@@ -133,7 +145,12 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
   const conversation = payload.data?.conversation;
   const message = payload.data?.message;
   const text = message?.message?.trim();
-  if (!conversation?.id || !message?.id || !text || !isPancakeMessageType(message.type)) {
+  if (
+    !conversation?.id ||
+    !message?.id ||
+    !text ||
+    !isPancakeMessageType(message.type)
+  ) {
     logInfo("Pancake webhook ignored", {
       reason: "missing_or_unsupported_message",
       pageId: payload.page_id,
@@ -145,7 +162,12 @@ function parsePancakeWebhook(req: ChannelRequest, pageId: string): ChannelParseR
     return { kind: "ignore" };
   }
 
-  if (message.is_hidden || message.is_removed || message.from?.id === pageId || !message.from?.page_customer_id) {
+  if (
+    message.is_hidden ||
+    message.is_removed ||
+    message.from?.id === pageId ||
+    !message.from?.page_customer_id
+  ) {
     logInfo("Pancake webhook ignored", {
       reason: message.is_hidden
         ? "hidden_message"
@@ -201,7 +223,8 @@ export function createPancakeActions(
   senderId?: string,
 ): ChannelActions {
   return {
-    sendText: (text) => sendPancakeMessage(pageAccessToken, source, text, senderId),
+    sendText: (text) =>
+      sendPancakeMessage(pageAccessToken, source, text, senderId),
     async sendTyping() {
       return;
     },
@@ -218,23 +241,25 @@ async function sendPancakeMessage(
   senderId?: string,
 ): Promise<void> {
   const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(source.conversationId)
-    }/messages`,
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(
+      source.conversationId,
+    )}/messages`,
   );
   url.searchParams.set("page_access_token", pageAccessToken);
 
-  const payload = source.messageType === "COMMENT"
-    ? {
-      action: "reply_comment",
-      message_id: source.messageId,
-      message: text,
-      ...(senderId ? { sender_id: senderId } : {}),
-    }
-    : {
-      action: "reply_inbox",
-      message: text,
-      ...(senderId ? { sender_id: senderId } : {}),
-    };
+  const payload =
+    source.messageType === "COMMENT"
+      ? {
+          action: "reply_comment",
+          message_id: source.messageId,
+          message: text,
+          ...(senderId ? { sender_id: senderId } : {}),
+        }
+      : {
+          action: "reply_inbox",
+          message: text,
+          ...(senderId ? { sender_id: senderId } : {}),
+        };
 
   logInfo("Pancake send message request", {
     pageId: source.pageId,
@@ -291,7 +316,10 @@ function toPancakeSource(source: Record<string, unknown>): PancakeSource {
     postId: typeof source.postId === "string" ? source.postId : undefined,
     fromId: typeof source.fromId === "string" ? source.fromId : undefined,
     fromName: typeof source.fromName === "string" ? source.fromName : undefined,
-    pageCustomerId: typeof source.pageCustomerId === "string" ? source.pageCustomerId : undefined,
+    pageCustomerId:
+      typeof source.pageCustomerId === "string"
+        ? source.pageCustomerId
+        : undefined,
   };
 }
 
@@ -308,7 +336,9 @@ function normalizePancakeTagIds(value: unknown): string[] {
   });
 }
 
-function isPancakeMessageType(value: unknown): value is PancakeSource["messageType"] {
+function isPancakeMessageType(
+  value: unknown,
+): value is PancakeSource["messageType"] {
   return value === "INBOX" || value === "COMMENT";
 }
 
@@ -316,19 +346,26 @@ function hashEventText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
 }
 
-function parseJsonBody(text: string): { success?: boolean; message?: string } | null {
+function parseJsonBody(
+  text: string,
+): { success?: boolean; message?: string } | null {
   if (!text) {
     return null;
   }
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    return parsed && typeof parsed === "object" ? parsed as { success?: boolean; message?: string } : null;
+    return parsed && typeof parsed === "object"
+      ? (parsed as { success?: boolean; message?: string })
+      : null;
   } catch {
     return null;
   }
 }
 
-function formatPancakeError(body: { message?: string } | null, bodyText: string): string {
+function formatPancakeError(
+  body: { message?: string } | null,
+  bodyText: string,
+): string {
   return body?.message ?? (bodyText || "unknown_error");
 }

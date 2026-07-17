@@ -43,8 +43,8 @@ export const myAgent = defineAgent({
 Both forms are equivalent:
 
 ```ts
-env.OPENAI_API_KEY      // property access
-env("OPENAI_API_KEY")   // call form
+env.OPENAI_API_KEY; // property access
+env("OPENAI_API_KEY"); // call form
 ```
 
 Set the value with the CLI:
@@ -87,14 +87,14 @@ export const myAgent = defineAgent({
 
 ### Supported Providers
 
-| Provider | Config key | Required fields |
-| --- | --- | --- |
-| Google | `google` | `apiKey` |
-| OpenAI | `openai` | `apiKey` |
-| Bedrock | `bedrock` | `region`, `apiKey` |
-| Gateway | `gateway` | `apiKey` |
-| MiniMax | `minimax` | `apiKey` |
-| OpenAI-compatible custom endpoint | `custom` | `apiKey`, `base_url` |
+| Provider                          | Config key | Required fields      |
+| --------------------------------- | ---------- | -------------------- |
+| Google                            | `google`   | `apiKey`             |
+| OpenAI                            | `openai`   | `apiKey`             |
+| Bedrock                           | `bedrock`  | `region`, `apiKey`   |
+| Gateway                           | `gateway`  | `apiKey`             |
+| MiniMax                           | `minimax`  | `apiKey`             |
+| OpenAI-compatible custom endpoint | `custom`   | `apiKey`, `base_url` |
 
 Use `custom` for providers that expose an OpenAI-compatible Chat Completions API:
 
@@ -144,12 +144,12 @@ and **take precedence** over `reasoning` when both are set — remove overlappin
 support the requested level, the SDK reports a call warning; the harness logs it
 (`model.step.warnings` events in Loki).
 
-| Provider | Provider-specific override |
-| --- | --- |
-| OpenAI | `providerOptions.openai.reasoningEffort` |
-| Anthropic | `providerOptions.anthropic.thinking` |
-| Google | `providerOptions.google.thinkingConfig` |
-| MiniMax | `providerOptions.anthropic.thinking` (Anthropic-compatible) |
+| Provider  | Provider-specific override                                  |
+| --------- | ----------------------------------------------------------- |
+| OpenAI    | `providerOptions.openai.reasoningEffort`                    |
+| Anthropic | `providerOptions.anthropic.thinking`                        |
+| Google    | `providerOptions.google.thinkingConfig`                     |
+| MiniMax   | `providerOptions.anthropic.thinking` (Anthropic-compatible) |
 
 ### Structured Output
 
@@ -235,8 +235,8 @@ export const myAgent = defineAgent({
   config: {
     sandbox: mySandbox,
     workspaces: [
-      notes,                                          // inherit agent sandbox
-      { workspace: notes, sandbox: null },            // read-only
+      notes, // inherit agent sandbox
+      { workspace: notes, sandbox: null }, // read-only
       { workspace: teamWorkspace, sandbox: reservedSandbox }, // per-workspace override
     ],
   },
@@ -248,7 +248,9 @@ export const myAgent = defineAgent({
 ```ts
 export const research = defineAgent({
   name: "research",
-  config: { /* ... */ },
+  config: {
+    /* ... */
+  },
 });
 
 export const myAgent = defineAgent({
@@ -313,7 +315,11 @@ export const workspacePolicy = definePolicy({
         actions: ["workspace.exec"],
         resources: { toolNames: ["bash"] },
         conditions: [
-          { attribute: "tool.input.command", operator: "contains", value: "rm -rf" },
+          {
+            attribute: "tool.input.command",
+            operator: "contains",
+            value: "rm -rf",
+          },
         ],
       },
       {

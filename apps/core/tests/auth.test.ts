@@ -6,8 +6,15 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
-import { hashAccountSecret, type AccountRecord } from "../src/shared/domain/accounts.ts";
-import { resetStorageForTests, setStorageForTests, type Storage } from "../src/shared/storage.ts";
+import {
+  hashAccountSecret,
+  type AccountRecord,
+} from "../src/shared/domain/accounts.ts";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+  type Storage,
+} from "../src/shared/storage.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
 
 const ACCOUNT: AccountRecord = {
@@ -42,20 +49,22 @@ beforeEach(() => {
   setStorageForTests({
     accounts: {
       getById: async (accountId: string) => accountsById[accountId] ?? null,
-      getBySecretHash: async (secretHash: string) => accountsBySecretHash[secretHash] ?? null,
+      getBySecretHash: async (secretHash: string) =>
+        accountsBySecretHash[secretHash] ?? null,
     },
     agents: {
-      getById: async (_accountId: string, agentId: string) => agentsById[agentId] ?? null,
+      getById: async (_accountId: string, agentId: string) =>
+        agentsById[agentId] ?? null,
     },
     agentDeployments: {
       getByApiKeyHash: async (apiKeyHash: string) =>
         apiKeyHash === sha256Hex(DEPLOYMENT_API_KEY)
           ? {
-            accountId: ACCOUNT.accountId,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
+              accountId: ACCOUNT.accountId,
+              endpointId: "env-endpoint",
+              projectSlug: "demo",
+              environmentSlug: "development",
+            }
           : null,
     },
   } as unknown as Storage);
@@ -82,17 +91,26 @@ describe("extractBearerToken", () => {
 
 describe("resolveBearerAuth", () => {
   it("resolves the admin secret", async () => {
-    const auth = await resolveBearerAuth({ authorization: "Bearer admin-secret" });
+    const auth = await resolveBearerAuth({
+      authorization: "Bearer admin-secret",
+    });
     expect(auth).toEqual({ kind: "admin" });
   });
 
   it("resolves an account by secret hash", async () => {
-    const auth = await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" });
-    expect(auth).toMatchObject({ kind: "account", account: { accountId: "acct_1" } });
+    const auth = await resolveBearerAuth({
+      authorization: "Bearer fp_acct_known-secret",
+    });
+    expect(auth).toMatchObject({
+      kind: "account",
+      account: { accountId: "acct_1" },
+    });
   });
 
   it("resolves a project/environment runtime API key", async () => {
-    const auth = await resolveBearerAuth({ authorization: `Bearer ${DEPLOYMENT_API_KEY}` });
+    const auth = await resolveBearerAuth({
+      authorization: `Bearer ${DEPLOYMENT_API_KEY}`,
+    });
     expect(auth).toMatchObject({
       kind: "deployment",
       account: { accountId: "acct_1" },
@@ -103,7 +121,9 @@ describe("resolveBearerAuth", () => {
   });
 
   it("rejects unknown tokens", async () => {
-    expect(await resolveBearerAuth({ authorization: "Bearer nope" })).toBeNull();
+    expect(
+      await resolveBearerAuth({ authorization: "Bearer nope" }),
+    ).toBeNull();
     expect(await resolveBearerAuth({})).toBeNull();
   });
 
@@ -112,13 +132,21 @@ describe("resolveBearerAuth", () => {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_1",
     });
-    expect(auth).toMatchObject({ kind: "account", viaServiceToken: true, account: { accountId: "acct_1" } });
+    expect(auth).toMatchObject({
+      kind: "account",
+      viaServiceToken: true,
+      account: { accountId: "acct_1" },
+    });
 
-    expect(await resolveBearerAuth({ authorization: "Bearer service-secret" })).toBeNull();
-    expect(await resolveBearerAuth({
-      authorization: "Bearer service-secret",
-      "x-account-id": "acct_missing",
-    })).toBeNull();
+    expect(
+      await resolveBearerAuth({ authorization: "Bearer service-secret" }),
+    ).toBeNull();
+    expect(
+      await resolveBearerAuth({
+        authorization: "Bearer service-secret",
+        "x-account-id": "acct_missing",
+      }),
+    ).toBeNull();
   });
 
   it("rejects the service token for disabled accounts", async () => {
@@ -129,20 +157,32 @@ describe("resolveBearerAuth", () => {
     };
 
     expect(await resolveBearerAuth(headers)).toBeNull();
-    expect(await resolveBearerAuth(headers, { allowDisabledAccountSecret: true })).toBeNull();
+    expect(
+      await resolveBearerAuth(headers, { allowDisabledAccountSecret: true }),
+    ).toBeNull();
   });
 
   it("rejects disabled accounts on the secret-hash path", async () => {
-    accountsBySecretHash[ACCOUNT.secretHash] = { ...ACCOUNT, status: "disabled" };
-    expect(await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" })).toBeNull();
+    accountsBySecretHash[ACCOUNT.secretHash] = {
+      ...ACCOUNT,
+      status: "disabled",
+    };
+    expect(
+      await resolveBearerAuth({ authorization: "Bearer fp_acct_known-secret" }),
+    ).toBeNull();
   });
 
   it("allows a disabled account secret only for an explicit deletion retry", async () => {
-    accountsBySecretHash[ACCOUNT.secretHash] = { ...ACCOUNT, status: "disabled" };
+    accountsBySecretHash[ACCOUNT.secretHash] = {
+      ...ACCOUNT,
+      status: "disabled",
+    };
     const headers = { authorization: "Bearer fp_acct_known-secret" };
 
     expect(await resolveBearerAuth(headers)).toBeNull();
-    expect(await resolveBearerAuth(headers, { allowDisabledAccountSecret: true })).toMatchObject({
+    expect(
+      await resolveBearerAuth(headers, { allowDisabledAccountSecret: true }),
+    ).toMatchObject({
       kind: "account",
       account: { accountId: "acct_1", status: "disabled" },
     });

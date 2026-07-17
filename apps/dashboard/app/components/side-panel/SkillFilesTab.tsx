@@ -92,8 +92,8 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>).
-        Saved in session only.
+        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
+        session only.
       </p>
       <div className="flex items-center gap-1.5">
         <Input
@@ -440,10 +440,11 @@ export function SkillFilesTab({
       {/* Status message */}
       {status.type !== "idle" && status.message && (
         <div
-          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] ${status.type === "error"
-            ? "bg-destructive/10 text-destructive"
-            : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-            }`}
+          className={`shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11px] ${
+            status.type === "error"
+              ? "bg-destructive/10 text-destructive"
+              : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          }`}
         >
           <span className="flex-1">{status.message}</span>
           <button

@@ -6,8 +6,22 @@
  * `"use node"` actions.
  */
 
-import { contentTypeForSkillPath, normalizeBundlePath, parseGitHubSkillUrl, parseSkillMarkdown, validateSkillDescription, validateSkillName, SKILL_FILE } from "./skillRules";
-import { deleteS3Prefix, listS3Prefix, readS3Bytes, readS3Text, writeS3Object } from "./s3";
+import {
+  contentTypeForSkillPath,
+  normalizeBundlePath,
+  parseGitHubSkillUrl,
+  parseSkillMarkdown,
+  validateSkillDescription,
+  validateSkillName,
+  SKILL_FILE,
+} from "./skillRules";
+import {
+  deleteS3Prefix,
+  listS3Prefix,
+  readS3Bytes,
+  readS3Text,
+  writeS3Object,
+} from "./s3";
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
@@ -16,25 +30,25 @@ const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
  * One file inside a skill bundle upload.
  */
 export interface SkillBundleFile {
-    path: string;
-    bytes: Uint8Array;
-    contentType?: string;
+  path: string;
+  bytes: Uint8Array;
+  contentType?: string;
 }
 
 /**
  * Skill identity parsed from SKILL.md plus its S3 path.
  */
 export interface SkillMetadata {
-    name: string;
-    description: string;
-    path: string;
+  name: string;
+  description: string;
+  path: string;
 }
 
 /**
  * A stored skill's metadata and file manifest.
  */
 export interface StoredSkill extends SkillMetadata {
-    files: Array<{ path: string; size?: number }>;
+  files: Array<{ path: string; size?: number }>;
 }
 
 /**
@@ -43,12 +57,12 @@ export interface StoredSkill extends SkillMetadata {
  * @throws when SKILLS_BUCKET_NAME is not configured
  */
 export function skillsBucketName(): string {
-    const bucket = process.env.SKILLS_BUCKET_NAME;
-    if (!bucket) {
-        throw new Error("SKILLS_BUCKET_NAME is required to store skills");
-    }
+  const bucket = process.env.SKILLS_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error("SKILLS_BUCKET_NAME is required to store skills");
+  }
 
-    return bucket;
+  return bucket;
 }
 
 /**
@@ -59,23 +73,33 @@ export function skillsBucketName(): string {
  * @returns the stored skill's metadata and manifest
  * @throws when the bundle violates a validation rule
  */
-export async function createOrReplaceSkill(accountId: string, input: SkillBundleFile[]): Promise<StoredSkill> {
-    const { metadata, files } = validateSkillBundle(input);
-    const skillPath = `${accountId}/${metadata.name}`;
+export async function createOrReplaceSkill(
+  accountId: string,
+  input: SkillBundleFile[],
+): Promise<StoredSkill> {
+  const { metadata, files } = validateSkillBundle(input);
+  const skillPath = `${accountId}/${metadata.name}`;
 
-    await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
-    await Promise.all(files.map((file) => writeS3Object(
+  await deleteS3Prefix(skillsBucketName(), `${skillPath}/`);
+  await Promise.all(
+    files.map((file) =>
+      writeS3Object(
         skillsBucketName(),
         `${skillPath}/${file.path}`,
         file.bytes,
         { contentType: file.contentType ?? contentTypeForSkillPath(file.path) },
-    )));
+      ),
+    ),
+  );
 
-    return {
-        ...metadata,
-        path: skillPath,
-        files: files.map((file) => ({ path: file.path, size: file.bytes.byteLength })),
-    };
+  return {
+    ...metadata,
+    path: skillPath,
+    files: files.map((file) => ({
+      path: file.path,
+      size: file.bytes.byteLength,
+    })),
+  };
 }
 
 /**
@@ -84,18 +108,21 @@ export async function createOrReplaceSkill(accountId: string, input: SkillBundle
  * @param skillName the skill name (without the account prefix)
  * @returns the stored skill, or null when it does not exist
  */
-export async function getSkill(accountId: string, skillName: string): Promise<StoredSkill | null> {
-    const metadata = await getSkillMetadata(accountId, skillName);
-    if (!metadata) return null;
-    const objects = await listS3Prefix(skillsBucketName(), `${metadata.path}/`);
+export async function getSkill(
+  accountId: string,
+  skillName: string,
+): Promise<StoredSkill | null> {
+  const metadata = await getSkillMetadata(accountId, skillName);
+  if (!metadata) return null;
+  const objects = await listS3Prefix(skillsBucketName(), `${metadata.path}/`);
 
-    return {
-        ...metadata,
-        files: objects.map((object) => ({
-            path: object.key.slice(`${metadata.path}/`.length),
-            ...(object.size !== undefined ? { size: object.size } : {}),
-        })),
-    };
+  return {
+    ...metadata,
+    files: objects.map((object) => ({
+      path: object.key.slice(`${metadata.path}/`.length),
+      ...(object.size !== undefined ? { size: object.size } : {}),
+    })),
+  };
 }
 
 /**
@@ -103,22 +130,25 @@ export async function getSkill(accountId: string, skillName: string): Promise<St
  * @param accountId account id owning the skills
  * @returns name/description/path for every readable skill
  */
-export async function listAccountSkills(accountId: string): Promise<SkillMetadata[]> {
-    const objects = await listS3Prefix(skillsBucketName(), `${accountId}/`);
-    const skillNames = new Set<string>();
-    for (const object of objects) {
-        const [, skillName] = object.key.split("/");
-        if (skillName) {
-            skillNames.add(skillName);
-        }
+export async function listAccountSkills(
+  accountId: string,
+): Promise<SkillMetadata[]> {
+  const objects = await listS3Prefix(skillsBucketName(), `${accountId}/`);
+  const skillNames = new Set<string>();
+  for (const object of objects) {
+    const [, skillName] = object.key.split("/");
+    if (skillName) {
+      skillNames.add(skillName);
     }
+  }
 
-    const skills = await Promise.all([...skillNames].map((skillName) =>
-        getSkillMetadata(accountId, skillName).catch(() => null)
-    ));
+  const skills = await Promise.all(
+    [...skillNames].map((skillName) =>
+      getSkillMetadata(accountId, skillName).catch(() => null),
+    ),
+  );
 
-    return skills
-        .filter((skill): skill is SkillMetadata => skill !== null);
+  return skills.filter((skill): skill is SkillMetadata => skill !== null);
 }
 
 /**
@@ -127,14 +157,20 @@ export async function listAccountSkills(accountId: string): Promise<SkillMetadat
  * @param skillName the skill name (without account prefix)
  * @returns metadata, or null when SKILL.md is missing or malformed
  */
-async function getSkillMetadata(accountId: string, skillName: string): Promise<SkillMetadata | null> {
-    validateSkillName(skillName);
-    const skillPath = `${accountId}/${skillName}`;
-    const markdown = await readS3Text(skillsBucketName(), `${skillPath}/${SKILL_FILE}`).catch(() => null);
-    if (markdown == null) return null;
-    const metadata = parseSkillMarkdown(markdown);
+async function getSkillMetadata(
+  accountId: string,
+  skillName: string,
+): Promise<SkillMetadata | null> {
+  validateSkillName(skillName);
+  const skillPath = `${accountId}/${skillName}`;
+  const markdown = await readS3Text(
+    skillsBucketName(),
+    `${skillPath}/${SKILL_FILE}`,
+  ).catch(() => null);
+  if (markdown == null) return null;
+  const metadata = parseSkillMarkdown(markdown);
 
-    return { ...metadata, path: skillPath };
+  return { ...metadata, path: skillPath };
 }
 
 /**
@@ -143,10 +179,13 @@ async function getSkillMetadata(accountId: string, skillName: string): Promise<S
  * @param skillName the skill name
  * @returns the number of objects deleted
  */
-export async function deleteSkill(accountId: string, skillName: string): Promise<number> {
-    validateSkillName(skillName);
+export async function deleteSkill(
+  accountId: string,
+  skillName: string,
+): Promise<number> {
+  validateSkillName(skillName);
 
-    return deleteS3Prefix(skillsBucketName(), `${accountId}/${skillName}/`);
+  return deleteS3Prefix(skillsBucketName(), `${accountId}/${skillName}/`);
 }
 
 /**
@@ -155,16 +194,22 @@ export async function deleteSkill(accountId: string, skillName: string): Promise
  * @param filePath the file path inside the skill
  * @returns the file contents
  */
-export async function readSkillFileBytes(skillPath: string, filePath: string): Promise<Uint8Array> {
-    return readS3Bytes(skillsBucketName(), `${skillPath}/${normalizeBundlePath(filePath)}`);
+export async function readSkillFileBytes(
+  skillPath: string,
+  filePath: string,
+): Promise<Uint8Array> {
+  return readS3Bytes(
+    skillsBucketName(),
+    `${skillPath}/${normalizeBundlePath(filePath)}`,
+  );
 }
 
 /**
  * A validated skill bundle: parsed SKILL.md metadata plus normalized files.
  */
 export interface ValidatedSkillBundle {
-    metadata: Omit<SkillMetadata, "path">;
-    files: SkillBundleFile[];
+  metadata: Omit<SkillMetadata, "path">;
+  files: SkillBundleFile[];
 }
 
 /**
@@ -174,33 +219,41 @@ export interface ValidatedSkillBundle {
  * @returns parsed metadata and normalized files
  * @throws when a rule is violated or SKILL.md is missing
  */
-export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBundle {
-    const files = input.map((file) => ({ ...file, path: normalizeBundlePath(file.path) }));
-    const seen = new Set<string>();
-    let totalBytes = 0;
-    for (const file of files) {
-        if (seen.has(file.path)) {
-            throw new Error(`Duplicate skill file path: ${file.path}`);
-        }
-        seen.add(file.path);
-        totalBytes += file.bytes.byteLength;
-        if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-            throw new Error(`Skill file is too large: ${file.path}`);
-        }
-        if (!isSupportedTextFile(file.path, file.bytes)) {
-            throw new Error(`Skill file must be a supported text file: ${file.path}`);
-        }
+export function validateSkillBundle(
+  input: SkillBundleFile[],
+): ValidatedSkillBundle {
+  const files = input.map((file) => ({
+    ...file,
+    path: normalizeBundlePath(file.path),
+  }));
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`Duplicate skill file path: ${file.path}`);
     }
-    if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-        throw new Error("Skill bundle exceeds 30 MB");
+    seen.add(file.path);
+    totalBytes += file.bytes.byteLength;
+    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
+      throw new Error(`Skill file is too large: ${file.path}`);
     }
+    if (!isSupportedTextFile(file.path, file.bytes)) {
+      throw new Error(`Skill file must be a supported text file: ${file.path}`);
+    }
+  }
+  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+    throw new Error("Skill bundle exceeds 30 MB");
+  }
 
-    const skillFile = files.find((file) => file.path === SKILL_FILE);
-    if (!skillFile) {
-        throw new Error("Skill bundle must include SKILL.md at the root");
-    }
+  const skillFile = files.find((file) => file.path === SKILL_FILE);
+  if (!skillFile) {
+    throw new Error("Skill bundle must include SKILL.md at the root");
+  }
 
-    return { metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)), files };
+  return {
+    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    files,
+  };
 }
 
 /**
@@ -211,16 +264,22 @@ export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBun
  * @param content markdown skill instructions
  * @returns the single-file bundle
  */
-export function createJsonSkillFiles(name: string, description: string, content: string): SkillBundleFile[] {
-    validateSkillName(name);
-    validateSkillDescription(description);
-    const markdown = `---\nname: ${name}\ndescription: ${description}\n---\n\n${content.trim()}\n`;
+export function createJsonSkillFiles(
+  name: string,
+  description: string,
+  content: string,
+): SkillBundleFile[] {
+  validateSkillName(name);
+  validateSkillDescription(description);
+  const markdown = `---\nname: ${name}\ndescription: ${description}\n---\n\n${content.trim()}\n`;
 
-    return [{
-        path: SKILL_FILE,
-        bytes: new TextEncoder().encode(markdown),
-        contentType: "text/markdown; charset=utf-8",
-    }];
+  return [
+    {
+      path: SKILL_FILE,
+      bytes: new TextEncoder().encode(markdown),
+      contentType: "text/markdown; charset=utf-8",
+    },
+  ];
 }
 
 /**
@@ -231,47 +290,73 @@ export function createJsonSkillFiles(name: string, description: string, content:
  * @returns the bundle files found under the URL's subdirectory
  * @throws when the download fails or the archive holds no files there
  */
-export async function fetchGitHubSkillFiles(url: unknown): Promise<SkillBundleFile[]> {
-    const parsed = parseGitHubSkillUrl(url);
-    const response = await fetch(parsed.archiveUrl, {
-        headers: {
-            "User-Agent": "broods-skill-importer",
-            "Accept": "application/x-gzip",
-        },
+export async function fetchGitHubSkillFiles(
+  url: unknown,
+): Promise<SkillBundleFile[]> {
+  const parsed = parseGitHubSkillUrl(url);
+  const response = await fetch(parsed.archiveUrl, {
+    headers: {
+      "User-Agent": "broods-skill-importer",
+      Accept: "application/x-gzip",
+    },
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(
+      `Failed to download GitHub skill archive: ${response.status}`,
+    );
+  }
+
+  // Web-standard gunzip: Convex's bundler rejects node builtins (node:zlib)
+  // outside "use node" entry files, and this model must stay importable.
+  const decompressed = response.body.pipeThrough(
+    new DecompressionStream("gzip"),
+  );
+  const archive = new Uint8Array(
+    await new Response(decompressed).arrayBuffer(),
+  );
+  const subdirPrefix = parsed.subdir ? `${parsed.subdir}/` : "";
+  const files: SkillBundleFile[] = [];
+  for (const entry of parseTarFiles(archive)) {
+    // Drop the archive's `<repo>-<ref>/` root directory.
+    const relative = entry.path.split("/").slice(1).join("/");
+    if (!relative || (subdirPrefix && !relative.startsWith(subdirPrefix))) {
+      continue;
+    }
+    const bundlePath = normalizeBundlePath(
+      subdirPrefix ? relative.slice(subdirPrefix.length) : relative,
+    );
+    files.push({
+      path: bundlePath,
+      bytes: entry.bytes,
+      contentType: contentTypeForSkillPath(bundlePath),
     });
-    if (!response.ok || !response.body) {
-        throw new Error(`Failed to download GitHub skill archive: ${response.status}`);
-    }
+  }
+  if (files.length === 0) {
+    throw new Error("GitHub archive has no files at that path");
+  }
 
-    // Web-standard gunzip: Convex's bundler rejects node builtins (node:zlib)
-    // outside "use node" entry files, and this model must stay importable.
-    const decompressed = response.body.pipeThrough(new DecompressionStream("gzip"));
-    const archive = new Uint8Array(await new Response(decompressed).arrayBuffer());
-    const subdirPrefix = parsed.subdir ? `${parsed.subdir}/` : "";
-    const files: SkillBundleFile[] = [];
-    for (const entry of parseTarFiles(archive)) {
-        // Drop the archive's `<repo>-<ref>/` root directory.
-        const relative = entry.path.split("/").slice(1).join("/");
-        if (!relative || (subdirPrefix && !relative.startsWith(subdirPrefix))) {
-            continue;
-        }
-        const bundlePath = normalizeBundlePath(subdirPrefix ? relative.slice(subdirPrefix.length) : relative);
-        files.push({
-            path: bundlePath,
-            bytes: entry.bytes,
-            contentType: contentTypeForSkillPath(bundlePath),
-        });
-    }
-    if (files.length === 0) {
-        throw new Error("GitHub archive has no files at that path");
-    }
-
-    return files;
+  return files;
 }
 
 const TEXT_EXTENSIONS = new Set([
-    ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
-    ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".sh",
+  ".sql",
+  ".svg",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
 ]);
 
 /**
@@ -281,13 +366,13 @@ const TEXT_EXTENSIONS = new Set([
  * @returns true when the file is acceptable
  */
 function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
-    const dot = filePath.lastIndexOf(".");
-    const extension = dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
-    if (!TEXT_EXTENSIONS.has(extension)) {
-        return false;
-    }
+  const dot = filePath.lastIndexOf(".");
+  const extension = dot >= 0 ? filePath.slice(dot).toLowerCase() : "";
+  if (!TEXT_EXTENSIONS.has(extension)) {
+    return false;
+  }
 
-    return !bytes.includes(0);
+  return !bytes.includes(0);
 }
 
 /**
@@ -296,38 +381,40 @@ function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
  * @param archive the uncompressed tar bytes
  * @returns the file entries with their full archive paths
  */
-function parseTarFiles(archive: Uint8Array): Array<{ path: string; bytes: Uint8Array }> {
-    const decoder = new TextDecoder();
-    const entries: Array<{ path: string; bytes: Uint8Array }> = [];
-    let overridePath: string | null = null;
-    let offset = 0;
-    while (offset + 512 <= archive.length) {
-        const header = archive.subarray(offset, offset + 512);
-        if (header.every((byte) => byte === 0)) {
-            break;
-        }
-        const size = parseInt(readTarString(decoder, header, 124, 12) || "0", 8);
-        const typeflag = String.fromCharCode(header[156] ?? 0);
-        const body = archive.subarray(offset + 512, offset + 512 + size);
-        if (typeflag === "x") {
-            overridePath = parsePaxPath(decoder.decode(body)) ?? overridePath;
-        } else if (typeflag === "L") {
-            overridePath = readTarString(decoder, body, 0, body.length);
-        } else {
-            if (typeflag === "0" || typeflag === "\0" || typeflag === "") {
-                const name = readTarString(decoder, header, 0, 100);
-                const prefix = readTarString(decoder, header, 345, 155);
-                entries.push({
-                    path: overridePath ?? (prefix ? `${prefix}/${name}` : name),
-                    bytes: body.slice(),
-                });
-            }
-            overridePath = null;
-        }
-        offset += 512 + Math.ceil(size / 512) * 512;
+function parseTarFiles(
+  archive: Uint8Array,
+): Array<{ path: string; bytes: Uint8Array }> {
+  const decoder = new TextDecoder();
+  const entries: Array<{ path: string; bytes: Uint8Array }> = [];
+  let overridePath: string | null = null;
+  let offset = 0;
+  while (offset + 512 <= archive.length) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
     }
+    const size = parseInt(readTarString(decoder, header, 124, 12) || "0", 8);
+    const typeflag = String.fromCharCode(header[156] ?? 0);
+    const body = archive.subarray(offset + 512, offset + 512 + size);
+    if (typeflag === "x") {
+      overridePath = parsePaxPath(decoder.decode(body)) ?? overridePath;
+    } else if (typeflag === "L") {
+      overridePath = readTarString(decoder, body, 0, body.length);
+    } else {
+      if (typeflag === "0" || typeflag === "\0" || typeflag === "") {
+        const name = readTarString(decoder, header, 0, 100);
+        const prefix = readTarString(decoder, header, 345, 155);
+        entries.push({
+          path: overridePath ?? (prefix ? `${prefix}/${name}` : name),
+          bytes: body.slice(),
+        });
+      }
+      overridePath = null;
+    }
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
 
-    return entries;
+  return entries;
 }
 
 /**
@@ -338,11 +425,16 @@ function parseTarFiles(archive: Uint8Array): Array<{ path: string; bytes: Uint8A
  * @param length field width
  * @returns the decoded string up to the first NUL
  */
-function readTarString(decoder: TextDecoder, bytes: Uint8Array, start: number, length: number): string {
-    const raw = decoder.decode(bytes.subarray(start, start + length));
-    const nul = raw.indexOf("\0");
+function readTarString(
+  decoder: TextDecoder,
+  bytes: Uint8Array,
+  start: number,
+  length: number,
+): string {
+  const raw = decoder.decode(bytes.subarray(start, start + length));
+  const nul = raw.indexOf("\0");
 
-    return (nul >= 0 ? raw.slice(0, nul) : raw).trim();
+  return (nul >= 0 ? raw.slice(0, nul) : raw).trim();
 }
 
 /**
@@ -351,23 +443,23 @@ function readTarString(decoder: TextDecoder, bytes: Uint8Array, start: number, l
  * @returns the path override, or null when the header has none
  */
 function parsePaxPath(content: string): string | null {
-    let rest = content;
-    while (rest.length > 0) {
-        const space = rest.indexOf(" ");
-        if (space < 0) {
-            break;
-        }
-        const length = Number(rest.slice(0, space));
-        if (!Number.isInteger(length) || length <= space + 1) {
-            break;
-        }
-        const record = rest.slice(space + 1, length - 1);
-        const equals = record.indexOf("=");
-        if (equals >= 0 && record.slice(0, equals) === "path") {
-            return record.slice(equals + 1);
-        }
-        rest = rest.slice(length);
+  let rest = content;
+  while (rest.length > 0) {
+    const space = rest.indexOf(" ");
+    if (space < 0) {
+      break;
     }
+    const length = Number(rest.slice(0, space));
+    if (!Number.isInteger(length) || length <= space + 1) {
+      break;
+    }
+    const record = rest.slice(space + 1, length - 1);
+    const equals = record.indexOf("=");
+    if (equals >= 0 && record.slice(0, equals) === "path") {
+      return record.slice(equals + 1);
+    }
+    rest = rest.slice(length);
+  }
 
-    return null;
+  return null;
 }

@@ -41,7 +41,12 @@ export interface ToolApprovalSummary {
 }
 
 export interface AsyncStatus {
-  status: "processing" | "awaiting_approval" | "completed" | "failed" | "not_found";
+  status:
+    | "processing"
+    | "awaiting_approval"
+    | "completed"
+    | "failed"
+    | "not_found";
   response?: unknown;
   error?: string;
   approvals?: ToolApprovalSummary[];

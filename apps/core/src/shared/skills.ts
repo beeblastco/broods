@@ -42,17 +42,49 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
 const TEXT_EXTENSIONS = new Set([
-  ".css", ".csv", ".html", ".js", ".json", ".md", ".mjs", ".py", ".sh", ".sql", ".svg",
-  ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".sh",
+  ".sql",
+  ".svg",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
 ]);
-const EXECUTABLE_EXTENSIONS = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".ts"]);
+const EXECUTABLE_EXTENSIONS = new Set([
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".py",
+  ".js",
+  ".mjs",
+  ".ts",
+]);
 
-export async function readSkillMarkdown(accountId: string, skillName: string): Promise<string | null> {
+export async function readSkillMarkdown(
+  accountId: string,
+  skillName: string,
+): Promise<string | null> {
   validateSkillName(skillName);
-  return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(() => null);
+  return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(
+    () => null,
+  );
 }
 
-export async function assertAccountOwnsSkillPath(accountId: string, skillPath: string): Promise<void> {
+export async function assertAccountOwnsSkillPath(
+  accountId: string,
+  skillPath: string,
+): Promise<void> {
   const parsed = parseSkillPath(skillPath);
   if (!parsed) {
     throw new Error(`Invalid skill path: ${skillPath}`);
@@ -60,16 +92,26 @@ export async function assertAccountOwnsSkillPath(accountId: string, skillPath: s
   if (parsed.accountId !== accountId) {
     throw new SkillAuthorizationError(skillPath);
   }
-  if (!await s3ObjectExists(skillsBucketName(), `${skillPath}/${SKILL_FILE}`)) {
+  if (
+    !(await s3ObjectExists(skillsBucketName(), `${skillPath}/${SKILL_FILE}`))
+  ) {
     throw new SkillNotFoundError(skillPath);
   }
 }
 
-export async function readSkillText(skillPath: string, resourcePath: string): Promise<string> {
-  return readS3Text(skillsBucketName(), `${skillPath}/${normalizeBundlePath(resourcePath)}`);
+export async function readSkillText(
+  skillPath: string,
+  resourcePath: string,
+): Promise<string> {
+  return readS3Text(
+    skillsBucketName(),
+    `${skillPath}/${normalizeBundlePath(resourcePath)}`,
+  );
 }
 
-export function parseSkillMarkdown(markdown: string): Omit<SkillMetadata, "path"> {
+export function parseSkillMarkdown(
+  markdown: string,
+): Omit<SkillMetadata, "path"> {
   const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match?.[1]) {
     throw new Error("SKILL.md must start with YAML frontmatter");
@@ -87,8 +129,13 @@ export function skillInstructionsFromMarkdown(markdown: string): string {
   return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
 }
 
-export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBundle {
-  const files = input.map((file) => ({ ...file, path: normalizeBundlePath(file.path) }));
+export function validateSkillBundle(
+  input: SkillBundleFile[],
+): ValidatedSkillBundle {
+  const files = input.map((file) => ({
+    ...file,
+    path: normalizeBundlePath(file.path),
+  }));
   const seen = new Set<string>();
   let totalBytes = 0;
   for (const file of files) {
@@ -112,7 +159,10 @@ export function validateSkillBundle(input: SkillBundleFile[]): ValidatedSkillBun
   if (!skillFile) {
     throw new Error("Skill bundle must include SKILL.md at the root");
   }
-  return { metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)), files };
+  return {
+    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    files,
+  };
 }
 
 export function contentTypeForSkillPath(filePath: string): string {
@@ -141,12 +191,18 @@ export function parseGitHubSkillUrl(value: unknown): {
     throw new Error("GitHub skill URL must use https://github.com");
   }
   if (/%2e/i.test(value.trim()) || value.trim().includes("..")) {
-    throw new Error("Invalid skill file path: GitHub URL must not contain path traversal");
+    throw new Error(
+      "Invalid skill file path: GitHub URL must not contain path traversal",
+    );
   }
 
-  const [owner, repo, kind, ref, ...subdirParts] = url.pathname.split("/").filter(Boolean);
+  const [owner, repo, kind, ref, ...subdirParts] = url.pathname
+    .split("/")
+    .filter(Boolean);
   if (!owner || !repo || kind !== "tree" || !ref) {
-    throw new Error("GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}");
+    throw new Error(
+      "GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}",
+    );
   }
   assertSafeGitHubSegment(owner, "owner");
   assertSafeGitHubSegment(repo, "repo");
@@ -161,7 +217,9 @@ export function parseGitHubSkillUrl(value: unknown): {
   };
 }
 
-export function parseSkillPath(skillPath: string): { accountId: string; skillName: string } | null {
+export function parseSkillPath(
+  skillPath: string,
+): { accountId: string; skillName: string } | null {
   const parts = skillPath.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     return null;
@@ -210,18 +268,24 @@ export function validateSkillName(value: unknown): asserts value is string {
     value.includes("claude") ||
     /<[^>]*>/.test(value)
   ) {
-    throw new Error("Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words");
+    throw new Error(
+      "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
+    );
   }
 }
 
-export function validateSkillDescription(value: unknown): asserts value is string {
+export function validateSkillDescription(
+  value: unknown,
+): asserts value is string {
   if (
     typeof value !== "string" ||
     value.trim().length === 0 ||
     value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
     /<[^>]*>/.test(value)
   ) {
-    throw new Error("Skill description must be non-empty, max 1024 chars, and cannot contain XML tags");
+    throw new Error(
+      "Skill description must be non-empty, max 1024 chars, and cannot contain XML tags",
+    );
   }
 }
 
@@ -236,7 +300,9 @@ function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   return !bytes.includes(0);
 }
 
-function parseSimpleYamlFrontmatter(frontmatter: string): Record<string, string> {
+function parseSimpleYamlFrontmatter(
+  frontmatter: string,
+): Record<string, string> {
   const result: Record<string, string> = {};
   for (const line of frontmatter.split(/\r?\n/)) {
     const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);

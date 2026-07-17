@@ -17,14 +17,22 @@ describe("handoffs tool", () => {
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
       if (fetchCalls.length === 1) {
-        return jsonResponse({ success: true, message: "order tag added", data: ["order-tag"] });
+        return jsonResponse({
+          success: true,
+          message: "order tag added",
+          data: ["order-tag"],
+        });
       }
       if (fetchCalls.length === 2) {
         return jsonResponse({ success: true, message: "marked unread" });
       }
-      return jsonResponse({ ok: true, result: { message_id: `zalo-${fetchCalls.length}` } });
+      return jsonResponse({
+        ok: true,
+        result: { message_id: `zalo-${fetchCalls.length}` },
+      });
     }) as never;
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
 
     const tools = handoffsTool(createToolContext());
 
@@ -38,7 +46,11 @@ describe("handoffs tool", () => {
       success: true,
       message: "marked unread",
       actions: {
-        scenarioTag: { success: true, message: "order tag added", data: ["order-tag"] },
+        scenarioTag: {
+          success: true,
+          message: "order tag added",
+          data: ["order-tag"],
+        },
         unread: { success: true, message: "marked unread" },
         zalo: [
           { userId: "sale-1", ok: true },
@@ -53,7 +65,9 @@ describe("handoffs tool", () => {
     });
 
     const zaloUrl = new URL(fetchCalls[2]!.url);
-    expect(zaloUrl.href).toBe("https://bot-api.zaloplatforms.com/botzalo-token/sendMessage");
+    expect(zaloUrl.href).toBe(
+      "https://bot-api.zaloplatforms.com/botzalo-token/sendMessage",
+    );
     expect(JSON.parse(String(fetchCalls[2]!.init?.body))).toEqual({
       chat_id: "sale-1",
       text: [
@@ -75,37 +89,50 @@ describe("handoffs tool", () => {
     globalThis.fetch = mock(async (url: string | URL, init?: RequestInit) => {
       fetchCalls.push({ url: String(url), init });
       if (fetchCalls.length === 1) {
-        return jsonResponse({ success: true, message: "pending tag added", data: ["pending-tag"] });
+        return jsonResponse({
+          success: true,
+          message: "pending tag added",
+          data: ["pending-tag"],
+        });
       }
       if (fetchCalls.length === 2) {
         return jsonResponse({ success: true, message: "marked unread" });
       }
       return jsonResponse({ ok: true, result: { message_id: "zalo-1" } });
     }) as never;
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
 
-    const tools = handoffsTool(createToolContext({
-      config: {
-        pancake: {
-          scenarioTagIds: {
-            order: "order-tag",
-            pending: "pending-tag",
+    const tools = handoffsTool(
+      createToolContext({
+        config: {
+          pancake: {
+            scenarioTagIds: {
+              order: "order-tag",
+              pending: "pending-tag",
+            },
+          },
+          zalo: {
+            botToken: "zalo-token",
+            notifyUserIds: ["sale-1"],
           },
         },
-        zalo: {
-          botToken: "zalo-token",
-          notifyUserIds: ["sale-1"],
-        },
-      },
-    }));
+      }),
+    );
 
-    await expect(executeHandoffs(tools.handoffs, {
-      scenario: "pending",
-      reason: "Customer asked for sale staff advice.",
-    })).resolves.toMatchObject({
+    await expect(
+      executeHandoffs(tools.handoffs, {
+        scenario: "pending",
+        reason: "Customer asked for sale staff advice.",
+      }),
+    ).resolves.toMatchObject({
       success: true,
       actions: {
-        scenarioTag: { success: true, message: "pending tag added", data: ["pending-tag"] },
+        scenarioTag: {
+          success: true,
+          message: "pending tag added",
+          data: ["pending-tag"],
+        },
         zalo: [{ userId: "sale-1", ok: true }],
       },
     });
@@ -118,25 +145,33 @@ describe("handoffs tool", () => {
   it("requires phoneNumber for order handoffs before external calls", async () => {
     const fetchMock = mock(async () => jsonResponse({ success: true }));
     globalThis.fetch = fetchMock as never;
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext());
 
-    await expect(executeHandoffs(tools.handoffs, {
-      scenario: "order",
-      reason: "Customer wants to order.",
-    })).rejects.toThrow("phoneNumber is required for order handoffs");
+    await expect(
+      executeHandoffs(tools.handoffs, {
+        scenario: "order",
+        reason: "Customer wants to order.",
+      }),
+    ).rejects.toThrow("phoneNumber is required for order handoffs");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fails clearly when required handoff config is missing", async () => {
-    globalThis.fetch = mock(async () => jsonResponse({ success: true })) as never;
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
+    globalThis.fetch = mock(async () =>
+      jsonResponse({ success: true }),
+    ) as never;
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext({ config: {} }));
 
-    await expect(executeHandoffs(tools.handoffs, {
-      scenario: "pending",
-      reason: "Customer needs staff.",
-    })).rejects.toThrow("config.tools.handoffs.pancake is required");
+    await expect(
+      executeHandoffs(tools.handoffs, {
+        scenario: "pending",
+        reason: "Customer needs staff.",
+      }),
+    ).rejects.toThrow("config.tools.handoffs.pancake is required");
   });
 
   it("throws when the Zalo ping fails", async () => {
@@ -151,34 +186,45 @@ describe("handoffs tool", () => {
       }
       return jsonResponse({ ok: false, description: "blocked" }, 400);
     }) as never;
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
     const tools = handoffsTool(createToolContext());
 
-    await expect(executeHandoffs(tools.handoffs, {
-      scenario: "pending",
-      reason: "Customer needs staff.",
-    })).rejects.toThrow("Zalo sendMessage failed (400): blocked");
+    await expect(
+      executeHandoffs(tools.handoffs, {
+        scenario: "pending",
+        reason: "Customer needs staff.",
+      }),
+    ).rejects.toThrow("Zalo sendMessage failed (400): blocked");
   });
 
   it("rejects non-Pancake conversations", async () => {
-    const { default: handoffsTool } = await import("../src/harness/tools/handoffs.tool.ts");
-    const tools = handoffsTool(createToolContext({
-      conversationKey: "acct:acct_test:agent:agent_test:direct:conversation",
-    }));
+    const { default: handoffsTool } =
+      await import("../src/harness/tools/handoffs.tool.ts");
+    const tools = handoffsTool(
+      createToolContext({
+        conversationKey: "acct:acct_test:agent:agent_test:direct:conversation",
+      }),
+    );
 
-    await expect(executeHandoffs(tools.handoffs, {
-      scenario: "pending",
-      reason: "Customer needs staff.",
-    })).rejects.toThrow("handoffs requires a Pancake conversation");
+    await expect(
+      executeHandoffs(tools.handoffs, {
+        scenario: "pending",
+        reason: "Customer needs staff.",
+      }),
+    ).rejects.toThrow("handoffs requires a Pancake conversation");
   });
 });
 
-function createToolContext(overrides: {
-  conversationKey?: string;
-  config?: Record<string, unknown>;
-} = {}) {
+function createToolContext(
+  overrides: {
+    conversationKey?: string;
+    config?: Record<string, unknown>;
+  } = {},
+) {
   return {
-    conversationKey: overrides.conversationKey ??
+    conversationKey:
+      overrides.conversationKey ??
       "acct:acct_test:agent:agent_test:pancake:249596441579238:conversation-1",
     filesystemNamespace: "filesystem",
     channels: {
@@ -205,7 +251,9 @@ function createToolContext(overrides: {
 }
 
 function executeHandoffs(toolEntry: unknown, input: unknown): Promise<unknown> {
-  return (toolEntry as { execute(input: unknown): Promise<unknown> }).execute(input);
+  return (toolEntry as { execute(input: unknown): Promise<unknown> }).execute(
+    input,
+  );
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

@@ -8,113 +8,118 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedEnvironment } from "./model/ownership/environment";
-import { decryptAgentConfigBlob, encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import {
+  decryptAgentConfigBlob,
+  encryptAgentConfigBlob,
+} from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
-    accountIdForProject,
-    auditDetailsJson,
-    dashboardAuditActor,
-    insertConfigAuditEvent,
-    type ConfigAuditActor,
+  accountIdForProject,
+  auditDetailsJson,
+  dashboardAuditActor,
+  insertConfigAuditEvent,
+  type ConfigAuditActor,
 } from "./model/auditEvents";
 
 const environmentVariableDoc = v.object({
-    _id: v.id("environmentVariables"),
-    _creationTime: v.number(),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    name: v.string(),
-    value: v.string(),
-    updatedAt: v.number(),
+  _id: v.id("environmentVariables"),
+  _creationTime: v.number(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  name: v.string(),
+  value: v.string(),
+  updatedAt: v.number(),
 });
 
 function encryptionSecret(): string {
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables");
-    }
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
+    );
+  }
 
-    return secret;
+  return secret;
 }
 
 function maskEnvironmentVariable(variable: {
-    _id: Id<"environmentVariables">;
-    _creationTime: number;
-    projectId: Id<"projects">;
-    environmentId: Id<"environments">;
-    name: string;
-    updatedAt: number;
+  _id: Id<"environmentVariables">;
+  _creationTime: number;
+  projectId: Id<"projects">;
+  environmentId: Id<"environments">;
+  name: string;
+  updatedAt: number;
 }) {
-    return {
-        _id: variable._id,
-        _creationTime: variable._creationTime,
-        projectId: variable.projectId,
-        environmentId: variable.environmentId,
-        name: variable.name,
-        value: "********",
-        updatedAt: variable.updatedAt,
-    };
+  return {
+    _id: variable._id,
+    _creationTime: variable._creationTime,
+    projectId: variable.projectId,
+    environmentId: variable.environmentId,
+    name: variable.name,
+    value: "********",
+    updatedAt: variable.updatedAt,
+  };
 }
 
 /** Record an environment-variable mutation without storing plaintext values. */
 async function recordEnvironmentVariableAudit(
-    ctx: MutationCtx,
-    actor: ConfigAuditActor,
-    input: {
-        projectId: Id<"projects">;
-        environmentId: Id<"environments">;
-        variableId?: Id<"environmentVariables">;
-        action: string;
-        name: string;
-        summary: string;
-    },
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  input: {
+    projectId: Id<"projects">;
+    environmentId: Id<"environments">;
+    variableId?: Id<"environmentVariables">;
+    action: string;
+    name: string;
+    summary: string;
+  },
 ): Promise<void> {
-    const accountId = await accountIdForProject(ctx, input.projectId);
-    if (!accountId) return;
+  const accountId = await accountIdForProject(ctx, input.projectId);
+  if (!accountId) return;
 
-    await insertConfigAuditEvent(ctx.db, {
-        accountId: accountId,
-        projectId: input.projectId,
-        environmentId: input.environmentId,
-        actor: actor,
-        action: input.action,
-        resource: {
-            kind: "environmentVariable",
-            id: input.variableId,
-            name: input.name,
-        },
-        summary: input.summary,
-        detailsJson: auditDetailsJson({ name: input.name }),
-    });
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: input.projectId,
+    environmentId: input.environmentId,
+    actor: actor,
+    action: input.action,
+    resource: {
+      kind: "environmentVariable",
+      id: input.variableId,
+      name: input.name,
+    },
+    summary: input.summary,
+    detailsJson: auditDetailsJson({ name: input.name }),
+  });
 }
 
 export const list = query({
-    args: { projectId: v.id("projects"), environmentId: v.id("environments") },
-    returns: v.array(environmentVariableDoc),
-    handler: async (ctx, { projectId, environmentId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  returns: v.array(environmentVariableDoc),
+  handler: async (ctx, { projectId, environmentId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        // Return empty rather than throwing so a just-deleted environment doesn't
-        // crash reactive subscribers before they unmount.
-        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            return [];
-        }
+    // Return empty rather than throwing so a just-deleted environment doesn't
+    // crash reactive subscribers before they unmount.
+    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
+    if (!environment || environment.projectId !== projectId) {
+      return [];
+    }
 
-        const variables = await ctx.db
-            .query("environmentVariables")
-            .withIndex("by_projectId_and_environmentId", (q) =>
-                q.eq("projectId", projectId).eq("environmentId", environmentId),
-            )
-            .collect();
+    const variables = await ctx.db
+      .query("environmentVariables")
+      .withIndex("by_projectId_and_environmentId", (q) =>
+        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      )
+      .collect();
 
-        return variables.map(maskEnvironmentVariable);
-    },
+    return variables.map(maskEnvironmentVariable);
+  },
 });
 
 /**
@@ -122,106 +127,109 @@ export const list = query({
  * name already exists, otherwise inserts a new row.
  */
 export const set = mutation({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.id("environments"),
-        name: v.string(),
-        value: v.string(),
-    },
-    returns: v.id("environmentVariables"),
-    handler: async (ctx, { projectId, environmentId, name, value }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    name: v.string(),
+    value: v.string(),
+  },
+  returns: v.id("environmentVariables"),
+  handler: async (ctx, { projectId, environmentId, name, value }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
+    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
+    if (!environment || environment.projectId !== projectId) {
+      throw new Error("Environment not found.");
+    }
 
-        const trimmedName = name.trim();
-        if (!trimmedName) throw new Error("Variable name is required.");
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error("Variable name is required.");
 
-        const existing = await ctx.db
-            .query("environmentVariables")
-            .withIndex("by_environmentId_and_name", (q) =>
-                q.eq("environmentId", environmentId).eq("name", trimmedName),
-            )
-            .unique();
+    const existing = await ctx.db
+      .query("environmentVariables")
+      .withIndex("by_environmentId_and_name", (q) =>
+        q.eq("environmentId", environmentId).eq("name", trimmedName),
+      )
+      .unique();
 
-        const now = Date.now();
-        const encrypted = await encryptAgentConfigBlob({ value: value }, encryptionSecret());
-        if (existing) {
-            await ctx.db.patch(existing._id, {
-                ciphertext: encrypted.ciphertext,
-                iv: encrypted.iv,
-                tag: encrypted.tag,
-                updatedAt: now,
-            });
+    const now = Date.now();
+    const encrypted = await encryptAgentConfigBlob(
+      { value: value },
+      encryptionSecret(),
+    );
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        ciphertext: encrypted.ciphertext,
+        iv: encrypted.iv,
+        tag: encrypted.tag,
+        updatedAt: now,
+      });
 
-            await refreshAgentConfigsForEnvironmentVariable(
-                ctx,
-                projectId,
-                environmentId,
-                trimmedName,
-                value,
-            );
-            await refreshSandboxConfigsForEnvironmentVariable(
-                ctx,
-                projectId,
-                environmentId,
-                trimmedName,
-                value,
-            );
-            await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-                projectId: projectId,
-                environmentId: environmentId,
-                variableId: existing._id,
-                action: "updated",
-                name: trimmedName,
-                summary: "Environment variable updated",
-            });
+      await refreshAgentConfigsForEnvironmentVariable(
+        ctx,
+        projectId,
+        environmentId,
+        trimmedName,
+        value,
+      );
+      await refreshSandboxConfigsForEnvironmentVariable(
+        ctx,
+        projectId,
+        environmentId,
+        trimmedName,
+        value,
+      );
+      await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
+        projectId: projectId,
+        environmentId: environmentId,
+        variableId: existing._id,
+        action: "updated",
+        name: trimmedName,
+        summary: "Environment variable updated",
+      });
 
-            return existing._id;
-        }
+      return existing._id;
+    }
 
-        const variableId = await ctx.db.insert("environmentVariables", {
-            projectId: projectId,
-            environmentId: environmentId,
-            name: trimmedName,
-            ciphertext: encrypted.ciphertext,
-            iv: encrypted.iv,
-            tag: encrypted.tag,
-            updatedAt: now,
-        });
+    const variableId = await ctx.db.insert("environmentVariables", {
+      projectId: projectId,
+      environmentId: environmentId,
+      name: trimmedName,
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      tag: encrypted.tag,
+      updatedAt: now,
+    });
 
-        await refreshAgentConfigsForEnvironmentVariable(
-            ctx,
-            projectId,
-            environmentId,
-            trimmedName,
-            value,
-        );
-        await refreshSandboxConfigsForEnvironmentVariable(
-            ctx,
-            projectId,
-            environmentId,
-            trimmedName,
-            value,
-        );
-        await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-            projectId: projectId,
-            environmentId: environmentId,
-            variableId: variableId,
-            action: "created",
-            name: trimmedName,
-            summary: "Environment variable created",
-        });
+    await refreshAgentConfigsForEnvironmentVariable(
+      ctx,
+      projectId,
+      environmentId,
+      trimmedName,
+      value,
+    );
+    await refreshSandboxConfigsForEnvironmentVariable(
+      ctx,
+      projectId,
+      environmentId,
+      trimmedName,
+      value,
+    );
+    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
+      projectId: projectId,
+      environmentId: environmentId,
+      variableId: variableId,
+      action: "created",
+      name: trimmedName,
+      summary: "Environment variable created",
+    });
 
-        return variableId;
-    },
+    return variableId;
+  },
 });
 
 /**
@@ -231,90 +239,94 @@ export const set = mutation({
  * @throws when the caller does not own the environment or the variable is gone
  */
 export const reveal = mutation({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.id("environments"),
-        variableId: v.id("environmentVariables"),
-    },
-    returns: v.object({ value: v.string() }),
-    handler: async (ctx, { projectId, environmentId, variableId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    variableId: v.id("environmentVariables"),
+  },
+  returns: v.object({ value: v.string() }),
+  handler: async (ctx, { projectId, environmentId, variableId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
+    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
+    if (!environment || environment.projectId !== projectId) {
+      throw new Error("Environment not found.");
+    }
 
-        const variable = await ctx.db.get(variableId);
-        if (!variable || variable.environmentId !== environmentId) {
-            throw new Error("Variable not found.");
-        }
+    const variable = await ctx.db.get(variableId);
+    if (!variable || variable.environmentId !== environmentId) {
+      throw new Error("Variable not found.");
+    }
 
-        const decrypted = await decryptAgentConfigBlob(
-            { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
-            encryptionSecret(),
-        );
-        const revealed = decrypted as { value?: unknown } | null;
-        const value = typeof revealed?.value === "string" ? revealed.value : "";
+    const decrypted = await decryptAgentConfigBlob(
+      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
+      encryptionSecret(),
+    );
+    const revealed = decrypted as { value?: unknown } | null;
+    const value = typeof revealed?.value === "string" ? revealed.value : "";
 
-        await ctx.db.insert("environmentVariableReveals", {
-            projectId: projectId,
-            environmentId: environmentId,
-            environmentVariableId: variableId,
-            name: variable.name,
-            source: "dashboard",
-            revealedByAuthId: user.id,
-            revealedAt: Date.now(),
-        });
+    await ctx.db.insert("environmentVariableReveals", {
+      projectId: projectId,
+      environmentId: environmentId,
+      environmentVariableId: variableId,
+      name: variable.name,
+      source: "dashboard",
+      revealedByAuthId: user.id,
+      revealedAt: Date.now(),
+    });
 
-        return { value: value };
-    },
+    return { value: value };
+  },
 });
 
 export const remove = mutation({
-    args: { variableId: v.id("environmentVariables") },
-    returns: v.id("environmentVariables"),
-    handler: async (ctx, { variableId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: { variableId: v.id("environmentVariables") },
+  returns: v.id("environmentVariables"),
+  handler: async (ctx, { variableId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const variable = await ctx.db.get(variableId);
-        if (!variable) throw new Error("Variable not found.");
+    const variable = await ctx.db.get(variableId);
+    if (!variable) throw new Error("Variable not found.");
 
-        const environment = await getOwnedEnvironment(ctx, user.id, variable.environmentId);
-        if (!environment) throw new Error("Variable not found.");
+    const environment = await getOwnedEnvironment(
+      ctx,
+      user.id,
+      variable.environmentId,
+    );
+    if (!environment) throw new Error("Variable not found.");
 
-        await ctx.db.delete(variableId);
-        await refreshAgentConfigsForEnvironmentVariable(
-            ctx,
-            variable.projectId,
-            variable.environmentId,
-            variable.name,
-            undefined,
-        );
-        await refreshSandboxConfigsForEnvironmentVariable(
-            ctx,
-            variable.projectId,
-            variable.environmentId,
-            variable.name,
-            undefined,
-        );
-        await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-            projectId: variable.projectId,
-            environmentId: variable.environmentId,
-            variableId: variableId,
-            action: "deleted",
-            name: variable.name,
-            summary: "Environment variable deleted",
-        });
+    await ctx.db.delete(variableId);
+    await refreshAgentConfigsForEnvironmentVariable(
+      ctx,
+      variable.projectId,
+      variable.environmentId,
+      variable.name,
+      undefined,
+    );
+    await refreshSandboxConfigsForEnvironmentVariable(
+      ctx,
+      variable.projectId,
+      variable.environmentId,
+      variable.name,
+      undefined,
+    );
+    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
+      projectId: variable.projectId,
+      environmentId: variable.environmentId,
+      variableId: variableId,
+      action: "deleted",
+      name: variable.name,
+      summary: "Environment variable deleted",
+    });
 
-        return variableId;
-    },
+    return variableId;
+  },
 });

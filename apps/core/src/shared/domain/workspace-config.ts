@@ -62,12 +62,16 @@ export interface WorkspaceConfig {
 }
 
 /** Whether the <workspace> guidance prompt is injected for a workspace (default: on). */
-export function workspaceGuidanceEnabled(config: WorkspaceConfig | undefined): boolean {
+export function workspaceGuidanceEnabled(
+  config: WorkspaceConfig | undefined,
+): boolean {
   return config?.harness?.workspace?.enabled !== false;
 }
 
 /** Whether the structured memory harness is on for a workspace (default: on). */
-export function workspaceMemoryHarnessEnabled(config: WorkspaceConfig | undefined): boolean {
+export function workspaceMemoryHarnessEnabled(
+  config: WorkspaceConfig | undefined,
+): boolean {
   return config?.harness?.memory?.enabled !== false;
 }
 
@@ -111,8 +115,14 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     if (!isPlainObject(config.harness)) {
       throw new Error("config.harness must be an object");
     }
-    const workspace = normalizeHarnessFeature(config.harness.workspace, "config.harness.workspace");
-    const memory = normalizeHarnessFeature(config.harness.memory, "config.harness.memory");
+    const workspace = normalizeHarnessFeature(
+      config.harness.workspace,
+      "config.harness.workspace",
+    );
+    const memory = normalizeHarnessFeature(
+      config.harness.memory,
+      "config.harness.memory",
+    );
     if (workspace || memory) {
       harness = {
         ...(workspace ? { workspace } : {}),
@@ -130,7 +140,10 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
 
 // Features default to on, so only an explicit opt-out is worth storing:
 // `enabled: true` normalizes away to the omitted (default) form.
-function normalizeHarnessFeature(value: unknown, name: string): { enabled?: boolean } | undefined {
+function normalizeHarnessFeature(
+  value: unknown,
+  name: string,
+): { enabled?: boolean } | undefined {
   if (value === undefined) {
     return undefined;
   }

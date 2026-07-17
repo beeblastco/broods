@@ -82,7 +82,9 @@ const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 /** Build a validated account env-var reference for use in an agent config. */
 export function envPlaceholder(name: string): string {
   if (!ACCOUNT_ENV_VAR_NAME_PATTERN.test(name) || name.length > 64) {
-    throw new Error("envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.");
+    throw new Error(
+      "envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
+    );
   }
   return `\${${name}}`;
 }
@@ -250,9 +252,14 @@ export class BroodsAccountClient {
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: BroodsAccountClientOptions = {}) {
-    const baseUrl = options.baseUrl ?? envVar("BROODS_BASE_URL") ?? DEFAULT_ACCOUNT_BASE_URL;
-    const accountSecret = options.accountSecret ?? envVar("BROODS_ACCOUNT_SECRET");
-    if (!accountSecret) throw new Error("BroodsAccountClient requires an accountSecret (or BROODS_ACCOUNT_SECRET).");
+    const baseUrl =
+      options.baseUrl ?? envVar("BROODS_BASE_URL") ?? DEFAULT_ACCOUNT_BASE_URL;
+    const accountSecret =
+      options.accountSecret ?? envVar("BROODS_ACCOUNT_SECRET");
+    if (!accountSecret)
+      throw new Error(
+        "BroodsAccountClient requires an accountSecret (or BROODS_ACCOUNT_SECRET).",
+      );
     this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.accountSecret = accountSecret;
     this.fetchImpl = options.fetch ?? fetch;
@@ -260,27 +267,55 @@ export class BroodsAccountClient {
 
   /** The account this secret belongs to. Its `accountId` is the first segment of channel webhook URLs. */
   async getAccount(): Promise<BroodsAccount> {
-    const result = await this.request<{ account: BroodsAccount }>("GET", "/v1/account");
-    if (!result) throw new BroodsAccountApiError("GET", "/v1/account", 404, "Account not found");
+    const result = await this.request<{ account: BroodsAccount }>(
+      "GET",
+      "/v1/account",
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "GET",
+        "/v1/account",
+        404,
+        "Account not found",
+      );
     return result.account;
   }
 
   /** Update account metadata (username/description). Returns null when the account is gone. Runtime config is managed through the agent endpoints. */
-  async updateAccount(patch: { username?: string; description?: string | null }): Promise<BroodsAccount | null> {
-    const result = await this.request<{ account: BroodsAccount }>("PATCH", "/v1/account", patch);
+  async updateAccount(patch: {
+    username?: string;
+    description?: string | null;
+  }): Promise<BroodsAccount | null> {
+    const result = await this.request<{ account: BroodsAccount }>(
+      "PATCH",
+      "/v1/account",
+      patch,
+    );
     return result?.account ?? null;
   }
 
   /** Rotate the account secret. The returned `secret` is shown once and the current secret stops working immediately, so persist it before the process exits. */
   async rotateSecret(): Promise<RotateSecretResult> {
-    const result = await this.request<RotateSecretResult>("POST", "/v1/account/rotate-secret");
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/account/rotate-secret", 404, "Account not found");
+    const result = await this.request<RotateSecretResult>(
+      "POST",
+      "/v1/account/rotate-secret",
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        "/v1/account/rotate-secret",
+        404,
+        "Account not found",
+      );
     return result;
   }
 
   /** Delete this account and cascade-clean every account-scoped resource. `cleanup` reports per-resource deletion counts. */
   async deleteAccount(): Promise<DeleteAccountResult> {
-    const result = await this.request<DeleteAccountResult>("DELETE", "/v1/account");
+    const result = await this.request<DeleteAccountResult>(
+      "DELETE",
+      "/v1/account",
+    );
     return result ?? { deleted: false };
   }
 
@@ -296,44 +331,79 @@ export class BroodsAccountClient {
   }
 
   async listAgents(): Promise<AccountAgent[]> {
-    const result = await this.request<{ agents: AccountAgent[] }>("GET", "/v1/agents");
+    const result = await this.request<{ agents: AccountAgent[] }>(
+      "GET",
+      "/v1/agents",
+    );
     return result?.agents ?? [];
   }
 
-  async createAgent(input: { name: string; description?: string; config: unknown }): Promise<CreateAgentResult> {
-    const result = await this.request<CreateAgentResult>("POST", "/v1/agents", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/agents", 404, "Not found");
+  async createAgent(input: {
+    name: string;
+    description?: string;
+    config: unknown;
+  }): Promise<CreateAgentResult> {
+    const result = await this.request<CreateAgentResult>(
+      "POST",
+      "/v1/agents",
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/agents", 404, "Not found");
     return result;
   }
 
   async getAgent(agentId: string): Promise<AccountAgent | null> {
-    return await this.request<AccountAgent>("GET", `/v1/agents/${encodeURIComponent(agentId)}`);
+    return await this.request<AccountAgent>(
+      "GET",
+      `/v1/agents/${encodeURIComponent(agentId)}`,
+    );
   }
 
   /** PATCH an agent. `config` deep-merges into the stored config; `null` leaves delete keys. Returns null when the agent is gone. */
-  async updateAgent(agentId: string, patch: UpdateAgentInput): Promise<AccountAgent | null> {
-    return await this.request<AccountAgent>("PATCH", `/v1/agents/${encodeURIComponent(agentId)}`, patch);
+  async updateAgent(
+    agentId: string,
+    patch: UpdateAgentInput,
+  ): Promise<AccountAgent | null> {
+    return await this.request<AccountAgent>(
+      "PATCH",
+      `/v1/agents/${encodeURIComponent(agentId)}`,
+      patch,
+    );
   }
 
   async deleteAgent(agentId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/agents/${encodeURIComponent(agentId)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/agents/${encodeURIComponent(agentId)}`,
+    );
     return result?.deleted ?? false;
   }
 
   /** List account environment variable names and update timestamps; values are never returned. */
   async listEnvVars(): Promise<AccountEnvVar[]> {
-    const result = await this.request<{ env: AccountEnvVar[] }>("GET", "/v1/env");
+    const result = await this.request<{ env: AccountEnvVar[] }>(
+      "GET",
+      "/v1/env",
+    );
     return result?.env ?? [];
   }
 
   /** Create or replace one write-only account environment variable. */
   async setEnvVar(name: string, value: string): Promise<void> {
-    await this.request<{ name: string }>("PUT", `/v1/env/${encodeURIComponent(name)}`, { value: value });
+    await this.request<{ name: string }>(
+      "PUT",
+      `/v1/env/${encodeURIComponent(name)}`,
+      { value: value },
+    );
   }
 
   /** Delete one account environment variable. Returns false when it is already absent. */
   async deleteEnvVar(name: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/env/${encodeURIComponent(name)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/env/${encodeURIComponent(name)}`,
+    );
     return result?.deleted ?? false;
   }
 
@@ -344,25 +414,42 @@ export class BroodsAccountClient {
 
   async createCron(input: CreateCronInput): Promise<Cron> {
     const result = await this.request<Cron>("POST", "/v1/crons", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/crons", 404, "Not found");
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/crons", 404, "Not found");
     return result;
   }
 
   async getCron(cronId: string): Promise<Cron | null> {
-    return await this.request<Cron>("GET", `/v1/crons/${encodeURIComponent(cronId)}`);
+    return await this.request<Cron>(
+      "GET",
+      `/v1/crons/${encodeURIComponent(cronId)}`,
+    );
   }
 
-  async updateCron(cronId: string, patch: UpdateCronInput): Promise<Cron | null> {
-    return await this.request<Cron>("PATCH", `/v1/crons/${encodeURIComponent(cronId)}`, patch);
+  async updateCron(
+    cronId: string,
+    patch: UpdateCronInput,
+  ): Promise<Cron | null> {
+    return await this.request<Cron>(
+      "PATCH",
+      `/v1/crons/${encodeURIComponent(cronId)}`,
+      patch,
+    );
   }
 
   async deleteCron(cronId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/crons/${encodeURIComponent(cronId)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/crons/${encodeURIComponent(cronId)}`,
+    );
     return result?.deleted ?? false;
   }
 
   /** Run history for a cron, newest first. Returns [] when the cron is gone. */
-  async listCronRuns(cronId: string, options: { limit?: number } = {}): Promise<CronRun[]> {
+  async listCronRuns(
+    cronId: string,
+    options: { limit?: number } = {},
+  ): Promise<CronRun[]> {
     const query = options.limit !== undefined ? `?limit=${options.limit}` : "";
     const result = await this.request<{ runs: CronRun[] }>(
       "GET",
@@ -372,25 +459,49 @@ export class BroodsAccountClient {
   }
 
   async listWorkspaces(): Promise<AccountWorkspace[]> {
-    const result = await this.request<{ workspaces: AccountWorkspace[] }>("GET", "/v1/workspaces");
+    const result = await this.request<{ workspaces: AccountWorkspace[] }>(
+      "GET",
+      "/v1/workspaces",
+    );
     return result?.workspaces ?? [];
   }
 
-  async createWorkspace(input: { name: string; description?: string; config?: unknown }): Promise<AccountWorkspace> {
-    const result = await this.request<AccountWorkspace>("POST", "/v1/workspaces", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/workspaces", 404, "Not found");
+  async createWorkspace(input: {
+    name: string;
+    description?: string;
+    config?: unknown;
+  }): Promise<AccountWorkspace> {
+    const result = await this.request<AccountWorkspace>(
+      "POST",
+      "/v1/workspaces",
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        "/v1/workspaces",
+        404,
+        "Not found",
+      );
     return result;
   }
 
   async getWorkspace(workspaceId: string): Promise<AccountWorkspace | null> {
-    return await this.request<AccountWorkspace>("GET", `/v1/workspaces/${encodeURIComponent(workspaceId)}`);
+    return await this.request<AccountWorkspace>(
+      "GET",
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+    );
   }
 
   async updateWorkspace(
     workspaceId: string,
     patch: { name?: string; description?: string | null; config?: unknown },
   ): Promise<AccountWorkspace | null> {
-    return await this.request<AccountWorkspace>("PATCH", `/v1/workspaces/${encodeURIComponent(workspaceId)}`, patch);
+    return await this.request<AccountWorkspace>(
+      "PATCH",
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}`,
+      patch,
+    );
   }
 
   async deleteWorkspace(workspaceId: string): Promise<boolean> {
@@ -411,7 +522,10 @@ export class BroodsAccountClient {
   }
 
   /** Short-lived download URL for one workspace file. Returns null when the workspace or file is gone. */
-  async getWorkspaceFileUrl(workspaceId: string, path: string): Promise<string | null> {
+  async getWorkspaceFileUrl(
+    workspaceId: string,
+    path: string,
+  ): Promise<string | null> {
     const query = `?path=${encodeURIComponent(path)}`;
     const result = await this.request<{ url: string }>(
       "GET",
@@ -426,13 +540,22 @@ export class BroodsAccountClient {
     input: { path: string; contentBase64: string; contentType?: string },
   ): Promise<WorkspaceFileEntry> {
     const path = `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`;
-    const result = await this.request<{ file: WorkspaceFileEntry }>("POST", path, input);
-    if (!result) throw new BroodsAccountApiError("POST", path, 404, "Workspace not found");
+    const result = await this.request<{ file: WorkspaceFileEntry }>(
+      "POST",
+      path,
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError("POST", path, 404, "Workspace not found");
     return result.file;
   }
 
   /** Rename a workspace file or folder. Returns false when the workspace or source path is gone. */
-  async renameWorkspaceFile(workspaceId: string, path: string, newPath: string): Promise<boolean> {
+  async renameWorkspaceFile(
+    workspaceId: string,
+    path: string,
+    newPath: string,
+  ): Promise<boolean> {
     const result = await this.request<{ renamed: boolean }>(
       "PATCH",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
@@ -442,7 +565,10 @@ export class BroodsAccountClient {
   }
 
   /** Delete a workspace file or folder. Returns false when the workspace or path is gone. */
-  async deleteWorkspaceFile(workspaceId: string, path: string): Promise<boolean> {
+  async deleteWorkspaceFile(
+    workspaceId: string,
+    path: string,
+  ): Promise<boolean> {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
@@ -452,18 +578,38 @@ export class BroodsAccountClient {
   }
 
   async listSandboxes(): Promise<AccountSandbox[]> {
-    const result = await this.request<{ sandboxes: AccountSandbox[] }>("GET", "/v1/sandboxes");
+    const result = await this.request<{ sandboxes: AccountSandbox[] }>(
+      "GET",
+      "/v1/sandboxes",
+    );
     return result?.sandboxes ?? [];
   }
 
-  async createSandbox(input: { name: string; description?: string; config?: unknown }): Promise<AccountSandbox> {
-    const result = await this.request<AccountSandbox>("POST", "/v1/sandboxes", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/sandboxes", 404, "Not found");
+  async createSandbox(input: {
+    name: string;
+    description?: string;
+    config?: unknown;
+  }): Promise<AccountSandbox> {
+    const result = await this.request<AccountSandbox>(
+      "POST",
+      "/v1/sandboxes",
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        "/v1/sandboxes",
+        404,
+        "Not found",
+      );
     return result;
   }
 
   async getSandbox(sandboxId: string): Promise<AccountSandbox | null> {
-    return await this.request<AccountSandbox>("GET", `/v1/sandboxes/${encodeURIComponent(sandboxId)}`);
+    return await this.request<AccountSandbox>(
+      "GET",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}`,
+    );
   }
 
   /** PATCH a sandbox config. `config` fully replaces the stored config. Returns null when the sandbox is gone. */
@@ -471,89 +617,176 @@ export class BroodsAccountClient {
     sandboxId: string,
     patch: { name?: string; description?: string | null; config?: unknown },
   ): Promise<AccountSandbox | null> {
-    return await this.request<AccountSandbox>("PATCH", `/v1/sandboxes/${encodeURIComponent(sandboxId)}`, patch);
+    return await this.request<AccountSandbox>(
+      "PATCH",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}`,
+      patch,
+    );
   }
 
   async deleteSandbox(sandboxId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/sandboxes/${encodeURIComponent(sandboxId)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}`,
+    );
     return result?.deleted ?? false;
   }
 
   /** Suspend a persistent sandbox reservation. Throws on 404/403/409 (missing sandbox, foreign reservation, or unsupported provider). */
-  async suspendSandbox(sandboxId: string, reservationKey: string): Promise<SandboxLifecycleResult> {
-    return await this.sandboxAction<SandboxLifecycleResult>(sandboxId, "suspend", { reservationKey });
+  async suspendSandbox(
+    sandboxId: string,
+    reservationKey: string,
+  ): Promise<SandboxLifecycleResult> {
+    return await this.sandboxAction<SandboxLifecycleResult>(
+      sandboxId,
+      "suspend",
+      { reservationKey },
+    );
   }
 
   /** Resume a persistent sandbox reservation. Throws on 404/403/409. */
-  async resumeSandbox(sandboxId: string, reservationKey: string): Promise<SandboxLifecycleResult> {
-    return await this.sandboxAction<SandboxLifecycleResult>(sandboxId, "resume", { reservationKey });
+  async resumeSandbox(
+    sandboxId: string,
+    reservationKey: string,
+  ): Promise<SandboxLifecycleResult> {
+    return await this.sandboxAction<SandboxLifecycleResult>(
+      sandboxId,
+      "resume",
+      { reservationKey },
+    );
   }
 
   /** Terminate a persistent sandbox reservation and drop its live-instance row. Throws on 404/403/409. */
-  async terminateSandbox(sandboxId: string, reservationKey: string): Promise<SandboxLifecycleResult> {
-    return await this.sandboxAction<SandboxLifecycleResult>(sandboxId, "terminate", { reservationKey });
+  async terminateSandbox(
+    sandboxId: string,
+    reservationKey: string,
+  ): Promise<SandboxLifecycleResult> {
+    return await this.sandboxAction<SandboxLifecycleResult>(
+      sandboxId,
+      "terminate",
+      { reservationKey },
+    );
   }
 
   /** Snapshot a persistent sandbox reservation into a reusable image (self-hosted `sandbox` provider). Throws on 404/403/409. */
-  async snapshotSandbox(sandboxId: string, reservationKey: string, name: string): Promise<SandboxSnapshotResult> {
-    return await this.sandboxAction<SandboxSnapshotResult>(sandboxId, "snapshot", { reservationKey, name });
+  async snapshotSandbox(
+    sandboxId: string,
+    reservationKey: string,
+    name: string,
+  ): Promise<SandboxSnapshotResult> {
+    return await this.sandboxAction<SandboxSnapshotResult>(
+      sandboxId,
+      "snapshot",
+      { reservationKey, name },
+    );
   }
 
   /** Mint a short-lived sealed ticket for an interactive PTY session on a persistent sandbox (`sandbox`/`lambda` providers). Throws on 404/403/409. */
-  async openSandboxTerminal(sandboxId: string, reservationKey: string): Promise<SandboxTerminalTicket> {
-    return await this.sandboxAction<SandboxTerminalTicket>(sandboxId, "terminal", { reservationKey });
+  async openSandboxTerminal(
+    sandboxId: string,
+    reservationKey: string,
+  ): Promise<SandboxTerminalTicket> {
+    return await this.sandboxAction<SandboxTerminalTicket>(
+      sandboxId,
+      "terminal",
+      { reservationKey },
+    );
   }
 
   async listTools(): Promise<AccountTool[]> {
-    const result = await this.request<{ tools: AccountTool[] }>("GET", "/v1/tools");
+    const result = await this.request<{ tools: AccountTool[] }>(
+      "GET",
+      "/v1/tools",
+    );
     return result?.tools ?? [];
   }
 
   async createTool(input: CreateToolInput): Promise<AccountTool> {
     const result = await this.request<AccountTool>("POST", "/v1/tools", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/tools", 404, "Not found");
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/tools", 404, "Not found");
     return result;
   }
 
   async getTool(toolId: string): Promise<AccountTool | null> {
-    return await this.request<AccountTool>("GET", `/v1/tools/${encodeURIComponent(toolId)}`);
+    return await this.request<AccountTool>(
+      "GET",
+      `/v1/tools/${encodeURIComponent(toolId)}`,
+    );
   }
 
   /** PATCH an uploaded tool. Omitting `bundle` keeps the stored bundle and runtime. Returns null when the tool is gone. */
-  async updateTool(toolId: string, patch: UpdateToolInput): Promise<AccountTool | null> {
-    return await this.request<AccountTool>("PATCH", `/v1/tools/${encodeURIComponent(toolId)}`, patch);
+  async updateTool(
+    toolId: string,
+    patch: UpdateToolInput,
+  ): Promise<AccountTool | null> {
+    return await this.request<AccountTool>(
+      "PATCH",
+      `/v1/tools/${encodeURIComponent(toolId)}`,
+      patch,
+    );
   }
 
   async deleteTool(toolId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/tools/${encodeURIComponent(toolId)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/tools/${encodeURIComponent(toolId)}`,
+    );
     return result?.deleted ?? false;
   }
 
   async listPolicies(): Promise<AccountPolicy[]> {
-    const result = await this.request<{ policies: AccountPolicy[] }>("GET", "/v1/policies");
+    const result = await this.request<{ policies: AccountPolicy[] }>(
+      "GET",
+      "/v1/policies",
+    );
     return result?.policies ?? [];
   }
 
-  async createPolicy(input: { name: string; description?: string; document: AgentPolicyDocument }): Promise<AccountPolicy> {
-    const result = await this.request<AccountPolicy>("POST", "/v1/policies", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/policies", 404, "Not found");
+  async createPolicy(input: {
+    name: string;
+    description?: string;
+    document: AgentPolicyDocument;
+  }): Promise<AccountPolicy> {
+    const result = await this.request<AccountPolicy>(
+      "POST",
+      "/v1/policies",
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/policies", 404, "Not found");
     return result;
   }
 
   async getPolicy(policyId: string): Promise<AccountPolicy | null> {
-    return await this.request<AccountPolicy>("GET", `/v1/policies/${encodeURIComponent(policyId)}`);
+    return await this.request<AccountPolicy>(
+      "GET",
+      `/v1/policies/${encodeURIComponent(policyId)}`,
+    );
   }
 
   /** PATCH a policy. `description: null` clears it. Returns null when the policy is gone. */
   async updatePolicy(
     policyId: string,
-    patch: { name?: string; description?: string | null; document?: AgentPolicyDocument; status?: string },
+    patch: {
+      name?: string;
+      description?: string | null;
+      document?: AgentPolicyDocument;
+      status?: string;
+    },
   ): Promise<AccountPolicy | null> {
-    return await this.request<AccountPolicy>("PATCH", `/v1/policies/${encodeURIComponent(policyId)}`, patch);
+    return await this.request<AccountPolicy>(
+      "PATCH",
+      `/v1/policies/${encodeURIComponent(policyId)}`,
+      patch,
+    );
   }
 
   async deletePolicy(policyId: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/policies/${encodeURIComponent(policyId)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/policies/${encodeURIComponent(policyId)}`,
+    );
     return result?.deleted ?? false;
   }
 
@@ -566,36 +799,56 @@ export class BroodsAccountClient {
   /** Upload a new skill from JSON content, a base64 file bundle, or a GitHub tree URL. Every bundle must include a root `SKILL.md`. */
   async createSkill(input: SkillUploadInput): Promise<Skill> {
     const result = await this.request<Skill>("POST", "/v1/skills", input);
-    if (!result) throw new BroodsAccountApiError("POST", "/v1/skills", 404, "Not found");
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/skills", 404, "Not found");
     return result;
   }
 
   async getSkill(skillName: string): Promise<Skill | null> {
-    return await this.request<Skill>("GET", `/v1/skills/${encodeURIComponent(skillName)}`);
+    return await this.request<Skill>(
+      "GET",
+      `/v1/skills/${encodeURIComponent(skillName)}`,
+    );
   }
 
   /** Replace a skill's bundle in place (`PUT`). Throws when the skill is gone (404). */
-  async uploadSkill(skillName: string, input: SkillUploadInput): Promise<Skill> {
+  async uploadSkill(
+    skillName: string,
+    input: SkillUploadInput,
+  ): Promise<Skill> {
     const path = `/v1/skills/${encodeURIComponent(skillName)}`;
     const result = await this.request<Skill>("PUT", path, input);
-    if (!result) throw new BroodsAccountApiError("PUT", path, 404, "Skill not found");
+    if (!result)
+      throw new BroodsAccountApiError("PUT", path, 404, "Skill not found");
     return result;
   }
 
   async deleteSkill(skillName: string): Promise<boolean> {
-    const result = await this.request<{ deleted: boolean }>("DELETE", `/v1/skills/${encodeURIComponent(skillName)}`);
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/skills/${encodeURIComponent(skillName)}`,
+    );
     return result?.deleted ?? false;
   }
 
   /** POST a sandbox lifecycle action, throwing on any non-2xx (including 404, since these are not upsert flows). */
-  private async sandboxAction<T>(sandboxId: string, action: string, body: unknown): Promise<T> {
+  private async sandboxAction<T>(
+    sandboxId: string,
+    action: string,
+    body: unknown,
+  ): Promise<T> {
     const path = `/v1/sandboxes/${encodeURIComponent(sandboxId)}/${action}`;
     const result = await this.request<T>("POST", path, body);
-    if (!result) throw new BroodsAccountApiError("POST", path, 404, "Sandbox not found");
+    if (!result)
+      throw new BroodsAccountApiError("POST", path, 404, "Sandbox not found");
     return result;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<T | null> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers: {
@@ -606,7 +859,12 @@ export class BroodsAccountClient {
     });
     if (response.status === 404) return null;
     if (!response.ok) {
-      throw new BroodsAccountApiError(method, path, response.status, await response.text());
+      throw new BroodsAccountApiError(
+        method,
+        path,
+        response.status,
+        await response.text(),
+      );
     }
     return (await response.json()) as T;
   }

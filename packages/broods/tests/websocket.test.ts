@@ -138,27 +138,32 @@ test("websocket client subscribes to the core service and forwards server messag
     WebSocket: FakeWebSocket,
   });
 
-  const subscription = client.subscribe({
-    endpointId: "agent_1",
-    projectSlug: "demo",
-    environmentSlug: "development",
-    events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-    sessionId: "session_1",
-    system: {
-      role: "system",
-      content: "Keep the answer short.",
+  const subscription = client.subscribe(
+    {
+      endpointId: "agent_1",
+      projectSlug: "demo",
+      environmentSlug: "development",
+      events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+      sessionId: "session_1",
+      system: {
+        role: "system",
+        content: "Keep the answer short.",
+      },
+      model: {
+        providerOptions: {
+          anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } },
+        },
+      },
     },
-    model: {
-      providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } } },
+    {
+      onMessage(message) {
+        messages.push(message);
+      },
+      onDone() {
+        done = true;
+      },
     },
-  }, {
-    onMessage(message) {
-      messages.push(message);
-    },
-    onDone() {
-      done = true;
-    },
-  });
+  );
 
   expect(subscription.url).toBe(
     "wss://app.example/v1/demo/agents/development/agent_1/ws?token=test-key",
@@ -176,7 +181,9 @@ test("websocket client subscribes to the core service and forwards server messag
       content: "Keep the answer short.",
     },
     model: {
-      providerOptions: { anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } } },
+      providerOptions: {
+        anthropic: { thinking: { type: "enabled", budgetTokens: 1024 } },
+      },
     },
   });
 
@@ -213,7 +220,9 @@ test("websocket client can build scoped URLs from generated agent references", a
     input: "hello",
   });
 
-  expect(subscription.url).toBe("wss://app.example/v1/demo/agents/development/env_123/ws?token=test-key");
+  expect(subscription.url).toBe(
+    "wss://app.example/v1/demo/agents/development/env_123/ws?token=test-key",
+  );
 
   await Promise.resolve();
   const socket = FakeWebSocket.instances[0]!;

@@ -15,7 +15,7 @@ reservation key used by the other providers (`reservationKey ?? namespace`).
     "network": {
       "mode": "restricted",
       "allowDomains": ["api.example.com"],
-      "allowCidrs": ["10.0.0.0/8"]
+      "allowCidrs": ["10.0.0.0/8"],
     },
     "permissionMode": "bypass",
     "onCreate": ["npm install"],
@@ -24,9 +24,9 @@ reservation key used by the other providers (`reservationKey ?? namespace`).
       "token": "vercel-token",
       "teamId": "team_xxx",
       "projectId": "prj_xxx",
-      "runtime": "node24"
-    }
-  }
+      "runtime": "node24",
+    },
+  },
 }
 ```
 
@@ -41,7 +41,7 @@ to `Sandbox.getOrCreate()`/`Sandbox.get()` instead of emulating them with marker
 
 Two semantic differences from the other persistent providers:
 
-- **`onResume` timing**: on Vercel the hook fires only when a *stopped* sandbox actually
+- **`onResume` timing**: on Vercel the hook fires only when a _stopped_ sandbox actually
   resumes. E2B/Daytona/`sandbox` run `onResume` on every call (they cannot tell a fresh
   reconnect from a resume), so write hooks that are idempotent either way.
 - **Idle timeout**: Vercel's `timeout` counts from sandbox start, not from last activity.
@@ -62,10 +62,10 @@ flowchart LR
 
 Vercel enforces all three normalized modes natively:
 
-| Mode | Vercel mapping |
-| --- | --- |
-| `allow-all` | `networkPolicy: "allow-all"` |
-| `deny-all` | `networkPolicy: "deny-all"` |
+| Mode         | Vercel mapping                                                                |
+| ------------ | ----------------------------------------------------------------------------- |
+| `allow-all`  | `networkPolicy: "allow-all"`                                                  |
+| `deny-all`   | `networkPolicy: "deny-all"`                                                   |
 | `restricted` | `networkPolicy.allow` for domains and `networkPolicy.subnets.allow` for CIDRs |
 
 ## Workspace Storage Caveat
@@ -91,6 +91,6 @@ harness job-control scripts also used by Daytona and the `sandbox` provider. Aut
 
 ## Troubleshooting
 
-| Symptom | Cause / fix |
-| --- | --- |
+| Symptom                                                | Cause / fix                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Vercel Sandbox rejected the request (HTTP 403 / 401)` | The `VERCEL_TOKEN` is invalid/expired or doesn't have access to the configured team/project. Verify the token at vercel.com/account/tokens and that `VERCEL_TEAM_ID` / `VERCEL_PROJECT_ID` belong to a project the token can reach (a quick check: `GET https://api.vercel.com/v2/user` with the token should return your user, not `invalidToken`). |

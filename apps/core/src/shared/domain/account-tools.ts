@@ -82,8 +82,10 @@ export interface PublicAccountToolRecord {
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
-const NODE_BUILTIN_IMPORT_PATTERN = /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
-const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
+const NODE_BUILTIN_IMPORT_PATTERN =
+  /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
+const BARE_IMPORT_PATTERN =
+  /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */
@@ -91,7 +93,10 @@ export function isAccountToolId(value: string): boolean {
   return CONVEX_DOCUMENT_ID_PATTERN.test(value);
 }
 
-export function normalizeAccountToolUpload(input: unknown, options: { requireBundle: boolean }): NormalizedAccountToolUpload {
+export function normalizeAccountToolUpload(
+  input: unknown,
+  options: { requireBundle: boolean },
+): NormalizedAccountToolUpload {
   if (!isPlainObject(input)) {
     throw new Error("tool upload body must be an object");
   }
@@ -139,7 +144,9 @@ export function normalizeAccountToolUpload(input: unknown, options: { requireBun
   return result as NormalizedAccountToolUpload;
 }
 
-export function normalizeCreateAccountToolInput(input: CreateAccountToolInput): CreateAccountToolInput {
+export function normalizeCreateAccountToolInput(
+  input: CreateAccountToolInput,
+): CreateAccountToolInput {
   return {
     name: normalizeToolName(input.name),
     description: normalizeDescription(input.description),
@@ -147,29 +154,45 @@ export function normalizeCreateAccountToolInput(input: CreateAccountToolInput): 
     bundleStorageKey: normalizeStorageKey(input.bundleStorageKey),
     sha256: normalizeSha256(input.sha256),
     runtime: input.runtime ? normalizeRuntime(input.runtime) : "sandbox",
-    ...(input.defaultConfig !== undefined ? { defaultConfig: normalizeDefaultConfig(input.defaultConfig) } : {}),
+    ...(input.defaultConfig !== undefined
+      ? { defaultConfig: normalizeDefaultConfig(input.defaultConfig) }
+      : {}),
   };
 }
 
-export function normalizeUpdateAccountToolInput(input: UpdateAccountToolInput): UpdateAccountToolInput {
+export function normalizeUpdateAccountToolInput(
+  input: UpdateAccountToolInput,
+): UpdateAccountToolInput {
   const patch: UpdateAccountToolInput = {};
   if (input.name !== undefined) patch.name = normalizeToolName(input.name);
-  if (input.description !== undefined) patch.description = normalizeDescription(input.description);
-  if (input.inputSchema !== undefined) patch.inputSchema = normalizeInputSchema(input.inputSchema);
-  if (input.bundleStorageKey !== undefined) patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
+  if (input.description !== undefined)
+    patch.description = normalizeDescription(input.description);
+  if (input.inputSchema !== undefined)
+    patch.inputSchema = normalizeInputSchema(input.inputSchema);
+  if (input.bundleStorageKey !== undefined)
+    patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
   if (input.sha256 !== undefined) patch.sha256 = normalizeSha256(input.sha256);
-  if (input.runtime !== undefined) patch.runtime = normalizeRuntime(input.runtime);
+  if (input.runtime !== undefined)
+    patch.runtime = normalizeRuntime(input.runtime);
   if (input.defaultConfig !== undefined) {
-    patch.defaultConfig = input.defaultConfig === null ? null : normalizeDefaultConfig(input.defaultConfig);
+    patch.defaultConfig =
+      input.defaultConfig === null
+        ? null
+        : normalizeDefaultConfig(input.defaultConfig);
   }
   return patch;
 }
 
-export function accountToolBundleStorageKey(accountId: string, sha256: string): string {
+export function accountToolBundleStorageKey(
+  accountId: string,
+  sha256: string,
+): string {
   return `account-tools/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
 }
 
-export function toPublicAccountTool(record: AccountToolRecord): PublicAccountToolRecord {
+export function toPublicAccountTool(
+  record: AccountToolRecord,
+): PublicAccountToolRecord {
   return {
     accountId: record.accountId,
     toolId: record.toolId,
@@ -178,7 +201,9 @@ export function toPublicAccountTool(record: AccountToolRecord): PublicAccountToo
     inputSchema: record.inputSchema,
     sha256: record.sha256,
     runtime: record.runtime,
-    ...(record.defaultConfig !== undefined ? { defaultConfig: record.defaultConfig } : {}),
+    ...(record.defaultConfig !== undefined
+      ? { defaultConfig: record.defaultConfig }
+      : {}),
     status: record.status,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
@@ -192,7 +217,9 @@ export function toPublicAccountTool(record: AccountToolRecord): PublicAccountToo
  * imports need the existing sandbox tier; pure relative-import-free bundles can
  * run in the V8 isolate tier.
  */
-export function inferAccountToolRuntime(bundleSource: string): AccountToolRuntime {
+export function inferAccountToolRuntime(
+  bundleSource: string,
+): AccountToolRuntime {
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
@@ -211,7 +238,9 @@ function normalizeToolName(value: unknown): string {
   }
   const name = value.trim();
   if (!MODEL_TOOL_NAME_PATTERN.test(name)) {
-    throw new Error("tool.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens");
+    throw new Error(
+      "tool.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
   }
   return name;
 }
@@ -228,7 +257,11 @@ function normalizeInputSchema(value: unknown): JSONSchema7 {
     throw new Error("tool.inputSchema must be a JSON Schema object");
   }
   const schema = value as JSONSchema7;
-  if (schema.type !== undefined && typeof schema.type !== "string" && !Array.isArray(schema.type)) {
+  if (
+    schema.type !== undefined &&
+    typeof schema.type !== "string" &&
+    !Array.isArray(schema.type)
+  ) {
     throw new Error("tool.inputSchema.type must be a string or array");
   }
   return schema;

@@ -22,7 +22,10 @@ import type {
   WorkspaceStorageConfig,
 } from "./domain/workspace-config.ts";
 import { normalizeFilesystemNamespace } from "./runtime-keys.ts";
-import { resolveSandboxSpecs, type SandboxControlPlane } from "./sandbox-sizes.ts";
+import {
+  resolveSandboxSpecs,
+  type SandboxControlPlane,
+} from "./sandbox-sizes.ts";
 import { getStorage } from "./storage.ts";
 
 // The effective sandbox for a workspace, with the workspace's storage identity and
@@ -70,13 +73,21 @@ export interface WorkspaceIsolationScope {
 }
 
 /** Derive the shared filesystem namespace for a workspace record. */
-export function workspaceNamespace(accountId: string | undefined, workspaceId: string): string {
+export function workspaceNamespace(
+  accountId: string | undefined,
+  workspaceId: string,
+): string {
   const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
   return normalizeFilesystemNamespace(scope);
 }
 
-export function workspaceNamespaceOwnsReservationKey(namespace: string, reservationKey: string): boolean {
-  return reservationKey === namespace || reservationKey.startsWith(`${namespace}/`);
+export function workspaceNamespaceOwnsReservationKey(
+  namespace: string,
+  reservationKey: string,
+): boolean {
+  return (
+    reservationKey === namespace || reservationKey.startsWith(`${namespace}/`)
+  );
 }
 
 export function isolatedWorkspaceNamespace(
@@ -93,7 +104,9 @@ export function isolatedWorkspaceNamespace(
     if (!scope.channelName) {
       return baseNamespace;
     }
-    throw new Error("Workspace isolation requires the active channel to define workspaceScope");
+    throw new Error(
+      "Workspace isolation requires the active channel to define workspaceScope",
+    );
   }
 
   if (workspaceScope.level === "channel") {
@@ -102,7 +115,9 @@ export function isolatedWorkspaceNamespace(
 
   const conversationKey = scope.conversationKey ?? scope.channelScopeKey;
   if (!conversationKey) {
-    throw new Error("Conversation workspace isolation requires an active conversation key");
+    throw new Error(
+      "Conversation workspace isolation requires an active conversation key",
+    );
   }
   return `${baseNamespace}/${workspaceScope.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }
@@ -122,7 +137,9 @@ export async function resolveAgentRuntime(
   // Load (and memoize) a sandbox record so a sandbox shared across workspaces is
   // only fetched once. The control-plane identity (account + size specs) is attached
   // here so a reserved instance mirrors itself into Convex from the executor.
-  async function loadSandbox(sandboxId: string): Promise<WorkspaceSandboxConfig> {
+  async function loadSandbox(
+    sandboxId: string,
+  ): Promise<WorkspaceSandboxConfig> {
     if (!accountId) {
       throw new Error("Cannot resolve sandbox reference without an account");
     }
@@ -142,18 +159,24 @@ export async function resolveAgentRuntime(
     return resolved;
   }
 
-  const sandbox = typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
-    ? await loadSandbox(agentConfig.sandbox)
-    : undefined;
+  const sandbox =
+    typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
+      ? await loadSandbox(agentConfig.sandbox)
+      : undefined;
 
   const workspaces: ResolvedWorkspace[] = [];
   for (const ref of agentConfig.workspaces ?? []) {
     if (!accountId) {
       throw new Error("Cannot resolve workspace reference without an account");
     }
-    const record = await storage.workspaceConfigs.getById(accountId, ref.workspaceId);
+    const record = await storage.workspaceConfigs.getById(
+      accountId,
+      ref.workspaceId,
+    );
     if (!record) {
-      throw new Error(`Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`);
+      throw new Error(
+        `Referenced workspace not found: ${ref.workspaceId} (as "${ref.name}")`,
+      );
     }
     // Effective sandbox cascade:
     //   null            => read-only opt-out (even when an agent default exists)
@@ -188,7 +211,14 @@ export async function resolveAgentRuntime(
       // Attach the workspace's storage identity to its effective sandbox so the
       // executor resolves the mount against the right bucket/creds.
       ...(effectiveSandbox
-        ? { sandbox: { ...effectiveSandbox, ...(record.config.storage ? { storage: record.config.storage } : {}) } }
+        ? {
+            sandbox: {
+              ...effectiveSandbox,
+              ...(record.config.storage
+                ? { storage: record.config.storage }
+                : {}),
+            },
+          }
         : {}),
       ...(readMount ? { readMount } : {}),
     });
@@ -202,7 +232,10 @@ export async function resolveAgentRuntime(
  * mirror itself into the Convex `sandboxInstances` registry (account, config row,
  * display name, size specs).
  */
-function sandboxControlPlane(accountId: string, record: SandboxConfigRecord): SandboxControlPlane {
+function sandboxControlPlane(
+  accountId: string,
+  record: SandboxConfigRecord,
+): SandboxControlPlane {
   return {
     accountId,
     ...(record.projectId ? { projectId: record.projectId } : {}),
@@ -216,7 +249,9 @@ function sandboxControlPlane(accountId: string, record: SandboxConfigRecord): Sa
     }),
     ...(record.config.snapshot ? { snapshotId: record.config.snapshot } : {}),
     ...(record.config.network ? { egress: record.config.network.mode } : {}),
-    ...(record.config.permissionMode ? { permissionMode: record.config.permissionMode } : {}),
+    ...(record.config.permissionMode
+      ? { permissionMode: record.config.permissionMode }
+      : {}),
   };
 }
 
@@ -224,10 +259,17 @@ function sandboxControlPlane(accountId: string, record: SandboxConfigRecord): Sa
  * Namespaces for an account's workspace records, used by cleanup to purge the
  * S3 data for shared workspaces. Pass the account's workspace ids.
  */
-export function workspaceNamespacesForAccount(accountId: string, workspaceIds: string[]): string[] {
-  return workspaceIds.map((workspaceId) => workspaceNamespace(accountId, workspaceId));
+export function workspaceNamespacesForAccount(
+  accountId: string,
+  workspaceIds: string[],
+): string[] {
+  return workspaceIds.map((workspaceId) =>
+    workspaceNamespace(accountId, workspaceId),
+  );
 }
 
-export function resolveWorkspaceRefs(agentConfig: AgentConfig): AgentWorkspaceRef[] {
+export function resolveWorkspaceRefs(
+  agentConfig: AgentConfig,
+): AgentWorkspaceRef[] {
   return agentConfig.workspaces ?? [];
 }

@@ -9,7 +9,9 @@ import type { ToolContext } from "./index.ts";
 
 export default function googleSearchTool(context: ToolContext): ToolSet {
   if (context.modelProviderName !== "google") {
-    throw new Error("config.tools.googleSearch requires config.model.provider to be google");
+    throw new Error(
+      "config.tools.googleSearch requires config.model.provider to be google",
+    );
   }
 
   const { enabled: _enabled, ...googleSearchConfig } = context.config;

@@ -1,7 +1,10 @@
 {
   "functions": ".",
   "authKit": {
-    "redirectUris": ["http://localhost:3000/auth/callback", "https://dashboard.broods.app/auth/callback"],
+    "redirectUris": [
+      "http://localhost:3000/auth/callback",
+      "https://dashboard.broods.app/auth/callback"
+    ],
     "appHomepageUrl": "https://dashboard.broods.app",
     "corsOrigins": ["http://localhost:3000", "https://dashboard.broods.app"]
   }

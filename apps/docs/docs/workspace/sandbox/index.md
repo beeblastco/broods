@@ -78,17 +78,17 @@ A sandbox is a standalone, account-scoped record referenced from agent config by
 {
   "name": "default",
   "config": {
-    "provider": "sandbox",         // sandbox (default) | lambda | e2b | daytona | vercel
-    "size": "small",               // tiny | xsmall | small | medium | large (see Snapshots & Sizes)
-    "snapshot": "img_curated",     // prebuilt image/snapshot to boot from (see Snapshots & Sizes); omit for the provider default
+    "provider": "sandbox", // sandbox (default) | lambda | e2b | daytona | vercel
+    "size": "small", // tiny | xsmall | small | medium | large (see Snapshots & Sizes)
+    "snapshot": "img_curated", // prebuilt image/snapshot to boot from (see Snapshots & Sizes); omit for the provider default
     "network": { "mode": "allow-all" }, // allow-all | deny-all | restricted (see Networking)
-    "permissionMode": "ask",       // edit | ask | bypass
+    "permissionMode": "ask", // edit | ask | bypass
     "runtimes": ["bash", "python", "node"], // advisory allow-list (best-effort)
-    "timeout": 120,                // per-call seconds (default 30; max 600)
-    "memoryLimit": 512,            // MB; validated (≤8192 for lambda MicroVM size) but informational — executors do not resize
+    "timeout": 120, // per-call seconds (default 30; max 600)
+    "memoryLimit": 512, // MB; validated (≤8192 for lambda MicroVM size) but informational — executors do not resize
     "outputLimitBytes": 65536,
-    "envVars": { "FOO": "bar" }    // injected into every run (encrypted at rest)
-  }
+    "envVars": { "FOO": "bar" }, // injected into every run (encrypted at rest)
+  },
 }
 ```
 
@@ -107,12 +107,12 @@ Sizes](snapshot.md). `network` controls egress — see [Networking](networking.m
 
 Provider-specific behavior lives in the [Integration](lambda.md) pages:
 
-| Provider | Documentation |
-| --- | --- |
-| `lambda` | [Lambda Details](lambda.md) |
-| `e2b` | [E2B Details](e2b.md) |
+| Provider  | Documentation                 |
+| --------- | ----------------------------- |
+| `lambda`  | [Lambda Details](lambda.md)   |
+| `e2b`     | [E2B Details](e2b.md)         |
 | `daytona` | [Daytona Details](daytona.md) |
-| `vercel` | [Vercel Details](vercel.md) |
+| `vercel`  | [Vercel Details](vercel.md)   |
 
 ## Storage capability matrix
 
@@ -120,13 +120,13 @@ This table describes the current harness behavior. Some providers expose additio
 native storage features in their own SDKs; those are called out in provider docs when they
 are not yet wired into the shared workspace contract.
 
-| Provider | Stateless bash | Shared S3 workspace mount | Persistent sandbox | Background jobs | Configurable storage limit |
-| --- | --- | --- | --- | --- | --- |
-| `sandbox` | yes | yes, through `mount-s3` (workspace `storage` or `options.mountAwsS3Buckets`) | yes, native pause/resume + standby | yes, with live status/logs/stop | provider/account limit outside sandbox config |
-| `lambda` | yes | yes, through `mount-s3` (inside the MicroVM) | yes, snapshot suspend/resume (8 h max) | yes, in the persistent VM | S3 bucket/account limits outside sandbox config |
-| `daytona` | yes | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true | yes, native persistent sandbox | yes, with live status/logs/stop | provider/account limit outside sandbox config |
-| `e2b` | yes | not wired; S3 workspaces are rejected | yes, native sandbox pause/resume | yes, native launch + callback delivery; no harness live logs/stop | E2B plan/template limit outside sandbox config |
-| `vercel` | yes | not wired; S3 workspaces are rejected | yes, named persistent sandbox filesystem | yes, with live status/logs/stop | Vercel sandbox/drive limits outside sandbox config |
+| Provider  | Stateless bash | Shared S3 workspace mount                                                    | Persistent sandbox                       | Background jobs                                                   | Configurable storage limit                         |
+| --------- | -------------- | ---------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| `sandbox` | yes            | yes, through `mount-s3` (workspace `storage` or `options.mountAwsS3Buckets`) | yes, native pause/resume + standby       | yes, with live status/logs/stop                                   | provider/account limit outside sandbox config      |
+| `lambda`  | yes            | yes, through `mount-s3` (inside the MicroVM)                                 | yes, snapshot suspend/resume (8 h max)   | yes, in the persistent VM                                         | S3 bucket/account limits outside sandbox config    |
+| `daytona` | yes            | yes, through `mount-s3` when `options.mountAwsS3Buckets` is true             | yes, native persistent sandbox           | yes, with live status/logs/stop                                   | provider/account limit outside sandbox config      |
+| `e2b`     | yes            | not wired; S3 workspaces are rejected                                        | yes, native sandbox pause/resume         | yes, native launch + callback delivery; no harness live logs/stop | E2B plan/template limit outside sandbox config     |
+| `vercel`  | yes            | not wired; S3 workspaces are rejected                                        | yes, named persistent sandbox filesystem | yes, with live status/logs/stop                                   | Vercel sandbox/drive limits outside sandbox config |
 
 The shared S3 workspace mount is intentionally the cross-provider workspace model for
 `sandbox`, `lambda`, and `daytona`. `e2b` and `vercel` provider-native storage is not
@@ -149,13 +149,13 @@ command in the selected workspace directory, so examples should use relative pat
 
 Provider implementation paths are still useful for debugging:
 
-| Provider | Workspace-backed bash cwd | Underlying mount path |
-| --- | --- | --- |
-| `sandbox` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
-| `lambda` | `/mnt/workspaces/<namespace>` | `mount-s3` (inside the MicroVM) at `/mnt/workspaces/<namespace>` |
-| `daytona` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>` |
-| `e2b` | not supported for S3 workspaces | no shared S3 mount wired |
-| `vercel` | not supported for S3 workspaces | no shared S3 mount wired |
+| Provider  | Workspace-backed bash cwd                | Underlying mount path                                            |
+| --------- | ---------------------------------------- | ---------------------------------------------------------------- |
+| `sandbox` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>`                |
+| `lambda`  | `/mnt/workspaces/<namespace>`            | `mount-s3` (inside the MicroVM) at `/mnt/workspaces/<namespace>` |
+| `daytona` | `/mnt/workspaces/<namespace>` by default | `mount-s3` at `options.workspaceRoot/<namespace>`                |
+| `e2b`     | not supported for S3 workspaces          | no shared S3 mount wired                                         |
+| `vercel`  | not supported for S3 workspaces          | no shared S3 mount wired                                         |
 
 Keep prompt text small: tell the model "use relative paths." Put provider-specific mount
 paths in docs and logs, not ordinary task prompts.
@@ -195,12 +195,12 @@ truncated at 256 KB by the image and again at `outputLimitBytes` harness-side.
 
 ## Learn more
 
-| Guide | Covers |
-| --- | --- |
-| [Getting Started](getting-started.md) | define a sandbox, attach a workspace, run code |
-| [Snapshots & Sizes](snapshot.md) | image pinning, the size catalog, the snapshot status model |
-| [Networking](networking.md) | egress modes and per-provider enforcement |
-| [Security](security.md) | credential isolation and workspace scoping |
-| [Hooks](hook.md) | setup commands and runtime lifecycle hooks |
-| [Best Practice](best-practice.md) | persistent sandboxes, background jobs, live terminal + PTY runs, idle tuning |
-| [Integration](lambda.md) | Lambda · Daytona · E2B · Vercel specifics |
+| Guide                                 | Covers                                                                       |
+| ------------------------------------- | ---------------------------------------------------------------------------- |
+| [Getting Started](getting-started.md) | define a sandbox, attach a workspace, run code                               |
+| [Snapshots & Sizes](snapshot.md)      | image pinning, the size catalog, the snapshot status model                   |
+| [Networking](networking.md)           | egress modes and per-provider enforcement                                    |
+| [Security](security.md)               | credential isolation and workspace scoping                                   |
+| [Hooks](hook.md)                      | setup commands and runtime lifecycle hooks                                   |
+| [Best Practice](best-practice.md)     | persistent sandboxes, background jobs, live terminal + PTY runs, idle tuning |
+| [Integration](lambda.md)              | Lambda · Daytona · E2B · Vercel specifics                                    |

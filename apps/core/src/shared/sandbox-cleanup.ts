@@ -16,18 +16,30 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
-type ReleasableSandboxProvider = "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
+type ReleasableSandboxProvider =
+  | "sandbox"
+  | "lambda"
+  | "daytona"
+  | "e2b"
+  | "vercel";
 
 /**
  * Clean delete of reserved sandboxes for the given workspace namespaces.
  * Idempotent: a namespace with no reserved sandbox is a cheap no-op.
  */
-export async function releaseReservedSandboxes(accountId: string, namespaces: string[]): Promise<number> {
+export async function releaseReservedSandboxes(
+  accountId: string,
+  namespaces: string[],
+): Promise<number> {
   if (namespaces.length === 0) {
     return 0;
   }
-  const configs = await getStorage().sandboxConfigs.list(accountId).catch(() => []);
-  const persistent = configs.map((record) => record.config).filter((config) => config.persistent === true);
+  const configs = await getStorage()
+    .sandboxConfigs.list(accountId)
+    .catch(() => []);
+  const persistent = configs
+    .map((record) => record.config)
+    .filter((config) => config.persistent === true);
   const sandbox = persistent.filter((config) => config.provider === "sandbox");
   const lambda = persistent.filter((config) => config.provider === "lambda");
   const daytona = persistent.filter((config) => config.provider === "daytona");
@@ -42,11 +54,11 @@ export async function releaseReservedSandboxes(accountId: string, namespaces: st
     if (await releaseFromConfigs("e2b", e2b, namespace)) released++;
     if (await releaseFromConfigs("vercel", vercel, namespace)) released++;
     // Drop any orphaned instance rows (e.g. all configs deleted, or none owned it).
-    await deleteSandboxInstance("sandbox", namespace).catch(() => { });
-    await deleteSandboxInstance("lambda", namespace).catch(() => { });
-    await deleteSandboxInstance("daytona", namespace).catch(() => { });
-    await deleteSandboxInstance("e2b", namespace).catch(() => { });
-    await deleteSandboxInstance("vercel", namespace).catch(() => { });
+    await deleteSandboxInstance("sandbox", namespace).catch(() => {});
+    await deleteSandboxInstance("lambda", namespace).catch(() => {});
+    await deleteSandboxInstance("daytona", namespace).catch(() => {});
+    await deleteSandboxInstance("e2b", namespace).catch(() => {});
+    await deleteSandboxInstance("vercel", namespace).catch(() => {});
     await removeSandboxInstance(accountId, namespace);
   }
   return released;
@@ -56,11 +68,16 @@ export async function releaseReservedSandboxes(accountId: string, namespaces: st
  * Release reserved sandbox/lambda/daytona/e2b/vercel sandboxes created from a
  * single config, across all of the account's workspace namespaces.
  */
-export async function releaseSandboxConfigInstances(accountId: string, config: SandboxConfig): Promise<number> {
+export async function releaseSandboxConfigInstances(
+  accountId: string,
+  config: SandboxConfig,
+): Promise<number> {
   if (config.persistent !== true || !isReleasableProvider(config.provider)) {
     return 0;
   }
-  const workspaceConfigs = await getStorage().workspaceConfigs.list(accountId).catch(() => []);
+  const workspaceConfigs = await getStorage()
+    .workspaceConfigs.list(accountId)
+    .catch(() => []);
   let released = 0;
   for (const workspace of workspaceConfigs) {
     const namespace = workspaceNamespace(accountId, workspace.workspaceId);
@@ -72,8 +89,16 @@ export async function releaseSandboxConfigInstances(accountId: string, config: S
   return released;
 }
 
-function isReleasableProvider(provider: SandboxConfig["provider"]): provider is ReleasableSandboxProvider {
-  return provider === "sandbox" || provider === "lambda" || provider === "daytona" || provider === "e2b" || provider === "vercel";
+function isReleasableProvider(
+  provider: SandboxConfig["provider"],
+): provider is ReleasableSandboxProvider {
+  return (
+    provider === "sandbox" ||
+    provider === "lambda" ||
+    provider === "daytona" ||
+    provider === "e2b" ||
+    provider === "vercel"
+  );
 }
 
 async function releaseFromConfigs(
@@ -83,15 +108,16 @@ async function releaseFromConfigs(
 ): Promise<boolean> {
   for (const config of configs) {
     try {
-      const executor = provider === "sandbox"
-        ? new WorkdirSandboxExecutor(config)
-        : provider === "lambda"
-          ? new MicrovmSandboxExecutor(config)
-          : provider === "daytona"
-            ? new DaytonaSandboxExecutor(config)
-            : provider === "e2b"
-              ? new E2BSandboxExecutor(config)
-              : new VercelSandboxExecutor(config);
+      const executor =
+        provider === "sandbox"
+          ? new WorkdirSandboxExecutor(config)
+          : provider === "lambda"
+            ? new MicrovmSandboxExecutor(config)
+            : provider === "daytona"
+              ? new DaytonaSandboxExecutor(config)
+              : provider === "e2b"
+                ? new E2BSandboxExecutor(config)
+                : new VercelSandboxExecutor(config);
       await executor.release({ namespace });
       return true;
     } catch (error) {

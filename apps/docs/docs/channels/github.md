@@ -9,11 +9,7 @@ Broods uses [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter
 Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineGitHubChannel,
-  env,
-} from "broods";
+import { defineAgent, defineGitHubChannel, env } from "broods";
 
 export const github = defineGitHubChannel({
   webhookSecret: env.GITHUB_WEBHOOK_SECRET,

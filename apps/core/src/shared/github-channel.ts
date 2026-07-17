@@ -75,7 +75,11 @@ export interface GitHubSource {
   issueNumber?: number;
   pullNumber?: number;
   commentId?: number;
-  target: "issue" | "issue_comment" | "pull_request" | "pull_request_review_comment";
+  target:
+    | "issue"
+    | "issue_comment"
+    | "pull_request"
+    | "pull_request_review_comment";
 }
 
 const GITHUB_API_VERSION = "2022-11-28";
@@ -84,7 +88,10 @@ const MAX_CONTEXT_BODY_CHARS = 8000;
 const MAX_CONTEXT_COMMENT_CHARS = 2000;
 
 class BroodsGitHubAdapter extends GitHubAdapter {
-  verifyWebhookSignature(body: string, signature: string | null | undefined): boolean {
+  verifyWebhookSignature(
+    body: string,
+    signature: string | null | undefined,
+  ): boolean {
     return this.verifySignature(body, signature ?? null);
   }
 }
@@ -117,7 +124,10 @@ export function createGitHubChannel(
     },
 
     authenticate(req) {
-      return github.verifyWebhookSignature(req.body, req.headers["x-hub-signature-256"]);
+      return github.verifyWebhookSignature(
+        req.body,
+        req.headers["x-hub-signature-256"],
+      );
     },
 
     parse(req): ChannelParseResult | Promise<ChannelParseResult> {
@@ -144,37 +154,82 @@ export function createGitHubChannel(
         return { kind: "ignore" };
       }
 
-      if (allowedRepos && !allowedRepos.has("*") && !allowedRepos.has(fullName)) {
-        logWarn("GitHub repository not in allow list", { repository: fullName });
+      if (
+        allowedRepos &&
+        !allowedRepos.has("*") &&
+        !allowedRepos.has(fullName)
+      ) {
+        logWarn("GitHub repository not in allow list", {
+          repository: fullName,
+        });
         return { kind: "ignore" };
       }
 
       switch (event) {
         case "issues":
-          return parseIssuesEvent(github, payload, deliveryId, owner, repo, fullName, options, userName);
+          return parseIssuesEvent(
+            github,
+            payload,
+            deliveryId,
+            owner,
+            repo,
+            fullName,
+            options,
+            userName,
+          );
         case "issue_comment":
-          return parseIssueCommentEvent(github, payload, deliveryId, owner, repo, fullName, {
-            apiUrl,
-            appId,
-            privateKey,
-            botUserName: userName,
-          });
+          return parseIssueCommentEvent(
+            github,
+            payload,
+            deliveryId,
+            owner,
+            repo,
+            fullName,
+            {
+              apiUrl,
+              appId,
+              privateKey,
+              botUserName: userName,
+            },
+          );
         case "pull_request":
-          return parsePullRequestEvent(github, payload, deliveryId, owner, repo, fullName, options, userName);
+          return parsePullRequestEvent(
+            github,
+            payload,
+            deliveryId,
+            owner,
+            repo,
+            fullName,
+            options,
+            userName,
+          );
         case "pull_request_review_comment":
-          return parseReviewCommentEvent(github, payload, deliveryId, owner, repo, fullName, {
-            apiUrl,
-            appId,
-            privateKey,
-            botUserName: userName,
-          });
+          return parseReviewCommentEvent(
+            github,
+            payload,
+            deliveryId,
+            owner,
+            repo,
+            fullName,
+            {
+              apiUrl,
+              appId,
+              privateKey,
+              botUserName: userName,
+            },
+          );
         default:
           return { kind: "ignore" };
       }
     },
 
     actions(msg): ChannelActions {
-      return createGitHubActions(appId, privateKey, toGitHubSource(msg.source), apiUrl);
+      return createGitHubActions(
+        appId,
+        privateKey,
+        toGitHubSource(msg.source),
+        apiUrl,
+      );
     },
   };
 }
@@ -207,7 +262,12 @@ function parseIssuesEvent(
     if (!isBotAssignee(payload, botUserName)) {
       return { kind: "ignore" };
     }
-    const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
+    const thread = {
+      owner,
+      repo,
+      prNumber: issueNumber,
+      type: "issue",
+    } satisfies GitHubThreadId;
     const threadId = github.encodeThreadId(thread);
     return {
       kind: "message",
@@ -216,10 +276,16 @@ function parseIssuesEvent(
         eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
         conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
         channelName: "github",
-        content: [{
-          type: "text",
-          text: formatTitleAndBody("Issue", payload.issue?.title, payload.issue?.body),
-        }],
+        content: [
+          {
+            type: "text",
+            text: formatTitleAndBody(
+              "Issue",
+              payload.issue?.title,
+              payload.issue?.body,
+            ),
+          },
+        ],
         source: {
           owner,
           repo,
@@ -237,7 +303,12 @@ function parseIssuesEvent(
   if (options?.triggerOnIssueOpen === false) {
     return { kind: "ignore" };
   }
-  const thread = { owner, repo, prNumber: issueNumber, type: "issue" } satisfies GitHubThreadId;
+  const thread = {
+    owner,
+    repo,
+    prNumber: issueNumber,
+    type: "issue",
+  } satisfies GitHubThreadId;
   const threadId = github.encodeThreadId(thread);
 
   return {
@@ -247,10 +318,16 @@ function parseIssuesEvent(
       eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:issue:${issueNumber}`,
       channelName: "github",
-      content: [{
-        type: "text",
-        text: formatTitleAndBody("Issue", payload.issue?.title, payload.issue?.body),
-      }],
+      content: [
+        {
+          type: "text",
+          text: formatTitleAndBody(
+            "Issue",
+            payload.issue?.title,
+            payload.issue?.body,
+          ),
+        },
+      ],
       source: {
         owner,
         repo,
@@ -270,13 +347,21 @@ function parseIssueCommentEvent(
   owner: string,
   repo: string,
   repoFullName: string,
-  options: { apiUrl?: string; appId: string; privateKey: string; botUserName?: string },
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  },
 ): Promise<ChannelParseResult> | ChannelParseResult {
   if (!isRelevantAction(payload.action)) {
     return { kind: "ignore" };
   }
 
-  if (isBotActor(payload.comment?.user?.type) || isBotActor(payload.sender?.type)) {
+  if (
+    isBotActor(payload.comment?.user?.type) ||
+    isBotActor(payload.sender?.type)
+  ) {
     return { kind: "ignore" };
   }
 
@@ -288,7 +373,10 @@ function parseIssueCommentEvent(
     return { kind: "ignore" };
   }
 
-  if (options.botUserName && !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)) {
+  if (
+    options.botUserName &&
+    !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)
+  ) {
     return { kind: "ignore" };
   }
 
@@ -320,7 +408,12 @@ function parseIssueCommentEvent(
 
 async function buildCommentMessage(options: {
   payload: GitHubWebhookPayload;
-  options: { apiUrl?: string; appId: string; privateKey: string; botUserName?: string };
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  };
   resource: "issue" | "pr";
   owner: string;
   repo: string;
@@ -401,7 +494,11 @@ function parsePullRequestEvent(
     if (!isBotAssignee(payload, botUserName)) {
       return { kind: "ignore" };
     }
-    const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;
+    const thread = {
+      owner,
+      repo,
+      prNumber: pullNumber,
+    } satisfies GitHubThreadId;
     const threadId = github.encodeThreadId(thread);
     return {
       kind: "message",
@@ -410,10 +507,16 @@ function parsePullRequestEvent(
         eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
         conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
         channelName: "github",
-        content: [{
-          type: "text",
-          text: formatTitleAndBody("Pull request", payload.pull_request?.title, payload.pull_request?.body),
-        }],
+        content: [
+          {
+            type: "text",
+            text: formatTitleAndBody(
+              "Pull request",
+              payload.pull_request?.title,
+              payload.pull_request?.body,
+            ),
+          },
+        ],
         source: {
           owner,
           repo,
@@ -442,10 +545,16 @@ function parsePullRequestEvent(
       eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${repoFullName}:pr:${pullNumber}`,
       channelName: "github",
-      content: [{
-        type: "text",
-        text: formatTitleAndBody("Pull request", payload.pull_request?.title, payload.pull_request?.body),
-      }],
+      content: [
+        {
+          type: "text",
+          text: formatTitleAndBody(
+            "Pull request",
+            payload.pull_request?.title,
+            payload.pull_request?.body,
+          ),
+        },
+      ],
       source: {
         owner,
         repo,
@@ -466,13 +575,21 @@ function parseReviewCommentEvent(
   owner: string,
   repo: string,
   repoFullName: string,
-  options: { apiUrl?: string; appId: string; privateKey: string; botUserName?: string },
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  },
 ): Promise<ChannelParseResult> | ChannelParseResult {
   if (!isRelevantAction(payload.action)) {
     return { kind: "ignore" };
   }
 
-  if (isBotActor(payload.comment?.user?.type) || isBotActor(payload.sender?.type)) {
+  if (
+    isBotActor(payload.comment?.user?.type) ||
+    isBotActor(payload.sender?.type)
+  ) {
     return { kind: "ignore" };
   }
 
@@ -484,7 +601,10 @@ function parseReviewCommentEvent(
     return { kind: "ignore" };
   }
 
-  if (options.botUserName && !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)) {
+  if (
+    options.botUserName &&
+    !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)
+  ) {
     return { kind: "ignore" };
   }
 
@@ -514,7 +634,12 @@ function parseReviewCommentEvent(
 
 async function buildReviewCommentMessage(options: {
   payload: GitHubWebhookPayload;
-  options: { apiUrl?: string; appId: string; privateKey: string; botUserName?: string };
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  };
   owner: string;
   repo: string;
   repoFullName: string;
@@ -583,19 +708,31 @@ function toGitHubSource(source: Record<string, unknown>): GitHubSource {
     repo: source.repo,
     installationId: source.installationId,
     threadId: source.threadId,
-    messageId: typeof source.messageId === "string" ? source.messageId : undefined,
-    issueNumber: typeof source.issueNumber === "number" ? source.issueNumber : undefined,
-    pullNumber: typeof source.pullNumber === "number" ? source.pullNumber : undefined,
-    commentId: typeof source.commentId === "number" ? source.commentId : undefined,
+    messageId:
+      typeof source.messageId === "string" ? source.messageId : undefined,
+    issueNumber:
+      typeof source.issueNumber === "number" ? source.issueNumber : undefined,
+    pullNumber:
+      typeof source.pullNumber === "number" ? source.pullNumber : undefined,
+    commentId:
+      typeof source.commentId === "number" ? source.commentId : undefined,
     target: source.target,
   };
 }
 
 function isRelevantAction(action: string | undefined): boolean {
-  return action === "opened" || action === "edited" || action === "reopened" || action === "created";
+  return (
+    action === "opened" ||
+    action === "edited" ||
+    action === "reopened" ||
+    action === "created"
+  );
 }
 
-function isBotAssignee(payload: GitHubWebhookPayload, botUserName: string | undefined): boolean {
+function isBotAssignee(
+  payload: GitHubWebhookPayload,
+  botUserName: string | undefined,
+): boolean {
   if (!botUserName) return false;
   const assignee = payload.assignee;
   if (!assignee?.login) return false;
@@ -608,10 +745,12 @@ function isBotActor(type: string | undefined): boolean {
 }
 
 function isGitHubTarget(value: unknown): value is GitHubSource["target"] {
-  return value === "issue"
-    || value === "issue_comment"
-    || value === "pull_request"
-    || value === "pull_request_review_comment";
+  return (
+    value === "issue" ||
+    value === "issue_comment" ||
+    value === "pull_request" ||
+    value === "pull_request_review_comment"
+  );
 }
 
 async function hydrateGitHubThreadContext(options: {
@@ -629,16 +768,21 @@ async function hydrateGitHubThreadContext(options: {
 }): Promise<ChannelIngressEvent | null> {
   try {
     const client = await createGitHubRestClient(options);
-    const thread = options.resource === "issue"
-      ? await client.get<GitHubIssueRef>(`/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`)
-      : await client.get<GitHubPullRequestRef>(`/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`);
+    const thread =
+      options.resource === "issue"
+        ? await client.get<GitHubIssueRef>(
+            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`,
+          )
+        : await client.get<GitHubPullRequestRef>(
+            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`,
+          );
     const issueComments = await client.get<GitHubCommentRef[]>(
       `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}/comments?per_page=100`,
     );
     const reviewComments = options.includeReviewComments
       ? await client.get<GitHubCommentRef[]>(
-        `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
-      )
+          `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
+        )
       : [];
 
     const content = formatGitHubThreadContext({
@@ -652,17 +796,18 @@ async function hydrateGitHubThreadContext(options: {
       currentCommentId: options.currentCommentId,
       currentCommentCreatedAt: options.currentCommentCreatedAt,
     });
-    return content
-      ? { role: "system", content, persist: false }
-      : null;
+    return content ? { role: "system", content, persist: false } : null;
   } catch (error) {
-    logWarn("GitHub thread context hydration failed; continuing with current comment only", {
-      owner: options.owner,
-      repo: options.repo,
-      resource: options.resource,
-      number: options.number,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logWarn(
+      "GitHub thread context hydration failed; continuing with current comment only",
+      {
+        owner: options.owner,
+        repo: options.repo,
+        resource: options.resource,
+        number: options.number,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
     return null;
   }
 }
@@ -673,20 +818,28 @@ async function createGitHubRestClient(options: {
   privateKey: string;
   installationId: number;
 }) {
-  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(
+    /\/+$/,
+    "",
+  );
   const appJwt = createGitHubAppJwt(options.appId, options.privateKey);
-  const tokenResponse = await fetch(`${baseApiUrl}/app/installations/${options.installationId}/access_tokens`, {
-    method: "POST",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${appJwt}`,
-      "X-GitHub-Api-Version": GITHUB_API_VERSION,
+  const tokenResponse = await fetch(
+    `${baseApiUrl}/app/installations/${options.installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${appJwt}`,
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      },
     },
-  });
+  );
   if (!tokenResponse.ok) {
-    throw new Error(`installation token request failed (${tokenResponse.status})`);
+    throw new Error(
+      `installation token request failed (${tokenResponse.status})`,
+    );
   }
-  const tokenJson = await tokenResponse.json() as { token?: unknown };
+  const tokenJson = (await tokenResponse.json()) as { token?: unknown };
   if (typeof tokenJson.token !== "string" || tokenJson.token.length === 0) {
     throw new Error("installation token response did not include a token");
   }
@@ -704,7 +857,7 @@ async function createGitHubRestClient(options: {
       if (!response.ok) {
         throw new Error(`GitHub GET ${path} failed (${response.status})`);
       }
-      return await response.json() as T;
+      return (await response.json()) as T;
     },
   };
 }
@@ -721,7 +874,10 @@ function formatGitHubThreadContext(options: {
   currentCommentCreatedAt?: string;
 }): string {
   const title = safeText(options.thread.title) || "(untitled)";
-  const body = truncateText(safeText(options.thread.body), MAX_CONTEXT_BODY_CHARS);
+  const body = truncateText(
+    safeText(options.thread.body),
+    MAX_CONTEXT_BODY_CHARS,
+  );
   const comments = [
     ...options.issueComments.map((comment) => ({
       id: comment.id,
@@ -738,8 +894,16 @@ function formatGitHubThreadContext(options: {
       label: formatReviewCommentLabel(comment),
     })),
   ]
-    .filter((comment) => isPriorGitHubComment(comment, options.currentCommentId, options.currentCommentCreatedAt))
-    .sort((left, right) => (left.createdAt ?? "").localeCompare(right.createdAt ?? ""))
+    .filter((comment) =>
+      isPriorGitHubComment(
+        comment,
+        options.currentCommentId,
+        options.currentCommentCreatedAt,
+      ),
+    )
+    .sort((left, right) =>
+      (left.createdAt ?? "").localeCompare(right.createdAt ?? ""),
+    )
     .slice(-MAX_CONTEXT_COMMENTS);
 
   const lines = [
@@ -755,12 +919,16 @@ function formatGitHubThreadContext(options: {
   ];
 
   if (comments.length > 0) {
-    lines.push("", `Prior comments (${comments.length}${comments.length === MAX_CONTEXT_COMMENTS ? " most recent" : ""}):`);
+    lines.push(
+      "",
+      `Prior comments (${comments.length}${comments.length === MAX_CONTEXT_COMMENTS ? " most recent" : ""}):`,
+    );
     for (const comment of comments) {
       lines.push(
         "",
         `- ${comment.label} by ${safeText(comment.author) || "unknown"} at ${safeText(comment.createdAt) || "unknown time"}:`,
-        truncateText(safeText(comment.body), MAX_CONTEXT_COMMENT_CHARS) || "(empty)",
+        truncateText(safeText(comment.body), MAX_CONTEXT_COMMENT_CHARS) ||
+          "(empty)",
       );
     }
   } else {
@@ -796,11 +964,13 @@ function formatReviewCommentLabel(comment: GitHubCommentRef): string {
 function createGitHubAppJwt(appId: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = base64UrlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = base64UrlEncode(JSON.stringify({
-    iat: now - 60,
-    exp: now + 9 * 60,
-    iss: appId,
-  }));
+  const payload = base64UrlEncode(
+    JSON.stringify({
+      iat: now - 60,
+      exp: now + 9 * 60,
+      iss: appId,
+    }),
+  );
   const unsigned = `${header}.${payload}`;
   const signature = createSign("RSA-SHA256")
     .update(unsigned)
@@ -818,14 +988,20 @@ function base64UrlEncode(value: string | Buffer): string {
 }
 
 function truncateText(value: string, maxChars: number): string {
-  return value.length > maxChars ? `${value.slice(0, maxChars).trimEnd()}\n...(truncated)` : value;
+  return value.length > maxChars
+    ? `${value.slice(0, maxChars).trimEnd()}\n...(truncated)`
+    : value;
 }
 
 function safeText(value: string | null | undefined): string {
   return value?.trim() ?? "";
 }
 
-function formatTitleAndBody(prefix: string, title: string | undefined, body: string | null | undefined): string {
+function formatTitleAndBody(
+  prefix: string,
+  title: string | undefined,
+  body: string | null | undefined,
+): string {
   const lines = [`${prefix}: ${title ?? "(untitled)"}`];
   if (body?.trim()) {
     lines.push("");
@@ -866,12 +1042,18 @@ function createGitHubActions(
     },
 
     stream: async (textStream, options) => {
-      const result = await github.stream(source.threadId, fromFullStream(textStream), options);
+      const result = await github.stream(
+        source.threadId,
+        fromFullStream(textStream),
+        options,
+      );
       return result.id;
     },
   };
 }
 
 function normalizePrivateKey(value: string): string {
-  return value.includes("BEGIN") ? value : Buffer.from(value, "base64").toString("utf8");
+  return value.includes("BEGIN")
+    ? value
+    : Buffer.from(value, "base64").toString("utf8");
 }

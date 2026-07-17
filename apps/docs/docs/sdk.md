@@ -264,7 +264,10 @@ await account.createCron({
   scheduleExpression: "cron(0 8 * * ? *)",
 });
 const files = await account.listWorkspaceFiles(workspaceId);
-await account.uploadWorkspaceFile(workspaceId, { path: "memory/seed.md", contentBase64: "IyBTZWVk" });
+await account.uploadWorkspaceFile(workspaceId, {
+  path: "memory/seed.md",
+  contentBase64: "IyBTZWVk",
+});
 const runs = await account.listCronRuns(cronId, { limit: 20 });
 
 // Sandboxes, tools, policies, and skills round out the config plane.
@@ -273,7 +276,12 @@ const sandbox = await account.createSandbox({
   config: { provider: "lambda", persistent: true, permissionMode: "ask" },
 });
 await account.suspendSandbox(sandbox.sandboxId, reservationKey); // + resume/terminate/snapshot/terminal
-await account.createSkill({ source: "json", name: "triage", description: "Triage flow", content: "# Triage" });
+await account.createSkill({
+  source: "json",
+  name: "triage",
+  description: "Triage flow",
+  content: "# Triage",
+});
 
 // Account self-management: metadata, one-time secret rotation, deletion.
 const { secret } = await account.rotateSecret();
@@ -331,24 +339,25 @@ const wsClient = new WebSocketClient({
   apiKey: "fp_env_...",
 });
 
-const subscription = wsClient.subscribe({
-  agent: api.agents.myAgent,
-  events: [
-    { role: "user", content: [{ type: "text", text: "Hello!" }] },
-  ],
-}, {
-  onMessage(message) {
-    if (message.type === "text-delta") {
-      process.stdout.write(message.text);
-    }
+const subscription = wsClient.subscribe(
+  {
+    agent: api.agents.myAgent,
+    events: [{ role: "user", content: [{ type: "text", text: "Hello!" }] }],
   },
-  onDone() {
-    console.log("\n[done]");
+  {
+    onMessage(message) {
+      if (message.type === "text-delta") {
+        process.stdout.write(message.text);
+      }
+    },
+    onDone() {
+      console.log("\n[done]");
+    },
+    onError(error) {
+      console.error("[error]", error.message);
+    },
   },
-  onError(error) {
-    console.error("[error]", error.message);
-  },
-});
+);
 
 // Close the connection when finished
 // subscription.close();
@@ -359,9 +368,7 @@ Or use the async-generator form:
 ```ts
 for await (const message of wsClient.stream({
   agent: api.agents.myAgent,
-  events: [
-    { role: "user", content: [{ type: "text", text: "Hello!" }] },
-  ],
+  events: [{ role: "user", content: [{ type: "text", text: "Hello!" }] }],
 })) {
   if (message.type === "text-delta") {
     process.stdout.write(message.text);

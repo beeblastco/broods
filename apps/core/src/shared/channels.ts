@@ -16,7 +16,10 @@ export interface ChannelActions {
   reactToMessage(): Promise<void>;
   // Optional native SDK/platform streaming. Channels omit it when the provider
   // lacks SDK streaming support, in which case the harness sends one final reply.
-  stream?(textStream: AsyncIterable<unknown>, options?: StreamOptions): Promise<string | null>;
+  stream?(
+    textStream: AsyncIterable<unknown>,
+    options?: StreamOptions,
+  ): Promise<string | null>;
 }
 
 export interface ChannelRequest {
@@ -88,7 +91,9 @@ export interface ChannelAdapter {
 export function extractText(content: UserContent): string {
   if (typeof content === "string") return content;
   return content
-    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .filter(
+      (part): part is { type: "text"; text: string } => part.type === "text",
+    )
     .map((part) => part.text)
     .join("");
 }
@@ -108,7 +113,11 @@ export function formatChannelErrorText(error: string): string {
 function simplifyErrorText(raw: string): string {
   const afterRetry = raw.match(/Last error:\s*(.+)$/is);
   let message = (afterRetry?.[1] ?? raw).trim();
-  if (/usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(message)) {
+  if (
+    /usage limit|quota|insufficient.*credit|purchase credits|upgrade your (token )?plan/i.test(
+      message,
+    )
+  ) {
     return "Usage limit reached — add credits or upgrade your plan, then try again.";
   }
   if (/rate.?limit|\b429\b|too many requests/i.test(message)) {
@@ -119,5 +128,8 @@ function simplifyErrorText(raw: string): string {
   }
   message = message.replace(/\s*\(\d{3,}\)\s*$/, "").trim(); // drop trailing provider codes like (2056)
 
-  return message || "Something went wrong while generating a reply — please try again.";
+  return (
+    message ||
+    "Something went wrong while generating a reply — please try again."
+  );
 }

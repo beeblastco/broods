@@ -378,24 +378,30 @@ describe("AsyncToolCoordinator", () => {
     const uploadedCompletionToken = createCalls[1]?.[1].completionToken;
     expect(uploadedCompletionToken).toBeDefined();
     expect(createCalls).toEqual([
-      ["createAsyncToolResult", {
-        resultId: builtInResultId,
-        parentEventId: "event-1",
-        conversationKey: "conversation-1",
-        toolName: "builtInAsync",
-        toolCallId: "tool-call-4",
-        input: {},
-      }],
-      ["createAsyncToolResult", {
-        resultId: uploadedResultId,
-        parentEventId: "event-1",
-        conversationKey: "conversation-1",
-        toolName: "uploadedAsync",
-        toolCallId: "tool-call-5",
-        input: {},
-        delivery: { kind: "async" },
-        completionToken: uploadedCompletionToken,
-      }],
+      [
+        "createAsyncToolResult",
+        {
+          resultId: builtInResultId,
+          parentEventId: "event-1",
+          conversationKey: "conversation-1",
+          toolName: "builtInAsync",
+          toolCallId: "tool-call-4",
+          input: {},
+        },
+      ],
+      [
+        "createAsyncToolResult",
+        {
+          resultId: uploadedResultId,
+          parentEventId: "event-1",
+          conversationKey: "conversation-1",
+          toolName: "uploadedAsync",
+          toolCallId: "tool-call-5",
+          input: {},
+          delivery: { kind: "async" },
+          completionToken: uploadedCompletionToken,
+        },
+      ],
     ]);
 
     expect(coordinator.pendingCount).toBe(1);

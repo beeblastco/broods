@@ -98,7 +98,10 @@ const RESPONSE_STREAM_DUPLICATE_WINDOW_MS = 2 * 60 * 1000;
 // times (running -> ok); those are distinct messages, not duplicates, so there
 // is no Nats-Msg-Id / duplicate_window here.
 const OBSERVABILITY_STREAM_NAME = "OBSERVABILITY";
-const OBSERVABILITY_SUBJECT_WILDCARDS = ["v1.*.*.*.logs.>", "v1.*.*.*.traces.>"];
+const OBSERVABILITY_SUBJECT_WILDCARDS = [
+  "v1.*.*.*.logs.>",
+  "v1.*.*.*.traces.>",
+];
 const OBSERVABILITY_STREAM_STORAGE = StorageType.File;
 // Recent-history window the gateway can replay on connect. Kept modest because
 // it is only the live/recent buffer; Tempo/Loki own the long tail.
@@ -134,7 +137,9 @@ export async function connectNats(options: {
       : {}),
   };
   const useWebSocket = /^wss?:\/\//i.test(options.servers);
-  const connection = useWebSocket ? await connectWebSocket(connectOptions) : await connectTcp(connectOptions);
+  const connection = useWebSocket
+    ? await connectWebSocket(connectOptions)
+    : await connectTcp(connectOptions);
   return connection as unknown as NatsConnection;
 }
 
@@ -151,7 +156,11 @@ export function getObservabilityNatsConn(): Promise<NatsConnection> | null {
   if (_obsNatsConn) return Promise.resolve(_obsNatsConn);
   if (_obsNatsConnPromise) return _obsNatsConnPromise;
 
-  _obsNatsConnPromise = connectNats({ servers: url, token: token, timeout: 3000 })
+  _obsNatsConnPromise = connectNats({
+    servers: url,
+    token: token,
+    timeout: 3000,
+  })
     .then((c) => {
       _obsNatsConn = c;
       _obsNatsConnPromise = null;
@@ -178,12 +187,19 @@ export class LiveNatsPublisher implements NatsPublisher {
     // Token-auth credential; omit for an unauthenticated server.
     private readonly token?: string,
   ) {
-    this.subject = streamResponseSubject(headers.accountId, headers.agentId, headers.conversationKey);
+    this.subject = streamResponseSubject(
+      headers.accountId,
+      headers.agentId,
+      headers.conversationKey,
+    );
   }
 
   private async getConnection(): Promise<NatsConnection> {
     if (!this.connectionPromise) {
-      this.connectionPromise = connectNats({ servers: this.url, token: this.token }).catch((err) => {
+      this.connectionPromise = connectNats({
+        servers: this.url,
+        token: this.token,
+      }).catch((err) => {
         this.connectionPromise = null;
         throw err;
       });
@@ -214,7 +230,9 @@ export class LiveNatsPublisher implements NatsPublisher {
       // stores a duplicate.
       const hdrs = natsHeaders();
       hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${this.sequence}`);
-      connection.publish(this.subject, ENCODER.encode(JSON.stringify(event)), { headers: hdrs });
+      connection.publish(this.subject, ENCODER.encode(JSON.stringify(event)), {
+        headers: hdrs,
+      });
     } catch {
       // Publishing is best-effort per event; close() drains queued writes.
     }
@@ -254,7 +272,9 @@ export class LiveNatsPublisher implements NatsPublisher {
 // invocations (a racing creator just sees "stream already exists").
 let ensureStreamPromise: Promise<void> | undefined;
 
-export async function ensureResponseStream(connection: NatsConnection): Promise<void> {
+export async function ensureResponseStream(
+  connection: NatsConnection,
+): Promise<void> {
   if (!ensureStreamPromise) {
     ensureStreamPromise = (async () => {
       const jsm = await connection.jetstreamManager();
@@ -275,7 +295,7 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
       try {
         await jsm.streams.info(RESPONSE_STREAM_NAME);
         // Exists: best-effort sync of the mutable retention knobs.
-        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => { });
+        await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => {});
         return;
       } catch {
         // Not found: create it below.
@@ -284,7 +304,11 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
         await jsm.streams.add(config);
       } catch (err) {
         // A concurrent creator won the race; treat an existing stream as success.
-        if (!/already in use|already exists/i.test(err instanceof Error ? err.message : String(err))) {
+        if (
+          !/already in use|already exists/i.test(
+            err instanceof Error ? err.message : String(err),
+          )
+        ) {
           throw err;
         }
       }
@@ -300,7 +324,9 @@ export async function ensureResponseStream(connection: NatsConnection): Promise<
 // invocations and across core + gateway (whoever runs first wins the race).
 let ensureObservabilityStreamPromise: Promise<void> | undefined;
 
-export async function ensureObservabilityStream(connection: NatsConnection): Promise<void> {
+export async function ensureObservabilityStream(
+  connection: NatsConnection,
+): Promise<void> {
   if (!ensureObservabilityStreamPromise) {
     ensureObservabilityStreamPromise = (async () => {
       const jsm = await connection.jetstreamManager();
@@ -319,7 +345,9 @@ export async function ensureObservabilityStream(connection: NatsConnection): Pro
       };
       try {
         await jsm.streams.info(OBSERVABILITY_STREAM_NAME);
-        await jsm.streams.update(OBSERVABILITY_STREAM_NAME, config).catch(() => { });
+        await jsm.streams
+          .update(OBSERVABILITY_STREAM_NAME, config)
+          .catch(() => {});
         return;
       } catch {
         // Not found: create it below.
@@ -327,7 +355,11 @@ export async function ensureObservabilityStream(connection: NatsConnection): Pro
       try {
         await jsm.streams.add(config);
       } catch (err) {
-        if (!/already in use|already exists/i.test(err instanceof Error ? err.message : String(err))) {
+        if (
+          !/already in use|already exists/i.test(
+            err instanceof Error ? err.message : String(err),
+          )
+        ) {
           throw err;
         }
       }
@@ -357,9 +389,10 @@ export async function readObservabilityStream(options: {
 }): Promise<ConsumerMessages> {
   await ensureObservabilityStream(options.connection);
   const js = options.connection.jetstream();
-  const subject = options.stream === "logs"
-    ? logsSubjectWildcard(options.accountId, options.project, options.env)
-    : tracesSubjectWildcard(options.accountId, options.project, options.env);
+  const subject =
+    options.stream === "logs"
+      ? logsSubjectWildcard(options.accountId, options.project, options.env)
+      : tracesSubjectWildcard(options.accountId, options.project, options.env);
   const consumer = await js.consumers.get(OBSERVABILITY_STREAM_NAME, {
     filterSubjects: subject,
     ...consumerStartPolicy(undefined, options.startTime),
@@ -395,7 +428,11 @@ export function subscribeConversationLive(options: {
   conversationKey: string;
 }): Subscription {
   return options.connection.subscribe(
-    streamResponseSubject(options.accountId, options.agentId, options.conversationKey),
+    streamResponseSubject(
+      options.accountId,
+      options.agentId,
+      options.conversationKey,
+    ),
   );
 }
 
@@ -416,7 +453,11 @@ export async function readConversationStream(options: {
 }): Promise<ConsumerMessages> {
   await ensureResponseStream(options.connection);
   const js = options.connection.jetstream();
-  const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
+  const subject = streamResponseSubject(
+    options.accountId,
+    options.agentId,
+    options.conversationKey,
+  );
   const consumer = await js.consumers.get(RESPONSE_STREAM_NAME, {
     filterSubjects: subject,
     ...consumerStartPolicy(options.startSequence, options.startTime),
@@ -437,9 +478,18 @@ export async function conversationBufferedCount(options: {
 }): Promise<number> {
   try {
     const jsm = await options.connection.jetstreamManager();
-    const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
-    const info = await jsm.streams.info(RESPONSE_STREAM_NAME, { subjects_filter: subject });
-    return (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0;
+    const subject = streamResponseSubject(
+      options.accountId,
+      options.agentId,
+      options.conversationKey,
+    );
+    const info = await jsm.streams.info(RESPONSE_STREAM_NAME, {
+      subjects_filter: subject,
+    });
+    return (
+      (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
+      0
+    );
   } catch {
     return 0;
   }
@@ -450,17 +500,30 @@ export async function conversationBufferedCount(options: {
 // From-start returns no policy on purpose: an ordered consumer already defaults
 // to all-from-start, and passing an explicit `deliver_policy: All` stalls it
 // (delivers nothing) — only the explicit start cursors are safe to set.
-export function consumerStartPolicy(startSequence?: number, startTime?: string) {
+export function consumerStartPolicy(
+  startSequence?: number,
+  startTime?: string,
+) {
   if (typeof startSequence === "number") {
-    return { deliver_policy: DeliverPolicy.StartSequence, opt_start_seq: startSequence };
+    return {
+      deliver_policy: DeliverPolicy.StartSequence,
+      opt_start_seq: startSequence,
+    };
   }
   if (startTime) {
-    return { deliver_policy: DeliverPolicy.StartTime, opt_start_time: startTime };
+    return {
+      deliver_policy: DeliverPolicy.StartTime,
+      opt_start_time: startTime,
+    };
   }
   return {};
 }
 
-export function streamResponseSubject(accountId: string, agentId: string, conversationKey: string): string {
+export function streamResponseSubject(
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+): string {
   return `v1.${accountId}.${agentId}.ws.response.${subjectToken(conversationKey)}`;
 }
 
@@ -494,10 +557,18 @@ export function tracesSubject(
 }
 
 // Wildcards cover all endpoints in a project/environment (dashboard tab / CLI `dev` scope).
-export function logsSubjectWildcard(accountId: string, project: string, env: string): string {
+export function logsSubjectWildcard(
+  accountId: string,
+  project: string,
+  env: string,
+): string {
   return `v1.${accountId}.${project}.${subjectToken(env)}.logs.>`;
 }
 
-export function tracesSubjectWildcard(accountId: string, project: string, env: string): string {
+export function tracesSubjectWildcard(
+  accountId: string,
+  project: string,
+  env: string,
+): string {
   return `v1.${accountId}.${project}.${subjectToken(env)}.traces.>`;
 }

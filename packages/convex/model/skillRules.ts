@@ -14,17 +14,19 @@ const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
  * @throws when the name violates the naming rules
  */
 export function validateSkillName(value: unknown): asserts value is string {
-    if (
-        typeof value !== "string" ||
-        value.length === 0 ||
-        value.length > MAX_SKILL_NAME_LENGTH ||
-        !/^[a-z0-9-]+$/.test(value) ||
-        value.includes("anthropic") ||
-        value.includes("claude") ||
-        /<[^>]*>/.test(value)
-    ) {
-        throw new Error("Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words");
-    }
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_SKILL_NAME_LENGTH ||
+    !/^[a-z0-9-]+$/.test(value) ||
+    value.includes("anthropic") ||
+    value.includes("claude") ||
+    /<[^>]*>/.test(value)
+  ) {
+    throw new Error(
+      "Skill name must be lowercase letters, numbers, and hyphens only, max 64 chars, without reserved words",
+    );
+  }
 }
 
 /**
@@ -32,15 +34,19 @@ export function validateSkillName(value: unknown): asserts value is string {
  * @param value candidate description
  * @throws when the description violates the rules
  */
-export function validateSkillDescription(value: unknown): asserts value is string {
-    if (
-        typeof value !== "string" ||
-        value.trim().length === 0 ||
-        value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
-        /<[^>]*>/.test(value)
-    ) {
-        throw new Error("Skill description must be non-empty, max 1024 chars, and cannot contain XML tags");
-    }
+export function validateSkillDescription(
+  value: unknown,
+): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > MAX_SKILL_DESCRIPTION_LENGTH ||
+    /<[^>]*>/.test(value)
+  ) {
+    throw new Error(
+      "Skill description must be non-empty, max 1024 chars, and cannot contain XML tags",
+    );
+  }
 }
 
 /**
@@ -50,22 +56,22 @@ export function validateSkillDescription(value: unknown): asserts value is strin
  * @throws when the path is unsafe
  */
 export function normalizeBundlePath(value: string): string {
-    if (typeof value !== "string") {
-        throw new Error("Skill file path must be a string");
-    }
+  if (typeof value !== "string") {
+    throw new Error("Skill file path must be a string");
+  }
 
-    const trimmed = value.trim();
-    if (
-        !trimmed ||
-        trimmed.startsWith("/") ||
-        trimmed.includes("\\") ||
-        trimmed.includes("\0") ||
-        trimmed.split("/").some((part) => part === ".." || part === "")
-    ) {
-        throw new Error(`Invalid skill file path: ${value}`);
-    }
+  const trimmed = value.trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith("/") ||
+    trimmed.includes("\\") ||
+    trimmed.includes("\0") ||
+    trimmed.split("/").some((part) => part === ".." || part === "")
+  ) {
+    throw new Error(`Invalid skill file path: ${value}`);
+  }
 
-    return trimmed;
+  return trimmed;
 }
 
 /**
@@ -74,19 +80,22 @@ export function normalizeBundlePath(value: string): string {
  * @returns the skill's name and description
  * @throws when frontmatter is missing or fields are invalid
  */
-export function parseSkillMarkdown(markdown: string): { name: string; description: string } {
-    const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
-    if (!match?.[1]) {
-        throw new Error("SKILL.md must start with YAML frontmatter");
-    }
+export function parseSkillMarkdown(markdown: string): {
+  name: string;
+  description: string;
+} {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match?.[1]) {
+    throw new Error("SKILL.md must start with YAML frontmatter");
+  }
 
-    const frontmatter = parseSimpleYamlFrontmatter(match[1]);
-    const name = frontmatter.name;
-    const description = frontmatter.description;
-    validateSkillName(name);
-    validateSkillDescription(description);
+  const frontmatter = parseSimpleYamlFrontmatter(match[1]);
+  const name = frontmatter.name;
+  const description = frontmatter.description;
+  validateSkillName(name);
+  validateSkillDescription(description);
 
-    return { name: name, description: description };
+  return { name: name, description: description };
 }
 
 /**
@@ -95,9 +104,9 @@ export function parseSkillMarkdown(markdown: string): { name: string; descriptio
  * @returns the S3 content type
  */
 export function contentTypeForSkillPath(filePath: string): string {
-    return filePath.toLowerCase().endsWith(".json")
-        ? "application/json"
-        : "text/plain; charset=utf-8";
+  return filePath.toLowerCase().endsWith(".json")
+    ? "application/json"
+    : "text/plain; charset=utf-8";
 }
 
 /**
@@ -107,40 +116,46 @@ export function contentTypeForSkillPath(filePath: string): string {
  * @throws when the URL is not a safe github.com tree URL
  */
 export function parseGitHubSkillUrl(value: unknown): {
-    owner: string;
-    repo: string;
-    ref: string;
-    subdir: string;
-    archiveUrl: string;
+  owner: string;
+  repo: string;
+  ref: string;
+  subdir: string;
+  archiveUrl: string;
 } {
-    if (typeof value !== "string" || value.trim().length === 0) {
-        throw new Error("url must be a non-empty string");
-    }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("url must be a non-empty string");
+  }
 
-    const url = new URL(value.trim());
-    if (url.protocol !== "https:" || url.hostname !== "github.com") {
-        throw new Error("GitHub skill URL must use https://github.com");
-    }
-    if (/%2e/i.test(value.trim()) || value.trim().includes("..")) {
-        throw new Error("Invalid skill file path: GitHub URL must not contain path traversal");
-    }
+  const url = new URL(value.trim());
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    throw new Error("GitHub skill URL must use https://github.com");
+  }
+  if (/%2e/i.test(value.trim()) || value.trim().includes("..")) {
+    throw new Error(
+      "Invalid skill file path: GitHub URL must not contain path traversal",
+    );
+  }
 
-    const [owner, repo, kind, ref, ...subdirParts] = url.pathname.split("/").filter(Boolean);
-    if (!owner || !repo || kind !== "tree" || !ref) {
-        throw new Error("GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}");
-    }
-    assertSafeGitHubSegment(owner, "owner");
-    assertSafeGitHubSegment(repo, "repo");
-    assertSafeGitHubSegment(ref, "ref");
-    const subdir = subdirParts.map((part) => normalizeBundlePath(part)).join("/");
+  const [owner, repo, kind, ref, ...subdirParts] = url.pathname
+    .split("/")
+    .filter(Boolean);
+  if (!owner || !repo || kind !== "tree" || !ref) {
+    throw new Error(
+      "GitHub skill URL must be https://github.com/{owner}/{repo}/tree/{ref}/{path}",
+    );
+  }
+  assertSafeGitHubSegment(owner, "owner");
+  assertSafeGitHubSegment(repo, "repo");
+  assertSafeGitHubSegment(ref, "ref");
+  const subdir = subdirParts.map((part) => normalizeBundlePath(part)).join("/");
 
-    return {
-        owner: owner,
-        repo: repo,
-        ref: ref,
-        subdir: subdir,
-        archiveUrl: `https://codeload.github.com/${owner}/${repo}/tar.gz/${encodeURIComponent(ref)}`,
-    };
+  return {
+    owner: owner,
+    repo: repo,
+    ref: ref,
+    subdir: subdir,
+    archiveUrl: `https://codeload.github.com/${owner}/${repo}/tar.gz/${encodeURIComponent(ref)}`,
+  };
 }
 
 /**
@@ -148,17 +163,19 @@ export function parseGitHubSkillUrl(value: unknown): {
  * @param frontmatter the frontmatter body
  * @returns the key/value map with scalar quotes stripped
  */
-function parseSimpleYamlFrontmatter(frontmatter: string): Record<string, string> {
-    const result: Record<string, string> = {};
-    for (const line of frontmatter.split(/\r?\n/)) {
-        const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (!match?.[1]) {
-            continue;
-        }
-        result[match[1]] = stripYamlScalarQuotes(match[2] ?? "").trim();
+function parseSimpleYamlFrontmatter(
+  frontmatter: string,
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match?.[1]) {
+      continue;
     }
+    result[match[1]] = stripYamlScalarQuotes(match[2] ?? "").trim();
+  }
 
-    return result;
+  return result;
 }
 
 /**
@@ -167,15 +184,15 @@ function parseSimpleYamlFrontmatter(frontmatter: string): Record<string, string>
  * @returns the unquoted scalar
  */
 function stripYamlScalarQuotes(value: string): string {
-    const trimmed = value.trim();
-    if (
-        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-        (trimmed.startsWith("'") && trimmed.endsWith("'"))
-    ) {
-        return trimmed.slice(1, -1);
-    }
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
 
-    return trimmed;
+  return trimmed;
 }
 
 /**
@@ -185,7 +202,7 @@ function stripYamlScalarQuotes(value: string): string {
  * @throws when the segment has unsupported characters
  */
 function assertSafeGitHubSegment(value: string, name: string): void {
-    if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
-        throw new Error(`GitHub ${name} contains unsupported characters`);
-    }
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new Error(`GitHub ${name} contains unsupported characters`);
+  }
 }

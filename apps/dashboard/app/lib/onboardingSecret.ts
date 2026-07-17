@@ -15,10 +15,10 @@ const EVENT_NAME = "fp:onboarding-secret";
  * @param secret the plaintext fp_acct_ secret to surface once
  */
 export function publishOnboardingSecret(secret: string) {
-    if (typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
 
-    window.sessionStorage.setItem(STORAGE_KEY, secret);
-    window.dispatchEvent(new CustomEvent(EVENT_NAME));
+  window.sessionStorage.setItem(STORAGE_KEY, secret);
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
 /**
@@ -26,17 +26,17 @@ export function publishOnboardingSecret(secret: string) {
  * @returns the pending plaintext secret, or null
  */
 export function readOnboardingSecret(): string | null {
-    if (typeof window === "undefined") return null;
+  if (typeof window === "undefined") return null;
 
-    return window.sessionStorage.getItem(STORAGE_KEY);
+  return window.sessionStorage.getItem(STORAGE_KEY);
 }
 
 /** Clears the pending one-time secret and notifies listeners. */
 export function clearOnboardingSecret() {
-    if (typeof window === "undefined") return;
+  if (typeof window === "undefined") return;
 
-    window.sessionStorage.removeItem(STORAGE_KEY);
-    window.dispatchEvent(new CustomEvent(EVENT_NAME));
+  window.sessionStorage.removeItem(STORAGE_KEY);
+  window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
 /**
@@ -45,11 +45,11 @@ export function clearOnboardingSecret() {
  * @returns an unsubscribe function
  */
 export function subscribeOnboardingSecret(listener: () => void): () => void {
-    if (typeof window === "undefined") {
-        return () => { };
-    }
+  if (typeof window === "undefined") {
+    return () => {};
+  }
 
-    window.addEventListener(EVENT_NAME, listener);
+  window.addEventListener(EVENT_NAME, listener);
 
-    return () => window.removeEventListener(EVENT_NAME, listener);
+  return () => window.removeEventListener(EVENT_NAME, listener);
 }

@@ -9,15 +9,15 @@ import type { NodeProps } from "@xyflow/react";
 import { FolderOpen } from "lucide-react";
 
 export function WorkspaceNode({ id, data }: NodeProps) {
-    const nodeData = data as BaseNodeData;
+  const nodeData = data as BaseNodeData;
 
-    return (
-        <BaseNode
-            id={id}
-            nodeType="workspace"
-            data={nodeData}
-            icon={<FolderOpen className="h-3.5 w-3.5" />}
-            showSideHandles={true}
-        />
-    );
+  return (
+    <BaseNode
+      id={id}
+      nodeType="workspace"
+      data={nodeData}
+      icon={<FolderOpen className="h-3.5 w-3.5" />}
+      showSideHandles={true}
+    />
+  );
 }

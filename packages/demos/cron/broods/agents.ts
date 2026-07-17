@@ -23,7 +23,9 @@ export const oneMinuteCron = defineCron({
     agent: cron,
     conversationKey: "cron:one-minute-test",
     input: "Say hello and the current time.",
-    scheduleExpression: process.env.CRON_SCHEDULE_EXPRESSION ?? atExpressionOneMinuteFromNow("Europe/Amsterdam"),
+    scheduleExpression:
+      process.env.CRON_SCHEDULE_EXPRESSION ??
+      atExpressionOneMinuteFromNow("Europe/Amsterdam"),
     timezone: "Europe/Amsterdam",
   },
 });
@@ -40,7 +42,9 @@ function atExpressionOneMinuteFromNow(timeZone: string): string {
     minute: "2-digit",
     second: "2-digit",
   }).formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value]),
+  );
 
   return `at(${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second})`;
 }

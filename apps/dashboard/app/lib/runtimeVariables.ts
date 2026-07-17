@@ -8,10 +8,10 @@ export type RuntimeVariable = { key: string; value: string };
  * loosely-typed `agentConfig.runtimeVariables` array read from Convex.
  */
 export function isRuntimeVariable(value: unknown): value is RuntimeVariable {
-    return (
-        typeof value === "object" &&
-        value !== null &&
-        typeof (value as { key: unknown }).key === "string" &&
-        typeof (value as { value: unknown }).value === "string"
-    );
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { key: unknown }).key === "string" &&
+    typeof (value as { value: unknown }).value === "string"
+  );
 }

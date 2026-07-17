@@ -8,7 +8,7 @@ import { ConsoleLogger } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelParseResult
+  ChannelParseResult,
 } from "./channels.ts";
 import { resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
@@ -103,10 +103,17 @@ class BroodsDiscordAdapter extends DiscordAdapter {
     signature: string | null | undefined,
     timestamp: string | null | undefined,
   ): Promise<boolean> {
-    return this.verifySignature(new TextEncoder().encode(body), signature ?? null, timestamp ?? null);
+    return this.verifySignature(
+      new TextEncoder().encode(body),
+      signature ?? null,
+      timestamp ?? null,
+    );
   }
 
-  parseCommand(name: string, options: DiscordInteractionOption[] | undefined): {
+  parseCommand(
+    name: string,
+    options: DiscordInteractionOption[] | undefined,
+  ): {
     command: string;
     text: string;
   } {
@@ -139,7 +146,10 @@ export function createDiscordChannel(
     name: "discord",
 
     canHandle(req) {
-      return "x-signature-ed25519" in req.headers || "x-discord-gateway-token" in req.headers;
+      return (
+        "x-signature-ed25519" in req.headers ||
+        "x-discord-gateway-token" in req.headers
+      );
     },
 
     authenticate(req) {
@@ -156,7 +166,11 @@ export function createDiscordChannel(
 
     parse(req): ChannelParseResult {
       const payload = JSON.parse(req.body) as DiscordInteractionPayload;
-      const gatewayEvent = parseForwardedGatewayEvent(discord, payload as DiscordForwardedEventPayload, allowedGuildIds);
+      const gatewayEvent = parseForwardedGatewayEvent(
+        discord,
+        payload as DiscordForwardedEventPayload,
+        allowedGuildIds,
+      );
       if (gatewayEvent) {
         return gatewayEvent;
       }
@@ -194,7 +208,9 @@ export function createDiscordChannel(
       }
 
       if (!payload.guild_id) {
-        logWarn("Discord DM interactions are disabled", { channelId: payload.channel_id });
+        logWarn("Discord DM interactions are disabled", {
+          channelId: payload.channel_id,
+        });
         return {
           kind: "response",
           response: {
@@ -208,8 +224,14 @@ export function createDiscordChannel(
         };
       }
 
-      if (allowedGuildIds && payload.guild_id && !allowedGuildIds.has(payload.guild_id)) {
-        logWarn("Discord guild not in allow list", { guildId: payload.guild_id });
+      if (
+        allowedGuildIds &&
+        payload.guild_id &&
+        !allowedGuildIds.has(payload.guild_id)
+      ) {
+        logWarn("Discord guild not in allow list", {
+          guildId: payload.guild_id,
+        });
         return {
           kind: "response",
           response: {
@@ -223,8 +245,14 @@ export function createDiscordChannel(
         };
       }
 
-      const command = discord.parseCommand(payload.data.name, payload.data.options);
-      const resolvedCommand = resolveDiscordCommand(command.command.replace(/^\//, ""), command.text);
+      const command = discord.parseCommand(
+        payload.data.name,
+        payload.data.options,
+      );
+      const resolvedCommand = resolveDiscordCommand(
+        command.command.replace(/^\//, ""),
+        command.text,
+      );
       if (!resolvedCommand) {
         return unsupportedInteractionResponse();
       }
@@ -259,7 +287,12 @@ export function createDiscordChannel(
     },
 
     actions(msg): ChannelActions {
-      return createDiscordActions(botToken, publicKey, toDiscordSource(msg.source), apiUrl);
+      return createDiscordActions(
+        botToken,
+        publicKey,
+        toDiscordSource(msg.source),
+        apiUrl,
+      );
     },
   };
 }
@@ -277,10 +310,13 @@ function createDiscordActions(
     publicKey,
     logger: new ConsoleLogger("error").child("discord"),
   });
-  const threadId = source.threadId ?? discord.encodeThreadId({
-    guildId: source.guildId ?? "@me",
-    channelId: source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
-  } satisfies DiscordThreadId);
+  const threadId =
+    source.threadId ??
+    discord.encodeThreadId({
+      guildId: source.guildId ?? "@me",
+      channelId:
+        source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
+    } satisfies DiscordThreadId);
 
   return {
     async sendText(text) {
@@ -343,24 +379,42 @@ function parseForwardedGatewayEvent(
   }
 
   if (data.author.bot) {
-    return { kind: "ignore", reason: "bot_message", response: gatewayAck().response };
+    return {
+      kind: "ignore",
+      reason: "bot_message",
+      response: gatewayAck().response,
+    };
   }
 
   if (!data.guild_id) {
-    logWarn("Discord DM gateway messages are disabled", { channelId: data.channel_id });
-    return { kind: "ignore", reason: "dm_disabled", response: gatewayAck().response };
+    logWarn("Discord DM gateway messages are disabled", {
+      channelId: data.channel_id,
+    });
+    return {
+      kind: "ignore",
+      reason: "dm_disabled",
+      response: gatewayAck().response,
+    };
   }
 
   if (allowedGuildIds && !allowedGuildIds.has(data.guild_id)) {
     logWarn("Discord guild not in allow list", { guildId: data.guild_id });
-    return { kind: "ignore", reason: "guild_not_allowed", response: gatewayAck().response };
+    return {
+      kind: "ignore",
+      reason: "guild_not_allowed",
+      response: gatewayAck().response,
+    };
   }
 
   const thread = toDiscordGatewayThread(data);
   const threadId = discord.encodeThreadId(thread);
   const content = data.content.trim();
   if (!content) {
-    return { kind: "ignore", reason: "empty_message", response: gatewayAck().response };
+    return {
+      kind: "ignore",
+      reason: "empty_message",
+      response: gatewayAck().response,
+    };
   }
 
   return {
@@ -383,9 +437,15 @@ function parseForwardedGatewayEvent(
   };
 }
 
-function isGatewayMessage(data: DiscordGatewayMessageData): data is Required<
-  Pick<DiscordGatewayMessageData, "author" | "channel_id" | "content" | "guild_id" | "id">
-> & DiscordGatewayMessageData {
+function isGatewayMessage(
+  data: DiscordGatewayMessageData,
+): data is Required<
+  Pick<
+    DiscordGatewayMessageData,
+    "author" | "channel_id" | "content" | "guild_id" | "id"
+  >
+> &
+  DiscordGatewayMessageData {
   return Boolean(
     data &&
     typeof data.id === "string" &&
@@ -399,9 +459,10 @@ function isGatewayMessage(data: DiscordGatewayMessageData): data is Required<
   );
 }
 
-function toDiscordGatewayThread(data: Required<
-  Pick<DiscordGatewayMessageData, "channel_id" | "guild_id">
-> & DiscordGatewayMessageData): DiscordThreadId {
+function toDiscordGatewayThread(
+  data: Required<Pick<DiscordGatewayMessageData, "channel_id" | "guild_id">> &
+    DiscordGatewayMessageData,
+): DiscordThreadId {
   if (data.thread?.id && data.thread.parent_id) {
     return {
       guildId: data.guild_id ?? "@me",
@@ -446,22 +507,30 @@ function toDiscordSource(source: Record<string, unknown>): DiscordSource {
     throw new Error("Invalid Discord source payload");
   }
 
-  const channelId = typeof source.channelId === "string" ? source.channelId : undefined;
-  const threadId = typeof source.threadId === "string" ? source.threadId : undefined;
-  const interactionId = typeof source.interactionId === "string" ? source.interactionId : undefined;
+  const channelId =
+    typeof source.channelId === "string" ? source.channelId : undefined;
+  const threadId =
+    typeof source.threadId === "string" ? source.threadId : undefined;
+  const interactionId =
+    typeof source.interactionId === "string" ? source.interactionId : undefined;
   if (!channelId && !threadId && !interactionId) {
     throw new Error("Invalid Discord source payload");
   }
 
   return {
     applicationId: source.applicationId,
-    interactionToken: typeof source.interactionToken === "string" ? source.interactionToken : undefined,
+    interactionToken:
+      typeof source.interactionToken === "string"
+        ? source.interactionToken
+        : undefined,
     interactionId,
     guildId: typeof source.guildId === "string" ? source.guildId : undefined,
     channelId,
     threadId,
-    messageId: typeof source.messageId === "string" ? source.messageId : undefined,
-    commandToken: typeof source.commandToken === "string" ? source.commandToken : undefined,
+    messageId:
+      typeof source.messageId === "string" ? source.messageId : undefined,
+    commandToken:
+      typeof source.commandToken === "string" ? source.commandToken : undefined,
     userId: typeof source.userId === "string" ? source.userId : undefined,
   };
 }

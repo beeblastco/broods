@@ -15,27 +15,31 @@ const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
 
 export const WORKSPACE_STORAGE_PROVIDERS = ["s3"] as const;
-export type WorkspaceStorageProvider = (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
+export type WorkspaceStorageProvider =
+  (typeof WORKSPACE_STORAGE_PROVIDERS)[number];
 
 export type WorkspaceStorageAuth =
-    | { type: "managed" }
-    | { type: "assumeRole"; roleArn: string; externalId?: string };
+  | { type: "managed" }
+  | { type: "assumeRole"; roleArn: string; externalId?: string };
 
 export interface WorkspaceStorageConfig {
-    provider: WorkspaceStorageProvider;
-    bucket?: string;
-    region?: string;
-    endpoint?: string;
-    prefix?: string;
-    auth?: WorkspaceStorageAuth;
+  provider: WorkspaceStorageProvider;
+  bucket?: string;
+  region?: string;
+  endpoint?: string;
+  prefix?: string;
+  auth?: WorkspaceStorageAuth;
 }
 
 export interface WorkspaceConfig {
-    storage: WorkspaceStorageConfig;
-    isolation?: boolean;
-    // Named harness features, each with its own options (no top-level enabled):
-    // workspace = the <workspace> prompt, memory = structured memory.
-    harness?: { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } };
+  storage: WorkspaceStorageConfig;
+  isolation?: boolean;
+  // Named harness features, each with its own options (no top-level enabled):
+  // workspace = the <workspace> prompt, memory = structured memory.
+  harness?: {
+    workspace?: { enabled?: boolean };
+    memory?: { enabled?: boolean };
+  };
 }
 
 /**
@@ -45,38 +49,46 @@ export interface WorkspaceConfig {
  * @throws when a field is malformed or the storage provider is unsupported
  */
 export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
-    if (value == null) {
-        return { storage: { provider: "s3" } };
-    }
-    if (!isPlainObject(value)) {
-        throw new Error("config must be an object");
-    }
+  if (value == null) {
+    return { storage: { provider: "s3" } };
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config must be an object");
+  }
 
-    const config = value;
-    const storage = normalizeWorkspaceStorage(config.storage);
-    assertOptionalBoolean(config.isolation, "config.isolation");
-    const isolation = config.isolation as boolean | undefined;
+  const config = value;
+  const storage = normalizeWorkspaceStorage(config.storage);
+  assertOptionalBoolean(config.isolation, "config.isolation");
+  const isolation = config.isolation as boolean | undefined;
 
-    let harness: { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } } | undefined;
-    if (config.harness !== undefined) {
-        if (!isPlainObject(config.harness)) {
-            throw new Error("config.harness must be an object");
-        }
-        const workspacePrompt = normalizeHarnessFeature(config.harness.workspace, "config.harness.workspace");
-        const memory = normalizeHarnessFeature(config.harness.memory, "config.harness.memory");
-        if (workspacePrompt || memory) {
-            harness = {
-                ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
-                ...(memory ? { memory: memory } : {}),
-            };
-        }
+  let harness:
+    | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
+    | undefined;
+  if (config.harness !== undefined) {
+    if (!isPlainObject(config.harness)) {
+      throw new Error("config.harness must be an object");
     }
+    const workspacePrompt = normalizeHarnessFeature(
+      config.harness.workspace,
+      "config.harness.workspace",
+    );
+    const memory = normalizeHarnessFeature(
+      config.harness.memory,
+      "config.harness.memory",
+    );
+    if (workspacePrompt || memory) {
+      harness = {
+        ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
+        ...(memory ? { memory: memory } : {}),
+      };
+    }
+  }
 
-    return {
-        storage: storage,
-        ...(isolation === true ? { isolation: true } : {}),
-        ...(harness ? { harness: harness } : {}),
-    };
+  return {
+    storage: storage,
+    ...(isolation === true ? { isolation: true } : {}),
+    ...(harness ? { harness: harness } : {}),
+  };
 }
 
 /**
@@ -85,15 +97,21 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
  * @returns the normalized name/description/config
  * @throws when a field is missing or malformed
  */
-export function normalizeCreateWorkspaceConfigInput(
-    value: unknown,
-): { name: string; description?: string; config: WorkspaceConfig } {
-    if (!isPlainObject(value)) throw new Error("Request body must be an object");
-    const name = requireString(value.name, "name");
-    const description = optionalString(value.description, "description");
-    const config = normalizeWorkspaceConfig(value.config);
+export function normalizeCreateWorkspaceConfigInput(value: unknown): {
+  name: string;
+  description?: string;
+  config: WorkspaceConfig;
+} {
+  if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  const name = requireString(value.name, "name");
+  const description = optionalString(value.description, "description");
+  const config = normalizeWorkspaceConfig(value.config);
 
-    return { name: name, ...(description ? { description: description } : {}), config: config };
+  return {
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
+  };
 }
 
 /**
@@ -104,22 +122,32 @@ export function normalizeCreateWorkspaceConfigInput(
  * @throws when a field is malformed
  */
 export function normalizeUpdateWorkspaceConfigInput(
-    existingConfig: WorkspaceConfig,
-    value: unknown,
+  existingConfig: WorkspaceConfig,
+  value: unknown,
 ): { name?: string; description?: string | null; config: WorkspaceConfig } {
-    if (!isPlainObject(value)) throw new Error("Request body must be an object");
+  if (!isPlainObject(value)) throw new Error("Request body must be an object");
 
-    const config = "config" in value
-        ? normalizeWorkspaceConfig(mergeConfigObjects(existingConfig, asObject(value.config)))
-        : existingConfig;
+  const config =
+    "config" in value
+      ? normalizeWorkspaceConfig(
+          mergeConfigObjects(existingConfig, asObject(value.config)),
+        )
+      : existingConfig;
 
-    return {
-        ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),
-        ...(value.description !== undefined
-            ? { description: value.description === null ? null : optionalString(value.description, "description") }
-            : {}),
-        config: config,
-    };
+  return {
+    ...(value.name !== undefined
+      ? { name: requireString(value.name, "name") }
+      : {}),
+    ...(value.description !== undefined
+      ? {
+          description:
+            value.description === null
+              ? null
+              : optionalString(value.description, "description"),
+        }
+      : {}),
+    config: config,
+  };
 }
 
 /**
@@ -128,16 +156,18 @@ export function normalizeUpdateWorkspaceConfigInput(
  * @param doc the workspaceConfigs document
  * @returns the public workspace record
  */
-export function toPublicWorkspaceConfigResponse(doc: Doc<"workspaceConfigs">): Record<string, unknown> {
-    return {
-        accountId: doc.accountId,
-        workspaceId: doc._id,
-        name: doc.name,
-        ...(doc.description ? { description: doc.description } : {}),
-        config: doc.config ?? { storage: { provider: "s3" } },
-        createdAt: new Date(doc.createdAt).toISOString(),
-        updatedAt: new Date(doc.updatedAt).toISOString(),
-    };
+export function toPublicWorkspaceConfigResponse(
+  doc: Doc<"workspaceConfigs">,
+): Record<string, unknown> {
+  return {
+    accountId: doc.accountId,
+    workspaceId: doc._id,
+    name: doc.name,
+    ...(doc.description ? { description: doc.description } : {}),
+    config: doc.config ?? { storage: { provider: "s3" } },
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
 }
 
 /**
@@ -149,108 +179,140 @@ export function toPublicWorkspaceConfigResponse(doc: Doc<"workspaceConfigs">): R
  * @param workspaceId the workspace config id
  * @returns the `fs-…` namespace prefix
  */
-export async function workspaceNamespace(accountId: string, workspaceId: string): Promise<string> {
-    const digest = await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode(`filesystem-namespace\0${accountId}:${workspaceId}`),
-    );
-    const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+export async function workspaceNamespace(
+  accountId: string,
+  workspaceId: string,
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(
+      `filesystem-namespace\0${accountId}:${workspaceId}`,
+    ),
+  );
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 
-    return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
+  return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
-    if (value === undefined) {
-        return { provider: "s3" };
-    }
-    if (!isPlainObject(value)) {
-        throw new Error("config.storage must be an object");
-    }
-    if (value.provider === "vercel") {
-        throw new Error(
-            'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
-        );
-    }
-    assertOptionalEnum(value.provider, "config.storage.provider", WORKSPACE_STORAGE_PROVIDERS);
+  if (value === undefined) {
+    return { provider: "s3" };
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.storage must be an object");
+  }
+  if (value.provider === "vercel") {
+    throw new Error(
+      'config.storage.provider "vercel" is not supported yet; Vercel Drive workspace storage is not wired. Use "s3" or omit config.storage.',
+    );
+  }
+  assertOptionalEnum(
+    value.provider,
+    "config.storage.provider",
+    WORKSPACE_STORAGE_PROVIDERS,
+  );
 
-    const bucket = optionalString(value.bucket, "config.storage.bucket");
-    const region = optionalString(value.region, "config.storage.region");
-    const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
-    const prefix = optionalString(value.prefix, "config.storage.prefix");
-    const auth = normalizeWorkspaceStorageAuth(value.auth);
+  const bucket = optionalString(value.bucket, "config.storage.bucket");
+  const region = optionalString(value.region, "config.storage.region");
+  const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
+  const prefix = optionalString(value.prefix, "config.storage.prefix");
+  const auth = normalizeWorkspaceStorageAuth(value.auth);
 
-    return {
-        provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
-        ...(bucket ? { bucket: bucket } : {}),
-        ...(region ? { region: region } : {}),
-        ...(endpoint ? { endpoint: endpoint } : {}),
-        ...(prefix ? { prefix: prefix } : {}),
-        ...(auth ? { auth: auth } : {}),
-    };
+  return {
+    provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
+    ...(bucket ? { bucket: bucket } : {}),
+    ...(region ? { region: region } : {}),
+    ...(endpoint ? { endpoint: endpoint } : {}),
+    ...(prefix ? { prefix: prefix } : {}),
+    ...(auth ? { auth: auth } : {}),
+  };
 }
 
-function normalizeWorkspaceStorageAuth(value: unknown): WorkspaceStorageAuth | undefined {
-    if (value === undefined) {
-        return undefined;
-    }
-    if (!isPlainObject(value)) {
-        throw new Error("config.storage.auth must be an object");
-    }
-    if (value.type === "managed") {
-        return { type: "managed" };
-    }
-    if (value.type === "assumeRole") {
-        const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
-        const externalId = optionalString(value.externalId, "config.storage.auth.externalId");
+function normalizeWorkspaceStorageAuth(
+  value: unknown,
+): WorkspaceStorageAuth | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.storage.auth must be an object");
+  }
+  if (value.type === "managed") {
+    return { type: "managed" };
+  }
+  if (value.type === "assumeRole") {
+    const roleArn = requireString(value.roleArn, "config.storage.auth.roleArn");
+    const externalId = optionalString(
+      value.externalId,
+      "config.storage.auth.externalId",
+    );
 
-        return { type: "assumeRole", roleArn: roleArn, ...(externalId ? { externalId: externalId } : {}) };
-    }
-    throw new Error("config.storage.auth.type must be one of: managed, assumeRole");
+    return {
+      type: "assumeRole",
+      roleArn: roleArn,
+      ...(externalId ? { externalId: externalId } : {}),
+    };
+  }
+  throw new Error(
+    "config.storage.auth.type must be one of: managed, assumeRole",
+  );
 }
 
 function asObject(value: unknown): Record<string, unknown> {
-    if (!isPlainObject(value)) throw new Error("config must be an object");
+  if (!isPlainObject(value)) throw new Error("config must be an object");
 
-    return value;
+  return value;
 }
 
-function normalizeHarnessFeature(value: unknown, name: string): { enabled?: boolean } | undefined {
-    if (value === undefined) {
-        return undefined;
-    }
-    if (!isPlainObject(value)) {
-        throw new Error(`${name} must be an object`);
-    }
-    assertOptionalBoolean(value.enabled, `${name}.enabled`);
+function normalizeHarnessFeature(
+  value: unknown,
+  name: string,
+): { enabled?: boolean } | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  assertOptionalBoolean(value.enabled, `${name}.enabled`);
 
-    // Features default to on: `enabled: true` normalizes away to the omitted form.
-    return value.enabled === false ? { enabled: false } : undefined;
+  // Features default to on: `enabled: true` normalizes away to the omitted form.
+  return value.enabled === false ? { enabled: false } : undefined;
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {
-    if (value !== undefined && typeof value !== "boolean") {
-        throw new Error(`${name} must be a boolean`);
-    }
+  if (value !== undefined && typeof value !== "boolean") {
+    throw new Error(`${name} must be a boolean`);
+  }
 }
 
-function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
-    if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
-        throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
-    }
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  }
 }
 
 function requireString(value: unknown, name: string): string {
-    if (typeof value !== "string" || value.trim().length === 0) {
-        throw new Error(`${name} must be a non-empty string`);
-    }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
 
-    return value.trim();
+  return value.trim();
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
-    if (value === undefined) return undefined;
-    if (typeof value !== "string") throw new Error(`${name} must be a string`);
-    const trimmed = value.trim();
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
 
-    return trimmed.length > 0 ? trimmed : undefined;
+  return trimmed.length > 0 ? trimmed : undefined;
 }

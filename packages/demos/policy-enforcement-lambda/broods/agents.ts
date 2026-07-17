@@ -4,7 +4,7 @@ const system = [
   "You are validating Broods agent policy behavior.",
   "When the user asks for the policy smoke test, call the bash tool exactly once with the requested command.",
   "After the tool outcome, summarize whether the tool ran or was blocked.",
-].join(" ")
+].join(" ");
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-policy-sandbox",
@@ -18,7 +18,8 @@ export const lambdaSandbox = defineSandbox({
 
 export const denyBashPolicy = definePolicy({
   name: "deny-bash-exec",
-  description: "Deny the policy smoke-test bash command so audit and enforce rollout modes can be compared.",
+  description:
+    "Deny the policy smoke-test bash command so audit and enforce rollout modes can be compared.",
   config: {
     rules: [
       {
@@ -58,7 +59,7 @@ export const auditPolicyAgent = defineAgent({
       modelId: "minimax.minimax-m2.5",
     },
     agent: {
-      system: system
+      system: system,
     },
     sandbox: lambdaSandbox,
     publicAccess: true,

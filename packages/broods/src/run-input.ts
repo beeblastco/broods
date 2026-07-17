@@ -1,24 +1,35 @@
-import type { LanguageModelCallOptions, ModelMessage, RequestOptions, SystemModelMessage, streamText } from "ai";
+import type {
+  LanguageModelCallOptions,
+  ModelMessage,
+  RequestOptions,
+  SystemModelMessage,
+  streamText,
+} from "ai";
 
 type StreamTextOptions = Parameters<typeof streamText>[0];
-type JsonCallSettings = Partial<LanguageModelCallOptions & Pick<RequestOptions, "maxRetries" | "timeout">>;
+type JsonCallSettings = Partial<
+  LanguageModelCallOptions & Pick<RequestOptions, "maxRetries" | "timeout">
+>;
 
-export type AgentRunModelOverrides = JsonCallSettings & Pick<StreamTextOptions, "providerOptions">;
+export type AgentRunModelOverrides = JsonCallSettings &
+  Pick<StreamTextOptions, "providerOptions">;
 
 export type AgentRunOverrides = {
   system?: SystemModelMessage | SystemModelMessage[];
   model?: AgentRunModelOverrides;
 };
 
-export type AgentRunEventInput = {
-  /** Shorthand for a single user text message. */
-  input: string;
-  events?: never;
-} | {
-  /** Full-fidelity event list for multimodal content or tool responses. */
-  events: [ModelMessage, ...ModelMessage[]];
-  input?: never;
-};
+export type AgentRunEventInput =
+  | {
+      /** Shorthand for a single user text message. */
+      input: string;
+      events?: never;
+    }
+  | {
+      /** Full-fidelity event list for multimodal content or tool responses. */
+      events: [ModelMessage, ...ModelMessage[]];
+      input?: never;
+    };
 
 /**
  * Resolves a run's events from either the explicit `events` list or the `input`
@@ -33,5 +44,7 @@ export function resolveRunEvents(input: AgentRunEventInput): ModelMessage[] {
     return [{ role: "user", content: [{ type: "text", text: input.input }] }];
   }
 
-  throw new Error("Run input requires `input` (string) or a non-empty `events` array");
+  throw new Error(
+    "Run input requires `input` (string) or a non-empty `events` array",
+  );
 }

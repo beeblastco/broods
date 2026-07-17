@@ -19,14 +19,31 @@ import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import { resolveS3ReadTarget, workspaceReadContext } from "../sandbox/s3-mount.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig, SandboxJobCallback, SandboxJobHandle, SandboxRunResult, SandboxRuntime } from "../sandbox/types.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+} from "../sandbox/s3-mount.ts";
+import type {
+  SandboxCpuSample,
+  SandboxExecutorConfig,
+  SandboxJobCallback,
+  SandboxJobHandle,
+  SandboxRunResult,
+  SandboxRuntime,
+} from "../sandbox/types.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 // Model-facing tool result shape (matches the AI SDK toModelOutput contract).
-export type ToolModelResult = Awaited<ReturnType<NonNullable<Tool<Record<string, unknown>, unknown>["toModelOutput"]>>>;
-export const toolText = (value: string): ToolModelResult => ({ type: "text", value });
+export type ToolModelResult = Awaited<
+  ReturnType<
+    NonNullable<Tool<Record<string, unknown>, unknown>["toModelOutput"]>
+  >
+>;
+export const toolText = (value: string): ToolModelResult => ({
+  type: "text",
+  value,
+});
 export const toolError = (value: string): ToolModelResult => {
   if (isFatalSandboxSetupError(value)) {
     throw new Error(`Sandbox setup failed: ${value}`);
@@ -34,10 +51,15 @@ export const toolError = (value: string): ToolModelResult => {
 
   return { type: "error-text", value };
 };
-export const toolJson = (value: JSONObject): ToolModelResult => ({ type: "json", value });
+export const toolJson = (value: JSONObject): ToolModelResult => ({
+  type: "json",
+  value,
+});
 
 function isFatalSandboxSetupError(value: string): boolean {
-  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(value);
+  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(
+    value,
+  );
 }
 
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
@@ -52,7 +74,11 @@ export interface SandboxToolContext {
   // AsyncToolResult keyed by these ids so `async_status` can find it. `delivery`
   // carries the originating channel/WebSocket so a finished job is pushed back
   // there; absent => the result is only retrievable by polling.
-  background?: { eventId: string; conversationKey: string; delivery?: AsyncToolDelivery };
+  background?: {
+    eventId: string;
+    conversationKey: string;
+    delivery?: AsyncToolDelivery;
+  };
   // Reports each sandbox exec's CPU so the harness can attribute usage per
   // sandbox type. The agent's bash/fs tools always report role "agent".
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
@@ -61,23 +87,32 @@ export interface SandboxToolContext {
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
   const options = isPlainObject(config.options) ? config.options : {};
-  return typeof options.workspaceRoot === "string" && options.workspaceRoot.trim()
+  return typeof options.workspaceRoot === "string" &&
+    options.workspaceRoot.trim()
     ? options.workspaceRoot.trim()
     : DEFAULT_WORKSPACE_ROOT;
 }
 
-function statelessReservationKeyFor(config: SandboxExecutorConfig): string | undefined {
+function statelessReservationKeyFor(
+  config: SandboxExecutorConfig,
+): string | undefined {
   const options = isPlainObject(config.options) ? config.options : {};
   const reservationKey = options.reservationKey;
 
-  return typeof reservationKey === "string" && reservationKey.trim() ? reservationKey.trim() : undefined;
+  return typeof reservationKey === "string" && reservationKey.trim()
+    ? reservationKey.trim()
+    : undefined;
 }
 
-export function sandboxSupportsBackgroundJobs(config: SandboxExecutorConfig | undefined): boolean {
+export function sandboxSupportsBackgroundJobs(
+  config: SandboxExecutorConfig | undefined,
+): boolean {
   return config?.persistent === true;
 }
 
-export function sandboxSupportsJobControls(config: SandboxExecutorConfig | undefined): boolean {
+export function sandboxSupportsJobControls(
+  config: SandboxExecutorConfig | undefined,
+): boolean {
   return sandboxSupportsBackgroundJobs(config) && config?.provider !== "e2b";
 }
 
@@ -86,7 +121,10 @@ export function sandboxSupportsJobControls(config: SandboxExecutorConfig | undef
  * configured (stateless / ephemeral run). The first workspace is the default.
  * Throws when a requested workspace name is unknown.
  */
-export function resolveWorkspace(workspaces: ResolvedWorkspace[], requested?: string): ResolvedWorkspace | undefined {
+export function resolveWorkspace(
+  workspaces: ResolvedWorkspace[],
+  requested?: string,
+): ResolvedWorkspace | undefined {
   if (workspaces.length === 0) {
     return undefined;
   }
@@ -108,7 +146,8 @@ export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
   return {
     type: "string" as const,
     enum: workspaces.map((w) => w.name),
-    description: "Named workspace to operate in. Omit to use the default workspace.",
+    description:
+      "Named workspace to operate in. Omit to use the default workspace.",
   };
 }
 
@@ -122,7 +161,9 @@ export function sandboxRunMetadata(
 
   return {
     ...context.sandboxMetadata,
-    ...(workspace ? { workspaceName: workspace.name, workspaceId: workspace.workspaceId } : {}),
+    ...(workspace
+      ? { workspaceName: workspace.name, workspaceId: workspace.workspaceId }
+      : {}),
   };
 }
 
@@ -130,21 +171,43 @@ export async function runSandbox(
   config: SandboxExecutorConfig,
   namespace: string | undefined,
   code: string,
-  options?: { onSandboxCpu?: (sample: SandboxCpuSample) => void; metadata?: SandboxRunMetadata },
+  options?: {
+    onSandboxCpu?: (sample: SandboxCpuSample) => void;
+    metadata?: SandboxRunMetadata;
+  },
 ): Promise<SandboxRunResult> {
   const executor = createSandboxExecutor(config);
   const limits = workspaceSandboxLimits(config.provider);
-  const reservationKey = !namespace && config.persistent === true ? statelessReservationKeyFor(config) : undefined;
+  const reservationKey =
+    !namespace && config.persistent === true
+      ? statelessReservationKeyFor(config)
+      : undefined;
   const result = await executor.run({
     code,
-    ...(namespace ? { namespace, workspaceRoot: workspaceRootFor(config) } : {}),
-    ...(reservationKey ? { reservationKey, workspaceRoot: workspaceRootFor(config) } : {}),
+    ...(namespace
+      ? { namespace, workspaceRoot: workspaceRootFor(config) }
+      : {}),
+    ...(reservationKey
+      ? { reservationKey, workspaceRoot: workspaceRootFor(config) }
+      : {}),
     ...(options?.metadata ? { metadata: options.metadata } : {}),
-    timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
-    outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
+    timeoutSeconds: boundedInteger(
+      config.timeout,
+      limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
+    outputLimitBytes: boundedInteger(
+      config.outputLimitBytes,
+      limits.defaultOutputLimitBytes,
+      limits.maxOutputLimitBytes,
+    ),
   });
   if (result.cpuUsec !== undefined && result.cpuUsec > 0) {
-    options?.onSandboxCpu?.({ type: result.provider, role: "agent", cpuUsec: result.cpuUsec });
+    options?.onSandboxCpu?.({
+      type: result.provider,
+      role: "agent",
+      cpuUsec: result.cpuUsec,
+    });
   }
   return result;
 }
@@ -159,7 +222,11 @@ export async function runSandboxBackground(
   config: SandboxExecutorConfig,
   namespace: string,
   code: string,
-  options: { jobId: string; callback?: SandboxJobCallback; metadata?: SandboxRunMetadata },
+  options: {
+    jobId: string;
+    callback?: SandboxJobCallback;
+    metadata?: SandboxRunMetadata;
+  },
 ): Promise<SandboxJobHandle> {
   const executor = createSandboxExecutor(config);
   if (!executor.runBackground) {
@@ -173,8 +240,16 @@ export async function runSandboxBackground(
     ...(options.callback ? { callback: options.callback } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {}),
     workspaceRoot: workspaceRootFor(config),
-    timeoutSeconds: boundedInteger(config.timeout, limits.defaultTimeoutSeconds, limits.maxTimeoutSeconds),
-    outputLimitBytes: boundedInteger(config.outputLimitBytes, limits.defaultOutputLimitBytes, limits.maxOutputLimitBytes),
+    timeoutSeconds: boundedInteger(
+      config.timeout,
+      limits.defaultTimeoutSeconds,
+      limits.maxTimeoutSeconds,
+    ),
+    outputLimitBytes: boundedInteger(
+      config.outputLimitBytes,
+      limits.defaultOutputLimitBytes,
+      limits.maxOutputLimitBytes,
+    ),
   });
 }
 
@@ -183,7 +258,10 @@ export async function runSandboxBackground(
 //   - read/glob/grep: always auto (handled by omitting needsApproval).
 //   - write/edit: auto in edit/bypass, ASK in ask.
 //   - bash: ASK in ask + edit, auto only in bypass.
-export function editNeedsApproval(workspaces: ResolvedWorkspace[], requested?: string): boolean {
+export function editNeedsApproval(
+  workspaces: ResolvedWorkspace[],
+  requested?: string,
+): boolean {
   try {
     const workspace = resolveWorkspace(workspaces, requested);
     // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
@@ -198,7 +276,10 @@ export function editNeedsApproval(workspaces: ResolvedWorkspace[], requested?: s
   }
 }
 
-export function bashNeedsApproval(context: SandboxToolContext, requested?: string): boolean {
+export function bashNeedsApproval(
+  context: SandboxToolContext,
+  requested?: string,
+): boolean {
   try {
     if (context.workspaces.length > 0) {
       const workspace = resolveWorkspace(context.workspaces, requested);
@@ -215,7 +296,9 @@ export function bashNeedsApproval(context: SandboxToolContext, requested?: strin
   }
 }
 
-function permissionModeFor(workspace: ResolvedWorkspace | undefined): SandboxPermissionMode {
+function permissionModeFor(
+  workspace: ResolvedWorkspace | undefined,
+): SandboxPermissionMode {
   return workspace?.sandbox?.permissionMode ?? "ask";
 }
 
@@ -232,7 +315,9 @@ export async function s3ReadNumbered(
   offset?: number,
   limit?: number,
 ): Promise<ToolModelResult> {
-  const target = await resolveS3ReadTarget(workspaceReadContext(ws.config.storage, ws.namespace));
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(ws.config.storage, ws.namespace),
+  );
   const key = `${target.prefix}${rel}`;
   let text: string;
   try {
@@ -251,7 +336,8 @@ export async function s3ReadNumbered(
     lines.pop();
   }
   const start = typeof offset === "number" && offset > 0 ? offset : 1;
-  const count = typeof limit === "number" && limit > 0 ? limit : READ_DEFAULT_LIMIT;
+  const count =
+    typeof limit === "number" && limit > 0 ? limit : READ_DEFAULT_LIMIT;
   const selected = lines.slice(start - 1, start - 1 + count);
   const numbered = selected
     .map((line, index) => `${String(start + index).padStart(6, " ")}\t${line}`)
@@ -259,10 +345,17 @@ export async function s3ReadNumbered(
   return toolText(numbered.length > 0 ? `${numbered}\n` : "");
 }
 
-export async function s3Glob(ws: ResolvedWorkspace, pattern: string, path?: string): Promise<ToolModelResult> {
-  const target = await resolveS3ReadTarget(workspaceReadContext(ws.config.storage, ws.namespace));
+export async function s3Glob(
+  ws: ResolvedWorkspace,
+  pattern: string,
+  path?: string,
+): Promise<ToolModelResult> {
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(ws.config.storage, ws.namespace),
+  );
   const rootRel = path ? toWorkspaceRelative(path) : ".";
-  const searchPrefix = rootRel === "." ? target.prefix : `${target.prefix}${rootRel}/`;
+  const searchPrefix =
+    rootRel === "." ? target.prefix : `${target.prefix}${rootRel}/`;
 
   let objects: Awaited<ReturnType<typeof listS3Prefix>>;
   try {
@@ -275,17 +368,28 @@ export async function s3Glob(ws: ResolvedWorkspace, pattern: string, path?: stri
 
   const matcher = new Bun.Glob(pattern);
   const matches = objects
-    .map((object) => ({ rel: object.key.slice(searchPrefix.length), lastModified: object.lastModified }))
-    .filter((entry) => entry.rel.length > 0 && !entry.rel.endsWith("/") && matcher.match(entry.rel))
+    .map((object) => ({
+      rel: object.key.slice(searchPrefix.length),
+      lastModified: object.lastModified,
+    }))
+    .filter(
+      (entry) =>
+        entry.rel.length > 0 &&
+        !entry.rel.endsWith("/") &&
+        matcher.match(entry.rel),
+    )
     .sort((a, b) => (b.lastModified ?? "").localeCompare(a.lastModified ?? ""))
     .map((entry) => entry.rel);
 
-  return toolText(matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n");
+  return toolText(
+    matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n",
+  );
 }
 
 export function formatRunText(result: SandboxRunResult): string {
   if (!result.ok) {
-    const error = `${result.stderr}${result.stdout}`.trim() || "sandbox command failed";
+    const error =
+      `${result.stderr}${result.stdout}`.trim() || "sandbox command failed";
     if (isFatalSandboxSetupError(error)) {
       throw new Error(error);
     }
@@ -313,23 +417,36 @@ export function formatRunJson(result: SandboxRunResult): JSONObject {
 }
 
 export function runtimeList(config: SandboxExecutorConfig): SandboxRuntime[] {
-  return config.runtimes && config.runtimes.length > 0 ? config.runtimes : ["bash", "python", "node"];
+  return config.runtimes && config.runtimes.length > 0
+    ? config.runtimes
+    : ["bash", "python", "node"];
 }
 
-export function runtimeDescription(config: SandboxExecutorConfig | undefined): string {
+export function runtimeDescription(
+  config: SandboxExecutorConfig | undefined,
+): string {
   const runtimes = config ? runtimeList(config) : ["bash", "python", "node"];
   return `Allowed runtimes: ${runtimes.join(", ")}.`;
 }
 
-export function disallowedRuntimeCommand(config: SandboxExecutorConfig, command: string): string | undefined {
+export function disallowedRuntimeCommand(
+  config: SandboxExecutorConfig,
+  command: string,
+): string | undefined {
   const runtimes = new Set(runtimeList(config));
   if (!runtimes.has("bash")) {
     return "Error: this sandbox does not allow bash commands";
   }
-  if (!runtimes.has("python") && invokesCommand(command, ["python", "python3"])) {
+  if (
+    !runtimes.has("python") &&
+    invokesCommand(command, ["python", "python3"])
+  ) {
     return "Error: this sandbox does not allow python commands";
   }
-  if (!runtimes.has("node") && invokesCommand(command, ["node", "npm", "npx"])) {
+  if (
+    !runtimes.has("node") &&
+    invokesCommand(command, ["node", "npm", "npx"])
+  ) {
     return "Error: this sandbox does not allow node commands";
   }
   return undefined;
@@ -337,7 +454,11 @@ export function disallowedRuntimeCommand(config: SandboxExecutorConfig, command:
 
 export function outsideWorkspaceCommand(command: string): string | undefined {
   const scanned = stripHereDocBodies(command);
-  if (/(^|[\s;&|()])cd\s+(?:--\s+)?(?:\.\.(?:[\/\s;&|)]|$)|\/(?!dev\/null(?:\s|$)))/.test(scanned)) {
+  if (
+    /(^|[\s;&|()])cd\s+(?:--\s+)?(?:\.\.(?:[\/\s;&|)]|$)|\/(?!dev\/null(?:\s|$)))/.test(
+      scanned,
+    )
+  ) {
     return "Error: bash commands must stay in the workspace directory";
   }
   if (/(^|[\s;&|()])(?:pushd|popd)\b/.test(scanned)) {
@@ -352,7 +473,9 @@ export function outsideWorkspaceCommand(command: string): string | undefined {
 
   // A leading `:` still flags `host:/abs/path`, but a `:` followed by `//` is a
   // URL scheme separator (https://...), not an absolute path, so it is exempt.
-  const absolutePath = scanned.match(/(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/);
+  const absolutePath = scanned.match(
+    /(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/,
+  );
   if (absolutePath) {
     return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
   }
@@ -369,7 +492,10 @@ export function toWorkspaceRelative(path: string): string {
   if (!trimmed || trimmed === "." || trimmed === "/") {
     return ".";
   }
-  const parts = trimmed.replace(/^\/+/, "").split("/").filter((p) => p.length > 0 && p !== ".");
+  const parts = trimmed
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter((p) => p.length > 0 && p !== ".");
   if (parts.some((p) => p === "..")) {
     throw new Error("Invalid path: directory traversal not allowed");
   }
@@ -384,18 +510,31 @@ export function toBase64(value: string): string {
   return Buffer.from(value, "utf-8").toString("base64");
 }
 
-export function boundedInteger(value: unknown, defaultValue: number, max: number): number {
+export function boundedInteger(
+  value: unknown,
+  defaultValue: number,
+  max: number,
+): number {
   if (value === undefined) {
     return defaultValue;
   }
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > max) {
-    throw new Error(`sandbox numeric option must be an integer from 1 to ${max}`);
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 1 ||
+    value > max
+  ) {
+    throw new Error(
+      `sandbox numeric option must be an integer from 1 to ${max}`,
+    );
   }
   return value;
 }
 
 function invokesCommand(command: string, names: string[]): boolean {
-  const escaped = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const escaped = names
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
 }
 

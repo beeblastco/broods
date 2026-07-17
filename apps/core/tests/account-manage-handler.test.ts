@@ -3,7 +3,10 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { handler } from "../src/accounts/handler.ts";
 import type { CoreRequest } from "../src/shared/http.ts";
 import { hashAccountSecret } from "../src/shared/domain/accounts.ts";
-import { resetStorageForTests, setStorageForTests } from "../src/shared/storage.ts";
+import {
+  resetStorageForTests,
+  setStorageForTests,
+} from "../src/shared/storage.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
@@ -48,9 +51,11 @@ afterEach(() => {
   } else {
     process.env.CRON_SCHEDULER_GROUP_NAME = originalSchedulerGroupName;
   }
-  if (originalSkillsBucketName === undefined) delete process.env.SKILLS_BUCKET_NAME;
+  if (originalSkillsBucketName === undefined)
+    delete process.env.SKILLS_BUCKET_NAME;
   else process.env.SKILLS_BUCKET_NAME = originalSkillsBucketName;
-  if (originalToolBundlesBucketName === undefined) delete process.env.TOOL_BUNDLES_BUCKET_NAME;
+  if (originalToolBundlesBucketName === undefined)
+    delete process.env.TOOL_BUNDLES_BUCKET_NAME;
   else process.env.TOOL_BUNDLES_BUCKET_NAME = originalToolBundlesBucketName;
   runtime.mutate = originalRuntimeMutate;
   S3Client.prototype.send = originalS3Send;
@@ -74,16 +79,25 @@ describe("account management HTTP handler", () => {
   });
 
   it("requires bearer auth to create an account", async () => {
-    setStorageForTests(createFakeStorage({
-      async create() {
-        throw new Error("create should not be called");
-      },
-    }));
+    setStorageForTests(
+      createFakeStorage({
+        async create() {
+          throw new Error("create should not be called");
+        },
+      }),
+    );
 
-    const response = await handler(createEvent("POST", "/accounts", {}, {
-      username: "company-a",
-      description: "Company A account",
-    }));
+    const response = await handler(
+      createEvent(
+        "POST",
+        "/accounts",
+        {},
+        {
+          username: "company-a",
+          description: "Company A account",
+        },
+      ),
+    );
 
     expect(response.status).toBe(401);
     expect(await responseJson(response)).toEqual({ error: "Unauthorized" });
@@ -92,23 +106,34 @@ describe("account management HTTP handler", () => {
   it("rejects account-secret auth when creating an account", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const accountSecret = "fp_acct_existing";
-    setStorageForTests(createFakeStorage({
-      accounts: {
-        async getBySecretHash(secretHash: string) {
-          return secretHash === hashAccountSecret(accountSecret) ? fakeAccount() : null;
+    setStorageForTests(
+      createFakeStorage({
+        accounts: {
+          async getBySecretHash(secretHash: string) {
+            return secretHash === hashAccountSecret(accountSecret)
+              ? fakeAccount()
+              : null;
+          },
+          async create() {
+            throw new Error("create should not be called");
+          },
         },
-        async create() {
-          throw new Error("create should not be called");
-        },
-      },
-    }));
+      }),
+    );
 
-    const response = await handler(createEvent("POST", "/accounts", {
-      authorization: `Bearer ${accountSecret}`,
-    }, {
-      username: "company-a",
-      description: "Company A account",
-    }));
+    const response = await handler(
+      createEvent(
+        "POST",
+        "/accounts",
+        {
+          authorization: `Bearer ${accountSecret}`,
+        },
+        {
+          username: "company-a",
+          description: "Company A account",
+        },
+      ),
+    );
 
     expect(response.status).toBe(403);
     expect(await responseJson(response)).toEqual({ error: "Forbidden" });
@@ -116,21 +141,30 @@ describe("account management HTTP handler", () => {
 
   it("returns create account one-time secret as secret for admin auth", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    setStorageForTests(createFakeStorage({
-      async create() {
-        return {
-          account: fakeAccount(),
-          secret: "fp_acct_created",
-        };
-      },
-    }));
+    setStorageForTests(
+      createFakeStorage({
+        async create() {
+          return {
+            account: fakeAccount(),
+            secret: "fp_acct_created",
+          };
+        },
+      }),
+    );
 
-    const response = await handler(createEvent("POST", "/accounts", {
-      authorization: "Bearer admin-secret",
-    }, {
-      username: "company-a",
-      description: "Company A account",
-    }));
+    const response = await handler(
+      createEvent(
+        "POST",
+        "/accounts",
+        {
+          authorization: "Bearer admin-secret",
+        },
+        {
+          username: "company-a",
+          description: "Company A account",
+        },
+      ),
+    );
 
     expect(response.status).toBe(201);
     expect(await responseJson(response)).toEqual({
@@ -148,35 +182,56 @@ describe("account management HTTP handler", () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
     setStorageForTests(createFakeStorage({}));
 
-    for (const path of ["/accounts", "/accounts/acct_test", "/accounts/acct_test/rotate-secret"]) {
-      const adminResponse = await handler(createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
-        authorization: "Bearer admin-secret",
-      }));
+    for (const path of [
+      "/accounts",
+      "/accounts/acct_test",
+      "/accounts/acct_test/rotate-secret",
+    ]) {
+      const adminResponse = await handler(
+        createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
+          authorization: "Bearer admin-secret",
+        }),
+      );
       expect(adminResponse.status).toBe(404);
       expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
     }
 
-    const adminPatchResponse = await handler(createEvent("PATCH", "/accounts/acct_test", {
-      authorization: "Bearer admin-secret",
-    }, { username: "next" }));
+    const adminPatchResponse = await handler(
+      createEvent(
+        "PATCH",
+        "/accounts/acct_test",
+        {
+          authorization: "Bearer admin-secret",
+        },
+        { username: "next" },
+      ),
+    );
     expect(adminPatchResponse.status).toBe(404);
-    expect(await responseJson(adminPatchResponse)).toEqual({ error: "Not found" });
+    expect(await responseJson(adminPatchResponse)).toEqual({
+      error: "Not found",
+    });
 
     for (const path of ["/v1/account", "/v1/account/rotate-secret"]) {
-      const serviceResponse = await handler(createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
-        authorization: "Bearer service-secret",
-        "x-account-id": "acct_test",
-      }));
+      const serviceResponse = await handler(
+        createEvent(path.endsWith("rotate-secret") ? "POST" : "GET", path, {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_test",
+        }),
+      );
       expect(serviceResponse.status).toBe(403);
-      expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
+      expect(await responseJson(serviceResponse)).toEqual({
+        error: "Forbidden",
+      });
     }
   });
 
   it("returns JSON not found errors for authenticated admin requests", async () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
-    const response = await handler(createEvent("GET", "/missing", {
-      authorization: "Bearer admin-secret",
-    }));
+    const response = await handler(
+      createEvent("GET", "/missing", {
+        authorization: "Bearer admin-secret",
+      }),
+    );
 
     expect(response.status).toBe(404);
     expect(await responseJson(response)).toEqual({ error: "Not found" });
@@ -188,20 +243,31 @@ describe("account management HTTP handler", () => {
     setStorageForTests(createFakeStorage({}));
 
     // Admin cron routes were removed with the rest of the cron plane.
-    const adminResponse = await handler(createEvent("GET", "/accounts/acct_test/crons", {
-      authorization: "Bearer admin-secret",
-    }));
+    const adminResponse = await handler(
+      createEvent("GET", "/accounts/acct_test/crons", {
+        authorization: "Bearer admin-secret",
+      }),
+    );
     expect(adminResponse.status).toBe(404);
     expect(await responseJson(adminResponse)).toEqual({ error: "Not found" });
 
     // Account-authenticated config-plane CRUD routes fall through to the admin gate.
-    for (const path of ["/v1/crons", "/v1/policies", "/v1/sandboxes", "/v1/workspaces"]) {
-      const serviceResponse = await handler(createEvent("GET", path, {
-        authorization: "Bearer service-secret",
-        "x-account-id": "acct_test",
-      }));
+    for (const path of [
+      "/v1/crons",
+      "/v1/policies",
+      "/v1/sandboxes",
+      "/v1/workspaces",
+    ]) {
+      const serviceResponse = await handler(
+        createEvent("GET", path, {
+          authorization: "Bearer service-secret",
+          "x-account-id": "acct_test",
+        }),
+      );
       expect(serviceResponse.status).toBe(403);
-      expect(await responseJson(serviceResponse)).toEqual({ error: "Forbidden" });
+      expect(await responseJson(serviceResponse)).toEqual({
+        error: "Forbidden",
+      });
     }
 
     for (const path of [
@@ -211,11 +277,15 @@ describe("account management HTTP handler", () => {
       "/accounts/acct_test/sandboxes",
       "/accounts/acct_test/workspaces",
     ]) {
-      const removedAdminResponse = await handler(createEvent("GET", path, {
-        authorization: "Bearer admin-secret",
-      }));
+      const removedAdminResponse = await handler(
+        createEvent("GET", path, {
+          authorization: "Bearer admin-secret",
+        }),
+      );
       expect(removedAdminResponse.status).toBe(404);
-      expect(await responseJson(removedAdminResponse)).toEqual({ error: "Not found" });
+      expect(await responseJson(removedAdminResponse)).toEqual({
+        error: "Not found",
+      });
     }
   });
 
@@ -226,9 +296,13 @@ describe("account management HTTP handler", () => {
       authorization: "Bearer service-secret",
       "x-account-id": "acct_test",
     };
-    const serviceTokenRejection = { error: "Service token is not allowed for this account endpoint" };
+    const serviceTokenRejection = {
+      error: "Service token is not allowed for this account endpoint",
+    };
 
-    const response = await handler(createEvent("DELETE", "/v1/account", serviceHeaders));
+    const response = await handler(
+      createEvent("DELETE", "/v1/account", serviceHeaders),
+    );
     expect(response.status).toBe(400);
     expect(await responseJson(response)).toEqual(serviceTokenRejection);
   });
@@ -242,26 +316,36 @@ describe("account management HTTP handler", () => {
       status: "disabled" as const,
     };
     let disableCalls = 0;
-    setStorageForTests(createFakeStorage({
-      accounts: {
-        async getBySecretHash(secretHash: string) {
-          return secretHash === disabledAccount.secretHash ? disabledAccount : null;
+    setStorageForTests(
+      createFakeStorage({
+        accounts: {
+          async getBySecretHash(secretHash: string) {
+            return secretHash === disabledAccount.secretHash
+              ? disabledAccount
+              : null;
+          },
+          async disable(accountId: string) {
+            expect(accountId).toBe(disabledAccount.accountId);
+            disableCalls += 1;
+            return null;
+          },
         },
-        async disable(accountId: string) {
-          expect(accountId).toBe(disabledAccount.accountId);
-          disableCalls += 1;
-          return null;
-        },
-      },
-    }));
+      }),
+    );
     const headers = { authorization: `Bearer ${accountSecret}` };
 
-    const normalResponse = await handler(createEvent("GET", "/missing", headers));
+    const normalResponse = await handler(
+      createEvent("GET", "/missing", headers),
+    );
     expect(normalResponse.status).toBe(401);
 
-    const retryResponse = await handler(createEvent("DELETE", "/v1/account", headers));
+    const retryResponse = await handler(
+      createEvent("DELETE", "/v1/account", headers),
+    );
     expect(retryResponse.status).toBe(200);
-    expect(await responseJson(retryResponse)).toEqual(successfulDeletionResponse());
+    expect(await responseJson(retryResponse)).toEqual(
+      successfulDeletionResponse(),
+    );
     expect(disableCalls).toBe(0);
   });
 
@@ -270,22 +354,28 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     const disabledAccount = { ...fakeAccount(), status: "disabled" as const };
     let disableCalls = 0;
-    setStorageForTests(createFakeStorage({
-      accounts: {
-        async getById(accountId: string) {
-          return accountId === disabledAccount.accountId ? disabledAccount : null;
+    setStorageForTests(
+      createFakeStorage({
+        accounts: {
+          async getById(accountId: string) {
+            return accountId === disabledAccount.accountId
+              ? disabledAccount
+              : null;
+          },
+          async disable(accountId: string) {
+            expect(accountId).toBe(disabledAccount.accountId);
+            disableCalls += 1;
+            return null;
+          },
         },
-        async disable(accountId: string) {
-          expect(accountId).toBe(disabledAccount.accountId);
-          disableCalls += 1;
-          return null;
-        },
-      },
-    }));
+      }),
+    );
 
-    const response = await handler(createEvent("DELETE", `/accounts/${disabledAccount.accountId}`, {
-      authorization: "Bearer admin-secret",
-    }));
+    const response = await handler(
+      createEvent("DELETE", `/accounts/${disabledAccount.accountId}`, {
+        authorization: "Bearer admin-secret",
+      }),
+    );
 
     expect(response.status).toBe(200);
     expect(await responseJson(response)).toEqual(successfulDeletionResponse());
@@ -305,7 +395,8 @@ function createEvent(
   body?: unknown,
 ): CoreRequest {
   const lower: Record<string, string> = {};
-  for (const [key, value] of Object.entries(headers)) lower[key.toLowerCase()] = value;
+  for (const [key, value] of Object.entries(headers))
+    lower[key.toLowerCase()] = value;
   return {
     method,
     path: rawPath,
@@ -345,45 +436,79 @@ function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
 function createFakeStorage(overrides: Record<string, unknown>) {
   return {
     accounts: {
-      async getById() { return fakeAccount(); },
-      async getBySecretHash() { return null; },
-      async list() { return [fakeAccount()]; },
-      async create() { return { account: fakeAccount(), secret: "fp_acct_fake" }; },
-      async update() { return fakeAccount(); },
-      async rotateSecret() { return { account: fakeAccount(), secret: "fp_acct_fake" }; },
-      async remove() { return true; },
+      async getById() {
+        return fakeAccount();
+      },
+      async getBySecretHash() {
+        return null;
+      },
+      async list() {
+        return [fakeAccount()];
+      },
+      async create() {
+        return { account: fakeAccount(), secret: "fp_acct_fake" };
+      },
+      async update() {
+        return fakeAccount();
+      },
+      async rotateSecret() {
+        return { account: fakeAccount(), secret: "fp_acct_fake" };
+      },
+      async remove() {
+        return true;
+      },
       ...(overrides.accounts as Record<string, unknown> | undefined),
       ...(!("accounts" in overrides) ? overrides : {}),
     },
     agents: {
-      async getById() { return fakeAgent(); },
-      async removeAllForAccount() { return 0; },
+      async getById() {
+        return fakeAgent();
+      },
+      async removeAllForAccount() {
+        return 0;
+      },
       ...(overrides.agents as Record<string, unknown> | undefined),
     },
     crons: {
-      async list() { return []; },
-      async create() { throw new Error("not implemented"); },
+      async list() {
+        return [];
+      },
+      async create() {
+        throw new Error("not implemented");
+      },
       ...(overrides.crons as Record<string, unknown> | undefined),
     },
     agentDeployments: {
-      async getByApiKeyHash() { return null; },
+      async getByApiKeyHash() {
+        return null;
+      },
       ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
     sandboxConfigs: {
-      async removeAllForAccount() { return 0; },
+      async removeAllForAccount() {
+        return 0;
+      },
       ...(overrides.sandboxConfigs as Record<string, unknown> | undefined),
     },
     workspaceConfigs: {
-      async list() { return []; },
-      async removeAllForAccount() { return 0; },
+      async list() {
+        return [];
+      },
+      async removeAllForAccount() {
+        return 0;
+      },
       ...(overrides.workspaceConfigs as Record<string, unknown> | undefined),
     },
     accountTools: {
-      async removeAllForAccount() { return 0; },
+      async removeAllForAccount() {
+        return 0;
+      },
       ...(overrides.accountTools as Record<string, unknown> | undefined),
     },
     accountHooks: {
-      async removeAllForAccount() { return 0; },
+      async removeAllForAccount() {
+        return 0;
+      },
       ...(overrides.accountHooks as Record<string, unknown> | undefined),
     },
   } as never;
@@ -392,7 +517,10 @@ function createFakeStorage(overrides: Record<string, unknown>) {
 function stubAccountDeletionDependencies(): void {
   process.env.SKILLS_BUCKET_NAME = "test-skills";
   process.env.TOOL_BUNDLES_BUCKET_NAME = "test-tool-bundles";
-  S3Client.prototype.send = mock(async () => ({ Contents: [], IsTruncated: false })) as never;
+  S3Client.prototype.send = mock(async () => ({
+    Contents: [],
+    IsTruncated: false,
+  })) as never;
   runtime.mutate = mock(async (name) => {
     expect(name).toBe("deleteAccountRuntimeData");
     return {

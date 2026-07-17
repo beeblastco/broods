@@ -12,8 +12,8 @@ them to boot a curated, prebuilt environment with a fixed footprint.
 {
   "config": {
     "provider": "sandbox",
-    "snapshot": "img_curated_python"   // workdir image id/name, or a MicroVM image ARN
-  }
+    "snapshot": "img_curated_python", // workdir image id/name, or a MicroVM image ARN
+  },
 }
 ```
 
@@ -35,13 +35,13 @@ self-hosted backends; `daytona`/`e2b`/`vercel` size natively, so a size is advis
 (it still sets the specs the dashboard shows). When `size` is omitted, the provider's own
 default applies.
 
-| Size | vCPU | Memory | Disk | Tier |
-| --- | --- | --- | --- | --- |
-| `tiny` | 0.25 | 0.5 GB | 8 GB | free (AWS MicroVM only; workdir clamps vCPU up to 0.5) |
-| `xsmall` | 0.5 | 1 GB | 8 GB | free (default) |
-| `small` | 1 | 2 GB | 8 GB | paid |
-| `medium` | 2 | 4 GB | 16 GB | paid |
-| `large` | 4 | 8 GB | 32 GB | paid |
+| Size     | vCPU | Memory | Disk  | Tier                                                   |
+| -------- | ---- | ------ | ----- | ------------------------------------------------------ |
+| `tiny`   | 0.25 | 0.5 GB | 8 GB  | free (AWS MicroVM only; workdir clamps vCPU up to 0.5) |
+| `xsmall` | 0.5  | 1 GB   | 8 GB  | free (default)                                         |
+| `small`  | 1    | 2 GB   | 8 GB  | paid                                                   |
+| `medium` | 2    | 4 GB   | 16 GB | paid                                                   |
+| `large`  | 4    | 8 GB   | 32 GB | paid                                                   |
 
 - **workdir (`sandbox`)** applies the size as create-time resources (vCPU clamped to
   workdir's `{0.5, 1, 2, 4}`); explicit `options.cpu`/`memoryMb`/`diskGb` still win.
@@ -71,32 +71,32 @@ node needs two things baked in, or every file tool fails with `mount-s3: not fou
 - **Guest kernel**: `CONFIG_FUSE_FS=y`. The prebuilt Firecracker CI kernels up to v1.13 ship
   **without** FUSE; build the kernel from the FC `microvm-kernel-ci` config with FUSE
   enabled and point `kernel_image` in the node's `config.toml` at it.
-:::
+  :::
 
 ## Unified status model
 
 The dashboard normalizes each backend's build/lifecycle states into one snapshot status,
 so the Snapshots/Images view reads the same regardless of provider:
 
-| Unified status | AWS MicroVM | workdir |
-| --- | --- | --- |
-| `pending` | Version PENDING | build queued |
-| `building` | Version IN_PROGRESS / Image CREATING/UPDATING | image building |
-| `pulling` | base/container image pull | base image pull |
-| `active` | Version SUCCESSFUL + ACTIVE, Image CREATED/UPDATED | image ready |
-| `inactive` | Version SUCCESSFUL + INACTIVE | soft-deleted / idle |
-| `error` | Image CREATION_FAILED / `get-microvm` stateReason | runtime / build error |
-| `build_failed` | Version FAILED | build failed |
+| Unified status | AWS MicroVM                                        | workdir               |
+| -------------- | -------------------------------------------------- | --------------------- |
+| `pending`      | Version PENDING                                    | build queued          |
+| `building`     | Version IN_PROGRESS / Image CREATING/UPDATING      | image building        |
+| `pulling`      | base/container image pull                          | base image pull       |
+| `active`       | Version SUCCESSFUL + ACTIVE, Image CREATED/UPDATED | image ready           |
+| `inactive`     | Version SUCCESSFUL + INACTIVE                      | soft-deleted / idle   |
+| `error`        | Image CREATION_FAILED / `get-microvm` stateReason  | runtime / build error |
+| `build_failed` | Version FAILED                                     | build failed          |
 
 ## Capturing a snapshot (provider support)
 
-Capturing a *running* sandbox into a new reusable image is provider-specific:
+Capturing a _running_ sandbox into a new reusable image is provider-specific:
 
-| Provider | Runtime "Create snapshot" | How a new image is produced |
-| --- | --- | --- |
-| `sandbox` (workdir) | ✅ yes | dashboard **Create snapshot** captures the running sandbox into a workdir image you can pin via `config.snapshot` |
-| `lambda` (MicroVM) | ❌ no | **AWS MicroVM has no runtime image-capture API** — images are built ahead of time as versioned MicroVM image builds (see [Lambda → Image & build](lambda.md#image--build)). A running VM's state is preserved across idle via **suspend/resume**, not by snapshotting it into a new image. |
-| `daytona` / `e2b` / `vercel` | ❌ no (in this harness) | use the provider's own snapshot/template tooling and reference it through `options` |
+| Provider                     | Runtime "Create snapshot" | How a new image is produced                                                                                                                                                                                                                                                                |
+| ---------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sandbox` (workdir)          | ✅ yes                    | dashboard **Create snapshot** captures the running sandbox into a workdir image you can pin via `config.snapshot`                                                                                                                                                                          |
+| `lambda` (MicroVM)           | ❌ no                     | **AWS MicroVM has no runtime image-capture API** — images are built ahead of time as versioned MicroVM image builds (see [Lambda → Image & build](lambda.md#image--build)). A running VM's state is preserved across idle via **suspend/resume**, not by snapshotting it into a new image. |
+| `daytona` / `e2b` / `vercel` | ❌ no (in this harness)   | use the provider's own snapshot/template tooling and reference it through `options`                                                                                                                                                                                                        |
 
 So the dashboard's **Create snapshot** action is shown only for `sandbox` instances; for
 the other providers the Snapshots view lists images but does not offer runtime capture. A

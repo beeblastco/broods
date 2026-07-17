@@ -7,7 +7,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mergeSystemMessagesMiddleware, normalizeStreamDeltasMiddleware } from "../src/harness/provider.ts";
+import {
+  mergeSystemMessagesMiddleware,
+  normalizeStreamDeltasMiddleware,
+} from "../src/harness/provider.ts";
 
 type PromptMessage = { role: string; content: unknown };
 
@@ -29,7 +32,10 @@ describe("mergeSystemMessagesMiddleware", () => {
     ]);
 
     expect(prompt).toEqual([
-      { role: "system", content: "Base prompt.\n\n<skills>skill context</skills>" },
+      {
+        role: "system",
+        content: "Base prompt.\n\n<skills>skill context</skills>",
+      },
       { role: "user", content: [{ type: "text", text: "hi" }] },
     ]);
   });
@@ -44,7 +50,9 @@ describe("mergeSystemMessagesMiddleware", () => {
   });
 
   it("passes through prompts without system messages", async () => {
-    const original = [{ role: "user", content: [{ type: "text", text: "hi" }] }];
+    const original = [
+      { role: "user", content: [{ type: "text", text: "hi" }] },
+    ];
 
     expect(await transform(original)).toEqual(original);
   });
@@ -53,7 +61,7 @@ describe("mergeSystemMessagesMiddleware", () => {
 type StreamPart = Record<string, unknown>;
 
 async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
-  const { stream } = await normalizeStreamDeltasMiddleware.wrapStream!({
+  const { stream } = (await normalizeStreamDeltasMiddleware.wrapStream!({
     doStream: async () => ({
       stream: new ReadableStream<StreamPart>({
         start(controller) {
@@ -62,7 +70,7 @@ async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
         },
       }),
     }),
-  } as never) as { stream: ReadableStream<StreamPart> };
+  } as never)) as { stream: ReadableStream<StreamPart> };
 
   const emitted: StreamPart[] = [];
   for await (const part of stream) {
@@ -71,12 +79,26 @@ async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
   return emitted;
 }
 
-const finishPart = (outputTokens: { total?: number; text?: number; reasoning?: number }): StreamPart => ({
+const finishPart = (outputTokens: {
+  total?: number;
+  text?: number;
+  reasoning?: number;
+}): StreamPart => ({
   type: "finish",
   finishReason: "stop",
   usage: {
-    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: undefined },
-    outputTokens: { total: undefined, text: undefined, reasoning: undefined, ...outputTokens },
+    inputTokens: {
+      total: 10,
+      noCache: 10,
+      cacheRead: 0,
+      cacheWrite: undefined,
+    },
+    outputTokens: {
+      total: undefined,
+      text: undefined,
+      reasoning: undefined,
+      ...outputTokens,
+    },
   },
 });
 
@@ -88,7 +110,11 @@ describe("normalizeStreamDeltasMiddleware", () => {
       { type: "reasoning-delta", id: "r0", delta: "The user is asking" },
     ]);
 
-    expect(emitted.map((part) => part.delta)).toEqual(["The", " user is", " asking"]);
+    expect(emitted.map((part) => part.delta)).toEqual([
+      "The",
+      " user is",
+      " asking",
+    ]);
   });
 
   it("drops pure snapshot repeats and passes true increments through", async () => {
@@ -117,8 +143,14 @@ describe("normalizeStreamDeltasMiddleware", () => {
       finishPart({ total: 200, text: 200, reasoning: 0 }),
     ]);
 
-    const finish = emitted.at(-1) as { usage: { outputTokens: Record<string, number> } };
-    expect(finish.usage.outputTokens).toEqual({ total: 200, text: 50, reasoning: 150 });
+    const finish = emitted.at(-1) as {
+      usage: { outputTokens: Record<string, number> };
+    };
+    expect(finish.usage.outputTokens).toEqual({
+      total: 200,
+      text: 50,
+      reasoning: 150,
+    });
   });
 
   it("keeps provider-reported reasoning tokens untouched", async () => {

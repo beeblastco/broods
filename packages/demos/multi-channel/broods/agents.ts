@@ -1,14 +1,29 @@
-import { defineAgent, defineGitHubChannel, defineSandbox, defineSkill, defineSlackChannel, defineTelegramChannel, defineWorkspace, env } from "broods";
+import {
+  defineAgent,
+  defineGitHubChannel,
+  defineSandbox,
+  defineSkill,
+  defineSlackChannel,
+  defineTelegramChannel,
+  defineWorkspace,
+  env,
+} from "broods";
 import fs from "fs";
 import path from "path";
 
 const __dirname = new URL(".", import.meta.url).pathname;
-const instructions = fs.readFileSync(path.join(__dirname, "instructions.md"), "utf-8").trim();
-const setupGitDevEnvironment = fs.readFileSync(path.join(__dirname, "hooks/setup-github-dev.sh"), "utf-8").trim();
+const instructions = fs
+  .readFileSync(path.join(__dirname, "instructions.md"), "utf-8")
+  .trim();
+const setupGitDevEnvironment = fs
+  .readFileSync(path.join(__dirname, "hooks/setup-github-dev.sh"), "utf-8")
+  .trim();
 const githubGitUserName = process.env.GITHUB_BOT_USERNAME;
 const githubGitUserEmail = process.env.GITHUB_GIT_USER_EMAIL;
 const optionalSandboxGithubEnv = {
-  ...(process.env.GITHUB_INSTALLATION_ID ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") } : {}),
+  ...(process.env.GITHUB_INSTALLATION_ID
+    ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") }
+    : {}),
 };
 
 export const slack = defineSlackChannel({
@@ -43,7 +58,7 @@ export const hubSpotSkill = defineSkill({
   config: {
     path: "./skills/hubspot",
   },
-})
+});
 
 export const sandbox = defineSandbox({
   name: "lambda-sandbox",
@@ -68,17 +83,17 @@ export const sandbox = defineSandbox({
       GITHUB_GIT_USER_EMAIL: githubGitUserEmail,
       GIT_TERMINAL_PROMPT: "0",
       ...optionalSandboxGithubEnv,
-    }
+    },
   },
-})
+});
 
 export const workspace = defineWorkspace({
   name: "workspace",
   config: {
     storage: { provider: "s3" },
     isolation: true,
-  }
-})
+  },
+});
 
 export const agent = defineAgent({
   name: "slack-channel-agent",
@@ -94,8 +109,8 @@ export const agent = defineAgent({
       modelId: "minimax.minimax-m2.5",
       providerOptions: {
         bedrock: {
-          reasoningConfig: { type: 'enabled', budgetTokens: 16000 },
-        }
+          reasoningConfig: { type: "enabled", budgetTokens: 16000 },
+        },
       },
     },
     agent: {
@@ -114,7 +129,7 @@ export const agent = defineAgent({
       tavilyExtract: {
         enabled: true,
         apiKey: env("TAVILY_API_KEY"),
-      }
+      },
     },
     channels: [slack, telegram, github],
     sandbox: sandbox,
@@ -126,6 +141,6 @@ export const agent = defineAgent({
     skills: {
       enabled: true,
       allowed: [hubSpotSkill],
-    }
+    },
   },
 });

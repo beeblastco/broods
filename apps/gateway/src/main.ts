@@ -42,7 +42,9 @@ import {
 } from "./utils.ts";
 
 type GatewayData =
-  AgentTestGatewayData | ObservabilityGatewayData | TerminalGatewayData;
+  | AgentTestGatewayData
+  | ObservabilityGatewayData
+  | TerminalGatewayData;
 
 let natsConnectionPromise: Promise<NatsConnection> | null = null;
 let activeSocketCount = 0;

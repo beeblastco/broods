@@ -5,14 +5,18 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
-import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow, syncAgentRowFields } from "./model/agentSync";
+import {
+  ensureAgentsRowForConfig,
+  pushEncryptedConfigToAgentRow,
+  syncAgentRowFields,
+} from "./model/agentSync";
 import { authKit } from "./auth";
 import {
-    accountIdForProject,
-    auditDetailsJson,
-    dashboardAuditActor,
-    insertConfigAuditEvent,
-    type ConfigAuditActor,
+  accountIdForProject,
+  auditDetailsJson,
+  dashboardAuditActor,
+  insertConfigAuditEvent,
+  type ConfigAuditActor,
 } from "./model/auditEvents";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -20,300 +24,320 @@ import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { agentConfigsFields } from "./schema";
 
 const agentProviderValidator = v.union(
-    v.literal("openai"),
-    v.literal("google"),
-    v.literal("bedrock"),
-    v.literal("anthropic"),
-    v.literal("minimax"),
-    v.literal("gateway"),
-    v.literal("custom"),
+  v.literal("openai"),
+  v.literal("google"),
+  v.literal("bedrock"),
+  v.literal("anthropic"),
+  v.literal("minimax"),
+  v.literal("gateway"),
+  v.literal("custom"),
 );
 
 const agentConfigDoc = v.object({
-    ...agentConfigsFields,
-    _id: v.id("agentConfigs"),
-    _creationTime: v.number(),
+  ...agentConfigsFields,
+  _id: v.id("agentConfigs"),
+  _creationTime: v.number(),
 });
 
 const workspaceRefValidator = v.object({
-    name: v.string(),
-    workspaceId: v.string(),
-    sandbox: v.optional(v.union(v.string(), v.null())),
+  name: v.string(),
+  workspaceId: v.string(),
+  sandbox: v.optional(v.union(v.string(), v.null())),
 });
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
 /** Coerces unknown JSON-ish values into a mutable record for patching. */
 function asRecord(value: unknown): Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 /** Hide secret values from browser reads while preserving variable names. */
-function maskRuntimeVariables<T extends { runtimeVariables?: Array<{ key: string; value: string }> }>(
-    config: T,
-): T {
-    return {
-        ...config,
-        runtimeVariables: config.runtimeVariables?.map((entry) => ({
-            key: entry.key,
-            value: MASKED_RUNTIME_VARIABLE_VALUE,
-        })),
-    };
+function maskRuntimeVariables<
+  T extends { runtimeVariables?: Array<{ key: string; value: string }> },
+>(config: T): T {
+  return {
+    ...config,
+    runtimeVariables: config.runtimeVariables?.map((entry) => ({
+      key: entry.key,
+      value: MASKED_RUNTIME_VARIABLE_VALUE,
+    })),
+  };
 }
 
 /** Returns true when the caller may edit a project-scoped agent config. */
 async function canAccessAgentConfig(
-    ctx: Parameters<typeof getOwnedProject>[0],
-    authId: string,
-    config: { projectId: Id<"projects"> },
+  ctx: Parameters<typeof getOwnedProject>[0],
+  authId: string,
+  config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
-    return Boolean(await getOwnedProject(ctx, authId, config.projectId));
+  return Boolean(await getOwnedProject(ctx, authId, config.projectId));
 }
 
 /**
  * Record a dashboard agent config mutation when the project has a provisioned account.
  */
 async function recordAgentConfigAudit(
-    ctx: MutationCtx,
-    actor: ConfigAuditActor,
-    input: {
-        projectId: Id<"projects">;
-        environmentId: Id<"environments">;
-        action: string;
-        agentId?: string;
-        configId: Id<"agentConfigs">;
-        name?: string;
-        summary: string;
-        details?: Record<string, unknown>;
-    },
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  input: {
+    projectId: Id<"projects">;
+    environmentId: Id<"environments">;
+    action: string;
+    agentId?: string;
+    configId: Id<"agentConfigs">;
+    name?: string;
+    summary: string;
+    details?: Record<string, unknown>;
+  },
 ): Promise<void> {
-    const accountId = await accountIdForProject(ctx, input.projectId);
-    if (!accountId) return;
+  const accountId = await accountIdForProject(ctx, input.projectId);
+  if (!accountId) return;
 
-    await insertConfigAuditEvent(ctx.db, {
-        accountId: accountId,
-        projectId: input.projectId,
-        environmentId: input.environmentId,
-        actor: actor,
-        action: input.action,
-        resource: {
-            kind: "agent",
-            id: input.agentId ?? input.configId,
-            name: input.name,
-        },
-        summary: input.summary,
-        detailsJson: input.details ? auditDetailsJson(input.details) : undefined,
-    });
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: input.projectId,
+    environmentId: input.environmentId,
+    actor: actor,
+    action: input.action,
+    resource: {
+      kind: "agent",
+      id: input.agentId ?? input.configId,
+      name: input.name,
+    },
+    summary: input.summary,
+    detailsJson: input.details ? auditDetailsJson(input.details) : undefined,
+  });
 }
 
 export const getById = query({
-    args: { configId: v.id("agentConfigs") },
-    returns: v.union(v.null(), agentConfigDoc),
-    handler: async (ctx, { configId }) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) throw new Error("User not found or not authenticated");
+  args: { configId: v.id("agentConfigs") },
+  returns: v.union(v.null(), agentConfigDoc),
+  handler: async (ctx, { configId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-        const config = await ctx.db.get(configId);
-        if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config))) return null;
+    const config = await ctx.db.get(configId);
+    if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config)))
+      return null;
 
-        return maskRuntimeVariables(config);
-    },
+    return maskRuntimeVariables(config);
+  },
 });
 
 export const create = mutation({
-    args: {
-        projectId: v.id("projects"),
-        environmentId: v.id("environments"),
-        name: v.string(),
-        provider: v.optional(agentProviderValidator),
-        modelId: v.optional(v.string()),
-        customBaseUrl: v.optional(v.string()),
-        description: v.optional(v.string()),
-        systemPrompt: v.optional(v.string()),
-        position: v.optional(v.object({ x: v.number(), y: v.number() })),
-    },
-    returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { projectId, environmentId, name, provider, modelId, customBaseUrl, description, systemPrompt, position } = args;
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    name: v.string(),
+    provider: v.optional(agentProviderValidator),
+    modelId: v.optional(v.string()),
+    customBaseUrl: v.optional(v.string()),
+    description: v.optional(v.string()),
+    systemPrompt: v.optional(v.string()),
+    position: v.optional(v.object({ x: v.number(), y: v.number() })),
+  },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, args) => {
+    const {
+      projectId,
+      environmentId,
+      name,
+      provider,
+      modelId,
+      customBaseUrl,
+      description,
+      systemPrompt,
+      position,
+    } = args;
 
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) throw new Error("User not found or not authenticated");
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-        const project = await getOwnedProject(ctx, authUser.id, projectId);
-        if (!project) throw new Error("Project not found.");
+    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    if (!project) throw new Error("Project not found.");
 
-        const environment = await getOwnedEnvironment(ctx, authUser.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            throw new Error("Environment not found.");
-        }
+    const environment = await getOwnedEnvironment(
+      ctx,
+      authUser.id,
+      environmentId,
+    );
+    if (!environment || environment.projectId !== projectId) {
+      throw new Error("Environment not found.");
+    }
 
-        const now = Date.now();
-        const trimmedName = name.trim();
-        if (provider === "custom" && !customBaseUrl?.trim()) {
-            throw new Error("customBaseUrl is required for the custom provider");
-        }
-        const configId = await ctx.db.insert("agentConfigs", {
-            authId: authUser.id,
-            name: trimmedName,
-            description: description?.trim() || undefined,
-            agentId: undefined,
-            projectId,
-            environmentId,
-            provider,
-            modelId: modelId?.trim() || "gpt-4.1-mini",
-            systemPrompt: systemPrompt?.trim() || undefined,
-            ...(provider === "custom" && customBaseUrl?.trim()
-                ? {
-                    extraConfig: {
-                        provider: {
-                            custom: {
-                                base_url: customBaseUrl.trim(),
-                                baseURL: customBaseUrl.trim(),
-                            },
-                        },
-                    },
-                }
-                : {}),
-            memoryToolEnabled: true,
-            searchToolEnabled: false,
-            updatedAt: now,
-        });
-
-        await ctx.db.patch(projectId, { updatedAt: now });
-
-        if (position) {
-            const layout = await ctx.db
-                .query("canvasLayouts")
-                .withIndex("by_projectId_and_environmentId", (q) =>
-                    q.eq("projectId", projectId).eq("environmentId", environmentId),
-                )
-                .unique();
-
-            const nextNode = {
-                id: String(now),
-                type: "agent" as const,
-                position,
-                data: {
-                    label: trimmedName,
-                    status: "idle" as const,
-                    agentConfigId: configId,
+    const now = Date.now();
+    const trimmedName = name.trim();
+    if (provider === "custom" && !customBaseUrl?.trim()) {
+      throw new Error("customBaseUrl is required for the custom provider");
+    }
+    const configId = await ctx.db.insert("agentConfigs", {
+      authId: authUser.id,
+      name: trimmedName,
+      description: description?.trim() || undefined,
+      agentId: undefined,
+      projectId,
+      environmentId,
+      provider,
+      modelId: modelId?.trim() || "gpt-4.1-mini",
+      systemPrompt: systemPrompt?.trim() || undefined,
+      ...(provider === "custom" && customBaseUrl?.trim()
+        ? {
+            extraConfig: {
+              provider: {
+                custom: {
+                  base_url: customBaseUrl.trim(),
+                  baseURL: customBaseUrl.trim(),
                 },
-            };
+              },
+            },
+          }
+        : {}),
+      memoryToolEnabled: true,
+      searchToolEnabled: false,
+      updatedAt: now,
+    });
 
-            if (layout) {
-                await ctx.db.patch(layout._id, {
-                    nodes: [...layout.nodes, nextNode],
-                    updatedAt: now,
-                });
-            } else {
-                await ctx.db.insert("canvasLayouts", {
-                    authId: authUser.id,
-                    projectId,
-                    environmentId,
-                    nodes: [nextNode],
-                    edges: [],
-                    updatedAt: now,
-                });
-            }
-        }
+    await ctx.db.patch(projectId, { updatedAt: now });
 
-        // Provision the broods agents row so the harness can resolve
-        // this config by its public agentId. No-ops if the org isn't yet
-        // provisioned with a broods account.
-        await ensureAgentsRowForConfig(ctx, configId, authUser.id);
-        await pushEncryptedConfigToAgentRow(ctx, configId);
-        const created = await ctx.db.get(configId);
-        await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
-            projectId: projectId,
-            environmentId: environmentId,
-            action: "created",
-            agentId: created?.agentId,
-            configId: configId,
-            name: trimmedName,
-            summary: "Agent configuration created",
-            details: { configId: configId },
+    if (position) {
+      const layout = await ctx.db
+        .query("canvasLayouts")
+        .withIndex("by_projectId_and_environmentId", (q) =>
+          q.eq("projectId", projectId).eq("environmentId", environmentId),
+        )
+        .unique();
+
+      const nextNode = {
+        id: String(now),
+        type: "agent" as const,
+        position,
+        data: {
+          label: trimmedName,
+          status: "idle" as const,
+          agentConfigId: configId,
+        },
+      };
+
+      if (layout) {
+        await ctx.db.patch(layout._id, {
+          nodes: [...layout.nodes, nextNode],
+          updatedAt: now,
         });
+      } else {
+        await ctx.db.insert("canvasLayouts", {
+          authId: authUser.id,
+          projectId,
+          environmentId,
+          nodes: [nextNode],
+          edges: [],
+          updatedAt: now,
+        });
+      }
+    }
 
-        return configId;
-    },
+    // Provision the broods agents row so the harness can resolve
+    // this config by its public agentId. No-ops if the org isn't yet
+    // provisioned with a broods account.
+    await ensureAgentsRowForConfig(ctx, configId, authUser.id);
+    await pushEncryptedConfigToAgentRow(ctx, configId);
+    const created = await ctx.db.get(configId);
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
+      projectId: projectId,
+      environmentId: environmentId,
+      action: "created",
+      agentId: created?.agentId,
+      configId: configId,
+      name: trimmedName,
+      summary: "Agent configuration created",
+      details: { configId: configId },
+    });
+
+    return configId;
+  },
 });
 
 export const update = mutation({
-    args: {
-        configId: v.id("agentConfigs"),
-        name: v.optional(v.string()),
-        provider: v.optional(agentProviderValidator),
-        modelId: v.optional(v.string()),
-        description: v.optional(v.string()),
-        systemPrompt: v.optional(v.string()),
-        maxTurns: v.optional(v.number()),
-        allowedTools: v.optional(v.array(v.string())),
-        permissionMode: v.optional(v.string()),
-        outputFormat: v.optional(v.any()),
-        providerOptions: v.optional(v.any()),
-        temperature: v.optional(v.number()),
-        maxTokens: v.optional(v.number()),
-        memoryToolEnabled: v.optional(v.boolean()),
-        searchToolEnabled: v.optional(v.boolean()),
-        searchToolConfig: v.optional(v.any()),
-        runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
-        agentId: v.optional(v.string()),
-        extraConfig: v.optional(v.any()),
-    },
-    returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { configId, ...updates } = args;
+  args: {
+    configId: v.id("agentConfigs"),
+    name: v.optional(v.string()),
+    provider: v.optional(agentProviderValidator),
+    modelId: v.optional(v.string()),
+    description: v.optional(v.string()),
+    systemPrompt: v.optional(v.string()),
+    maxTurns: v.optional(v.number()),
+    allowedTools: v.optional(v.array(v.string())),
+    permissionMode: v.optional(v.string()),
+    outputFormat: v.optional(v.any()),
+    providerOptions: v.optional(v.any()),
+    temperature: v.optional(v.number()),
+    maxTokens: v.optional(v.number()),
+    memoryToolEnabled: v.optional(v.boolean()),
+    searchToolEnabled: v.optional(v.boolean()),
+    searchToolConfig: v.optional(v.any()),
+    runtimeVariables: v.optional(
+      v.array(v.object({ key: v.string(), value: v.string() })),
+    ),
+    agentId: v.optional(v.string()),
+    extraConfig: v.optional(v.any()),
+  },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, args) => {
+    const { configId, ...updates } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const existing = await ctx.db.get(configId);
-        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-            throw new Error("Agent config not found.");
-        }
+    const existing = await ctx.db.get(configId);
+    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
+      throw new Error("Agent config not found.");
+    }
 
-        const patch = Object.fromEntries(
-            Object.entries(updates)
-                .filter(([, v]) => v !== undefined)
-                .map(([key, value]) => [key, key === "outputFormat" && value === null ? undefined : value]),
-        );
-        if (Array.isArray(patch.runtimeVariables)) {
-            patch.runtimeVariables = await saveAgentRuntimeSecrets(
-                ctx,
-                configId,
-                patch.runtimeVariables as Array<{ key: string; value: string }>,
-            );
-        }
+    const patch = Object.fromEntries(
+      Object.entries(updates)
+        .filter(([, v]) => v !== undefined)
+        .map(([key, value]) => [
+          key,
+          key === "outputFormat" && value === null ? undefined : value,
+        ]),
+    );
+    if (Array.isArray(patch.runtimeVariables)) {
+      patch.runtimeVariables = await saveAgentRuntimeSecrets(
+        ctx,
+        configId,
+        patch.runtimeVariables as Array<{ key: string; value: string }>,
+      );
+    }
 
-        await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
+    await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
 
-        // Keep the broods `agents` row aligned; this also provisions
-        // the runtime row when an org account was created after the config.
-        await ensureAgentsRowForConfig(ctx, configId, user.id);
-        await syncAgentRowFields(ctx, configId, {
-            name: updates.name,
-            description: updates.description,
-        });
-        await pushEncryptedConfigToAgentRow(ctx, configId);
-        const updated = await ctx.db.get(configId);
-        await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
-            projectId: existing.projectId,
-            environmentId: existing.environmentId,
-            action: "updated",
-            agentId: updated?.agentId,
-            configId: configId,
-            name: updated?.name ?? existing.name,
-            summary: "Agent configuration updated",
-            details: { configId: configId, changedFields: Object.keys(patch).sort() },
-        });
+    // Keep the broods `agents` row aligned; this also provisions
+    // the runtime row when an org account was created after the config.
+    await ensureAgentsRowForConfig(ctx, configId, user.id);
+    await syncAgentRowFields(ctx, configId, {
+      name: updates.name,
+      description: updates.description,
+    });
+    await pushEncryptedConfigToAgentRow(ctx, configId);
+    const updated = await ctx.db.get(configId);
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
+      projectId: existing.projectId,
+      environmentId: existing.environmentId,
+      action: "updated",
+      agentId: updated?.agentId,
+      configId: configId,
+      name: updated?.name ?? existing.name,
+      summary: "Agent configuration updated",
+      details: { configId: configId, changedFields: Object.keys(patch).sort() },
+    });
 
-        return configId;
-    },
+    return configId;
+  },
 });
 
 /**
@@ -321,50 +345,50 @@ export const update = mutation({
  * This preserves unrelated extraConfig branches while replacing sandbox/workspaces.
  */
 export const updateRuntimeRefs = mutation({
-    args: {
-        configId: v.id("agentConfigs"),
-        sandbox: v.union(v.string(), v.null()),
-        workspaces: v.union(v.array(workspaceRefValidator), v.null()),
-    },
-    returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { configId, sandbox, workspaces } = args;
+  args: {
+    configId: v.id("agentConfigs"),
+    sandbox: v.union(v.string(), v.null()),
+    workspaces: v.union(v.array(workspaceRefValidator), v.null()),
+  },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, args) => {
+    const { configId, sandbox, workspaces } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const existing = await ctx.db.get(configId);
-        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-            throw new Error("Agent config not found.");
-        }
+    const existing = await ctx.db.get(configId);
+    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
+      throw new Error("Agent config not found.");
+    }
 
-        const extraConfig = { ...asRecord(existing.extraConfig) };
-        if (sandbox) {
-            extraConfig.sandbox = sandbox;
-        } else {
-            delete extraConfig.sandbox;
-        }
-        if (workspaces && workspaces.length > 0) {
-            extraConfig.workspaces = workspaces;
-        } else {
-            delete extraConfig.workspaces;
-        }
-        // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
-        delete extraConfig.workspace;
+    const extraConfig = { ...asRecord(existing.extraConfig) };
+    if (sandbox) {
+      extraConfig.sandbox = sandbox;
+    } else {
+      delete extraConfig.sandbox;
+    }
+    if (workspaces && workspaces.length > 0) {
+      extraConfig.workspaces = workspaces;
+    } else {
+      delete extraConfig.workspaces;
+    }
+    // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
+    delete extraConfig.workspace;
 
-        await ctx.db.patch(configId, {
-            extraConfig: extraConfig,
-            updatedAt: Date.now(),
-        });
+    await ctx.db.patch(configId, {
+      extraConfig: extraConfig,
+      updatedAt: Date.now(),
+    });
 
-        await ensureAgentsRowForConfig(ctx, configId, user.id);
-        await pushEncryptedConfigToAgentRow(ctx, configId);
+    await ensureAgentsRowForConfig(ctx, configId, user.id);
+    await pushEncryptedConfigToAgentRow(ctx, configId);
 
-        return configId;
-    },
+    return configId;
+  },
 });
 
 /**
@@ -374,109 +398,123 @@ export const updateRuntimeRefs = mutation({
  * subagent calls when non-empty and clearing the branch when empty.
  */
 export const updateSubagentRefs = mutation({
-    args: {
-        configId: v.id("agentConfigs"),
-        calleeConfigIds: v.array(v.id("agentConfigs")),
-    },
-    returns: v.id("agentConfigs"),
-    handler: async (ctx, args) => {
-        const { configId, calleeConfigIds } = args;
+  args: {
+    configId: v.id("agentConfigs"),
+    calleeConfigIds: v.array(v.id("agentConfigs")),
+  },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, args) => {
+    const { configId, calleeConfigIds } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const existing = await ctx.db.get(configId);
-        if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
-            throw new Error("Agent config not found.");
-        }
+    const existing = await ctx.db.get(configId);
+    if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
+      throw new Error("Agent config not found.");
+    }
 
-        // Map each callee config to its broods agents-row id, skipping
-        // self-calls and any config the caller doesn't own or can't provision.
-        const allowed: string[] = [];
-        for (const calleeId of calleeConfigIds) {
-            if (calleeId === configId) continue;
-            const callee = await ctx.db.get(calleeId);
-            if (!callee || !(await canAccessAgentConfig(ctx, user.id, callee))) continue;
-            const agentRowId = await ensureAgentsRowForConfig(ctx, calleeId, user.id);
-            if (agentRowId) allowed.push(agentRowId);
-        }
-        allowed.sort();
+    // Map each callee config to its broods agents-row id, skipping
+    // self-calls and any config the caller doesn't own or can't provision.
+    const allowed: string[] = [];
+    for (const calleeId of calleeConfigIds) {
+      if (calleeId === configId) continue;
+      const callee = await ctx.db.get(calleeId);
+      if (!callee || !(await canAccessAgentConfig(ctx, user.id, callee)))
+        continue;
+      const agentRowId = await ensureAgentsRowForConfig(ctx, calleeId, user.id);
+      if (agentRowId) allowed.push(agentRowId);
+    }
+    allowed.sort();
 
-        const extraConfig = { ...asRecord(existing.extraConfig) };
-        const prevSubagent = asRecord(extraConfig.subagent);
-        // Preserve any context/mode the caller already set; only swap enabled+allowed.
-        const nextSubagent =
-            allowed.length > 0 ? { ...prevSubagent, enabled: true, allowed: allowed } : undefined;
+    const extraConfig = { ...asRecord(existing.extraConfig) };
+    const prevSubagent = asRecord(extraConfig.subagent);
+    // Preserve any context/mode the caller already set; only swap enabled+allowed.
+    const nextSubagent =
+      allowed.length > 0
+        ? { ...prevSubagent, enabled: true, allowed: allowed }
+        : undefined;
 
-        // Skip the patch and encryption push entirely when the branch is unchanged.
-        if (JSON.stringify(extraConfig.subagent ?? null) === JSON.stringify(nextSubagent ?? null)) {
-            return configId;
-        }
+    // Skip the patch and encryption push entirely when the branch is unchanged.
+    if (
+      JSON.stringify(extraConfig.subagent ?? null) ===
+      JSON.stringify(nextSubagent ?? null)
+    ) {
+      return configId;
+    }
 
-        if (nextSubagent) {
-            extraConfig.subagent = nextSubagent;
-        } else {
-            delete extraConfig.subagent;
-        }
+    if (nextSubagent) {
+      extraConfig.subagent = nextSubagent;
+    } else {
+      delete extraConfig.subagent;
+    }
 
-        await ctx.db.patch(configId, { extraConfig: extraConfig, updatedAt: Date.now() });
+    await ctx.db.patch(configId, {
+      extraConfig: extraConfig,
+      updatedAt: Date.now(),
+    });
 
-        await ensureAgentsRowForConfig(ctx, configId, user.id);
-        await pushEncryptedConfigToAgentRow(ctx, configId);
+    await ensureAgentsRowForConfig(ctx, configId, user.id);
+    await pushEncryptedConfigToAgentRow(ctx, configId);
 
-        return configId;
-    },
+    return configId;
+  },
 });
 
 export const remove = mutation({
-    args: { configId: v.id("agentConfigs") },
-    returns: v.id("agentConfigs"),
-    handler: async (ctx, { configId }) => {
-        const authUser = await authKit.getAuthUser(ctx);
-        if (!authUser) throw new Error("User not found or not authenticated");
+  args: { configId: v.id("agentConfigs") },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, { configId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-        const existing = await ctx.db.get(configId);
-        if (!existing || !(await canAccessAgentConfig(ctx, authUser.id, existing))) {
-            throw new Error("Agent config not found.");
-        }
+    const existing = await ctx.db.get(configId);
+    if (
+      !existing ||
+      !(await canAccessAgentConfig(ctx, authUser.id, existing))
+    ) {
+      throw new Error("Agent config not found.");
+    }
 
-        // Code is the source of truth for CLI-managed agents: the dashboard may
-        // edit them (changes are overwritten on the next sync) but must not delete
-        // them. Removal happens by deleting them from `broods/` and running
-        // `broods deploy --prune`.
-        if (existing.managedBy === "cli") {
-            throw new Error("This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.");
-        }
+    // Code is the source of truth for CLI-managed agents: the dashboard may
+    // edit them (changes are overwritten on the next sync) but must not delete
+    // them. Removal happens by deleting them from `broods/` and running
+    // `broods deploy --prune`.
+    if (existing.managedBy === "cli") {
+      throw new Error(
+        "This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.",
+      );
+    }
 
-        // Note: the environment's runtime API key is shared across all its agents
-        // (env-scoped), so deleting one agent config must NOT delete it. The key is
-        // only removed when the whole environment is deleted (see environment.ts).
+    // Note: the environment's runtime API key is shared across all its agents
+    // (env-scoped), so deleting one agent config must NOT delete it. The key is
+    // only removed when the whole environment is deleted (see environment.ts).
 
-        // Clean up the linked broods `agents` row if present so the
-        // harness side stays consistent with the dashboard's canvas.
-        if (existing.agentId) {
-            const normalized = ctx.db.normalizeId("agents", existing.agentId);
-            if (normalized) {
-                const agent = await ctx.db.get(normalized);
-                if (agent) await ctx.db.delete(normalized);
-            }
-        }
+    // Clean up the linked broods `agents` row if present so the
+    // harness side stays consistent with the dashboard's canvas.
+    if (existing.agentId) {
+      const normalized = ctx.db.normalizeId("agents", existing.agentId);
+      if (normalized) {
+        const agent = await ctx.db.get(normalized);
+        if (agent) await ctx.db.delete(normalized);
+      }
+    }
 
-        await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
-            projectId: existing.projectId,
-            environmentId: existing.environmentId,
-            action: "deleted",
-            agentId: existing.agentId,
-            configId: configId,
-            name: existing.name,
-            summary: "Agent configuration deleted",
-            details: { configId: configId },
-        });
-        await ctx.db.delete(configId);
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
+      projectId: existing.projectId,
+      environmentId: existing.environmentId,
+      action: "deleted",
+      agentId: existing.agentId,
+      configId: configId,
+      name: existing.name,
+      summary: "Agent configuration deleted",
+      details: { configId: configId },
+    });
+    await ctx.db.delete(configId);
 
-        return configId;
-    },
+    return configId;
+  },
 });

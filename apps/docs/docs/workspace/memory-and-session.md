@@ -99,12 +99,25 @@ omits the optional `workspace` argument:
 ```ts
 import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
-export const personal = defineWorkspace({ name: "personal", config: { storage: { provider: "s3" } } });
-export const team = defineWorkspace({ name: "team", config: { storage: { provider: "s3" } } });
-export const docs = defineWorkspace({ name: "docs", config: { storage: { provider: "s3" } } });
+export const personal = defineWorkspace({
+  name: "personal",
+  config: { storage: { provider: "s3" } },
+});
+export const team = defineWorkspace({
+  name: "team",
+  config: { storage: { provider: "s3" } },
+});
+export const docs = defineWorkspace({
+  name: "docs",
+  config: { storage: { provider: "s3" } },
+});
 export const lockedDown = defineSandbox({
   name: "locked-down",
-  config: { provider: "lambda", network: { mode: "deny-all" }, permissionMode: "ask" },
+  config: {
+    provider: "lambda",
+    network: { mode: "deny-all" },
+    permissionMode: "ask",
+  },
 });
 
 export const myAgent = defineAgent({
@@ -112,9 +125,9 @@ export const myAgent = defineAgent({
   config: {
     sandbox: lambdaSandbox,
     workspaces: [
-      personal,                                    // inherit agent sandbox
-      { workspace: team, sandbox: lockedDown },    // per-workspace override
-      { workspace: docs, sandbox: null },          // read-only S3 access
+      personal, // inherit agent sandbox
+      { workspace: team, sandbox: lockedDown }, // per-workspace override
+      { workspace: docs, sandbox: null }, // read-only S3 access
     ],
   },
 });

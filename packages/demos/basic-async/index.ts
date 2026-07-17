@@ -21,5 +21,7 @@ console.log("Response:", formatResponse(status.response));
 if (status.error) console.error("Error:", status.error);
 
 function formatResponse(response: unknown): string {
-  return typeof response === "string" ? response : JSON.stringify(response, null, 2);
+  return typeof response === "string"
+    ? response
+    : JSON.stringify(response, null, 2);
 }

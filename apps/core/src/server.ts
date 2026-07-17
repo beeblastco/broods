@@ -18,7 +18,10 @@ const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
 ];
 const inFlight = new Set<Promise<void>>();
 
-export function routesToAccountManage(method: string, pathname: string): boolean {
+export function routesToAccountManage(
+  method: string,
+  pathname: string,
+): boolean {
   const upperMethod = method.toUpperCase();
   if (pathname === "/accounts") {
     return upperMethod === "POST";
@@ -49,13 +52,18 @@ export async function toCoreRequest(
   // Trust the rightmost forwarded address added by the ingress, not client input.
   const forwardedChain = headers["x-forwarded-for"];
   const clientIp = forwardedChain
-    ? forwardedChain.split(",").map((entry) => entry.trim()).filter(Boolean).pop() ?? ""
-    : socketAddress ?? "";
+    ? (forwardedChain
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .pop() ?? "")
+    : (socketAddress ?? "");
 
-  const cookies = headers["cookie"]
-    ?.split(";")
-    .map((cookie) => cookie.trim())
-    .filter(Boolean) ?? [];
+  const cookies =
+    headers["cookie"]
+      ?.split(";")
+      .map((cookie) => cookie.trim())
+      .filter(Boolean) ?? [];
 
   return {
     method: request.method,
@@ -90,10 +98,17 @@ export async function drainInFlight(): Promise<void> {
 }
 
 if (import.meta.main) {
-  const SHUTDOWN_DEADLINE_MS = positiveIntegerEnv("SHUTDOWN_DEADLINE_MS", 25_000);
-  const requestBudgetMs = positiveIntegerEnv("REQUEST_TIMEOUT_BUDGET_MS", DEFAULT_REQUEST_BUDGET_MS);
+  const SHUTDOWN_DEADLINE_MS = positiveIntegerEnv(
+    "SHUTDOWN_DEADLINE_MS",
+    25_000,
+  );
+  const requestBudgetMs = positiveIntegerEnv(
+    "REQUEST_TIMEOUT_BUDGET_MS",
+    DEFAULT_REQUEST_BUDGET_MS,
+  );
   const { handler: accountHandler } = await import("./accounts/handler.ts");
-  const { drainInProcessWorkers, handler: harnessHandler } = await import("./harness/handler.ts");
+  const { drainInProcessWorkers, handler: harnessHandler } =
+    await import("./harness/handler.ts");
 
   initOtel();
 
@@ -108,7 +123,11 @@ if (import.meta.main) {
         return Response.json({ status: "ok" });
       }
 
-      const coreRequest = await toCoreRequest(request, url, bunServer.requestIP(request)?.address);
+      const coreRequest = await toCoreRequest(
+        request,
+        url,
+        bunServer.requestIP(request)?.address,
+      );
       const ctx: RequestContext = {
         requestId: crypto.randomUUID(),
         deadlineMs: Date.now() + requestBudgetMs,
@@ -124,7 +143,10 @@ if (import.meta.main) {
           path: url.pathname,
           error: err instanceof Error ? err.message : String(err),
         });
-        return Response.json({ error: "Internal server error" }, { status: 500 });
+        return Response.json(
+          { error: "Internal server error" },
+          { status: 500 },
+        );
       }
     },
   });
@@ -136,13 +158,17 @@ if (import.meta.main) {
     if (shuttingDown) return;
     shuttingDown = true;
     logInfo("Core server shutting down", { signal });
-    const deadline = new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_DEADLINE_MS));
+    const deadline = new Promise<void>((resolve) =>
+      setTimeout(resolve, SHUTDOWN_DEADLINE_MS),
+    );
     const graceful = (async () => {
       await server.stop();
       await drainInFlight();
       await drainInProcessWorkers();
     })().catch((err) => {
-      logError("Graceful shutdown failed", { error: err instanceof Error ? err.message : String(err) });
+      logError("Graceful shutdown failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
     await Promise.race([graceful, deadline]);
     await forceFlushOtel().catch(() => undefined);

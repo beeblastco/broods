@@ -14,7 +14,7 @@ for await (const chunk of client.stream(api.agents.sandboxAgent, {
     "Run this exact native mounted sandbox smoke test, covering env vars and outbound internet.",
     "",
     "Env var check (the sandbox configured SANDBOX_SMOKE_VAR=sandbox-env-ok):",
-    "1. Run the bash command: echo \"shell:$SANDBOX_SMOKE_VAR\".",
+    '1. Run the bash command: echo "shell:$SANDBOX_SMOKE_VAR".',
     "2. Use the write tool to create env.py that prints `python:` followed by os.environ['SANDBOX_SMOKE_VAR'], then run python3 env.py with bash.",
     "3. Use the write tool to create env.js that prints `node:` followed by process.env.SANDBOX_SMOKE_VAR, then run node env.js with bash.",
     "4. Confirm all three print sandbox-env-ok.",
@@ -27,30 +27,34 @@ for await (const chunk of client.stream(api.agents.sandboxAgent, {
     "9. Return the stdout and status from every run.",
   ].join("\n"),
 })) {
-    switch (chunk.type) {
-      case "reasoning-delta":
-        process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
-        break;
-      case "reasoning-end":
-        process.stdout.write(`\n\n`);
-        break;
-      case "text-delta":
-        process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
-        break;
-      case "text-end":
-        process.stdout.write(`\n\n`);
-        break;
-      case "tool-input-delta":
-        process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
-        break;
-      case "tool-call":
-        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
-        break;
-      case "tool-result":
-        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
-        break;
-      case "finish":
-        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
-        break;
-    }
+  switch (chunk.type) {
+    case "reasoning-delta":
+      process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);
+      break;
+    case "reasoning-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "text-delta":
+      process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
+      break;
+    case "text-end":
+      process.stdout.write(`\n\n`);
+      break;
+    case "tool-input-delta":
+      process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
+      break;
+    case "tool-call":
+      process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+      break;
+    case "tool-result":
+      process.stdout.write(
+        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
+      break;
+    case "finish":
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
+      break;
+  }
 }
