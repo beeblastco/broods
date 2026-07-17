@@ -44,59 +44,6 @@ interface MemorySaveInput {
   workspace?: string;
 }
 
-function inputSchema(context: MemoryToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-  return {
-    type: "object",
-    properties: {
-      title: {
-        type: "string",
-        description:
-          "Short title of the fact; it becomes the entry's file name (kebab-cased).",
-      },
-      description: {
-        type: "string",
-        description:
-          "One-line summary, shown in the MEMORY.md index and used to decide relevance later.",
-      },
-      content: {
-        type: "string",
-        description: "The memory itself (markdown). One fact per entry.",
-      },
-      type: {
-        type: "string",
-        enum: [...MEMORY_TYPES],
-        description:
-          'Kind of memory: "user" for who a person is, "feedback" for guidance or corrections on how to behave, "project" for ongoing work or goals, "reference" for pointers to resources. Defaults to "project".',
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["title", "description", "content"],
-    additionalProperties: false,
-  };
-}
-
-// kebab-case file slug from the title (diacritics folded), capped so index lines
-// and paths stay short. A capped or empty slug is no longer unique per title, so
-// those get a stable hash suffix — distinct titles must never share a file.
-export function memorySlug(title: string): string {
-  const kebab = title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const slug = kebab.slice(0, 60).replace(/-+$/, "");
-  if (slug.length > 0 && slug === kebab) {
-    return slug;
-  }
-  const hash = createHash("sha256")
-    .update(title, "utf8")
-    .digest("hex")
-    .slice(0, 8);
-  return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
-}
-
 export default function memoryTool(context: MemoryToolContext): ToolSet {
   return {
     memory_save: tool({
@@ -200,4 +147,57 @@ Usage notes:
       },
     }),
   };
+}
+
+function inputSchema(context: MemoryToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+  return {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description:
+          "Short title of the fact; it becomes the entry's file name (kebab-cased).",
+      },
+      description: {
+        type: "string",
+        description:
+          "One-line summary, shown in the MEMORY.md index and used to decide relevance later.",
+      },
+      content: {
+        type: "string",
+        description: "The memory itself (markdown). One fact per entry.",
+      },
+      type: {
+        type: "string",
+        enum: [...MEMORY_TYPES],
+        description:
+          'Kind of memory: "user" for who a person is, "feedback" for guidance or corrections on how to behave, "project" for ongoing work or goals, "reference" for pointers to resources. Defaults to "project".',
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["title", "description", "content"],
+    additionalProperties: false,
+  };
+}
+
+// kebab-case file slug from the title (diacritics folded), capped so index lines
+// and paths stay short. A capped or empty slug is no longer unique per title, so
+// those get a stable hash suffix — distinct titles must never share a file.
+export function memorySlug(title: string): string {
+  const kebab = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = kebab.slice(0, 60).replace(/-+$/, "");
+  if (slug.length > 0 && slug === kebab) {
+    return slug;
+  }
+  const hash = createHash("sha256")
+    .update(title, "utf8")
+    .digest("hex")
+    .slice(0, 8);
+  return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
 }
