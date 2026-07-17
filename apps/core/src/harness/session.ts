@@ -16,7 +16,7 @@ import {
 import { runtime } from "../shared/convex/runtime.ts";
 import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
-import { workspaceMemoryHarnessEnabled, workspaceMemoryIndexEnabled } from "../shared/domain/workspace-config.ts";
+import { workspaceGuidanceEnabled, workspaceMemoryHarnessEnabled } from "../shared/domain/workspace-config.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import {
@@ -504,7 +504,7 @@ export class Session {
     for (const workspace of this.resolvedWorkspaces()) {
       // harness.memory.enabled: false is a full opt-out — the index is not
       // loaded into the model context either.
-      if (!workspaceMemoryIndexEnabled(workspace.config)) {
+      if (!workspaceMemoryHarnessEnabled(workspace.config)) {
         continue;
       }
       const content = await this.loadMemoryFile(workspace);
@@ -595,7 +595,7 @@ export class Session {
   }
 
   private isWorkspaceHarnessEnabled(): boolean {
-    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspace.config.harness?.enabled !== false);
+    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspaceGuidanceEnabled(workspace.config));
   }
 
   // Mirrors the registry condition in tools/index.ts: memory_save exists when a
@@ -683,7 +683,7 @@ function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[], mem
       ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
       : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
 
-  const memoryIndexEnabled = workspaces.some((workspace) => workspaceMemoryIndexEnabled(workspace.config));
+  const memoryIndexEnabled = workspaces.some((workspace) => workspaceMemoryHarnessEnabled(workspace.config));
   const memoryGuidance = memoryToolEnabled
     ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
     : memoryIndexEnabled

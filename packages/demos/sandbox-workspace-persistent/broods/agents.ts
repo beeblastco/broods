@@ -29,7 +29,7 @@ export const projectWorkspace = defineWorkspace({
   name: "project",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: true },
+    harness: { guidance: { enabled: true } },
   },
 });
 

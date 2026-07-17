@@ -42,30 +42,32 @@ export interface WorkspaceStorageConfig {
   auth?: WorkspaceStorageAuth;
 }
 
+// The workspace harness is a set of named features, each with its own options
+// and each defaulting to on. There is deliberately no top-level enabled flag:
+// new capabilities get their own key here for independent control.
+//   - guidance: the injected <workspace> prompt (file-tool + TASKS guidance).
+//   - memory: structured memory — the memory_save tool, memory/MEMORY.md index
+//     loading, and the <memory> prompt.
+export interface WorkspaceHarnessConfig {
+  guidance?: { enabled?: boolean };
+  memory?: { enabled?: boolean };
+}
+
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
   // Enables hierarchical alias-scoped workspace folders. Channel configs must
   // provide workspaceScope when an attached workspace sets this to true.
   isolation?: boolean;
-  // Whether the workspace harness prompt (memory/tasks guidance) is injected,
-  // and whether the structured memory harness (memory_save + memory/MEMORY.md
-  // index loading) ships with it. Memory rides on the harness: disabling the
-  // harness disables memory; `memory.enabled: false` opts out of memory alone.
-  harness?: { enabled?: boolean; memory?: { enabled?: boolean } };
+  harness?: WorkspaceHarnessConfig;
 }
 
-/** Whether the structured memory harness is on for a workspace (default: on with the harness). */
+/** Whether the <workspace> guidance prompt is injected for a workspace (default: on). */
+export function workspaceGuidanceEnabled(config: WorkspaceConfig | undefined): boolean {
+  return config?.harness?.guidance?.enabled !== false;
+}
+
+/** Whether the structured memory harness is on for a workspace (default: on). */
 export function workspaceMemoryHarnessEnabled(config: WorkspaceConfig | undefined): boolean {
-  return config?.harness?.enabled !== false && config?.harness?.memory?.enabled !== false;
-}
-
-/**
- * Whether the memory index is loaded into the prompt for a workspace. Only the
- * memory-specific toggle controls this: `harness.enabled: false` suppresses the
- * guidance and the memory_save tool but keeps loading an existing index, while
- * `harness.memory.enabled: false` opts out of memory entirely.
- */
-export function workspaceMemoryIndexEnabled(config: WorkspaceConfig | undefined): boolean {
   return config?.harness?.memory?.enabled !== false;
 }
 
@@ -104,25 +106,16 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   assertOptionalBoolean(config.isolation, "config.isolation");
   const isolation = config.isolation as boolean | undefined;
 
-  let harness: { enabled?: boolean; memory?: { enabled?: boolean } } | undefined;
+  let harness: WorkspaceHarnessConfig | undefined;
   if (config.harness !== undefined) {
     if (!isPlainObject(config.harness)) {
       throw new Error("config.harness must be an object");
     }
-    assertOptionalBoolean(config.harness.enabled, "config.harness.enabled");
-    let memory: { enabled?: boolean } | undefined;
-    if (config.harness.memory !== undefined) {
-      if (!isPlainObject(config.harness.memory)) {
-        throw new Error("config.harness.memory must be an object");
-      }
-      assertOptionalBoolean(config.harness.memory.enabled, "config.harness.memory.enabled");
-      if (config.harness.memory.enabled !== undefined) {
-        memory = { enabled: config.harness.memory.enabled as boolean };
-      }
-    }
-    if (config.harness.enabled !== undefined || memory) {
+    const guidance = normalizeHarnessFeature(config.harness.guidance, "config.harness.guidance");
+    const memory = normalizeHarnessFeature(config.harness.memory, "config.harness.memory");
+    if (guidance || memory) {
       harness = {
-        ...(config.harness.enabled !== undefined ? { enabled: config.harness.enabled as boolean } : {}),
+        ...(guidance ? { guidance } : {}),
         ...(memory ? { memory } : {}),
       };
     }
@@ -133,6 +126,17 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     ...(isolation === true ? { isolation: true } : {}),
     ...(harness ? { harness } : {}),
   };
+}
+
+function normalizeHarnessFeature(value: unknown, name: string): { enabled?: boolean } | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  assertOptionalBoolean(value.enabled, `${name}.enabled`);
+  return value.enabled !== undefined ? { enabled: value.enabled as boolean } : undefined;
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

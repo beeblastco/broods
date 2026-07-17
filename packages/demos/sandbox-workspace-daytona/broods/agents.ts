@@ -24,7 +24,7 @@ export const notesWorkspace = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: true },
+    harness: { guidance: { enabled: true } },
   },
 });
 

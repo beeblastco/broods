@@ -81,7 +81,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: true },
+    harness: { guidance: { enabled: true }, memory: { enabled: true } },
   },
 });
 
@@ -149,21 +149,25 @@ The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/bee
 
 ## Configure It
 
-Create a workspace with the full harness — automatic `memory/MEMORY.md` index loading, the `memory_save` tool, and the workspace/memory guidance:
+The harness is a set of named features, each on by default and toggled independently — there is no top-level `enabled` flag:
+
+- `harness.guidance` — the `<workspace>` prompt (file-tool + TASKS guidance).
+- `harness.memory` — structured memory: the `memory_save` tool, `memory/MEMORY.md` index loading, and the `<memory>` prompt.
 
 ```ts
 import { defineWorkspace } from "broods";
 
+// Everything on (the default — an empty config does the same):
 export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: true }, // memory rides along by default
+    harness: { guidance: { enabled: true }, memory: { enabled: true } },
   },
 });
 ```
 
-Keep the workspace harness but opt out of memory entirely (no `memory_save`, no `<memory>` guidance, and the index is not loaded into context):
+Opt out of memory entirely (no `memory_save`, no `<memory>` guidance, and the index is not loaded into context) while keeping the workspace guidance:
 
 ```ts
 export const notesNoMemory = defineWorkspace({
@@ -175,14 +179,14 @@ export const notesNoMemory = defineWorkspace({
 });
 ```
 
-Disable the harness guidance entirely (also disables memory) while still loading an existing `memory/MEMORY.md`:
+Suppress only the workspace guidance prompt while keeping structured memory:
 
 ```ts
 export const notesBare = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { enabled: false },
+    harness: { guidance: { enabled: false } },
   },
 });
 ```
