@@ -50,10 +50,12 @@ import {
   workspaceNamespace,
   workspaceNamespaceOwnsReservationKey,
 } from "../shared/workspaces.ts";
-import { deleteAccountToolBundles } from "./bundles.ts";
-import { deleteAccountRuntimeData } from "./cleanup.ts";
+import {
+  deleteAccountRuntimeData,
+  deleteAccountSkills,
+  deleteAccountToolBundles,
+} from "./cleanup.ts";
 import { deleteCronSchedule } from "./cron.ts";
-import { deleteAccountSkills } from "./skills.ts";
 
 type SandboxLifecycleAction =
   | "suspend"
