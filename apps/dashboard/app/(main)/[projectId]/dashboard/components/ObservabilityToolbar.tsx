@@ -73,12 +73,20 @@ export function ObservabilityToolbar({
       </div>
 
       <Select value={filterValue} onValueChange={onFilterChange}>
-        <SelectTrigger size="sm" aria-label={filterAriaLabel} className="w-32.5 cursor-pointer text-xs">
+        <SelectTrigger
+          size="sm"
+          aria-label={filterAriaLabel}
+          className="w-32.5 cursor-pointer text-xs"
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {filterOptions.map((option) => (
-            <SelectItem key={option.value} value={option.value} className="cursor-pointer text-xs">
+            <SelectItem
+              key={option.value}
+              value={option.value}
+              className="cursor-pointer text-xs"
+            >
               {option.label}
             </SelectItem>
           ))}
@@ -130,7 +138,9 @@ export function ObservabilityToolbar({
           isError && "text-destructive",
         )}
       >
-        <RefreshCw className={cn("size-3.5", refreshSpinning && "animate-spin")} />
+        <RefreshCw
+          className={cn("size-3.5", refreshSpinning && "animate-spin")}
+        />
       </Button>
     </div>
   );

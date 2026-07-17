@@ -10,7 +10,11 @@ const orgTest = () => convexTest(schema, modules);
 
 type T = ReturnType<typeof orgTest>;
 
-async function seedAccount(t: T, orgId: string, username = "beeblast-sale-agent-dev") {
+async function seedAccount(
+  t: T,
+  orgId: string,
+  username = "beeblast-sale-agent-dev",
+) {
   return await t.run(
     async (ctx) =>
       await ctx.db.insert("accounts", {
@@ -37,8 +41,10 @@ async function seedUser(t: T, email: string) {
   );
 }
 
-const adopt = (t: T, args: { accountId: any; ownerEmail: string; orgName: string }) =>
-  t.mutation(internal.org.adoptExternalAccount, args);
+const adopt = (
+  t: T,
+  args: { accountId: any; ownerEmail: string; orgName: string },
+) => t.mutation(internal.org.adoptExternalAccount, args);
 
 describe("adoptExternalAccount", () => {
   test("binds an external account to a new org owned by the target user", async () => {
@@ -64,7 +70,11 @@ describe("adoptExternalAccount", () => {
       expect(org?.ownerAuthId).toBe("auth_owner@example.com");
 
       const membership = await ctx.db.get(result.membershipId);
-      expect(membership).toMatchObject({ orgId: result.orgId, userId, role: "owner" });
+      expect(membership).toMatchObject({
+        orgId: result.orgId,
+        userId,
+        role: "owner",
+      });
     });
   });
 
@@ -102,7 +112,11 @@ describe("adoptExternalAccount", () => {
     await seedUser(t, "owner@example.com");
 
     await expect(
-      adopt(t, { accountId, ownerEmail: "owner@example.com", orgName: "Hijack" }),
+      adopt(t, {
+        accountId,
+        ownerEmail: "owner@example.com",
+        orgName: "Hijack",
+      }),
     ).rejects.toThrow(/refusing to move it/);
   });
 
@@ -129,7 +143,11 @@ describe("adoptExternalAccount", () => {
           createdAt: Date.now(),
         }),
     );
-    const existingAccountId = await seedAccount(t, existingOrgId, "owners-workspace");
+    const existingAccountId = await seedAccount(
+      t,
+      existingOrgId,
+      "owners-workspace",
+    );
     const accountId = await seedAccount(t, "external:sale-agent-dev");
     await seedUser(t, "owner@example.com");
 
@@ -141,18 +159,32 @@ describe("adoptExternalAccount", () => {
 
     expect(orgId).not.toBe(existingOrgId);
     // The pre-existing org still resolves to exactly its own account.
-    const existing = await t.query(internal.accounts.getByOrgId, { orgId: existingOrgId });
+    const existing = await t.query(internal.accounts.getByOrgId, {
+      orgId: existingOrgId,
+    });
     expect(existing?._id).toBe(existingAccountId);
   });
 
   test("gives each adopted account a distinct slug", async () => {
     const t = orgTest();
     const first = await seedAccount(t, "external:sale-agent-dev", "acct-dev");
-    const second = await seedAccount(t, "external:sale-agent-prod", "acct-prod");
+    const second = await seedAccount(
+      t,
+      "external:sale-agent-prod",
+      "acct-prod",
+    );
     await seedUser(t, "owner@example.com");
 
-    const a = await adopt(t, { accountId: first, ownerEmail: "owner@example.com", orgName: "BeeBlast Sale Agent" });
-    const b = await adopt(t, { accountId: second, ownerEmail: "owner@example.com", orgName: "BeeBlast Sale Agent" });
+    const a = await adopt(t, {
+      accountId: first,
+      ownerEmail: "owner@example.com",
+      orgName: "BeeBlast Sale Agent",
+    });
+    const b = await adopt(t, {
+      accountId: second,
+      ownerEmail: "owner@example.com",
+      orgName: "BeeBlast Sale Agent",
+    });
 
     expect(a.slug).not.toBe(b.slug);
   });

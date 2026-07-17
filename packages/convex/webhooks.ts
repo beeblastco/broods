@@ -11,13 +11,16 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { ensureAgentsRowForConfig, pushEncryptedConfigToAgentRow } from "./model/agentSync";
 import {
-    accountIdForProject,
-    auditDetailsJson,
-    dashboardAuditActor,
-    insertConfigAuditEvent,
-    type ConfigAuditActor,
+  ensureAgentsRowForConfig,
+  pushEncryptedConfigToAgentRow,
+} from "./model/agentSync";
+import {
+  accountIdForProject,
+  auditDetailsJson,
+  dashboardAuditActor,
+  insertConfigAuditEvent,
+  type ConfigAuditActor,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 import { getOwnedEnvironment } from "./model/ownership/environment";
@@ -25,19 +28,22 @@ import { getOwnedProject } from "./model/ownership/project";
 
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
-    index: v.number(),
-    enabled: v.boolean(),
-    url: v.optional(v.string()),
-    secret: v.optional(v.string()),
-    events: v.array(v.string()),
+  index: v.number(),
+  enabled: v.boolean(),
+  url: v.optional(v.string()),
+  secret: v.optional(v.string()),
+  events: v.array(v.string()),
 });
 
 /** Reads the `hooks.webhooks` array out of an agent config's `extraConfig` blob. */
 function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
-    const hooks = isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks) ? extraConfig.hooks : undefined;
-    const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
+  const hooks =
+    isPlainObject(extraConfig) && isPlainObject(extraConfig.hooks)
+      ? extraConfig.hooks
+      : undefined;
+  const webhooks = hooks && Array.isArray(hooks.webhooks) ? hooks.webhooks : [];
 
-    return webhooks.filter(isPlainObject);
+  return webhooks.filter(isPlainObject);
 }
 
 /**
@@ -47,47 +53,49 @@ function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
  * @returns one entry per agent, each carrying its indexed webhook rows
  */
 export const listAgentWebhooks = query({
-    args: { projectId: v.id("projects"), environmentId: v.id("environments") },
-    returns: v.array(
-        v.object({
-            agentConfigId: v.id("agentConfigs"),
-            agentName: v.string(),
-            webhooks: v.array(webhookRow),
-        }),
-    ),
-    handler: async (ctx, { projectId, environmentId }) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  returns: v.array(
+    v.object({
+      agentConfigId: v.id("agentConfigs"),
+      agentName: v.string(),
+      webhooks: v.array(webhookRow),
+    }),
+  ),
+  handler: async (ctx, { projectId, environmentId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-        if (!environment || environment.projectId !== projectId) {
-            return [];
-        }
+    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
+    if (!environment || environment.projectId !== projectId) {
+      return [];
+    }
 
-        const configs = await ctx.db
-            .query("agentConfigs")
-            .withIndex("by_projectId_and_environmentId", (q) =>
-                q.eq("projectId", projectId).eq("environmentId", environmentId),
+    const configs = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId_and_environmentId", (q) =>
+        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      )
+      .collect();
+
+    return configs.map((config) => ({
+      agentConfigId: config._id,
+      agentName: config.name,
+      webhooks: readWebhooks(config.extraConfig).map((webhook, index) => ({
+        index,
+        enabled: webhook.enabled !== false,
+        url: typeof webhook.url === "string" ? webhook.url : undefined,
+        secret: typeof webhook.secret === "string" ? webhook.secret : undefined,
+        events: Array.isArray(webhook.events)
+          ? webhook.events.filter(
+              (event): event is string => typeof event === "string",
             )
-            .collect();
-
-        return configs.map((config) => ({
-            agentConfigId: config._id,
-            agentName: config.name,
-            webhooks: readWebhooks(config.extraConfig).map((webhook, index) => ({
-                index,
-                enabled: webhook.enabled !== false,
-                url: typeof webhook.url === "string" ? webhook.url : undefined,
-                secret: typeof webhook.secret === "string" ? webhook.secret : undefined,
-                events: Array.isArray(webhook.events)
-                    ? webhook.events.filter((event): event is string => typeof event === "string")
-                    : [],
-            })),
-        }));
-    },
+          : [],
+      })),
+    }));
+  },
 });
 
 /**
@@ -97,63 +105,76 @@ export const listAgentWebhooks = query({
  * @throws when the config is missing or the caller does not own its project
  */
 async function mutateAgentWebhooks(
-    ctx: MutationCtx,
-    authId: string,
-    agentConfigId: Id<"agentConfigs">,
-    mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
+  ctx: MutationCtx,
+  authId: string,
+  agentConfigId: Id<"agentConfigs">,
+  mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
 ): Promise<void> {
-    const config = await ctx.db.get(agentConfigId);
-    if (!config || !(await getOwnedProject(ctx, authId, config.projectId))) {
-        throw new Error("Agent config not found.");
-    }
+  const config = await ctx.db.get(agentConfigId);
+  if (!config || !(await getOwnedProject(ctx, authId, config.projectId))) {
+    throw new Error("Agent config not found.");
+  }
 
-    const extra: Record<string, unknown> = isPlainObject(config.extraConfig) ? { ...config.extraConfig } : {};
-    const hooks: Record<string, unknown> = isPlainObject(extra.hooks) ? { ...extra.hooks } : {};
-    hooks.webhooks = mutate(readWebhooks(config.extraConfig));
-    extra.hooks = hooks;
+  const extra: Record<string, unknown> = isPlainObject(config.extraConfig)
+    ? { ...config.extraConfig }
+    : {};
+  const hooks: Record<string, unknown> = isPlainObject(extra.hooks)
+    ? { ...extra.hooks }
+    : {};
+  hooks.webhooks = mutate(readWebhooks(config.extraConfig));
+  extra.hooks = hooks;
 
-    await ctx.db.patch(agentConfigId, { extraConfig: extra, updatedAt: Date.now() });
-    await ensureAgentsRowForConfig(ctx, agentConfigId, authId);
-    await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
+  await ctx.db.patch(agentConfigId, {
+    extraConfig: extra,
+    updatedAt: Date.now(),
+  });
+  await ensureAgentsRowForConfig(ctx, agentConfigId, authId);
+  await pushEncryptedConfigToAgentRow(ctx, agentConfigId);
 }
 
-async function requireUser(ctx: MutationCtx): Promise<{ id: string; email?: string | null; name?: string | null }> {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-        throw new Error("User not found or not authenticated");
-    }
+async function requireUser(
+  ctx: MutationCtx,
+): Promise<{ id: string; email?: string | null; name?: string | null }> {
+  // Check authenticated user
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) {
+    throw new Error("User not found or not authenticated");
+  }
 
-    return user;
+  return user;
 }
 
 async function recordWebhookAudit(
-    ctx: MutationCtx,
-    actor: ConfigAuditActor,
-    agentConfigId: Id<"agentConfigs">,
-    action: string,
-    summary: string,
-    data?: Record<string, unknown>,
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  agentConfigId: Id<"agentConfigs">,
+  action: string,
+  summary: string,
+  data?: Record<string, unknown>,
 ): Promise<void> {
-    const config = await ctx.db.get(agentConfigId);
-    if (!config) return;
-    const accountId = await accountIdForProject(ctx, config.projectId);
-    if (!accountId) return;
+  const config = await ctx.db.get(agentConfigId);
+  if (!config) return;
+  const accountId = await accountIdForProject(ctx, config.projectId);
+  if (!accountId) return;
 
-    await insertConfigAuditEvent(ctx.db, {
-        accountId: accountId,
-        projectId: config.projectId,
-        environmentId: config.environmentId,
-        actor: actor,
-        action: action,
-        resource: {
-            kind: "webhook",
-            id: `${agentConfigId}:${typeof data?.index === "number" ? data.index : "new"}`,
-            name: config.name,
-        },
-        summary: summary,
-        detailsJson: auditDetailsJson({ agentConfigId: agentConfigId, agentId: config.agentId, ...data }),
-    });
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: config.projectId,
+    environmentId: config.environmentId,
+    actor: actor,
+    action: action,
+    resource: {
+      kind: "webhook",
+      id: `${agentConfigId}:${typeof data?.index === "number" ? data.index : "new"}`,
+      name: config.name,
+    },
+    summary: summary,
+    detailsJson: auditDetailsJson({
+      agentConfigId: agentConfigId,
+      agentId: config.agentId,
+      ...data,
+    }),
+  });
 }
 
 /**
@@ -161,32 +182,39 @@ async function recordWebhookAudit(
  * @returns null
  */
 export const addAgentWebhook = mutation({
-    args: {
-        agentConfigId: v.id("agentConfigs"),
-        url: v.string(),
-        secret: v.string(),
-        events: v.optional(v.array(v.string())),
-        enabled: v.optional(v.boolean()),
-    },
-    returns: v.null(),
-    handler: async (ctx, { agentConfigId, url, secret, events, enabled }) => {
-        const user = await requireUser(ctx);
-        await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
-            ...webhooks,
-            {
-                enabled: enabled !== false,
-                url: url.trim(),
-                secret: secret.trim(),
-                events: events ?? [],
-            },
-        ]);
-        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "created", "Agent webhook created", {
-            events: events ?? [],
-            enabled: enabled !== false,
-        });
+  args: {
+    agentConfigId: v.id("agentConfigs"),
+    url: v.string(),
+    secret: v.string(),
+    events: v.optional(v.array(v.string())),
+    enabled: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, { agentConfigId, url, secret, events, enabled }) => {
+    const user = await requireUser(ctx);
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) => [
+      ...webhooks,
+      {
+        enabled: enabled !== false,
+        url: url.trim(),
+        secret: secret.trim(),
+        events: events ?? [],
+      },
+    ]);
+    await recordWebhookAudit(
+      ctx,
+      dashboardAuditActor(user),
+      agentConfigId,
+      "created",
+      "Agent webhook created",
+      {
+        events: events ?? [],
+        enabled: enabled !== false,
+      },
+    );
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -194,24 +222,33 @@ export const addAgentWebhook = mutation({
  * @returns null
  */
 export const setAgentWebhookEnabled = mutation({
-    args: {
-        agentConfigId: v.id("agentConfigs"),
-        index: v.number(),
-        enabled: v.boolean(),
-    },
-    returns: v.null(),
-    handler: async (ctx, { agentConfigId, index, enabled }) => {
-        const user = await requireUser(ctx);
-        await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
-            webhooks.map((webhook, i) => (i === index ? { ...webhook, enabled: enabled } : webhook)),
-        );
-        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "updated", "Agent webhook updated", {
-            index: index,
-            enabled: enabled,
-        });
+  args: {
+    agentConfigId: v.id("agentConfigs"),
+    index: v.number(),
+    enabled: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { agentConfigId, index, enabled }) => {
+    const user = await requireUser(ctx);
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
+      webhooks.map((webhook, i) =>
+        i === index ? { ...webhook, enabled: enabled } : webhook,
+      ),
+    );
+    await recordWebhookAudit(
+      ctx,
+      dashboardAuditActor(user),
+      agentConfigId,
+      "updated",
+      "Agent webhook updated",
+      {
+        index: index,
+        enabled: enabled,
+      },
+    );
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -219,20 +256,27 @@ export const setAgentWebhookEnabled = mutation({
  * @returns null
  */
 export const removeAgentWebhook = mutation({
-    args: {
-        agentConfigId: v.id("agentConfigs"),
-        index: v.number(),
-    },
-    returns: v.null(),
-    handler: async (ctx, { agentConfigId, index }) => {
-        const user = await requireUser(ctx);
-        await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
-            webhooks.filter((_, i) => i !== index),
-        );
-        await recordWebhookAudit(ctx, dashboardAuditActor(user), agentConfigId, "deleted", "Agent webhook deleted", {
-            index: index,
-        });
+  args: {
+    agentConfigId: v.id("agentConfigs"),
+    index: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { agentConfigId, index }) => {
+    const user = await requireUser(ctx);
+    await mutateAgentWebhooks(ctx, user.id, agentConfigId, (webhooks) =>
+      webhooks.filter((_, i) => i !== index),
+    );
+    await recordWebhookAudit(
+      ctx,
+      dashboardAuditActor(user),
+      agentConfigId,
+      "deleted",
+      "Agent webhook deleted",
+      {
+        index: index,
+      },
+    );
 
-        return null;
-    },
+    return null;
+  },
 });

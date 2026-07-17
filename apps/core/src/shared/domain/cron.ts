@@ -72,7 +72,10 @@ export type UpdateCronInput = {
   scheduleExpression?: string;
   timezone?: string | null;
   status?: CronStatus;
-} & ({ input?: string; events?: never } | { events?: ModelMessage[]; input?: never });
+} & (
+  | { input?: string; events?: never }
+  | { events?: ModelMessage[]; input?: never }
+);
 
 /** Normalized create payload: `input`/`events` collapsed to a stored events list. */
 export interface NormalizedCronCreate {
@@ -102,7 +105,9 @@ export function isCronsConfigured(): boolean {
   return Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 }
 
-export function normalizeCreateCronInput(input: CreateCronInput): NormalizedCronCreate {
+export function normalizeCreateCronInput(
+  input: CreateCronInput,
+): NormalizedCronCreate {
   if (!isPlainObject(input)) throw new Error("Request body must be an object");
   return {
     name: requireString(input.name, "name", 120),
@@ -110,44 +115,71 @@ export function normalizeCreateCronInput(input: CreateCronInput): NormalizedCron
     events: runPayloadToEvents(input),
     scheduleExpression: normalizeScheduleExpression(input.scheduleExpression),
     ...(input.description !== undefined
-      ? { description: optionalString(input.description, "description", 500) ?? "" }
+      ? {
+          description:
+            optionalString(input.description, "description", 500) ?? "",
+        }
       : {}),
     ...(input.conversationKey !== undefined
-      ? { conversationKey: optionalString(input.conversationKey, "conversationKey", 256) ?? "" }
+      ? {
+          conversationKey:
+            optionalString(input.conversationKey, "conversationKey", 256) ?? "",
+        }
       : {}),
-    ...(input.timezone !== undefined ? { timezone: normalizeTimezone(input.timezone) } : {}),
-    ...(input.status !== undefined ? { status: normalizeCronStatus(input.status) } : {}),
+    ...(input.timezone !== undefined
+      ? { timezone: normalizeTimezone(input.timezone) }
+      : {}),
+    ...(input.status !== undefined
+      ? { status: normalizeCronStatus(input.status) }
+      : {}),
   };
 }
 
-export function normalizeUpdateCronInput(input: UpdateCronInput): NormalizedCronUpdate {
+export function normalizeUpdateCronInput(
+  input: UpdateCronInput,
+): NormalizedCronUpdate {
   if (!isPlainObject(input)) throw new Error("Request body must be an object");
   const events = optionalRunPayloadToEvents(input);
   const normalized: NormalizedCronUpdate = {
-    ...(input.name !== undefined ? { name: requireString(input.name, "name", 120) } : {}),
+    ...(input.name !== undefined
+      ? { name: requireString(input.name, "name", 120) }
+      : {}),
     ...(input.description !== undefined
       ? {
-        description:
-          input.description === null ? null : optionalString(input.description, "description", 500),
-      }
+          description:
+            input.description === null
+              ? null
+              : optionalString(input.description, "description", 500),
+        }
       : {}),
-    ...(input.agentId !== undefined ? { agentId: requireString(input.agentId, "agentId", 120) } : {}),
+    ...(input.agentId !== undefined
+      ? { agentId: requireString(input.agentId, "agentId", 120) }
+      : {}),
     ...(events !== undefined ? { events } : {}),
     ...(input.conversationKey !== undefined
       ? {
-        conversationKey:
-          input.conversationKey === null
-            ? null
-            : optionalString(input.conversationKey, "conversationKey", 256),
-      }
+          conversationKey:
+            input.conversationKey === null
+              ? null
+              : optionalString(input.conversationKey, "conversationKey", 256),
+        }
       : {}),
     ...(input.scheduleExpression !== undefined
-      ? { scheduleExpression: normalizeScheduleExpression(input.scheduleExpression) }
+      ? {
+          scheduleExpression: normalizeScheduleExpression(
+            input.scheduleExpression,
+          ),
+        }
       : {}),
     ...(input.timezone !== undefined
-      ? { timezone: input.timezone === null ? null : normalizeTimezone(input.timezone) }
+      ? {
+          timezone:
+            input.timezone === null ? null : normalizeTimezone(input.timezone),
+        }
       : {}),
-    ...(input.status !== undefined ? { status: normalizeCronStatus(input.status) } : {}),
+    ...(input.status !== undefined
+      ? { status: normalizeCronStatus(input.status) }
+      : {}),
   };
   if (Object.keys(normalized).length === 0) {
     throw new Error("Request body must include at least one cron job field");
@@ -163,7 +195,10 @@ export function normalizeSchedulerGroupName(value: unknown): string {
   return groupName;
 }
 
-export function applyCronPatch(record: CronRecord, input: UpdateCronInput): CronRecord {
+export function applyCronPatch(
+  record: CronRecord,
+  input: UpdateCronInput,
+): CronRecord {
   const patch = normalizeUpdateCronInput(input);
   return {
     ...record,
@@ -180,7 +215,9 @@ export function applyCronPatch(record: CronRecord, input: UpdateCronInput): Cron
       : patch.conversationKey !== undefined
         ? { conversationKey: patch.conversationKey }
         : {}),
-    ...(patch.scheduleExpression !== undefined ? { scheduleExpression: patch.scheduleExpression } : {}),
+    ...(patch.scheduleExpression !== undefined
+      ? { scheduleExpression: patch.scheduleExpression }
+      : {}),
     ...(patch.timezone === null
       ? { timezone: undefined }
       : patch.timezone !== undefined
@@ -191,22 +228,34 @@ export function applyCronPatch(record: CronRecord, input: UpdateCronInput): Cron
 }
 
 /** Collapses a one-of `input`/`events` payload into the stored events list. */
-function runPayloadToEvents(payload: { input?: unknown; events?: unknown }): ModelMessage[] {
+function runPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): ModelMessage[] {
   const hasInput = payload.input !== undefined;
   const hasEvents = payload.events !== undefined;
   if (hasInput === hasEvents) {
     throw new Error("Provide exactly one of input or events");
   }
   if (hasInput) {
-    return [{ role: "user", content: [{ type: "text", text: String(payload.input) }] }];
+    return [
+      {
+        role: "user",
+        content: [{ type: "text", text: String(payload.input) }],
+      },
+    ];
   }
 
   return normalizeEvents(payload.events);
 }
 
 /** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
-function optionalRunPayloadToEvents(payload: { input?: unknown; events?: unknown }): ModelMessage[] | undefined {
-  if (payload.input === undefined && payload.events === undefined) return undefined;
+function optionalRunPayloadToEvents(payload: {
+  input?: unknown;
+  events?: unknown;
+}): ModelMessage[] | undefined {
+  if (payload.input === undefined && payload.events === undefined)
+    return undefined;
 
   return runPayloadToEvents(payload);
 }
@@ -222,7 +271,9 @@ function normalizeEvents(value: unknown): ModelMessage[] {
 function normalizeScheduleExpression(value: unknown): string {
   const expression = requireString(value, "scheduleExpression", 256);
   if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new Error("scheduleExpression must use cron(...), rate(...), or at(...)");
+    throw new Error(
+      "scheduleExpression must use cron(...), rate(...), or at(...)",
+    );
   }
   return expression;
 }
@@ -240,18 +291,29 @@ function normalizeCronStatus(value: unknown): CronStatus {
   throw new Error("status must be active or paused");
 }
 
-function requireString(value: unknown, name: string, maxLength: number): string {
+function requireString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string {
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
-  if (trimmed.length === 0) throw new Error(`${name} must be a non-empty string`);
-  if (trimmed.length > maxLength) throw new Error(`${name} must be at most ${maxLength} characters`);
+  if (trimmed.length === 0)
+    throw new Error(`${name} must be a non-empty string`);
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
   return trimmed;
 }
 
-function optionalString(value: unknown, name: string, maxLength: number): string | undefined {
+function optionalString(
+  value: unknown,
+  name: string,
+  maxLength: number,
+): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
-  if (trimmed.length > maxLength) throw new Error(`${name} must be at most ${maxLength} characters`);
+  if (trimmed.length > maxLength)
+    throw new Error(`${name} must be at most ${maxLength} characters`);
   return trimmed.length > 0 ? trimmed : undefined;
 }

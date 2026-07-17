@@ -161,22 +161,18 @@ describe("runtime persistence", () => {
       }
     });
 
-    const first = await t.query(
-      internal.runtime.listConversationEvents,
-      { conversationKey: conversationKey },
-    );
+    const first = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+    });
     expect(first.page).toHaveLength(512);
     expect(first).toMatchObject({
       isDone: false,
       continueCursor: "0511",
     });
-    const second = await t.query(
-      internal.runtime.listConversationEvents,
-      {
-        conversationKey: conversationKey,
-        afterCursor: first.continueCursor ?? undefined,
-      },
-    );
+    const second = await t.query(internal.runtime.listConversationEvents, {
+      conversationKey: conversationKey,
+      afterCursor: first.continueCursor ?? undefined,
+    });
     expect(second).toEqual({
       page: [
         {
@@ -273,15 +269,13 @@ describe("runtime persistence", () => {
       sealed: false,
       expiresAt: expect.any(Number),
     });
-    const refreshedGroup = await t.query(
-      internal.runtime.getAsyncToolGroup,
-      { parentEventId: parentEventId },
-    );
+    const refreshedGroup = await t.query(internal.runtime.getAsyncToolGroup, {
+      parentEventId: parentEventId,
+    });
     expect(refreshedGroup?.expiresAt).toBeGreaterThan(1);
-    const group = await t.mutation(
-      internal.runtime.sealAsyncToolGroup,
-      { parentEventId: parentEventId },
-    );
+    const group = await t.mutation(internal.runtime.sealAsyncToolGroup, {
+      parentEventId: parentEventId,
+    });
     expect(group).toMatchObject({
       resultIds: ["result-1", "result-2"],
       sealed: true,
@@ -365,16 +359,10 @@ describe("runtime persistence", () => {
       externalId: "sandbox-1",
     };
     expect(
-      await t.mutation(
-        internal.runtime.claimSandboxReservation,
-        args,
-      ),
+      await t.mutation(internal.runtime.claimSandboxReservation, args),
     ).toBe(true);
     expect(
-      await t.mutation(
-        internal.runtime.claimSandboxReservation,
-        args,
-      ),
+      await t.mutation(internal.runtime.claimSandboxReservation, args),
     ).toBe(false);
     await t.mutation(internal.runtime.deleteSandboxReservation, {
       provider: args.provider,
@@ -735,9 +723,7 @@ describe("runtime persistence", () => {
       }
     });
 
-    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(
-      5,
-    );
+    expect(await t.mutation(internal.runtime.pruneExpired, {})).toBe(5);
     expect(
       await t.run(async (ctx) => ({
         claims: (await ctx.db.query("runtimeClaims").collect()).map(

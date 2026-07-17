@@ -1,6 +1,8 @@
 import { handleAuth } from "@workos-inc/authkit-nextjs";
 
-const redirectUri = process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ?? "http://localhost:3000/auth/callback";
+const redirectUri =
+  process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ??
+  "http://localhost:3000/auth/callback";
 const url = new URL(redirectUri);
 
 /**
@@ -8,6 +10,6 @@ const url = new URL(redirectUri);
  * @returns Redirect response after successful authentication
  */
 export const GET = handleAuth({
-    returnPathname: "/",
-    baseURL: url.origin
+  returnPathname: "/",
+  baseURL: url.origin,
 });

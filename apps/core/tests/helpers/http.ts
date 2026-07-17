@@ -18,9 +18,23 @@ export function coreRequest(
     search: url.search.startsWith("?") ? url.search.slice(1) : url.search,
     query: url.searchParams,
     headers: lowerHeaders,
-    body: body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body),
-    cookies: lowerHeaders.cookie?.split(";").map((cookie) => cookie.trim()).filter(Boolean) ?? [],
-    clientIp: lowerHeaders["x-forwarded-for"]?.split(",").map((ip) => ip.trim()).filter(Boolean).pop() ?? "127.0.0.1",
+    body:
+      body === undefined
+        ? ""
+        : typeof body === "string"
+          ? body
+          : JSON.stringify(body),
+    cookies:
+      lowerHeaders.cookie
+        ?.split(";")
+        .map((cookie) => cookie.trim())
+        .filter(Boolean) ?? [],
+    clientIp:
+      lowerHeaders["x-forwarded-for"]
+        ?.split(",")
+        .map((ip) => ip.trim())
+        .filter(Boolean)
+        .pop() ?? "127.0.0.1",
   };
 }
 

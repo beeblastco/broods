@@ -30,8 +30,12 @@ export function formatDeploymentTarget(
 ): string {
   const color = shouldUseColor(options);
   const bar = paint("▌", GREEN, color);
-  const label = color ? `${LABEL_BG_GREEN} Development ${RESET}` : "[Development]";
-  const dashboardText = color ? paint("dashboard", UNDERLINE, color) : "dashboard";
+  const label = color
+    ? `${LABEL_BG_GREEN} Development ${RESET}`
+    : "[Development]";
+  const dashboardText = color
+    ? paint("dashboard", UNDERLINE, color)
+    : "dashboard";
   const deepLink = `${target.dashboardUrl}?project=${encodeURIComponent(target.project)}&env=${encodeURIComponent(target.environment)}`;
   const url = paint(deepLink, `${DIM}${UNDERLINE}`, color);
 
@@ -42,7 +46,10 @@ export function formatDeploymentTarget(
   ].join("\n");
 }
 
-export function formatReadyLine(durationMs: number, options: FormatOptions = {}): string {
+export function formatReadyLine(
+  durationMs: number,
+  options: FormatOptions = {},
+): string {
   const time = (options.now ?? new Date()).toTimeString().slice(0, 8);
   return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
 }
@@ -51,14 +58,20 @@ export function formatReadyLine(durationMs: number, options: FormatOptions = {})
  * One-line summary of the env vars `dev` pushed from `.env.local` to the cloud
  * environment, e.g. `▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, …`.
  */
-export function formatEnvSync(names: string[], options: FormatOptions = {}): string {
+export function formatEnvSync(
+  names: string[],
+  options: FormatOptions = {},
+): string {
   const color = shouldUseColor(options);
   const bar = paint("▌", GREEN, color);
   const arrow = paint("↑", GREEN, color);
   return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
 }
 
-export function formatDiffEntries(entries: DiffEntry[], options: FormatOptions = {}): string[] {
+export function formatDiffEntries(
+  entries: DiffEntry[],
+  options: FormatOptions = {},
+): string[] {
   const color = shouldUseColor(options);
 
   return entries.map((entry) => {
@@ -70,7 +83,10 @@ export function formatDiffEntries(entries: DiffEntry[], options: FormatOptions =
   });
 }
 
-export function formatWarning(message: string, options: FormatOptions = {}): string {
+export function formatWarning(
+  message: string,
+  options: FormatOptions = {},
+): string {
   return paint(message, YELLOW, shouldUseColor(options));
 }
 
@@ -105,7 +121,10 @@ function paint(value: string, style: string, color: boolean): string {
   return color ? `${style}${value}${RESET}` : value;
 }
 
-function formatDiffMarker(operation: DiffEntry["operation"], color: boolean): string {
+function formatDiffMarker(
+  operation: DiffEntry["operation"],
+  color: boolean,
+): string {
   if (operation === "create") return `[${paint("+", GREEN, color)}]`;
   if (operation === "rename") return `[${paint("~", YELLOW, color)}]`;
   if (operation === "update") return `[${paint("*", CYAN, color)}]`;

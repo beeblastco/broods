@@ -6,19 +6,19 @@ import { ProjectSelector } from "@/app/components/ProjectSelector";
 import { useParams } from "next/navigation";
 
 export function ProjectHeaderLeft() {
-    const params = useParams<{ projectId?: string }>();
-    const hasProject = Boolean(params.projectId);
+  const params = useParams<{ projectId?: string }>();
+  const hasProject = Boolean(params.projectId);
 
-    return (
+  return (
+    <>
+      <div className="h-4 w-px bg-border" />
+      <ProjectSelector />
+      {hasProject && (
         <>
-            <div className="h-4 w-px bg-border" />
-            <ProjectSelector />
-            {hasProject && (
-                <>
-                    <div className="h-4 w-px bg-border" />
-                    <EnvironmentSelector />
-                </>
-            )}
+          <div className="h-4 w-px bg-border" />
+          <EnvironmentSelector />
         </>
-    );
+      )}
+    </>
+  );
 }

@@ -111,9 +111,15 @@ describe("environment helpers", () => {
     process.env.BOOL_INVALID_NUM = "2";
     process.env.BOOL_INVALID_YEP = "yep";
 
-    expect(() => booleanEnv("BOOL_INVALID")).toThrow("BOOL_INVALID must be a boolean-like value");
-    expect(() => booleanEnv("BOOL_INVALID_NUM")).toThrow("BOOL_INVALID_NUM must be a boolean-like value");
-    expect(() => booleanEnv("BOOL_INVALID_YEP")).toThrow("BOOL_INVALID_YEP must be a boolean-like value");
+    expect(() => booleanEnv("BOOL_INVALID")).toThrow(
+      "BOOL_INVALID must be a boolean-like value",
+    );
+    expect(() => booleanEnv("BOOL_INVALID_NUM")).toThrow(
+      "BOOL_INVALID_NUM must be a boolean-like value",
+    );
+    expect(() => booleanEnv("BOOL_INVALID_YEP")).toThrow(
+      "BOOL_INVALID_YEP must be a boolean-like value",
+    );
   });
 });
 
@@ -122,7 +128,9 @@ describe("logging helpers", () => {
     const lines: string[] = [];
 
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      lines.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+      lines.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
       return true;
     }) as typeof process.stdout.write;
 
@@ -180,11 +188,14 @@ describe("logging helpers", () => {
       runtimeVariables: [{ key: "PUBLIC_URL", value: "runtime-secret-value" }],
     });
 
-    const result = redact({
-      detail: "env-secret-value provider-secret-value runtime-secret-value",
-      nested: { url: "https://example.test/run?token=url-secret" },
-      authorization: "Bearer direct-secret",
-    }, ["env-secret-value", ...taskSecrets]);
+    const result = redact(
+      {
+        detail: "env-secret-value provider-secret-value runtime-secret-value",
+        nested: { url: "https://example.test/run?token=url-secret" },
+        authorization: "Bearer direct-secret",
+      },
+      ["env-secret-value", ...taskSecrets],
+    );
     const serialized = JSON.stringify(result);
 
     expect(serialized).not.toContain("env-secret-value");
@@ -198,14 +209,16 @@ describe("logging helpers", () => {
   });
 
   it("builds the exact tenant attributes consumed by observability queries", () => {
-    expect(observabilityAttributes({
-      accountId: "acct_1",
-      project: "project-one",
-      environment: "development",
-      endpointId: "env-1234",
-      agentId: "agent-1",
-      conversationKey: "conversation-1",
-    })).toEqual({
+    expect(
+      observabilityAttributes({
+        accountId: "acct_1",
+        project: "project-one",
+        environment: "development",
+        endpointId: "env-1234",
+        agentId: "agent-1",
+        conversationKey: "conversation-1",
+      }),
+    ).toEqual({
       account_id: "acct_1",
       project: "project-one",
       environment: "development",

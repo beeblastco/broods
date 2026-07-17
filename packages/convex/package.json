@@ -1,32 +1,32 @@
 {
-    "name": "@broods/convex",
-    "version": "0.0.1",
-    "private": true,
-    "description": "Shared Convex backend (schema + internal queries/mutations) deployed alongside the dashboard and read by the core harness as a typed remote API.",
-    "type": "module",
-    "main": "./index.ts",
-    "types": "./index.ts",
-    "scripts": {
-        "dev": "convex dev",
-        "deploy": "convex deploy",
-        "codegen": "convex codegen",
-        "check": "tsc --noEmit",
-        "test": "vitest run",
-        "format": "prettier --write \"**/*.{ts,md,json}\""
-    },
-    "devDependencies": {
-        "@edge-runtime/vm": "^5.0.0",
-        "convex-test": "^0.0.54",
-        "vite": "^8.1.4",
-        "vitest": "^4.1.10"
-    },
-    "dependencies": {
-        "@aws-sdk/client-s3": "3.1017.0",
-        "@aws-sdk/client-scheduler": "3.1017.0",
-        "@aws-sdk/client-sts": "3.1017.0",
-        "@aws-sdk/s3-request-presigner": "3.1017.0",
-        "@convex-dev/stripe": "^0.1.4",
-        "@convex-dev/workos-authkit": "^0.2.6",
-        "convex": "^1.40.0"
-    }
+  "name": "@broods/convex",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Shared Convex backend (schema + internal queries/mutations) deployed alongside the dashboard and read by the core harness as a typed remote API.",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "codegen": "convex codegen",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write \"**/*.{ts,md,json}\""
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "convex-test": "^0.0.54",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1017.0",
+    "@aws-sdk/client-scheduler": "3.1017.0",
+    "@aws-sdk/client-sts": "3.1017.0",
+    "@aws-sdk/s3-request-presigner": "3.1017.0",
+    "@convex-dev/stripe": "^0.1.4",
+    "@convex-dev/workos-authkit": "^0.2.6",
+    "convex": "^1.40.0"
+  }
 }

@@ -5,7 +5,10 @@
  */
 
 import type { JSONValue } from "ai";
-import type { AgentConfig, AgentLifecycleEventName } from "../shared/domain/agent-config.ts";
+import type {
+  AgentConfig,
+  AgentLifecycleEventName,
+} from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { fireWebhook } from "../shared/webhook.ts";
 import type { Session } from "./session.ts";
@@ -23,11 +26,17 @@ export interface AgentLifecycleEvent {
 }
 
 export interface AgentLifecycleEmitter {
-  emit(type: AgentLifecycleEventName, payload?: AgentLifecycleEventPayload): Promise<void>;
+  emit(
+    type: AgentLifecycleEventName,
+    payload?: AgentLifecycleEventPayload,
+  ): Promise<void>;
 }
 
 export function createAgentLifecycleEmitter(
-  session: Pick<Session, "accountId" | "agentId" | "eventId" | "conversationKey">,
+  session: Pick<
+    Session,
+    "accountId" | "agentId" | "eventId" | "conversationKey"
+  >,
   agentConfig: AgentConfig,
 ): AgentLifecycleEmitter {
   // An agent can register several outbound webhooks; keep only deliverable ones
@@ -40,7 +49,9 @@ export function createAgentLifecycleEmitter(
     async emit(type, payload = {}) {
       // A webhook with no events allow-list receives every event; otherwise only
       // the events it subscribed to.
-      const targets = webhooks.filter((webhook) => !webhook.events || webhook.events.includes(type));
+      const targets = webhooks.filter(
+        (webhook) => !webhook.events || webhook.events.includes(type),
+      );
       if (targets.length === 0) {
         return;
       }
@@ -55,21 +66,26 @@ export function createAgentLifecycleEmitter(
         payload,
       } satisfies AgentLifecycleEvent;
 
-      await Promise.all(targets.map(async (webhook) => {
-        if (!webhook.url || !webhook.secret) {
-          return;
-        }
-        try {
-          await fireWebhook({ url: webhook.url, secret: webhook.secret }, event);
-        } catch (err) {
-          logError("Lifecycle webhook delivery failed", {
-            eventType: type,
-            eventId: session.eventId,
-            url: webhook.url,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }));
+      await Promise.all(
+        targets.map(async (webhook) => {
+          if (!webhook.url || !webhook.secret) {
+            return;
+          }
+          try {
+            await fireWebhook(
+              { url: webhook.url, secret: webhook.secret },
+              event,
+            );
+          } catch (err) {
+            logError("Lifecycle webhook delivery failed", {
+              eventType: type,
+              eventId: session.eventId,
+              url: webhook.url,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }),
+      );
     },
   };
 }
@@ -81,7 +97,9 @@ export function toLifecycleValue(value: unknown): JSONValue | undefined {
 
   try {
     const serialized = JSON.stringify(value);
-    return serialized === undefined ? String(value) : JSON.parse(serialized) as JSONValue;
+    return serialized === undefined
+      ? String(value)
+      : (JSON.parse(serialized) as JSONValue);
   } catch {
     return String(value);
   }

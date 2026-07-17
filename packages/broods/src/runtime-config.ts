@@ -44,7 +44,9 @@ const realEnvSnapshot = new Set(Object.keys(process.env));
  */
 const loadedFromFiles = new Set<string>();
 
-export function loadBroodsRuntimeConfig(cwd = process.cwd()): BroodsRuntimeConfig {
+export function loadBroodsRuntimeConfig(
+  cwd = process.cwd(),
+): BroodsRuntimeConfig {
   loadEnvFiles(cwd);
   const stored = readStoredAuthSync();
 
@@ -87,8 +89,14 @@ function loadEnvFiles(cwd: string): void {
     if (cached && cached.mtimeMs === mtimeMs) continue;
     envFileCache.set(path, { mtimeMs });
 
-    for (const [key, value] of Object.entries(parseEnv(readFileSync(path, "utf8")))) {
-      if (forceReload || !realEnvSnapshot.has(key) || loadedFromFiles.has(key)) {
+    for (const [key, value] of Object.entries(
+      parseEnv(readFileSync(path, "utf8")),
+    )) {
+      if (
+        forceReload ||
+        !realEnvSnapshot.has(key) ||
+        loadedFromFiles.has(key)
+      ) {
         process.env[key] = value;
         loadedFromFiles.add(key);
       }
@@ -102,7 +110,9 @@ function parseEnv(source: string): Record<string, string> {
   for (const rawLine of source.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
-    const assignment = line.startsWith("export ") ? line.slice("export ".length).trim() : line;
+    const assignment = line.startsWith("export ")
+      ? line.slice("export ".length).trim()
+      : line;
     const eq = assignment.indexOf("=");
     if (eq <= 0) continue;
     const key = assignment.slice(0, eq).trim();
@@ -132,17 +142,24 @@ function unquoteEnvValue(value: string): string {
  * constructor can use it without awaiting. Returns null when the file is
  * absent, malformed, or predates the Convex-direct control plane.
  */
-function readStoredAuthSync(): { baseUrl: string; dashboardUrl?: string; token: string } | null {
+function readStoredAuthSync(): {
+  baseUrl: string;
+  dashboardUrl?: string;
+  token: string;
+} | null {
   try {
     const value = JSON.parse(readFileSync(USER_CONFIG_PATH, "utf8")) as {
       baseUrl?: unknown;
       dashboardUrl?: unknown;
       token?: unknown;
     };
-    if (typeof value.baseUrl !== "string" || typeof value.token !== "string") return null;
+    if (typeof value.baseUrl !== "string" || typeof value.token !== "string")
+      return null;
     return {
       baseUrl: stripTrailingSlash(value.baseUrl),
-      ...(typeof value.dashboardUrl === "string" ? { dashboardUrl: stripTrailingSlash(value.dashboardUrl) } : {}),
+      ...(typeof value.dashboardUrl === "string"
+        ? { dashboardUrl: stripTrailingSlash(value.dashboardUrl) }
+        : {}),
       token: value.token,
     };
   } catch {

@@ -7,10 +7,7 @@ import {
   websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
-import {
-  isConfigHttpPath,
-  isCoreHttpRoute,
-} from "../src/routes.ts";
+import { isConfigHttpPath, isCoreHttpRoute } from "../src/routes.ts";
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   lokiLogEntry,
@@ -251,9 +248,9 @@ test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpRoute("/async")).toBe(true);
   expect(isCoreHttpRoute("/status/request-1")).toBe(true);
   expect(isCoreHttpRoute("/v1/crons")).toBe(true);
-  expect(
-    isCoreHttpRoute("/v1/demo/agents/development/env_123/async"),
-  ).toBe(true);
+  expect(isCoreHttpRoute("/v1/demo/agents/development/env_123/async")).toBe(
+    true,
+  );
   expect(isCoreHttpRoute("/healthz")).toBe(false);
 });
 
@@ -294,9 +291,13 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/skills")).toBe(true);
   expect(isConfigHttpPath("/v1/skills/my-skill")).toBe(true);
   expect(isConfigHttpPath("/v1/tools")).toBe(true);
-  expect(isConfigHttpPath("/v1/tools/qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
+  expect(isConfigHttpPath("/v1/tools/qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(
+    true,
+  );
   expect(isConfigHttpPath("/v1/hooks")).toBe(true);
-  expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(true);
+  expect(isConfigHttpPath("/v1/hooks/k17zwc4z4q5ysxm74fgrhd13s88xxtv")).toBe(
+    true,
+  );
   expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
@@ -890,7 +891,9 @@ test("origin allow-list: defaults cover broods.app, wildcards, and non-browser c
   expect(isOriginAllowed(null, defaults)).toBe(true);
   expect(isOriginAllowed("", defaults)).toBe(true);
   expect(isOriginAllowed("https://dashboard.broods.app", defaults)).toBe(true);
-  expect(isOriginAllowed("https://dashboard.dev.broods.app", defaults)).toBe(true);
+  expect(isOriginAllowed("https://dashboard.dev.broods.app", defaults)).toBe(
+    true,
+  );
   expect(isOriginAllowed("https://broods.app", defaults)).toBe(true);
   expect(isOriginAllowed("http://localhost:3000", defaults)).toBe(true);
   expect(isOriginAllowed("https://evil.example.com", defaults)).toBe(false);
@@ -936,7 +939,10 @@ test("websocket token prefers the Authorization header over the query param", ()
 
 test("client ip prefers x-real-ip, then x-forwarded-for, then the socket address", () => {
   const withRealIp = new Request("https://gateway.example.com/", {
-    headers: { "x-real-ip": "203.0.113.7", "x-forwarded-for": "198.51.100.1, 10.0.0.1" },
+    headers: {
+      "x-real-ip": "203.0.113.7",
+      "x-forwarded-for": "198.51.100.1, 10.0.0.1",
+    },
   });
   expect(clientIp(withRealIp, "127.0.0.1")).toBe("203.0.113.7");
 
@@ -944,8 +950,12 @@ test("client ip prefers x-real-ip, then x-forwarded-for, then the socket address
     headers: { "x-forwarded-for": "198.51.100.1, 10.0.0.1" },
   });
   expect(clientIp(withForwarded, "127.0.0.1")).toBe("198.51.100.1");
-  expect(clientIp(new Request("https://gateway.example.com/"), "127.0.0.1")).toBe("127.0.0.1");
-  expect(clientIp(new Request("https://gateway.example.com/"), undefined)).toBe("unknown");
+  expect(
+    clientIp(new Request("https://gateway.example.com/"), "127.0.0.1"),
+  ).toBe("127.0.0.1");
+  expect(clientIp(new Request("https://gateway.example.com/"), undefined)).toBe(
+    "unknown",
+  );
 });
 
 test("proxyHttp returns 502 when every upstream is unreachable", async () => {
@@ -970,7 +980,12 @@ test("observability relay sheds droppable frames when the socket buffer is backe
   const messages = async function* () {
     yield {
       data: encoder.encode(
-        JSON.stringify({ ts: 1, level: "ERROR", eventType: "error", message: "shed me" }),
+        JSON.stringify({
+          ts: 1,
+          level: "ERROR",
+          eventType: "error",
+          message: "shed me",
+        }),
       ),
     };
   };

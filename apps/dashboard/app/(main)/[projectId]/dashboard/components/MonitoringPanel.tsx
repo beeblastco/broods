@@ -10,7 +10,10 @@ import { cn } from "@/app/lib/utils";
 import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
+import {
+  ObservabilityToolbar,
+  type ToolbarFilterOption,
+} from "./ObservabilityToolbar";
 
 interface Props {
   projectSlug: string | undefined;
@@ -89,9 +92,7 @@ function parseLogMessage(raw: string): {
 
 /** Strip the long region / account suffix from the function name for table density. */
 function shortFunctionName(name: string): string {
-  return name
-    .replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "")
-    .replace(/^broods-/, "");
+  return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
 }
 
 /** Text color per log level — INFO is now distinctly colored, not muted. */
@@ -140,11 +141,18 @@ function LogRow({
           {time}
         </td>
         <td className="px-3 py-1.5 whitespace-nowrap">
-          <span className={cn("inline-flex items-center gap-1.5 font-medium", levelColor(entry.level))}>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 font-medium",
+              levelColor(entry.level),
+            )}
+          >
             {entry.level === "ERROR" || entry.level === "WARN" ? (
               <AlertTriangle className="size-3" />
             ) : (
-              <span className={cn("size-1.5 rounded-full", levelDot(entry.level))} />
+              <span
+                className={cn("size-1.5 rounded-full", levelDot(entry.level))}
+              />
             )}
             {entry.level}
           </span>
@@ -157,11 +165,14 @@ function LogRow({
             ? shortFunctionName(entry.service)
             : entry.endpointId
               ? shortFunctionName(entry.endpointId)
-              : entry.agentId ?? "—"}
+              : (entry.agentId ?? "—")}
         </td>
         <td className="px-3 py-1.5 text-foreground/90 max-w-0 truncate">
           {(parsed.eventType ?? entry.eventType) && (
-            <Badge variant="secondary" className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide">
+            <Badge
+              variant="secondary"
+              className="mr-2 px-1.5 py-0 text-[10px] uppercase tracking-wide"
+            >
               {parsed.eventType ?? entry.eventType}
             </Badge>
           )}
@@ -212,7 +223,11 @@ function LogRow({
   );
 }
 
-export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props) {
+export function MonitoringPanel({
+  projectSlug,
+  environmentSlug,
+  apiKey,
+}: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -241,7 +256,8 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
 
   const fromMs = toEpochMs(fromTime);
   const toMs = toEpochMs(toTime);
-  const hasFilters = filter.trim() !== "" || level !== "all" || fromMs !== null || toMs !== null;
+  const hasFilters =
+    filter.trim() !== "" || level !== "all" || fromMs !== null || toMs !== null;
 
   const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -264,7 +280,8 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
   // Reset paging whenever the filters change so "Load more" always starts from
   // the top of the current view — render-time adjustment, not an effect.
   const filterSignature = `${filter}|${level}|${fromMs}|${toMs}`;
-  const [prevFilterSignature, setPrevFilterSignature] = useState(filterSignature);
+  const [prevFilterSignature, setPrevFilterSignature] =
+    useState(filterSignature);
   if (filterSignature !== prevFilterSignature) {
     setPrevFilterSignature(filterSignature);
     setVisibleCount(PAGE_SIZE);
@@ -283,7 +300,8 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Project service logs from channel ingress, agent execution, tools, and runtime services.
+        Project service logs from channel ingress, agent execution, tools, and
+        runtime services.
       </p>
 
       <ObservabilityToolbar
@@ -338,8 +356,13 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="h-32 text-center text-xs text-muted-foreground/60">
-                    {entries.length === 0 ? "Waiting for logs…" : "No logs match the current filters."}
+                  <td
+                    colSpan={4}
+                    className="h-32 text-center text-xs text-muted-foreground/60"
+                  >
+                    {entries.length === 0
+                      ? "Waiting for logs…"
+                      : "No logs match the current filters."}
                   </td>
                 </tr>
               )}
@@ -352,7 +375,8 @@ export function MonitoringPanel({ projectSlug, environmentSlug, apiKey }: Props)
                 onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
                 className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
               >
-                Load {Math.min(PAGE_SIZE, remaining)} more · {remaining.toLocaleString()} older
+                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+                {remaining.toLocaleString()} older
               </button>
             </div>
           )}

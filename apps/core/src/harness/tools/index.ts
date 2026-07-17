@@ -21,14 +21,24 @@ import { logWarn } from "../../shared/log.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
-import type { AsyncToolModeMap, AsyncToolSource, RunAsyncToolDispatch } from "../async-tools.ts";
-import type { SandboxCpuSample, SandboxExecutorConfig } from "../sandbox/types.ts";
+import type {
+  AsyncToolModeMap,
+  AsyncToolSource,
+  RunAsyncToolDispatch,
+} from "../async-tools.ts";
+import type {
+  SandboxCpuSample,
+  SandboxExecutorConfig,
+} from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
 import accountTool from "./account-tool.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import editTool from "./edit.tool.ts";
-import { sandboxSupportsBackgroundJobs, sandboxSupportsJobControls } from "./filesystem-utils.ts";
+import {
+  sandboxSupportsBackgroundJobs,
+  sandboxSupportsJobControls,
+} from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import grepTool from "./grep.tool.ts";
@@ -78,7 +88,10 @@ const toolFactories = {
   googleSearch: googleSearchTool,
 } satisfies Record<string, ToolFactory>;
 
-export async function createTools(context: Omit<ToolContext, "config">, agentConfig: AgentConfig): Promise<ToolSet> {
+export async function createTools(
+  context: Omit<ToolContext, "config">,
+  agentConfig: AgentConfig,
+): Promise<ToolSet> {
   const tools: ToolSet = {};
   assertSupportedConfiguredTools(agentConfig.tools);
 
@@ -91,64 +104,84 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   // Per-call sandbox approval is handled by the harness-level v7 toolApproval.
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
-  const statelessSandbox = workspaces.length === 0 ? context.statelessSandbox : undefined;
-  const statelessOptions = typeof statelessSandbox?.options === "object" && statelessSandbox.options !== null
-    ? statelessSandbox.options as Record<string, unknown>
-    : {};
-  const hasStatelessReservation = typeof statelessOptions.reservationKey === "string" && statelessOptions.reservationKey.trim().length > 0;
+  const statelessSandbox =
+    workspaces.length === 0 ? context.statelessSandbox : undefined;
+  const statelessOptions =
+    typeof statelessSandbox?.options === "object" &&
+    statelessSandbox.options !== null
+      ? (statelessSandbox.options as Record<string, unknown>)
+      : {};
+  const hasStatelessReservation =
+    typeof statelessOptions.reservationKey === "string" &&
+    statelessOptions.reservationKey.trim().length > 0;
   if (statelessSandbox?.persistent === true && !hasStatelessReservation) {
     // Persistence is keyed by workspace namespace; a stateless (no-workspace)
     // sandbox needs an explicit options.reservationKey to reconnect — warn so a
     // misconfiguration is visible rather than silently behaving ephemerally.
-    logWarn("persistent sandbox attached without a workspace; it runs ephemerally", {
-      conversationKey: context.conversationKey,
-    });
+    logWarn(
+      "persistent sandbox attached without a workspace; it runs ephemerally",
+      {
+        conversationKey: context.conversationKey,
+      },
+    );
   }
   const sandboxTools: ToolSet = {};
 
   // Reserved (persistent) workspaces can run detached background jobs; bash then
   // exposes a `background` flag and records each job under the parent session.
-  const hasBackgroundWorkspace = workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
+  const hasBackgroundWorkspace = workspaces.some((workspace) =>
+    sandboxSupportsBackgroundJobs(workspace.sandbox),
+  );
   // eventId identifies the turn that spawned the job (stored as parentEventId on the
   // async-tool-result record); conversationKey identifies which conversation to resume
   // when the job completes in a future continuation worker. delivery carries the
   // originating channel/WebSocket so the result is pushed back there, not just polled.
-  const backgroundContext = hasBackgroundWorkspace && context.session
-    ? {
-      eventId: context.session.eventId,
-      conversationKey: context.conversationKey,
-      ...(context.session.delivery ? { delivery: context.session.delivery } : {}),
-    }
-    : undefined;
+  const backgroundContext =
+    hasBackgroundWorkspace && context.session
+      ? {
+          eventId: context.session.eventId,
+          conversationKey: context.conversationKey,
+          ...(context.session.delivery
+            ? { delivery: context.session.delivery }
+            : {}),
+        }
+      : undefined;
 
   // bash: stateless (no workspace) on the agent sandbox, or in any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
   // of silently selecting the first writable workspace.
   if (statelessSandbox || sandboxWorkspaces.length > 0) {
-    Object.assign(sandboxTools,
+    Object.assign(
+      sandboxTools,
       bashTool({
         workspaces,
         ...(statelessSandbox
-          ? { statelessSandbox, statelessPermissionMode: context.statelessPermissionMode ?? "ask" }
+          ? {
+              statelessSandbox,
+              statelessPermissionMode: context.statelessPermissionMode ?? "ask",
+            }
           : {}),
         ...(backgroundContext ? { background: backgroundContext } : {}),
         ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
-      }
-      ));
+      }),
+    );
   }
   // read/glob: every workspace (sandbox-backed via the mount, read-only via S3).
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
       readTool({ workspaces }),
-      globTool({ workspaces })
+      globTool({ workspaces }),
     );
   }
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace
   // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
-    const fsContext = { workspaces, ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}) };
+    const fsContext = {
+      workspaces,
+      ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
+    };
     Object.assign(
       sandboxTools,
       writeTool(fsContext),
@@ -158,8 +191,15 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
     // memory_save: structured memory on the same sandbox write path. It ships
     // with the workspace harness (config.harness.memory, default on) rather
     // than config.tools, and only touches the memory/ folder and its index.
-    if (sandboxWorkspaces.some((workspace) => workspaceMemoryHarnessEnabled(workspace.config))) {
-      Object.assign(sandboxTools, memoryTool({ ...fsContext, conversationKey: context.conversationKey }));
+    if (
+      sandboxWorkspaces.some((workspace) =>
+        workspaceMemoryHarnessEnabled(workspace.config),
+      )
+    ) {
+      Object.assign(
+        sandboxTools,
+        memoryTool({ ...fsContext, conversationKey: context.conversationKey }),
+      );
     }
   }
   Object.assign(tools, sandboxTools);
@@ -168,18 +208,31 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.
   if (agentConfig.subagent?.enabled === true && context.dispatchSubagents) {
-    Object.assign(tools, runSubagentTool({
-      dispatchSubagents: context.dispatchSubagents,
-      mode: agentConfig.subagent.mode,
-    }));
+    Object.assign(
+      tools,
+      runSubagentTool({
+        dispatchSubagents: context.dispatchSubagents,
+        mode: agentConfig.subagent.mode,
+      }),
+    );
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
-  if (agentConfig.skills?.enabled === true && allowedSkillPaths.length > 0 && context.session) {
-    Object.assign(tools, loadSkillTool(
-      context.session,
-      (skillPath, resourcePaths) => context.session!.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
-    ));
+  if (
+    agentConfig.skills?.enabled === true &&
+    allowedSkillPaths.length > 0 &&
+    context.session
+  ) {
+    Object.assign(
+      tools,
+      loadSkillTool(context.session, (skillPath, resourcePaths) =>
+        context.session!.loadSkillPrompt(
+          allowedSkillPaths,
+          skillPath,
+          resourcePaths,
+        ),
+      ),
+    );
   }
 
   for (const [toolName, toolFactory] of Object.entries(toolFactories)) {
@@ -188,59 +241,89 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       continue;
     }
 
-    if (toolConfig.needsApproval === true) context.approvalRequirements?.set(toolName, true);
-    Object.assign(tools, toolFactory({
-      ...context,
-      config: externalToolRuntimeConfig(toolConfig),
-    }));
+    if (toolConfig.needsApproval === true)
+      context.approvalRequirements?.set(toolName, true);
+    Object.assign(
+      tools,
+      toolFactory({
+        ...context,
+        config: externalToolRuntimeConfig(toolConfig),
+      }),
+    );
     addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
   }
 
   const handoffsConfig = agentConfig.tools?.handoffs;
   if (isToolEnabled(handoffsConfig)) {
-    if (handoffsConfig.needsApproval === true) context.approvalRequirements?.set("handoffs", true);
-    Object.assign(tools, handoffsTool({
-      ...context,
-      channels: agentConfig.channels,
-      config: externalToolRuntimeConfig(handoffsConfig),
-    }));
-    addAsyncModeIfConfigured(asyncModes, "handoffs", handoffsConfig, "built-in");
+    if (handoffsConfig.needsApproval === true)
+      context.approvalRequirements?.set("handoffs", true);
+    Object.assign(
+      tools,
+      handoffsTool({
+        ...context,
+        channels: agentConfig.channels,
+        config: externalToolRuntimeConfig(handoffsConfig),
+      }),
+    );
+    addAsyncModeIfConfigured(
+      asyncModes,
+      "handoffs",
+      handoffsConfig,
+      "built-in",
+    );
   }
 
-  for (const [toolId, toolConfig] of Object.entries(agentConfig.tools ?? {}).filter(([key]) => isAccountToolId(key))) {
+  for (const [toolId, toolConfig] of Object.entries(
+    agentConfig.tools ?? {},
+  ).filter(([key]) => isAccountToolId(key))) {
     if (!isToolEnabled(toolConfig)) {
       continue;
     }
     if (!context.accountId) {
-      throw new Error(`config.tools.${toolId} requires an account-scoped session`);
+      throw new Error(
+        `config.tools.${toolId} requires an account-scoped session`,
+      );
     }
     const accountId = context.accountId;
     const record = await getStorage().accountTools.getById(accountId, toolId);
     if (!record || record.status !== "active") {
-      throw new Error(`config.tools.${toolId} references an unknown account tool`);
+      throw new Error(
+        `config.tools.${toolId} references an unknown account tool`,
+      );
     }
     if (tools[record.name]) {
-      throw new Error(`config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`);
+      throw new Error(
+        `config.tools.${toolId} model-facing name '${record.name}' conflicts with another tool`,
+      );
     }
-    if (toolConfig.needsApproval === true) context.approvalRequirements?.set(record.name, true);
+    if (toolConfig.needsApproval === true)
+      context.approvalRequirements?.set(record.name, true);
     context.policyToolIdsByName?.set(record.name, toolId);
-    Object.assign(tools, accountTool(record, {
-      ...context,
-      accountId,
-      config: externalToolRuntimeConfig(toolConfig),
-    }));
+    Object.assign(
+      tools,
+      accountTool(record, {
+        ...context,
+        accountId,
+        config: externalToolRuntimeConfig(toolConfig),
+      }),
+    );
     addAsyncModeIfConfigured(asyncModes, record.name, toolConfig, "uploaded");
   }
 
   // Auto-add the background-job status tool when the agent has any async tool or
   // a reserved sandbox that can launch background jobs.
   if (asyncModes.size > 0 || hasBackgroundWorkspace) {
-    Object.assign(tools, asyncStatusTool({
-      conversationKey: context.conversationKey,
-      workspaces,
-      // logs/stop only apply when the background provider exposes live controls.
-      supportsJobs: workspaces.some((workspace) => sandboxSupportsJobControls(workspace.sandbox)),
-    }));
+    Object.assign(
+      tools,
+      asyncStatusTool({
+        conversationKey: context.conversationKey,
+        workspaces,
+        // logs/stop only apply when the background provider exposes live controls.
+        supportsJobs: workspaces.some((workspace) =>
+          sandboxSupportsJobControls(workspace.sandbox),
+        ),
+      }),
+    );
   }
 
   return context.dispatchAsyncTools
@@ -250,13 +333,19 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
 
 function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
   for (const toolName of Object.keys(tools ?? {})) {
-    if (!(toolName in toolFactories) && toolName !== "handoffs" && !isAccountToolId(toolName)) {
+    if (
+      !(toolName in toolFactories) &&
+      toolName !== "handoffs" &&
+      !isAccountToolId(toolName)
+    ) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
   }
 }
 
-function isToolEnabled(config: AgentToolConfig | undefined): config is AgentToolConfig {
+function isToolEnabled(
+  config: AgentToolConfig | undefined,
+): config is AgentToolConfig {
   return config !== undefined && config.enabled !== false;
 }
 

@@ -89,7 +89,7 @@ flowchart TD
   Core --> Crons["Convex: crons"]
   Session --> Workspace["S3: account-scoped workspace files"]
   SkillStore -->|"Load skills metadata"| Session
-  Harness -->|"Access skills"| SkillStore 
+  Harness -->|"Access skills"| SkillStore
   Tools --> Filesystem["S3: account-scoped workspace files"]
   Subagents --> AsyncAgentResult
   Subagents --> Session
@@ -280,14 +280,14 @@ the bound `WS_RESPONSES` stream captures that same message for replay.
 
 NATS subject patterns:
 
-| Subject | Direction | Purpose |
-| --------- | ----------- | --------- |
+| Subject                                            | Direction      | Purpose                                                                               |
+| -------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------- |
 | `v1.{accountId}.{agentId}.ws.response.{convToken}` | Core → Gateway | Vercel AI SDK stream events (`step-start`, `text`, `tool-call`, `finish`, `error`, …) |
 
 `convToken = base64url(publicConversationKey)` — a single NATS-safe token.
 
 **One publish, two read paths — and not double storage.** A core publish is
-fanned out live to any core subscriber on the subject *and* captured once by the
+fanned out live to any core subscriber on the subject _and_ captured once by the
 stream. **Core publish stores nothing itself** — the stream is the only stored
 copy, so this is not duplicated storage. The platform exposes both read paths and
 lets the application choose how to switch:
@@ -296,7 +296,7 @@ lets the application choose how to switch:
 - **Dropped mid-stream → reconnect & resume:** `readConversationStream`
   (JetStream consumer) from `startSequence` (last `JsMsg.seq`) or `startTime`,
   catch up the missed events, then continue live. This is JetStream's **only**
-  job — resuming a turn that is *still streaming*.
+  job — resuming a turn that is _still streaming_.
 - **Reconnect after the turn finished →** there is nothing to resume: the buffer
   was purged at persist time, so read the completed turn from the conversation DB.
 
@@ -326,7 +326,7 @@ Notes:
     (`LiveNatsPublisher.purge`, right after the terminal `done`) deletes that
     conversation from the stream — a later reconnect reads the saved turn from the
     DB, so keeping the buffer would be pointless. The detached async continuation
-    re-enters the same path, so it purges when *it* finishes.
+    re-enters the same path, so it purges when _it_ finishes.
   - **Short backstop `max_age` (~3 min):** only for turns that never persist
     cleanly (e.g. an error/crash before the purge); they expire instead of piling up.
   - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
@@ -352,7 +352,7 @@ Notes:
 ## Deferred delivery & resume (background jobs)
 
 A detached sandbox job can outlive the request or worker that launched it, so its result has to
-be delivered in a *later* continuation and routed back to wherever the turn came
+be delivered in a _later_ continuation and routed back to wherever the turn came
 from. The mechanism is a small **delivery descriptor carried on the Session and
 persisted with the job**, so no live connection state needs to survive — only an
 identifier the next invocation can rebuild from.
@@ -371,7 +371,7 @@ flowchart TD
 
 - **What's saved, and why it's safe.** `Session.delivery` (an `AsyncToolDelivery`)
   describes the origin: a chat channel (`{channelName, source}` — the routing
-  payload only, *never* credentials), a WebSocket conversation, or plain async.
+  payload only, _never_ credentials), a WebSocket conversation, or plain async.
   `bash background:true` copies it onto the `AsyncToolResult` row in Convex
   alongside the per-job `completionToken`. No account secret is stored or enters
   the sandbox; channel credentials are re-fetched (decrypted) from the agent
@@ -394,7 +394,7 @@ flowchart TD
 account-scoped records, referenced from agent config by id (`sandbox`, `workspaces`). The
 handler resolves those references (`resolveAgentRuntime`) before the agent loop. A
 sandbox can be attached agent-wide (`config.sandbox`) or per workspace
-(`workspaces[].sandbox`, overriding the agent-level one). Each workspace's *effective*
+(`workspaces[].sandbox`, overriding the agent-level one). Each workspace's _effective_
 sandbox decides its tools: `read`/`write`/`edit`/`glob`/`grep`/`bash` when present, or
 read-only `read`/`glob` when absent (via a read-only mount by default, or direct S3 with the
 `sandbox: null` opt-out); `bash` is also exposed stateless when there is no workspace. Each tool's `permissionMode` (`edit`/`ask`/`bypass`)

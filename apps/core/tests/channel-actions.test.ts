@@ -40,7 +40,12 @@ describe("telegram channel actions", () => {
       jsonResponse({ ok: true, result: true }),
     );
 
-    const actions = createTelegramChannel("bot-token", "secret", new Set([123]), "👀").actions(
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    ).actions(
       createMessage({
         chatId: 123,
         messageId: "123:42",
@@ -53,25 +58,36 @@ describe("telegram channel actions", () => {
     if (!actions.stream) {
       throw new Error("Expected Telegram actions to support SDK streaming");
     }
-    const messageId = await actions.stream((async function* () {
-      yield "stream";
-      yield " done";
-    })());
+    const messageId = await actions.stream(
+      (async function* () {
+        yield "stream";
+        yield " done";
+      })(),
+    );
     await actions.sendTyping();
     await actions.reactToMessage();
 
     expect(fetchMock.calls).toHaveLength(6);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessage",
+    );
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
       chat_id: "123",
     });
-    expect(JSON.stringify(JSON.parse(String(fetchMock.calls[0]!.init?.body))))
-      .toContain("telegram");
+    expect(
+      JSON.stringify(JSON.parse(String(fetchMock.calls[0]!.init?.body))),
+    ).toContain("telegram");
 
     expect(messageId).toBe("123:51");
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessageDraft");
-    expect(toUrl(fetchMock.calls[2]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessageDraft");
-    expect(toUrl(fetchMock.calls[3]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessageDraft",
+    );
+    expect(toUrl(fetchMock.calls[2]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessageDraft",
+    );
+    expect(toUrl(fetchMock.calls[3]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessage",
+    );
     expect(JSON.parse(String(fetchMock.calls[3]!.init?.body))).toMatchObject({
       chat_id: "123",
       rich_message: {
@@ -79,13 +95,17 @@ describe("telegram channel actions", () => {
       },
     });
 
-    expect(toUrl(fetchMock.calls[4]!.input)).toBe("https://api.telegram.org/botbot-token/sendChatAction");
+    expect(toUrl(fetchMock.calls[4]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendChatAction",
+    );
     expect(JSON.parse(String(fetchMock.calls[4]!.init?.body))).toMatchObject({
       chat_id: "123",
       action: "typing",
     });
 
-    expect(toUrl(fetchMock.calls[5]!.input)).toBe("https://api.telegram.org/botbot-token/setMessageReaction");
+    expect(toUrl(fetchMock.calls[5]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/setMessageReaction",
+    );
     expect(JSON.parse(String(fetchMock.calls[5]!.init?.body))).toMatchObject({
       chat_id: "123",
       message_id: 42,
@@ -99,7 +119,12 @@ describe("telegram channel actions", () => {
       telegramMessageResponse(51, "second"),
     );
 
-    const actions = createTelegramChannel("bot-token", "secret", new Set([123]), "👀").actions(
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    ).actions(
       createMessage({
         chatId: 123,
         messageId: "123:42",
@@ -110,8 +135,12 @@ describe("telegram channel actions", () => {
     await actions.sendText(`${"a".repeat(3600)} ${"b".repeat(20)}`);
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe("https://api.telegram.org/botbot-token/sendRichMessage");
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessage",
+    );
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendRichMessage",
+    );
   });
 });
 
@@ -123,7 +152,11 @@ describe("discord channel actions", () => {
       new Response("", { status: 204 }),
     );
 
-    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    ).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -141,7 +174,9 @@ describe("discord channel actions", () => {
       "https://discord.com/api/v10/webhooks/app-1/interaction-token/messages/@original",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("PATCH");
-    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body)).content).toHaveLength(2000);
+    expect(
+      JSON.parse(String(fetchMock.calls[0]!.init?.body)).content,
+    ).toHaveLength(2000);
 
     expect(toUrl(fetchMock.calls[1]!.input)).toBe(
       "https://discord.com/api/v10/channels/channel-1/typing",
@@ -153,7 +188,11 @@ describe("discord channel actions", () => {
 
   it("rethrows an interaction failure when no channel id is available to fall back to", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    ).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -170,7 +209,11 @@ describe("discord channel actions", () => {
 
   it("falls back to a bot-token channel post when the interaction token has expired", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    ).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "expired-token",
@@ -200,7 +243,11 @@ describe("discord channel actions", () => {
 
   it("surfaces a bot-token channel post failure", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    ).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "expired-token",
@@ -218,7 +265,11 @@ describe("discord channel actions", () => {
 
   it("throws when a Discord typing request fails", async () => {
     const fetchMock = installFetchMock();
-    const actions = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null).actions(
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    ).actions(
       createMessage({
         applicationId: "app-1",
         interactionToken: "interaction-token",
@@ -235,7 +286,11 @@ describe("discord channel actions", () => {
 
   it("skips typing without a channel id and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null);
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    );
     const actions = adapter.actions(
       createMessage({
         applicationId: "app-1",
@@ -248,9 +303,11 @@ describe("discord channel actions", () => {
     expect(fetchMock.calls).toHaveLength(0);
 
     expect(() =>
-      adapter.actions(createMessage({
-        applicationId: "app-1",
-      })),
+      adapter.actions(
+        createMessage({
+          applicationId: "app-1",
+        }),
+      ),
     ).toThrow("Invalid Discord source payload");
   });
 });
@@ -260,7 +317,12 @@ describe("slack channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(new Response("", { status: 200 }));
 
-    const actions = createSlackChannel("bot-token", "signing-secret", null, "white_check_mark").actions(
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      "white_check_mark",
+    ).actions(
       createMessage({
         teamId: "T1",
         channelId: "C1",
@@ -271,7 +333,9 @@ describe("slack channel actions", () => {
     await actions.sendText("| Name | Value |\n| --- | --- |\n| Alpha | Beta |");
 
     expect(fetchMock.calls).toHaveLength(1);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://hooks.slack.test/response");
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://hooks.slack.test/response",
+    );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
       text: "```\nName  | Value\n------|------\nAlpha | Beta\n```",
@@ -286,7 +350,12 @@ describe("slack channel actions", () => {
       jsonResponse({ ok: true }),
     );
 
-    const actions = createSlackChannel("bot-token", "signing-secret", null, "white_check_mark").actions(
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      "white_check_mark",
+    ).actions(
       createMessage({
         teamId: "T1",
         channelId: "C1",
@@ -300,18 +369,26 @@ describe("slack channel actions", () => {
     await actions.sendTyping();
 
     expect(fetchMock.calls).toHaveLength(2);
-    expect(toUrl(fetchMock.calls[0]!.input)).toBe("https://slack.com/api/chat.postMessage");
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://slack.com/api/chat.postMessage",
+    );
     expect(fetchMock.calls[0]!.init?.headers).toEqual({
       authorization: "Bearer bot-token",
       "content-type": "application/x-www-form-urlencoded",
     });
-    expect(Object.fromEntries(new URLSearchParams(String(fetchMock.calls[0]!.init?.body)))).toMatchObject({
+    expect(
+      Object.fromEntries(
+        new URLSearchParams(String(fetchMock.calls[0]!.init?.body)),
+      ),
+    ).toMatchObject({
       channel: "C1",
       markdown_text: "hello slack",
       thread_ts: "1713916800.000001",
     });
 
-    expect(toUrl(fetchMock.calls[1]!.input)).toBe("https://slack.com/api/reactions.add");
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://slack.com/api/reactions.add",
+    );
     expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
       channel: "C1",
       timestamp: "1713916800.000002",
@@ -334,9 +411,11 @@ describe("slack channel actions", () => {
     expect(fetchMock.calls).toHaveLength(0);
 
     expect(() =>
-      adapter.actions(createMessage({
-        channelId: "C1",
-      })),
+      adapter.actions(
+        createMessage({
+          channelId: "C1",
+        }),
+      ),
     ).toThrow("Invalid Slack source payload");
   });
 
@@ -363,12 +442,16 @@ describe("slack channel actions", () => {
         messageTs: "1713916800.000002",
       }),
     );
-    fetchMock.responses.push(jsonResponse({ ok: false, error: "channel_not_found" }, 200));
+    fetchMock.responses.push(
+      jsonResponse({ ok: false, error: "channel_not_found" }, 200),
+    );
     await expect(apiActions.sendText("hello")).rejects.toThrow(
       "Slack chat.postMessage failed (200): channel_not_found",
     );
 
-    fetchMock.responses.push(jsonResponse({ ok: false, error: "missing_scope" }, 403));
+    fetchMock.responses.push(
+      jsonResponse({ ok: false, error: "missing_scope" }, 403),
+    );
     await expect(apiActions.reactToMessage()).rejects.toThrow(
       "Slack reactions.add failed (403): missing_scope",
     );
@@ -380,7 +463,12 @@ describe("pancake channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
 
-    const actions = createPancakeChannel("page-1", "page-token", "hook-secret", "sender-1").actions(
+    const actions = createPancakeChannel(
+      "page-1",
+      "page-token",
+      "hook-secret",
+      "sender-1",
+    ).actions(
       createMessage({
         pageId: "page-1",
         conversationId: "conversation-1",
@@ -398,7 +486,9 @@ describe("pancake channel actions", () => {
       "https://pages.fm/api/public_api/v1/pages/page-1/conversations/conversation-1/messages?page_access_token=page-token",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
-    expect(fetchMock.calls[0]!.init?.headers).toEqual({ "Content-Type": "application/json" });
+    expect(fetchMock.calls[0]!.init?.headers).toEqual({
+      "Content-Type": "application/json",
+    });
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
       action: "reply_inbox",
       message: "hello inbox",
@@ -410,7 +500,11 @@ describe("pancake channel actions", () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(jsonResponse({ success: true, id: "reply-1" }));
 
-    const actions = createPancakeChannel("page-1", "page-token", "hook-secret").actions(
+    const actions = createPancakeChannel(
+      "page-1",
+      "page-token",
+      "hook-secret",
+    ).actions(
       createMessage({
         pageId: "page-1",
         conversationId: "conversation-1",
@@ -441,18 +535,22 @@ describe("pancake channel actions", () => {
       }),
     );
 
-    fetchMock.responses.push(jsonResponse({ success: false, message: "permission denied" }, 200));
+    fetchMock.responses.push(
+      jsonResponse({ success: false, message: "permission denied" }, 200),
+    );
     await expect(actions.sendText("hello")).rejects.toThrow(
       "Pancake send message failed (200): permission denied",
     );
 
     expect(() =>
-      adapter.actions(createMessage({
-        pageId: "page-1",
-        conversationId: "conversation-1",
-        messageId: "message-1",
-        messageType: "UNKNOWN",
-      })),
+      adapter.actions(
+        createMessage({
+          pageId: "page-1",
+          conversationId: "conversation-1",
+          messageId: "message-1",
+          messageType: "UNKNOWN",
+        }),
+      ),
     ).toThrow("Invalid Pancake source payload");
   });
 });
@@ -466,7 +564,11 @@ describe("zalo channel actions", () => {
       jsonResponse({ ok: true, result: true }),
     );
 
-    const actions = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"])).actions(
+    const actions = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    ).actions(
       createMessage({
         chatId: "chat-1",
         chatType: "PRIVATE",
@@ -485,7 +587,9 @@ describe("zalo channel actions", () => {
       "https://bot-api.zaloplatforms.com/botbot-token/sendMessage",
     );
     expect(fetchMock.calls[0]!.init?.method).toBe("POST");
-    expect(fetchMock.calls[0]!.init?.headers).toEqual({ "Content-Type": "application/json" });
+    expect(fetchMock.calls[0]!.init?.headers).toEqual({
+      "Content-Type": "application/json",
+    });
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
       chat_id: "chat-1",
       text: "a".repeat(2000),
@@ -505,7 +609,11 @@ describe("zalo channel actions", () => {
 
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    );
     const actions = adapter.actions(
       createMessage({
         chatId: "chat-1",
@@ -516,19 +624,23 @@ describe("zalo channel actions", () => {
       }),
     );
 
-    fetchMock.responses.push(jsonResponse({ ok: false, description: "permission denied" }, 200));
+    fetchMock.responses.push(
+      jsonResponse({ ok: false, description: "permission denied" }, 200),
+    );
     await expect(actions.sendText("hello")).rejects.toThrow(
       "Zalo sendMessage failed (200): permission denied",
     );
 
     expect(() =>
-      adapter.actions(createMessage({
-        chatId: "chat-1",
-        chatType: "GROUP",
-        messageId: "message-1",
-        senderId: "user-1",
-        eventName: "message.text.received",
-      })),
+      adapter.actions(
+        createMessage({
+          chatId: "chat-1",
+          chatType: "GROUP",
+          messageId: "message-1",
+          senderId: "user-1",
+          eventName: "message.text.received",
+        }),
+      ),
     ).toThrow("Invalid Zalo source payload");
   });
 });

@@ -2,7 +2,9 @@
 
 import type { useRouter } from "next/navigation";
 
-type RouterPrefetchOptions = Parameters<ReturnType<typeof useRouter>["prefetch"]>[1];
+type RouterPrefetchOptions = Parameters<
+  ReturnType<typeof useRouter>["prefetch"]
+>[1];
 
 /**
  * Force full App Router prefetch for dynamic routes so navigation can reuse

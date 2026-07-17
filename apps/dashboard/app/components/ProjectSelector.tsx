@@ -81,14 +81,16 @@ export function ProjectSelector() {
             variant="ghost"
             className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
           >
-            <span className="truncate block">
-              {displayName}
-            </span>
+            <span className="truncate block">{displayName}</span>
             <ChevronDown className="size-3.5 text-muted-foreground" />
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-72 flex-col overflow-hidden">
+        <DropdownMenuContent
+          align="start"
+          sideOffset={8}
+          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-72 flex-col overflow-hidden"
+        >
           <DropdownMenuLabel>{projectsLabel}</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
@@ -107,9 +109,7 @@ export function ProjectSelector() {
                 )}
               >
                 <Folder className="size-4" />
-                <span className="truncate max-w-60 block">
-                  {project.name}
-                </span>
+                <span className="truncate max-w-60 block">{project.name}</span>
               </DropdownMenuItem>
             ))}
           </div>

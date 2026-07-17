@@ -3,7 +3,10 @@
 import { runtime } from "../shared/convex/runtime.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 export type AsyncAgentStatus =
-  "processing" | "awaiting_approval" | "completed" | "failed";
+  | "processing"
+  | "awaiting_approval"
+  | "completed"
+  | "failed";
 export interface AsyncAgentResultRecord {
   eventId: string;
   conversationKey: string;

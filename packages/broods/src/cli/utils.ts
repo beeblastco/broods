@@ -6,7 +6,12 @@ import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { readStoredAuth, stripTrailingSlash, writeStoredAuth, type StoredAuthConfig } from "../config.ts";
+import {
+  readStoredAuth,
+  stripTrailingSlash,
+  writeStoredAuth,
+  type StoredAuthConfig,
+} from "../config.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
@@ -25,7 +30,9 @@ export function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
-export function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -33,7 +40,9 @@ export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
   loadBroodsRuntimeConfig();
   const auth = await readStoredAuth();
   if (!auth) {
-    throw new Error("Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.");
+    throw new Error(
+      "Run `broods login` first, or set BROODS_TOKEN and BROODS_BASE_URL.",
+    );
   }
 
   return {
@@ -53,7 +62,10 @@ export async function promptSecret(label: string): Promise<string> {
   }
 }
 
-export async function promptText(label: string, defaultValue?: string): Promise<string> {
+export async function promptText(
+  label: string,
+  defaultValue?: string,
+): Promise<string> {
   const rl = createInterface({ input, output });
   try {
     const pending = rl.question(`${label}: `);
@@ -106,20 +118,25 @@ export async function promptConfirm(question: string): Promise<boolean> {
   if (!input.isTTY) return false;
   const rl = createInterface({ input, output });
   try {
-    const answer = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
+    const answer = (await rl.question(`${question} [y/N] `))
+      .trim()
+      .toLowerCase();
     return answer === "y" || answer === "yes";
   } finally {
     rl.close();
   }
 }
 
-export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuthConfig> {
+export async function loginWithBrowser(
+  dashboardUrl: string,
+): Promise<StoredAuthConfig> {
   const state = crypto.randomUUID();
   const { code, close } = await waitForCallback(state);
 
   try {
     const callbackUrl = code.callbackUrl;
-    const startUrl = `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
+    const startUrl =
+      `${stripTrailingSlash(dashboardUrl)}/cli-auth/start?` +
       new URLSearchParams({ callback: callbackUrl, state: state });
     await assertCliAuthRouteExists(startUrl);
     openBrowser(startUrl);
@@ -133,9 +150,11 @@ export async function loginWithBrowser(dashboardUrl: string): Promise<StoredAuth
       body: JSON.stringify({ code: login.code }),
     });
     if (!response.ok) {
-      throw new Error(`Login exchange failed: ${response.status} ${await response.text()}`);
+      throw new Error(
+        `Login exchange failed: ${response.status} ${await response.text()}`,
+      );
     }
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       token: string;
       user?: StoredAuthConfig["user"];
       org?: StoredAuthConfig["org"];
@@ -166,11 +185,13 @@ async function assertCliAuthRouteExists(startUrl: string): Promise<void> {
     const url = new URL(startUrl);
     throw new Error(
       `${url.origin} does not expose /cli-auth/start yet. Deploy the dashboard changes first, ` +
-      `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
+        `or use --dashboard-url http://localhost:3000 with a local dashboard dev server.`,
     );
   }
   if (response.status >= 500) {
-    throw new Error(`Dashboard CLI auth route failed: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `Dashboard CLI auth route failed: ${response.status} ${await response.text()}`,
+    );
   }
 }
 
@@ -190,14 +211,22 @@ function waitForCallback(expectedState: string): Promise<{
           return;
         }
         if (!baseUrl) {
-          res.writeHead(400).end("Login callback omitted base_url; update the dashboard deployment.");
-          callbackReject(new Error(
-            "Login callback did not advertise the API base URL (base_url). " +
-            "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
-          ));
+          res
+            .writeHead(400)
+            .end(
+              "Login callback omitted base_url; update the dashboard deployment.",
+            );
+          callbackReject(
+            new Error(
+              "Login callback did not advertise the API base URL (base_url). " +
+                "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
+            ),
+          );
           return;
         }
-        res.writeHead(200, { "Content-Type": "text/plain" }).end("broods CLI login complete. You can close this tab.");
+        res
+          .writeHead(200, { "Content-Type": "text/plain" })
+          .end("broods CLI login complete. You can close this tab.");
         callbackResolve({
           code: code,
           baseUrl: stripTrailingSlash(baseUrl),
@@ -216,7 +245,11 @@ function waitForCallback(expectedState: string): Promise<{
 
     const requestedPort = callbackPort();
     server.on("error", (error: NodeJS.ErrnoException) => {
-      if (!process.env.BROODS_LOGIN_PORT && requestedPort !== 0 && error.code === "EADDRINUSE") {
+      if (
+        !process.env.BROODS_LOGIN_PORT &&
+        requestedPort !== 0 &&
+        error.code === "EADDRINUSE"
+      ) {
         server.listen(0, "127.0.0.1");
         return;
       }
@@ -250,13 +283,16 @@ async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
-      () => reject(new Error(
-        "Timed out waiting for browser login to complete.\n" +
-        "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
-        "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
-        "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
-        "cliAuth Convex functions or no active API account (Settings -> API Access).",
-      )),
+      () =>
+        reject(
+          new Error(
+            "Timed out waiting for browser login to complete.\n" +
+              "Check the browser tab and the dashboard logs for an error. If the browser shows\n" +
+              "404 on /cli-auth/start, deploy the dashboard build that includes CLI auth or pass\n" +
+              "--dashboard-url for the environment you deployed. Other common causes are missing\n" +
+              "cliAuth Convex functions or no active API account (Settings -> API Access).",
+          ),
+        ),
       ms,
     );
   });
@@ -279,11 +315,12 @@ function callbackPort(): number {
 }
 
 function openBrowser(url: string): void {
-  const command = process.platform === "darwin"
-    ? "open"
-    : process.platform === "win32"
-      ? "cmd"
-      : "xdg-open";
+  const command =
+    process.platform === "darwin"
+      ? "open"
+      : process.platform === "win32"
+        ? "cmd"
+        : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", url] : [url];
   const child = spawn(command, args, { stdio: "ignore", detached: true });
   child.unref();

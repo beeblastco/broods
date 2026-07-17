@@ -1,6 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
 import { subscribeObservabilityLogs } from "../src/observability-client.ts";
-import type { ObservabilityLogEntry, ObservabilityServerMessage } from "../src/observability-contracts.ts";
+import type {
+  ObservabilityLogEntry,
+  ObservabilityServerMessage,
+} from "../src/observability-contracts.ts";
 
 class FakeObservabilitySocket {
   static instances: FakeObservabilitySocket[] = [];
@@ -44,7 +47,12 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
-    { baseUrl: "https://app.example", apiKey: "secret-key", project: "demo", environment: "development" },
+    {
+      baseUrl: "https://app.example",
+      apiKey: "secret-key",
+      project: "demo",
+      environment: "development",
+    },
     { backfill: 100, signal: controller.signal },
   );
   const firstEntry: ObservabilityLogEntry = {
@@ -62,7 +70,10 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
 
   const first = stream.next();
   await Bun.sleep(0);
-  FakeObservabilitySocket.instances[0]!.emit({ type: "log", entry: firstEntry });
+  FakeObservabilitySocket.instances[0]!.emit({
+    type: "log",
+    entry: firstEntry,
+  });
   expect((await first).value).toEqual(firstEntry);
 
   const second = stream.next();
@@ -84,7 +95,12 @@ test("requests live-only logs when no backfill is requested", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
   const controller = new AbortController();
   const stream = subscribeObservabilityLogs(
-    { baseUrl: "https://app.example", apiKey: "secret-key", project: "demo", environment: "development" },
+    {
+      baseUrl: "https://app.example",
+      apiKey: "secret-key",
+      project: "demo",
+      environment: "development",
+    },
     { signal: controller.signal },
   );
 
@@ -104,12 +120,18 @@ test("requests live-only logs when no backfill is requested", async () => {
 
 test("does not include the runtime key in connection errors", async () => {
   globalThis.WebSocket = FakeObservabilitySocket as unknown as typeof WebSocket;
-  const stream = subscribeObservabilityLogs(
-    { baseUrl: "https://app.example", apiKey: "do-not-leak", project: "demo", environment: "development" },
-  );
+  const stream = subscribeObservabilityLogs({
+    baseUrl: "https://app.example",
+    apiKey: "do-not-leak",
+    project: "demo",
+    environment: "development",
+  });
   const result = stream.next();
   await Bun.sleep(0);
-  FakeObservabilitySocket.instances[0]!.emit({ type: "error", error: "Unauthorized" });
+  FakeObservabilitySocket.instances[0]!.emit({
+    type: "error",
+    error: "Unauthorized",
+  });
 
   await expect(result).rejects.toThrow("Unauthorized");
   await expect(result).rejects.not.toThrow("do-not-leak");

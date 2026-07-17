@@ -15,7 +15,9 @@ export const ACCOUNT_MODEL_PROVIDERS = {
 
 export type AccountModelProviderName = keyof typeof ACCOUNT_MODEL_PROVIDERS;
 
-export function isAccountModelProviderName(value: string): value is AccountModelProviderName {
+export function isAccountModelProviderName(
+  value: string,
+): value is AccountModelProviderName {
   return value in ACCOUNT_MODEL_PROVIDERS;
 }
 

@@ -18,26 +18,28 @@ import { writeS3Object } from "./model/s3";
  * @returns the S3 object key written
  */
 export const putToolBundle = internalAction({
-    args: {
-        accountId: v.id("accounts"),
-        sha256: v.string(),
-        bundle: v.string(),
-    },
-    returns: v.string(),
-    handler: async (_ctx, args) => {
-        const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
-        if (!bucket) {
-            throw new Error("TOOL_BUNDLES_BUCKET_NAME is required to write tool bundles");
-        }
+  args: {
+    accountId: v.id("accounts"),
+    sha256: v.string(),
+    bundle: v.string(),
+  },
+  returns: v.string(),
+  handler: async (_ctx, args) => {
+    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
+    if (!bucket) {
+      throw new Error(
+        "TOOL_BUNDLES_BUCKET_NAME is required to write tool bundles",
+      );
+    }
 
-        const key = accountToolBundleStorageKey(args.accountId, args.sha256);
-        await writeS3Object(bucket, key, args.bundle, {
-            contentType: "application/javascript",
-            executable: false,
-        });
+    const key = accountToolBundleStorageKey(args.accountId, args.sha256);
+    await writeS3Object(bucket, key, args.bundle, {
+      contentType: "application/javascript",
+      executable: false,
+    });
 
-        return key;
-    },
+    return key;
+  },
 });
 
 /**
@@ -48,24 +50,26 @@ export const putToolBundle = internalAction({
  * @returns the S3 object key written
  */
 export const putHookBundle = internalAction({
-    args: {
-        accountId: v.id("accounts"),
-        sha256: v.string(),
-        bundle: v.string(),
-    },
-    returns: v.string(),
-    handler: async (_ctx, args) => {
-        const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
-        if (!bucket) {
-            throw new Error("TOOL_BUNDLES_BUCKET_NAME is required to write hook bundles");
-        }
+  args: {
+    accountId: v.id("accounts"),
+    sha256: v.string(),
+    bundle: v.string(),
+  },
+  returns: v.string(),
+  handler: async (_ctx, args) => {
+    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
+    if (!bucket) {
+      throw new Error(
+        "TOOL_BUNDLES_BUCKET_NAME is required to write hook bundles",
+      );
+    }
 
-        const key = accountHookBundleStorageKey(args.accountId, args.sha256);
-        await writeS3Object(bucket, key, args.bundle, {
-            contentType: "application/javascript",
-            executable: false,
-        });
+    const key = accountHookBundleStorageKey(args.accountId, args.sha256);
+    await writeS3Object(bucket, key, args.bundle, {
+      contentType: "application/javascript",
+      executable: false,
+    });
 
-        return key;
-    },
+    return key;
+  },
 });

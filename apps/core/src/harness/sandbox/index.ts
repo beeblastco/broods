@@ -14,9 +14,17 @@ import type {
 import { VercelSandboxExecutor } from "./vercel-executor.ts";
 import { WorkdirSandboxExecutor } from "./workdir-executor.ts";
 
-export const SANDBOX_PROVIDERS = ["sandbox", "lambda", "e2b", "daytona", "vercel"] as const satisfies readonly SandboxProvider[];
+export const SANDBOX_PROVIDERS = [
+  "sandbox",
+  "lambda",
+  "e2b",
+  "daytona",
+  "vercel",
+] as const satisfies readonly SandboxProvider[];
 
-export function createSandboxExecutor(config: SandboxExecutorConfig): SandboxExecutor {
+export function createSandboxExecutor(
+  config: SandboxExecutorConfig,
+): SandboxExecutor {
   // provider is required and always resolved by normalizeSandboxConfig; never
   // silently default here so a misconfigured config fails loudly.
   const { provider } = config;

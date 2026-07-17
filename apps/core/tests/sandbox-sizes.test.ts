@@ -5,7 +5,11 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { resolveSandboxSpecs, workdirSizeResources, SANDBOX_SIZES } from "../src/shared/sandbox-sizes.ts";
+import {
+  resolveSandboxSpecs,
+  workdirSizeResources,
+  SANDBOX_SIZES,
+} from "../src/shared/sandbox-sizes.ts";
 
 describe("resolveSandboxSpecs", () => {
   it("returns the catalog specs for a pinned size", () => {
@@ -33,7 +37,15 @@ describe("resolveSandboxSpecs", () => {
 describe("workdirSizeResources", () => {
   it("clamps vcpu up to workdir's allowed set", () => {
     // tiny is 0.25 vCPU; workdir's smallest choice is 0.5.
-    expect(workdirSizeResources("tiny")).toEqual({ cpu: 0.5, memoryMb: 512, diskGb: 8 });
-    expect(workdirSizeResources("large")).toEqual({ cpu: 4, memoryMb: 8192, diskGb: 32 });
+    expect(workdirSizeResources("tiny")).toEqual({
+      cpu: 0.5,
+      memoryMb: 512,
+      diskGb: 8,
+    });
+    expect(workdirSizeResources("large")).toEqual({
+      cpu: 4,
+      memoryMb: 8192,
+      diskGb: 32,
+    });
   });
 });

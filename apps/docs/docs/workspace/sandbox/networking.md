@@ -10,16 +10,16 @@ Lambda-only `internet` boolean. If omitted, the config normalizes to `deny-all`.
     "network": {
       "mode": "restricted",
       "allowDomains": ["api.example.com"],
-      "allowCidrs": ["10.0.0.0/8"]
-    }
-  }
+      "allowCidrs": ["10.0.0.0/8"],
+    },
+  },
 }
 ```
 
-| Mode | Meaning |
-| --- | --- |
-| `allow-all` | outbound internet allowed |
-| `deny-all` | outbound internet denied |
+| Mode         | Meaning                                                             |
+| ------------ | ------------------------------------------------------------------- |
+| `allow-all`  | outbound internet allowed                                           |
+| `deny-all`   | outbound internet denied                                            |
 | `restricted` | allow only listed domains/CIDRs where the provider can enforce them |
 
 ## Provider enforcement
@@ -27,13 +27,13 @@ Lambda-only `internet` boolean. If omitted, the config normalizes to `deny-all`.
 Enforcement is best-effort and provider-specific. Where a provider cannot enforce a
 finer-grained rule, the harness logs a warning rather than silently pretending it applied.
 
-| Provider | `allow-all` | `deny-all` | `restricted` |
-| --- | --- | --- | --- |
-| `sandbox` | egress allowed | egress denied | domain + CIDR allowlist (workdir egress policy) |
-| `lambda` | default `INTERNET_EGRESS` | VPC egress connector (no internet) | VPC egress connector + SG (domain allowlists logged as unsupported); fails closed if no connector is provisioned |
-| `vercel` | native `networkPolicy: "allow-all"` | native `networkPolicy: "deny-all"` | native domain + CIDR allowlists |
-| `daytona` | `networkBlockAll: false` | `networkBlockAll: true` | CIDR allowlist only; domain allowlists are ignored with a warning |
-| `e2b` | allowed | rejected by validation | rejected by validation |
+| Provider  | `allow-all`                         | `deny-all`                         | `restricted`                                                                                                     |
+| --------- | ----------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `sandbox` | egress allowed                      | egress denied                      | domain + CIDR allowlist (workdir egress policy)                                                                  |
+| `lambda`  | default `INTERNET_EGRESS`           | VPC egress connector (no internet) | VPC egress connector + SG (domain allowlists logged as unsupported); fails closed if no connector is provisioned |
+| `vercel`  | native `networkPolicy: "allow-all"` | native `networkPolicy: "deny-all"` | native domain + CIDR allowlists                                                                                  |
+| `daytona` | `networkBlockAll: false`            | `networkBlockAll: true`            | CIDR allowlist only; domain allowlists are ignored with a warning                                                |
+| `e2b`     | allowed                             | rejected by validation             | rejected by validation                                                                                           |
 
 E2B cannot enforce egress restrictions, so its config validation requires
 `network.mode: "allow-all"` explicitly — `deny-all` and `restricted` are rejected rather

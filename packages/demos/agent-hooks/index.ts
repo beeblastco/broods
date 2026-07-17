@@ -16,7 +16,9 @@ for await (const chunk of client.stream(api.agents.hookedAgent, {
       process.stdout.write(`\x1b[32m${chunk.text}\x1b[0m`);
       break;
     case "finish":
-      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
       break;
   }
 }

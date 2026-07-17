@@ -31,7 +31,9 @@ async function rotateSlackConfigToken(
   };
   if (!data.ok || !data.token || !data.refresh_token) {
     const details = data.response_metadata?.messages?.join("; ");
-    throw new Error(`Slack token rotation failed: ${data.error ?? "missing tokens in response"}${details ? ` (${details})` : ""}`);
+    throw new Error(
+      `Slack token rotation failed: ${data.error ?? "missing tokens in response"}${details ? ` (${details})` : ""}`,
+    );
   }
   return { token: data.token, refreshToken: data.refresh_token };
 }
@@ -45,7 +47,10 @@ function cleanEnvToken(token: string): string {
  * them. Only touches the two lines; leaves everything else untouched and
  * preserves quoting/formatting on the lines it rewrites.
  */
-async function persistRotatedSlackTokens(newToken: string, newRefreshToken: string): Promise<void> {
+async function persistRotatedSlackTokens(
+  newToken: string,
+  newRefreshToken: string,
+): Promise<void> {
   const envPath = `${import.meta.dir}/.env.local`;
   const file = Bun.file(envPath);
   if (!(await file.exists())) {
@@ -54,7 +59,11 @@ async function persistRotatedSlackTokens(newToken: string, newRefreshToken: stri
   }
   const original = await file.text();
   let updated = upsertEnvValue(original, "SLACK_CONFIG_TOKEN", newToken);
-  updated = upsertEnvValue(updated, "SLACK_CONFIG_REFRESH_TOKEN", newRefreshToken);
+  updated = upsertEnvValue(
+    updated,
+    "SLACK_CONFIG_REFRESH_TOKEN",
+    newRefreshToken,
+  );
   if (updated === original) {
     console.warn(`Could not persist rotated tokens to ${envPath}`);
     return;
@@ -77,7 +86,10 @@ async function updateGitHubAppWebhook(options: {
   webhookUrl: string;
   apiUrl?: string;
 }): Promise<void> {
-  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(
+    /\/+$/,
+    "",
+  );
   const response = await fetch(`${baseApiUrl}/app/hook/config`, {
     method: "PATCH",
     headers: {
@@ -94,18 +106,22 @@ async function updateGitHubAppWebhook(options: {
     }),
   });
   if (!response.ok) {
-    throw new Error(`GitHub app webhook update failed: ${response.status} ${await response.text()}`);
+    throw new Error(
+      `GitHub app webhook update failed: ${response.status} ${await response.text()}`,
+    );
   }
 }
 
 function createGitHubAppJwt(appId: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = base64UrlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = base64UrlEncode(JSON.stringify({
-    iat: now - 60,
-    exp: now + 9 * 60,
-    iss: cleanEnvToken(appId),
-  }));
+  const payload = base64UrlEncode(
+    JSON.stringify({
+      iat: now - 60,
+      exp: now + 9 * 60,
+      iss: cleanEnvToken(appId),
+    }),
+  );
   const unsigned = `${header}.${payload}`;
   const signature = createSign("RSA-SHA256")
     .update(unsigned)
@@ -133,7 +149,8 @@ const slackRef = api.channels?.slack;
 
 if (slackRef) {
   const webhookUrl = `${baseUrl}${slackRef.webhookPath}`;
-  const configToken = process.env.SLACK_CONFIG_TOKEN ?? process.env.SLACK_APP_CONFIG_TOKEN;
+  const configToken =
+    process.env.SLACK_CONFIG_TOKEN ?? process.env.SLACK_APP_CONFIG_TOKEN;
   const configRefreshToken = process.env.SLACK_CONFIG_REFRESH_TOKEN;
   const appId = process.env.SLACK_APP_ID;
 
@@ -157,15 +174,23 @@ if (slackRef) {
       } catch (err) {
         const msg = (err as Error).message;
         console.error(`\nSlack token rotation failed: ${msg}\n`);
-        console.error("tooling.tokens.rotate requires the xoxe-* app configuration refresh token.");
-        console.error("\nGenerate a fresh configuration token pair at https://api.slack.com/apps -> your app ->");
+        console.error(
+          "tooling.tokens.rotate requires the xoxe-* app configuration refresh token.",
+        );
+        console.error(
+          "\nGenerate a fresh configuration token pair at https://api.slack.com/apps -> your app ->",
+        );
         console.error("  Features -> App Manifest -> Generate Token.");
-        console.error("Then put the returned access token in SLACK_CONFIG_TOKEN and refresh token in");
+        console.error(
+          "Then put the returned access token in SLACK_CONFIG_TOKEN and refresh token in",
+        );
         console.error("SLACK_CONFIG_REFRESH_TOKEN.\n");
         throw err;
       }
     } else if (configToken) {
-      console.warn("SLACK_CONFIG_REFRESH_TOKEN is not set — cannot rotate. Add it to .env.local to avoid token_expired errors.");
+      console.warn(
+        "SLACK_CONFIG_REFRESH_TOKEN is not set — cannot rotate. Add it to .env.local to avoid token_expired errors.",
+      );
     }
 
     const manifest: Record<string, unknown> = {
@@ -174,9 +199,24 @@ if (slackRef) {
       features: {
         bot_user: { display_name: "Tracy", always_online: true },
         slash_commands: [
-          { command: "/new", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
-          { command: "/clear", description: "Clear conversation context and start fresh", url: webhookUrl, should_escape: false },
-          { command: "/help", description: "Show available commands", url: webhookUrl, should_escape: false },
+          {
+            command: "/new",
+            description: "Clear conversation context and start fresh",
+            url: webhookUrl,
+            should_escape: false,
+          },
+          {
+            command: "/clear",
+            description: "Clear conversation context and start fresh",
+            url: webhookUrl,
+            should_escape: false,
+          },
+          {
+            command: "/help",
+            description: "Show available commands",
+            url: webhookUrl,
+            should_escape: false,
+          },
         ],
       },
       oauth_config: {
@@ -202,25 +242,45 @@ if (slackRef) {
       },
     };
 
-    const updateRes = await fetch("https://slack.com/api/apps.manifest.update", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${activeToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ app_id: appId, manifest: JSON.stringify(manifest) }),
-    });
-    const updateData = await updateRes.json() as { ok: boolean; error?: string };
+    const updateRes = await fetch(
+      "https://slack.com/api/apps.manifest.update",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${activeToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          app_id: appId,
+          manifest: JSON.stringify(manifest),
+        }),
+      },
+    );
+    const updateData = (await updateRes.json()) as {
+      ok: boolean;
+      error?: string;
+    };
     if (!updateData.ok) {
       throw new Error(`Slack manifest update failed: ${updateData.error}`);
     }
     console.log(`Registered Slack webhook: ${webhookUrl}`);
   } else {
     console.log(`\nBroods Slack webhook URL:\n\n  ${webhookUrl}\n`);
-    console.log("Configure this URL in your Slack app at https://api.slack.com/apps:");
+    console.log(
+      "Configure this URL in your Slack app at https://api.slack.com/apps:",
+    );
     console.log("  1. Event Subscriptions → enable → paste URL as Request URL");
     console.log(`  2. Subscribe to bot events: ${botEvents.join(", ")}`);
-    console.log("  3. Add Slash Commands (/new, /clear, /help) pointing to the same URL");
-    console.log("\nTo auto-register, add SLACK_CONFIG_TOKEN, SLACK_CONFIG_REFRESH_TOKEN, and SLACK_APP_ID to .env.local");
+    console.log(
+      "  3. Add Slash Commands (/new, /clear, /help) pointing to the same URL",
+    );
+    console.log(
+      "\nTo auto-register, add SLACK_CONFIG_TOKEN, SLACK_CONFIG_REFRESH_TOKEN, and SLACK_APP_ID to .env.local",
+    );
     if (process.env.SLACK_APP_TOKEN?.startsWith("xapp-")) {
-      console.log("Note: SLACK_APP_TOKEN is an xapp token; Slack does not accept it for apps.manifest.update.");
+      console.log(
+        "Note: SLACK_APP_TOKEN is an xapp token; Slack does not accept it for apps.manifest.update.",
+      );
     }
   }
 } else {
@@ -236,21 +296,28 @@ if (telegramRef) {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
   if (botToken && webhookSecret) {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, {
-      method: "POST",
-      body: new URLSearchParams({
-        url: telegramUrl,
-        secret_token: webhookSecret,
-        allowed_updates: JSON.stringify(["message", "edited_message"]),
-      }),
-    });
+    const response = await fetch(
+      `https://api.telegram.org/bot${botToken}/setWebhook`,
+      {
+        method: "POST",
+        body: new URLSearchParams({
+          url: telegramUrl,
+          secret_token: webhookSecret,
+          allowed_updates: JSON.stringify(["message", "edited_message"]),
+        }),
+      },
+    );
     if (!response.ok) {
-      throw new Error(`Telegram setWebhook failed: ${response.status} ${await response.text()}`);
+      throw new Error(
+        `Telegram setWebhook failed: ${response.status} ${await response.text()}`,
+      );
     }
     console.log(`Registered Telegram webhook: ${telegramUrl}`);
   } else {
     console.log(`\nBroods Telegram webhook URL:\n\n  ${telegramUrl}\n`);
-    console.log("To auto-register, add TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET to .env.local");
+    console.log(
+      "To auto-register, add TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET to .env.local",
+    );
   }
 } else {
   console.log("No Telegram channel defined — skipping Telegram registration.");
@@ -275,11 +342,17 @@ if (githubRef) {
       apiUrl,
     });
     console.log(`Registered GitHub App webhook: ${githubUrl}`);
-    console.log("GitHub App events must include: issues, issue_comment, pull_request, pull_request_review_comment");
+    console.log(
+      "GitHub App events must include: issues, issue_comment, pull_request, pull_request_review_comment",
+    );
   } else {
     console.log(`\nBroods GitHub webhook URL:\n\n  ${githubUrl}\n`);
-    console.log("To auto-register, add GITHUB_APP_ID, GITHUB_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to .env.local");
-    console.log("GitHub App events must include: issues, issue_comment, pull_request, pull_request_review_comment");
+    console.log(
+      "To auto-register, add GITHUB_APP_ID, GITHUB_PRIVATE_KEY, and GITHUB_WEBHOOK_SECRET to .env.local",
+    );
+    console.log(
+      "GitHub App events must include: issues, issue_comment, pull_request, pull_request_review_comment",
+    );
   }
 } else {
   console.log("No GitHub channel defined — skipping GitHub registration.");

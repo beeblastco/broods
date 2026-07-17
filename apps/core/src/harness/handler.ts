@@ -11,7 +11,13 @@ import { executeCommand } from "../shared/commands.ts";
 import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import { booleanEnv, optionalEnv, positiveIntegerEnv } from "../shared/env.ts";
-import { errorResponse, jsonResponse, parseJsonBody, type CoreRequest, type RequestContext } from "../shared/http.ts";
+import {
+  errorResponse,
+  jsonResponse,
+  parseJsonBody,
+  type CoreRequest,
+  type RequestContext,
+} from "../shared/http.ts";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
@@ -38,9 +44,16 @@ import {
   type AsyncToolDelivery,
   type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
-import { AsyncToolCoordinator, completionToParentMessage } from "./async-tools.ts";
+import {
+  AsyncToolCoordinator,
+  completionToParentMessage,
+} from "./async-tools.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
-import { applyMessageSendingHook, createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
+import {
+  applyMessageSendingHook,
+  createAgentHookDispatcher,
+  type HookDispatcher,
+} from "./hook-dispatcher.ts";
 import {
   routeIncomingEvent,
   sendChannelReply,
@@ -103,25 +116,37 @@ class ConversationBusyError extends Error {
 }
 
 const AGENT_PROCESSING_FAILED = "Agent processing failed";
-const CONVERSATION_BUSY = "Conversation is already processing another turn. Try again when the current turn finishes.";
-const CHANNEL_APPROVAL_DENIAL_REASON = "Tool approval is only supported through the direct API.";
+const CONVERSATION_BUSY =
+  "Conversation is already processing another turn. Try again when the current turn finishes.";
+const CHANNEL_APPROVAL_DENIAL_REASON =
+  "Tool approval is only supported through the direct API.";
 const ENABLE_DIRECT_API = booleanEnv("ENABLE_DIRECT_API", true);
 const ENABLE_WEBSOCKET = booleanEnv("ENABLE_WEBSOCKET", false);
 const LAMBDA_TIMEOUT_SAFETY_MS = 5 * 60 * 1000;
 const DEFAULT_PARENT_WAIT_MS = 8 * 60 * 1000;
 const DEFAULT_DASHBOARD_URL = "https://dashboard.broods.app";
 const MAX_INPROCESS_WORKERS = positiveIntegerEnv("MAX_INPROCESS_WORKERS", 8);
-const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv("WORKER_TIMEOUT_BUDGET_MS", 10 * 60 * 1000);
+const WORKER_TIMEOUT_BUDGET_MS = positiveIntegerEnv(
+  "WORKER_TIMEOUT_BUDGET_MS",
+  10 * 60 * 1000,
+);
 const WORKER_SLOT_GRACE_MS = 5_000;
 const MAX_PENDING_WORKER_PAYLOADS = 1000;
 const textEncoder = new TextEncoder();
 const inProcessWorkers = new Set<Promise<void>>();
-const pendingWorkerPayloads: [AsyncWorkerInvocation | NatsWorkerInvocation, InProcessWorkerRun][] = [];
+const pendingWorkerPayloads: [
+  AsyncWorkerInvocation | NatsWorkerInvocation,
+  InProcessWorkerRun,
+][] = [];
 
 let activeInProcessWorkers = 0;
 
 export async function handler(
-  event: CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
+  event:
+    | CoreRequest
+    | AsyncWorkerInvocation
+    | NatsWorkerInvocation
+    | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // Each HTTP request or in-process worker gets a request-private observability
@@ -131,7 +156,11 @@ export async function handler(
 }
 
 async function handleRequest(
-  event: CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
+  event:
+    | CoreRequest
+    | AsyncWorkerInvocation
+    | NatsWorkerInvocation
+    | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // First entry in this execution environment marks the end of the cold-start
@@ -157,28 +186,41 @@ async function handleRequest(
     return handleCronHttpRequest(event);
   }
 
-  return routeIncomingEvent(event, {
-    handleDirectRequest: (directEvent) => handleDirectRequest(directEvent, context),
-    handleAsyncRequest,
-    handleStatusRequest,
-    handleAsyncToolCompletionRequest,
-    handleSandboxJobCompletionRequest,
-    handleChannelRequest: (channelEvent) => handleChannelRequest(channelEvent, context),
-    handleChannelContext,
-  }, {
-    directApiEnabled: ENABLE_DIRECT_API,
-    ...(context?.waitUntil ? { waitUntil: context.waitUntil } : {}),
-  });
+  return routeIncomingEvent(
+    event,
+    {
+      handleDirectRequest: (directEvent) =>
+        handleDirectRequest(directEvent, context),
+      handleAsyncRequest,
+      handleStatusRequest,
+      handleAsyncToolCompletionRequest,
+      handleSandboxJobCompletionRequest,
+      handleChannelRequest: (channelEvent) =>
+        handleChannelRequest(channelEvent, context),
+      handleChannelContext,
+    },
+    {
+      directApiEnabled: ENABLE_DIRECT_API,
+      ...(context?.waitUntil ? { waitUntil: context.waitUntil } : {}),
+    },
+  );
 }
 
 async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
   if (request.method !== "POST") {
-    return errorResponse(405, "Method not allowed", { method: request.method, allowedMethods: ["POST"] });
+    return errorResponse(405, "Method not allowed", {
+      method: request.method,
+      allowedMethods: ["POST"],
+    });
   }
 
   const serviceSecret = optionalEnv("SERVICE_AUTH_SECRET");
   const token = extractBearerToken(request.headers.authorization);
-  if (!serviceSecret || !token || !timingSafeStringEqual(token, serviceSecret)) {
+  if (
+    !serviceSecret ||
+    !token ||
+    !timingSafeStringEqual(token, serviceSecret)
+  ) {
     return errorResponse(401, "Unauthorized");
   }
 
@@ -186,7 +228,10 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
   try {
     payload = parseJsonBody(request);
   } catch (err) {
-    return errorResponse(400, err instanceof Error ? err.message : "Invalid request JSON");
+    return errorResponse(
+      400,
+      err instanceof Error ? err.message : "Invalid request JSON",
+    );
   }
   if (!isCronInvocation(payload)) {
     return errorResponse(400, "Invalid cron invocation");
@@ -246,7 +291,9 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
  * Handle the account-auth async tool result completion request.
  * Requires account-scoped authentication and agent validation.
  */
-async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<Response> {
+async function handleAsyncToolCompletionRequest(
+  event: AsyncToolCompletionInboundEvent,
+): Promise<Response> {
   // Check for existing
   const existing = await getAsyncToolResult(event.resultId);
   if (!existing) {
@@ -255,7 +302,10 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
 
   // Check the event is for the same account and agent
   const agentId = agentIdFromScopedKey(existing.parentEventId, event.accountId);
-  if (!agentId || !isAccountScopedKey(existing.conversationKey, event.accountId, agentId)) {
+  if (
+    !agentId ||
+    !isAccountScopedKey(existing.conversationKey, event.accountId, agentId)
+  ) {
     return jsonResponse(404, { error: "Async tool result not found" });
   }
 
@@ -284,7 +334,10 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
     return jsonResponse(409, { error: "Async tool result settled got error" });
   }
 
-  return continuationResponse(settled, await continueAfterAsyncToolSettlement(settled));
+  return continuationResponse(
+    settled,
+    await continueAfterAsyncToolSettlement(settled),
+  );
 }
 
 /**
@@ -293,17 +346,22 @@ async function handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboun
  * sandbox never needs an account secret. Reuses the same settle → continuation
  * path as the account-auth async-tool completion endpoint.
  */
-async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInboundEvent): Promise<Response> {
+async function handleSandboxJobCompletionRequest(
+  event: SandboxJobCompletionInboundEvent,
+): Promise<Response> {
   const existing = await getAsyncToolResult(event.resultId);
   if (!existing) {
     return jsonResponse(404, { error: "Background job result not found" });
   }
   if (existing.status !== "processing") {
-    return jsonResponse(409, { error: "Background job result is already settled", status: existing.status });
+    return jsonResponse(409, {
+      error: "Background job result is already settled",
+      status: existing.status,
+    });
   }
 
   // Missing/mismatched token reads as not-found so the endpoint is not a token oracle.
-  if (!await verifyAsyncToolCompletionToken(event.resultId, event.token)) {
+  if (!(await verifyAsyncToolCompletionToken(event.resultId, event.token))) {
     return jsonResponse(404, { error: "Background job result not found" });
   }
 
@@ -314,10 +372,15 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
     ...(event.error ? { error: event.error } : {}),
   });
   if (!settled) {
-    return jsonResponse(409, { error: "Background job result is already settled" });
+    return jsonResponse(409, {
+      error: "Background job result is already settled",
+    });
   }
 
-  return continuationResponse(settled, await continueAfterAsyncToolSettlement(settled));
+  return continuationResponse(
+    settled,
+    await continueAfterAsyncToolSettlement(settled),
+  );
 }
 
 /**
@@ -325,20 +388,35 @@ async function handleSandboxJobCompletionRequest(event: SandboxJobCompletionInbo
  * dispatch group is in. Derives the account/agent from the (scoped) parentEventId
  * so it serves both the account-authed and token-authed completion paths.
  */
-async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord): Promise<ContinuationOutcome> {
+async function continueAfterAsyncToolSettlement(
+  settled: AsyncToolResultRecord,
+): Promise<ContinuationOutcome> {
   const toolResults = await listCurrentParentToolResults(settled);
   const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
-  const missingCount = Math.max((dispatchGroup?.resultIds.length ?? 0) - toolResults.length, 0);
-  const pendingCount = toolResults.filter((result) => result.status === "processing").length + missingCount;
+  const missingCount = Math.max(
+    (dispatchGroup?.resultIds.length ?? 0) - toolResults.length,
+    0,
+  );
+  const pendingCount =
+    toolResults.filter((result) => result.status === "processing").length +
+    missingCount;
   if (!dispatchGroup?.sealed || pendingCount > 0) {
-    return { kind: "pending", pendingCount: dispatchGroup?.sealed ? pendingCount : Math.max(pendingCount, 1) };
+    return {
+      kind: "pending",
+      pendingCount: dispatchGroup?.sealed
+        ? pendingCount
+        : Math.max(pendingCount, 1),
+    };
   }
 
   const scope = parseAccountAgentFromScopedKey(settled.parentEventId);
   if (!scope) {
     return { kind: "skip" };
   }
-  const agent = await getStorage().agents.getById(scope.accountId, scope.agentId);
+  const agent = await getStorage().agents.getById(
+    scope.accountId,
+    scope.agentId,
+  );
   if (!agent || agent.status !== "active") {
     return { kind: "skip" };
   }
@@ -355,13 +433,24 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
     agentId: scope.agentId,
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: asyncToolContinuationEventId(settled.parentEventId),
-    ...(settled.delivery?.kind === "async" ? { asyncResultEventId: settled.parentEventId } : {}),
+    ...(settled.delivery?.kind === "async"
+      ? { asyncResultEventId: settled.parentEventId }
+      : {}),
     ...(settled.delivery?.kind === "channel"
-      ? { replyTarget: { channelName: settled.delivery.channelName, source: settled.delivery.source } }
+      ? {
+          replyTarget: {
+            channelName: settled.delivery.channelName,
+            source: settled.delivery.source,
+          },
+        }
       : {}),
     publicEventId: `async-tools-${settled.resultId}`,
     conversationKey: settled.conversationKey,
-    publicConversationKey: eventPublicConversationKey(settled.conversationKey, scope.accountId, scope.agentId),
+    publicConversationKey: eventPublicConversationKey(
+      settled.conversationKey,
+      scope.accountId,
+      scope.agentId,
+    ),
     events,
   } satisfies DirectInboundEvent;
 
@@ -372,10 +461,17 @@ async function continueAfterAsyncToolSettlement(settled: AsyncToolResultRecord):
   if (created) {
     await invokeAsyncToolContinuationWorker(continuationEvent, settled);
   }
-  return { kind: "ready", invoked: created, publicEventId: continuationEvent.publicEventId };
+  return {
+    kind: "ready",
+    invoked: created,
+    publicEventId: continuationEvent.publicEventId,
+  };
 }
 
-function continuationResponse(settled: AsyncToolResultRecord, outcome: ContinuationOutcome): Response {
+function continuationResponse(
+  settled: AsyncToolResultRecord,
+  outcome: ContinuationOutcome,
+): Response {
   if (outcome.kind === "pending") {
     return jsonResponse(202, {
       status: "waiting_for_async_tools",
@@ -384,7 +480,11 @@ function continuationResponse(settled: AsyncToolResultRecord, outcome: Continuat
     });
   }
   if (outcome.kind === "skip") {
-    return jsonResponse(202, { status: "accepted", resultId: settled.resultId, invoked: false });
+    return jsonResponse(202, {
+      status: "accepted",
+      resultId: settled.resultId,
+      invoked: false,
+    });
   }
   return jsonResponse(202, {
     status: "accepted",
@@ -397,7 +497,10 @@ function continuationResponse(settled: AsyncToolResultRecord, outcome: Continuat
 /**
  * Handle a direct SSE request.
  */
-async function handleDirectRequest(event: DirectInboundEvent, context?: RequestContext): Promise<Response> {
+async function handleDirectRequest(
+  event: DirectInboundEvent,
+  context?: RequestContext,
+): Promise<Response> {
   if (event.connectionId) {
     await invokeNatsWorker(event);
 
@@ -424,7 +527,7 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: RequestC
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await session.releaseConversationLease().catch(() => { });
+      await session.releaseConversationLease().catch(() => {});
       return emptySseResponse();
     }
 
@@ -449,7 +552,9 @@ async function handleDirectRequest(event: DirectInboundEvent, context?: RequestC
  * Handle a direct async request.
  * Return a 202 Accepted response and trigger an in-process async worker.
  */
-async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Response> {
+async function handleAsyncRequest(
+  event: AsyncDirectInboundEvent,
+): Promise<Response> {
   if (!hasRunnableDirectEvents(event)) {
     await createPendingAsyncAgentResult({
       eventId: event.eventId,
@@ -457,7 +562,8 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Respo
     });
     await markAsyncAgentResultFailed({
       eventId: event.eventId,
-      error: "Request must include at least one user event or tool approval response",
+      error:
+        "Request must include at least one user event or tool approval response",
     });
     return acceptedAsyncResponse(event.statusUrl);
   }
@@ -471,7 +577,8 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Respo
     try {
       await invokeAsyncWorker(event);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start async worker";
+      const message =
+        err instanceof Error ? err.message : "Failed to start async worker";
       logError("Failed to invoke async worker", {
         eventId: event.eventId,
         error: message,
@@ -487,7 +594,10 @@ async function handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<Respo
  * Handle an in-process async worker request.
  * Publish the final result into storage.
  */
-async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: RequestContext): Promise<void> {
+async function handleAsyncWorkerRequest(
+  event: DirectInboundEvent,
+  context?: RequestContext,
+): Promise<void> {
   try {
     await createPendingAsyncAgentResult({
       eventId: event.asyncResultEventId ?? event.eventId,
@@ -501,56 +611,94 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await settleAsyncFailure(event, "Request did not produce pending model input");
-      await session.releaseConversationLease().catch(() => { });
+      await settleAsyncFailure(
+        event,
+        "Request did not produce pending model input",
+      );
+      await session.releaseConversationLease().catch(() => {});
       return;
     }
 
     let didSettle = false;
     let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
     try {
-      result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig, context, {
-        onFinalText: async (response, traceId) => {
-          didSettle = true;
-          await Promise.all(asyncResultEventIds(event).map((eventId) =>
-            markAsyncAgentResultCompleted({
-              eventId: eventId,
-              response: response,
-            })
-          ));
-          if (event.cronRun) {
-            await getStorage().crons.completeRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, response);
-          }
-          await pushReplyToChannel(event, formatChannelFinalText(
-            typeof response === "string" ? response : JSON.stringify(response, null, 2),
-            traceId,
-            event,
-          ));
+      result = await runAgentLoopUntilSubagentsIdle(
+        session,
+        turnContext,
+        event.agentConfig,
+        context,
+        {
+          onFinalText: async (response, traceId) => {
+            didSettle = true;
+            await Promise.all(
+              asyncResultEventIds(event).map((eventId) =>
+                markAsyncAgentResultCompleted({
+                  eventId: eventId,
+                  response: response,
+                }),
+              ),
+            );
+            if (event.cronRun) {
+              await getStorage().crons.completeRun(
+                event.accountId,
+                event.cronRun.cronId,
+                event.cronRun.runId,
+                response,
+              );
+            }
+            await pushReplyToChannel(
+              event,
+              formatChannelFinalText(
+                typeof response === "string"
+                  ? response
+                  : JSON.stringify(response, null, 2),
+                traceId,
+                event,
+              ),
+            );
+          },
+          onErrorText: async (error, traceId) => {
+            didSettle = true;
+            await settleAsyncFailure(event, error);
+            if (event.cronRun) {
+              await getStorage().crons.failRun(
+                event.accountId,
+                event.cronRun.cronId,
+                event.cronRun.runId,
+                error,
+              );
+            }
+            await pushReplyToChannel(
+              event,
+              formatChannelFinalText(
+                formatChannelErrorText(error),
+                traceId,
+                event,
+              ),
+            );
+          },
+          onApprovalRequired: async (approvals) => {
+            await Promise.all(
+              asyncResultEventIds(event).map((eventId) =>
+                markAsyncAgentResultAwaitingApproval({
+                  eventId,
+                  approvals,
+                }),
+              ),
+            );
+            didSettle = true;
+          },
         },
-        onErrorText: async (error, traceId) => {
-          didSettle = true;
-          await settleAsyncFailure(event, error);
-          if (event.cronRun) {
-            await getStorage().crons.failRun(event.accountId, event.cronRun.cronId, event.cronRun.runId, error);
-          }
-          await pushReplyToChannel(event, formatChannelFinalText(formatChannelErrorText(error), traceId, event));
-        },
-        onApprovalRequired: async (approvals) => {
-          await Promise.all(asyncResultEventIds(event).map((eventId) =>
-            markAsyncAgentResultAwaitingApproval({
-              eventId,
-              approvals,
-            })
-          ));
-          didSettle = true;
-        },
-      });
+      );
     } finally {
-      await session.releaseConversationLease().catch(() => { });
+      await session.releaseConversationLease().catch(() => {});
     }
 
     if (result.didFail && !didSettle) {
-      await settleAsyncFailure(event, result.failureText ?? AGENT_PROCESSING_FAILED);
+      await settleAsyncFailure(
+        event,
+        result.failureText ?? AGENT_PROCESSING_FAILED,
+      );
       if (event.cronRun) {
         await getStorage().crons.failRun(
           event.accountId,
@@ -577,7 +725,10 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
     });
-    await settleAsyncFailure(event, err instanceof Error ? err.message : "Async request failed");
+    await settleAsyncFailure(
+      event,
+      err instanceof Error ? err.message : "Async request failed",
+    );
     if (event.cronRun) {
       await getStorage().crons.failRun(
         event.accountId,
@@ -594,7 +745,10 @@ async function handleAsyncWorkerRequest(event: DirectInboundEvent, context?: Req
  * Handle an in-process NATS worker request.
  * Publish the streaming event to NATS subject.
  */
-async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: RequestContext): Promise<void> {
+async function handleNatsWorkerRequest(
+  event: DirectInboundEvent,
+  context?: RequestContext,
+): Promise<void> {
   if (!hasRunnableDirectEvents(event)) {
     return;
   }
@@ -631,19 +785,27 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await session.releaseConversationLease().catch(() => { });
+      await session.releaseConversationLease().catch(() => {});
       return;
     }
 
     try {
-      const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
+      const subagentCoordinator = new SubagentCoordinator(
+        session,
+        event.agentConfig,
+        waitUntilMs(context),
+      );
       // Define the async tool mode application map.
-      const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), {
-        kind: "nats",
-        connectionId,
-        publicEventId: event.publicEventId,
-        publicConversationKey: event.publicConversationKey,
-      });
+      const asyncToolCoordinator = new AsyncToolCoordinator(
+        session,
+        waitUntilMs(context),
+        {
+          kind: "nats",
+          connectionId,
+          publicEventId: event.publicEventId,
+          publicConversationKey: event.publicConversationKey,
+        },
+      );
 
       await runParentContinuationLoop({
         session: session,
@@ -653,20 +815,24 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, publisher),
         onLoopErrorText: async (error) => {
-          publisher.publish({ type: "error", error }).catch(() => { });
+          publisher.publish({ type: "error", error }).catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
           // extract this data and do sth with it.
           // This is intentional (the user will receive the tool-approval-request event separately)
-          publisher.publish({ type: "tool-approval-request", approvals }).catch(() => { });
+          publisher
+            .publish({ type: "tool-approval-request", approvals })
+            .catch(() => {});
         },
         onHeartbeat: (pendingCount) => {
-          publisher.publish({
-            type: "waiting",
-            reason: "in-process-async-work",
-            pendingCount,
-          }).catch(() => { });
+          publisher
+            .publish({
+              type: "waiting",
+              reason: "in-process-async-work",
+              pendingCount,
+            })
+            .catch(() => {});
         },
       });
 
@@ -685,7 +851,7 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
         await publisher.purge();
       }
     } finally {
-      await session.releaseConversationLease().catch(() => { });
+      await session.releaseConversationLease().catch(() => {});
       await publisher.close();
     }
   } catch (err) {
@@ -694,13 +860,15 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
         eventId: event.eventId,
         conversationKey: event.conversationKey,
       });
-      await publisher.publish({ type: "error", error: CONVERSATION_BUSY }).catch(() => { });
-      await publisher.publish({ type: "done" }).catch(() => { });
-      await publisher.close().catch(() => { });
+      await publisher
+        .publish({ type: "error", error: CONVERSATION_BUSY })
+        .catch(() => {});
+      await publisher.publish({ type: "done" }).catch(() => {});
+      await publisher.close().catch(() => {});
       return;
     }
 
-    await publisher.close().catch(() => { });
+    await publisher.close().catch(() => {});
     logError("NATS worker processing failed", {
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
@@ -713,7 +881,10 @@ async function handleNatsWorkerRequest(event: DirectInboundEvent, context?: Requ
  * Handle an integration channel webhook request.
  * Publish the final result back to the channel integration sendText() function.
  */
-async function handleChannelRequest(event: ChannelInboundEvent, context?: RequestContext): Promise<void> {
+async function handleChannelRequest(
+  event: ChannelInboundEvent,
+  context?: RequestContext,
+): Promise<void> {
   const session = new Session(
     event.eventId,
     event.conversationKey,
@@ -761,7 +932,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
         channel: event.channel,
       });
     } catch (err) {
-      await session.release().catch(() => { });
+      await session.release().catch(() => {});
       throw err;
     }
     return;
@@ -801,7 +972,10 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
     let ephemeralSystem: SystemModelMessage[] = [];
     // One dispatcher for the whole channel request — every drained turn, its
     // subagent finishes, and the outbound sending hook share it (and ctx.state).
-    const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig ?? {});
+    const hooks = await createAgentHookDispatcher(
+      event.accountId,
+      event.agentConfig ?? {},
+    );
     while (true) {
       if (incoming.length > 0) {
         try {
@@ -820,7 +994,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
             conversationKey: session.conversationKey,
             error: err instanceof Error ? err.message : String(err),
           });
-          await session.release().catch(() => { });
+          await session.release().catch(() => {});
           throw err;
         }
         incoming = [];
@@ -844,102 +1018,124 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
       }
 
       let streamed = false;
-      const streamWarn = (error: unknown) => logWarn("Channel SDK stream failed; falling back to final sendText", {
-        channel: event.channelName,
-        eventId: session.eventId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const streamWarn = (error: unknown) =>
+        logWarn("Channel SDK stream failed; falling back to final sendText", {
+          channel: event.channelName,
+          eventId: session.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        });
 
-      const result = await runAgentLoopUntilSubagentsIdle(session, turnContext, event.agentConfig ?? {}, context, {
-        ...(event.channel.stream
-          ? {
-            streamMessage: async (stream) => {
-              try {
-                const result = await event.channel.stream!(readAgentFullStream(stream));
-                streamed = Boolean(result);
-                if (!streamed) {
-                  await stream.consumeStream();
-                }
-              } catch (error) {
-                streamWarn(error);
-                if (!streamed) {
+      const result = await runAgentLoopUntilSubagentsIdle(
+        session,
+        turnContext,
+        event.agentConfig ?? {},
+        context,
+        {
+          ...(event.channel.stream
+            ? {
+                streamMessage: async (stream) => {
                   try {
-                    await stream.consumeStream();
-                  } catch {
-                    // The final error path below will send the channel error reply.
+                    const result = await event.channel.stream!(
+                      readAgentFullStream(stream),
+                    );
+                    streamed = Boolean(result);
+                    if (!streamed) {
+                      await stream.consumeStream();
+                    }
+                  } catch (error) {
+                    streamWarn(error);
+                    if (!streamed) {
+                      try {
+                        await stream.consumeStream();
+                      } catch {
+                        // The final error path below will send the channel error reply.
+                      }
+                    }
                   }
-                }
+                },
               }
-            },
-          }
-          : {}),
-        onFinalText: async (response, traceId) => {
-          if (streamed && typeof response === "string") {
-            return;
-          }
-          const formatted = formatChannelFinalText(
-            typeof response === "string" ? response : JSON.stringify(response, null, 2),
-            traceId,
-            event,
-          );
-          // An onMessageSending hook may drop or rewrite the outbound channel reply.
-          const text = await applyMessageSendingHook(hooks, event.channelName, formatted);
-          if (text === null) {
-            logInfo("Channel reply dropped by onMessageSending hook", {
+            : {}),
+          onFinalText: async (response, traceId) => {
+            if (streamed && typeof response === "string") {
+              return;
+            }
+            const formatted = formatChannelFinalText(
+              typeof response === "string"
+                ? response
+                : JSON.stringify(response, null, 2),
+              traceId,
+              event,
+            );
+            // An onMessageSending hook may drop or rewrite the outbound channel reply.
+            const text = await applyMessageSendingHook(
+              hooks,
+              event.channelName,
+              formatted,
+            );
+            if (text === null) {
+              logInfo("Channel reply dropped by onMessageSending hook", {
+                channel: event.channelName,
+                eventId: session.eventId,
+                conversationKey: session.conversationKey,
+              });
+              return;
+            }
+            logInfo("Channel reply sending", {
               channel: event.channelName,
+              accountId: event.accountId,
+              agentId: event.agentId,
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+              textLength: text.length,
+            });
+            await event.channel.sendText(text);
+            logInfo("Channel reply sent", {
+              channel: event.channelName,
+              accountId: event.accountId,
+              agentId: event.agentId,
               eventId: session.eventId,
               conversationKey: session.conversationKey,
             });
-            return;
-          }
-          logInfo("Channel reply sending", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-            textLength: text.length,
-          });
-          await event.channel.sendText(text);
-          logInfo("Channel reply sent", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-          });
+          },
+          onErrorText: async (error, traceId) => {
+            const text = formatChannelFinalText(
+              formatChannelErrorText(error),
+              traceId,
+              event,
+            );
+            logInfo("Channel error reply sending", {
+              channel: event.channelName,
+              accountId: event.accountId,
+              agentId: event.agentId,
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+              textLength: text.length,
+            });
+            await event.channel.sendText(text);
+            logInfo("Channel error reply sent", {
+              channel: event.channelName,
+              accountId: event.accountId,
+              agentId: event.agentId,
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+            });
+          },
+          onApprovalRequired: async (approvals) => {
+            logInfo("Channel tool approval denied", {
+              channel: event.channelName,
+              accountId: event.accountId,
+              agentId: event.agentId,
+              eventId: session.eventId,
+              conversationKey: session.conversationKey,
+              approvalCount: approvals.length,
+            });
+            await session.persistModelMessages([
+              createChannelApprovalDenial(approvals),
+            ]);
+          },
         },
-        onErrorText: async (error, traceId) => {
-          const text = formatChannelFinalText(formatChannelErrorText(error), traceId, event);
-          logInfo("Channel error reply sending", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-            textLength: text.length,
-          });
-          await event.channel.sendText(text);
-          logInfo("Channel error reply sent", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-          });
-        },
-        onApprovalRequired: async (approvals) => {
-          logInfo("Channel tool approval denied", {
-            channel: event.channelName,
-            accountId: event.accountId,
-            agentId: event.agentId,
-            eventId: session.eventId,
-            conversationKey: session.conversationKey,
-            approvalCount: approvals.length,
-          });
-          await session.persistModelMessages([createChannelApprovalDenial(approvals)]);
-        },
-      }, hooks);
+        hooks,
+      );
 
       if (result.didFail) {
         logError("Channel agent loop failed", {
@@ -963,7 +1159,7 @@ async function handleChannelRequest(event: ChannelInboundEvent, context?: Reques
       eventId: session.eventId,
       conversationKey: session.conversationKey,
     });
-    await session.releaseConversationLease().catch(() => { });
+    await session.releaseConversationLease().catch(() => {});
   }
 }
 
@@ -1012,7 +1208,9 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 /**
  * Handle a status request.
  */
-async function handleStatusRequest(event: StatusInboundEvent): Promise<Response> {
+async function handleStatusRequest(
+  event: StatusInboundEvent,
+): Promise<Response> {
   const result = await getAsyncAgentResult(event.eventId);
   if (!result) {
     return jsonResponse(404, {
@@ -1023,7 +1221,11 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<Response>
 
   return jsonResponse(200, {
     eventId: event.publicEventId,
-    conversationKey: eventPublicConversationKey(result.conversationKey, event.accountId, event.agentId),
+    conversationKey: eventPublicConversationKey(
+      result.conversationKey,
+      event.accountId,
+      event.agentId,
+    ),
     status: result.status,
     ...(result.response !== undefined ? { response: result.response } : {}),
     ...(result.error ? { error: result.error } : {}),
@@ -1031,19 +1233,31 @@ async function handleStatusRequest(event: StatusInboundEvent): Promise<Response>
   });
 }
 
-async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn | null> {
+async function prepareDirectTurn(
+  event: DirectInboundEvent,
+): Promise<DirectTurn | null> {
   // A WebSocket-origin turn carries a connectionId; a background job it launches
   // republishes to the durable conversation stream so a reconnecting client
   // replays it. Plain direct/async API turns have no delivery target (poll only).
   const delivery: AsyncToolDelivery | undefined = event.connectionId
     ? {
-      kind: "nats",
-      connectionId: event.connectionId,
-      publicEventId: event.publicEventId,
-      publicConversationKey: event.publicConversationKey,
-    }
+        kind: "nats",
+        connectionId: event.connectionId,
+        publicEventId: event.publicEventId,
+        publicConversationKey: event.publicConversationKey,
+      }
     : undefined;
-  const session = new Session(event.eventId, event.conversationKey, event.accountId, event.agentId, event.agentConfig, delivery, event.endpointId, event.projectSlug, event.environmentSlug);
+  const session = new Session(
+    event.eventId,
+    event.conversationKey,
+    event.accountId,
+    event.agentId,
+    event.agentConfig,
+    delivery,
+    event.endpointId,
+    event.projectSlug,
+    event.environmentSlug,
+  );
   if (!(await claimSession(session))) {
     return null;
   }
@@ -1067,9 +1281,9 @@ async function prepareDirectTurn(event: DirectInboundEvent): Promise<DirectTurn 
     return { session, turnContext };
   } catch (err) {
     if (leaseAcquired) {
-      await session.releaseConversationLease().catch(() => { });
+      await session.releaseConversationLease().catch(() => {});
     }
-    await session.release().catch(() => { });
+    await session.release().catch(() => {});
     throw err;
   }
 }
@@ -1083,19 +1297,27 @@ async function claimSession(session: Session): Promise<boolean> {
   return true;
 }
 
-async function settleAsyncFailure(event: DirectInboundEvent, error: string): Promise<void> {
-  await Promise.all(asyncResultEventIds(event).map((eventId) =>
-    markAsyncAgentResultFailed({
-      eventId,
-      error,
-    })
-  ));
+async function settleAsyncFailure(
+  event: DirectInboundEvent,
+  error: string,
+): Promise<void> {
+  await Promise.all(
+    asyncResultEventIds(event).map((eventId) =>
+      markAsyncAgentResultFailed({
+        eventId,
+        error,
+      }),
+    ),
+  );
 }
 
 function formatChannelFinalText(
   text: string,
   traceId: string | undefined,
-  event: Pick<DirectInboundEvent | ChannelInboundEvent, "projectSlug" | "environmentSlug">,
+  event: Pick<
+    DirectInboundEvent | ChannelInboundEvent,
+    "projectSlug" | "environmentSlug"
+  >,
 ): string {
   const link = dashboardTraceUrl(traceId, event);
   if (!link) {
@@ -1107,13 +1329,19 @@ function formatChannelFinalText(
 
 function dashboardTraceUrl(
   traceId: string | undefined,
-  event: Pick<DirectInboundEvent | ChannelInboundEvent, "projectSlug" | "environmentSlug">,
+  event: Pick<
+    DirectInboundEvent | ChannelInboundEvent,
+    "projectSlug" | "environmentSlug"
+  >,
 ): string | null {
   if (!traceId || !event.projectSlug || !event.environmentSlug) {
     return null;
   }
-  const dashboardUrl = (process.env.BROODS_DASHBOARD_URL ?? process.env.DASHBOARD_URL ?? DEFAULT_DASHBOARD_URL)
-    .replace(/\/+$/, "");
+  const dashboardUrl = (
+    process.env.BROODS_DASHBOARD_URL ??
+    process.env.DASHBOARD_URL ??
+    DEFAULT_DASHBOARD_URL
+  ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,
     env: event.environmentSlug,
@@ -1129,7 +1357,10 @@ function dashboardTraceUrl(
  * background job launched from Telegram/Slack/etc.). Best-effort: the row is
  * already settled, so a delivery failure is logged, not thrown.
  */
-async function pushReplyToChannel(event: DirectInboundEvent, text: string): Promise<void> {
+async function pushReplyToChannel(
+  event: DirectInboundEvent,
+  text: string,
+): Promise<void> {
   if (!event.replyTarget) {
     return;
   }
@@ -1197,7 +1428,9 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
  * Dispatch a worker payload as fire-and-forget in-process background work — the
  * async fan-out runs in this process, not via a Lambda self-invoke.
  */
-async function invokeHarnessWorker(payload: AsyncWorkerInvocation | NatsWorkerInvocation): Promise<void> {
+async function invokeHarnessWorker(
+  payload: AsyncWorkerInvocation | NatsWorkerInvocation,
+): Promise<void> {
   dispatchInProcessWorker(payload);
 }
 
@@ -1221,7 +1454,7 @@ export function dispatchInProcessWorker(
     deadlineMs: Date.now() + WORKER_TIMEOUT_BUDGET_MS,
     // Workers run detached; they never emit an HTTP response, so there is no
     // post-response tail to defer.
-    waitUntil: () => { },
+    waitUntil: () => {},
   }).then(
     () => undefined,
     (err) => {
@@ -1278,8 +1511,14 @@ async function continueDetachedAsyncToolsIfReady(
     return false;
   }
 
-  const toolResults = (await Promise.all(dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId))))
-    .filter((result): result is AsyncToolResultRecord => result?.parentEventId === event.eventId);
+  const toolResults = (
+    await Promise.all(
+      dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId)),
+    )
+  ).filter(
+    (result): result is AsyncToolResultRecord =>
+      result?.parentEventId === event.eventId,
+  );
   if (
     toolResults.length !== dispatchGroup.resultIds.length ||
     toolResults.some((result) => result.status === "processing")
@@ -1298,7 +1537,9 @@ async function continueDetachedAsyncToolsIfReady(
     ...event,
     agentConfig,
     eventId: asyncToolContinuationEventId(event.eventId),
-    ...(event.connectionId ? {} : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
+    ...(event.connectionId
+      ? {}
+      : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
     events,
   } satisfies DirectInboundEvent;
 
@@ -1322,7 +1563,9 @@ function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
 
-async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: string; conversationKey: string }> {
+async function startScheduledAgentRun(
+  job: CronRecord,
+): Promise<{ eventId: string; conversationKey: string }> {
   const event = await createCronDirectEvent(job);
   const run = await getStorage().crons.createRun({
     accountId: job.accountId,
@@ -1349,12 +1592,17 @@ async function startScheduledAgentRun(job: CronRecord): Promise<{ eventId: strin
   };
 }
 
-async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEvent> {
+async function createCronDirectEvent(
+  job: CronRecord,
+): Promise<DirectInboundEvent> {
   const agent = await getStorage().agents.getById(job.accountId, job.agentId);
   if (!agent || agent.status !== "active") {
     throw new Error(`Agent not found: ${job.agentId}`);
   }
-  const deployment = await getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId);
+  const deployment = await getStorage().agentDeployments.getByAgentId?.(
+    job.accountId,
+    job.agentId,
+  );
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
@@ -1364,54 +1612,84 @@ async function createCronDirectEvent(job: CronRecord): Promise<DirectInboundEven
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
     publicEventId,
-    conversationKey: scopedDirectConversationKey(job.accountId, job.agentId, publicConversationKey),
+    conversationKey: scopedDirectConversationKey(
+      job.accountId,
+      job.agentId,
+      publicConversationKey,
+    ),
     publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
     ...(deployment
       ? {
-        endpointId: deployment.endpointId,
-        projectSlug: deployment.projectSlug,
-        environmentSlug: deployment.environmentSlug,
-      }
+          endpointId: deployment.endpointId,
+          projectSlug: deployment.projectSlug,
+          environmentSlug: deployment.environmentSlug,
+        }
       : {}),
   } satisfies DirectInboundEvent;
 }
 
-async function listCurrentParentToolResults(settled: AsyncToolResultRecord): Promise<AsyncToolResultRecord[]> {
+async function listCurrentParentToolResults(
+  settled: AsyncToolResultRecord,
+): Promise<AsyncToolResultRecord[]> {
   const dispatchGroup = await getDetachedAsyncToolGroup(settled.parentEventId);
   const queried = dispatchGroup?.sealed
-    ? (await Promise.all(dispatchGroup.resultIds.map((resultId) => getAsyncToolResult(resultId))))
-      .filter((result): result is AsyncToolResultRecord => result?.parentEventId === settled.parentEventId)
+    ? (
+        await Promise.all(
+          dispatchGroup.resultIds.map((resultId) =>
+            getAsyncToolResult(resultId),
+          ),
+        )
+      ).filter(
+        (result): result is AsyncToolResultRecord =>
+          result?.parentEventId === settled.parentEventId,
+      )
     : await listAsyncToolResultsByParentEvent(settled.parentEventId);
-  const byResultId = new Map(queried.map((result) => [result.resultId, result]));
+  const byResultId = new Map(
+    queried.map((result) => [result.resultId, result]),
+  );
   byResultId.set(settled.resultId, settled);
 
-  const refreshed = await Promise.all([...byResultId.values()].map(async (result) => {
-    if (result.status !== "processing") {
-      return result;
-    }
+  const refreshed = await Promise.all(
+    [...byResultId.values()].map(async (result) => {
+      if (result.status !== "processing") {
+        return result;
+      }
 
-    const latest = await getAsyncToolResult(result.resultId);
-    return latest?.parentEventId === settled.parentEventId ? latest : result;
-  }));
+      const latest = await getAsyncToolResult(result.resultId);
+      return latest?.parentEventId === settled.parentEventId ? latest : result;
+    }),
+  );
 
   return refreshed;
 }
 
-function settledToolResultsToParentMessages(results: AsyncToolResultRecord[]): DirectInboundEvent["events"] {
-  return results
-    // Skip results the model already pulled via async_status — re-injecting them
-    // would make the model answer the same completion twice.
-    .filter((result) => (result.status === "completed" || result.status === "failed") && result.observed !== true)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-    .map((result) => completionToParentMessage({
-      resultId: result.resultId,
-      toolName: result.toolName,
-      input: result.input,
-      status: result.status === "completed" ? "completed" : "failed",
-      ...(result.response !== undefined ? { response: result.response } : {}),
-      ...(result.error ? { error: result.error } : {}),
-    }));
+function settledToolResultsToParentMessages(
+  results: AsyncToolResultRecord[],
+): DirectInboundEvent["events"] {
+  return (
+    results
+      // Skip results the model already pulled via async_status — re-injecting them
+      // would make the model answer the same completion twice.
+      .filter(
+        (result) =>
+          (result.status === "completed" || result.status === "failed") &&
+          result.observed !== true,
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((result) =>
+        completionToParentMessage({
+          resultId: result.resultId,
+          toolName: result.toolName,
+          input: result.input,
+          status: result.status === "completed" ? "completed" : "failed",
+          ...(result.response !== undefined
+            ? { response: result.response }
+            : {}),
+          ...(result.error ? { error: result.error } : {}),
+        }),
+      )
+  );
 }
 
 function createDirectContinuationSseBody(
@@ -1426,8 +1704,15 @@ function createDirectContinuationSseBody(
     // to keep the continuation's redaction/routing tenant-private.
     start(controller) {
       return runWithObservabilityScope(async () => {
-        const subagentCoordinator = new SubagentCoordinator(session, event.agentConfig, waitUntilMs(context));
-        const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context));
+        const subagentCoordinator = new SubagentCoordinator(
+          session,
+          event.agentConfig,
+          waitUntilMs(context),
+        );
+        const asyncToolCoordinator = new AsyncToolCoordinator(
+          session,
+          waitUntilMs(context),
+        );
 
         try {
           await runParentContinuationLoop({
@@ -1437,7 +1722,12 @@ function createDirectContinuationSseBody(
             initialTurnContext: initialTurnContext,
             agentConfig: event.agentConfig,
             consumeStream: (stream) => pipeAgentSseStream(stream, controller),
-            onHeartbeat: (pendingCount) => controller.enqueue(textEncoder.encode(`: waiting for async work pending=${pendingCount}\n\n`))
+            onHeartbeat: (pendingCount) =>
+              controller.enqueue(
+                textEncoder.encode(
+                  `: waiting for async work pending=${pendingCount}\n\n`,
+                ),
+              ),
           });
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
@@ -1445,9 +1735,13 @@ function createDirectContinuationSseBody(
             eventId: event.eventId,
             error,
           });
-          controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
+          controller.enqueue(
+            textEncoder.encode(
+              `data: ${JSON.stringify({ type: "error", error })}\n\n`,
+            ),
+          );
         } finally {
-          await session.releaseConversationLease().catch(() => { });
+          await session.releaseConversationLease().catch(() => {});
           controller.close();
         }
       });
@@ -1467,9 +1761,22 @@ async function runAgentLoopUntilSubagentsIdle(
     streamMessage?(stream: AgentLoopStream): Promise<void>;
   },
   hooks?: HookDispatcher,
-): Promise<{ didFail: boolean; failureText: string | null; hasDetachedCallbacks: boolean; traceId?: string }> {
-  const subagentCoordinator = new SubagentCoordinator(session, agentConfig, waitUntilMs(context));
-  const asyncToolCoordinator = new AsyncToolCoordinator(session, waitUntilMs(context), session.delivery ?? { kind: "async" });
+): Promise<{
+  didFail: boolean;
+  failureText: string | null;
+  hasDetachedCallbacks: boolean;
+  traceId?: string;
+}> {
+  const subagentCoordinator = new SubagentCoordinator(
+    session,
+    agentConfig,
+    waitUntilMs(context),
+  );
+  const asyncToolCoordinator = new AsyncToolCoordinator(
+    session,
+    waitUntilMs(context),
+    session.delivery ?? { kind: "async" },
+  );
   const result = await runParentContinuationLoop({
     session: session,
     subagentCoordinator: subagentCoordinator,
@@ -1477,9 +1784,11 @@ async function runAgentLoopUntilSubagentsIdle(
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
     ...(hooks ? { hooks } : {}),
-    consumeStream: reply.streamMessage ?? (async (stream) => {
-      await stream.consumeStream();
-    }),
+    consumeStream:
+      reply.streamMessage ??
+      (async (stream) => {
+        await stream.consumeStream();
+      }),
   });
   const hasDetachedCallbacks = asyncToolCoordinator.hasDetachedCallbacks;
   if (hasDetachedCallbacks) {
@@ -1488,23 +1797,46 @@ async function runAgentLoopUntilSubagentsIdle(
 
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
-    return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
+    return {
+      didFail: false,
+      failureText: null,
+      hasDetachedCallbacks,
+      ...(result.traceId ? { traceId: result.traceId } : {}),
+    };
   }
 
   if (result.didFail) {
-    await reply.onErrorText(result.failureText ?? AGENT_PROCESSING_FAILED, result.traceId);
-    return { didFail: true, failureText: result.failureText, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
+    await reply.onErrorText(
+      result.failureText ?? AGENT_PROCESSING_FAILED,
+      result.traceId,
+    );
+    return {
+      didFail: true,
+      failureText: result.failureText,
+      hasDetachedCallbacks,
+      ...(result.traceId ? { traceId: result.traceId } : {}),
+    };
   }
 
   if (hasDetachedCallbacks) {
-    return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
+    return {
+      didFail: false,
+      failureText: null,
+      hasDetachedCallbacks,
+      ...(result.traceId ? { traceId: result.traceId } : {}),
+    };
   }
 
   if (result.finalResponse !== undefined) {
     await reply.onFinalText(result.finalResponse, result.traceId);
   }
 
-  return { didFail: false, failureText: null, hasDetachedCallbacks, ...(result.traceId ? { traceId: result.traceId } : {}) };
+  return {
+    didFail: false,
+    failureText: null,
+    hasDetachedCallbacks,
+    ...(result.traceId ? { traceId: result.traceId } : {}),
+  };
 }
 
 /**
@@ -1533,27 +1865,38 @@ async function runParentContinuationLoop(options: {
 
   // One hook dispatcher for the whole parent request: every loop iteration and
   // the subagent-finish fire-points share a single ctx.state and one storage load.
-  const hooks = options.hooks ?? await createAgentHookDispatcher(options.session.accountId, options.agentConfig);
+  const hooks =
+    options.hooks ??
+    (await createAgentHookDispatcher(
+      options.session.accountId,
+      options.agentConfig,
+    ));
   options.subagentCoordinator.attachHooks(hooks);
 
   while (true) {
     let approvals: ToolApprovalSummary[] = [];
-    const stream = await runAgentLoop(options.session, turnContext, options.agentConfig, {
-      onFinalText: async (response) => {
-        finalResponse = response;
+    const stream = await runAgentLoop(
+      options.session,
+      turnContext,
+      options.agentConfig,
+      {
+        onFinalText: async (response) => {
+          finalResponse = response;
+        },
+        onErrorText: async (error) => {
+          await options.onLoopErrorText?.(error);
+        },
+        onApprovalRequired: async (approvalSummaries) => {
+          approvals = approvalSummaries;
+          await options.onApprovalRequired?.(approvalSummaries);
+        },
       },
-      onErrorText: async (error) => {
-        await options.onLoopErrorText?.(error);
+      {
+        dispatchSubagents: options.subagentCoordinator.dispatch,
+        dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
+        hooks: hooks,
       },
-      onApprovalRequired: async (approvalSummaries) => {
-        approvals = approvalSummaries;
-        await options.onApprovalRequired?.(approvalSummaries);
-      },
-    }, {
-      dispatchSubagents: options.subagentCoordinator.dispatch,
-      dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
-      hooks: hooks,
-    });
+    );
     traceId = stream.traceId();
 
     await options.consumeStream(stream);
@@ -1576,7 +1919,9 @@ async function runParentContinuationLoop(options: {
       // worker returned before the terminal one was ever flushed. Bounded by the
       // same deadline budget as the success path.
       if (options.subagentCoordinator.pendingCount > 0) {
-        await options.subagentCoordinator.waitForIdle({ onHeartbeat: options.onHeartbeat });
+        await options.subagentCoordinator.waitForIdle({
+          onHeartbeat: options.onHeartbeat,
+        });
       }
 
       return {
@@ -1590,9 +1935,13 @@ async function runParentContinuationLoop(options: {
     }
 
     // Wait for any injected subagents or internal async tools to complete.
-    const injected = await waitAndDrainAsyncWork(options.subagentCoordinator, options.asyncToolCoordinator, {
-      onHeartbeat: options.onHeartbeat,
-    });
+    const injected = await waitAndDrainAsyncWork(
+      options.subagentCoordinator,
+      options.asyncToolCoordinator,
+      {
+        onHeartbeat: options.onHeartbeat,
+      },
+    );
     if (injected === 0) {
       return {
         didFail: false,
@@ -1636,7 +1985,10 @@ async function waitAndDrainAsyncWork(
     onHeartbeat?: (pendingCount: number) => void;
   } = {},
 ): Promise<number> {
-  if (subagentCoordinator.pendingCount === 0 && asyncToolCoordinator.pendingCount === 0) {
+  if (
+    subagentCoordinator.pendingCount === 0 &&
+    asyncToolCoordinator.pendingCount === 0
+  ) {
     const [subagentCount, asyncToolCount] = await Promise.all([
       subagentCoordinator.drainCompletionsToParent(),
       asyncToolCoordinator.drainCompletionsToParent(),
@@ -1646,10 +1998,16 @@ async function waitAndDrainAsyncWork(
 
   const [subagentStatus, asyncToolStatus] = await Promise.all([
     subagentCoordinator.waitForIdle({
-      onHeartbeat: () => options.onHeartbeat?.(subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount),
+      onHeartbeat: () =>
+        options.onHeartbeat?.(
+          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
+        ),
     }),
     asyncToolCoordinator.waitForIdle({
-      onHeartbeat: () => options.onHeartbeat?.(subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount),
+      onHeartbeat: () =>
+        options.onHeartbeat?.(
+          subagentCoordinator.pendingCount + asyncToolCoordinator.pendingCount,
+        ),
     }),
   ]);
 
@@ -1687,22 +2045,32 @@ async function pipeAgentSseStream(
     if (isErrorStreamChunk(value)) {
       emittedErrorChunk = true;
     }
-    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify(value)}\n\n`));
+    controller.enqueue(
+      textEncoder.encode(`data: ${JSON.stringify(value)}\n\n`),
+    );
   }
 
   const failureText = stream.failureText();
   if (failureText && !emittedErrorChunk) {
-    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
-      type: "error",
-      error: failureText,
-    })}\n\n`));
+    controller.enqueue(
+      textEncoder.encode(
+        `data: ${JSON.stringify({
+          type: "error",
+          error: failureText,
+        })}\n\n`,
+      ),
+    );
   }
   const finalResponse = stream.finalResponse();
   if (stream.hasStructuredOutput() && finalResponse !== undefined) {
-    controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({
-      type: "structured-output",
-      output: finalResponse,
-    })}\n\n`));
+    controller.enqueue(
+      textEncoder.encode(
+        `data: ${JSON.stringify({
+          type: "structured-output",
+          output: finalResponse,
+        })}\n\n`,
+      ),
+    );
   }
 }
 
@@ -1721,7 +2089,7 @@ async function pipeAgentNatsStream(
     if (isErrorStreamChunk(value)) {
       emittedErrorChunk = true;
     }
-    publisher.publish(value as Record<string, unknown>).catch(() => { });
+    publisher.publish(value as Record<string, unknown>).catch(() => {});
   }
   // Mirror the SSE path: surface a terminal failure as an in-stream error part so
   // WebSocket clients receive the same AI SDK stream parts as SSE clients.
@@ -1741,7 +2109,9 @@ async function pipeAgentNatsStream(
 // Native channel SDKs consume async iterables, while the AI SDK exposes a Web
 // ReadableStream. This adapter also finalizes tracing/usage when the channel
 // drains the stream directly instead of calling stream.consumeStream().
-async function* readAgentFullStream(stream: AgentLoopStream): AsyncIterable<unknown> {
+async function* readAgentFullStream(
+  stream: AgentLoopStream,
+): AsyncIterable<unknown> {
   const reader = stream.stream.getReader();
   try {
     while (true) {
@@ -1785,7 +2155,11 @@ function errorSseResponse(error: string, statusCode = 200): Response {
   return new Response(
     new ReadableStream({
       start(controller) {
-        controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "error", error })}\n\n`));
+        controller.enqueue(
+          textEncoder.encode(
+            `data: ${JSON.stringify({ type: "error", error })}\n\n`,
+          ),
+        );
         controller.close();
       },
     }),
@@ -1793,7 +2167,9 @@ function errorSseResponse(error: string, statusCode = 200): Response {
   );
 }
 
-function createChannelApprovalDenial(approvals: ToolApprovalSummary[]): ToolModelMessage {
+function createChannelApprovalDenial(
+  approvals: ToolApprovalSummary[],
+): ToolModelMessage {
   // TODO: Allow channel webhooks to complete approval requests instead of
   // auto-denying them once channel-safe approval UX is available.
   return {
@@ -1811,7 +2187,11 @@ function acceptedAsyncResponse(statusUrl: string): Response {
   return jsonResponse(202, { statusUrl });
 }
 
-function eventPublicConversationKey(conversationKey: string, accountId: string, agentId?: string): string {
+function eventPublicConversationKey(
+  conversationKey: string,
+  accountId: string,
+  agentId?: string,
+): string {
   return publicConversationKeyFromScoped(conversationKey, accountId, agentId);
 }
 
@@ -1826,16 +2206,24 @@ function agentIdFromScopedKey(value: string, accountId: string): string | null {
   return separator > 0 ? rest.slice(0, separator) : null;
 }
 
-function isAccountScopedKey(value: string, accountId: string, agentId: string): boolean {
+function isAccountScopedKey(
+  value: string,
+  accountId: string,
+  agentId: string,
+): boolean {
   return value.startsWith(`acct:${accountId}:agent:${agentId}:`);
 }
 
-function parseAccountAgentFromScopedKey(value: string): { accountId: string; agentId: string } | null {
+function parseAccountAgentFromScopedKey(
+  value: string,
+): { accountId: string; agentId: string } | null {
   const match = value.match(/^acct:([^:]+):agent:([^:]+):/);
   return match ? { accountId: match[1]!, agentId: match[2]! } : null;
 }
 
-function isAsyncWorkerInvocation(event: unknown): event is AsyncWorkerInvocation {
+function isAsyncWorkerInvocation(
+  event: unknown,
+): event is AsyncWorkerInvocation {
   return Boolean(
     event &&
     typeof event === "object" &&
@@ -1857,7 +2245,7 @@ function isCronInvocation(event: unknown): event is CronInvocation {
     typeof event === "object" &&
     (event as { kind?: unknown }).kind === "cron" &&
     typeof (event as { accountId?: unknown }).accountId === "string" &&
-    typeof (event as { cronId?: unknown }).cronId === "string"
+    typeof (event as { cronId?: unknown }).cronId === "string",
   );
 }
 
@@ -1867,13 +2255,22 @@ function hasRunnableDirectEvents(event: DirectInboundEvent): boolean {
 
 // A persisted tool result is history, not new model input. Only user turns and
 // AI SDK approval responses should start or resume a model run.
-function isRunnableModelInput(message: DirectInboundEvent["events"][number] | DirectTurn["turnContext"]["messages"][number] | undefined): boolean {
-  return message?.role === "user" ||
+function isRunnableModelInput(
+  message:
+    | DirectInboundEvent["events"][number]
+    | DirectTurn["turnContext"]["messages"][number]
+    | undefined,
+): boolean {
+  return (
+    message?.role === "user" ||
     (message?.role === "tool" &&
       message.content.length > 0 &&
-      message.content.every((part) => part.type === "tool-approval-response"));
+      message.content.every((part) => part.type === "tool-approval-response"))
+  );
 }
 
 function asyncResultEventIds(event: DirectInboundEvent): string[] {
-  return [...new Set([event.asyncResultEventId ?? event.eventId, event.eventId])];
+  return [
+    ...new Set([event.asyncResultEventId ?? event.eventId, event.eventId]),
+  ];
 }

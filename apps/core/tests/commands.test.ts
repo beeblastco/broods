@@ -25,7 +25,9 @@ afterEach(() => {
   mock.restore();
 });
 
-function createMockChannelActions(overrides: Partial<ChannelActions> = {}): ChannelActions {
+function createMockChannelActions(
+  overrides: Partial<ChannelActions> = {},
+): ChannelActions {
   return {
     sendText: mock(async () => {}),
     sendTyping: mock(async () => {}),
@@ -34,10 +36,12 @@ function createMockChannelActions(overrides: Partial<ChannelActions> = {}): Chan
   };
 }
 
-function createCommandContext(overrides: Partial<{
-  conversationKey: string;
-  channel: ChannelActions;
-}> = {}) {
+function createCommandContext(
+  overrides: Partial<{
+    conversationKey: string;
+    channel: ChannelActions;
+  }> = {},
+) {
   return {
     conversationKey: overrides.conversationKey ?? "test-convo",
     channel: overrides.channel ?? createMockChannelActions(),
@@ -114,7 +118,9 @@ describe("executeCommand", () => {
 
     await executeCommand("/new", ctx);
 
-    expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Context cleared. Starting fresh.",
+    );
   });
 
   it("executes /help and lists executable commands", async () => {
@@ -124,7 +130,8 @@ describe("executeCommand", () => {
     await executeCommand("/help", ctx);
 
     expect(channel.sendText).toHaveBeenCalledTimes(1);
-    const helpText = (channel.sendText as ReturnType<typeof mock>).mock.calls[0]?.[0] as string;
+    const helpText = (channel.sendText as ReturnType<typeof mock>).mock
+      .calls[0]?.[0] as string;
     expect(helpText).toContain("Available commands:");
     expect(helpText).toContain("/new");
     expect(helpText).toContain("/clear");
@@ -154,11 +161,15 @@ describe("executeCommand", () => {
     const channel = createMockChannelActions();
     const ctx = createCommandContext({ channel });
 
-    runtime.mutate = mock(() => Promise.reject(new Error("Convex connection failed"))) as never;
+    runtime.mutate = mock(() =>
+      Promise.reject(new Error("Convex connection failed")),
+    ) as never;
 
     await executeCommand("/new", ctx);
 
-    expect(channel.sendText).toHaveBeenCalledWith("Something went wrong. Please try again.");
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Something went wrong. Please try again.",
+    );
   });
 
   it("handles non-Error exceptions during execution", async () => {
@@ -169,7 +180,9 @@ describe("executeCommand", () => {
 
     await executeCommand("/new", ctx);
 
-    expect(channel.sendText).toHaveBeenCalledWith("Something went wrong. Please try again.");
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Something went wrong. Please try again.",
+    );
   });
 });
 
@@ -250,7 +263,8 @@ describe("getDiscordCommandRegistrations", () => {
 
   it("defaults to global scope when no scope is provided", () => {
     const globalRegistrations = getDiscordCommandRegistrations();
-    const explicitGlobalRegistrations = getDiscordCommandRegistrations("global");
+    const explicitGlobalRegistrations =
+      getDiscordCommandRegistrations("global");
 
     expect(globalRegistrations).toEqual(explicitGlobalRegistrations);
   });
@@ -263,10 +277,17 @@ describe("clearConversation via /new command", () => {
       .mockResolvedValueOnce({ deleted: 2, hasMore: false });
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
-    await executeCommand("/new", createCommandContext({ conversationKey: "key-1", channel }));
+    await executeCommand(
+      "/new",
+      createCommandContext({ conversationKey: "key-1", channel }),
+    );
     expect(mutationMock).toHaveBeenCalledTimes(2);
-    expect(mutationMock).toHaveBeenCalledWith("clearConversation", { conversationKey: "key-1" });
-    expect(channel.sendText).toHaveBeenCalledWith("Context cleared. Starting fresh.");
+    expect(mutationMock).toHaveBeenCalledWith("clearConversation", {
+      conversationKey: "key-1",
+    });
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Context cleared. Starting fresh.",
+    );
   });
 
   it("reports success when the final allowed batch completes cleanup", async () => {
@@ -307,7 +328,11 @@ describe("clearConversation via /new command", () => {
       createCommandContext({ conversationKey: "key-1", channel }),
     );
     expect(mutationMock).toHaveBeenCalledTimes(100);
-    expect(channel.sendText).toHaveBeenCalledWith("Something went wrong. Please try again.");
-    expect(channel.sendText).not.toHaveBeenCalledWith("Context cleared. Starting fresh.");
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Something went wrong. Please try again.",
+    );
+    expect(channel.sendText).not.toHaveBeenCalledWith(
+      "Context cleared. Starting fresh.",
+    );
   });
 });

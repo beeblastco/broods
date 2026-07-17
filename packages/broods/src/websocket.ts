@@ -7,7 +7,11 @@ import { DEFAULT_CORE_BASE_URL, normalizeHttpServiceUrl } from "./client.ts";
 import type { AgentReference } from "./client.ts";
 import { stripTrailingSlash } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
-import { resolveRunEvents, type AgentRunEventInput, type AgentRunOverrides } from "./run-input.ts";
+import {
+  resolveRunEvents,
+  type AgentRunEventInput,
+  type AgentRunOverrides,
+} from "./run-input.ts";
 import type {
   WebSocketClientCancelMessage,
   WebSocketClientExecuteMessage,
@@ -29,7 +33,8 @@ export type WebSocketRunInput = {
   projectSlug?: string;
   environmentSlug?: string;
   signal?: AbortSignal;
-} & AgentRunEventInput & AgentRunOverrides;
+} & AgentRunEventInput &
+  AgentRunOverrides;
 
 export interface WebSocketHandlers {
   onMessage?(message: WebSocketServerMessage): void;
@@ -76,20 +81,27 @@ export class BroodsWebSocketClient {
 
   constructor(options: BroodsWebSocketClientOptions = {}) {
     loadBroodsRuntimeConfig();
-    this.baseUrl = normalizeWebSocketServiceUrl(options.baseUrl ||
-      options.host ||
-      process.env.BROODS_BASE_URL ||
-      process.env.BROODS_HOST ||
-      DEFAULT_CORE_BASE_URL);
-    this.apiKey = options.apiKey ||
-      process.env.BROODS_API_KEY ||
-      "";
-    if (!this.apiKey) throw new Error("BroodsWebSocketClient requires apiKey or BROODS_API_KEY.");
+    this.baseUrl = normalizeWebSocketServiceUrl(
+      options.baseUrl ||
+        options.host ||
+        process.env.BROODS_BASE_URL ||
+        process.env.BROODS_HOST ||
+        DEFAULT_CORE_BASE_URL,
+    );
+    this.apiKey = options.apiKey || process.env.BROODS_API_KEY || "";
+    if (!this.apiKey)
+      throw new Error(
+        "BroodsWebSocketClient requires apiKey or BROODS_API_KEY.",
+      );
     this.WebSocketImpl = options.WebSocket;
-    this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+    this.connectTimeoutMs =
+      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
   }
 
-  subscribe(input: WebSocketRunInput, handlers: WebSocketHandlers = {}): WebSocketSubscription {
+  subscribe(
+    input: WebSocketRunInput,
+    handlers: WebSocketHandlers = {},
+  ): WebSocketSubscription {
     const WebSocketImpl = this.resolveWebSocket();
     const url = this.buildUrl(input);
     const agentId = resolveAgentId(input);
@@ -106,7 +118,10 @@ export class BroodsWebSocketClient {
       closed = true;
       clearTimeout(timeout);
       input.signal?.removeEventListener("abort", onAbort);
-      if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING) {
+      if (
+        socket.readyState === WS_OPEN ||
+        socket.readyState === WS_CONNECTING
+      ) {
         socket.close(code, reason);
       }
     };
@@ -138,15 +153,17 @@ export class BroodsWebSocketClient {
         return;
       }
 
-      socket.send(JSON.stringify({
-        type: "execute",
-        agentId,
-        events: resolveRunEvents(input),
-        sessionId: input.sessionId,
-        ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
-        ...(input.system !== undefined ? { system: input.system } : {}),
-        ...(input.model !== undefined ? { model: input.model } : {}),
-      }));
+      socket.send(
+        JSON.stringify({
+          type: "execute",
+          agentId,
+          events: resolveRunEvents(input),
+          sessionId: input.sessionId,
+          ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
+          ...(input.system !== undefined ? { system: input.system } : {}),
+          ...(input.model !== undefined ? { model: input.model } : {}),
+        }),
+      );
     };
 
     socket.onmessage = (event) => {
@@ -158,7 +175,9 @@ export class BroodsWebSocketClient {
 
       switch (payload.type) {
         case "meta":
-          handlers.onMeta?.(payload as Extract<WebSocketServerMessage, { type: "meta" }>);
+          handlers.onMeta?.(
+            payload as Extract<WebSocketServerMessage, { type: "meta" }>,
+          );
           break;
         case "done":
           finish();
@@ -186,7 +205,9 @@ export class BroodsWebSocketClient {
     };
   }
 
-  async *stream(input: WebSocketRunInput): AsyncGenerator<WebSocketServerMessage> {
+  async *stream(
+    input: WebSocketRunInput,
+  ): AsyncGenerator<WebSocketServerMessage> {
     const queue: WebSocketServerMessage[] = [];
     let done = false;
     let error: Error | null = null;
@@ -229,29 +250,43 @@ export class BroodsWebSocketClient {
     }
   }
 
-  buildUrl(input: Pick<WebSocketRunInput, "agent" | "endpointId" | "projectSlug" | "environmentSlug">): string {
+  buildUrl(
+    input: Pick<
+      WebSocketRunInput,
+      "agent" | "endpointId" | "projectSlug" | "environmentSlug"
+    >,
+  ): string {
     const endpointId = resolveEndpointId(input);
     const projectSlug = input.projectSlug ?? input.agent?.projectSlug;
-    const environmentSlug = input.environmentSlug ?? input.agent?.environmentSlug;
+    const environmentSlug =
+      input.environmentSlug ?? input.agent?.environmentSlug;
     const projectPrefix = projectSlug ? `/${projectSlug}` : "";
     const environmentPrefix = environmentSlug ? `/${environmentSlug}` : "";
     const wsBaseUrl = toWebSocketBaseUrl(this.baseUrl);
 
-    return `${wsBaseUrl}/v1${projectPrefix}/agents${environmentPrefix}/${encodeURIComponent(endpointId)}/ws` +
-      `?token=${encodeURIComponent(this.apiKey)}`;
+    return (
+      `${wsBaseUrl}/v1${projectPrefix}/agents${environmentPrefix}/${encodeURIComponent(endpointId)}/ws` +
+      `?token=${encodeURIComponent(this.apiKey)}`
+    );
   }
 
   private resolveWebSocket(): WebSocketConstructorLike {
-    const WebSocketImpl = this.WebSocketImpl ?? (globalThis as { WebSocket?: WebSocketConstructorLike }).WebSocket;
+    const WebSocketImpl =
+      this.WebSocketImpl ??
+      (globalThis as { WebSocket?: WebSocketConstructorLike }).WebSocket;
     if (!WebSocketImpl) {
-      throw new Error("WebSocket is not available. Pass a WebSocket implementation in BroodsWebSocketClient options.");
+      throw new Error(
+        "WebSocket is not available. Pass a WebSocket implementation in BroodsWebSocketClient options.",
+      );
     }
 
     return WebSocketImpl;
   }
 }
 
-function resolveAgentId(input: Pick<WebSocketRunInput, "agent" | "agentId" | "endpointId">): string {
+function resolveAgentId(
+  input: Pick<WebSocketRunInput, "agent" | "agentId" | "endpointId">,
+): string {
   const agentId = input.agentId ?? input.agent?.id ?? input.endpointId;
   if (!agentId) {
     throw new Error("WebSocket run requires agent, agentId, or endpointId.");
@@ -260,8 +295,11 @@ function resolveAgentId(input: Pick<WebSocketRunInput, "agent" | "agentId" | "en
   return agentId;
 }
 
-function resolveEndpointId(input: Pick<WebSocketRunInput, "agent" | "endpointId">): string {
-  const endpointId = input.endpointId ?? input.agent?.endpointId ?? input.agent?.id;
+function resolveEndpointId(
+  input: Pick<WebSocketRunInput, "agent" | "endpointId">,
+): string {
+  const endpointId =
+    input.endpointId ?? input.agent?.endpointId ?? input.agent?.id;
   if (!endpointId) {
     throw new Error("WebSocket run requires agent or endpointId.");
   }
@@ -301,7 +339,11 @@ function webSocketAccessError(baseUrl: string): Error {
 function parseServerMessage(data: string): WebSocketServerMessage | null {
   try {
     const value = JSON.parse(data) as WebSocketServerMessage;
-    return typeof value === "object" && value !== null && typeof value.type === "string" ? value : null;
+    return typeof value === "object" &&
+      value !== null &&
+      typeof value.type === "string"
+      ? value
+      : null;
   } catch {
     return null;
   }
@@ -309,9 +351,15 @@ function parseServerMessage(data: string): WebSocketServerMessage | null {
 
 function formatWireError(error: unknown): string {
   if (typeof error === "string") return error;
-  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
+  if (
+    error &&
+    typeof error === "object" &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
     return (error as { message: string }).message;
   }
 
-  return error === undefined ? "WebSocket stream error." : JSON.stringify(error);
+  return error === undefined
+    ? "WebSocket stream error."
+    : JSON.stringify(error);
 }

@@ -32,10 +32,14 @@ for await (const chunk of client.stream(api.agents.search, {
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
-      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
       break;
     case "finish":
-      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
       break;
   }
 }

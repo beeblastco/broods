@@ -7,12 +7,12 @@ teardown behave.
 ## Ephemeral vs reserved
 
 By default every provider is **ephemeral per call** (create → run → destroy); only workspace
-*files* persist (via the S3 mount). That is the right default for stateless tasks — it is
+_files_ persist (via the S3 mount). That is the right default for stateless tasks — it is
 cheap and there is nothing to leak.
 
 **Prefer `persistent: false` unless you actually need the state.** Each persistent config
 reserves **one long-lived instance per workspace**, and on `lambda` a MicroVM counts against
-the account's *allocated memory* quota while it is **running or suspended** — a suspended VM
+the account's _allocated memory_ quota while it is **running or suspended** — a suspended VM
 still holds its full allocation until `suspendedDurationSeconds` (or a dashboard Terminate)
 releases it. A handful of persistent agents/workspaces can exhaust the quota and every new
 launch then fails with `ServiceQuotaExceededException` ("maximum allocated memory limit").
@@ -34,17 +34,17 @@ reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8 h max lifetime)
 ```jsonc
 {
   "config": {
-    "provider": "sandbox",   // sandbox | lambda | daytona | e2b | vercel
+    "provider": "sandbox", // sandbox | lambda | daytona | e2b | vercel
     "network": { "mode": "allow-all" },
     "persistent": true,
     "permissionMode": "bypass",
     "lifecycle": {
-      "idleTimeoutSeconds": 1800,   // scale down after 30 min idle (default 900)
-      "maxLifetimeSeconds": 86400   // hard expiry backstop (optional)
+      "idleTimeoutSeconds": 1800, // scale down after 30 min idle (default 900)
+      "maxLifetimeSeconds": 86400, // hard expiry backstop (optional)
     },
     "onCreate": ["python3 -m venv $HOME/.venv"],
-    "onResume": ["test -x $HOME/.venv/bin/python"]
-  }
+    "onResume": ["test -x $HOME/.venv/bin/python"],
+  },
 }
 ```
 
@@ -118,11 +118,11 @@ account key — no account secret ever enters the sandbox). The harness settles 
 **resumes the conversation** with the result injected, so the model does not have to poll.
 The follow-up is then delivered back to wherever the turn came from:
 
-| Origin | Delivery |
-| --- | --- |
+| Origin                                                    | Delivery                                                                            |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Chat channel (Telegram/Slack/Discord/Zalo/Pancake/GitHub) | pushed into the chat via the channel's `sendText` (rebuilt from the stored routing) |
-| WebSocket | republished to the durable conversation stream (replays on reconnect) |
-| Direct/async API | settled for `/status` polling; `config.hooks.webhook` also fires `agent.finished` |
+| WebSocket                                                 | republished to the durable conversation stream (replays on reconnect)               |
+| Direct/async API                                          | settled for `/status` polling; `config.hooks.webhook` also fires `agent.finished`   |
 
 Polling with `async_status` is still available to check progress or fetch a result sooner.
 Discord delivers a delayed reply with the bot token (its interaction token expires ~15 min);

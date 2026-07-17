@@ -4,7 +4,11 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import type { ChannelActions, ChannelAdapter, ChannelParseResult } from "./channels.ts";
+import type {
+  ChannelActions,
+  ChannelAdapter,
+  ChannelParseResult,
+} from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -67,7 +71,10 @@ export function createZaloChannel(
     },
 
     authenticate(req) {
-      return verifyWebhookSecret(req.headers["x-bot-api-secret-token"], webhookSecret);
+      return verifyWebhookSecret(
+        req.headers["x-bot-api-secret-token"],
+        webhookSecret,
+      );
     },
 
     parse(req): ChannelParseResult {
@@ -82,7 +89,14 @@ export function createZaloChannel(
       const senderId = message?.from?.id;
       const messageId = message?.message_id;
       const chatType = message?.chat?.chat_type;
-      if (!messageId || !chatId || !senderId || !text || chatType !== "PRIVATE" || message.from?.is_bot) {
+      if (
+        !messageId ||
+        !chatId ||
+        !senderId ||
+        !text ||
+        chatType !== "PRIVATE" ||
+        message.from?.is_bot
+      ) {
         return { kind: "ignore" };
       }
 
@@ -118,7 +132,10 @@ export function createZaloChannel(
   };
 }
 
-export function createZaloActions(botToken: string, source: ZaloSource): ChannelActions {
+export function createZaloActions(
+  botToken: string,
+  source: ZaloSource,
+): ChannelActions {
   return {
     async sendText(text) {
       for (const chunk of chunkZaloText(text)) {
@@ -140,7 +157,10 @@ export function createZaloActions(botToken: string, source: ZaloSource): Channel
   };
 }
 
-function verifyWebhookSecret(header: string | undefined, secret: string): boolean {
+function verifyWebhookSecret(
+  header: string | undefined,
+  secret: string,
+): boolean {
   if (!header) return false;
   const actual = Buffer.from(header);
   const expected = Buffer.from(secret);
@@ -150,7 +170,11 @@ function verifyWebhookSecret(header: string | undefined, secret: string): boolea
 function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
   if (raw && typeof raw === "object") {
     const envelope = raw as ZaloWebhookEnvelope;
-    if (envelope.ok === true && envelope.result && typeof envelope.result === "object") {
+    if (
+      envelope.ok === true &&
+      envelope.result &&
+      typeof envelope.result === "object"
+    ) {
       return envelope.result as ZaloUpdate;
     }
   }
@@ -174,7 +198,8 @@ function toZaloSource(source: Record<string, unknown>): ZaloSource {
     chatType: source.chatType,
     messageId: source.messageId,
     senderId: source.senderId,
-    senderName: typeof source.senderName === "string" ? source.senderName : undefined,
+    senderName:
+      typeof source.senderName === "string" ? source.senderName : undefined,
     eventName: source.eventName,
     date: typeof source.date === "number" ? source.date : undefined,
   };
@@ -206,7 +231,9 @@ async function callZaloApi(
   const parsed = parseJsonBody(bodyText);
 
   if (!response.ok || parsed?.ok === false) {
-    throw new Error(`Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`);
+    throw new Error(
+      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
+    );
   }
 
   return parsed ?? { ok: true };
@@ -219,12 +246,21 @@ function parseJsonBody(text: string): ZaloApiResponse | null {
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    return parsed && typeof parsed === "object" ? parsed as ZaloApiResponse : null;
+    return parsed && typeof parsed === "object"
+      ? (parsed as ZaloApiResponse)
+      : null;
   } catch {
     return null;
   }
 }
 
-function formatZaloError(body: ZaloApiResponse | null, bodyText: string): string {
-  return body?.description ?? body?.error_code?.toString() ?? (bodyText || "unknown_error");
+function formatZaloError(
+  body: ZaloApiResponse | null,
+  bodyText: string,
+): string {
+  return (
+    body?.description ??
+    body?.error_code?.toString() ??
+    (bodyText || "unknown_error")
+  );
 }

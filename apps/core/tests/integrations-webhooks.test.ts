@@ -83,7 +83,10 @@ describe("account webhook ingress", () => {
       accountLoader: async () => null,
     });
 
-    const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toEqual({ error: "Not found" });
@@ -97,10 +100,15 @@ describe("account webhook ingress", () => {
       agentLoader: async () => ({ ...TEST_AGENT, config: {} }),
     });
 
-    const response = await routeIncomingEvent(createTelegramEvent(), createHandlers());
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toEqual({ error: "telegram integration is not configured" });
+    expect(responseJson(response)).toEqual({
+      error: "telegram integration is not configured",
+    });
   });
 
   it("returns 401 when account channel authentication fails", async () => {
@@ -109,9 +117,12 @@ describe("account webhook ingress", () => {
       agentLoader: async () => TEST_AGENT,
     });
 
-    const response = await routeIncomingEvent(createTelegramEvent(undefined, {
-      "x-telegram-bot-api-secret-token": "wrong",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createTelegramEvent(undefined, {
+        "x-telegram-bot-api-secret-token": "wrong",
+      }),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
@@ -123,13 +134,19 @@ describe("account webhook ingress", () => {
       agentLoader: async () => ZALO_AGENT,
     });
 
-    const missing = await routeIncomingEvent(createZaloEvent(undefined, {}), createHandlers());
+    const missing = await routeIncomingEvent(
+      createZaloEvent(undefined, {}),
+      createHandlers(),
+    );
     expect(missing.statusCode).toBe(401);
     expect(responseJson(missing)).toEqual({ error: "Unauthorized" });
 
-    const wrong = await routeIncomingEvent(createZaloEvent(undefined, {
-      "x-bot-api-secret-token": "wrong-secret",
-    }), createHandlers());
+    const wrong = await routeIncomingEvent(
+      createZaloEvent(undefined, {
+        "x-bot-api-secret-token": "wrong-secret",
+      }),
+      createHandlers(),
+    );
     expect(wrong.statusCode).toBe(401);
     expect(responseJson(wrong)).toEqual({ error: "Unauthorized" });
   });
@@ -148,12 +165,15 @@ describe("account webhook ingress", () => {
     });
     let processingScope: ReturnType<typeof getObservabilityContext> = null;
 
-    const response = await routeIncomingEvent(createTelegramEvent(), createHandlers({
-      handleChannelRequest: async (event) => {
-        processingScope = getObservabilityContext();
-        handledEvents.push(event);
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createTelegramEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          processingScope = getObservabilityContext();
+          handledEvents.push(event);
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
     expect(response.afterResponse).toBeDefined();
@@ -198,11 +218,14 @@ describe("account webhook ingress", () => {
       agentLoader: async () => PANCAKE_AGENT,
     });
 
-    const response = await routeIncomingEvent(createPancakeEvent(), createHandlers({
-      handleChannelRequest: async (event) => {
-        handledEvents.push(event);
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createPancakeEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
     await response.afterResponse;
@@ -224,13 +247,19 @@ describe("account webhook ingress", () => {
           },
         },
       },
-      conversationKey: "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
+      conversationKey:
+        "acct:acct_test:agent:agent_test:pancake:page-1:conversation-1",
       content: [{ type: "text", text: "hello pancake" }],
-      events: [{ role: "user", content: [{ type: "text", text: "hello pancake" }] }],
+      events: [
+        { role: "user", content: [{ type: "text", text: "hello pancake" }] },
+      ],
       channelName: "pancake",
     });
-    expect(handledEvents[0]!.eventId.startsWith("acct:acct_test:agent:agent_test:pancake:page-1:message-1:"))
-      .toBe(true);
+    expect(
+      handledEvents[0]!.eventId.startsWith(
+        "acct:acct_test:agent:agent_test:pancake:page-1:message-1:",
+      ),
+    ).toBe(true);
   });
 
   it("normalizes Zalo webhook events through account webhook routing", async () => {
@@ -240,11 +269,14 @@ describe("account webhook ingress", () => {
       agentLoader: async () => ZALO_AGENT,
     });
 
-    const response = await routeIncomingEvent(createZaloEvent(), createHandlers({
-      handleChannelRequest: async (event) => {
-        handledEvents.push(event);
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createZaloEvent(),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
     await response.afterResponse;
@@ -262,7 +294,8 @@ describe("account webhook ingress", () => {
           },
         },
       },
-      eventId: "acct:acct_test:agent:agent_test:zalo:message.text.received:chat-1:user-1:message-1",
+      eventId:
+        "acct:acct_test:agent:agent_test:zalo:message.text.received:chat-1:user-1:message-1",
       conversationKey: "acct:acct_test:agent:agent_test:zalo:chat-1",
       content: "hello zalo",
       events: [{ role: "user", content: "hello zalo" }],
@@ -289,11 +322,14 @@ describe("account webhook ingress", () => {
         }),
       });
 
-      const response = await routeIncomingEvent(createZaloEvent(), createHandlers({
-        handleChannelRequest: async (event) => {
-          handledEvents.push(event);
-        },
-      }));
+      const response = await routeIncomingEvent(
+        createZaloEvent(),
+        createHandlers({
+          handleChannelRequest: async (event) => {
+            handledEvents.push(event);
+          },
+        }),
+      );
 
       expect(response.statusCode).toBe(200);
       await response.afterResponse;
@@ -307,10 +343,15 @@ describe("account webhook ingress", () => {
       agentLoader: async () => TEST_AGENT,
     });
 
-    const response = await routeIncomingEvent(createZaloEvent(), createHandlers());
+    const response = await routeIncomingEvent(
+      createZaloEvent(),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(503);
-    expect(responseJson(response)).toEqual({ error: "zalo integration is not configured" });
+    expect(responseJson(response)).toEqual({
+      error: "zalo integration is not configured",
+    });
   });
 
   it("uses account webhook routing only; root provider webhooks are not accepted", async () => {
@@ -320,22 +361,28 @@ describe("account webhook ingress", () => {
       authResolver: async () => null,
     });
 
-    const response = await routeIncomingEvent(createTelegramEvent(undefined, undefined, "/"), createHandlers());
+    const response = await routeIncomingEvent(
+      createTelegramEvent(undefined, undefined, "/"),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
-
 });
 
-function createHandlers(overrides: Partial<{
-  handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
-  handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
-}> = {}) {
+function createHandlers(
+  overrides: Partial<{
+    handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
+    handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
+  }> = {},
+) {
   return {
     handleDirectRequest: async (event: DirectInboundEvent) =>
-      responseFromShape(await (overrides.handleDirectRequest ?? defaultDirectHandler)(event)),
-    handleChannelRequest: overrides.handleChannelRequest ?? (async () => { }),
+      responseFromShape(
+        await (overrides.handleDirectRequest ?? defaultDirectHandler)(event),
+      ),
+    handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
 }
 
@@ -364,35 +411,46 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
     const response = await router(request, handlers);
     const shape = await responseToShape(response);
     if (waitUntilPromises.length > 0) {
-      shape.afterResponse = Promise.all(waitUntilPromises).then(() => undefined);
+      shape.afterResponse = Promise.all(waitUntilPromises).then(
+        () => undefined,
+      );
     }
     return shape;
   };
 }
 
 function createPancakeEvent(): ReturnType<typeof coreRequest> {
-  return createTelegramEvent({
-    page_id: "page-1",
-    event_type: "messaging",
-    data: {
-      conversation: {
-        id: "conversation-1",
-        type: "INBOX",
-        tags: [],
-        from: { id: "customer-1", name: "Ada" },
-      },
-      message: {
-        id: "message-1",
-        conversation_id: "conversation-1",
-        page_id: "page-1",
-        message: "hello pancake",
-        type: "INBOX",
-        from: { id: "customer-1", name: "Ada", page_customer_id: "page-customer-1" },
+  return createTelegramEvent(
+    {
+      page_id: "page-1",
+      event_type: "messaging",
+      data: {
+        conversation: {
+          id: "conversation-1",
+          type: "INBOX",
+          tags: [],
+          from: { id: "customer-1", name: "Ada" },
+        },
+        message: {
+          id: "message-1",
+          conversation_id: "conversation-1",
+          page_id: "page-1",
+          message: "hello pancake",
+          type: "INBOX",
+          from: {
+            id: "customer-1",
+            name: "Ada",
+            page_customer_id: "page-customer-1",
+          },
+        },
       },
     },
-  }, {
-    "content-type": "application/json",
-  }, "/webhooks/acct_test/agent_test/pancake", "secret=pancake-secret");
+    {
+      "content-type": "application/json",
+    },
+    "/webhooks/acct_test/agent_test/pancake",
+    "secret=pancake-secret",
+  );
 }
 
 function createZaloEvent(
@@ -401,7 +459,11 @@ function createZaloEvent(
     "x-bot-api-secret-token": "zalo-secret",
   },
 ): ReturnType<typeof coreRequest> {
-  return createTelegramEvent(body, headers, "/webhooks/acct_test/agent_test/zalo");
+  return createTelegramEvent(
+    body,
+    headers,
+    "/webhooks/acct_test/agent_test/zalo",
+  );
 }
 
 function createTelegramEvent(

@@ -10,8 +10,15 @@ import { logs, SeverityNumber } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-proto";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { BatchLogRecordProcessor, LoggerProvider } from "@opentelemetry/sdk-logs";
-import { BasicTracerProvider, BatchSpanProcessor, RandomIdGenerator } from "@opentelemetry/sdk-trace-base";
+import {
+  BatchLogRecordProcessor,
+  LoggerProvider,
+} from "@opentelemetry/sdk-logs";
+import {
+  BasicTracerProvider,
+  BatchSpanProcessor,
+  RandomIdGenerator,
+} from "@opentelemetry/sdk-trace-base";
 import { registerTelemetry } from "ai";
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -50,7 +57,9 @@ export function runWithObservabilityScope<T>(fn: () => T): T {
   return _obsStore.run({ current: null }, fn);
 }
 
-export function setObservabilityContext(ctx: ObservabilityContext | null): void {
+export function setObservabilityContext(
+  ctx: ObservabilityContext | null,
+): void {
   const cell = _obsStore.getStore();
   if (cell) {
     cell.current = ctx;
@@ -148,7 +157,15 @@ export function getTracer(): Tracer {
 
 /** Tenant attributes shared by logs and spans and consumed by gateway filters. */
 export function observabilityAttributes(
-  ctx: Pick<ObservabilityContext, "accountId" | "project" | "environment" | "endpointId" | "agentId" | "conversationKey">,
+  ctx: Pick<
+    ObservabilityContext,
+    | "accountId"
+    | "project"
+    | "environment"
+    | "endpointId"
+    | "agentId"
+    | "conversationKey"
+  >,
 ): Record<string, string> {
   return {
     account_id: ctx.accountId,
@@ -192,7 +209,10 @@ export function emitOtelLog(
         ...(ctx ? { trace_id: ctx.traceId } : {}),
       } as never,
       ...(ctx ? { context: ctx.otelContext } : {}),
-      timestamp: typeof body.time === "string" ? new Date(body.time).getTime() : Date.now(),
+      timestamp:
+        typeof body.time === "string"
+          ? new Date(body.time).getTime()
+          : Date.now(),
     });
   } catch {
     // Best-effort: never propagate into the agent path.

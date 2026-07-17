@@ -16,6 +16,11 @@
       "@site/*": ["./*"]
     }
   },
-  "include": ["docusaurus.config.ts", "sidebar.ts", "docs/**/*.ts", "docs/**/*.tsx"],
+  "include": [
+    "docusaurus.config.ts",
+    "sidebar.ts",
+    "docs/**/*.ts",
+    "docs/**/*.tsx"
+  ],
   "exclude": ["node_modules", "build", ".docusaurus"]
 }

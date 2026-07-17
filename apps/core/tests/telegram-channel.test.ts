@@ -8,48 +8,92 @@ import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 describe("telegram channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
-    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    );
 
-    expect(adapter.authenticate(createRequest({
-      update_id: 1,
-      message: createMessage({ text: "hello" }),
-    }, {
-      "x-telegram-bot-api-secret-token": "secret",
-    }))).toBe(true);
+    expect(
+      adapter.authenticate(
+        createRequest(
+          {
+            update_id: 1,
+            message: createMessage({ text: "hello" }),
+          },
+          {
+            "x-telegram-bot-api-secret-token": "secret",
+          },
+        ),
+      ),
+    ).toBe(true);
 
-    expect(adapter.authenticate(createRequest({
-      update_id: 1,
-      message: createMessage({ text: "hello" }),
-    }, {
-      "x-telegram-bot-api-secret-token": "wrong",
-    }))).toBe(false);
+    expect(
+      adapter.authenticate(
+        createRequest(
+          {
+            update_id: 1,
+            message: createMessage({ text: "hello" }),
+          },
+          {
+            "x-telegram-bot-api-secret-token": "wrong",
+          },
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("ignores updates without text content", async () => {
-    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    );
 
-    expect(await adapter.parse(createRequest({
-      update_id: 1,
-      message: createMessage({ text: undefined }),
-    }))).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createRequest({
+          update_id: 1,
+          message: createMessage({ text: undefined }),
+        }),
+      ),
+    ).toEqual({ kind: "ignore" });
   });
 
   it("ignores chats outside the allow list", async () => {
-    const adapter = createTelegramChannel("bot-token", "secret", new Set([999]), "👀");
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([999]),
+      "👀",
+    );
 
-    expect(await adapter.parse(createRequest({
-      update_id: 1,
-      message: createMessage({ text: "hello" }),
-    }))).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createRequest({
+          update_id: 1,
+          message: createMessage({ text: "hello" }),
+        }),
+      ),
+    ).toEqual({ kind: "ignore" });
   });
 
   it("normalizes inbound messages from the main message payload", async () => {
-    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    );
 
-    const parsed = await adapter.parse(createRequest({
-      update_id: 7,
-      message: createMessage({ text: "hello", message_id: 42 }),
-    }));
+    const parsed = await adapter.parse(
+      createRequest({
+        update_id: 7,
+        message: createMessage({ text: "hello", message_id: 42 }),
+      }),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -70,12 +114,19 @@ describe("telegram channel adapter", () => {
   });
 
   it("uses edited_message when no main message is present", async () => {
-    const adapter = createTelegramChannel("bot-token", "secret", new Set([123]), "👀");
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    );
 
-    const parsed = await adapter.parse(createRequest({
-      update_id: 8,
-      edited_message: createMessage({ text: "edited", message_id: 99 }),
-    }));
+    const parsed = await adapter.parse(
+      createRequest({
+        update_id: 8,
+        edited_message: createMessage({ text: "edited", message_id: 99 }),
+      }),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -109,10 +160,12 @@ function createRequest(
   };
 }
 
-function createMessage(overrides: Partial<{
-  message_id: number;
-  text: string | undefined;
-}> = {}) {
+function createMessage(
+  overrides: Partial<{
+    message_id: number;
+    text: string | undefined;
+  }> = {},
+) {
   return {
     message_id: overrides.message_id ?? 42,
     from: {

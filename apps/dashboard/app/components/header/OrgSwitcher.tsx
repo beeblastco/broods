@@ -99,7 +99,11 @@ export function OrgSwitcher() {
             <ChevronDown className="size-3.5 text-muted-foreground" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-64 flex-col overflow-hidden">
+        <DropdownMenuContent
+          align="start"
+          sideOffset={8}
+          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-64 flex-col overflow-hidden"
+        >
           <DropdownMenuLabel className="text-xs text-muted-foreground">
             Organizations
           </DropdownMenuLabel>

@@ -71,18 +71,18 @@ State is resilient within the run but never outlives it: a hook that throws or r
 
 ## Hooks
 
-| Hook | Lifecycle event | May return |
-| --- | --- | --- |
-| `onStart` | `agent.started` | `{ system?, messages? }` — inject/replace the prompt or conversation |
-| `onToolCall` | `tool.call.started` | `{ decision: "allow"｜"deny", args?, denyReason? }` |
-| `onToolResult` | `tool.result` | `{ output? }` — transform the tool result |
-| `onFinish` | `agent.finished` | `{ output? }` — transform the final response |
-| `onStepFinish` | `agent.step.finished` | — (observe: logging, side effects) |
-| `onError` | `agent.failed` | — (observe) |
-| `onApproval` | `agent.approval.required` | — (observe; `{ approve }` auto-resolve is not yet honored) |
-| `onSubagentFinish` | `subagent.task.finished` | `{ visibleResult? }` — shape what the parent sees |
+| Hook                | Lifecycle event            | May return                                                                        |
+| ------------------- | -------------------------- | --------------------------------------------------------------------------------- |
+| `onStart`           | `agent.started`            | `{ system?, messages? }` — inject/replace the prompt or conversation              |
+| `onToolCall`        | `tool.call.started`        | `{ decision: "allow"｜"deny", args?, denyReason? }`                               |
+| `onToolResult`      | `tool.result`              | `{ output? }` — transform the tool result                                         |
+| `onFinish`          | `agent.finished`           | `{ output? }` — transform the final response                                      |
+| `onStepFinish`      | `agent.step.finished`      | — (observe: logging, side effects)                                                |
+| `onError`           | `agent.failed`             | — (observe)                                                                       |
+| `onApproval`        | `agent.approval.required`  | — (observe; `{ approve }` auto-resolve is not yet honored)                        |
+| `onSubagentFinish`  | `subagent.task.finished`   | `{ visibleResult? }` — shape what the parent sees                                 |
 | `onMessageReceived` | `channel.message.received` | `{ drop?, text? }` — drop discards the message; text rewrites what the agent sees |
-| `onMessageSending` | `channel.message.sending` | `{ drop?, text? }` |
+| `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                |
 
 Related: `config.subagent.visibility` (`"full"｜"result"｜"none"`) is the no-code way to control what the parent sees from a subagent; `onSubagentFinish` overrides it for custom shaping.
 

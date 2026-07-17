@@ -18,15 +18,15 @@ import { authKit } from "./auth";
  * @throws when either variable is unset.
  */
 function getServiceEnv(): { url: string; secret: string } {
-    const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-    const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-    if (!url || !secret) {
-        throw new Error(
-            "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
-        );
-    }
+  const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
+  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+  if (!url || !secret) {
+    throw new Error(
+      "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
+    );
+  }
 
-    return { url: url.replace(/\/+$/, ""), secret: secret };
+  return { url: url.replace(/\/+$/, ""), secret: secret };
 }
 
 /**
@@ -36,11 +36,11 @@ function getServiceEnv(): { url: string; secret: string } {
  * @returns the request headers.
  */
 function headers(accountId: string, secret: string): HeadersInit {
-    return {
-        Authorization: `Bearer ${secret}`,
-        "X-Account-Id": accountId,
-        "Content-Type": "application/json",
-    };
+  return {
+    Authorization: `Bearer ${secret}`,
+    "X-Account-Id": accountId,
+    "Content-Type": "application/json",
+  };
 }
 
 /**
@@ -49,17 +49,17 @@ function headers(accountId: string, secret: string): HeadersInit {
  * @returns the current dashboard user, or an unknown dashboard actor.
  */
 async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-        return { source: "dashboard" };
-    }
+  const user = await authKit.getAuthUser(ctx);
+  if (!user) {
+    return { source: "dashboard" };
+  }
 
-    return {
-        source: "dashboard",
-        id: user.id,
-        ...(user.email ? { email: user.email } : {}),
-        ...(user.name ? { name: user.name } : {}),
-    };
+  return {
+    source: "dashboard",
+    id: user.id,
+    ...(user.email ? { email: user.email } : {}),
+    ...(user.name ? { name: user.name } : {}),
+  };
 }
 
 /**
@@ -72,48 +72,67 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
  * @throws when no account resolves or broods returns a non-2xx response.
  */
 async function callLifecycle(
-    ctx: ActionCtx,
-    sandboxId: string,
-    reservationKey: string,
-    op: "suspend" | "resume" | "terminate" | "snapshot" | "refresh" | "exec" | "terminal",
-    extra?: Record<string, unknown>,
+  ctx: ActionCtx,
+  sandboxId: string,
+  reservationKey: string,
+  op:
+    | "suspend"
+    | "resume"
+    | "terminate"
+    | "snapshot"
+    | "refresh"
+    | "exec"
+    | "terminal",
+  extra?: Record<string, unknown>,
 ): Promise<unknown> {
-    const account = await ctx.runQuery(api.org.getActiveAccount, {});
-    if (!account) throw new Error("No active org / account not provisioned");
-    const controllable = await ctx.runQuery(internal.sandboxInstances.isControllable, {
-        accountId: account.accountId as never,
-        sandboxConfigId: sandboxId as never,
+  const account = await ctx.runQuery(api.org.getActiveAccount, {});
+  if (!account) throw new Error("No active org / account not provisioned");
+  const controllable = await ctx.runQuery(
+    internal.sandboxInstances.isControllable,
+    {
+      accountId: account.accountId as never,
+      sandboxConfigId: sandboxId as never,
+      reservationKey: reservationKey,
+    },
+  );
+  if (!controllable) {
+    throw new Error("Sandbox instance does not belong to this sandbox config");
+  }
+
+  const { url, secret } = getServiceEnv();
+  const res = await fetch(
+    `${url}/v1/sandboxes/${encodeURIComponent(sandboxId)}/${op}`,
+    {
+      method: "POST",
+      headers: headers(account.accountId, secret),
+      body: JSON.stringify({
         reservationKey: reservationKey,
+        actor: await actor(ctx),
+        ...extra,
+      }),
+    },
+  );
+  if (res.status === 404 && op === "refresh") {
+    // The sandbox config behind this instance row was deleted, so broods can
+    // no longer act on it. Drop the orphaned mirror row so the dashboard
+    // heals on refresh instead of erroring forever.
+    await ctx.runMutation(internal.sandboxInstances.remove, {
+      accountId: account.accountId as never,
+      reservationKey: reservationKey,
     });
-    if (!controllable) {
-        throw new Error("Sandbox instance does not belong to this sandbox config");
-    }
 
-    const { url, secret } = getServiceEnv();
-    const res = await fetch(`${url}/v1/sandboxes/${encodeURIComponent(sandboxId)}/${op}`, {
-        method: "POST",
-        headers: headers(account.accountId, secret),
-        body: JSON.stringify({ reservationKey: reservationKey, actor: await actor(ctx), ...extra }),
-    });
-    if (res.status === 404 && op === "refresh") {
-        // The sandbox config behind this instance row was deleted, so broods can
-        // no longer act on it. Drop the orphaned mirror row so the dashboard
-        // heals on refresh instead of erroring forever.
-        await ctx.runMutation(internal.sandboxInstances.remove, {
-            accountId: account.accountId as never,
-            reservationKey: reservationKey,
-        });
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(
+      `Broods sandbox ${op} failed: ${res.status} ${await res.text()}`,
+    );
+  }
 
-        return null;
-    }
-    if (!res.ok) {
-        throw new Error(`Broods sandbox ${op} failed: ${res.status} ${await res.text()}`);
-    }
+  const text = await res.text();
+  if (!text) return null;
 
-    const text = await res.text();
-    if (!text) return null;
-
-    return JSON.parse(text);
+  return JSON.parse(text);
 }
 
 /**
@@ -121,57 +140,63 @@ async function callLifecycle(
  * compute.
  */
 export const suspendSandbox = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /** Resumes a suspended sandbox instance. */
 export const resumeSandbox = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "resume");
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "resume");
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /** Terminates a sandbox instance and drops its reservation + registry row. */
 export const terminateSandbox = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminate");
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminate");
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /** Captures a reusable snapshot/image from a running sandbox instance. */
 export const createSnapshot = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string(), name: v.string() },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", { name: args.name });
+  args: {
+    sandboxId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+    name: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", {
+      name: args.name,
+    });
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /** Refreshes the mirrored instance state from the provider control plane. */
 export const refreshSandbox = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -180,67 +205,83 @@ export const refreshSandbox = action({
  * terminal WebSocket; broods resumes a suspended instance first when needed.
  */
 export const openTerminal = action({
-    args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-    returns: v.object({
-        token: v.string(),
-        expiresAt: v.number(),
-        websocketPath: v.string(),
-    }),
-    handler: async (ctx, args) => {
-        const result = await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminal");
-        if (!result || typeof result !== "object") {
-            throw new Error("Broods sandbox terminal returned an empty response");
-        }
-        const record = result as Record<string, unknown>;
-        if (typeof record.token !== "string" || typeof record.expiresAt !== "number" || typeof record.websocketPath !== "string") {
-            throw new Error("Broods sandbox terminal returned an invalid ticket");
-        }
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.object({
+    token: v.string(),
+    expiresAt: v.number(),
+    websocketPath: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const result = await callLifecycle(
+      ctx,
+      args.sandboxId,
+      args.reservationKey,
+      "terminal",
+    );
+    if (!result || typeof result !== "object") {
+      throw new Error("Broods sandbox terminal returned an empty response");
+    }
+    const record = result as Record<string, unknown>;
+    if (
+      typeof record.token !== "string" ||
+      typeof record.expiresAt !== "number" ||
+      typeof record.websocketPath !== "string"
+    ) {
+      throw new Error("Broods sandbox terminal returned an invalid ticket");
+    }
 
-        return {
-            token: record.token,
-            expiresAt: record.expiresAt,
-            websocketPath: record.websocketPath,
-        };
-    },
+    return {
+      token: record.token,
+      expiresAt: record.expiresAt,
+      websocketPath: record.websocketPath,
+    };
+  },
 });
 
 /** Runs one bounded shell command against a reserved sandbox instance. */
 export const runSandboxCommand = action({
-    args: {
-        sandboxId: v.id("sandboxConfigs"),
-        reservationKey: v.string(),
-        code: v.string(),
-    },
-    returns: v.object({
-        ok: v.boolean(),
-        runtime: v.string(),
-        exitCode: v.union(v.number(), v.null()),
-        stdout: v.string(),
-        stderr: v.string(),
-        durationMs: v.number(),
-        truncated: v.boolean(),
-        provider: v.string(),
-    }),
-    handler: async (ctx, args) => {
-        const result = await callLifecycle(ctx, args.sandboxId, args.reservationKey, "exec", {
-            code: args.code,
-            timeoutSeconds: 30,
-            outputLimitBytes: 64 * 1024,
-        });
-        if (!result || typeof result !== "object") {
-            throw new Error("Broods sandbox exec returned an empty response");
-        }
-        const record = result as Record<string, unknown>;
+  args: {
+    sandboxId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+    code: v.string(),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    runtime: v.string(),
+    exitCode: v.union(v.number(), v.null()),
+    stdout: v.string(),
+    stderr: v.string(),
+    durationMs: v.number(),
+    truncated: v.boolean(),
+    provider: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const result = await callLifecycle(
+      ctx,
+      args.sandboxId,
+      args.reservationKey,
+      "exec",
+      {
+        code: args.code,
+        timeoutSeconds: 30,
+        outputLimitBytes: 64 * 1024,
+      },
+    );
+    if (!result || typeof result !== "object") {
+      throw new Error("Broods sandbox exec returned an empty response");
+    }
+    const record = result as Record<string, unknown>;
 
-        return {
-            ok: record.ok === true,
-            runtime: typeof record.runtime === "string" ? record.runtime : "bash",
-            exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
-            stdout: typeof record.stdout === "string" ? record.stdout : "",
-            stderr: typeof record.stderr === "string" ? record.stderr : "",
-            durationMs: typeof record.durationMs === "number" ? record.durationMs : 0,
-            truncated: record.truncated === true,
-            provider: typeof record.provider === "string" ? record.provider : "sandbox",
-        };
-    },
+    return {
+      ok: record.ok === true,
+      runtime: typeof record.runtime === "string" ? record.runtime : "bash",
+      exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
+      stdout: typeof record.stdout === "string" ? record.stdout : "",
+      stderr: typeof record.stderr === "string" ? record.stderr : "",
+      durationMs: typeof record.durationMs === "number" ? record.durationMs : 0,
+      truncated: record.truncated === true,
+      provider:
+        typeof record.provider === "string" ? record.provider : "sandbox",
+    };
+  },
 });

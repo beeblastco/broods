@@ -14,13 +14,39 @@ import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
-import { type CliOnboardingContext, type CliOnboardingOrg, type CliOnboardingProject, diffManifests, BroodsSyncClient, type RemoteManifestResponse } from "../sync.ts";
+import {
+  type CliOnboardingContext,
+  type CliOnboardingOrg,
+  type CliOnboardingProject,
+  diffManifests,
+  BroodsSyncClient,
+  type RemoteManifestResponse,
+} from "../sync.ts";
 import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import { subscribeObservabilityLogs } from "../observability-client.ts";
-import type { LogLevel, ObservabilityLogEntry } from "../observability-contracts.ts";
-import { hasFlag, isPlainObject, loginWithBrowser, optionValue, promptConfirm, promptSecret, promptSelect, promptText, requireAuth } from "./utils.ts";
-import { printDeploymentTarget, printDiffEntries, printEnvSync, printReadyLine, printWarning } from "./output.ts";
+import type {
+  LogLevel,
+  ObservabilityLogEntry,
+} from "../observability-contracts.ts";
+import {
+  hasFlag,
+  isPlainObject,
+  loginWithBrowser,
+  optionValue,
+  promptConfirm,
+  promptSecret,
+  promptSelect,
+  promptText,
+  requireAuth,
+} from "./utils.ts";
+import {
+  printDeploymentTarget,
+  printDiffEntries,
+  printEnvSync,
+  printReadyLine,
+  printWarning,
+} from "./output.ts";
 import { createRenderState, renderStreamPart } from "./render.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -124,7 +150,11 @@ async function init(args: string[]): Promise<void> {
   const root = resolve(process.cwd(), PROJECT_DIR);
   await mkdir(resolve(root, GENERATED_DIR), { recursive: true });
   await writeStarter(resolve(root, "index.ts"), starterAgent(), force);
-  await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", force);
+  await writeStarter(
+    resolve(root, ".gitignore"),
+    "_generated\n.cache\n",
+    force,
+  );
   await writeLocalEnvDefaults({
     dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
@@ -141,17 +171,27 @@ async function login(args: string[]): Promise<void> {
     return;
   }
   const runtime = loadBroodsRuntimeConfig();
-  const dashboardUrl = optionValue(args, "--dashboard-url") ??
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const auth = await loginWithBrowser(dashboardUrl);
-  const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT ?? inferProjectName(process.cwd());
-  const environment = optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT ?? "development";
+  const project =
+    optionValue(args, "--project") ??
+    process.env.BROODS_PROJECT ??
+    inferProjectName(process.cwd());
+  const environment =
+    optionValue(args, "--env") ??
+    process.env.BROODS_ENVIRONMENT ??
+    "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
     project: project,
     environment: environment,
-    region: optionValue(args, "--region") ?? process.env.BROODS_REGION ?? DEFAULT_SERVICE_REGION,
+    region:
+      optionValue(args, "--region") ??
+      process.env.BROODS_REGION ??
+      DEFAULT_SERVICE_REGION,
     force: false,
   });
   const user = auth.user?.email || auth.user?.name || auth.user?.authId;
@@ -193,9 +233,17 @@ async function diff(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
-  const remote = await client.getManifest(manifest.project, manifest.environment);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const remote = await client.getManifest(
+    manifest.project,
+    manifest.environment,
+  );
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 }
 
@@ -206,12 +254,30 @@ async function deploy(args: string[]): Promise<void> {
     command: "deploy",
     useRuntimeEnvironment: false,
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
-  const result = await client.putManifest(manifest, hasFlag(args, "--prune"), hasFlag(args, "--rotate-key"));
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const result = await client.putManifest(
+    manifest,
+    hasFlag(args, "--prune"),
+    hasFlag(args, "--rotate-key"),
+  );
+  await writeGeneratedFiles(
+    manifest,
+    result.ids,
+    process.cwd(),
+    resourceAliases,
+    result.deployment,
+    channels,
+  );
   await ensureGitIgnore();
-  console.log(`Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`);
+  console.log(
+    `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`,
+  );
   await applyDeploymentKey(result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
@@ -229,7 +295,6 @@ async function applyDeploymentKey(
     console.log(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
     return;
   }
-
 }
 
 /** Surface non-fatal deploy advisories (e.g. env vars referenced but not set). */
@@ -245,7 +310,7 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   if (missingPolicies.length > 0) {
     printWarning(
       `⚠ ${missingPolicies.length} policy ref(s) in agent config match no policy resource ` +
-      `in this deploy and will be ignored at runtime: ${missingPolicies.join(", ")}`,
+        `in this deploy and will be ignored at runtime: ${missingPolicies.join(", ")}`,
     );
   }
 }
@@ -296,7 +361,9 @@ async function dev(args: string[]): Promise<void> {
         lastSourceSignature = signature;
         await runSyncChild(args, childEnv);
       })
-      .catch((error) => console.error(error instanceof Error ? error.message : String(error)))
+      .catch((error) =>
+        console.error(error instanceof Error ? error.message : String(error)),
+      )
       .finally(() => {
         syncing = false;
         if (pending) {
@@ -306,11 +373,15 @@ async function dev(args: string[]): Promise<void> {
       });
   };
 
-  const watcher = watch(resolve(process.cwd(), PROJECT_DIR), { recursive: true }, (_event, filename) => {
-    if (!filename || isGeneratedPath(filename)) return;
-    clearTimeout(timer);
-    timer = setTimeout(runSync, 150);
-  });
+  const watcher = watch(
+    resolve(process.cwd(), PROJECT_DIR),
+    { recursive: true },
+    (_event, filename) => {
+      if (!filename || isGeneratedPath(filename)) return;
+      clearTimeout(timer);
+      timer = setTimeout(runSync, 150);
+    },
+  );
 
   // Like `convex dev`: stream live agent logs alongside the resource watcher so
   // the developer sees activity while editing. Best-effort — if no runtime API
@@ -328,12 +399,17 @@ async function dev(args: string[]): Promise<void> {
 // Live-tail logs during `dev`, mirroring `convex dev`. Best-effort: if the API
 // key or project/env can't be resolved yet, print a hint and return rather than
 // breaking the watch loop.
-async function streamDevLogs(args: string[], signal: AbortSignal): Promise<void> {
+async function streamDevLogs(
+  args: string[],
+  signal: AbortSignal,
+): Promise<void> {
   let creds: { apiKey: string; baseUrl: string };
   try {
     creds = resolveObservabilityCredentials();
   } catch {
-    console.log("· live logs off — no runtime key found for this environment yet. Run `broods dev --once` after login to create or reconnect it.");
+    console.log(
+      "· live logs off — no runtime key found for this environment yet. Run `broods dev --once` after login to create or reconnect it.",
+    );
 
     return;
   }
@@ -349,14 +425,21 @@ async function streamDevLogs(args: string[], signal: AbortSignal): Promise<void>
   const minLevel = resolveMinLevel(args);
   try {
     for await (const entry of subscribeObservabilityLogs(
-      { baseUrl: creds.baseUrl, apiKey: creds.apiKey, project: project, environment: environment },
+      {
+        baseUrl: creds.baseUrl,
+        apiKey: creds.apiKey,
+        project: project,
+        environment: environment,
+      },
       { backfill: 0, minLevel: minLevel, signal: signal },
     )) {
       console.log(formatObservabilityEntry(entry));
     }
   } catch (error) {
     if (!signal.aborted) {
-      console.error(`live logs: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `live logs: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }
@@ -375,7 +458,11 @@ async function ensureProjectShell(): Promise<void> {
   if (files.length > 0) return;
 
   await writeStarter(resolve(root, "index.ts"), starterAgent(), false);
-  await writeStarter(resolve(root, ".gitignore"), "_generated\n.cache\n", false);
+  await writeStarter(
+    resolve(root, ".gitignore"),
+    "_generated\n.cache\n",
+    false,
+  );
   console.log(`Created starter ${PROJECT_DIR}/`);
 }
 
@@ -395,22 +482,29 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const needsRegion = values.BROODS_REGION === undefined;
 
   const runtime = loadBroodsRuntimeConfig();
-  const dashboardUrl = optionValue(args, "--dashboard-url") ??
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
-  let project = optionValue(args, "--project") ??
+  let project =
+    optionValue(args, "--project") ??
     process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
-  let environment = optionValue(args, "--env") ??
+  let environment =
+    optionValue(args, "--env") ??
     process.env.BROODS_ENVIRONMENT ??
     "development";
-  let region = optionValue(args, "--region") ??
+  let region =
+    optionValue(args, "--region") ??
     process.env.BROODS_REGION ??
     DEFAULT_SERVICE_REGION;
 
   if (process.stdin.isTTY && needsProject) {
     const auth = await requireAuthOrLogin(dashboardUrl);
-    const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
+    const client = new BroodsSyncClient({
+      baseUrl: auth.baseUrl,
+      token: auth.token,
+    });
     const context = await getOnboardingContextOrFallback(client, auth);
     const selectedContext = await selectOnboardingOrg(client, context);
     project = await selectOnboardingProject(selectedContext, project);
@@ -423,8 +517,11 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
-    region = await promptSelect("Select service region", [...SERVICE_REGIONS], (entry) => entry.label)
-      .then((entry) => entry.region);
+    region = await promptSelect(
+      "Select service region",
+      [...SERVICE_REGIONS],
+      (entry) => entry.label,
+    ).then((entry) => entry.region);
   }
 
   await writeLocalEnvDefaults({
@@ -461,20 +558,23 @@ async function getOnboardingContextOrFallback(
 
     return {
       currentOrgId: auth.org.id,
-      orgs: [{
-        id: auth.org.id,
-        name: auth.org.name,
-        slug: auth.org.slug,
-        role: "admin",
-        accountStatus: "active",
-      }],
+      orgs: [
+        {
+          id: auth.org.id,
+          name: auth.org.name,
+          slug: auth.org.slug,
+          role: "admin",
+          accountStatus: "active",
+        },
+      ],
       projects: [],
     };
   }
 }
 
 function formatOrgChoice(org: CliOnboardingOrg): string {
-  const suffix = org.role === "owner" || org.role === "admin" ? org.role : "member";
+  const suffix =
+    org.role === "owner" || org.role === "admin" ? org.role : "member";
 
   return `${org.name} (${org.slug}, ${suffix})`;
 }
@@ -483,16 +583,22 @@ async function selectOnboardingOrg(
   client: BroodsSyncClient,
   context: CliOnboardingContext,
 ): Promise<CliOnboardingContext> {
-  const activeOrgs = context.orgs.filter((org) => org.accountStatus === "active");
+  const activeOrgs = context.orgs.filter(
+    (org) => org.accountStatus === "active",
+  );
   const createNew = { kind: "create" as const, name: "New organization" };
   const selected = await promptSelect(
     "Select organization",
     [...activeOrgs, createNew],
-    (entry) => "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
+    (entry) =>
+      "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
   );
 
   if ("kind" in selected) {
-    const name = await promptText("Organization name", inferProjectName(process.cwd()));
+    const name = await promptText(
+      "Organization name",
+      inferProjectName(process.cwd()),
+    );
     if (!name.trim()) throw new Error("Organization name is required.");
 
     return await client.createOnboardingOrg(name);
@@ -503,24 +609,38 @@ async function selectOnboardingOrg(
     : await client.selectOnboardingOrg(selected.id);
 }
 
-function defaultProjectName(context: CliOnboardingContext, inferred: string): string {
-  const exact = context.projects.find((project) => project.name === inferred || project.slug === inferred);
+function defaultProjectName(
+  context: CliOnboardingContext,
+  inferred: string,
+): string {
+  const exact = context.projects.find(
+    (project) => project.name === inferred || project.slug === inferred,
+  );
 
   return exact?.name ?? inferred;
 }
 
-async function selectOnboardingProject(context: CliOnboardingContext, inferred: string): Promise<string> {
+async function selectOnboardingProject(
+  context: CliOnboardingContext,
+  inferred: string,
+): Promise<string> {
   if (context.projects.length === 0) {
     return promptText("Project name", inferred);
   }
 
-  const createNew = { kind: "create" as const, name: defaultProjectName(context, inferred), slug: "" };
+  const createNew = {
+    kind: "create" as const,
+    name: defaultProjectName(context, inferred),
+    slug: "",
+  };
   const choices: Array<CliOnboardingProject | typeof createNew> = [
     ...context.projects,
     createNew,
   ];
   const selected = await promptSelect("Select project", choices, (entry) =>
-    "kind" in entry && entry.kind === "create" ? `Create new project (${entry.name})` : `${entry.name} (${entry.slug})`
+    "kind" in entry && entry.kind === "create"
+      ? `Create new project (${entry.name})`
+      : `${entry.name} (${entry.slug})`,
   );
   if ("kind" in selected && selected.kind === "create") {
     return promptText("New project name", selected.name);
@@ -537,19 +657,27 @@ async function selectOnboardingProject(context: CliOnboardingContext, inferred: 
 function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     const entryPoint = process.argv[1] ?? "";
-    const child = spawn(process.execPath, [entryPoint, "dev", "--once", ...args], {
-      stdio: "inherit",
-      env: env,
-    });
+    const child = spawn(
+      process.execPath,
+      [entryPoint, "dev", "--once", ...args],
+      {
+        stdio: "inherit",
+        env: env,
+      },
+    );
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       if (code === 0) {
         resolvePromise();
         return;
       }
-      reject(new Error(signal
-        ? `Sync child exited from signal ${signal}`
-        : `Sync child exited with code ${code ?? "unknown"}`));
+      reject(
+        new Error(
+          signal
+            ? `Sync child exited from signal ${signal}`
+            : `Sync child exited with code ${code ?? "unknown"}`,
+        ),
+      );
     });
   });
 }
@@ -568,35 +696,69 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
-  const remote = await client.getManifest(manifest.project, manifest.environment);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const remote = await client.getManifest(
+    manifest.project,
+    manifest.environment,
+  );
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
   // Push any `env.NAME` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
-  await syncLocalEnvVars(client, manifest, envSyncScopeKey(auth.baseUrl, auth.token));
+  await syncLocalEnvVars(
+    client,
+    manifest,
+    envSyncScopeKey(auth.baseUrl, auth.token),
+  );
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
-  await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
+  await writeGeneratedFiles(
+    manifest,
+    result.ids,
+    process.cwd(),
+    resourceAliases,
+    result.deployment,
+    channels,
+  );
   await ensureGitIgnore();
 
   const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
-  const undecided = deletes.filter((entry) => !declined.has(`${entry.kind}:${entry.name}`));
+  const undecided = deletes.filter(
+    (entry) => !declined.has(`${entry.kind}:${entry.name}`),
+  );
   let pruned = false;
   if (undecided.length > 0) {
     printWarning("⚠ These remote resources are no longer declared locally:");
     printDiffEntries(undecided);
-    if (await promptConfirm(`Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`)) {
+    if (
+      await promptConfirm(
+        `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`,
+      )
+    ) {
       result = await client.putManifest(manifest, true);
-      await writeGeneratedFiles(manifest, result.ids, process.cwd(), resourceAliases, result.deployment, channels);
+      await writeGeneratedFiles(
+        manifest,
+        result.ids,
+        process.cwd(),
+        resourceAliases,
+        result.deployment,
+        channels,
+      );
       await clearDeclinedDeletes();
       pruned = true;
     } else {
-      await rememberDeclinedDeletes(undecided.map((entry) => `${entry.kind}:${entry.name}`));
+      await rememberDeclinedDeletes(
+        undecided.map((entry) => `${entry.kind}:${entry.name}`),
+      );
     }
   }
 
@@ -604,8 +766,12 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   // the prompt stops re-asking, so re-surface them (non-blocking) every sync
   // until they are re-declared in code or pruned.
   if (!pruned && deletes.length > 0) {
-    const names = deletes.map((entry) => `${entry.kind}:${entry.name}`).join(", ");
-    printWarning(`⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`);
+    const names = deletes
+      .map((entry) => `${entry.kind}:${entry.name}`)
+      .join(", ");
+    printWarning(
+      `⚠ ${deletes.length} undeclared resource(s) kept remotely: ${names} — re-declare in code or run \`deploy --prune\` to remove.`,
+    );
   }
 
   await applyDeploymentKey(result.deployment);
@@ -633,7 +799,9 @@ function printChannelEndpoints(
       accountId: deployment.accountId,
       webhookPath,
     });
-    console.log(`Channel ${channel.alias} (${channel.type}): ${url}${channel.type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`);
+    console.log(
+      `Channel ${channel.alias} (${channel.type}): ${url}${channel.type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`,
+    );
   }
 }
 
@@ -649,7 +817,11 @@ function printChannelEndpoints(
  * removing a var locally never deletes it remotely. `deploy` is left untouched
  * so production secrets stay an explicit `broods env set`.
  */
-async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest, scopeKey: string): Promise<void> {
+async function syncLocalEnvVars(
+  client: BroodsSyncClient,
+  manifest: CliManifest,
+  scopeKey: string,
+): Promise<void> {
   const present = collectEnvRefNames(manifest).filter((name) => {
     const value = process.env[name];
     return !name.startsWith("BROODS_") && value !== undefined && value !== "";
@@ -664,13 +836,29 @@ async function syncLocalEnvVars(client: BroodsSyncClient, manifest: CliManifest,
   // switching dashboard/account cannot suppress a needed push. A cleared cache
   // just re-pushes once — safe because the set is idempotent.
   const cache = await loadEnvSyncCache();
-  const known = cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] ?? {};
-  const remoteNames = new Set((await client.listEnv(manifest.project, manifest.environment)).map((entry) => entry.name));
-  const changed = present.filter((name) => !remoteNames.has(name) || known[name] !== hashEnvValue(process.env[name]!));
+  const known =
+    cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] ?? {};
+  const remoteNames = new Set(
+    (await client.listEnv(manifest.project, manifest.environment)).map(
+      (entry) => entry.name,
+    ),
+  );
+  const changed = present.filter(
+    (name) =>
+      !remoteNames.has(name) ||
+      known[name] !== hashEnvValue(process.env[name]!),
+  );
   if (changed.length === 0) return;
 
   await Promise.all(
-    changed.map((name) => client.setEnv(manifest.project, manifest.environment, name, process.env[name]!)),
+    changed.map((name) =>
+      client.setEnv(
+        manifest.project,
+        manifest.environment,
+        name,
+        process.env[name]!,
+      ),
+    ),
   );
   for (const name of changed) known[name] = hashEnvValue(process.env[name]!);
   cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] = known;
@@ -684,7 +872,11 @@ function envSyncScopeKey(baseUrl: string, token: string): string {
   return `${baseUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
 }
 
-function envCacheKey(scopeKey: string, project: string, environment: string): string {
+function envCacheKey(
+  scopeKey: string,
+  project: string,
+  environment: string,
+): string {
   return `${scopeKey}:${project}:${environment}`;
 }
 
@@ -715,7 +907,13 @@ async function saveEnvSyncCache(cache: EnvSyncCache): Promise<void> {
 }
 
 /** Records the synced hash for a var set via `env set`, so `dev` won't re-push an unchanged value. */
-async function rememberEnvSyncValue(scopeKey: string, project: string, environment: string, name: string, value: string): Promise<void> {
+async function rememberEnvSyncValue(
+  scopeKey: string,
+  project: string,
+  environment: string,
+  name: string,
+  value: string,
+): Promise<void> {
   const cache = await loadEnvSyncCache();
   const key = envCacheKey(scopeKey, project, environment);
   cache[key] = { ...(cache[key] ?? {}), [name]: hashEnvValue(value) };
@@ -723,7 +921,12 @@ async function rememberEnvSyncValue(scopeKey: string, project: string, environme
 }
 
 /** Drops a var's cached hash after `env rm`, so a later re-add with the same value re-pushes. */
-async function forgetEnvSyncValue(scopeKey: string, project: string, environment: string, name: string): Promise<void> {
+async function forgetEnvSyncValue(
+  scopeKey: string,
+  project: string,
+  environment: string,
+  name: string,
+): Promise<void> {
   const cache = await loadEnvSyncCache();
   const key = envCacheKey(scopeKey, project, environment);
   if (!cache[key] || !(name in cache[key])) return;
@@ -737,7 +940,9 @@ async function printDevTarget(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
   printDeploymentTarget({
     project: manifest.project,
     environment: manifest.environment,
@@ -751,7 +956,12 @@ async function loadDeclinedDeletes(): Promise<Set<string>> {
   if (!path) return new Set();
   const text = await readTextIfExists(path);
 
-  return new Set(text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+  return new Set(
+    text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
 }
 
 /** Appends declined delete keys so later watch syncs do not re-prompt for them. */
@@ -784,13 +994,21 @@ async function envCommand(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const client = new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token });
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
   const scopeKey = envSyncScopeKey(auth.baseUrl, auth.token);
   const target = `${manifest.project}/${manifest.environment}`;
 
   if (isList) {
-    const variables = await client.listEnv(manifest.project, manifest.environment);
+    const variables = await client.listEnv(
+      manifest.project,
+      manifest.environment,
+    );
     if (variables.length === 0) {
       console.log(`No environment variables set for ${target}.`);
       return;
@@ -801,7 +1019,11 @@ async function envCommand(args: string[]): Promise<void> {
   }
 
   if (isGet) {
-    const value = await client.getEnv(manifest.project, manifest.environment, name!);
+    const value = await client.getEnv(
+      manifest.project,
+      manifest.environment,
+      name!,
+    );
     if (value === null) {
       console.error(`${name} is not set for ${target}`);
       process.exitCode = 1;
@@ -814,20 +1036,34 @@ async function envCommand(args: string[]): Promise<void> {
 
   if (isRemove) {
     await client.removeEnv(manifest.project, manifest.environment, name!);
-    await forgetEnvSyncValue(scopeKey, manifest.project, manifest.environment, name!);
+    await forgetEnvSyncValue(
+      scopeKey,
+      manifest.project,
+      manifest.environment,
+      name!,
+    );
     console.log(`Removed ${name} from ${target}`);
     return;
   }
 
   const value = await promptSecret(name!);
   await client.setEnv(manifest.project, manifest.environment, name!, value);
-  await rememberEnvSyncValue(scopeKey, manifest.project, manifest.environment, name!, value);
+  await rememberEnvSyncValue(
+    scopeKey,
+    manifest.project,
+    manifest.environment,
+    name!,
+    value,
+  );
   console.log(`Stored ${name} for ${target}`);
 }
 
 // Runtime API key (BROODS_API_KEY, written by `deploy`/`init`) + base URL
 // for the observability gateway. No dashboard login required.
-function resolveObservabilityCredentials(): { apiKey: string; baseUrl: string } {
+function resolveObservabilityCredentials(): {
+  apiKey: string;
+  baseUrl: string;
+} {
   loadBroodsRuntimeConfig();
   const apiKey = process.env.BROODS_API_KEY ?? "";
   if (!apiKey) {
@@ -855,14 +1091,13 @@ function resolveMinLevel(args: string[]): LogLevel | undefined {
 }
 
 /** Resolve project + environment for observability commands (same as other commands). */
-async function resolveProjectEnv(args: string[]): Promise<{ project: string; environment: string }> {
+async function resolveProjectEnv(
+  args: string[],
+): Promise<{ project: string; environment: string }> {
   loadBroodsRuntimeConfig();
-  const project =
-    optionValue(args, "--project") ??
-    process.env.BROODS_PROJECT;
+  const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
   const environment =
-    optionValue(args, "--env") ??
-    process.env.BROODS_ENVIRONMENT;
+    optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT;
   if (!project) {
     throw new Error(
       "Project name is required. Pass --project <name> or set BROODS_PROJECT in .env.local.",
@@ -896,8 +1131,8 @@ async function streamLogs(args: string[]): Promise<void> {
 
   console.log(
     `Streaming live logs for ${project}/${environment}` +
-    (minLevel ? ` [${minLevel}+]` : "") +
-    " — Ctrl+C to stop",
+      (minLevel ? ` [${minLevel}+]` : "") +
+      " — Ctrl+C to stop",
   );
 
   try {
@@ -923,7 +1158,9 @@ async function logs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
   const { project, environment } = await resolveProjectEnv(args);
   const minLevel = resolveMinLevel(args);
-  const limit = Number(optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100);
+  const limit = Number(
+    optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
+  );
   const jsonMode = hasFlag(args, "--json");
 
   const controller = new AbortController();
@@ -932,8 +1169,8 @@ async function logs(args: string[]): Promise<void> {
 
   console.log(
     `Logs for ${project}/${environment}` +
-    (minLevel ? ` [${minLevel}+]` : "") +
-    ` (backfill ${limit}) — Ctrl+C to stop`,
+      (minLevel ? ` [${minLevel}+]` : "") +
+      ` (backfill ${limit}) — Ctrl+C to stop`,
   );
 
   try {
@@ -979,16 +1216,24 @@ async function agentCommand(args: string[]): Promise<void> {
 /** Compile the local manifest and pair each agent with its remote deploy id. */
 async function loadAgentsWithIds(args: string[]): Promise<{
   manifest: CliManifest;
-  agents: Array<{ name: string; config: Record<string, unknown>; agentId?: string }>;
+  agents: Array<{
+    name: string;
+    config: Record<string, unknown>;
+    agentId?: string;
+  }>;
 }> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const remote = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
-    .getManifest(manifest.project, manifest.environment);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const remote = await new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  }).getManifest(manifest.project, manifest.environment);
   const agents = manifest.resources
     .filter((resource) => resource.kind === "agent")
     .map((resource) => ({
@@ -1003,7 +1248,9 @@ async function loadAgentsWithIds(args: string[]): Promise<{
 async function agentList(args: string[]): Promise<void> {
   const { manifest, agents } = await loadAgentsWithIds(args);
   if (agents.length === 0) {
-    console.log(`No agents declared in ${manifest.project}/${manifest.environment}.`);
+    console.log(
+      `No agents declared in ${manifest.project}/${manifest.environment}.`,
+    );
     return;
   }
   console.log(`Agents in ${manifest.project}/${manifest.environment}:`);
@@ -1015,43 +1262,75 @@ async function agentList(args: string[]): Promise<void> {
   }
 }
 
-async function agentGet(name: string | undefined, args: string[]): Promise<void> {
+async function agentGet(
+  name: string | undefined,
+  args: string[],
+): Promise<void> {
   if (!name) throw new Error("Usage: broods agent get <name>");
   const { manifest, agents } = await loadAgentsWithIds(args);
   const agent = agents.find((entry) => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
 
   const config = agent.config;
-  const sandbox = typeof config.sandbox === "string" ? config.sandbox : undefined;
+  const sandbox =
+    typeof config.sandbox === "string" ? config.sandbox : undefined;
   const workspaces = Array.isArray(config.workspaces)
-    ? config.workspaces.map((ref) => (typeof ref === "string" ? ref : (ref as { name?: string }).name)).filter(Boolean)
+    ? config.workspaces
+        .map((ref) =>
+          typeof ref === "string" ? ref : (ref as { name?: string }).name,
+        )
+        .filter(Boolean)
     : [];
   const tools = isPlainObject(config.tools) ? Object.keys(config.tools) : [];
-  const channels = isPlainObject(config.channels) ? Object.keys(config.channels) : [];
-  const subagents = isPlainObject(config.subagent) && Array.isArray((config.subagent as { allowed?: unknown }).allowed)
-    ? ((config.subagent as { allowed: unknown[] }).allowed).map((entry) =>
-        typeof entry === "string" ? entry : (entry as { name?: string }).name).filter(Boolean)
+  const channels = isPlainObject(config.channels)
+    ? Object.keys(config.channels)
     : [];
-  const webhooks = isPlainObject(config.hooks) && Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
-    ? ((config.hooks as { webhooks: unknown[] }).webhooks).filter(isPlainObject)
-    : [];
+  const subagents =
+    isPlainObject(config.subagent) &&
+    Array.isArray((config.subagent as { allowed?: unknown }).allowed)
+      ? (config.subagent as { allowed: unknown[] }).allowed
+          .map((entry) =>
+            typeof entry === "string"
+              ? entry
+              : (entry as { name?: string }).name,
+          )
+          .filter(Boolean)
+      : [];
+  const webhooks =
+    isPlainObject(config.hooks) &&
+    Array.isArray((config.hooks as { webhooks?: unknown }).webhooks)
+      ? (config.hooks as { webhooks: unknown[] }).webhooks.filter(isPlainObject)
+      : [];
 
   console.log(`Agent: ${agent.name}`);
   console.log(`  Project/Env:  ${manifest.project}/${manifest.environment}`);
   console.log(`  Deployed id:  ${agent.agentId ?? "not deployed"}`);
-  console.log(`  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`);
+  console.log(
+    `  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`,
+  );
   console.log(`  Model:        ${agentModelLabel(config)}`);
   console.log(`  Sandbox:      ${sandbox ?? "—"}`);
-  console.log(`  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "—"}`);
+  console.log(
+    `  Workspaces:   ${workspaces.length > 0 ? workspaces.join(", ") : "—"}`,
+  );
   console.log(`  Tools:        ${tools.length > 0 ? tools.join(", ") : "—"}`);
-  console.log(`  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "—"}`);
-  console.log(`  Channels:     ${channels.length > 0 ? channels.join(", ") : "—"}`);
+  console.log(
+    `  Subagents:    ${subagents.length > 0 ? subagents.join(", ") : "—"}`,
+  );
+  console.log(
+    `  Channels:     ${channels.length > 0 ? channels.join(", ") : "—"}`,
+  );
   if (webhooks.length > 0) {
     console.log(`  Webhooks:`);
     webhooks.forEach((webhook, index) => {
-      const events = Array.isArray(webhook.events) && webhook.events.length > 0 ? webhook.events.join(", ") : "all events";
+      const events =
+        Array.isArray(webhook.events) && webhook.events.length > 0
+          ? webhook.events.join(", ")
+          : "all events";
       const state = webhook.enabled === false ? "disabled" : "enabled";
-      console.log(`    [${index}] ${state} → ${webhook.url ?? "—"} (${events})`);
+      console.log(
+        `    [${index}] ${state} → ${webhook.url ?? "—"} (${events})`,
+      );
     });
   }
 }
@@ -1059,7 +1338,8 @@ async function agentGet(name: string | undefined, args: string[]): Promise<void>
 /** A compact `provider/modelId` label from an agent's nested config. */
 function agentModelLabel(config: Record<string, unknown>): string {
   const model = isPlainObject(config.model) ? config.model : {};
-  const provider = typeof model.provider === "string" ? model.provider : undefined;
+  const provider =
+    typeof model.provider === "string" ? model.provider : undefined;
   const modelId = typeof model.modelId === "string" ? model.modelId : undefined;
   if (provider && modelId) return `${provider}/${modelId}`;
 
@@ -1067,7 +1347,9 @@ function agentModelLabel(config: Record<string, unknown>): string {
 }
 
 async function run(args: string[]): Promise<void> {
-  const [agentName, ...promptParts] = args.filter((arg) => !arg.startsWith("--"));
+  const [agentName, ...promptParts] = args.filter(
+    (arg) => !arg.startsWith("--"),
+  );
   if (!agentName || promptParts.length === 0) {
     throw new Error("Usage: broods run <agent> <prompt>");
   }
@@ -1076,14 +1358,26 @@ async function run(args: string[]): Promise<void> {
     environment: optionValue(args, "--env"),
     command: "dev",
   });
-  const auth = await requireAuth(optionValue(args, "--base-url") ?? config.baseUrl);
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === agentName);
+  const auth = await requireAuth(
+    optionValue(args, "--base-url") ?? config.baseUrl,
+  );
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === agentName,
+  );
   if (!agent) throw new Error(`Unknown local agent: ${agentName}`);
-  const remote = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
-    .getManifest(manifest.project, manifest.environment);
+  const remote = await new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  }).getManifest(manifest.project, manifest.environment);
   const agentId = remote?.ids.agents[agentName];
-  if (!agentId) throw new Error(`Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`);
-  const runtimeKey = await new BroodsSyncClient({ baseUrl: auth.baseUrl, token: auth.token })
+  if (!agentId)
+    throw new Error(
+      `Agent ${agentName} is not synced yet. Run broods dev --once or broods deploy first.`,
+    );
+  const runtimeKey = await new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  })
     .getRuntimeKey(manifest.project, manifest.environment)
     .catch(() => null);
   if (runtimeKey?.apiKey) {
@@ -1096,23 +1390,34 @@ async function run(args: string[]): Promise<void> {
   if ((agent.config as Record<string, unknown>).publicAccess !== true) {
     printWarning(
       `⚠ Agent "${agentName}" does not set publicAccess: true. The public endpoint is secured by default; ` +
-      "if the deployed agent has not enabled it, this run will be refused.",
+        "if the deployed agent has not enabled it, this run will be refused.",
     );
   }
 
-  const client = new BroodsClient(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {});
+  const client = new BroodsClient(
+    runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {},
+  );
   const state = createRenderState();
   try {
-    for await (const part of client.stream({
-      kind: "agent",
-      name: agentName,
-      id: agentId,
-      project: manifest.project,
-      environment: manifest.environment,
-      ...(runtimeKey?.endpointId ? { endpointId: runtimeKey.endpointId } : {}),
-      ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
-      ...(runtimeKey?.environmentSlug ? { environmentSlug: runtimeKey.environmentSlug } : {}),
-    }, { input: promptParts.join(" ") })) {
+    for await (const part of client.stream(
+      {
+        kind: "agent",
+        name: agentName,
+        id: agentId,
+        project: manifest.project,
+        environment: manifest.environment,
+        ...(runtimeKey?.endpointId
+          ? { endpointId: runtimeKey.endpointId }
+          : {}),
+        ...(runtimeKey?.projectSlug
+          ? { projectSlug: runtimeKey.projectSlug }
+          : {}),
+        ...(runtimeKey?.environmentSlug
+          ? { environmentSlug: runtimeKey.environmentSlug }
+          : {}),
+      },
+      { input: promptParts.join(" ") },
+    )) {
       renderStreamPart(part, state);
     }
     process.stdout.write("\n");
@@ -1121,14 +1426,18 @@ async function run(args: string[]): Promise<void> {
     if (message.includes("public_access_disabled")) {
       throw new Error(
         `Agent "${agentName}" is not publicly accessible (secured by default). ` +
-        "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
+          "Set publicAccess: true in its config and redeploy, or enable Public access in the dashboard.",
       );
     }
     throw error;
   }
 }
 
-async function writeStarter(path: string, contents: string, force: boolean): Promise<void> {
+async function writeStarter(
+  path: string,
+  contents: string,
+  force: boolean,
+): Promise<void> {
   try {
     await writeFile(path, contents, { flag: force ? "w" : "wx" });
   } catch (error) {
@@ -1142,9 +1451,13 @@ async function ensureGitIgnore(): Promise<void> {
   const path = resolve(process.cwd(), PROJECT_DIR, ".gitignore");
   const existing = await readTextIfExists(path);
   const needed = ["_generated", ".cache"];
-  const missing = needed.filter((line) => !existing.split(/\r?\n/).some((l) => l.trim() === line));
+  const missing = needed.filter(
+    (line) => !existing.split(/\r?\n/).some((l) => l.trim() === line),
+  );
   if (missing.length === 0) return;
-  const body = existing ? existing.trimEnd() + "\n" + missing.join("\n") + "\n" : missing.join("\n") + "\n";
+  const body = existing
+    ? existing.trimEnd() + "\n" + missing.join("\n") + "\n"
+    : missing.join("\n") + "\n";
   await writeFile(path, body, "utf8");
 }
 
@@ -1164,9 +1477,9 @@ async function writeLocalEnvDefaults(options: {
     BROODS_ENVIRONMENT: options.environment,
     BROODS_REGION: options.region,
   };
-  const lines = current ? current.replace(/\n?$/, "\n").split(/\n/) : [
-    "# Local broods CLI settings. Tokens are stored outside the repo.",
-  ];
+  const lines = current
+    ? current.replace(/\n?$/, "\n").split(/\n/)
+    : ["# Local broods CLI settings. Tokens are stored outside the repo."];
   let changed = false;
 
   for (const [key, value] of Object.entries(nextValues)) {
@@ -1225,11 +1538,13 @@ function quoteEnv(value: string): string {
 }
 
 function inferProjectName(cwd: string): string {
-  return basename(resolve(cwd))
-    .replace(/^@/, "")
-    .replace(/\//g, "-")
-    .replace(/[^A-Za-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "broods-app";
+  return (
+    basename(resolve(cwd))
+      .replace(/^@/, "")
+      .replace(/\//g, "-")
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "broods-app"
+  );
 }
 
 async function sourceSignature(): Promise<string> {
@@ -1252,20 +1567,35 @@ async function collectSourceFiles(dir: string, files: string[]): Promise<void> {
   for (const entry of entries) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (entry.name === GENERATED_DIR || entry.name === "generated" || entry.name === ".cache") continue;
+      if (
+        entry.name === GENERATED_DIR ||
+        entry.name === "generated" ||
+        entry.name === ".cache"
+      )
+        continue;
       await collectSourceFiles(full, files);
       continue;
     }
-    if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))) files.push(full);
+    if (
+      entry.isFile() &&
+      (entry.name.endsWith(".ts") || entry.name.endsWith(".md"))
+    )
+      files.push(full);
   }
 }
 
 function isGeneratedPath(path: string): boolean {
-  return path.split(/[\\/]/).some((part) => part === GENERATED_DIR || part === "generated" || part === ".cache");
+  return path
+    .split(/[\\/]/)
+    .some(
+      (part) =>
+        part === GENERATED_DIR || part === "generated" || part === ".cache",
+    );
 }
 
 function starterAgent(): string {
-  return `import { defineAgent, defineSandbox, env } from "broods";\n\n` +
+  return (
+    `import { defineAgent, defineSandbox, env } from "broods";\n\n` +
     `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
     `export const lambdaSandbox = defineSandbox({\n` +
     `  name: "lambda-sandbox",\n` +
@@ -1295,7 +1625,8 @@ function starterAgent(): string {
     `    // private agent is only reachable via internal endpoints or channel webhooks.\n` +
     `    publicAccess: true,\n` +
     `  },\n` +
-    `});\n`;
+    `});\n`
+  );
 }
 
 main().catch((error) => {

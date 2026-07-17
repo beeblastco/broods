@@ -1,6 +1,6 @@
 # Lifecycle Webhooks
 
-Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{agentId}/{channel}`, and different again from [sandbox hooks](workspace/sandbox/hook.md): a lifecycle webhook is **declarative HTTPS delivery of event JSON to an external service**, whereas sandbox `onCreate`/`onResume` commands run *inside the sandbox*. Neither uploads or executes user hook code today — per-invocation user code hooks are tracked under [#63](https://github.com/beeblastco/broods/issues/63).
+Lifecycle webhooks publish agent runtime events to an HTTPS endpoint configured on the agent. They are different from channel provider webhooks under `/webhooks/{accountId}/{agentId}/{channel}`, and different again from [sandbox hooks](workspace/sandbox/hook.md): a lifecycle webhook is **declarative HTTPS delivery of event JSON to an external service**, whereas sandbox `onCreate`/`onResume` commands run _inside the sandbox_. Neither uploads or executes user hook code today — per-invocation user code hooks are tracked under [#63](https://github.com/beeblastco/broods/issues/63).
 
 ```mermaid
 flowchart LR
@@ -52,12 +52,12 @@ export const myAgent = defineAgent({
 });
 ```
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `enabled` | boolean | Enables delivery for this webhook |
-| `url` | string | HTTPS endpoint that receives event JSON |
-| `secret` | string | HMAC signing secret |
-| `events` | string[] | Optional allow-list; omitted means all lifecycle events |
+| Field     | Type     | Description                                             |
+| --------- | -------- | ------------------------------------------------------- |
+| `enabled` | boolean  | Enables delivery for this webhook                       |
+| `url`     | string   | HTTPS endpoint that receives event JSON                 |
+| `secret`  | string   | HMAC signing secret                                     |
+| `events`  | string[] | Optional allow-list; omitted means all lifecycle events |
 
 Each entry is delivered independently: every enabled webhook whose `events` allow-list matches (or is omitted) receives the event. The `url` must be a public HTTPS endpoint — loopback, private (RFC 1918), link-local, and internal hostnames are rejected at config time and again at delivery, and delivery does not follow redirects.
 
@@ -65,18 +65,18 @@ Whether you configure webhooks in code (`config.hooks.webhooks`, with `url`/`sec
 
 ## Events
 
-| Event | Emitted when |
-| --- | --- |
-| `agent.started` | A model loop starts |
-| `agent.step.finished` | A Vercel AI SDK step finishes |
-| `agent.finished` | The agent produces a final response |
-| `agent.failed` | The model loop or post-generation handling fails |
-| `agent.approval.required` | A tool approval request pauses the turn |
-| `tool.call.started` | A tool call starts |
-| `tool.call.finished` | A tool call finishes or fails |
-| `tool.result` | Tool results are available from a finished step |
-| `subagent.task.started` | A subagent task is dispatched |
-| `subagent.task.finished` | A subagent task completes or fails |
+| Event                     | Emitted when                                     |
+| ------------------------- | ------------------------------------------------ |
+| `agent.started`           | A model loop starts                              |
+| `agent.step.finished`     | A Vercel AI SDK step finishes                    |
+| `agent.finished`          | The agent produces a final response              |
+| `agent.failed`            | The model loop or post-generation handling fails |
+| `agent.approval.required` | A tool approval request pauses the turn          |
+| `tool.call.started`       | A tool call starts                               |
+| `tool.call.finished`      | A tool call finishes or fails                    |
+| `tool.result`             | Tool results are available from a finished step  |
+| `subagent.task.started`   | A subagent task is dispatched                    |
+| `subagent.task.finished`  | A subagent task completes or fails               |
 
 ## Delivery
 

@@ -11,9 +11,9 @@ import { getActiveAccountForUser } from "./org";
 import { sandboxSnapshotsFields } from "./schema";
 
 const sandboxSnapshotDoc = v.object({
-    ...sandboxSnapshotsFields,
-    _id: v.id("sandboxSnapshots"),
-    _creationTime: v.number(),
+  ...sandboxSnapshotsFields,
+  _id: v.id("sandboxSnapshots"),
+  _creationTime: v.number(),
 });
 
 /**
@@ -22,17 +22,17 @@ const sandboxSnapshotDoc = v.object({
  * @returns the account's snapshot rows, or `[]` when no org/account resolves.
  */
 export const listForActiveOrg = query({
-    args: {},
-    returns: v.array(sandboxSnapshotDoc),
-    handler: async (ctx) => {
-        const account = await getActiveAccountForUser(ctx);
-        if (!account) return [];
+  args: {},
+  returns: v.array(sandboxSnapshotDoc),
+  handler: async (ctx) => {
+    const account = await getActiveAccountForUser(ctx);
+    if (!account) return [];
 
-        return await ctx.db
-            .query("sandboxSnapshots")
-            .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
-            .collect();
-    },
+    return await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
+      .collect();
+  },
 });
 
 /**
@@ -47,47 +47,49 @@ export const listForActiveOrg = query({
  * @param status the unified build status; defaults to `active`.
  */
 export const upsert = internalMutation({
-    args: {
-        accountId: v.id("accounts"),
-        name: v.string(),
-        provider: sandboxSnapshotsFields.provider,
-        baseImage: v.string(),
-        externalImageId: v.string(),
-        status: v.optional(sandboxSnapshotsFields.status),
-    },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        const existing = await ctx.db
-            .query("sandboxSnapshots")
-            .withIndex("by_accountId_and_name", (q) => q.eq("accountId", args.accountId).eq("name", args.name))
-            .unique();
+  args: {
+    accountId: v.id("accounts"),
+    name: v.string(),
+    provider: sandboxSnapshotsFields.provider,
+    baseImage: v.string(),
+    externalImageId: v.string(),
+    status: v.optional(sandboxSnapshotsFields.status),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("sandboxSnapshots")
+      .withIndex("by_accountId_and_name", (q) =>
+        q.eq("accountId", args.accountId).eq("name", args.name),
+      )
+      .unique();
 
-        const now = Date.now();
-        const status = args.status ?? "active";
-        if (existing) {
-            await ctx.db.patch(existing._id, {
-                provider: args.provider,
-                baseImage: args.baseImage,
-                externalImageId: args.externalImageId,
-                status,
-                lastUsedAt: now,
-            });
+    const now = Date.now();
+    const status = args.status ?? "active";
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        provider: args.provider,
+        baseImage: args.baseImage,
+        externalImageId: args.externalImageId,
+        status,
+        lastUsedAt: now,
+      });
 
-            return null;
-        }
+      return null;
+    }
 
-        await ctx.db.insert("sandboxSnapshots", {
-            accountId: args.accountId,
-            name: args.name,
-            provider: args.provider,
-            baseImage: args.baseImage,
-            externalImageId: args.externalImageId,
-            status,
-            pulledCount: 0,
-            createdAt: now,
-            lastUsedAt: now,
-        });
+    await ctx.db.insert("sandboxSnapshots", {
+      accountId: args.accountId,
+      name: args.name,
+      provider: args.provider,
+      baseImage: args.baseImage,
+      externalImageId: args.externalImageId,
+      status,
+      pulledCount: 0,
+      createdAt: now,
+      lastUsedAt: now,
+    });
 
-        return null;
-    },
+    return null;
+  },
 });

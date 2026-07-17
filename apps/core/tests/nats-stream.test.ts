@@ -6,19 +6,27 @@
 
 import { describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
-import { consumerStartPolicy, streamResponseSubject, subjectToken } from "../src/shared/nats.ts";
+import {
+  consumerStartPolicy,
+  streamResponseSubject,
+  subjectToken,
+} from "../src/shared/nats.ts";
 
 describe("nats subject scheme", () => {
   it("encodes a conversationKey into a single NATS-safe subject token", () => {
     const token = subjectToken("api:user.1 / chat*>");
-    expect(token).toBe(Buffer.from("api:user.1 / chat*>", "utf8").toString("base64url"));
+    expect(token).toBe(
+      Buffer.from("api:user.1 / chat*>", "utf8").toString("base64url"),
+    );
     // No NATS-reserved characters survive (., *, >, whitespace).
     expect(token).not.toMatch(/[.*>\s]/);
   });
 
   it("round-trips the conversationKey through the token", () => {
     const key = "api:weird/key.with.dots and spaces";
-    expect(Buffer.from(subjectToken(key), "base64url").toString("utf8")).toBe(key);
+    expect(Buffer.from(subjectToken(key), "base64url").toString("utf8")).toBe(
+      key,
+    );
   });
 
   it("is conversation-scoped so a reconnecting client shares one subject", () => {
@@ -29,10 +37,20 @@ describe("nats subject scheme", () => {
   });
 
   it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
-    const subject = streamResponseSubject("acct1", "agent1", "conv with spaces.and.dots");
+    const subject = streamResponseSubject(
+      "acct1",
+      "agent1",
+      "conv with spaces.and.dots",
+    );
     const tokens = subject.split(".");
     expect(tokens).toHaveLength(6);
-    expect(tokens.slice(0, 5)).toEqual(["v1", "acct1", "agent1", "ws", "response"]);
+    expect(tokens.slice(0, 5)).toEqual([
+      "v1",
+      "acct1",
+      "agent1",
+      "ws",
+      "response",
+    ]);
   });
 });
 

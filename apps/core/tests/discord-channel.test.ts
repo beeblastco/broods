@@ -5,17 +5,23 @@ const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
 
 describe("discord channel adapter", () => {
   it("rejects DM interactions", async () => {
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, new Set(["guild-1"]));
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
 
-    const parsed = await adapter.parse(createRequest({
-      id: "interaction-1",
-      type: 2,
-      token: "token-1",
-      application_id: "app-1",
-      channel_id: "channel-1",
-      data: { name: "new" },
-      user: { id: "user-1" },
-    }));
+    const parsed = await adapter.parse(
+      createRequest({
+        id: "interaction-1",
+        type: 2,
+        token: "token-1",
+        application_id: "app-1",
+        channel_id: "channel-1",
+        data: { name: "new" },
+        user: { id: "user-1" },
+      }),
+    );
 
     expect(parsed.kind).toBe("response");
     if (parsed.kind !== "response") {
@@ -27,18 +33,24 @@ describe("discord channel adapter", () => {
   });
 
   it("rejects guild interactions outside the allow list", async () => {
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, new Set(["guild-1"]));
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
 
-    const parsed = await adapter.parse(createRequest({
-      id: "interaction-2",
-      type: 2,
-      token: "token-2",
-      application_id: "app-1",
-      guild_id: "guild-2",
-      channel_id: "channel-1",
-      data: { name: "new" },
-      member: { user: { id: "user-1" } },
-    }));
+    const parsed = await adapter.parse(
+      createRequest({
+        id: "interaction-2",
+        type: 2,
+        token: "token-2",
+        application_id: "app-1",
+        guild_id: "guild-2",
+        channel_id: "channel-1",
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
 
     expect(parsed.kind).toBe("response");
     if (parsed.kind !== "response") {
@@ -50,18 +62,24 @@ describe("discord channel adapter", () => {
   });
 
   it("accepts guild interactions inside the allow list", async () => {
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, new Set(["guild-1"]));
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
 
-    const parsed = await adapter.parse(createRequest({
-      id: "interaction-3",
-      type: 2,
-      token: "token-3",
-      application_id: "app-1",
-      guild_id: "guild-1",
-      channel_id: "channel-1",
-      data: { name: "new" },
-      member: { user: { id: "user-1" } },
-    }));
+    const parsed = await adapter.parse(
+      createRequest({
+        id: "interaction-3",
+        type: 2,
+        token: "token-3",
+        application_id: "app-1",
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -74,27 +92,33 @@ describe("discord channel adapter", () => {
   });
 
   it("accepts gateway-forwarded message events as ordinary agent input", async () => {
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, new Set(["guild-1"]));
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
 
-    const parsed = await adapter.parse(createGatewayRequest({
-      type: "GATEWAY_MESSAGE_CREATE",
-      timestamp: Date.now(),
-      data: {
-        id: "message-1",
-        channel_id: "channel-1",
-        content: "what is the weather?",
-        guild_id: "guild-1",
-        timestamp: "2026-06-29T12:00:00.000Z",
-        mentions: [],
-        mention_roles: [],
-        attachments: [],
-        author: {
-          id: "user-1",
-          username: "ada",
-          bot: false,
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        timestamp: Date.now(),
+        data: {
+          id: "message-1",
+          channel_id: "channel-1",
+          content: "what is the weather?",
+          guild_id: "guild-1",
+          timestamp: "2026-06-29T12:00:00.000Z",
+          mentions: [],
+          mention_roles: [],
+          attachments: [],
+          author: {
+            id: "user-1",
+            username: "ada",
+            bot: false,
+          },
         },
-      },
-    }));
+      }),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -104,7 +128,9 @@ describe("discord channel adapter", () => {
     expect(parsed.ack?.statusCode).toBe(200);
     expect(parsed.message.eventId).toBe("discord:message-1");
     expect(parsed.message.conversationKey).toBe("discord:guild-1:channel-1");
-    expect(parsed.message.content).toEqual([{ type: "text", text: "what is the weather?" }]);
+    expect(parsed.message.content).toEqual([
+      { type: "text", text: "what is the weather?" },
+    ]);
     expect(parsed.message.source).toMatchObject({
       applicationId: "broods-discord-gateway",
       guildId: "guild-1",
@@ -116,13 +142,23 @@ describe("discord channel adapter", () => {
   });
 
   it("authenticates gateway-forwarded events with the SDK gateway token header", async () => {
-    const adapter = createDiscordChannel("bot-token", TEST_DISCORD_PUBLIC_KEY, null);
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+    );
 
-    expect(await adapter.authenticate(createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }))).toBe(true);
-    expect(await adapter.authenticate({
-      ...createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
-      headers: { "x-discord-gateway-token": "wrong-token" },
-    })).toBe(false);
+    expect(
+      await adapter.authenticate(
+        createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
+      ),
+    ).toBe(true);
+    expect(
+      await adapter.authenticate({
+        ...createGatewayRequest({ type: "GATEWAY_MESSAGE_CREATE", data: {} }),
+        headers: { "x-discord-gateway-token": "wrong-token" },
+      }),
+    ).toBe(false);
   });
 });
 

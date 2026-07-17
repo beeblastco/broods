@@ -48,22 +48,32 @@ type ToolExecute = NonNullable<ToolEntry["execute"]>;
 
 export type AsyncToolSource = "built-in" | "uploaded";
 export type AsyncToolModeMap = Map<string, AsyncToolSource>;
-export type RunAsyncToolDispatch = (tools: ToolSet, asyncToolModes: AsyncToolModeMap) => ToolSet;
+export type RunAsyncToolDispatch = (
+  tools: ToolSet,
+  asyncToolModes: AsyncToolModeMap,
+) => ToolSet;
 
 export class AsyncToolCoordinator {
   private readonly completions: AsyncToolCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
-  private readonly pendingMetadata = new Map<string, AsyncToolPendingMetadata>();
+  private readonly pendingMetadata = new Map<
+    string,
+    AsyncToolPendingMetadata
+  >();
   private readonly waiters = new Set<() => void>();
   private detachedCallbackCount = 0;
 
   constructor(
     private readonly parentSession: Session,
-    private readonly waitUntilMs: number = Date.now() + DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
+    private readonly waitUntilMs: number = Date.now() +
+      DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS,
     private readonly delivery?: AsyncToolDelivery,
-  ) { }
+  ) {}
 
-  dispatch: RunAsyncToolDispatch = (tools: ToolSet, asyncToolModes: AsyncToolModeMap): ToolSet => {
+  dispatch: RunAsyncToolDispatch = (
+    tools: ToolSet,
+    asyncToolModes: AsyncToolModeMap,
+  ): ToolSet => {
     if (asyncToolModes.size === 0) {
       return tools;
     }
@@ -87,14 +97,21 @@ export class AsyncToolCoordinator {
     return this.detachedCallbackCount > 0;
   }
 
-  async waitForIdle(options: {
-    onHeartbeat?: (pendingCount: number) => void;
-  } = {}): Promise<"idle" | "timeout"> {
+  async waitForIdle(
+    options: {
+      onHeartbeat?: (pendingCount: number) => void;
+    } = {},
+  ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
-      const heartbeatAt = Math.min(Date.now() + HEARTBEAT_INTERVAL_MS, this.waitUntilMs);
+      const heartbeatAt = Math.min(
+        Date.now() + HEARTBEAT_INTERVAL_MS,
+        this.waitUntilMs,
+      );
       await Promise.race([
         this.nextStateChange(),
-        new Promise((resolve) => setTimeout(resolve, Math.max(heartbeatAt - Date.now(), 0))),
+        new Promise((resolve) =>
+          setTimeout(resolve, Math.max(heartbeatAt - Date.now(), 0)),
+        ),
       ]);
 
       if (this.pending.size > 0) {
@@ -111,7 +128,9 @@ export class AsyncToolCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(completions.map(completionToParentMessage));
+    await this.parentSession.persistModelMessages(
+      completions.map(completionToParentMessage),
+    );
     return completions.length;
   }
 
@@ -121,33 +140,44 @@ export class AsyncToolCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    const timeouts = [...this.pendingMetadata.values()].map((metadata): AsyncToolCompletion => ({
-      ...metadata,
-      status: "failed",
-      error: "Async tool call is still pending near the parent request timeout.",
-    }));
+    const timeouts = [...this.pendingMetadata.values()].map(
+      (metadata): AsyncToolCompletion => ({
+        ...metadata,
+        status: "failed",
+        error:
+          "Async tool call is still pending near the parent request timeout.",
+      }),
+    );
 
-    await Promise.all(timeouts.map((timeout) =>
-      markAsyncToolResultFailed({
-        resultId: timeout.resultId,
-        error: timeout.error ?? "Async tool call timed out",
-      }).catch((error) => {
-        logError("Failed to mark async tool timeout", {
+    await Promise.all(
+      timeouts.map((timeout) =>
+        markAsyncToolResultFailed({
           resultId: timeout.resultId,
-          toolName: timeout.toolName,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      })
-    ));
+          error: timeout.error ?? "Async tool call timed out",
+        }).catch((error) => {
+          logError("Failed to mark async tool timeout", {
+            resultId: timeout.resultId,
+            toolName: timeout.toolName,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      ),
+    );
 
     this.pending.clear();
     this.pendingMetadata.clear();
     const batch = [...completions, ...timeouts];
-    await this.parentSession.persistModelMessages(batch.map(completionToParentMessage));
+    await this.parentSession.persistModelMessages(
+      batch.map(completionToParentMessage),
+    );
     return batch.length;
   }
 
-  private wrapTool(toolName: string, entry: ToolEntry, source: AsyncToolSource): ToolEntry {
+  private wrapTool(
+    toolName: string,
+    entry: ToolEntry,
+    source: AsyncToolSource,
+  ): ToolEntry {
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
         toolName,
@@ -158,20 +188,23 @@ export class AsyncToolCoordinator {
     }
 
     const originalExecute = entry.execute.bind(entry) as ToolExecute;
-    const detachedCallback = source === "uploaded" && this.delivery !== undefined;
+    const detachedCallback =
+      source === "uploaded" && this.delivery !== undefined;
     const wrapped = {
       ...entry,
       outputSchema: undefined,
       toModelOutput: ({ output }: { output: AsyncToolPendingResult }) => ({
         type: "text" as const,
-        value: pendingResultText(
-          output.resultId,
-          output.status,
-        ),
+        value: pendingResultText(output.resultId, output.status),
       }),
-      execute: async (input: never, options: Parameters<ToolExecute>[1]): Promise<AsyncToolPendingResult> => {
+      execute: async (
+        input: never,
+        options: Parameters<ToolExecute>[1],
+      ): Promise<AsyncToolPendingResult> => {
         const resultId = `async_tool_${crypto.randomUUID()}`;
-        const completionToken = detachedCallback ? crypto.randomUUID() : undefined;
+        const completionToken = detachedCallback
+          ? crypto.randomUUID()
+          : undefined;
         await createPendingAsyncToolResult({
           resultId,
           parentEventId: this.parentSession.eventId,
@@ -179,7 +212,9 @@ export class AsyncToolCoordinator {
           toolName,
           toolCallId: options.toolCallId,
           input,
-          ...(detachedCallback && this.delivery ? { delivery: this.delivery } : {}),
+          ...(detachedCallback && this.delivery
+            ? { delivery: this.delivery }
+            : {}),
           ...(completionToken ? { completionToken } : {}),
         });
         const executeOptions = withAsyncToolMetadata(options, {
@@ -218,13 +253,15 @@ export class AsyncToolCoordinator {
 
   private startToolCall(options: AsyncToolCall): void {
     const promise = this.runToolCall(options)
-      .catch((error) => this.completeToolCall({
-        resultId: options.resultId,
-        toolName: options.toolName,
-        input: options.input,
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      }))
+      .catch((error) =>
+        this.completeToolCall({
+          resultId: options.resultId,
+          toolName: options.toolName,
+          input: options.input,
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
       .finally(() => {
         this.pending.delete(options.resultId);
         this.pendingMetadata.delete(options.resultId);
@@ -239,7 +276,9 @@ export class AsyncToolCoordinator {
     });
   }
 
-  private async dispatchDetachedToolCall(options: AsyncToolCall): Promise<void> {
+  private async dispatchDetachedToolCall(
+    options: AsyncToolCall,
+  ): Promise<void> {
     logInfo("Detached async tool started", {
       parentEventId: this.parentSession.eventId,
       resultId: options.resultId,
@@ -263,7 +302,8 @@ export class AsyncToolCoordinator {
         logError("Failed to mark detached async tool failed", {
           resultId: options.resultId,
           toolName: options.toolName,
-          error: markError instanceof Error ? markError.message : String(markError),
+          error:
+            markError instanceof Error ? markError.message : String(markError),
         });
       });
       throw error;
@@ -292,7 +332,9 @@ export class AsyncToolCoordinator {
     });
   }
 
-  private async completeToolCall(completion: AsyncToolCompletion): Promise<void> {
+  private async completeToolCall(
+    completion: AsyncToolCompletion,
+  ): Promise<void> {
     const shouldInjectToParent = this.pending.has(completion.resultId);
 
     if (completion.status === "failed") {
@@ -336,26 +378,33 @@ export class AsyncToolCoordinator {
   }
 }
 
-export function completionToParentMessage(completion: AsyncToolCompletion): UserModelMessage {
+export function completionToParentMessage(
+  completion: AsyncToolCompletion,
+): UserModelMessage {
   const metadata = [
     `statusId: ${completion.resultId}`,
     `toolName: ${completion.toolName}`,
     `status: ${completion.status}`,
   ].join("\n");
-  const result = completion.status === "completed"
-    ? formatUnknown(completion.response)
-    : completion.error;
+  const result =
+    completion.status === "completed"
+      ? formatUnknown(completion.response)
+      : completion.error;
 
   return {
     role: "user",
-    content: [{
-      type: "text",
-      text: `Async tool result injected into parent conversation.\n${metadata}\n\nInput:\n${formatUnknown(completion.input)}\n\nResult:\n${result ?? "(no result)"}`,
-    }],
+    content: [
+      {
+        type: "text",
+        text: `Async tool result injected into parent conversation.\n${metadata}\n\nInput:\n${formatUnknown(completion.input)}\n\nResult:\n${result ?? "(no result)"}`,
+      },
+    ],
   };
 }
 
-async function resolveToolOutput(output: ReturnType<ToolExecute>): Promise<unknown> {
+async function resolveToolOutput(
+  output: ReturnType<ToolExecute>,
+): Promise<unknown> {
   if (isAsyncIterable(output)) {
     let lastOutput: unknown;
     for await (const chunk of output) {
@@ -369,9 +418,7 @@ async function resolveToolOutput(output: ReturnType<ToolExecute>): Promise<unkno
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
   return Boolean(
-    value &&
-    typeof value === "object" &&
-    Symbol.asyncIterator in value,
+    value && typeof value === "object" && Symbol.asyncIterator in value,
   );
 }
 
@@ -391,11 +438,14 @@ function withAsyncToolMetadata(
       resultId: metadata.resultId,
       parentEventId: metadata.parentEventId,
       conversationKey: metadata.conversationKey,
-      completePath: metadata.detached === true
-        ? `/sandbox-jobs/${encodeURIComponent(metadata.resultId)}/complete`
-        : `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
+      completePath:
+        metadata.detached === true
+          ? `/sandbox-jobs/${encodeURIComponent(metadata.resultId)}/complete`
+          : `/async-tools/${encodeURIComponent(metadata.resultId)}/complete`,
       ...(metadata.detached === true ? { detached: true } : {}),
-      ...(metadata.completionToken ? { completionToken: metadata.completionToken } : {}),
+      ...(metadata.completionToken
+        ? { completionToken: metadata.completionToken }
+        : {}),
     },
   } as Parameters<ToolExecute>[1];
 }

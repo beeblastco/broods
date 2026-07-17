@@ -122,11 +122,9 @@ export function SettingsTab({
                   {managedByCode ? (
                     <>
                       Managed by code in{" "}
-                      <span className="font-mono">broods/</span>. Delete it
-                      from your code, then run{" "}
-                      <span className="font-mono">
-                        broods deploy --prune
-                      </span>.
+                      <span className="font-mono">broods/</span>. Delete it from
+                      your code, then run{" "}
+                      <span className="font-mono">broods deploy --prune</span>.
                     </>
                   ) : (
                     "Checking ownership before delete is available."

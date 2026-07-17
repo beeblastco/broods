@@ -8,7 +8,8 @@ import { api } from "./broods/_generated/api";
 const client = new BroodsClient();
 
 const run = await client.runAsync(api.agents.structuredAssistant, {
-  input: "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",
+  input:
+    "What is the newest model release from OpenAI? Provide a concise answer and suggest follow-up actions.",
 });
 
 console.log("Async status id:", run.statusId);

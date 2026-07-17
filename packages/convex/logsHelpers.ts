@@ -18,27 +18,32 @@ import { getOwnedProject } from "./model/ownership/project";
  * @returns active endpointId strings
  */
 export async function projectEndpointIds(
-    ctx: QueryCtx,
-    authId: string,
-    projectId: Id<"projects">,
-    environmentId?: Id<"environments">,
+  ctx: QueryCtx,
+  authId: string,
+  projectId: Id<"projects">,
+  environmentId?: Id<"environments">,
 ): Promise<string[]> {
-    const project = await getOwnedProject(ctx, authId, projectId);
-    if (!project) return [];
+  const project = await getOwnedProject(ctx, authId, projectId);
+  if (!project) return [];
 
-    const deployments = environmentId
-        ? await ctx.db
-            .query("agentDeployments")
-            .withIndex("by_projectId_and_environmentId_and_status", (q) =>
-                q.eq("projectId", projectId).eq("environmentId", environmentId).eq("status", "active"),
-            )
-            .collect()
-        : await ctx.db
-            .query("agentDeployments")
-            .withIndex("by_projectId_and_environmentId_and_status", (q) => q.eq("projectId", projectId))
-            .collect();
+  const deployments = environmentId
+    ? await ctx.db
+        .query("agentDeployments")
+        .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+          q
+            .eq("projectId", projectId)
+            .eq("environmentId", environmentId)
+            .eq("status", "active"),
+        )
+        .collect()
+    : await ctx.db
+        .query("agentDeployments")
+        .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+          q.eq("projectId", projectId),
+        )
+        .collect();
 
-    return deployments
-        .filter((deployment) => deployment.status === "active")
-        .map((deployment) => deployment.endpointId);
+  return deployments
+    .filter((deployment) => deployment.status === "active")
+    .map((deployment) => deployment.endpointId);
 }

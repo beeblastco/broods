@@ -15,7 +15,11 @@ const input = [
   "Then say whether the command ran or policy blocked it.",
 ].join("\n");
 
-async function runDemo(label: string, agent: (typeof api.agents)[keyof typeof api.agents], conversationKeyPrefix: string) {
+async function runDemo(
+  label: string,
+  agent: (typeof api.agents)[keyof typeof api.agents],
+  conversationKeyPrefix: string,
+) {
   console.log(`\n=== ${label} ===\n`);
   for await (const chunk of client.stream(agent, {
     input,
@@ -38,22 +42,34 @@ async function runDemo(label: string, agent: (typeof api.agents)[keyof typeof ap
         process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
         break;
       case "tool-call":
-        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`,
+        );
         break;
       case "tool-result":
-        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+        );
         break;
       case "tool-output-denied":
-        process.stdout.write(`\n\x1b[33m[Tool Output Denied: ${chunk.toolName}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[33m[Tool Output Denied: ${chunk.toolName}]\x1b[0m\n`,
+        );
         break;
       case "tool-error":
-        process.stdout.write(`\n\x1b[31m[Tool Error: ${chunk.toolName}] ${JSON.stringify(chunk.error)}\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[31m[Tool Error: ${chunk.toolName}] ${JSON.stringify(chunk.error)}\x1b[0m\n`,
+        );
         break;
       case "error":
-        process.stdout.write(`\n\x1b[31m[Error: ${JSON.stringify(chunk.error)}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[31m[Error: ${JSON.stringify(chunk.error)}]\x1b[0m\n`,
+        );
         break;
       case "finish":
-        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+        );
         break;
     }
   }

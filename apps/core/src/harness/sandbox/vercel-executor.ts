@@ -4,13 +4,32 @@
  * sandbox per reservation key and uses Vercel's native lifecycle callbacks.
  */
 
-import type { CommandFinished, NetworkPolicy, Sandbox as VercelSandbox } from "@vercel/sandbox";
+import type {
+  CommandFinished,
+  NetworkPolicy,
+  Sandbox as VercelSandbox,
+} from "@vercel/sandbox";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import { MAX_CONCURRENT_BACKGROUND_JOBS, resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
-import { generateJobId, launchScript, logsScript, parseJobStatus, statusScript, stopScript } from "./jobs.ts";
+import {
+  MAX_CONCURRENT_BACKGROUND_JOBS,
+  resolveSandboxLifecycle,
+} from "../../shared/sandbox.ts";
+import {
+  claimSandboxInstance,
+  deleteSandboxInstance,
+  getSandboxExternalId,
+  saveSandboxInstance,
+} from "./instance-store.ts";
+import {
+  generateJobId,
+  launchScript,
+  logsScript,
+  parseJobStatus,
+  statusScript,
+  stopScript,
+} from "./jobs.ts";
 import type {
   SandboxExecutor,
   SandboxExecutorConfig,
@@ -21,7 +40,16 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isSandboxGoneError, persistentSandboxName, sandboxReservationKey, shellQuote, stringRecord, truncateText, workspacePath } from "./utils.ts";
+import {
+  configString,
+  isSandboxGoneError,
+  persistentSandboxName,
+  sandboxReservationKey,
+  shellQuote,
+  stringRecord,
+  truncateText,
+  workspacePath,
+} from "./utils.ts";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
 
@@ -37,7 +65,9 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
     const sandbox = await this.#acquire(request);
-    const cwd = persistent ? this.#workDir(sandboxReservationKey(request)!) : workspacePath(request);
+    const cwd = persistent
+      ? this.#workDir(sandboxReservationKey(request)!)
+      : workspacePath(request);
 
     try {
       if (cwd) {
@@ -50,18 +80,29 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         cmd: "bash",
         args: ["-lc", request.code],
         ...(cwd ? { cwd } : {}),
-        env: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
+        env: {
+          ...stringRecord(this.#config.envVars),
+          ...(request.envVars ?? {}),
+        },
         timeoutMs: request.timeoutSeconds * 1000,
       });
       return this.#adaptResult(result, request, startedAt);
     } finally {
-      if (!persistent) await sandbox.stop().catch(() => { });
+      if (!persistent) await sandbox.stop().catch(() => {});
     }
   }
 
-  async prewarm(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+  async prewarm(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): Promise<void> {
     if (!this.#persistent(request)) return;
-    await this.#acquire({ code: "", ...request, timeoutSeconds: 30, outputLimitBytes: 1024 });
+    await this.#acquire({
+      code: "",
+      ...request,
+      timeoutSeconds: 30,
+      outputLimitBytes: 1024,
+    });
   }
 
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
@@ -71,10 +112,16 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     await this.#shell(sandbox, `mkdir -p ${shellQuote(workDir)}`, { cwd: "/" });
     const jobId = request.jobId ?? generateJobId();
     await this.#runLifecycle(sandbox, workDir);
-    const script = launchScript(this.#jobsDir(ns), jobId, workDir, request.code, {
-      maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
-      ...(request.callback ? { callback: request.callback } : {}),
-    });
+    const script = launchScript(
+      this.#jobsDir(ns),
+      jobId,
+      workDir,
+      request.code,
+      {
+        maxConcurrentJobs: MAX_CONCURRENT_BACKGROUND_JOBS,
+        ...(request.callback ? { callback: request.callback } : {}),
+      },
+    );
     const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", script],
@@ -82,58 +129,92 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       timeoutMs: request.timeoutSeconds * 1000,
     });
     if (result.exitCode !== 0) {
-      throw new Error(await commandError(result, "failed to launch background job"));
+      throw new Error(
+        await commandError(result, "failed to launch background job"),
+      );
     }
     return { jobId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
-    return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
+    return parseJobStatus(
+      request.jobId,
+      await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
+    );
   }
 
   async jobLogs(request: SandboxJobRequest): Promise<SandboxJobLogs> {
     const bytes = request.outputLimitBytes ?? 64 * 1024;
     const { sandbox, jobsDir } = await this.#jobContext(request);
-    const logs = truncateText(await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)), bytes);
-    return { jobId: request.jobId, logs: logs.value, truncated: logs.truncated };
+    const logs = truncateText(
+      await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
+      bytes,
+    );
+    return {
+      jobId: request.jobId,
+      logs: logs.value,
+      truncated: logs.truncated,
+    };
   }
 
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
-    return parseJobStatus(request.jobId, await this.#shell(sandbox, statusScript(jobsDir, request.jobId)));
+    return parseJobStatus(
+      request.jobId,
+      await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
+    );
   }
 
-  async release(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+  async release(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
     const name = await getSandboxExternalId("vercel", key);
     if (!name) return;
     try {
       const Sandbox = await this.#Sandbox();
-      const sandbox = await Sandbox.get({ name, ...vercelAuthOptions(this.#config) });
+      const sandbox = await Sandbox.get({
+        name,
+        ...vercelAuthOptions(this.#config),
+      });
       await sandbox.delete();
     } catch (err) {
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("vercel", key).catch(() => { });
+    await deleteSandboxInstance("vercel", key).catch(() => {});
   }
 
-  #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
+  #persistent(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): boolean {
     return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
 
-  #requirePersistent(request: { namespace?: string; reservationKey?: string }): string {
+  #requirePersistent(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): string {
     if (!this.#persistent(request)) {
-      throw new Error("background jobs require a persistent vercel sandbox reservation key");
+      throw new Error(
+        "background jobs require a persistent vercel sandbox reservation key",
+      );
     }
     return sandboxReservationKey(request)!;
   }
 
   #workspaceRoot(): string {
-    const options = isPlainObject(this.#config.options) ? this.#config.options : {};
-    return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(/\/+$/, "");
+    const options = isPlainObject(this.#config.options)
+      ? this.#config.options
+      : {};
+    return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
+      /\/+$/,
+      "",
+    );
   }
 
   #workDir(namespace: string): string {
@@ -166,15 +247,21 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        await saveSandboxInstance("vercel", key, storedName).catch(() => { });
-        await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, storedName, request.metadata);
+        await saveSandboxInstance("vercel", key, storedName).catch(() => {});
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "vercel",
+          key,
+          storedName,
+          request.metadata,
+        );
         return sandbox;
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("vercel", key, storedName).catch(() => { });
+        await deleteSandboxInstance("vercel", key, storedName).catch(() => {});
       }
     }
 
@@ -184,23 +271,34 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       name,
     });
     if (await claimSandboxInstance("vercel", key, name)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "vercel", key, name, request.metadata);
+      await upsertSandboxInstance(
+        this.#config.controlPlane,
+        "vercel",
+        key,
+        name,
+        request.metadata,
+      );
       return sandbox;
     }
     const winner = await getSandboxExternalId("vercel", key);
     if (!winner || winner === name) {
       return sandbox;
     }
-    await sandbox.delete().catch(() => { });
+    await sandbox.delete().catch(() => {});
     return Sandbox.get({
       name: winner,
       ...vercelAuthOptions(this.#config),
     });
   }
 
-  async #jobContext(request: SandboxJobRequest): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
+  async #jobContext(
+    request: SandboxJobRequest,
+  ): Promise<{ sandbox: VercelSandbox; jobsDir: string }> {
     const key = sandboxReservationKey(request);
-    if (!key) throw new Error("job operations require a persistent sandbox reservation key");
+    if (!key)
+      throw new Error(
+        "job operations require a persistent sandbox reservation key",
+      );
     const name = await getSandboxExternalId("vercel", key);
     if (!name) throw new Error("no reserved vercel sandbox for this workspace");
     const Sandbox = await this.#Sandbox();
@@ -211,7 +309,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     return { sandbox, jobsDir: this.#jobsDir(key) };
   }
 
-  async #shell(sandbox: VercelSandbox, code: string, opts: { cwd?: string } = {}): Promise<string> {
+  async #shell(
+    sandbox: VercelSandbox,
+    code: string,
+    opts: { cwd?: string } = {},
+  ): Promise<string> {
     const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", code],
@@ -219,13 +321,16 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       env: { ...stringRecord(this.#config.envVars) },
     });
     if (result.exitCode !== 0) {
-      throw new Error(await commandError(result, "vercel sandbox setup command failed"));
+      throw new Error(
+        await commandError(result, "vercel sandbox setup command failed"),
+      );
     }
     return await result.stdout();
   }
 
   async #runLifecycle(sandbox: VercelSandbox, workDir: string): Promise<void> {
-    if (!this.#config.onCreate?.length && !this.#config.onResume?.length) return;
+    if (!this.#config.onCreate?.length && !this.#config.onResume?.length)
+      return;
     const marker = `${workDir}/.fp-lifecycle-created`;
     const createCommands = this.#config.onCreate ?? [];
     const resumeCommands = this.#config.onResume ?? [];
@@ -243,8 +348,15 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     await this.#shell(sandbox, script, { cwd: "/" });
   }
 
-  async #adaptResult(result: CommandFinished, request: SandboxRunRequest, startedAt: number): Promise<SandboxRunResult> {
-    const [rawStdout, rawStderr] = await Promise.all([result.stdout(), result.stderr()]);
+  async #adaptResult(
+    result: CommandFinished,
+    request: SandboxRunRequest,
+    startedAt: number,
+  ): Promise<SandboxRunResult> {
+    const [rawStdout, rawStderr] = await Promise.all([
+      result.stdout(),
+      result.stderr(),
+    ]);
     const stdout = truncateText(rawStdout, request.outputLimitBytes);
     const stderr = truncateText(rawStderr, request.outputLimitBytes);
     return {
@@ -276,23 +388,32 @@ function vercelCreateOptions(
     ...vercelAuthOptions(config),
     runtime: configString(options.runtime) ?? "node24",
     persistent,
-    timeout: (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) * 1000,
+    timeout:
+      (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
+      1000,
     networkPolicy: vercelNetworkPolicy(config),
     env: { ...stringRecord(config.envVars), ...(request.envVars ?? {}) },
     tags: { app: "broods", provider: "vercel" },
   };
 }
 
-function vercelAuthOptions(config: SandboxExecutorConfig): { token: string; teamId: string; projectId: string } {
+function vercelAuthOptions(config: SandboxExecutorConfig): {
+  token: string;
+  teamId: string;
+  projectId: string;
+} {
   const options = isPlainObject(config.options) ? config.options : {};
   const token = configString(options.token) ?? optionalEnv("VERCEL_TOKEN");
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
-  const projectId = configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");
+  const projectId =
+    configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");
   const missing = Object.entries({ token, teamId, projectId })
     .filter(([, value]) => !value)
     .map(([key]) => key);
   if (missing.length > 0) {
-    throw new Error(`vercel sandbox auth is missing ${missing.join(", ")}; set config.options.{token,teamId,projectId} or VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID`);
+    throw new Error(
+      `vercel sandbox auth is missing ${missing.join(", ")}; set config.options.{token,teamId,projectId} or VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID`,
+    );
   }
   return { token: token!, teamId: teamId!, projectId: projectId! };
 }
@@ -303,12 +424,20 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
   if (network.mode === "deny-all") return "deny-all";
   return {
     ...(network.allowDomains?.length ? { allow: network.allowDomains } : {}),
-    ...(network.allowCidrs?.length ? { subnets: { allow: network.allowCidrs } } : {}),
+    ...(network.allowCidrs?.length
+      ? { subnets: { allow: network.allowCidrs } }
+      : {}),
   };
 }
 
-async function commandError(result: CommandFinished, fallback: string): Promise<string> {
-  const [stderr, stdout] = await Promise.all([result.stderr(), result.stdout()]);
+async function commandError(
+  result: CommandFinished,
+  fallback: string,
+): Promise<string> {
+  const [stderr, stdout] = await Promise.all([
+    result.stderr(),
+    result.stdout(),
+  ]);
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
@@ -329,7 +458,7 @@ export function classifyVercelError(err: unknown): Error {
   if (status === 401 || status === 403) {
     return new Error(
       `Vercel Sandbox rejected the request (HTTP ${status}): the VERCEL_TOKEN is invalid or lacks access to the ` +
-      `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
+        `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
     );
   }
   return err instanceof Error ? err : new Error(message);

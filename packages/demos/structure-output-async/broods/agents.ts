@@ -22,13 +22,13 @@ export const structuredAssistant = defineAgent({
             answer: { type: "string" },
             actions: {
               type: "array",
-              items: { type: "string" }
-            }
+              items: { type: "string" },
+            },
           },
           required: ["answer"],
-          additionalProperties: false
-        }
-      }
+          additionalProperties: false,
+        },
+      },
     },
     agent: {
       system: "You are a helpful assistant that returns structured output.",

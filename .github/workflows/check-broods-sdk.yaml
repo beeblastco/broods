@@ -3,20 +3,20 @@ name: Check broods SDK Package
 on:
   pull_request:
     paths:
-      - 'packages/broods/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/check-broods-sdk.yaml'
-      - '.github/workflows/publish-npm.yaml'
+      - "packages/broods/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/check-broods-sdk.yaml"
+      - ".github/workflows/publish-npm.yaml"
   push:
     branches-ignore:
       - main
     paths:
-      - 'packages/broods/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/check-broods-sdk.yaml'
-      - '.github/workflows/publish-npm.yaml'
+      - "packages/broods/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/check-broods-sdk.yaml"
+      - ".github/workflows/publish-npm.yaml"
   workflow_dispatch:
 
 jobs:
