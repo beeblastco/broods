@@ -34,8 +34,8 @@ export interface WorkspaceConfig {
     storage: WorkspaceStorageConfig;
     isolation?: boolean;
     // Named harness features, each with its own options (no top-level enabled):
-    // guidance = the <workspace> prompt, memory = structured memory.
-    harness?: { guidance?: { enabled?: boolean }; memory?: { enabled?: boolean } };
+    // workspace = the <workspace> prompt, memory = structured memory.
+    harness?: { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } };
 }
 
 /**
@@ -57,16 +57,16 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     assertOptionalBoolean(config.isolation, "config.isolation");
     const isolation = config.isolation as boolean | undefined;
 
-    let harness: { guidance?: { enabled?: boolean }; memory?: { enabled?: boolean } } | undefined;
+    let harness: { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } } | undefined;
     if (config.harness !== undefined) {
         if (!isPlainObject(config.harness)) {
             throw new Error("config.harness must be an object");
         }
-        const guidance = normalizeHarnessFeature(config.harness.guidance, "config.harness.guidance");
+        const workspacePrompt = normalizeHarnessFeature(config.harness.workspace, "config.harness.workspace");
         const memory = normalizeHarnessFeature(config.harness.memory, "config.harness.memory");
-        if (guidance || memory) {
+        if (workspacePrompt || memory) {
             harness = {
-                ...(guidance ? { guidance: guidance } : {}),
+                ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
                 ...(memory ? { memory: memory } : {}),
             };
         }

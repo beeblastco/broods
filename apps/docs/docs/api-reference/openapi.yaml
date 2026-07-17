@@ -1371,7 +1371,7 @@ paths:
                       type: object
                       description: Named harness features, each defaulting to enabled. No top-level enabled flag.
                       properties:
-                        guidance:
+                        workspace:
                           type: object
                           description: The injected <workspace> guidance prompt.
                           properties:
@@ -1385,7 +1385,7 @@ paths:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: true, harness: { guidance: { enabled: true }, memory: { enabled: true } } }
+                  config: { storage: { provider: s3 }, isolation: true, harness: { workspace: { enabled: true }, memory: { enabled: true } } }
       responses:
         '201': { description: Workspace created }
     get:

@@ -227,7 +227,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { guidance: { enabled: true } },
+    harness: { workspace: { enabled: true } },
   },
 });
 
@@ -427,7 +427,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { guidance: { enabled: true } },
+    harness: { workspace: { enabled: true } },
   },
 });
 ```

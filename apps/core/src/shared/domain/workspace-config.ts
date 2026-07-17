@@ -45,11 +45,11 @@ export interface WorkspaceStorageConfig {
 // The workspace harness is a set of named features, each with its own options
 // and each defaulting to on. There is deliberately no top-level enabled flag:
 // new capabilities get their own key here for independent control.
-//   - guidance: the injected <workspace> prompt (file-tool + TASKS guidance).
+//   - workspace: the injected <workspace> prompt (file-tool + TASKS guidance).
 //   - memory: structured memory — the memory_save tool, memory/MEMORY.md index
 //     loading, and the <memory> prompt.
 export interface WorkspaceHarnessConfig {
-  guidance?: { enabled?: boolean };
+  workspace?: { enabled?: boolean };
   memory?: { enabled?: boolean };
 }
 
@@ -63,7 +63,7 @@ export interface WorkspaceConfig {
 
 /** Whether the <workspace> guidance prompt is injected for a workspace (default: on). */
 export function workspaceGuidanceEnabled(config: WorkspaceConfig | undefined): boolean {
-  return config?.harness?.guidance?.enabled !== false;
+  return config?.harness?.workspace?.enabled !== false;
 }
 
 /** Whether the structured memory harness is on for a workspace (default: on). */
@@ -111,11 +111,11 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     if (!isPlainObject(config.harness)) {
       throw new Error("config.harness must be an object");
     }
-    const guidance = normalizeHarnessFeature(config.harness.guidance, "config.harness.guidance");
+    const workspace = normalizeHarnessFeature(config.harness.workspace, "config.harness.workspace");
     const memory = normalizeHarnessFeature(config.harness.memory, "config.harness.memory");
-    if (guidance || memory) {
+    if (workspace || memory) {
       harness = {
-        ...(guidance ? { guidance } : {}),
+        ...(workspace ? { workspace } : {}),
         ...(memory ? { memory } : {}),
       };
     }

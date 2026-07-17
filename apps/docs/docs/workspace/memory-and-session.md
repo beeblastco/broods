@@ -81,7 +81,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { guidance: { enabled: true }, memory: { enabled: true } },
+    harness: { workspace: { enabled: true }, memory: { enabled: true } },
   },
 });
 
@@ -151,7 +151,7 @@ The namespace helper is in [`src/shared/runtime-keys.ts`](https://github.com/bee
 
 The harness is a set of named features, each on by default and toggled independently — there is no top-level `enabled` flag:
 
-- `harness.guidance` — the `<workspace>` prompt (file-tool + TASKS guidance).
+- `harness.workspace` — the `<workspace>` prompt (file-tool + TASKS guidance).
 - `harness.memory` — structured memory: the `memory_save` tool, `memory/MEMORY.md` index loading, and the `<memory>` prompt.
 
 ```ts
@@ -162,7 +162,7 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { guidance: { enabled: true }, memory: { enabled: true } },
+    harness: { workspace: { enabled: true }, memory: { enabled: true } },
   },
 });
 ```
@@ -186,7 +186,7 @@ export const notesBare = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { guidance: { enabled: false } },
+    harness: { workspace: { enabled: false } },
   },
 });
 ```

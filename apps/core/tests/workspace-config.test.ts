@@ -29,15 +29,15 @@ describe("workspace config", () => {
       .toThrow("config.storage must be an object");
     expect(() => normalizeWorkspaceConfig({ harness: true }))
       .toThrow("config.harness must be an object");
-    expect(() => normalizeWorkspaceConfig({ harness: { guidance: "yes" } }))
-      .toThrow("config.harness.guidance must be an object");
-    expect(() => normalizeWorkspaceConfig({ harness: { guidance: { enabled: "yes" } } }))
-      .toThrow("config.harness.guidance.enabled must be a boolean");
+    expect(() => normalizeWorkspaceConfig({ harness: { workspace: "yes" } }))
+      .toThrow("config.harness.workspace must be an object");
+    expect(() => normalizeWorkspaceConfig({ harness: { workspace: { enabled: "yes" } } }))
+      .toThrow("config.harness.workspace.enabled must be a boolean");
   });
 
   it("keeps harness feature toggles when present and drops unknown fields", () => {
-    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { guidance: { enabled: false } }, extra: "x" }))
-      .toEqual({ storage: { provider: "s3" }, harness: { guidance: { enabled: false } } });
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { workspace: { enabled: false } }, extra: "x" }))
+      .toEqual({ storage: { provider: "s3" }, harness: { workspace: { enabled: false } } });
     // The legacy top-level harness.enabled flag is gone; unknown harness keys drop.
     expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { enabled: true } }))
       .toEqual({ storage: { provider: "s3" } });
@@ -46,8 +46,8 @@ describe("workspace config", () => {
   it("normalizes the harness memory toggle and validates its shape", () => {
     expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } }))
       .toEqual({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } });
-    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { guidance: { enabled: true }, memory: {} } }))
-      .toEqual({ storage: { provider: "s3" }, harness: { guidance: { enabled: true } } });
+    expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { workspace: { enabled: true }, memory: {} } }))
+      .toEqual({ storage: { provider: "s3" }, harness: { workspace: { enabled: true } } });
     expect(() => normalizeWorkspaceConfig({ harness: { memory: true } }))
       .toThrow("config.harness.memory must be an object");
     expect(() => normalizeWorkspaceConfig({ harness: { memory: { enabled: "yes" } } }))
@@ -61,9 +61,9 @@ describe("workspace config", () => {
     expect(workspaceGuidanceEnabled({ storage: { provider: "s3" } })).toBe(true);
     expect(workspaceGuidanceEnabled(undefined)).toBe(true);
     // The toggles are orthogonal: turning one feature off leaves the other on.
-    const guidanceOff = { storage: { provider: "s3" as const }, harness: { guidance: { enabled: false } } };
-    expect(workspaceGuidanceEnabled(guidanceOff)).toBe(false);
-    expect(workspaceMemoryHarnessEnabled(guidanceOff)).toBe(true);
+    const workspacePromptOff = { storage: { provider: "s3" as const }, harness: { workspace: { enabled: false } } };
+    expect(workspaceGuidanceEnabled(workspacePromptOff)).toBe(false);
+    expect(workspaceMemoryHarnessEnabled(workspacePromptOff)).toBe(true);
     const memoryOff = { storage: { provider: "s3" as const }, harness: { memory: { enabled: false } } };
     expect(workspaceGuidanceEnabled(memoryOff)).toBe(true);
     expect(workspaceMemoryHarnessEnabled(memoryOff)).toBe(false);
@@ -125,30 +125,30 @@ describe("workspace config", () => {
     expect(normalizeCreateWorkspaceConfigInput({
       name: "  notes  ",
       description: "  shared notes  ",
-      config: { harness: { guidance: { enabled: false } } },
+      config: { harness: { workspace: { enabled: false } } },
     })).toEqual({
       name: "notes",
       description: "shared notes",
-      config: { storage: { provider: "s3" }, harness: { guidance: { enabled: false } } },
+      config: { storage: { provider: "s3" }, harness: { workspace: { enabled: false } } },
     });
   });
 
   it("merges a config patch on update and clears description with null", () => {
-    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { guidance: { enabled: false } } };
+    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { workspace: { enabled: false } } };
     const patched = normalizeUpdateWorkspaceConfigInput(existing, {
       name: "renamed",
       description: null,
-      config: { harness: { guidance: { enabled: true } } },
+      config: { harness: { workspace: { enabled: true } } },
     });
     expect(patched).toEqual({
       name: "renamed",
       description: null,
-      config: { storage: { provider: "s3" }, harness: { guidance: { enabled: true } } },
+      config: { storage: { provider: "s3" }, harness: { workspace: { enabled: true } } },
     });
   });
 
   it("keeps the existing config when no config patch is supplied", () => {
-    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { guidance: { enabled: true } } };
+    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { workspace: { enabled: true } } };
     expect(normalizeUpdateWorkspaceConfigInput(existing, { name: "renamed" }))
       .toEqual({ name: "renamed", config: existing });
   });

@@ -41,13 +41,14 @@ export function WorkspaceResourceDetailsTab({
 }) {
     const config: Record<string, unknown> = isPlainObject(data.config) ? data.config : WORKSPACE_DEFAULT_CONFIG;
     const harness = isPlainObject(config.harness) ? config.harness : {};
-    const harnessFeatureEnabled = (key: "guidance" | "memory") => {
+    const harnessFeatureEnabled = (key: "workspace" | "memory") => {
         const feature = isPlainObject(harness[key]) ? (harness[key] as Record<string, unknown>) : {};
+
         return feature.enabled !== false;
     };
     // Features default to on: an enabled feature is stored as an omitted key, a
     // disabled one as { enabled: false }; an empty harness object is dropped.
-    const setHarnessFeature = (key: "guidance" | "memory", enabled: boolean) => {
+    const setHarnessFeature = (key: "workspace" | "memory", enabled: boolean) => {
         const next: Record<string, unknown> = { ...harness };
         if (enabled) {
             delete next[key];
@@ -108,8 +109,8 @@ export function WorkspaceResourceDetailsTab({
                 <ToggleRow
                     label="Guidance"
                     description="Inject the workspace guidance prompt."
-                    checked={harnessFeatureEnabled("guidance")}
-                    onCheckedChange={(enabled) => setHarnessFeature("guidance", enabled)}
+                    checked={harnessFeatureEnabled("workspace")}
+                    onCheckedChange={(enabled) => setHarnessFeature("workspace", enabled)}
                 />
                 <ToggleRow
                     label="Memory"

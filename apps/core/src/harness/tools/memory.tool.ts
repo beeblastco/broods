@@ -95,7 +95,9 @@ Usage notes:
           if (!workspaceMemoryHarnessEnabled(ws.config)) {
             return toolError(`Error: the memory harness is disabled for workspace ${ws.name}`);
           }
-          const cleanTitle = (title ?? "").replace(/\s+/g, " ").trim();
+          // Square brackets would break the index line's markdown link (and the
+          // anchored pattern that replaces it), so fold them into spaces.
+          const cleanTitle = (title ?? "").replace(/[\[\]]/g, " ").replace(/\s+/g, " ").trim();
           const cleanDescription = (description ?? "").replace(/\s+/g, " ").trim();
           if (!cleanTitle) {
             return toolError("Error: title must not be empty");
@@ -127,14 +129,19 @@ Usage notes:
           const qFile = shellQuote(filePath);
           const qIndex = shellQuote(MEMORY_INDEX_PATH);
           const qIndexTmp = shellQuote(`${MEMORY_INDEX_PATH}.tmp`);
+          // Anchored to the entry-defining shape `- [title](slug.md) — ` so a line
+          // that merely cross-references this slug in its description never matches.
+          // Safe as a BRE: the slug charset is [a-z0-9-] and the title has no `]`.
+          const indexLinePattern = `^- \\[[^]]*](${slug}\\.md) — `;
           // Same base64 + `sync` discipline as the write tool: commit both files to
           // the S3 Files server before the sandbox freezes. The entry's index line
-          // is REPLACED (matched by its link target), so re-saving a title updates
-          // the summary future turns see instead of keeping the stale line.
+          // is REPLACED (matched by its anchored defining line), so re-saving a
+          // title updates the summary future turns see instead of keeping the
+          // stale line.
           const code =
             `mkdir -p ${shellQuote(MEMORY_DIR)} && printf '%s' ${shellQuote(toBase64(entry))} | base64 -d > ${qFile} && sync ${qFile} && ` +
             `{ [ -f ${qIndex} ] || printf '%s\\n' ${shellQuote(indexHeader)} > ${qIndex}; } && ` +
-            `{ grep -vF ${shellQuote(`](${slug}.md)`)} ${qIndex} > ${qIndexTmp} || true; } && ` +
+            `{ grep -v ${shellQuote(indexLinePattern)} ${qIndex} > ${qIndexTmp} || true; } && ` +
             `printf '%s\\n' ${shellQuote(indexLine)} >> ${qIndexTmp} && mv ${qIndexTmp} ${qIndex} && ` +
             `sync ${qIndex} && printf 'Saved memory %s (indexed in %s)\\n' ${qFile} ${qIndex}`;
           const result = await runSandbox(ws.sandbox, ws.namespace, code, {

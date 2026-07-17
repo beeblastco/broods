@@ -173,7 +173,7 @@ export const notes = defineWorkspace({
   config: {
     storage: { provider: "s3" },
     isolation: true,
-    harness: { guidance: { enabled: true } },
+    harness: { workspace: { enabled: true } },
   },
 });
 ```

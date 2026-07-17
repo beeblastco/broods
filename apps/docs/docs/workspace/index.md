@@ -73,7 +73,7 @@ export const notes = defineWorkspace({
   config: {
     storage: { provider: "s3" },
     isolation: true,
-    harness: { guidance: { enabled: true } },
+    harness: { workspace: { enabled: true } },
   },
 });
 
@@ -317,7 +317,7 @@ If the workspace root already contains `fileA`, `MEMORY.md`, and `TASKS.md`, Git
 GitHub issue `#456` sees another child folder under `support/`. All three runs use the same
 workspace name, but each scope is backed by a different folder.
 
-The harness toggles are per feature: `workspace.harness.guidance.enabled: false`
+The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`
 disables structured memory (the `memory_save` tool, index loading, and the `<memory>`
 prompt). See [Memory and Session](./memory-and-session.md).

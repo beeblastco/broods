@@ -32,7 +32,7 @@ type WorkspaceSlice = {
     namespace?: string;
     defaultWorkspace?: string;
     workspaces?: Record<string, WorkspaceDefinition>;
-    harness?: { guidance?: { enabled?: boolean }; memory?: { enabled?: boolean } };
+    harness?: { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } };
     storage?: { provider?: string };
     sandbox?: SandboxSlice;
 };
@@ -122,9 +122,9 @@ export function WorkspaceDetailsTab(props: {
                 <ToggleRow
                     label="Guidance"
                     description="Inject the workspace guidance prompt."
-                    checked={workspace.harness?.guidance?.enabled !== false}
+                    checked={workspace.harness?.workspace?.enabled !== false}
                     disabled={disabled || !workspaceEnabled}
-                    onCheckedChange={(next) => updateBranch(["workspace", "harness", "guidance", "enabled"], next)}
+                    onCheckedChange={(next) => updateBranch(["workspace", "harness", "workspace", "enabled"], next)}
                 />
                 <ToggleRow
                     label="Memory"

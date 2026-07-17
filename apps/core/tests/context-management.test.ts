@@ -67,7 +67,7 @@ const testStorage = () => ({
       accountId: "acct",
       workspaceId,
       name: "default",
-      config: { storage: { provider: "s3" }, harness: { guidance: { enabled: workspaceHarnessEnabled } } },
+      config: { storage: { provider: "s3" }, harness: { workspace: { enabled: workspaceHarnessEnabled } } },
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     }),

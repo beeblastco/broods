@@ -426,10 +426,12 @@ describe("memory tool", () => {
     expect(payload.code).toContain("memory/name-in-this-channel.md");
     expect(payload.code).toContain("memory/MEMORY.md");
     // Same durability discipline as write: base64-piped body, fsynced files, and
-    // the entry's index line replaced (not skipped) by its link target so
-    // re-saving a title updates the summary future turns load.
+    // the entry's index line replaced (not skipped), matched by its anchored
+    // defining shape so a cross-reference to this slug in another entry's
+    // description is never deleted.
     expect(payload.code).toContain("base64 -d");
-    expect(payload.code).toContain("grep -vF");
+    expect(payload.code).toContain("grep -v ");
+    expect(payload.code).toContain("^- \\[[^]]*](name-in-this-channel\\.md) — ");
     expect(payload.code).toContain("mv ");
     expect(payload.code).toContain("sync ");
     expect(result.type).toBe("text");

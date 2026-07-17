@@ -406,7 +406,7 @@ Every sandbox-backed tool compiles to a single `run` against the provider (`sand
 derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
 files — including across the sandbox-backed and read-only S3 paths. A workspace with no
 sandbox still serves `memory/MEMORY.md` via the S3 API. The harness is per-feature:
-`workspace.harness.guidance.enabled=false` suppresses the workspace guidance prompt,
+`workspace.harness.workspace.enabled=false` suppresses the workspace guidance prompt,
 `workspace.harness.memory.enabled=false` disables structured memory.
 
 ```mermaid
