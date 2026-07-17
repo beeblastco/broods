@@ -5,6 +5,7 @@
     "": {
       "name": "filthy-panty",
       "devDependencies": {
+        "prettier": "^3.5.0",
         "typescript": "^7.0.2",
       },
     },

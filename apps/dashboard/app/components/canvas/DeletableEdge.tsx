@@ -84,14 +84,16 @@ export function DeletableEdge({
   const locked =
     isCodeManagedEdgeId(id) ||
     (sourceManagedBy === "cli" && targetManagedBy === "cli");
-  const edgeStyle = hovered && !locked
-    ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
-    : style;
-  const arrowColor = hovered && !locked
-    ? HOVER_COLOR
-    : isDark
-      ? "rgba(255,255,255,0.35)"
-      : "rgba(0,0,0,0.3)";
+  const edgeStyle =
+    hovered && !locked
+      ? { ...style, stroke: HOVER_COLOR, strokeWidth: 2 }
+      : style;
+  const arrowColor =
+    hovered && !locked
+      ? HOVER_COLOR
+      : isDark
+        ? "rgba(255,255,255,0.35)"
+        : "rgba(0,0,0,0.3)";
   const arrowId = `${ARROW_ID_PREFIX}-${id}`;
 
   return (

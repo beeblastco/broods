@@ -11,14 +11,16 @@ process.env.PROCESSED_EVENTS_TABLE_NAME ??= "processed-events";
 process.env.ASYNC_AGENT_RESULT_TABLE_NAME ??= "async-agent-result";
 process.env.ASYNC_TOOL_RESULT_TABLE_NAME ??= "async-tool-result";
 
-const { dispatchInProcessWorker, drainInProcessWorkers } = await import(
-  "../src/harness/handler.ts"
-);
+const { dispatchInProcessWorker, drainInProcessWorkers } =
+  await import("../src/harness/handler.ts");
 
 type WorkerPayload = Parameters<typeof dispatchInProcessWorker>[0];
 
 function payload(id: number): WorkerPayload {
-  return { kind: "direct-api-async-worker", event: { eventId: `evt-${id}` } } as unknown as WorkerPayload;
+  return {
+    kind: "direct-api-async-worker",
+    event: { eventId: `evt-${id}` },
+  } as unknown as WorkerPayload;
 }
 
 describe("in-process worker dispatch", () => {

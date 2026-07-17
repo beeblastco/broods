@@ -9,7 +9,11 @@ import { api } from "./broods/_generated/api";
 // Create a client to connect to the Broods API.
 const client = new BroodsClient();
 
-async function runAgent(label: string, agentRef: any, input: string): Promise<void> {
+async function runAgent(
+  label: string,
+  agentRef: any,
+  input: string,
+): Promise<void> {
   console.log(`\n[${label}]\n`);
 
   for await (const chunk of client.stream(agentRef, { input })) {
@@ -30,20 +34,38 @@ async function runAgent(label: string, agentRef: any, input: string): Promise<vo
         process.stdout.write(`\x1b[36m${chunk.delta}\x1b[0m`);
         break;
       case "tool-call":
-        process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`,
+        );
         break;
       case "tool-result":
-        process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+        );
         break;
       case "finish":
-        process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+        process.stdout.write(
+          `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+        );
         break;
     }
   }
 }
 
-await runAgent("writer seeds a file", api.agents.writer, "Use the write tool to create report.md with the text 'shared via S3'.");
+await runAgent(
+  "writer seeds a file",
+  api.agents.writer,
+  "Use the write tool to create report.md with the text 'shared via S3'.",
+);
 
-await runAgent("reader-mount reads it back (read-only MOUNT, fresh)", api.agents.readerMount, "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text");
+await runAgent(
+  "reader-mount reads it back (read-only MOUNT, fresh)",
+  api.agents.readerMount,
+  "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text",
+);
 
-await runAgent("reader-s3 reads it back (S3 DIRECT opt-out)", api.agents.readerS3, "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text");
+await runAgent(
+  "reader-s3 reads it back (S3 DIRECT opt-out)",
+  api.agents.readerS3,
+  "Use glob to list **/*.md, then read report.md and return its contents. Try to update file report with new text",
+);

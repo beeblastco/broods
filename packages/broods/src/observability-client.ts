@@ -32,17 +32,26 @@ export interface ObservabilitySubscribeOptions {
 const WS_OPEN = 1;
 const WS_CONNECTING = 0;
 
-function buildObservabilityUrl(baseUrl: string, project: string, environment: string, apiKey: string): string {
+function buildObservabilityUrl(
+  baseUrl: string,
+  project: string,
+  environment: string,
+  apiKey: string,
+): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
-  return `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(environment)}/observability/ws` +
-    `?token=${encodeURIComponent(apiKey)}`;
+  return (
+    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(environment)}/observability/ws` +
+    `?token=${encodeURIComponent(apiKey)}`
+  );
 }
 
 function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
   if (typeof data !== "string") return null;
   try {
     const value = JSON.parse(data) as ObservabilityServerMessage;
-    return typeof value === "object" && value !== null && typeof (value as { type?: unknown }).type === "string"
+    return typeof value === "object" &&
+      value !== null &&
+      typeof (value as { type?: unknown }).type === "string"
       ? value
       : null;
   } catch {
@@ -51,7 +60,8 @@ function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
 }
 
 function resolveWebSocket(): new (url: string) => WebSocket {
-  const impl = (globalThis as { WebSocket?: new (url: string) => WebSocket }).WebSocket;
+  const impl = (globalThis as { WebSocket?: new (url: string) => WebSocket })
+    .WebSocket;
   if (!impl) throw new Error("WebSocket is not available in this environment.");
   return impl;
 }
@@ -65,7 +75,10 @@ export async function* subscribeObservabilityLogs(
   let retryMs = 500;
   while (!subscribeOptions.signal?.aborted) {
     try {
-      for await (const entry of subscribeObservabilityLogsOnce(options, subscribeOptions)) {
+      for await (const entry of subscribeObservabilityLogsOnce(
+        options,
+        subscribeOptions,
+      )) {
         const key = `${entry.ts}|${entry.eventType}|${entry.message}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -76,7 +89,12 @@ export async function* subscribeObservabilityLogs(
     } catch (error) {
       if (subscribeOptions.signal?.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      if (/unauthorized|invalid websocket token|scope does not match/i.test(message)) throw error;
+      if (
+        /unauthorized|invalid websocket token|scope does not match/i.test(
+          message,
+        )
+      )
+        throw error;
     }
     await reconnectDelay(retryMs, subscribeOptions.signal);
     retryMs = Math.min(retryMs * 2, 5_000);
@@ -172,7 +190,9 @@ async function* subscribeObservabilityLogsOnce(
   };
 
   socket.onerror = (): void => {
-    socketError = new Error(`Cannot connect to the observability gateway at ${displayUrl}.`);
+    socketError = new Error(
+      `Cannot connect to the observability gateway at ${displayUrl}.`,
+    );
     done = true;
     notify();
   };
@@ -208,13 +228,20 @@ async function* subscribeObservabilityLogsOnce(
   }
 }
 
-function reconnectDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+function reconnectDelay(
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
     const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(timer);
-      resolve();
-    }, { once: true });
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
   });
 }

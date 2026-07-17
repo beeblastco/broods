@@ -38,13 +38,17 @@ const SANDBOX_GID = "990";
  * @param executable whether a file should be world-executable
  * @returns the S3 user-metadata map
  */
-function posixMetadata(kind: "file" | "directory", executable = false): Record<string, string> {
+function posixMetadata(
+  kind: "file" | "directory",
+  executable = false,
+): Record<string, string> {
   const now = `${Date.now()}000000ns`;
 
   return {
     "file-owner": SANDBOX_UID,
     "file-group": SANDBOX_GID,
-    "file-permissions": kind === "directory" ? "0040777" : executable ? "0100777" : "0100666",
+    "file-permissions":
+      kind === "directory" ? "0040777" : executable ? "0100777" : "0100666",
     "file-atime": now,
     "file-mtime": now,
   };
@@ -72,7 +76,10 @@ export async function writeS3Object(
       Key: key,
       Body: body,
       ...(options.contentType ? { ContentType: options.contentType } : {}),
-      Metadata: posixMetadata(key.endsWith("/") ? "directory" : "file", options.executable === true),
+      Metadata: posixMetadata(
+        key.endsWith("/") ? "directory" : "file",
+        options.executable === true,
+      ),
     }),
   );
 
@@ -101,7 +108,10 @@ export async function copyS3Object(
       Key: destinationKey,
       CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, "/")}`,
       MetadataDirective: "REPLACE",
-      Metadata: posixMetadata(destinationKey.endsWith("/") ? "directory" : "file", options.executable === true),
+      Metadata: posixMetadata(
+        destinationKey.endsWith("/") ? "directory" : "file",
+        options.executable === true,
+      ),
       ...(options.contentType ? { ContentType: options.contentType } : {}),
     }),
   );
@@ -112,7 +122,10 @@ export async function copyS3Object(
  * @param bucket target bucket
  * @param key file key whose parent directories should exist
  */
-export async function ensureS3DirectoryMarkers(bucket: string, key: string): Promise<void> {
+export async function ensureS3DirectoryMarkers(
+  bucket: string,
+  key: string,
+): Promise<void> {
   const parts = key.split("/").filter(Boolean);
   parts.pop();
 
@@ -132,9 +145,14 @@ export async function ensureS3DirectoryMarkers(bucket: string, key: string): Pro
  * @returns the object body as bytes
  * @throws when the object has no body
  */
-export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Array> {
+export async function readS3Bytes(
+  bucket: string,
+  key: string,
+): Promise<Uint8Array> {
   const client = await s3Client();
-  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const result = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
   if (!result.Body) {
     throw new Error(`S3 object has no body: ${key}`);
   }
@@ -150,7 +168,9 @@ export async function readS3Bytes(bucket: string, key: string): Promise<Uint8Arr
  */
 export async function readS3Text(bucket: string, key: string): Promise<string> {
   const client = await s3Client();
-  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const result = await client.send(
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+  );
   if (!result.Body) {
     throw new Error(`S3 object has no body: ${key}`);
   }
@@ -172,9 +192,13 @@ export async function getS3ObjectUrl(
 ): Promise<string> {
   const client = await s3Client();
 
-  return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-    expiresIn: options.expiresInSeconds ?? 300,
-  });
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    {
+      expiresIn: options.expiresInSeconds ?? 300,
+    },
+  );
 }
 
 /**
@@ -184,7 +208,10 @@ export async function getS3ObjectUrl(
  * @returns true when the object exists
  * @throws on non-404 S3 errors
  */
-export async function s3ObjectExists(bucket: string, key: string): Promise<boolean> {
+export async function s3ObjectExists(
+  bucket: string,
+  key: string,
+): Promise<boolean> {
   const client = await s3Client();
   try {
     await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
@@ -204,7 +231,10 @@ export async function s3ObjectExists(bucket: string, key: string): Promise<boole
  * @param prefix key prefix
  * @returns the objects found
  */
-export async function listS3Prefix(bucket: string, prefix: string): Promise<S3ObjectInfo[]> {
+export async function listS3Prefix(
+  bucket: string,
+  prefix: string,
+): Promise<S3ObjectInfo[]> {
   const client = await s3Client();
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
@@ -226,8 +256,12 @@ export async function listS3Prefix(bucket: string, prefix: string): Promise<S3Ob
       objects.push({
         key: item.Key,
         ...(item.Size !== undefined ? { size: item.Size } : {}),
-        ...(item.LastModified !== undefined ? { lastModified: item.LastModified.toISOString() } : {}),
-        ...(item.ETag !== undefined ? { etag: item.ETag.replace(/^"|"$/g, "") } : {}),
+        ...(item.LastModified !== undefined
+          ? { lastModified: item.LastModified.toISOString() }
+          : {}),
+        ...(item.ETag !== undefined
+          ? { etag: item.ETag.replace(/^"|"$/g, "") }
+          : {}),
       });
     }
 
@@ -242,7 +276,10 @@ export async function listS3Prefix(bucket: string, prefix: string): Promise<S3Ob
  * @param bucket target bucket
  * @param key object key
  */
-export async function deleteS3Object(bucket: string, key: string): Promise<void> {
+export async function deleteS3Object(
+  bucket: string,
+  key: string,
+): Promise<void> {
   const client = await s3Client();
   await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
@@ -253,9 +290,14 @@ export async function deleteS3Object(bucket: string, key: string): Promise<void>
  * @param prefix key prefix
  * @returns the number of objects deleted
  */
-export async function deleteS3Prefix(bucket: string, prefix: string): Promise<number> {
+export async function deleteS3Prefix(
+  bucket: string,
+  prefix: string,
+): Promise<number> {
   const objects = await listS3Prefix(bucket, prefix);
-  await Promise.all(objects.map((object) => deleteS3Object(bucket, object.key)));
+  await Promise.all(
+    objects.map((object) => deleteS3Object(bucket, object.key)),
+  );
 
   return objects.length;
 }

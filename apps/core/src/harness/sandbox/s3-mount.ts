@@ -55,7 +55,9 @@ export interface S3MountContext {
 // The mount role for a workspace: the developer's `assumeRole` role, else the
 // platform role (SANDBOX_MOUNT_ROLE_ARN). Undefined => no role; the provider
 // supplies credentials another way. Sync, so the mount strategy can branch on it.
-export function mountRoleArn(storage: WorkspaceStorageConfig | undefined): string | undefined {
+export function mountRoleArn(
+  storage: WorkspaceStorageConfig | undefined,
+): string | undefined {
   return storage?.auth?.type === "assumeRole"
     ? storage.auth.roleArn
     : optionalEnv("SANDBOX_MOUNT_ROLE_ARN");
@@ -68,14 +70,24 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
   const storage = ctx.storage;
   const bucket = storage?.bucket ?? ctx.managedBucket;
   if (!bucket) {
-    throw new Error("workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).");
+    throw new Error(
+      "workspace S3 mount requires storage.bucket or a managed bucket (FILESYSTEM_BUCKET_NAME).",
+    );
   }
   const prefix = storage?.bucket
-    ? joinPrefix(normalizePrefix(storage.prefix), namespaceIsolationSuffix(ctx.namespace))
+    ? joinPrefix(
+        normalizePrefix(storage.prefix),
+        namespaceIsolationSuffix(ctx.namespace),
+      )
     : `${workspaceNamespacePrefix(ctx.namespace)}/`;
   const region = storage?.region ?? ctx.region;
   const endpoint = storage?.endpoint ?? ctx.endpoint;
-  return { bucket, prefix, ...(region ? { region } : {}), ...(endpoint ? { endpoint } : {}) };
+  return {
+    bucket,
+    prefix,
+    ...(region ? { region } : {}),
+    ...(endpoint ? { endpoint } : {}),
+  };
 }
 
 function namespaceIsolationSuffix(namespace: string): string | undefined {
@@ -83,7 +95,10 @@ function namespaceIsolationSuffix(namespace: string): string | undefined {
   return separator >= 0 ? namespace.slice(separator + 1) : undefined;
 }
 
-function joinPrefix(prefix: string | undefined, suffix: string | undefined): string {
+function joinPrefix(
+  prefix: string | undefined,
+  suffix: string | undefined,
+): string {
   const normalizedPrefix = prefix?.replace(/^\/+|\/+$/g, "");
   const normalizedSuffix = suffix?.replace(/^\/+|\/+$/g, "");
   const joined = [normalizedPrefix, normalizedSuffix].filter(Boolean).join("/");
@@ -101,7 +116,10 @@ export interface S3ReadTarget {
 // Build the resolver context for a harness-side read of a workspace's storage,
 // using the env defaults (managed bucket / region) the harness runs with. The
 // bring-your-own endpoint, when set, rides storage.endpoint.
-export function workspaceReadContext(storage: WorkspaceStorageConfig | undefined, namespace: string): S3MountContext {
+export function workspaceReadContext(
+  storage: WorkspaceStorageConfig | undefined,
+  namespace: string,
+): S3MountContext {
   return {
     storage,
     namespace,
@@ -113,7 +131,9 @@ export function workspaceReadContext(storage: WorkspaceStorageConfig | undefined
 // Resolve a harness read target. The managed bucket is read directly on the
 // harness's own role (no per-read STS) exactly as before; a bring-your-own bucket
 // assumes the configured role for short-lived, prefix-scoped cross-account creds.
-export async function resolveS3ReadTarget(ctx: S3MountContext): Promise<S3ReadTarget> {
+export async function resolveS3ReadTarget(
+  ctx: S3MountContext,
+): Promise<S3ReadTarget> {
   const identity = resolveS3MountIdentity(ctx);
   if (!ctx.storage?.bucket) {
     return { bucket: identity.bucket, prefix: identity.prefix };
@@ -122,12 +142,12 @@ export async function resolveS3ReadTarget(ctx: S3MountContext): Promise<S3ReadTa
   const access: S3Access = {
     ...(mount.credentials
       ? {
-        credentials: {
-          accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
-          secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
-          sessionToken: mount.credentials.AWS_SESSION_TOKEN,
-        },
-      }
+          credentials: {
+            accessKeyId: mount.credentials.AWS_ACCESS_KEY_ID,
+            secretAccessKey: mount.credentials.AWS_SECRET_ACCESS_KEY,
+            sessionToken: mount.credentials.AWS_SESSION_TOKEN,
+          },
+        }
       : {}),
     ...(mount.region ? { region: mount.region } : {}),
     ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
@@ -135,12 +155,22 @@ export async function resolveS3ReadTarget(ctx: S3MountContext): Promise<S3ReadTa
   return { bucket: mount.bucket, prefix: mount.prefix, access };
 }
 
-export async function resolveS3Mount(ctx: S3MountContext): Promise<ResolvedS3Mount> {
+export async function resolveS3Mount(
+  ctx: S3MountContext,
+): Promise<ResolvedS3Mount> {
   const identity = resolveS3MountIdentity(ctx);
   const roleArn = mountRoleArn(ctx.storage);
-  const externalId = ctx.storage?.auth?.type === "assumeRole" ? ctx.storage.auth.externalId : undefined;
+  const externalId =
+    ctx.storage?.auth?.type === "assumeRole"
+      ? ctx.storage.auth.externalId
+      : undefined;
   const credentials = roleArn
-    ? await assumeScopedMountCredentials({ roleArn, bucket: identity.bucket, prefix: identity.prefix, externalId })
+    ? await assumeScopedMountCredentials({
+        roleArn,
+        bucket: identity.bucket,
+        prefix: identity.prefix,
+        externalId,
+      })
     : undefined;
   return { ...identity, ...(credentials ? { credentials } : {}) };
 }
@@ -158,7 +188,12 @@ export async function assumeScopedMountCredentials(params: {
   const statements: Record<string, unknown>[] = [
     {
       Effect: "Allow",
-      Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+      Action: [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+      ],
       Resource: [objectResource],
     },
     {
@@ -166,19 +201,27 @@ export async function assumeScopedMountCredentials(params: {
       Action: ["s3:ListBucket"],
       Resource: [`arn:aws:s3:::${params.bucket}`],
       // Scope the listing to the prefix; an empty prefix lists the whole bucket.
-      ...(params.prefix ? { Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } } } : {}),
+      ...(params.prefix
+        ? { Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } } }
+        : {}),
     },
   ];
 
-  const result = await new STSClient({}).send(new AssumeRoleCommand({
-    RoleArn: params.roleArn,
-    RoleSessionName: "fp-sandbox-mount",
-    DurationSeconds: 3600,
-    Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
-    ...(params.externalId ? { ExternalId: params.externalId } : {}),
-  }));
+  const result = await new STSClient({}).send(
+    new AssumeRoleCommand({
+      RoleArn: params.roleArn,
+      RoleSessionName: "fp-sandbox-mount",
+      DurationSeconds: 3600,
+      Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
+      ...(params.externalId ? { ExternalId: params.externalId } : {}),
+    }),
+  );
   const credentials = result.Credentials;
-  if (!credentials?.AccessKeyId || !credentials.SecretAccessKey || !credentials.SessionToken) {
+  if (
+    !credentials?.AccessKeyId ||
+    !credentials.SecretAccessKey ||
+    !credentials.SessionToken
+  ) {
     throw new Error("Failed to assume the workspace S3 mount role");
   }
 

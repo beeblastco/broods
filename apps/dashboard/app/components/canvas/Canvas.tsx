@@ -186,12 +186,12 @@ function hydrateSubagentEdge(edge: Edge): Edge {
 
 /** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
 function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
-  const sourceManagedBy = (nodesById.get(edge.source)?.data as
-    | { managedBy?: string }
-    | undefined)?.managedBy;
-  const targetManagedBy = (nodesById.get(edge.target)?.data as
-    | { managedBy?: string }
-    | undefined)?.managedBy;
+  const sourceManagedBy = (
+    nodesById.get(edge.source)?.data as { managedBy?: string } | undefined
+  )?.managedBy;
+  const targetManagedBy = (
+    nodesById.get(edge.target)?.data as { managedBy?: string } | undefined
+  )?.managedBy;
   if (
     !isCodeManagedEdgeId(edge.id) &&
     !(sourceManagedBy === "cli" && targetManagedBy === "cli")
@@ -638,9 +638,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // pair allows a single edge either way.
     const duplicate = isAgentPair
       ? edgesRef.current.some(
-        (e) =>
-          e.source === connection.source && e.target === connection.target,
-      )
+          (e) =>
+            e.source === connection.source && e.target === connection.target,
+        )
       : hasEdgeBetween(edgesRef.current, connection.source, connection.target);
     if (duplicate) return false;
 
@@ -649,9 +649,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // edge would encode a null handle into its id and fail to hydrate after a reload.
     if (isSideConnection(connection)) {
       const sourceIsSide =
-        connection.sourceHandle === "left" || connection.sourceHandle === "right";
+        connection.sourceHandle === "left" ||
+        connection.sourceHandle === "right";
       const targetIsSide =
-        connection.targetHandle === "left" || connection.targetHandle === "right";
+        connection.targetHandle === "left" ||
+        connection.targetHandle === "right";
 
       return sourceIsSide && targetIsSide && (isMountPair || isAgentPair);
     }
@@ -758,10 +760,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       const wouldDoubleSandbox =
         type === "sandbox" && nearest
           ? agentHasDirectSandbox(
-            edgesRef.current,
-            nodesRef.current,
-            nearest.id,
-          )
+              edgesRef.current,
+              nodesRef.current,
+              nearest.id,
+            )
           : false;
       if (nearest && !wouldDoubleSandbox) {
         const newEdge: Edge = {
@@ -898,7 +900,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       JSON.stringify({
         n: nodes.map((n) => {
           const d = n.data as BaseNodeData;
-          return [n.id, n.type, d?.resourceId, d?.label, d?.mountName, d?.readOnly === true];
+          return [
+            n.id,
+            n.type,
+            d?.resourceId,
+            d?.label,
+            d?.mountName,
+            d?.readOnly === true,
+          ];
         }),
         e: edges.map((e) => [e.source, e.target, e.type]),
       }),

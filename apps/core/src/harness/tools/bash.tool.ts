@@ -6,6 +6,7 @@
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
+import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { logInfo } from "../../shared/log.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
@@ -14,9 +15,11 @@ import {
   sealDetachedAsyncToolGroup,
 } from "../async-tool-result.ts";
 import { generateJobId } from "../sandbox/jobs.ts";
-import type { SandboxExecutorConfig, SandboxJobCallback } from "../sandbox/types.ts";
+import type {
+  SandboxExecutorConfig,
+  SandboxJobCallback,
+} from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
-import { getHarnessPublicUrl } from "../self-url.ts";
 import {
   disallowedRuntimeCommand,
   formatRunText,
@@ -51,7 +54,12 @@ function ptyCommand(command: string): string {
 // Background jobs need a persistent workspace sandbox (to outlive the request)
 // and a parent session to track the job as an AsyncToolResult.
 function backgroundAvailable(context: SandboxToolContext): boolean {
-  return Boolean(context.background) && context.workspaces.some((workspace) => sandboxSupportsBackgroundJobs(workspace.sandbox));
+  return (
+    Boolean(context.background) &&
+    context.workspaces.some((workspace) =>
+      sandboxSupportsBackgroundJobs(workspace.sandbox),
+    )
+  );
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
@@ -66,15 +74,17 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
       pty: {
         type: "boolean",
-        description: "Run the command attached to a real interactive TTY (pseudo-terminal). Use when a program refuses to run or degrades without a terminal (isatty checks, TTY-only prompts, terminal UIs). Note: stderr merges into stdout and lines end with CRLF.",
+        description:
+          "Run the command attached to a real interactive TTY (pseudo-terminal). Use when a program refuses to run or degrades without a terminal (isatty checks, TTY-only prompts, terminal UIs). Note: stderr merges into stdout and lines end with CRLF.",
       },
       ...(backgroundAvailable(context)
         ? {
-          background: {
-            type: "boolean",
-            description: "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
-          } as JSONSchema7,
-        }
+            background: {
+              type: "boolean",
+              description:
+                "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+            } as JSONSchema7,
+          }
         : {}),
     },
     required: ["command"],
@@ -102,11 +112,12 @@ Usage notes:
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${backgroundAvailable(context)
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${
+    backgroundAvailable(context)
       ? `
 - This workspace is reserved (persistent): packages installed under $HOME (e.g. a uv/venv or npm prefix) and files survive across calls. Set background:true for long-running commands; the result is delivered back automatically when it finishes, and you can check on it with async_status.`
       : ""
-    }`;
+  }`;
 }
 
 async function dispatchBackground(
@@ -117,13 +128,19 @@ async function dispatchBackground(
   toolCallId: string,
 ) {
   if (!ws || ws.sandbox?.persistent !== true) {
-    return toolError("Error: background jobs require a persistent workspace sandbox");
+    return toolError(
+      "Error: background jobs require a persistent workspace sandbox",
+    );
   }
   if (!sandboxSupportsBackgroundJobs(ws.sandbox)) {
-    return toolError("Error: this workspace sandbox does not support background jobs");
+    return toolError(
+      "Error: this workspace sandbox does not support background jobs",
+    );
   }
   if (!context.background) {
-    return toolError("Error: background jobs are not available in this context");
+    return toolError(
+      "Error: background jobs are not available in this context",
+    );
   }
 
   const resultId = `async_tool_${crypto.randomUUID()}`;
@@ -133,12 +150,17 @@ async function dispatchBackground(
   // job its own parent event and seal it immediately after the tracking row is
   // created. Uploaded async tools are sealed by handler.ts after the model pass.
   const parentEventId = `${context.background.eventId}:async-bg:${resultId}`;
-  const baseUrl = await getHarnessPublicUrl();
+  const baseUrl = getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
-    ? { url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`, token: completionToken }
+    ? {
+        url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`,
+        token: completionToken,
+      }
     : undefined;
   if (!callback && !sandboxSupportsJobControls(ws.sandbox)) {
-    return toolError("Error: this sandbox requires PUBLIC_BASE_URL for background job completion");
+    return toolError(
+      "Error: this sandbox requires PUBLIC_BASE_URL for background job completion",
+    );
   }
 
   // Create + seal the tracking row BEFORE launching so a fast job's callback can
@@ -170,11 +192,16 @@ async function dispatchBackground(
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
-    await markAsyncToolResultFailed({ resultId, error }).catch(() => { });
+    await markAsyncToolResultFailed({ resultId, error }).catch(() => {});
     return toolError(`Error: failed to start background job: ${error}`);
   }
 
-  logInfo("bash background job started", { namespace: ws.namespace, jobId, resultId, delivers: Boolean(callback) });
+  logInfo("bash background job started", {
+    namespace: ws.namespace,
+    jobId,
+    resultId,
+    delivers: Boolean(callback),
+  });
   const delivery = callback
     ? "Its result will be delivered back into this conversation when it finishes."
     : "Poll async_status with this statusId to retrieve the result (automatic delivery is unavailable in this environment).";
@@ -184,7 +211,7 @@ async function dispatchBackground(
   return toolText(
     // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
-    controls,
+      controls,
   );
 }
 
@@ -200,14 +227,17 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           return toolError("Error: command is required");
         }
         try {
-          const ws = context.workspaces.length > 0
-            ? resolveWorkspace(context.workspaces, workspace)
-            : undefined;
+          const ws =
+            context.workspaces.length > 0
+              ? resolveWorkspace(context.workspaces, workspace)
+              : undefined;
           const sandbox = ws?.sandbox ?? context.statelessSandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
-          const outsideWorkspace = ws ? outsideWorkspaceCommand(trimmed) : undefined;
+          const outsideWorkspace = ws
+            ? outsideWorkspaceCommand(trimmed)
+            : undefined;
           if (outsideWorkspace) {
             return toolError(outsideWorkspace);
           }
@@ -219,15 +249,31 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           // inspect the real command, never the `script` wrapper.
           const effective = pty === true ? ptyCommand(trimmed) : trimmed;
           if (background === true) {
-            return await dispatchBackground(context, ws, sandbox, effective, options.toolCallId);
+            return await dispatchBackground(
+              context,
+              ws,
+              sandbox,
+              effective,
+              options.toolCallId,
+            );
           }
-          logInfo("bash tool command", { namespace: ws?.namespace, commandLength: trimmed.length, pty: pty === true });
-          return toolText(formatRunText(await runSandbox(sandbox, ws?.namespace, effective, {
-            onSandboxCpu: context.onSandboxCpu,
-            metadata: sandboxRunMetadata(context, ws),
-          })));
+          logInfo("bash tool command", {
+            namespace: ws?.namespace,
+            commandLength: trimmed.length,
+            pty: pty === true,
+          });
+          return toolText(
+            formatRunText(
+              await runSandbox(sandbox, ws?.namespace, effective, {
+                onSandboxCpu: context.onSandboxCpu,
+                metadata: sandboxRunMetadata(context, ws),
+              }),
+            ),
+          );
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

@@ -26,12 +26,8 @@ import type {
   CronStatus,
   UpdateCronInput,
 } from "../../../apps/core/src/shared/domain/cron.ts";
-import type {
-  SandboxConfig,
-} from "../../../apps/core/src/shared/domain/sandbox-config.ts";
-import type {
-  WorkspaceConfig,
-} from "../../../apps/core/src/shared/domain/workspace-config.ts";
+import type { SandboxConfig } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
+import type { WorkspaceConfig } from "../../../apps/core/src/shared/domain/workspace-config.ts";
 import type {
   AgentPolicyConfig,
   AgentPolicyDocument,
@@ -46,8 +42,12 @@ export type { DiscordSource } from "../../../apps/core/src/shared/discord-channe
 export type { PancakeSource } from "../../../apps/core/src/shared/pancake-channel.ts";
 export type { ZaloSource } from "../../../apps/core/src/shared/zalo-channel.ts";
 
-export type Id<TableName extends string = string> = string & { readonly __tableName?: TableName };
-export type Doc<TableName extends string = string> = Record<string, unknown> & { readonly _id: Id<TableName> };
+export type Id<TableName extends string = string> = string & {
+  readonly __tableName?: TableName;
+};
+export type Doc<TableName extends string = string> = Record<string, unknown> & {
+  readonly _id: Id<TableName>;
+};
 
 export type {
   AgentConfig,
@@ -82,8 +82,19 @@ export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;
 export type CronDoc = Doc<"crons">;
 
-export type CliResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+export type CliResourceKind =
+  | "agent"
+  | "workspace"
+  | "sandbox"
+  | "cron"
+  | "skill"
+  | "tool"
+  | "policy";
 
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.
-export type { CliManifest, CliManifestResource, GeneratedIds } from "../../convex/cliTypes.ts";
+export type {
+  CliManifest,
+  CliManifestResource,
+  GeneratedIds,
+} from "../../convex/cliTypes.ts";

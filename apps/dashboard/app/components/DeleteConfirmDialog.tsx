@@ -71,9 +71,7 @@ export function DeleteConfirmDialog({
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="delete-confirm-primary">
-              Confirmation text
-            </Label>
+            <Label htmlFor="delete-confirm-primary">Confirmation text</Label>
             <div
               className="select-text whitespace-pre-wrap wrap-break-word rounded-md border bg-muted/40 px-3 py-2 font-mono text-sm leading-6 text-foreground"
               aria-label="Text to type for delete confirmation"

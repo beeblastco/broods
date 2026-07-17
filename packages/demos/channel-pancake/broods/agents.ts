@@ -14,7 +14,7 @@ export const agent = defineAgent({
       custom: {
         apiKey: env.AI_API_KEY,
         base_url: env.AI_BASE_URL,
-      }
+      },
     },
     model: {
       provider: "custom",
@@ -44,7 +44,9 @@ export const agent = defineAgent({
         const handoffTagIds = ["order-tag", "pending-tag"];
         const tagIds = event.source.tagIds ?? [];
 
-        return tagIds.some((tagId) => handoffTagIds.includes(tagId)) ? { drop: true } : undefined;
+        return tagIds.some((tagId) => handoffTagIds.includes(tagId))
+          ? { drop: true }
+          : undefined;
       },
     },
     channels: [pancake],

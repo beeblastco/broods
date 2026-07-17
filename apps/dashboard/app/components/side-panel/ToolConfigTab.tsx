@@ -84,10 +84,10 @@ export function ToolConfigTab({
     api.toolService.getByNode,
     canQueryTool
       ? {
-        projectId: projectId,
-        environmentId: environmentId,
-        nodeId: nodeId,
-      }
+          projectId: projectId,
+          environmentId: environmentId,
+          nodeId: nodeId,
+        }
       : "skip",
   );
   const upsertToolService = useMutation(

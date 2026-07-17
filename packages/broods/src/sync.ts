@@ -80,21 +80,35 @@ export class BroodsSyncClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  async getManifest(project: string, environment: string): Promise<RemoteManifestResponse | null> {
-    const response = await this.request(project, environment, "/manifest", { method: "GET" });
+  async getManifest(
+    project: string,
+    environment: string,
+  ): Promise<RemoteManifestResponse | null> {
+    const response = await this.request(project, environment, "/manifest", {
+      method: "GET",
+    });
     if (response.status === 404) return null;
     await assertOk(response, "Fetch manifest failed");
-    return await response.json() as RemoteManifestResponse;
+    return (await response.json()) as RemoteManifestResponse;
   }
 
-  async putManifest(manifest: CliManifest, prune: boolean, rotateRuntimeKey = false): Promise<RemoteManifestResponse> {
-    const response = await this.request(manifest.project, manifest.environment, "/manifest", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ manifest, prune, rotateRuntimeKey }),
-    });
+  async putManifest(
+    manifest: CliManifest,
+    prune: boolean,
+    rotateRuntimeKey = false,
+  ): Promise<RemoteManifestResponse> {
+    const response = await this.request(
+      manifest.project,
+      manifest.environment,
+      "/manifest",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifest, prune, rotateRuntimeKey }),
+      },
+    );
     await assertOk(response, "Sync manifest failed");
-    return await response.json() as RemoteManifestResponse;
+    return (await response.json()) as RemoteManifestResponse;
   }
 
   /**
@@ -102,17 +116,22 @@ export class BroodsSyncClient {
    * dashboard-created project without redeploying. Returns null when the project/
    * environment is unknown.
    */
-  async getRuntimeKey(project: string, environment: string): Promise<{
+  async getRuntimeKey(
+    project: string,
+    environment: string,
+  ): Promise<{
     apiKey: string;
     keyHint: string;
     endpointId?: string;
     projectSlug?: string;
     environmentSlug?: string;
   } | null> {
-    const response = await this.request(project, environment, "/runtime-key", { method: "GET" });
+    const response = await this.request(project, environment, "/runtime-key", {
+      method: "GET",
+    });
     if (response.status === 404) return null;
     await assertOk(response, "Fetch runtime key failed");
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       apiKey?: string;
       keyHint?: string;
       endpointId?: string;
@@ -120,23 +139,36 @@ export class BroodsSyncClient {
       environmentSlug?: string;
     };
 
-    if (!payload.apiKey) throw new Error("Fetch runtime key failed: response omitted apiKey");
+    if (!payload.apiKey)
+      throw new Error("Fetch runtime key failed: response omitted apiKey");
 
     return {
       apiKey: payload.apiKey,
       keyHint: payload.keyHint ?? "",
       ...(payload.endpointId ? { endpointId: payload.endpointId } : {}),
       ...(payload.projectSlug ? { projectSlug: payload.projectSlug } : {}),
-      ...(payload.environmentSlug ? { environmentSlug: payload.environmentSlug } : {}),
+      ...(payload.environmentSlug
+        ? { environmentSlug: payload.environmentSlug }
+        : {}),
     };
   }
 
-  async setEnv(project: string, environment: string, name: string, value: string): Promise<void> {
-    const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value }),
-    });
+  async setEnv(
+    project: string,
+    environment: string,
+    name: string,
+    value: string,
+  ): Promise<void> {
+    const response = await this.request(
+      project,
+      environment,
+      `/env/${encodeURIComponent(name)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      },
+    );
     await assertOk(response, "Set environment variable failed");
   }
 
@@ -145,72 +177,107 @@ export class BroodsSyncClient {
    * server-side and encrypted, so only names and last-updated times return).
    */
   async listEnv(project: string, environment: string): Promise<CliEnvVar[]> {
-    const response = await this.request(project, environment, "/env", { method: "GET" });
+    const response = await this.request(project, environment, "/env", {
+      method: "GET",
+    });
     await assertOk(response, "List environment variables failed");
-    const payload = await response.json() as { variables?: CliEnvVar[] };
+    const payload = (await response.json()) as { variables?: CliEnvVar[] };
 
     return payload.variables ?? [];
   }
 
   /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
-  async getEnv(project: string, environment: string, name: string): Promise<string | null> {
-    const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, { method: "GET" });
+  async getEnv(
+    project: string,
+    environment: string,
+    name: string,
+  ): Promise<string | null> {
+    const response = await this.request(
+      project,
+      environment,
+      `/env/${encodeURIComponent(name)}`,
+      { method: "GET" },
+    );
     if (response.status === 404) return null;
     await assertOk(response, "Read environment variable failed");
-    const payload = await response.json() as { value?: string };
+    const payload = (await response.json()) as { value?: string };
 
     return payload.value ?? null;
   }
 
-  async removeEnv(project: string, environment: string, name: string): Promise<void> {
-    const response = await this.request(project, environment, `/env/${encodeURIComponent(name)}`, {
-      method: "DELETE",
-    });
+  async removeEnv(
+    project: string,
+    environment: string,
+    name: string,
+  ): Promise<void> {
+    const response = await this.request(
+      project,
+      environment,
+      `/env/${encodeURIComponent(name)}`,
+      {
+        method: "DELETE",
+      },
+    );
     await assertOk(response, "Remove environment variable failed");
   }
 
   async getOnboarding(): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/onboarding`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
       },
-    });
+    );
     await assertOk(response, "Fetch CLI onboarding context failed");
 
-    return await response.json() as CliOnboardingContext;
+    return (await response.json()) as CliOnboardingContext;
   }
 
   async selectOnboardingOrg(orgId: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/onboarding`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ orgId: orgId }),
       },
-      body: JSON.stringify({ orgId: orgId }),
-    });
+    );
     await assertOk(response, "Select CLI org failed");
 
-    return await response.json() as CliOnboardingContext;
+    return (await response.json()) as CliOnboardingContext;
   }
 
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/onboarding`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        "Content-Type": "application/json",
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/onboarding`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ createOrgName: name }),
       },
-      body: JSON.stringify({ createOrgName: name }),
-    });
+    );
     await assertOk(response, "Create CLI org failed");
 
-    return await response.json() as CliOnboardingContext;
+    return (await response.json()) as CliOnboardingContext;
   }
 
-  private async request(project: string, environment: string, suffix: string, init: RequestInit): Promise<Response> {
-    const url = `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
+  private async request(
+    project: string,
+    environment: string,
+    suffix: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const url =
+      `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
       `/environments/${encodeURIComponent(environment)}${suffix}`;
     return await this.fetchImpl(url, {
       ...init,
@@ -222,19 +289,42 @@ export class BroodsSyncClient {
   }
 }
 
-export function diffManifests(local: CliManifest, remote: CliManifest | null): DiffEntry[] {
-  const remoteResources = new Map((remote?.resources ?? []).map((entry) => [`${entry.kind}:${entry.name}`, entry]));
-  const localResources = new Map(local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]));
+export function diffManifests(
+  local: CliManifest,
+  remote: CliManifest | null,
+): DiffEntry[] {
+  const remoteResources = new Map(
+    (remote?.resources ?? []).map((entry) => [
+      `${entry.kind}:${entry.name}`,
+      entry,
+    ]),
+  );
+  const localResources = new Map(
+    local.resources.map((entry) => [`${entry.kind}:${entry.name}`, entry]),
+  );
   const entries: DiffEntry[] = [];
-  const unmatchedLocal: Array<{ key: string; resource: CliManifest["resources"][number] }> = [];
-  const unmatchedRemote: Array<{ key: string; resource: CliManifest["resources"][number] }> = [];
+  const unmatchedLocal: Array<{
+    key: string;
+    resource: CliManifest["resources"][number];
+  }> = [];
+  const unmatchedRemote: Array<{
+    key: string;
+    resource: CliManifest["resources"][number];
+  }> = [];
 
   for (const [key, resource] of localResources) {
     const remoteResource = remoteResources.get(key);
     if (!remoteResource) {
       unmatchedLocal.push({ key: key, resource: resource });
-    } else if (stableJson(snapshotResource(remoteResource)) !== stableJson(snapshotResource(resource))) {
-      entries.push({ operation: "update", kind: resource.kind, name: resource.name });
+    } else if (
+      stableJson(snapshotResource(remoteResource)) !==
+      stableJson(snapshotResource(resource))
+    ) {
+      entries.push({
+        operation: "update",
+        kind: resource.kind,
+        name: resource.name,
+      });
     }
   }
 
@@ -247,11 +337,13 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
   const renamedRemoteKeys = new Set<string>();
   const renamedLocalKeys = new Set<string>();
   for (const localEntry of unmatchedLocal) {
-    const match = unmatchedRemote.find((remoteEntry) =>
-      !renamedRemoteKeys.has(remoteEntry.key) &&
-      isRenamableKind(localEntry.resource.kind) &&
-      localEntry.resource.kind === remoteEntry.resource.kind &&
-      stableJson(renameSnapshot(localEntry.resource)) === stableJson(renameSnapshot(remoteEntry.resource))
+    const match = unmatchedRemote.find(
+      (remoteEntry) =>
+        !renamedRemoteKeys.has(remoteEntry.key) &&
+        isRenamableKind(localEntry.resource.kind) &&
+        localEntry.resource.kind === remoteEntry.resource.kind &&
+        stableJson(renameSnapshot(localEntry.resource)) ===
+          stableJson(renameSnapshot(remoteEntry.resource)),
     );
     if (!match) continue;
     renamedLocalKeys.add(localEntry.key);
@@ -266,22 +358,37 @@ export function diffManifests(local: CliManifest, remote: CliManifest | null): D
 
   for (const { key, resource } of unmatchedLocal) {
     if (!renamedLocalKeys.has(key)) {
-      entries.push({ operation: "create", kind: resource.kind, name: resource.name });
+      entries.push({
+        operation: "create",
+        kind: resource.kind,
+        name: resource.name,
+      });
     }
   }
 
   for (const { key, resource } of unmatchedRemote) {
     if (!renamedRemoteKeys.has(key)) {
-      entries.push({ operation: "delete", kind: resource.kind, name: resource.name });
+      entries.push({
+        operation: "delete",
+        kind: resource.kind,
+        name: resource.name,
+      });
     }
   }
 
   return entries.sort((a, b) => diffSortKey(a).localeCompare(diffSortKey(b)));
 }
 
-function snapshotResource(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
+function snapshotResource(
+  resource: { kind: string; config: unknown } & Record<string, unknown>,
+): unknown {
   const normalized = normalizeEnvRefs(resource) as typeof resource;
-  if (resource.kind !== "skill" && resource.kind !== "tool" && resource.kind !== "hook") return normalized;
+  if (
+    resource.kind !== "skill" &&
+    resource.kind !== "tool" &&
+    resource.kind !== "hook"
+  )
+    return normalized;
 
   return {
     ...normalized,
@@ -289,7 +396,9 @@ function snapshotResource(resource: { kind: string; config: unknown } & Record<s
   };
 }
 
-function renameSnapshot(resource: { kind: string; config: unknown } & Record<string, unknown>): unknown {
+function renameSnapshot(
+  resource: { kind: string; config: unknown } & Record<string, unknown>,
+): unknown {
   const normalized = snapshotResource(resource) as Record<string, unknown>;
   const { name: _name, ...rest } = normalized;
 
@@ -297,7 +406,12 @@ function renameSnapshot(resource: { kind: string; config: unknown } & Record<str
 }
 
 function isRenamableKind(kind: string): boolean {
-  return kind === "agent" || kind === "workspace" || kind === "sandbox" || kind === "policy";
+  return (
+    kind === "agent" ||
+    kind === "workspace" ||
+    kind === "sandbox" ||
+    kind === "policy"
+  );
 }
 
 function diffSortKey(entry: DiffEntry): string {
@@ -320,7 +434,10 @@ function normalizeEnvRefs(value: unknown): unknown {
     }
 
     return Object.fromEntries(
-      Object.entries(record).map(([key, entry]) => [key, normalizeEnvRefs(entry)]),
+      Object.entries(record).map(([key, entry]) => [
+        key,
+        normalizeEnvRefs(entry),
+      ]),
     );
   }
 
@@ -330,10 +447,12 @@ function normalizeEnvRefs(value: unknown): unknown {
 function stripArtifactContent(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripArtifactContent);
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => {
-      if (key === "contentBase64" || key === "bundle") return [];
-      return [[key, stripArtifactContent(entry)]];
-    }));
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([key, entry]) => {
+        if (key === "contentBase64" || key === "bundle") return [];
+        return [[key, stripArtifactContent(entry)]];
+      }),
+    );
   }
 
   return value;
@@ -346,7 +465,11 @@ function stableJson(value: unknown): string {
 function sortValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortValue);
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, sortValue(entry)]));
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, sortValue(entry)]),
+    );
   }
 
   return value;

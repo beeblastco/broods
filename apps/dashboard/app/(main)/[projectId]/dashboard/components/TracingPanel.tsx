@@ -9,8 +9,18 @@ import {
 import { cn } from "@/app/lib/utils";
 import { ChevronDown, ChevronRight, LoaderCircle } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ObservabilityToolbar, type ToolbarFilterOption } from "./ObservabilityToolbar";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  ObservabilityToolbar,
+  type ToolbarFilterOption,
+} from "./ObservabilityToolbar";
 
 interface Props {
   projectSlug: string | undefined;
@@ -95,7 +105,10 @@ function displayAttribute(value: unknown): string {
   return value;
 }
 
-function numericAttribute(span: ObservabilitySpanRow, key: string): number | undefined {
+function numericAttribute(
+  span: ObservabilitySpanRow,
+  key: string,
+): number | undefined {
   const value = span.attributes?.[key];
 
   return typeof value === "number" ? value : undefined;
@@ -112,7 +125,10 @@ const TASK_MAX_RUNTIME_MS = 16 * 60 * 1000;
 
 /** Whether a root task/subtask is genuinely still running (bounded by freshness). */
 function isTaskRunning(root: ObservabilitySpanRow): boolean {
-  return root.status === "running" && Date.now() - root.startTimeMs < TASK_MAX_RUNTIME_MS;
+  return (
+    root.status === "running" &&
+    Date.now() - root.startTimeMs < TASK_MAX_RUNTIME_MS
+  );
 }
 
 /** A live "running" span under a task that already finished never reported its end. */
@@ -164,7 +180,9 @@ interface SpanGroup {
 /** Group spans into per-task trees keyed by parent span, newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   // Tasks and subagent subtasks are both top-level roots (each its own trace).
-  const tasks = spans.filter((span) => span.kind === "task" || span.kind === "subtask");
+  const tasks = spans.filter(
+    (span) => span.kind === "task" || span.kind === "subtask",
+  );
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
 
   for (const span of spans) {
@@ -177,14 +195,18 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
   return tasks
     .map((root) => {
       const children = childrenByTrace.get(root.traceId) ?? [];
-      const spanIds = new Set([root.spanId, ...children.map((child) => child.spanId)]);
+      const spanIds = new Set([
+        root.spanId,
+        ...children.map((child) => child.spanId),
+      ]);
       const childrenByParent = new Map<string, ObservabilitySpanRow[]>();
       for (const child of children) {
         // Re-parent orphans (a parent that never arrived) onto the root so they
         // still render instead of disappearing.
-        const parentId = child.parentSpanId && spanIds.has(child.parentSpanId)
-          ? child.parentSpanId
-          : root.spanId;
+        const parentId =
+          child.parentSpanId && spanIds.has(child.parentSpanId)
+            ? child.parentSpanId
+            : root.spanId;
         const siblings = childrenByParent.get(parentId) ?? [];
         siblings.push(child);
         childrenByParent.set(parentId, siblings);
@@ -209,7 +231,11 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
         childrenByParent: childrenByParent,
         windowStart: windowStart,
         windowSpan: windowSpan,
-        taskDurationMs: Math.max(root.durationMs, taskRunning ? windowEnd - root.startTimeMs : 0, 1),
+        taskDurationMs: Math.max(
+          root.durationMs,
+          taskRunning ? windowEnd - root.startTimeMs : 0,
+          1,
+        ),
       };
     })
     .sort((left, right) => right.root.startTimeMs - left.root.startTimeMs);
@@ -218,9 +244,17 @@ function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
 // Only a running span gets an icon (the spinner). Finished/errored/stale state is
 // already carried by the Status column, so a static tick/cross would just be
 // redundant chrome — keep the tree minimal.
-function SpanStatusIcon({ span, taskRunning }: { span: ObservabilitySpanRow; taskRunning: boolean }) {
+function SpanStatusIcon({
+  span,
+  taskRunning,
+}: {
+  span: ObservabilitySpanRow;
+  taskRunning: boolean;
+}) {
   if (span.status === "running" && !isStale(span, taskRunning)) {
-    return <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-400" />;
+    return (
+      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-400" />
+    );
   }
 
   return null;
@@ -235,7 +269,9 @@ function spanLabel(span: ObservabilitySpanRow): string {
   if (span.kind === "model.step") {
     const stepNumber = span.attributes?.["agent.step_number"];
 
-    return typeof stepNumber === "number" ? `Model step ${stepNumber + 1}` : "Model step";
+    return typeof stepNumber === "number"
+      ? `Model step ${stepNumber + 1}`
+      : "Model step";
   }
   if (span.kind === "phase") {
     const label = span.attributes?.["phase.name"];
@@ -245,7 +281,9 @@ function spanLabel(span: ObservabilitySpanRow): string {
   if (span.kind === "subtask") {
     const agentId = span.attributes?.["agent.id"] ?? span.agentId;
 
-    return typeof agentId === "string" ? `Subagent: ${agentId}` : "Subagent task";
+    return typeof agentId === "string"
+      ? `Subagent: ${agentId}`
+      : "Subagent task";
   }
   const taskId = span.attributes?.["task.id"];
 
@@ -265,7 +303,10 @@ function TaskDurationBar({
 }) {
   const live = isTaskRunning(group.root);
   const barColor = kindBarColor(group.root.kind);
-  const widthPct = Math.max(1.5, Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100));
+  const widthPct = Math.max(
+    1.5,
+    Math.min(100, (group.taskDurationMs / scaleMaxMs) * 100),
+  );
   const title = `${spanLabel(group.root)} · ${formatDuration(group.taskDurationMs)} · started ${formatTime(group.root.startTimeMs)}`;
 
   return (
@@ -273,7 +314,11 @@ function TaskDurationBar({
       <div
         className={cn(
           "absolute top-1/2 h-2 -translate-y-1/2 rounded-sm",
-          group.root.status === "error" ? "bg-red-500/70" : live ? cn(barColor, "animate-pulse") : barColor,
+          group.root.status === "error"
+            ? "bg-red-500/70"
+            : live
+              ? cn(barColor, "animate-pulse")
+              : barColor,
         )}
         style={{ width: `${widthPct}%` }}
         title={title}
@@ -301,14 +346,28 @@ function TimelineBar({
 }) {
   const stale = isStale(span, taskRunning);
   const live = span.status === "running" && taskRunning;
-  const end = live ? windowStart + windowSpan : Math.max(span.endTimeMs, span.startTimeMs);
-  const leftPct = Math.min(100, Math.max(0, ((span.startTimeMs - windowStart) / windowSpan) * 100));
-  const widthPct = Math.max(0.75, Math.min(((end - span.startTimeMs) / windowSpan) * 100, 100 - leftPct));
+  const end = live
+    ? windowStart + windowSpan
+    : Math.max(span.endTimeMs, span.startTimeMs);
+  const leftPct = Math.min(
+    100,
+    Math.max(0, ((span.startTimeMs - windowStart) / windowSpan) * 100),
+  );
+  const widthPct = Math.max(
+    0.75,
+    Math.min(((end - span.startTimeMs) / windowSpan) * 100, 100 - leftPct),
+  );
 
   const ttftMs = numericAttribute(span, "model.ttft_ms");
-  const ttftFrac = ttftMs !== undefined && span.durationMs > 0 ? Math.min(1, ttftMs / span.durationMs) : 0;
-  const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${ttftMs !== undefined ? ` · time to first token ${formatDuration(ttftMs)}` : ""
-    }`;
+  const ttftFrac =
+    ttftMs !== undefined && span.durationMs > 0
+      ? Math.min(1, ttftMs / span.durationMs)
+      : 0;
+  const title = `${spanLabel(span)} · ${formatDuration(span.durationMs)} · started ${formatTime(span.startTimeMs)}${
+    ttftMs !== undefined
+      ? ` · time to first token ${formatDuration(ttftMs)}`
+      : ""
+  }`;
 
   return (
     <div className="relative h-4 w-full">
@@ -319,7 +378,10 @@ function TimelineBar({
         title={title}
       >
         {ttftFrac > 0 && (
-          <div className="h-full shrink-0 bg-sky-500/25" style={{ width: `${ttftFrac * 100}%` }} />
+          <div
+            className="h-full shrink-0 bg-sky-500/25"
+            style={{ width: `${ttftFrac * 100}%` }}
+          />
         )}
         <div
           className={cn(
@@ -337,19 +399,34 @@ function TimelineBar({
 }
 
 /** One timing segment chip: label + value, shown only when the value is present. */
-function TimingChip({ label, ms, tone }: { label: string; ms: number | undefined; tone?: string }) {
+function TimingChip({
+  label,
+  ms,
+  tone,
+}: {
+  label: string;
+  ms: number | undefined;
+  tone?: string;
+}) {
   if (ms === undefined) {
     return null;
   }
 
   return (
     <span>
-      {label} <span className={tone ?? "text-sky-300"}>{formatDuration(ms)}</span>
+      {label}{" "}
+      <span className={tone ?? "text-sky-300"}>{formatDuration(ms)}</span>
     </span>
   );
 }
 
-function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: number }) {
+function SpanDetails({
+  span,
+  depth,
+}: {
+  span: ObservabilitySpanRow;
+  depth: number;
+}) {
   const attributes = span.attributes ?? {};
   const ttftMs = numericAttribute(span, "model.ttft_ms");
   const streamMs = numericAttribute(span, "model.stream_ms");
@@ -362,7 +439,9 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
 
     return value ? [{ key: key, label: label, value: value }] : [];
   });
-  const metadata = Object.entries(attributes).filter(([key]) => !DETAIL_KEYS.has(key));
+  const metadata = Object.entries(attributes).filter(
+    ([key]) => !DETAIL_KEYS.has(key),
+  );
 
   return (
     <div
@@ -371,7 +450,8 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
     >
       {span.kind === "task" && (
         <div className="text-[11px] font-mono text-muted-foreground/70">
-          trace: {span.traceId} · agent: {span.agentId ?? "unknown"} · {span.conversationKey ?? "no conversation"}
+          trace: {span.traceId} · agent: {span.agentId ?? "unknown"} ·{" "}
+          {span.conversationKey ?? "no conversation"}
         </div>
       )}
       {span.kind === "model.step" && ttftMs !== undefined && (
@@ -384,22 +464,40 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
             <TimingChip label="streaming" ms={streamMs} />
             <TimingChip
               label="tool wait"
-              ms={toolWaitMs !== undefined && toolWaitMs > 0 ? toolWaitMs : undefined}
+              ms={
+                toolWaitMs !== undefined && toolWaitMs > 0
+                  ? toolWaitMs
+                  : undefined
+              }
               tone="text-amber-300"
             />
           </div>
           {(reasoningMs > 0 || textMs > 0 || toolInputMs > 0) && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground/70">
               <span className="text-muted-foreground/50">streamed:</span>
-              <TimingChip label="reasoning" ms={reasoningMs > 0 ? reasoningMs : undefined} tone="text-teal-300" />
-              <TimingChip label="text" ms={textMs > 0 ? textMs : undefined} tone="text-teal-300" />
-              <TimingChip label="tool input" ms={toolInputMs > 0 ? toolInputMs : undefined} tone="text-teal-300" />
+              <TimingChip
+                label="reasoning"
+                ms={reasoningMs > 0 ? reasoningMs : undefined}
+                tone="text-teal-300"
+              />
+              <TimingChip
+                label="text"
+                ms={textMs > 0 ? textMs : undefined}
+                tone="text-teal-300"
+              />
+              <TimingChip
+                label="tool input"
+                ms={toolInputMs > 0 ? toolInputMs : undefined}
+                tone="text-teal-300"
+              />
             </div>
           )}
         </div>
       )}
       {span.error && (
-        <div className="rounded-md bg-red-950/20 px-3 py-2 text-xs text-red-400">{span.error}</div>
+        <div className="rounded-md bg-red-950/20 px-3 py-2 text-xs text-red-400">
+          {span.error}
+        </div>
       )}
       {/* Flat sections: a clickable header row over a soft-tinted payload surface.
           No bordered card around each one — that nested box-in-box otherwise. */}
@@ -409,7 +507,9 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
             <details key={key} className="group/detail">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
                 <ChevronRight className="size-3 shrink-0 transition-transform group-open/detail:rotate-90" />
-                <span className="flex-1 normal-case tracking-normal">{label}</span>
+                <span className="flex-1 normal-case tracking-normal">
+                  {label}
+                </span>
                 <span className="font-mono text-[10px] text-muted-foreground/60">
                   {value.length.toLocaleString()} chars
                 </span>
@@ -426,7 +526,10 @@ function SpanDetails({ span, depth }: { span: ObservabilitySpanRow; depth: numbe
           {metadata.map(([key, value]) => (
             <div key={key} className="flex min-w-0 justify-between gap-3">
               <span className="truncate">{key}</span>
-              <span className="max-w-[60%] truncate text-foreground/70" title={String(value)}>
+              <span
+                className="max-w-[60%] truncate text-foreground/70"
+                title={String(value)}
+              >
                 {String(value)}
               </span>
             </div>
@@ -461,7 +564,8 @@ function SpanRow({
   // Tasks and subagent subtasks are both roots: own duration bar, anchor id, subtitle.
   const isRoot = span.kind === "task" || span.kind === "subtask";
   const stale = isStale(span, taskRunning);
-  const parentTraceId = span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
+  const parentTraceId =
+    span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
 
   return (
     <tr
@@ -474,7 +578,10 @@ function SpanRow({
         highlighted && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/40",
       )}
     >
-      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80" title={new Date(span.startTimeMs).toLocaleString()}>
+      <td
+        className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80"
+        title={new Date(span.startTimeMs).toLocaleString()}
+      >
         {formatDateTime(span.startTimeMs)}
       </td>
       <td className="py-1.5 pr-3" style={{ paddingLeft: depth * 18 + 12 }}>
@@ -491,7 +598,8 @@ function SpanRow({
             </span>
             {isRoot && (
               <span className="block truncate text-[11px] font-normal text-muted-foreground">
-                {span.agentId ?? "Unknown agent"} · {span.conversationKey ?? "No conversation"}
+                {span.agentId ?? "Unknown agent"} ·{" "}
+                {span.conversationKey ?? "No conversation"}
                 {typeof parentTraceId === "string" && parentTraceId && (
                   <>
                     {" · "}
@@ -514,7 +622,12 @@ function SpanRow({
         </span>
       </td>
       <td className="px-3 py-1.5 whitespace-nowrap">
-        <Badge className={cn("px-1.5 py-0 text-[10px] uppercase tracking-wide", kindBadge(span.kind))}>
+        <Badge
+          className={cn(
+            "px-1.5 py-0 text-[10px] uppercase tracking-wide",
+            kindBadge(span.kind),
+          )}
+        >
           {span.kind}
         </Badge>
       </td>
@@ -587,14 +700,29 @@ function renderSpanRows(
 
   if (isExpanded) {
     rows.push(
-      <tr key={`detail:${key}`} className="border-b border-border/40 bg-background/30">
+      <tr
+        key={`detail:${key}`}
+        className="border-b border-border/40 bg-background/30"
+      >
         <td colSpan={6} className="p-0">
           <SpanDetails span={span} depth={depth} />
         </td>
       </tr>,
     );
     for (const child of children) {
-      rows.push(...renderSpanRows(child, depth + 1, group, scaleMaxMs, expanded, toggle, focusTraceId, childRootLive, onFocusTrace));
+      rows.push(
+        ...renderSpanRows(
+          child,
+          depth + 1,
+          group,
+          scaleMaxMs,
+          expanded,
+          toggle,
+          focusTraceId,
+          childRootLive,
+          onFocusTrace,
+        ),
+      );
     }
   }
 
@@ -623,7 +751,11 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
 
   const fromMs = toEpochMs(fromTime);
   const toMs = toEpochMs(toTime);
-  const hasFilters = filter.trim() !== "" || statusFilter !== "all" || fromMs !== null || toMs !== null;
+  const hasFilters =
+    filter.trim() !== "" ||
+    statusFilter !== "all" ||
+    fromMs !== null ||
+    toMs !== null;
 
   const groups = useMemo(() => {
     const allGroups = groupSpans(entries);
@@ -667,7 +799,8 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   // Reset paging when the filters change so "Load more" starts from the top —
   // render-time adjustment, not an effect.
   const filterSignature = `${filter}|${statusFilter}|${fromMs}|${toMs}`;
-  const [prevFilterSignature, setPrevFilterSignature] = useState(filterSignature);
+  const [prevFilterSignature, setPrevFilterSignature] =
+    useState(filterSignature);
   if (filterSignature !== prevFilterSignature) {
     setPrevFilterSignature(filterSignature);
     setVisibleCount(PAGE_SIZE);
@@ -682,7 +815,9 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   useEffect(() => {
     const focusKey = focusTraceId ? `${focusTraceId}:${refocusNonce}` : null;
     if (!focusKey || focusedRef.current === focusKey) return;
-    const index = groups.findIndex((group) => group.root.traceId === focusTraceId);
+    const index = groups.findIndex(
+      (group) => group.root.traceId === focusTraceId,
+    );
     if (index === -1) return;
     focusedRef.current = focusKey;
     const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
@@ -696,7 +831,15 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
     const next = new URLSearchParams(searchParams.toString());
     next.delete("trace");
     router.replace(`${pathname}?${next.toString()}`, { scroll: false });
-  }, [focusTraceId, refocusNonce, groups, visibleCount, searchParams, pathname, router]);
+  }, [
+    focusTraceId,
+    refocusNonce,
+    groups,
+    visibleCount,
+    searchParams,
+    pathname,
+    router,
+  ]);
 
   const toggle = (key: string) => {
     setExpanded((current) => {
@@ -737,7 +880,13 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <p className="shrink-0 text-xs text-muted-foreground">
-        Each task bar is scaled by total duration so longer tasks read as longer bars. Expand a task for the per-step waterfall (positioned in time); model step bars show time to first token (lighter) then streaming. Streaming counts only model token generation. Tool execution is shown separately as &ldquo;tool wait&rdquo; and as the child tool spans. Expand a span, then open a section to inspect its input, reasoning, or output.
+        Each task bar is scaled by total duration so longer tasks read as longer
+        bars. Expand a task for the per-step waterfall (positioned in time);
+        model step bars show time to first token (lighter) then streaming.
+        Streaming counts only model token generation. Tool execution is shown
+        separately as &ldquo;tool wait&rdquo; and as the child tool spans.
+        Expand a span, then open a section to inspect its input, reasoning, or
+        output.
       </p>
 
       <ObservabilityToolbar
@@ -784,12 +933,27 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
             </thead>
             <tbody>
               {visibleGroups.flatMap((group) =>
-                renderSpanRows(group.root, 0, group, scaleMaxMs, expanded, toggle, focusTraceId, isTaskRunning(group.root), focusTrace),
+                renderSpanRows(
+                  group.root,
+                  0,
+                  group,
+                  scaleMaxMs,
+                  expanded,
+                  toggle,
+                  focusTraceId,
+                  isTaskRunning(group.root),
+                  focusTrace,
+                ),
               )}
               {groups.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="h-32 text-center text-xs text-muted-foreground/60">
-                    {entries.length === 0 ? "Waiting for traces…" : "No tasks match the current filters."}
+                  <td
+                    colSpan={6}
+                    className="h-32 text-center text-xs text-muted-foreground/60"
+                  >
+                    {entries.length === 0
+                      ? "Waiting for traces…"
+                      : "No tasks match the current filters."}
                   </td>
                 </tr>
               )}
@@ -802,7 +966,9 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
                 onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
                 className="cursor-pointer rounded-md px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
               >
-                Load {Math.min(PAGE_SIZE, remaining)} more · {remaining.toLocaleString()} older task{remaining === 1 ? "" : "s"}
+                Load {Math.min(PAGE_SIZE, remaining)} more ·{" "}
+                {remaining.toLocaleString()} older task
+                {remaining === 1 ? "" : "s"}
               </button>
             </div>
           )}

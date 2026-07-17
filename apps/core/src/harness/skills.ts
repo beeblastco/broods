@@ -58,7 +58,10 @@ export async function listConfiguredSkillMetadata(
     return [];
   }
 
-  return listSkillMetadataForConfig(accountId, agentConfig.skills?.allowed ?? []);
+  return listSkillMetadataForConfig(
+    accountId,
+    agentConfig.skills?.allowed ?? [],
+  );
 }
 
 export async function loadConfiguredSkillPrompt(
@@ -95,7 +98,10 @@ export async function loadConfiguredSkillPrompt(
   };
 }
 
-export async function listSkillMetadataForConfig(accountId: string, skillPaths: string[] = []): Promise<SkillMetadata[]> {
+export async function listSkillMetadataForConfig(
+  accountId: string,
+  skillPaths: string[] = [],
+): Promise<SkillMetadata[]> {
   const enabled: SkillMetadata[] = [];
   for (const skillPath of skillPaths) {
     await assertAccountOwnsSkillPath(accountId, skillPath);
@@ -111,7 +117,10 @@ export async function listSkillMetadataForConfig(accountId: string, skillPaths: 
   return enabled;
 }
 
-export async function loadSkillContent(skillPath: string, resourcePaths: string[] = []): Promise<{
+export async function loadSkillContent(
+  skillPath: string,
+  resourcePaths: string[] = [],
+): Promise<{
   path: string;
   skill: SkillMetadata;
   parts: Array<{ path: string; text: string }>;
@@ -124,11 +133,15 @@ export async function loadSkillContent(skillPath: string, resourcePaths: string[
 
   const skillText = await readSkillText(skillPath, SKILL_FILE);
   const skill = parseSkillMarkdown(skillText);
-  const safeResourcePaths = resourcePaths.map(normalizeBundlePath).filter((resource) => resource !== SKILL_FILE);
-  const resourceParts = await Promise.all(safeResourcePaths.map(async (resourcePath) => ({
-    path: resourcePath,
-    text: await readSkillText(skillPath, resourcePath),
-  })));
+  const safeResourcePaths = resourcePaths
+    .map(normalizeBundlePath)
+    .filter((resource) => resource !== SKILL_FILE);
+  const resourceParts = await Promise.all(
+    safeResourcePaths.map(async (resourcePath) => ({
+      path: resourcePath,
+      text: await readSkillText(skillPath, resourcePath),
+    })),
+  );
   const parts = [
     { path: SKILL_FILE, text: skillInstructionsFromMarkdown(skillText) },
     ...resourceParts,
@@ -141,7 +154,10 @@ export async function loadSkillContent(skillPath: string, resourcePaths: string[
       path: skillPath,
     },
     parts,
-    bytes: parts.reduce((total, part) => total + Buffer.byteLength(part.text, "utf-8"), 0),
+    bytes: parts.reduce(
+      (total, part) => total + Buffer.byteLength(part.text, "utf-8"),
+      0,
+    ),
   };
 }
 
@@ -165,8 +181,11 @@ async function stageSkillBundleForSandbox(
   ];
 
   // Refresh every staged location from source: drop stale files, copy the bundle in.
-  await Promise.all(prefixes.map((prefix) =>
-    stageSkillFiles(workspaceBucket, prefix, sourceFiles, sourcePathSet)));
+  await Promise.all(
+    prefixes.map((prefix) =>
+      stageSkillFiles(workspaceBucket, prefix, sourceFiles, sourcePathSet),
+    ),
+  );
 
   return {
     stagedPath: canonicalStagedPath(parsed.skillName),
@@ -182,29 +201,47 @@ async function stageSkillFiles(
   sourcePathSet: Set<string>,
 ): Promise<void> {
   await ensureS3DirectoryMarkers(workspaceBucket, destinationPrefix);
-  await deleteStaleStagedSkillFiles(workspaceBucket, destinationPrefix, sourcePathSet);
-  await Promise.all(sourceFiles.map(async (file) => {
-    const destinationKey = `${destinationPrefix}${file.path}`;
-    await ensureS3DirectoryMarkers(workspaceBucket, destinationKey);
-    await copyS3Object(skillsBucketName(), file.key, workspaceBucket, destinationKey, {
-      contentType: contentTypeForSkillPath(file.path),
-      executable: isExecutableSkillPath(file.path),
-    });
-  }));
+  await deleteStaleStagedSkillFiles(
+    workspaceBucket,
+    destinationPrefix,
+    sourcePathSet,
+  );
+  await Promise.all(
+    sourceFiles.map(async (file) => {
+      const destinationKey = `${destinationPrefix}${file.path}`;
+      await ensureS3DirectoryMarkers(workspaceBucket, destinationKey);
+      await copyS3Object(
+        skillsBucketName(),
+        file.key,
+        workspaceBucket,
+        destinationKey,
+        {
+          contentType: contentTypeForSkillPath(file.path),
+          executable: isExecutableSkillPath(file.path),
+        },
+      );
+    }),
+  );
 }
 
-async function listSkillSourceFiles(skillPath: string): Promise<SkillSourceFile[]> {
+async function listSkillSourceFiles(
+  skillPath: string,
+): Promise<SkillSourceFile[]> {
   const sourcePrefix = `${skillPath}/`;
   const objects = await listS3Prefix(skillsBucketName(), sourcePrefix);
-  return objects.flatMap((object) => {
-    if (object.key.endsWith("/")) {
-      return [];
-    }
-    return [{
-      key: object.key,
-      path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
-    }];
-  }).sort((a, b) => compareSkillBundlePath(a.path, b.path));
+  return objects
+    .flatMap((object) => {
+      if (object.key.endsWith("/")) {
+        return [];
+      }
+      return [
+        {
+          key: object.key,
+          path: normalizeBundlePath(object.key.slice(sourcePrefix.length)),
+        },
+      ];
+    })
+    .sort((a, b) => compareSkillBundlePath(a.path, b.path));
 }
 
 async function deleteStaleStagedSkillFiles(
@@ -213,24 +250,37 @@ async function deleteStaleStagedSkillFiles(
   sourcePathSet: Set<string>,
 ): Promise<void> {
   const stagedObjects = await listS3Prefix(workspaceBucket, destinationPrefix);
-  await Promise.all(stagedObjects.map(async (object) => {
-    if (object.key.endsWith("/")) {
-      return;
-    }
-    const relativePath = normalizeBundlePath(object.key.slice(destinationPrefix.length));
-    if (sourcePathSet.has(relativePath)) {
-      return;
-    }
-    await deleteS3Object(workspaceBucket, object.key);
-  }));
+  await Promise.all(
+    stagedObjects.map(async (object) => {
+      if (object.key.endsWith("/")) {
+        return;
+      }
+      const relativePath = normalizeBundlePath(
+        object.key.slice(destinationPrefix.length),
+      );
+      if (sourcePathSet.has(relativePath)) {
+        return;
+      }
+      await deleteS3Object(workspaceBucket, object.key);
+    }),
+  );
 }
 
-function canonicalStagePrefix(workspaceNamespace: string, skillName: string): string {
+function canonicalStagePrefix(
+  workspaceNamespace: string,
+  skillName: string,
+): string {
   return `${workspaceNamespacePrefix(workspaceNamespace)}/${SKILL_CANONICAL_DIR}/${skillName}/`;
 }
 
-function mirrorStagePrefixes(workspaceNamespace: string, skillName: string): string[] {
-  return SKILL_MIRROR_DIRS.map((dir) => `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`);
+function mirrorStagePrefixes(
+  workspaceNamespace: string,
+  skillName: string,
+): string[] {
+  return SKILL_MIRROR_DIRS.map(
+    (dir) =>
+      `${workspaceNamespacePrefix(workspaceNamespace)}/${dir}/${skillName}/`,
+  );
 }
 
 function canonicalStagedPath(skillName: string): string {
@@ -251,10 +301,13 @@ function formatLoadedSkillPrompt(
   loaded: Awaited<ReturnType<typeof loadSkillContent>>,
   staged?: SkillBundleSandboxStage | null,
 ): string {
-  const parts = loaded.parts.map((part) => `## ${part.path}\n\n${part.text.trim()}`).join("\n\n");
-  const mirrorText = staged && staged.mirrorPaths.length > 0
-    ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
-    : "";
+  const parts = loaded.parts
+    .map((part) => `## ${part.path}\n\n${part.text.trim()}`)
+    .join("\n\n");
+  const mirrorText =
+    staged && staged.mirrorPaths.length > 0
+      ? ` It is also mirrored at ${staged.mirrorPaths.map((path) => `\`${path}\``).join(", ")} for tools that expect those locations.`
+      : "";
   const sandboxText = staged
     ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";

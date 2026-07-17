@@ -8,22 +8,44 @@ import { createZaloChannel } from "../src/shared/zalo-channel.ts";
 
 describe("zalo channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    );
 
-    expect(adapter.authenticate(createZaloRequest(validUpdate(), {
-      "x-bot-api-secret-token": "zalo-secret",
-    }))).toBe(true);
-    expect(adapter.authenticate(createZaloRequest(validUpdate(), {
-      "x-bot-api-secret-token": "wrong-secret",
-    }))).toBe(false);
-    expect(adapter.authenticate(createZaloRequest(validUpdate(), {}))).toBe(false);
+    expect(
+      adapter.authenticate(
+        createZaloRequest(validUpdate(), {
+          "x-bot-api-secret-token": "zalo-secret",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      adapter.authenticate(
+        createZaloRequest(validUpdate(), {
+          "x-bot-api-secret-token": "wrong-secret",
+        }),
+      ),
+    ).toBe(false);
+    expect(adapter.authenticate(createZaloRequest(validUpdate(), {}))).toBe(
+      false,
+    );
   });
 
   it("normalizes text webhook events into direct conversations", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
-    const parsed = await adapter.parse(createZaloRequest(validUpdate({
-      text: "  hello zalo  ",
-    })));
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    );
+    const parsed = await adapter.parse(
+      createZaloRequest(
+        validUpdate({
+          text: "  hello zalo  ",
+        }),
+      ),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -49,11 +71,17 @@ describe("zalo channel adapter", () => {
   });
 
   it("accepts wrapped Zalo API webhook envelopes", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
-    const parsed = await adapter.parse(createZaloRequest({
-      ok: true,
-      result: validUpdate({ text: "wrapped" }),
-    }));
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    );
+    const parsed = await adapter.parse(
+      createZaloRequest({
+        ok: true,
+        result: validUpdate({ text: "wrapped" }),
+      }),
+    );
 
     expect(parsed.kind).toBe("message");
     if (parsed.kind !== "message") {
@@ -65,26 +93,60 @@ describe("zalo channel adapter", () => {
   it("accepts any private sender when the allow list is omitted", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
 
-    expect((await adapter.parse(createZaloRequest(validUpdate({ senderId: "customer-1" })))).kind).toBe("message");
+    expect(
+      (
+        await adapter.parse(
+          createZaloRequest(validUpdate({ senderId: "customer-1" })),
+        )
+      ).kind,
+    ).toBe("message");
   });
 
   it("accepts any private sender when the allow list is empty", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", new Set());
 
-    expect((await adapter.parse(createZaloRequest(validUpdate({ senderId: "customer-1" })))).kind).toBe("message");
+    expect(
+      (
+        await adapter.parse(
+          createZaloRequest(validUpdate({ senderId: "customer-1" })),
+        )
+      ).kind,
+    ).toBe("message");
   });
 
   it("ignores unsupported events, groups, blank text, bot messages, and unknown senders", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set(["user-1"]));
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      new Set(["user-1"]),
+    );
 
-    expect(await adapter.parse(createZaloRequest(validUpdate({ eventName: "message.image.received" })))).toEqual({
+    expect(
+      await adapter.parse(
+        createZaloRequest(validUpdate({ eventName: "message.image.received" })),
+      ),
+    ).toEqual({
       kind: "ignore",
     });
-    expect(await adapter.parse(createZaloRequest(validUpdate({ chatType: "GROUP" })))).toEqual({ kind: "ignore" });
-    expect(await adapter.parse(createZaloRequest(validUpdate({ text: "   " })))).toEqual({ kind: "ignore" });
-    expect(await adapter.parse(createZaloRequest(validUpdate({ isBot: true })))).toEqual({ kind: "ignore" });
-    expect(await adapter.parse(createZaloRequest(validUpdate({ senderId: "user-2" })))).toEqual({ kind: "ignore" });
-    expect(await adapter.parse(createZaloRequest(validUpdate({ messageId: null })))).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createZaloRequest(validUpdate({ chatType: "GROUP" })),
+      ),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(createZaloRequest(validUpdate({ text: "   " }))),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(createZaloRequest(validUpdate({ isBot: true }))),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(
+        createZaloRequest(validUpdate({ senderId: "user-2" })),
+      ),
+    ).toEqual({ kind: "ignore" });
+    expect(
+      await adapter.parse(createZaloRequest(validUpdate({ messageId: null }))),
+    ).toEqual({ kind: "ignore" });
   });
 });
 
@@ -101,18 +163,22 @@ function createZaloRequest(
   };
 }
 
-function validUpdate(overrides: {
-  eventName?: string;
-  text?: string;
-  chatType?: string;
-  senderId?: string;
-  messageId?: string | null;
-  isBot?: boolean;
-} = {}) {
+function validUpdate(
+  overrides: {
+    eventName?: string;
+    text?: string;
+    chatType?: string;
+    senderId?: string;
+    messageId?: string | null;
+    isBot?: boolean;
+  } = {},
+) {
   return {
     event_name: overrides.eventName ?? "message.text.received",
     message: {
-      ...(overrides.messageId === null ? {} : { message_id: overrides.messageId ?? "message-1" }),
+      ...(overrides.messageId === null
+        ? {}
+        : { message_id: overrides.messageId ?? "message-1" }),
       date: 1713916800,
       text: overrides.text ?? "hello zalo",
       chat: {

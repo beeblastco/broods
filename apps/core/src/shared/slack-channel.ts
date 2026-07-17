@@ -25,7 +25,7 @@ import { ConsoleLogger, type StreamChunk } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
-  ChannelParseResult
+  ChannelParseResult,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import {
@@ -108,15 +108,31 @@ export function createSlackChannel(
         return parseSlashCommand(payload, allowedChannelIds);
       }
 
-      if ((req.headers["content-type"] ?? "").includes("application/x-www-form-urlencoded")) {
-        return { kind: "ignore", reason: `unsupported_slack_payload:${payload.kind}` };
+      if (
+        (req.headers["content-type"] ?? "").includes(
+          "application/x-www-form-urlencoded",
+        )
+      ) {
+        return {
+          kind: "ignore",
+          reason: `unsupported_slack_payload:${payload.kind}`,
+        };
       }
 
-      return parseEventCallback(req.body, allowedChannelIds, userNameResolver ?? createSlackUserNameResolver(slack));
+      return parseEventCallback(
+        req.body,
+        allowedChannelIds,
+        userNameResolver ?? createSlackUserNameResolver(slack),
+      );
     },
 
     actions(msg): ChannelActions {
-      return createSlackActions(botToken, slack, toSlackSource(msg.source), reactionEmoji);
+      return createSlackActions(
+        botToken,
+        slack,
+        toSlackSource(msg.source),
+        reactionEmoji,
+      );
     },
   };
 }
@@ -128,7 +144,10 @@ async function parseEventCallback(
 ): Promise<ChannelParseResult> {
   const payload = JSON.parse(body) as SlackEventEnvelope;
 
-  if (payload.type === "url_verification" && typeof payload.challenge === "string") {
+  if (
+    payload.type === "url_verification" &&
+    typeof payload.challenge === "string"
+  ) {
     return {
       kind: "response",
       reason: "url_verification",
@@ -140,12 +159,20 @@ async function parseEventCallback(
     };
   }
 
-  if (payload.type !== "event_callback" || !isSlackMessageEvent(payload.event) || !payload.event_id || !payload.team_id) {
+  if (
+    payload.type !== "event_callback" ||
+    !isSlackMessageEvent(payload.event) ||
+    !payload.event_id ||
+    !payload.team_id
+  ) {
     return { kind: "ignore", reason: "invalid_event_callback" };
   }
 
   if (!isSupportedSlackEvent(payload.event)) {
-    return { kind: "ignore", reason: getUnsupportedSlackEventReason(payload.event) };
+    return {
+      kind: "ignore",
+      reason: getUnsupportedSlackEventReason(payload.event),
+    };
   }
 
   const channelId = payload.event.channel;
@@ -159,19 +186,35 @@ async function parseEventCallback(
     return { kind: "ignore", reason: "channel_not_allowed" };
   }
 
-  if (payload.event.type === "message" && mentionsSlackBot(payload.event.text ?? "", payload)) {
-    return { kind: "ignore", reason: "message_with_mention_wait_for_app_mention" };
+  if (
+    payload.event.type === "message" &&
+    mentionsSlackBot(payload.event.text ?? "", payload)
+  ) {
+    return {
+      kind: "ignore",
+      reason: "message_with_mention_wait_for_app_mention",
+    };
   }
 
-  const isGroupChannel = payload.event.channel_type !== "im" && payload.event.channel_type !== "app_home";
-  const runAgent = payload.event.type === "app_mention"
-    || payload.event.channel_type === "im"
-    || payload.event.channel_type === "app_home";
+  const isGroupChannel =
+    payload.event.channel_type !== "im" &&
+    payload.event.channel_type !== "app_home";
+  const runAgent =
+    payload.event.type === "app_mention" ||
+    payload.event.channel_type === "im" ||
+    payload.event.channel_type === "app_home";
   const botUserIds = runAgent ? getSlackBotUserIds(payload) : new Set<string>();
-  const rawText = payload.event.type === "app_mention" && botUserIds.size === 0
-    ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
-    : payload.event.text ?? "";
-  const text = await formatSlackMessageText(rawText, payload.event.user, isGroupChannel, botUserIds, resolveUserName);
+  const rawText =
+    payload.event.type === "app_mention" && botUserIds.size === 0
+      ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
+      : (payload.event.text ?? "");
+  const text = await formatSlackMessageText(
+    rawText,
+    payload.event.user,
+    isGroupChannel,
+    botUserIds,
+    resolveUserName,
+  );
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
 
@@ -183,7 +226,12 @@ async function parseEventCallback(
       // (app_mention + message for the same mention) dedupe naturally via
       // session.claim().  ts is unique per message within a channel.
       eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
-      conversationKey: getSlackConversationKey(payload.team_id, channelId, payload.event, threadTs),
+      conversationKey: getSlackConversationKey(
+        payload.team_id,
+        channelId,
+        payload.event,
+        threadTs,
+      ),
       channelName: "slack",
       content: [{ type: "text", text }],
       source: {
@@ -197,7 +245,9 @@ async function parseEventCallback(
   };
 }
 
-function isSlackMessageEvent(event: SlackEvent | undefined): event is SlackEvent {
+function isSlackMessageEvent(
+  event: SlackEvent | undefined,
+): event is SlackEvent {
   return Boolean(event && "type" in event && typeof event.type === "string");
 }
 
@@ -210,23 +260,31 @@ function isSupportedSlackEvent(event: SlackEvent): boolean {
     return true;
   }
 
-  return event.type === "message" && isSupportedSlackMessageChannel(event.channel_type);
+  return (
+    event.type === "message" &&
+    isSupportedSlackMessageChannel(event.channel_type)
+  );
 }
 
 function getUnsupportedSlackEventReason(event: SlackEvent): string {
   if (event.bot_id) return "bot_message";
   if (event.subtype) return `unsupported_subtype:${event.subtype}`;
-  if (event.type === "message") return `unsupported_message_channel:${event.channel_type ?? "unknown"}`;
+  if (event.type === "message")
+    return `unsupported_message_channel:${event.channel_type ?? "unknown"}`;
 
   return `unsupported_event:${event.type ?? "unknown"}`;
 }
 
-function isSupportedSlackMessageChannel(channelType: string | undefined): boolean {
-  return channelType === "channel"
-    || channelType === "group"
-    || channelType === "mpim"
-    || channelType === "im"
-    || channelType === "app_home";
+function isSupportedSlackMessageChannel(
+  channelType: string | undefined,
+): boolean {
+  return (
+    channelType === "channel" ||
+    channelType === "group" ||
+    channelType === "mpim" ||
+    channelType === "im" ||
+    channelType === "app_home"
+  );
 }
 
 function getSlackConversationKey(
@@ -248,7 +306,9 @@ function getSlackReplyThreadTs(
 ): string | undefined {
   if (
     event.type === "app_mention" ||
-    (event.type === "message" && event.channel_type !== "im" && event.channel_type !== "app_home")
+    (event.type === "message" &&
+      event.channel_type !== "im" &&
+      event.channel_type !== "app_home")
   ) {
     return event.thread_ts ?? messageTs;
   }
@@ -301,14 +361,20 @@ function createSlackActions(
   reactionEmoji: string,
 ): ChannelActions {
   const threadId = source.threadTs
-    ? slack.encodeThreadId({ channel: source.channelId, threadTs: source.threadTs } satisfies SlackThreadId)
+    ? slack.encodeThreadId({
+        channel: source.channelId,
+        threadTs: source.threadTs,
+      } satisfies SlackThreadId)
     : undefined;
   const formatter = new SlackFormatConverter();
 
   return {
     async sendText(text) {
       if (source.responseUrl) {
-        await sendSlackWebhookResponse(source.responseUrl, formatter.toResponseUrlText({ markdown: text }));
+        await sendSlackWebhookResponse(
+          source.responseUrl,
+          formatter.toResponseUrlText({ markdown: text }),
+        );
         return;
       }
 
@@ -336,15 +402,18 @@ function createSlackActions(
       }
 
       try {
-        assertSlackOk("reactions.add", await callSlackApi(
+        assertSlackOk(
           "reactions.add",
-          {
-            channel: source.channelId,
-            timestamp: source.messageTs,
-            name: reactionEmoji,
-          },
-          { token: botToken, contentType: "json" },
-        ));
+          await callSlackApi(
+            "reactions.add",
+            {
+              channel: source.channelId,
+              timestamp: source.messageTs,
+              name: reactionEmoji,
+            },
+            { token: botToken, contentType: "json" },
+          ),
+        );
       } catch (err) {
         throw normalizeSlackApiError("reactions.add", err);
       }
@@ -352,16 +421,20 @@ function createSlackActions(
 
     ...(threadId && source.userId
       ? {
-        stream: async (textStream, options) => {
-          const result = await slack.stream(threadId, toSlackStream(textStream), {
-            ...options,
-            recipientTeamId: source.teamId,
-            recipientUserId: source.userId!,
-            taskDisplayMode: "plan",
-          });
-          return result.id;
-        },
-      }
+          stream: async (textStream, options) => {
+            const result = await slack.stream(
+              threadId,
+              toSlackStream(textStream),
+              {
+                ...options,
+                recipientTeamId: source.teamId,
+                recipientUserId: source.userId!,
+                taskDisplayMode: "plan",
+              },
+            );
+            return result.id;
+          },
+        }
       : {}),
   };
 }
@@ -378,9 +451,12 @@ function toSlackSource(source: Record<string, unknown>): SlackSource {
     teamId: source.teamId,
     channelId: source.channelId,
     threadTs: typeof source.threadTs === "string" ? source.threadTs : undefined,
-    messageTs: typeof source.messageTs === "string" ? source.messageTs : undefined,
-    responseUrl: typeof source.responseUrl === "string" ? source.responseUrl : undefined,
-    commandToken: typeof source.commandToken === "string" ? source.commandToken : undefined,
+    messageTs:
+      typeof source.messageTs === "string" ? source.messageTs : undefined,
+    responseUrl:
+      typeof source.responseUrl === "string" ? source.responseUrl : undefined,
+    commandToken:
+      typeof source.commandToken === "string" ? source.commandToken : undefined,
     userId: typeof source.userId === "string" ? source.userId : undefined,
   };
 }
@@ -420,20 +496,31 @@ async function normalizeSlackMentions(
   omittedUserIds: Set<string>,
   resolveUserName: SlackUserNameResolver,
 ): Promise<string> {
-  const mentionedUserIds = [...new Set([...text.matchAll(/<@([^>]+)>/g)]
-    .map((match) => match[1])
-    .filter((userId): userId is string => typeof userId === "string" && userId.length > 0))];
+  const mentionedUserIds = [
+    ...new Set(
+      [...text.matchAll(/<@([^>]+)>/g)]
+        .map((match) => match[1])
+        .filter(
+          (userId): userId is string =>
+            typeof userId === "string" && userId.length > 0,
+        ),
+    ),
+  ];
   const names = new Map<string, string>();
 
-  await Promise.all(mentionedUserIds.map(async (userId) => {
-    if (omittedUserIds.has(userId)) return;
-    names.set(userId, await resolveSlackUserName(userId, resolveUserName));
-  }));
+  await Promise.all(
+    mentionedUserIds.map(async (userId) => {
+      if (omittedUserIds.has(userId)) return;
+      names.set(userId, await resolveSlackUserName(userId, resolveUserName));
+    }),
+  );
 
-  return cleanSlackText(text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
-    if (omittedUserIds.has(userId)) return "";
-    return `@${names.get(userId) ?? userId}`;
-  }));
+  return cleanSlackText(
+    text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
+      if (omittedUserIds.has(userId)) return "";
+      return `@${names.get(userId) ?? userId}`;
+    }),
+  );
 }
 
 function hasSlackMention(text: string): boolean {
@@ -467,7 +554,11 @@ async function formatSlackMessageText(
   omittedUserIds: Set<string>,
   resolveUserName: SlackUserNameResolver,
 ): Promise<string> {
-  const normalized = await normalizeSlackMentions(text, omittedUserIds, resolveUserName);
+  const normalized = await normalizeSlackMentions(
+    text,
+    omittedUserIds,
+    resolveUserName,
+  );
   if (!isGroupChannel || !userId || !normalized) {
     return normalized;
   }
@@ -479,18 +570,26 @@ function getSlackBotUserIds(payload: SlackEventEnvelope): Set<string> {
     (payload.authorizations ?? [])
       .filter((authorization) => authorization.is_bot !== false)
       .map((authorization) => authorization.user_id)
-      .filter((userId): userId is string => typeof userId === "string" && userId.length > 0),
+      .filter(
+        (userId): userId is string =>
+          typeof userId === "string" && userId.length > 0,
+      ),
   );
 }
 
-function createSlackUserNameResolver(slack: SlackAdapter): SlackUserNameResolver {
+function createSlackUserNameResolver(
+  slack: SlackAdapter,
+): SlackUserNameResolver {
   return async (userId) => {
     const user = await slack.getUser(userId);
     return user?.userName ?? user?.fullName ?? null;
   };
 }
 
-async function resolveSlackUserName(userId: string, resolveUserName: SlackUserNameResolver): Promise<string> {
+async function resolveSlackUserName(
+  userId: string,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
   const resolved = await resolveUserName(userId);
   return cleanSlackName(resolved) || userId;
 }
@@ -580,7 +679,9 @@ export async function* toSlackStream(
         // finishReason is absent on UI-stream chunks; the tool events seen
         // during the step stand in for it there.
         const finishReason = stringValue(event.finishReason);
-        const interim = finishReason ? finishReason === "tool-calls" : stepHadToolCalls;
+        const interim = finishReason
+          ? finishReason === "tool-calls"
+          : stepHadToolCalls;
         const trimmedStepText = stepText.trim();
         if (interim) {
           if (trimmedStepText) {
@@ -611,11 +712,12 @@ export async function* toSlackStream(
           const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
           // The ellipsis counts against the budget; with under 4 characters
           // left there is no room for it, so the clip ends the text plain.
-          const details = text.length <= remaining
-            ? text
-            : remaining > 3
-              ? `${text.slice(0, remaining - 3)}...`
-              : text.slice(0, remaining);
+          const details =
+            text.length <= remaining
+              ? text
+              : remaining > 3
+                ? `${text.slice(0, remaining - 3)}...`
+                : text.slice(0, remaining);
           reasoningChars += details.length;
           yield {
             type: "task_update",
@@ -664,7 +766,8 @@ export async function* toSlackStream(
       case "tool-call": {
         stepHadToolCalls = true;
         const toolName = (event.toolName ?? "tool") as string;
-        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? toolName;
+        const id =
+          stringValue(event.toolCallId) ?? stringValue(event.id) ?? toolName;
         toolNamesById.set(id, toolName);
         yield {
           type: "task_update",
@@ -676,8 +779,11 @@ export async function* toSlackStream(
       }
 
       case "tool-result": {
-        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
-        const toolName = (event.toolName ?? toolNamesById.get(id) ?? "tool") as string;
+        const id =
+          stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
+        const toolName = (event.toolName ??
+          toolNamesById.get(id) ??
+          "tool") as string;
         yield {
           type: "task_update",
           id: taskId("tool", id),
@@ -690,8 +796,11 @@ export async function* toSlackStream(
       }
 
       case "tool-error": {
-        const id = stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
-        const toolName = (event.toolName ?? toolNamesById.get(id) ?? "tool") as string;
+        const id =
+          stringValue(event.toolCallId) ?? stringValue(event.id) ?? "tool";
+        const toolName = (event.toolName ??
+          toolNamesById.get(id) ??
+          "tool") as string;
         yield {
           type: "task_update",
           id: taskId("tool", id),
@@ -721,14 +830,20 @@ export async function* toSlackStream(
   // When no kept step produced visible text — whitespace-only counts as none —
   // fall back to the last interim text so a model that answered only inside a
   // tool-call step still gets a reply out.
-  const trailingText = stepText.trim() ? appendBufferedSlackText(finalText, stepText, true) : finalText;
+  const trailingText = stepText.trim()
+    ? appendBufferedSlackText(finalText, stepText, true)
+    : finalText;
   const text = trailingText.trim() ? trailingText : lastInterimText;
   if (text) {
     yield text;
   }
 }
 
-function appendBufferedSlackText(current: string, text: string, needsSeparator: boolean): string {
+function appendBufferedSlackText(
+  current: string,
+  text: string,
+  needsSeparator: boolean,
+): string {
   if (!text) return current;
   if (needsSeparator && current) {
     return `${current}\n\n${text}`;
@@ -772,7 +887,11 @@ function isStreamChunk(value: unknown): value is StreamChunk {
     case "markdown_text":
       return typeof record.text === "string";
     case "task_update":
-      return typeof record.id === "string" && typeof record.title === "string" && typeof record.status === "string";
+      return (
+        typeof record.id === "string" &&
+        typeof record.title === "string" &&
+        typeof record.status === "string"
+      );
     case "plan_update":
       return typeof record.title === "string";
     default:

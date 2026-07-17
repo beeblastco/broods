@@ -10,23 +10,23 @@ import { useMemo } from "react";
 
 /** Sandbox node displayed on the architecture canvas. */
 export function SandboxNode({ id, data }: NodeProps) {
-    const nodeData = data as BaseNodeData;
-    const featureRows = useMemo(() => {
-        if (nodeData.config?.persistent !== true) {
-            return undefined;
-        }
+  const nodeData = data as BaseNodeData;
+  const featureRows = useMemo(() => {
+    if (nodeData.config?.persistent !== true) {
+      return undefined;
+    }
 
-        return [{ key: "persistent", label: "persistent" }];
-    }, [nodeData.config?.persistent]);
+    return [{ key: "persistent", label: "persistent" }];
+  }, [nodeData.config?.persistent]);
 
-    return (
-        <BaseNode
-            id={id}
-            nodeType="sandbox"
-            data={nodeData}
-            icon={<Box className="h-3.5 w-3.5" />}
-            featureRows={featureRows}
-            showSideHandles={true}
-        />
-    );
+  return (
+    <BaseNode
+      id={id}
+      nodeType="sandbox"
+      data={nodeData}
+      icon={<Box className="h-3.5 w-3.5" />}
+      featureRows={featureRows}
+      showSideHandles={true}
+    />
+  );
 }

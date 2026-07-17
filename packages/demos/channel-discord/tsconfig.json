@@ -1,5 +1,10 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": { "allowImportingTsExtensions": true, "module": "ESNext", "moduleResolution": "Bundler", "types": ["bun"] },
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["bun"]
+  },
   "include": ["broods/**/*.ts", "register.ts"]
 }

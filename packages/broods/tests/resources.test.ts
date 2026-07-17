@@ -29,7 +29,9 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
   const cwd = await fixtureProject();
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
 
   expect(manifest.project).toBe("typed-app");
   expect(manifest.environment).toBe("development");
@@ -51,7 +53,9 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
 });
 
 test("compileProject accepts object-shaped resource definitions", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
@@ -69,57 +73,77 @@ export const support = defineAgent({
     workspaces: [repo],
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  expect(manifest.resources).toContainEqual(expect.objectContaining({
-    kind: "workspace",
-    name: "repo",
-    description: "Repository workspace",
-  }));
-  expect(manifest.resources).toContainEqual(expect.objectContaining({
-    kind: "agent",
-    name: "support",
-    description: "Support assistant",
-  }));
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "workspace",
+      name: "repo",
+      description: "Repository workspace",
+    }),
+  );
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "support",
+      description: "Support assistant",
+    }),
+  );
 });
 
 test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineSandbox } from "${RESOURCES_MODULE}";
 
 export const curated = defineSandbox({
   name: "curated",
   config: { provider: "sandbox", size: "small", snapshot: "img_curated" },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  expect(manifest.resources).toContainEqual(expect.objectContaining({
-    kind: "sandbox",
-    name: "curated",
-    config: expect.objectContaining({ provider: "sandbox", size: "small", snapshot: "img_curated" }),
-  }));
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "sandbox",
+      name: "curated",
+      config: expect.objectContaining({
+        provider: "sandbox",
+        size: "small",
+        snapshot: "img_curated",
+      }),
+    }),
+  );
 });
 
 test("compileProject rejects provider-native workspace storage before upload", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
   name: "repo",
   config: { storage: { provider: "vercel" } },
 });
-`);
+`,
+  );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" }))
-    .rejects.toThrow('Workspace "repo" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet');
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Workspace "repo" uses storage.provider "vercel", but Vercel Drive workspace storage is not supported yet',
+  );
 });
 
 test("compileProject rejects S3 workspaces on an incompatible default sandbox", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
@@ -139,14 +163,18 @@ export const support = defineAgent({
     workspaces: [repo],
   },
 });
-`);
+`,
+  );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" }))
-    .rejects.toThrow('Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts');
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" workspace "repo" uses sandbox "runner" (vercel) which does not support S3 workspace mounts',
+  );
 });
 
 test("compileProject rejects S3 workspaces on an incompatible workspace sandbox override", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSandbox, defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
@@ -171,14 +199,18 @@ export const support = defineAgent({
     workspaces: [{ workspace: repo, sandbox: e2bRunner }],
   },
 });
-`);
+`,
+  );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" }))
-    .rejects.toThrow('Agent "support" workspace "repo" uses sandbox "e2b-runner" (e2b) which does not support S3 workspace mounts');
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "support" workspace "repo" uses sandbox "e2b-runner" (e2b) which does not support S3 workspace mounts',
+  );
 });
 
 test("compileProject accepts env refs in webhook hook strings", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const webhookAgent = defineAgent({
@@ -196,23 +228,31 @@ export const webhookAgent = defineAgent({
     },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "webhook-agent");
+  const agent = manifest.resources.find(
+    (resource) =>
+      resource.kind === "agent" && resource.name === "webhook-agent",
+  );
 
   expect(agent?.config).toMatchObject({
     hooks: {
-      webhooks: [{
-        url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
-        secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
-      }],
+      webhooks: [
+        {
+          url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
+          secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
+        },
+      ],
     },
   });
 });
 
 test("compileProject carries the per-agent publicAccess opt-in into the manifest", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const publicAgent = defineAgent({
@@ -223,16 +263,21 @@ export const publicAgent = defineAgent({
     publicAccess: true,
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "public-agent");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "public-agent",
+  );
 
   expect(agent?.config).toMatchObject({ publicAccess: true });
 });
 
 test("compileProject lowers all typed channel constructors into the existing keyed config", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import {
   defineAgent,
   defineTelegramChannel,
@@ -287,22 +332,41 @@ export const support = defineAgent({
   name: "support",
   config: { channels: [telegram, github, slack, discord, pancake, zalo] },
 });
-`);
+`,
+  );
 
   const { manifest, channels } = await compileProject({ cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent")!;
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent",
+  )!;
 
   expect(agent.config).toMatchObject({
     channels: {
-      telegram: { allowedChatIds: [123], reactionEmoji: "eyes", apiUrl: "https://telegram.example" },
-      github: { allowedRepos: ["owner/repo"], apiUrl: "https://github.example/api/v3" },
-      slack: { allowedChannelIds: ["C123"], reactionEmoji: "white_check_mark", apiUrl: "https://slack.example/api/" },
-      discord: { allowedGuildIds: ["G123"], apiUrl: "https://discord.example/api/v10" },
+      telegram: {
+        allowedChatIds: [123],
+        reactionEmoji: "eyes",
+        apiUrl: "https://telegram.example",
+      },
+      github: {
+        allowedRepos: ["owner/repo"],
+        apiUrl: "https://github.example/api/v3",
+      },
+      slack: {
+        allowedChannelIds: ["C123"],
+        reactionEmoji: "white_check_mark",
+        apiUrl: "https://slack.example/api/",
+      },
+      discord: {
+        allowedGuildIds: ["G123"],
+        apiUrl: "https://discord.example/api/v10",
+      },
       pancake: { senderId: "staff-1" },
       zalo: { allowedUserIds: ["user-1"] },
     },
   });
-  expect(channels.map(({ alias, type, agentName }) => ({ alias, type, agentName }))).toEqual([
+  expect(
+    channels.map(({ alias, type, agentName }) => ({ alias, type, agentName })),
+  ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
     { alias: "pancake", type: "pancake", agentName: "support" },
@@ -314,7 +378,9 @@ export const support = defineAgent({
 });
 
 test("compileProject rejects a channel reused by two agents", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
@@ -323,7 +389,8 @@ export const github = defineGitHubChannel({
 });
 export const first = defineAgent({ name: "first", config: { channels: [github] } });
 export const second = defineAgent({ name: "second", config: { channels: [github] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Channel github is already attached to agent "first" and cannot also attach to "second"',
@@ -331,12 +398,15 @@ export const second = defineAgent({ name: "second", config: { channels: [github]
 });
 
 test("compileProject rejects duplicate channel types on one agent", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
 const one = defineGitHubChannel({ appId: env.APP_1, privateKey: env.KEY_1, webhookSecret: env.SECRET_1 });
 const two = defineGitHubChannel({ appId: env.APP_2, privateKey: env.KEY_2, webhookSecret: env.SECRET_2 });
 export const support = defineAgent({ name: "support", config: { channels: [one, two] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" cannot configure more than one github channel',
@@ -344,7 +414,9 @@ export const support = defineAgent({ name: "support", config: { channels: [one, 
 });
 
 test("compileProject carries channel id and workspaceScope for isolated workspaces", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -369,33 +441,52 @@ export const support = defineAgent({
   name: "support",
   config: { channels: [slack, github], workspaces: [repo] },
 });
-`);
+`,
+  );
 
   const { manifest, channels } = await compileProject({ cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
 
   expect(agent?.config).toMatchObject({
     channels: {
-      slack: { id: "supportSlackChannel", workspaceScope: { level: "channel" } },
-      github: { id: "supportGithubChannel", workspaceScope: { alias: "support", level: "conversation" } },
+      slack: {
+        id: "supportSlackChannel",
+        workspaceScope: { level: "channel" },
+      },
+      github: {
+        id: "supportGithubChannel",
+        workspaceScope: { alias: "support", level: "conversation" },
+      },
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
   });
-  expect(channels.map(({ alias, type, id, agentName }) => ({ alias, type, id, agentName }))).toEqual([
+  expect(
+    channels.map(({ alias, type, id, agentName }) => ({
+      alias,
+      type,
+      id,
+      agentName,
+    })),
+  ).toEqual([
     { alias: "github", type: "github", id: "github", agentName: "support" },
     { alias: "slack", type: "slack", id: "slack", agentName: "support" },
   ]);
 });
 
 test("compileProject rejects removed workspace isolation modes", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineWorkspace } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
   name: "repo",
   config: { storage: { provider: "s3" }, isolation: "channel" },
 });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Workspace "repo" config.isolation no longer supports string modes; use isolation: true or omit it.',
@@ -403,7 +494,9 @@ export const repo = defineWorkspace({
 });
 
 test("compileProject auto-generates channel id for workspaceScope", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -413,23 +506,38 @@ export const slack = defineSlackChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" }, isolation: true } });
 export const support = defineAgent({ name: "support", config: { channels: [slack], workspaces: [repo] } });
-`);
+`,
+  );
 
   const { manifest, channels } = await compileProject({ cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
 
   expect(agent?.config).toMatchObject({
     channels: {
-      slack: { id: "supportSlackChannel", workspaceScope: { level: "channel" } },
+      slack: {
+        id: "supportSlackChannel",
+        workspaceScope: { level: "channel" },
+      },
     },
   });
-  expect(channels.map(({ alias, type, id, agentName }) => ({ alias, type, id, agentName }))).toEqual([
+  expect(
+    channels.map(({ alias, type, id, agentName }) => ({
+      alias,
+      type,
+      id,
+      agentName,
+    })),
+  ).toEqual([
     { alias: "slack", type: "slack", id: "slack", agentName: "support" },
   ]);
 });
 
 test("compileProject rejects unsafe workspaceScope aliases", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -439,7 +547,8 @@ export const slack = defineSlackChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" }, isolation: true } });
 export const support = defineAgent({ name: "support", config: { channels: [slack], workspaces: [repo] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens',
@@ -447,7 +556,9 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 });
 
 test("compileProject rejects unknown workspaceScope levels", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -457,7 +568,8 @@ export const slack = defineSlackChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" }, isolation: true } });
 export const support = defineAgent({ name: "support", config: { channels: [slack], workspaces: [repo] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" workspaceScope.level must be one of: channel, conversation',
@@ -465,7 +577,9 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 });
 
 test("compileProject rejects scoped channels without an isolated workspace", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -475,7 +589,8 @@ export const slack = defineSlackChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" } } });
 export const support = defineAgent({ name: "support", config: { channels: [slack], workspaces: [repo] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" defines workspaceScope, but no attached workspace has isolation: true.',
@@ -483,7 +598,9 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 });
 
 test("compileProject rejects isolated workspaces when a channel lacks workspaceScope", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -498,7 +615,8 @@ export const github = defineGitHubChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" }, isolation: true } });
 export const support = defineAgent({ name: "support", config: { channels: [slack, github], workspaces: [repo] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" attaches isolated workspace "repo", but channel "github" does not define workspaceScope.',
@@ -506,7 +624,9 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 });
 
 test("compileProject rejects duplicate channel ids", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackChannel({
@@ -524,7 +644,8 @@ export const github = defineGitHubChannel({
 });
 export const repo = defineWorkspace({ name: "repo", config: { storage: { provider: "s3" }, isolation: true } });
 export const support = defineAgent({ name: "support", config: { channels: [slack, github], workspaces: [repo] } });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     "Duplicate channel id: support-channel",
@@ -532,13 +653,16 @@ export const support = defineAgent({ name: "support", config: { channels: [slack
 });
 
 test("compileProject rejects keyed channel configuration", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
   config: { channels: { github: { appId: env.APP_ID, privateKey: env.PRIVATE_KEY, webhookSecret: env.WEBHOOK_SECRET } } },
 });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" config.channels must be an array of channel definitions',
@@ -546,7 +670,9 @@ export const support = defineAgent({
 });
 
 test("compileProject keeps uploaded tool bundles intact beside typed channels", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, defineTool, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
@@ -565,7 +691,8 @@ export const support = defineAgent({
   name: "support",
   config: { channels: [github], tools: { [helper.name]: { enabled: true, needsApproval: false } } },
 });
-`);
+`,
+  );
   await mkdir(join(cwd, "broods", "tools"), { recursive: true });
   await writeFile(
     join(cwd, "broods", "tools", "helper.ts"),
@@ -574,10 +701,17 @@ export const support = defineAgent({
 
   const { manifest } = await compileProject({ cwd, command: "dev" });
   const tool = manifest.resources.find((resource) => resource.kind === "tool");
-  const agent = manifest.resources.find((resource) => resource.kind === "agent");
-  expect(tool?.config).toMatchObject({ path: "tools/helper.ts", description: "Returns a result" });
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent",
+  );
+  expect(tool?.config).toMatchObject({
+    path: "tools/helper.ts",
+    description: "Returns a result",
+  });
   expect(typeof (tool?.config as { bundle?: unknown }).bundle).toBe("string");
-  expect((tool?.config as { bundle: string }).bundle).not.toContain("_ctx: unknown");
+  expect((tool?.config as { bundle: string }).bundle).not.toContain(
+    "_ctx: unknown",
+  );
   expect(agent?.config).toMatchObject({
     channels: { github: {} },
     tools: { helper: { enabled: true, needsApproval: false } },
@@ -585,7 +719,9 @@ export const support = defineAgent({
 });
 
 test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
@@ -606,11 +742,14 @@ export const support = defineAgent({
     },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
-  const agent = manifest.resources.find((resource) => resource.kind === "agent");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent",
+  );
   const bundle = (hook?.config as { bundle?: unknown }).bundle;
   expect(hook?.name).toBe("support-hooks");
   expect(hook?.description).toBe("Inline hooks for agent support");
@@ -618,24 +757,28 @@ export const support = defineAgent({
     events: ["agent.started", "tool.call.started"],
   });
   expect(typeof bundle).toBe("string");
-  expect(bundle as string).toContain('export default');
+  expect(bundle as string).toContain("export default");
   expect(bundle as string).toContain('"agent.started"');
   expect(bundle as string).toContain('"tool.call.started"');
   expect(bundle as string).not.toContain("event: { system: string");
   expect(typeof (hook?.config as { sha256?: unknown }).sha256).toBe("string");
   expect(agent?.config).toMatchObject({
     hooks: {
-      webhooks: [{
-        url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
-        secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
-      }],
+      webhooks: [
+        {
+          url: { __beeblastEnv: true, name: "MOCK_WEBHOOK_URL" },
+          secret: { __beeblastEnv: true, name: "MOCK_WEBHOOK_SECRET" },
+        },
+      ],
       code: [{ hookId: "support-hooks" }],
     },
   });
 });
 
 test("compileProject serializes method-shorthand hooks into valid function expressions", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
@@ -650,7 +793,8 @@ export const support = defineAgent({
     },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
@@ -662,7 +806,9 @@ export const support = defineAgent({
 });
 
 test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -680,15 +826,21 @@ export const billing = defineAgent({
     model: { provider: "custom", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  expect(collectEnvRefNames(manifest)).toEqual(["OPENAI_API_KEY", "STRIPE_API_KEY"]);
+  expect(collectEnvRefNames(manifest)).toEqual([
+    "OPENAI_API_KEY",
+    "STRIPE_API_KEY",
+  ]);
 });
 
 test("collectEnvRefNames returns nothing when no env refs are present", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -697,7 +849,8 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
@@ -705,7 +858,9 @@ export const support = defineAgent({
 });
 
 test("compileProject works without a config file and infers project from cwd", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -714,7 +869,8 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
@@ -723,7 +879,9 @@ export const support = defineAgent({
 });
 
 test("compileProject accepts explicit project override", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -732,15 +890,22 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
-  const { manifest } = await compileProject({ cwd: cwd, command: "dev", project: "docs-demo" });
+  const { manifest } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+    project: "docs-demo",
+  });
 
   expect(manifest.project).toBe("docs-demo");
 });
 
 test("compileProject preserves exported resource aliases for generated api handles", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const myAgent = defineAgent({
@@ -749,15 +914,21 @@ export const myAgent = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
-  const { resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+  const { resourceAliases } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
 
   expect(resourceAliases.agent).toEqual({ "my-agent": "myAgent" });
 });
 
 test("writeGeneratedFiles uses exported resource aliases for api property names", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const myAgent = defineAgent({
@@ -766,27 +937,43 @@ export const myAgent = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
-  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+`,
+  );
+  const { manifest, resourceAliases } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
 
-  await writeGeneratedFiles(manifest, {
-    agents: { "my-agent": "agent_123" },
-    workspaces: {},
-    sandboxes: {},
-    crons: {},
-    skills: {},
-    tools: {},
-    hooks: {},
-  }, cwd, resourceAliases);
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { "my-agent": "agent_123" },
+      workspaces: {},
+      sandboxes: {},
+      crons: {},
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+    resourceAliases,
+  );
 
-  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
 
-  expect(api).toContain('myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"]');
+  expect(api).toContain(
+    'myAgent: { kind: "agent", name: "my-agent", id: ids.agents["my-agent"]',
+  );
   expect(api).not.toContain('"my-agent": { kind: "agent"');
 });
 
 test("writeGeneratedFiles keys non-agent resources by export alias under api.crons", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineWorkspace, defineCron } from "${RESOURCES_MODULE}";
 
 export const cron = defineAgent({
@@ -813,33 +1000,47 @@ export const oneMinuteCron = defineCron({
     timezone: "UTC",
   },
 });
-`);
-  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+`,
+  );
+  const { manifest, resourceAliases } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
 
-  await writeGeneratedFiles(manifest, {
-    agents: { "cron-agent": "agent_1" },
-    workspaces: { "my-repo": "workspace_1" },
-    sandboxes: {},
-    crons: { "one-minute-cron-test": "cron_1" },
-    skills: {},
-    tools: {},
-    hooks: {},
-  }, cwd, resourceAliases);
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { "cron-agent": "agent_1" },
+      workspaces: { "my-repo": "workspace_1" },
+      sandboxes: {},
+      crons: { "one-minute-cron-test": "cron_1" },
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+    resourceAliases,
+  );
 
-  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
 
   // Renamed namespace + export-name keys pointing at the unchanged ids contract.
-  expect(api).toContain('crons: {');
+  expect(api).toContain("crons: {");
   expect(api).toContain('oneMinuteCron: ids.crons["one-minute-cron-test"],');
   expect(api).toContain('myRepo: ids.workspaces["my-repo"],');
-  expect(api).not.toContain('crons: ids.crons');
+  expect(api).not.toContain("crons: ids.crons");
   expect(api).not.toContain('"one-minute-cron-test":');
   // Kinds with no local resources stay as an empty literal.
-  expect(api).toContain('sandboxes: {}');
+  expect(api).toContain("sandboxes: {}");
 });
 
 test("compileProject loads project and environment from .env.local", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -848,12 +1049,14 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
-  await writeFile(join(cwd, ".env.local"), [
-    "BROODS_PROJECT=env-file-project",
-    "BROODS_ENVIRONMENT=staging",
-    "",
-  ].join("\n"));
+`,
+  );
+  await writeFile(
+    join(cwd, ".env.local"),
+    ["BROODS_PROJECT=env-file-project", "BROODS_ENVIRONMENT=staging", ""].join(
+      "\n",
+    ),
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
 
@@ -862,7 +1065,9 @@ export const support = defineAgent({
 });
 
 test("compileProject defaults deploy to production without an override", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -871,7 +1076,8 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
 
@@ -879,7 +1085,9 @@ export const support = defineAgent({
 });
 
 test("compileProject can ignore runtime env when deploy uses command defaults", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -888,11 +1096,12 @@ export const support = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
-  await writeFile(join(cwd, ".env.local"), [
-    "BROODS_ENVIRONMENT=development",
-    "",
-  ].join("\n"));
+`,
+  );
+  await writeFile(
+    join(cwd, ".env.local"),
+    ["BROODS_ENVIRONMENT=development", ""].join("\n"),
+  );
 
   const { manifest } = await compileProject({
     cwd: cwd,
@@ -904,11 +1113,13 @@ export const support = defineAgent({
 });
 
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
-  const cwd = await fixtureProject(`
+  const cwd = await fixtureProject(
+    `
 import { defineBroods } from "${RESOURCES_MODULE}";
 
 export default defineBroods({ project: "typed-app" });
-`, `
+`,
+    `
 import { defineAgent, defineSkill, defineTool, defineWorkspace, defineSandbox } from "${RESOURCES_MODULE}";
 
 export const docs = defineSkill({
@@ -948,30 +1159,51 @@ export const support = defineAgent({
     tools: { [progress.name]: { enabled: true } },
   },
 });
-`);
-  await mkdir(join(cwd, "broods", "skills", "greeting-skill"), { recursive: true });
-  await writeFile(join(cwd, "broods", "skills", "greeting-skill", "SKILL.md"), `---
+`,
+  );
+  await mkdir(join(cwd, "broods", "skills", "greeting-skill"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(cwd, "broods", "skills", "greeting-skill", "SKILL.md"),
+    `---
 name: greeting-skill
 description: Says hello.
 ---
 
 # Greeting
-`);
+`,
+  );
   await mkdir(join(cwd, "broods", "tools"), { recursive: true });
-  await writeFile(join(cwd, "broods", "tools", "stream_progress.mjs"), "export default { name: 'stream_progress' };\n");
+  await writeFile(
+    join(cwd, "broods", "tools", "stream_progress.mjs"),
+    "export default { name: 'stream_progress' };\n",
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const support = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
-  const skill = manifest.resources.find((resource) => resource.kind === "skill" && resource.name === "greeting-skill");
-  const tool = manifest.resources.find((resource) => resource.kind === "tool" && resource.name === "stream_progress");
+  const support = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
+  const skill = manifest.resources.find(
+    (resource) =>
+      resource.kind === "skill" && resource.name === "greeting-skill",
+  );
+  const tool = manifest.resources.find(
+    (resource) =>
+      resource.kind === "tool" && resource.name === "stream_progress",
+  );
 
   expect(support?.config).toMatchObject({
     agent: {
-      system: [{
-        role: "system",
-        content: "Use the support policy.",
-        providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-      }],
+      system: [
+        {
+          role: "system",
+          content: "Use the support policy.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral" } },
+          },
+        },
+      ],
     },
     sandbox: "runner",
     workspaces: [
@@ -985,20 +1217,35 @@ description: Says hello.
   expect(skill?.config).toMatchObject({
     source: "files",
     path: "skills/greeting-skill",
-    files: [expect.objectContaining({ path: "SKILL.md", contentBase64: expect.any(String) })],
+    files: [
+      expect.objectContaining({
+        path: "SKILL.md",
+        contentBase64: expect.any(String),
+      }),
+    ],
   });
-  expect((tool?.config as Record<string, unknown>).path).toBe("tools/stream_progress.mjs");
-  expect((tool?.config as Record<string, unknown>).description).toBe("Streams progress updates.");
-  expect((tool?.config as Record<string, unknown>).bundle).toContain('name: "stream_progress"');
-  expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe("string");
+  expect((tool?.config as Record<string, unknown>).path).toBe(
+    "tools/stream_progress.mjs",
+  );
+  expect((tool?.config as Record<string, unknown>).description).toBe(
+    "Streams progress updates.",
+  );
+  expect((tool?.config as Record<string, unknown>).bundle).toContain(
+    'name: "stream_progress"',
+  );
+  expect(typeof (tool?.config as Record<string, unknown>).sha256).toBe(
+    "string",
+  );
 });
 
 test("compileProject maps policy resources and agent policy refs", async () => {
-  const cwd = await fixtureProject(`
+  const cwd = await fixtureProject(
+    `
 import { defineBroods } from "${RESOURCES_MODULE}";
 
 export default defineBroods({ project: "typed-app" });
-`, `
+`,
+    `
 import { defineAgent, definePolicy } from "${RESOURCES_MODULE}";
 
 export const filesystemPolicy = definePolicy({
@@ -1024,11 +1271,17 @@ export const support = defineAgent({
     policy: { mode: "audit", policies: [filesystemPolicy] },
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const policy = manifest.resources.find((resource) => resource.kind === "policy" && resource.name === "filesystem-guard");
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const policy = manifest.resources.find(
+    (resource) =>
+      resource.kind === "policy" && resource.name === "filesystem-guard",
+  );
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
 
   expect(policy?.description).toBe("Restricts workspace writes.");
   expect(policy?.config).toMatchObject({
@@ -1052,7 +1305,9 @@ export const support = defineAgent({
 });
 
 test("compileProject drops empty agent policy config", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -1062,16 +1317,21 @@ export const support = defineAgent({
     policy: {},
   },
 });
-`);
+`,
+  );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const agent = manifest.resources.find((resource) => resource.kind === "agent" && resource.name === "support");
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "support",
+  );
 
   expect(agent?.config).not.toHaveProperty("policy");
 });
 
 test("compileProject rejects unknown agent policy config keys", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
@@ -1081,7 +1341,8 @@ export const support = defineAgent({
     policy: { enabbled: true },
   },
 });
-`);
+`,
+  );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" config.policy.enabbled is not supported',
@@ -1089,7 +1350,9 @@ export const support = defineAgent({
 });
 
 test("compileProject rejects skill and tool paths outside broods project root", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineSkill, defineTool } from "${RESOURCES_MODULE}";
 
 export const escapedSkill = defineSkill({
@@ -1105,20 +1368,26 @@ export const escapedTool = defineTool({
     inputSchema: { type: "object" },
   },
 });
-`);
+`,
+  );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("must stay inside broods/");
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "must stay inside broods/",
+  );
 });
 
 test("compileProject skips hidden and secret-looking files from skill bundles", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineSkill } from "${RESOURCES_MODULE}";
 
 export const docs = defineSkill({
   name: "safe-skill",
   config: { path: "skills/safe-skill" },
 });
-`);
+`,
+  );
   const skillRoot = join(cwd, "broods", "skills", "safe-skill");
   await mkdir(join(skillRoot, ".cache"), { recursive: true });
   await writeFile(join(skillRoot, "SKILL.md"), "# Safe\n");
@@ -1128,14 +1397,20 @@ export const docs = defineSkill({
   await writeFile(join(skillRoot, "private.pem"), "secret\n");
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
-  const skill = manifest.resources.find((resource) => resource.kind === "skill" && resource.name === "safe-skill");
-  const files = ((skill?.config as Record<string, unknown>).files as Array<{ path: string }>).map((file) => file.path);
+  const skill = manifest.resources.find(
+    (resource) => resource.kind === "skill" && resource.name === "safe-skill",
+  );
+  const files = (
+    (skill?.config as Record<string, unknown>).files as Array<{ path: string }>
+  ).map((file) => file.path);
 
   expect(files.sort()).toEqual(["SKILL.md", "notes.txt"].sort());
 });
 
 test("compileProject rejects hidden or secret-looking tool bundle paths", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineTool } from "${RESOURCES_MODULE}";
 
 export const hiddenTool = defineTool({
@@ -1146,11 +1421,17 @@ export const hiddenTool = defineTool({
     inputSchema: { type: "object" },
   },
 });
-`);
+`,
+  );
   await mkdir(join(cwd, "broods", ".secret"), { recursive: true });
-  await writeFile(join(cwd, "broods", ".secret", "tool.mjs"), "export default {};\n");
+  await writeFile(
+    join(cwd, "broods", ".secret", "tool.mjs"),
+    "export default {};\n",
+  );
 
-  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow("looks like a hidden file or secret");
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "looks like a hidden file or secret",
+  );
 });
 
 test("diffManifests reports create, update, and delete operations", () => {
@@ -1186,7 +1467,11 @@ test("diffManifests reports a pure resource rename without delete prompt noise",
     project: "app",
     environment: "dev",
     resources: [
-      { kind: "agent" as const, name: "async-search", config: { model: { provider: "google", modelId: "gemma" } } },
+      {
+        kind: "agent" as const,
+        name: "async-search",
+        config: { model: { provider: "google", modelId: "gemma" } },
+      },
     ],
   };
   const remote = {
@@ -1194,7 +1479,11 @@ test("diffManifests reports a pure resource rename without delete prompt noise",
     project: "app",
     environment: "dev",
     resources: [
-      { kind: "agent" as const, name: "async-search-assistant", config: { model: { provider: "google", modelId: "gemma" } } },
+      {
+        kind: "agent" as const,
+        name: "async-search-assistant",
+        config: { model: { provider: "google", modelId: "gemma" } },
+      },
     ],
   };
 
@@ -1253,51 +1542,94 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
   const cwd = await fixtureProject();
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
-  await writeGeneratedFiles(manifest, {
-    agents: { support: "agent_123" },
-    workspaces: { repo: "workspace_123" },
-    sandboxes: {},
-    crons: {},
-    skills: {},
-    tools: {},
-    hooks: {},
-  }, cwd);
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { support: "agent_123" },
+      workspaces: { repo: "workspace_123" },
+      sandboxes: {},
+      crons: {},
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+  );
 
-  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
-  const ids = await readFile(join(cwd, "broods", "_generated", "ids.ts"), "utf8");
-  const dataModel = await readFile(join(cwd, "broods", "_generated", "dataModel.ts"), "utf8");
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
+  const ids = await readFile(
+    join(cwd, "broods", "_generated", "ids.ts"),
+    "utf8",
+  );
+  const dataModel = await readFile(
+    join(cwd, "broods", "_generated", "dataModel.ts"),
+    "utf8",
+  );
 
-  expect(api).toContain('export const api = {');
-  expect(api).toContain('support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }');
+  expect(api).toContain("export const api = {");
+  expect(api).toContain(
+    'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }',
+  );
   expect(ids).toContain('"support": "agent_123"');
   expect(dataModel).toContain("AgentReference");
   expect(api).not.toContain("new BroodsClient");
-  await expect(readFile(join(cwd, "broods", "_generated", "client.ts"), "utf8")).rejects.toThrow();
+  await expect(
+    readFile(join(cwd, "broods", "_generated", "client.ts"), "utf8"),
+  ).rejects.toThrow();
 });
 
 test("writeGeneratedFiles emits typed channel references with authoritative webhook paths", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubChannel({ appId: env.APP_ID, privateKey: env.KEY, webhookSecret: env.SECRET });
 export const support = defineAgent({ name: "support", config: { channels: [github] } });
-`);
-  const { manifest, resourceAliases, channels } = await compileProject({ cwd, command: "dev" });
-  await writeGeneratedFiles(manifest, {
-    agents: { support: "agent/123" }, workspaces: {}, sandboxes: {}, crons: {}, skills: {}, tools: {}, hooks: {},
-  }, cwd, resourceAliases, {
-    accountId: "account/123",
-    endpointId: "endpoint-1",
-    projectSlug: "typed-app",
-    environmentSlug: "development",
-  }, channels);
+`,
+  );
+  const { manifest, resourceAliases, channels } = await compileProject({
+    cwd,
+    command: "dev",
+  });
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { support: "agent/123" },
+      workspaces: {},
+      sandboxes: {},
+      crons: {},
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+    resourceAliases,
+    {
+      accountId: "account/123",
+      endpointId: "endpoint-1",
+      projectSlug: "typed-app",
+      environmentSlug: "development",
+    },
+    channels,
+  );
 
-  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
   expect(api).toContain('github: { kind: "channel", type: "github"');
-  expect(api).toContain('webhookPath: "/webhooks/account%2F123/agent%2F123/github"');
+  expect(api).toContain(
+    'webhookPath: "/webhooks/account%2F123/agent%2F123/github"',
+  );
 });
 
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
-  const cwd = await fixtureProject("", `
+  const cwd = await fixtureProject(
+    "",
+    `
 import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const myAgent = defineAgent({
@@ -1306,21 +1638,36 @@ export const myAgent = defineAgent({
     model: { provider: "openai", modelId: "gpt-5-mini" },
   },
 });
-`);
-  const { manifest, resourceAliases } = await compileProject({ cwd: cwd, command: "dev" });
+`,
+  );
+  const { manifest, resourceAliases } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
 
-  await writeGeneratedFiles(manifest, {
-    agents: { "my-agent": "agent_1", "remote-only": "agent_2" },
-    workspaces: { "remote-workspace": "workspace_1" },
-    sandboxes: {},
-    crons: {},
-    skills: {},
-    tools: {},
-    hooks: {},
-  }, cwd, resourceAliases);
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { "my-agent": "agent_1", "remote-only": "agent_2" },
+      workspaces: { "remote-workspace": "workspace_1" },
+      sandboxes: {},
+      crons: {},
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+    resourceAliases,
+  );
 
-  const api = await readFile(join(cwd, "broods", "_generated", "api.ts"), "utf8");
-  const ids = await readFile(join(cwd, "broods", "_generated", "ids.ts"), "utf8");
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
+  const ids = await readFile(
+    join(cwd, "broods", "_generated", "ids.ts"),
+    "utf8",
+  );
 
   expect(api).toContain("myAgent");
   expect(api).not.toContain("remote-only");
@@ -1332,16 +1679,19 @@ export const myAgent = defineAgent({
 test("runtime config loads .env.local without manual client wiring", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-test-"));
   tempDirs.push(cwd);
-  await writeFile(join(cwd, ".env.local"), [
-    "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
-    // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
-    // stored auth, which exists on logged-in dev machines but not in CI.
-    "BROODS_BASE_URL=https://gateway.dev.broods.app",
-    "BROODS_TOKEN=fp_cli_test",
-    "BROODS_PROJECT=sandbox-stateless",
-    "BROODS_ENVIRONMENT=development",
-    "",
-  ].join("\n"));
+  await writeFile(
+    join(cwd, ".env.local"),
+    [
+      "BROODS_DASHBOARD_URL=https://dashboard.dev.broods.app",
+      // Pin baseUrl too: without it the field falls back to ~/.broods/config.json
+      // stored auth, which exists on logged-in dev machines but not in CI.
+      "BROODS_BASE_URL=https://gateway.dev.broods.app",
+      "BROODS_TOKEN=fp_cli_test",
+      "BROODS_PROJECT=sandbox-stateless",
+      "BROODS_ENVIRONMENT=development",
+      "",
+    ].join("\n"),
+  );
 
   const config = loadBroodsRuntimeConfig(cwd);
 
@@ -1354,20 +1704,30 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   });
 });
 
-async function fixtureProject(configSource?: string, resourcesSource?: string): Promise<string> {
+async function fixtureProject(
+  configSource?: string,
+  resourcesSource?: string,
+): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), "broods-test-"));
   tempDirs.push(cwd);
   const projectDir = join(cwd, "broods");
   await mkdir(projectDir, { recursive: true });
-  await writeFile(join(projectDir, "broods.config.ts"), configSource ?? `
+  await writeFile(
+    join(projectDir, "broods.config.ts"),
+    configSource ??
+      `
 import { defineBroods } from "${RESOURCES_MODULE}";
 
 export default defineBroods({
   project: "typed-app",
   environments: { dev: "development", deploy: "production" },
 });
-`);
-  await writeFile(join(projectDir, "agents.ts"), resourcesSource ?? `
+`,
+  );
+  await writeFile(
+    join(projectDir, "agents.ts"),
+    resourcesSource ??
+      `
 import { defineAgent, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const repo = defineWorkspace({
@@ -1390,7 +1750,8 @@ export const support = defineAgent({
     workspaces: [repo],
   },
 });
-`);
+`,
+  );
 
   return cwd;
 }

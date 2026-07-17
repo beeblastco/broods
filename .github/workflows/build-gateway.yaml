@@ -6,10 +6,10 @@ on:
       - main
       - dev
     paths:
-      - 'apps/gateway/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/build-gateway.yaml'
+      - "apps/gateway/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/build-gateway.yaml"
   workflow_dispatch:
 
 env:

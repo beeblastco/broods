@@ -19,10 +19,16 @@ afterEach(() => {
 
 describe("workspaceNamespace", () => {
   it("scopes by accountId:workspaceId so the workspace is shared across agents", () => {
-    expect(workspaceNamespace("acct_1", "ws_a")).toBe(normalizeFilesystemNamespace("acct_1:ws_a"));
-    expect(workspaceNamespace("acct_1", "ws_a")).not.toBe(workspaceNamespace("acct_1", "ws_b"));
+    expect(workspaceNamespace("acct_1", "ws_a")).toBe(
+      normalizeFilesystemNamespace("acct_1:ws_a"),
+    );
+    expect(workspaceNamespace("acct_1", "ws_a")).not.toBe(
+      workspaceNamespace("acct_1", "ws_b"),
+    );
     // Same workspaceId resolves to the same namespace regardless of caller.
-    expect(workspaceNamespace("acct_1", "ws_a")).toBe(workspaceNamespace("acct_1", "ws_a"));
+    expect(workspaceNamespace("acct_1", "ws_a")).toBe(
+      workspaceNamespace("acct_1", "ws_a"),
+    );
   });
 
   it("mounts channel scope at the workspace root and conversation scope under its alias", () => {
@@ -37,12 +43,19 @@ describe("workspaceNamespace", () => {
     expect(isolatedWorkspaceNamespace(base, false, scope)).toBe(base);
     expect(isolatedWorkspaceNamespace(base, true)).toBe(base);
     expect(isolatedWorkspaceNamespace(base, true, scope)).toBe(base);
-    expect(isolatedWorkspaceNamespace(base, true, {
-      ...scope,
-      workspaceScope: { alias: "support", level: "conversation" },
-    })).toBe(`${base}/support/${normalizeFilesystemNamespace(scope.conversationKey)}`);
-    expect(() => isolatedWorkspaceNamespace(base, true, { channelName: "slack" }))
-      .toThrow("Workspace isolation requires the active channel to define workspaceScope");
+    expect(
+      isolatedWorkspaceNamespace(base, true, {
+        ...scope,
+        workspaceScope: { alias: "support", level: "conversation" },
+      }),
+    ).toBe(
+      `${base}/support/${normalizeFilesystemNamespace(scope.conversationKey)}`,
+    );
+    expect(() =>
+      isolatedWorkspaceNamespace(base, true, { channelName: "slack" }),
+    ).toThrow(
+      "Workspace isolation requires the active channel to define workspaceScope",
+    );
   });
 
   it("shares channel roots while separating aliased sibling conversations", () => {
@@ -88,8 +101,15 @@ describe("workspaceNamespace", () => {
 
     expect(workspaceNamespaceOwnsReservationKey(base, base)).toBe(true);
     expect(workspaceNamespaceOwnsReservationKey(base, child)).toBe(true);
-    expect(workspaceNamespaceOwnsReservationKey(base, `${base}-not-a-child`)).toBe(false);
-    expect(workspaceNamespaceOwnsReservationKey(base, workspaceNamespace("acct_1", "ws_b"))).toBe(false);
+    expect(
+      workspaceNamespaceOwnsReservationKey(base, `${base}-not-a-child`),
+    ).toBe(false);
+    expect(
+      workspaceNamespaceOwnsReservationKey(
+        base,
+        workspaceNamespace("acct_1", "ws_b"),
+      ),
+    ).toBe(false);
   });
 });
 
@@ -98,11 +118,26 @@ describe("resolveAgentRuntime", () => {
     setStorageForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "sb_1" ? { sandboxId: "sb_1", name: "primary", config: { provider: "lambda", permissionMode: "ask", snapshot: "img_primary" } } : null,
+          id === "sb_1"
+            ? {
+                sandboxId: "sb_1",
+                name: "primary",
+                config: {
+                  provider: "lambda",
+                  permissionMode: "ask",
+                  snapshot: "img_primary",
+                },
+              }
+            : null,
       },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "ws_a" ? { config: { storage: { provider: "s3" } }, description: "notes ws" } : null,
+          id === "ws_a"
+            ? {
+                config: { storage: { provider: "s3" } },
+                description: "notes ws",
+              }
+            : null,
       },
     } as never);
 
@@ -111,31 +146,36 @@ describe("resolveAgentRuntime", () => {
       "acct_1",
     );
 
-    expect(resolved.sandbox).toMatchObject({ provider: "lambda", permissionMode: "ask" });
+    expect(resolved.sandbox).toMatchObject({
+      provider: "lambda",
+      permissionMode: "ask",
+    });
     // The workspace inherits the agent-level sandbox as its effective sandbox, with
     // its own storage identity attached so the executor resolves the mount target, plus
     // the control-plane identity so a reserved instance can mirror itself into Convex.
-    expect(resolved.workspaces).toEqual([{
-      name: "notes",
-      workspaceId: "ws_a",
-      namespace: workspaceNamespace("acct_1", "ws_a"),
-      description: "notes ws",
-      config: { storage: { provider: "s3" } },
-      sandbox: {
-        provider: "lambda",
-        permissionMode: "ask",
-        snapshot: "img_primary",
-        storage: { provider: "s3" },
-        controlPlane: {
-          accountId: "acct_1",
-          sandboxConfigId: "sb_1",
-          name: "primary",
-          specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
-          snapshotId: "img_primary",
+    expect(resolved.workspaces).toEqual([
+      {
+        name: "notes",
+        workspaceId: "ws_a",
+        namespace: workspaceNamespace("acct_1", "ws_a"),
+        description: "notes ws",
+        config: { storage: { provider: "s3" } },
+        sandbox: {
+          provider: "lambda",
           permissionMode: "ask",
+          snapshot: "img_primary",
+          storage: { provider: "s3" },
+          controlPlane: {
+            accountId: "acct_1",
+            sandboxConfigId: "sb_1",
+            name: "primary",
+            specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+            snapshotId: "img_primary",
+            permissionMode: "ask",
+          },
         },
       },
-    }]);
+    ]);
   });
 
   it("resolves workspace isolation with the active channel workspace scope", async () => {
@@ -143,7 +183,9 @@ describe("resolveAgentRuntime", () => {
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "ws_a" ? { config: { storage: { provider: "s3" }, isolation: true } } : null,
+          id === "ws_a"
+            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            : null,
       },
     } as never);
 
@@ -169,7 +211,9 @@ describe("resolveAgentRuntime", () => {
       sandboxConfigs: { getById: async () => null },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "ws_a" ? { config: { storage: { provider: "s3" }, isolation: true } } : null,
+          id === "ws_a"
+            ? { config: { storage: { provider: "s3" }, isolation: true } }
+            : null,
       },
     } as never);
 
@@ -178,15 +222,19 @@ describe("resolveAgentRuntime", () => {
       "acct_1",
     );
 
-    expect(resolved.workspaces[0]?.namespace).toBe(workspaceNamespace("acct_1", "ws_a"));
+    expect(resolved.workspaces[0]?.namespace).toBe(
+      workspaceNamespace("acct_1", "ws_a"),
+    );
   });
 
   it("lets a workspace override the agent-level sandbox per agent", async () => {
     setStorageForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) => {
-          if (id === "sb_default") return { config: { provider: "lambda", permissionMode: "ask" } };
-          if (id === "sb_bypass") return { config: { provider: "lambda", permissionMode: "bypass" } };
+          if (id === "sb_default")
+            return { config: { provider: "lambda", permissionMode: "ask" } };
+          if (id === "sb_bypass")
+            return { config: { provider: "lambda", permissionMode: "bypass" } };
           return null;
         },
       },
@@ -197,23 +245,34 @@ describe("resolveAgentRuntime", () => {
     } as never);
 
     const resolved = await resolveAgentRuntime(
-      { sandbox: "sb_default", workspaces: [{ name: "notes", workspaceId: "ws_a", sandbox: "sb_bypass" }] },
+      {
+        sandbox: "sb_default",
+        workspaces: [
+          { name: "notes", workspaceId: "ws_a", sandbox: "sb_bypass" },
+        ],
+      },
       "acct_1",
     );
 
     expect(resolved.sandbox).toMatchObject({ permissionMode: "ask" });
-    expect(resolved.workspaces[0]?.sandbox).toMatchObject({ permissionMode: "bypass" });
+    expect(resolved.workspaces[0]?.sandbox).toMatchObject({
+      permissionMode: "bypass",
+    });
   });
 
   it("lets a workspace opt out of the agent-level default with sandbox: null", async () => {
     setStorageForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) =>
-          id === "sb_default" ? { config: { provider: "lambda", permissionMode: "ask" } } : null,
+          id === "sb_default"
+            ? { config: { provider: "lambda", permissionMode: "ask" } }
+            : null,
       },
       workspaceConfigs: {
         getById: async (_accountId: string, id: string) =>
-          ({ ws_rw: true, ws_ro: true }[id] ? { config: { storage: { provider: "s3" } } } : null),
+          ({ ws_rw: true, ws_ro: true })[id]
+            ? { config: { storage: { provider: "s3" } } }
+            : null,
       },
     } as never);
 
@@ -221,14 +280,16 @@ describe("resolveAgentRuntime", () => {
       {
         sandbox: "sb_default",
         workspaces: [
-          { name: "rw", workspaceId: "ws_rw" },              // inherits the default
+          { name: "rw", workspaceId: "ws_rw" }, // inherits the default
           { name: "ro", workspaceId: "ws_ro", sandbox: null }, // forced read-only
         ],
       },
       "acct_1",
     );
 
-    expect(resolved.workspaces[0]?.sandbox).toMatchObject({ permissionMode: "ask" });
+    expect(resolved.workspaces[0]?.sandbox).toMatchObject({
+      permissionMode: "ask",
+    });
     expect(resolved.workspaces[1]?.sandbox).toBeUndefined();
     // rw inherits a sandbox (mounts directly); the `sandbox: null` opt-out reads S3
     // directly, so neither carries a read-only mount runner.
@@ -253,7 +314,10 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.sandbox).toBeUndefined();
     expect(resolved.workspaces[0]?.sandbox).toBeUndefined();
     // Implicit read-only defaults to reading through the service-managed read-only mount.
-    expect(resolved.workspaces[0]?.readMount).toEqual({ provider: "lambda", network: { mode: "deny-all" } });
+    expect(resolved.workspaces[0]?.readMount).toEqual({
+      provider: "lambda",
+      network: { mode: "deny-all" },
+    });
   });
 
   it("reads a read-only workspace directly from S3 when the ref opts out with sandbox: null", async () => {
@@ -281,8 +345,8 @@ describe("resolveAgentRuntime", () => {
       workspaceConfigs: { getById: async () => null },
     } as never);
 
-    await expect(resolveAgentRuntime({ sandbox: "missing" }, "acct_1")).rejects.toThrow(
-      /Referenced sandbox not found/,
-    );
+    await expect(
+      resolveAgentRuntime({ sandbox: "missing" }, "acct_1"),
+    ).rejects.toThrow(/Referenced sandbox not found/);
   });
 });

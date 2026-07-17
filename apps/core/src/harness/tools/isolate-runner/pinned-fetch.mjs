@@ -23,7 +23,9 @@ export const DENY_CIDRS = [
 // Tests may inject lookup/createConnection through opts; production callers should
 // leave those unset so Node opens the socket directly to the validated address.
 export async function guardedFetch(url, init, opts = {}) {
-  const timeoutMs = Number.isFinite(opts.timeoutMs) ? Math.max(0, Number(opts.timeoutMs)) : FETCH_TIMEOUT_MS;
+  const timeoutMs = Number.isFinite(opts.timeoutMs)
+    ? Math.max(0, Number(opts.timeoutMs))
+    : FETCH_TIMEOUT_MS;
   const controller = new AbortController();
   let timeout;
   const timeoutPromise = new Promise((_, reject) => {
@@ -33,12 +35,15 @@ export async function guardedFetch(url, init, opts = {}) {
     }, timeoutMs);
   });
   try {
-    return await Promise.race([guardedFetchWithDeadline(url, sanitizeFetchInit(init), {
-      ...opts,
-      signal: controller.signal,
-      deadlineAt: Date.now() + timeoutMs,
-      redirects: 0,
-    }), timeoutPromise]);
+    return await Promise.race([
+      guardedFetchWithDeadline(url, sanitizeFetchInit(init), {
+        ...opts,
+        signal: controller.signal,
+        deadlineAt: Date.now() + timeoutMs,
+        redirects: 0,
+      }),
+      timeoutPromise,
+    ]);
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error("ctx.fetch timed out");
@@ -60,10 +65,14 @@ async function guardedFetchWithDeadline(url, init, state) {
   if (isRedirect(response.status)) {
     const location = response.headers.location;
     if (!location) throw new Error("fetch redirect missing location");
-    return guardedFetchWithDeadline(new URL(location, parsed).toString(), init, {
-      ...state,
-      redirects: state.redirects + 1,
-    });
+    return guardedFetchWithDeadline(
+      new URL(location, parsed).toString(),
+      init,
+      {
+        ...state,
+        redirects: state.redirects + 1,
+      },
+    );
   }
   return response;
 }
@@ -90,7 +99,11 @@ async function resolveAllowedAddress(hostname, lookup) {
     throw new Error("ctx.fetch hostname did not resolve");
   }
   for (const address of normalized) {
-    if (!address || typeof address.address !== "string" || isDeniedAddress(address.address)) {
+    if (
+      !address ||
+      typeof address.address !== "string" ||
+      isDeniedAddress(address.address)
+    ) {
       throw new Error("ctx.fetch blocked private or metadata address");
     }
   }
@@ -103,29 +116,32 @@ function requestPinned(parsed, pinned, init, state) {
     const client = parsed.protocol === "https:" ? https : http;
     const headers = normalizeRequestHeaders(init.headers);
     headers.Host = parsed.host;
-    const request = client.request({
-      protocol: parsed.protocol,
-      hostname: pinned.address,
-      family: pinned.family,
-      port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-      method: init.method === undefined ? "GET" : String(init.method),
-      path: `${parsed.pathname}${parsed.search}`,
-      headers,
-      servername: parsed.hostname,
-      signal: state.signal,
-      createConnection: state.createConnection,
-      timeout: Math.max(1, state.deadlineAt - Date.now()),
-    }, async (response) => {
-      try {
-        resolve({
-          status: response.statusCode ?? 0,
-          headers: responseHeadersToRecord(response.headers),
-          bodyText: await readBodyText(response),
-        });
-      } catch (error) {
-        reject(error);
-      }
-    });
+    const request = client.request(
+      {
+        protocol: parsed.protocol,
+        hostname: pinned.address,
+        family: pinned.family,
+        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+        method: init.method === undefined ? "GET" : String(init.method),
+        path: `${parsed.pathname}${parsed.search}`,
+        headers,
+        servername: parsed.hostname,
+        signal: state.signal,
+        createConnection: state.createConnection,
+        timeout: Math.max(1, state.deadlineAt - Date.now()),
+      },
+      async (response) => {
+        try {
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: responseHeadersToRecord(response.headers),
+            bodyText: await readBodyText(response),
+          });
+        } catch (error) {
+          reject(error);
+        }
+      },
+    );
     request.on("timeout", () => {
       request.destroy(new Error("ctx.fetch timed out"));
     });
@@ -157,11 +173,14 @@ function normalizeRequestHeaders(headers) {
   }
   if (typeof headers === "object") {
     for (const [key, value] of Object.entries(headers)) {
-      if (key.toLowerCase() !== "host" && value !== undefined) result[key] = String(value);
+      if (key.toLowerCase() !== "host" && value !== undefined)
+        result[key] = String(value);
     }
     return result;
   }
-  throw new Error("ctx.fetch init headers must be an object, array, or Headers");
+  throw new Error(
+    "ctx.fetch init headers must be an object, array, or Headers",
+  );
 }
 
 function responseHeadersToRecord(headers) {
@@ -209,13 +228,17 @@ export function isDeniedAddress(address) {
     const normalized = address.toLowerCase();
     // IPv4-mapped IPv6 (::ffff:a.b.c.d) tunnels a v4 address past the v6 checks —
     // evaluate the embedded v4 against the CIDR denylist instead.
-    const mapped = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    const mapped = normalized.match(
+      /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
+    );
     if (mapped) return isDeniedAddress(mapped[1]);
-    return normalized === "::" ||
+    return (
+      normalized === "::" ||
       normalized === "::1" ||
       isIpv6LinkLocal(normalized) ||
       normalized.startsWith("fc") ||
-      normalized.startsWith("fd");
+      normalized.startsWith("fd")
+    );
   }
   const numeric = ipv4ToInt(address);
   if (numeric === null) return true;
@@ -244,7 +267,13 @@ function ipv4InCidr(address, cidr) {
 }
 
 function isRedirect(status) {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
 }
 
 async function readBodyText(response) {

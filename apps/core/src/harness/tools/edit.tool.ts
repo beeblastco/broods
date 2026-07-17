@@ -31,10 +31,20 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   return {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Path to edit, relative to the workspace root." },
+      file_path: {
+        type: "string",
+        description: "Path to edit, relative to the workspace root.",
+      },
       old_string: { type: "string", description: "The exact text to replace." },
-      new_string: { type: "string", description: "The replacement text (must differ from old_string)." },
-      replace_all: { type: "boolean", description: "Replace every occurrence instead of requiring a unique match." },
+      new_string: {
+        type: "string",
+        description: "The replacement text (must differ from old_string).",
+      },
+      replace_all: {
+        type: "boolean",
+        description:
+          "Replace every occurrence instead of requiring a unique match.",
+      },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
     required: ["file_path", "old_string", "new_string"],
@@ -42,7 +52,12 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   };
 }
 
-function editScript(pathB64: string, oldB64: string, newB64: string, replaceAll: boolean): string {
+function editScript(
+  pathB64: string,
+  oldB64: string,
+  newB64: string,
+  replaceAll: boolean,
+): string {
   return [
     "node <<'NODEEOF'",
     "const fs = require('node:fs');",
@@ -86,7 +101,8 @@ Usage notes:
 - The edit fails if the file does not exist — use the \`write\` tool to create new files.`,
       inputSchema: jsonSchema(inputSchema(context)),
       async execute(input) {
-        const { file_path, old_string, new_string, replace_all, workspace } = input as EditInput;
+        const { file_path, old_string, new_string, replace_all, workspace } =
+          input as EditInput;
         try {
           const ws = resolveWorkspace(context.workspaces, workspace);
           if (!ws?.sandbox) {
@@ -107,11 +123,15 @@ Usage notes:
             metadata: sandboxRunMetadata(context, ws),
           });
           if (!result.ok) {
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: edit failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() || "Error: edit failed",
+            );
           }
           return toolText(result.stdout.trim());
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

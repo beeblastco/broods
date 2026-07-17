@@ -14,7 +14,8 @@ export const chat = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: "You are a helpful assistant that can answer questions and provide information.",
+      system:
+        "You are a helpful assistant that can answer questions and provide information.",
     },
     publicAccess: true,
   },

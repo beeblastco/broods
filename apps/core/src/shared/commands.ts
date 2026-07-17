@@ -61,8 +61,15 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      for (let batchNumber = 0; batchNumber < CLEAR_CONVERSATION_MAX_BATCHES; batchNumber += 1) {
-        const result = await runtime.mutate<{ deleted: number; hasMore: boolean }>("clearConversation", {
+      for (
+        let batchNumber = 0;
+        batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
+        batchNumber += 1
+      ) {
+        const result = await runtime.mutate<{
+          deleted: number;
+          hasMore: boolean;
+        }>("clearConversation", {
           conversationKey: ctx.conversationKey,
         });
         if (!result.hasMore) return "Context cleared. Starting fresh.";
@@ -104,7 +111,9 @@ export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
 ): Promise<void> {
-  const handler = getExecutableCommands().find((c) => c.aliases.includes(commandToken));
+  const handler = getExecutableCommands().find((c) =>
+    c.aliases.includes(commandToken),
+  );
   if (!handler?.execute) return;
 
   try {
@@ -123,7 +132,9 @@ export function resolveDiscordCommand(
   name: string,
   optionText: string,
 ): DiscordCommandResolution | null {
-  const handler = commands.find((command) => command.discord?.names.includes(name));
+  const handler = commands.find((command) =>
+    command.discord?.names.includes(name),
+  );
   if (!handler?.discord) {
     return null;
   }
@@ -149,17 +160,23 @@ export function getDiscordCommandRegistrations(
       ...(discord.options ? { options: discord.options } : {}),
       ...(scope === "global"
         ? {
-          integration_types: discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
-          contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
-        }
+            integration_types:
+              discord.integrationTypes ?? DEFAULT_DISCORD_INTEGRATION_TYPES,
+            contexts: discord.contexts ?? DEFAULT_DISCORD_CONTEXTS,
+          }
         : {}),
     }));
   });
 }
 
-function getExecutableCommands(): Array<CommandHandler & { execute: NonNullable<CommandHandler["execute"]> }> {
+function getExecutableCommands(): Array<
+  CommandHandler & { execute: NonNullable<CommandHandler["execute"]> }
+> {
   return commands.filter(
-    (command): command is CommandHandler & { execute: NonNullable<CommandHandler["execute"]> } =>
-      typeof command.execute === "function",
+    (
+      command,
+    ): command is CommandHandler & {
+      execute: NonNullable<CommandHandler["execute"]>;
+    } => typeof command.execute === "function",
   );
 }

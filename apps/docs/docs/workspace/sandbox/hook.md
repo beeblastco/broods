@@ -2,11 +2,11 @@
 
 A sandbox has two hook surfaces today, plus a planned one. Keep them distinct:
 
-| Hook surface | What it is | Where it runs |
-| --- | --- | --- |
-| **Setup commands** (`onCreate`/`onResume`) | shell commands you declare on a persistent config | inside the sandbox, on create/resume |
-| **Runtime lifecycle hooks** | image-implemented HTTP endpoints the platform calls | inside the image (internal) |
-| **User code hooks** (planned, [#63](https://github.com/beeblastco/broods/issues/63)) | uploaded TS that runs around agent/channel events | egress-less V8 isolate — **not shipped yet** |
+| Hook surface                                                                         | What it is                                          | Where it runs                                |
+| ------------------------------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------- |
+| **Setup commands** (`onCreate`/`onResume`)                                           | shell commands you declare on a persistent config   | inside the sandbox, on create/resume         |
+| **Runtime lifecycle hooks**                                                          | image-implemented HTTP endpoints the platform calls | inside the image (internal)                  |
+| **User code hooks** (planned, [#63](https://github.com/beeblastco/broods/issues/63)) | uploaded TS that runs around agent/channel events   | egress-less V8 isolate — **not shipped yet** |
 
 These are **different from [agent Lifecycle Webhooks](../../webhook.md)**, which deliver
 signed HTTPS event JSON to an external endpoint and do not execute any code in the sandbox.
@@ -23,8 +23,8 @@ build a virtualenv or install dependencies that then survive across calls:
     "provider": "sandbox",
     "persistent": true,
     "onCreate": ["python3 -m venv $HOME/.venv"],
-    "onResume": ["test -x $HOME/.venv/bin/python"]
-  }
+    "onResume": ["test -x $HOME/.venv/bin/python"],
+  },
 }
 ```
 
@@ -43,13 +43,13 @@ The MicroVM image implements HTTP lifecycle hooks the platform calls at VM trans
 something account config declares — they are what makes the workspace mount and
 suspend/resume work:
 
-| Hook | When | What the image does |
-| --- | --- | --- |
-| `/ready`, `/validate` | image build | health / validation (return 200) |
-| `/run` | per VM start | `mount-s3` the workspace from the run-hook payload |
-| `/resume` | on resume from suspend | reconnect / refresh credentials |
-| `/suspend` | before snapshot | `sync(2)` flush |
-| `/terminate` | on teardown | unmount + final `sync` |
+| Hook                  | When                   | What the image does                                |
+| --------------------- | ---------------------- | -------------------------------------------------- |
+| `/ready`, `/validate` | image build            | health / validation (return 200)                   |
+| `/run`                | per VM start           | `mount-s3` the workspace from the run-hook payload |
+| `/resume`             | on resume from suspend | reconnect / refresh credentials                    |
+| `/suspend`            | before snapshot        | `sync(2)` flush                                    |
+| `/terminate`          | on teardown            | unmount + final `sync`                             |
 
 The self-hosted `sandbox` (workdir) backend performs the equivalent mount/flush work
 through its own pause/resume lifecycle. See [Lambda → Lifecycle hooks](lambda.md#lifecycle-hooks).

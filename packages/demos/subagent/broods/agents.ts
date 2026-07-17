@@ -45,7 +45,8 @@ export const parent = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: "You are a helpful assistant. Please answer based on the informations provided",
+      system:
+        "You are a helpful assistant. Please answer based on the informations provided",
     },
     subagent: {
       enabled: true,

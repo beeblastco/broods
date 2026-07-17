@@ -32,7 +32,9 @@ export function markHandlerEntry(now: number): void {
  * window onto this request's trace. Returns null on warm runs, on runs that
  * began too long after process start, and after the first consumption.
  */
-export function consumeColdStart(runStartedMs: number): { startMs: number; durationMs: number } | null {
+export function consumeColdStart(
+  runStartedMs: number,
+): { startMs: number; durationMs: number } | null {
   if (coldStartConsumed || !coldStartWindow) {
     return null;
   }
@@ -45,7 +47,10 @@ export function consumeColdStart(runStartedMs: number): { startMs: number; durat
     return null;
   }
 
-  const rawDurationMs = Math.max(0, coldStartWindow.endMs - coldStartWindow.startMs);
+  const rawDurationMs = Math.max(
+    0,
+    coldStartWindow.endMs - coldStartWindow.startMs,
+  );
   const durationMs = Math.min(rawDurationMs, MAX_COLD_START_MS);
 
   // Anchor the (possibly clamped) window to the handler entry so the span never

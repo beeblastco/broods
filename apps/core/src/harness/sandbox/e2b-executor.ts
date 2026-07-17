@@ -11,7 +11,12 @@ import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts"
 import { optionalEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { resolveSandboxLifecycle } from "../../shared/sandbox.ts";
-import { claimSandboxInstance, deleteSandboxInstance, getSandboxExternalId, saveSandboxInstance } from "./instance-store.ts";
+import {
+  claimSandboxInstance,
+  deleteSandboxInstance,
+  getSandboxExternalId,
+  saveSandboxInstance,
+} from "./instance-store.ts";
 import { callbackSnippet, generateJobId } from "./jobs.ts";
 import type {
   SandboxExecutor,
@@ -20,7 +25,14 @@ import type {
   SandboxRunRequest,
   SandboxRunResult,
 } from "./types.ts";
-import { configString, isSandboxGoneError, sandboxReservationKey, shellQuote, stringRecord, truncateText } from "./utils.ts";
+import {
+  configString,
+  isSandboxGoneError,
+  sandboxReservationKey,
+  shellQuote,
+  stringRecord,
+  truncateText,
+} from "./utils.ts";
 
 export class E2BSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -37,10 +49,19 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     try {
       const result = await sandbox.commands.run(request.code, {
         timeoutMs: request.timeoutSeconds * 1000,
-        envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
+        envs: {
+          ...stringRecord(this.#config.envVars),
+          ...(request.envVars ?? {}),
+        },
       });
-      const stdout = truncateText(result.stdout ?? "", request.outputLimitBytes);
-      const stderr = truncateText([result.stderr, result.error].filter(Boolean).join("\n"), request.outputLimitBytes);
+      const stdout = truncateText(
+        result.stdout ?? "",
+        request.outputLimitBytes,
+      );
+      const stderr = truncateText(
+        [result.stderr, result.error].filter(Boolean).join("\n"),
+        request.outputLimitBytes,
+      );
       return {
         ok: (result.exitCode ?? null) === 0,
         runtime: request.runtime ?? "bash",
@@ -60,16 +81,25 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
     const jobId = request.jobId ?? generateJobId();
-    const handle = await sandbox.commands.run(e2bBackgroundCommand(request, jobId), {
-      background: true,
-      timeoutMs: request.timeoutSeconds * 1000,
-      envs: { ...stringRecord(this.#config.envVars), ...(request.envVars ?? {}) },
-    });
-    await handle.disconnect().catch(() => { });
+    const handle = await sandbox.commands.run(
+      e2bBackgroundCommand(request, jobId),
+      {
+        background: true,
+        timeoutMs: request.timeoutSeconds * 1000,
+        envs: {
+          ...stringRecord(this.#config.envVars),
+          ...(request.envVars ?? {}),
+        },
+      },
+    );
+    await handle.disconnect().catch(() => {});
     return { jobId };
   }
 
-  async release(request: { namespace?: string; reservationKey?: string }): Promise<void> {
+  async release(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
     const externalId = await getSandboxExternalId("e2b", key);
@@ -81,16 +111,24 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("e2b", key).catch(() => { });
+    await deleteSandboxInstance("e2b", key).catch(() => {});
   }
 
-  #persistent(request: { namespace?: string; reservationKey?: string }): boolean {
+  #persistent(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): boolean {
     return this.#config.persistent === true && !!sandboxReservationKey(request);
   }
 
-  #requirePersistent(request: { namespace?: string; reservationKey?: string }): void {
+  #requirePersistent(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): void {
     if (!this.#persistent(request)) {
-      throw new Error("background jobs require a persistent e2b sandbox reservation key");
+      throw new Error(
+        "background jobs require a persistent e2b sandbox reservation key",
+      );
     }
   }
 
@@ -102,34 +140,54 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     const externalId = await getSandboxExternalId("e2b", ns);
     if (externalId) {
       try {
-        const sandbox = await Sandbox.connect(externalId, e2bApiOptions(this.#config));
-        await saveSandboxInstance("e2b", ns, externalId).catch(() => { });
-        await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, externalId, request.metadata);
+        const sandbox = await Sandbox.connect(
+          externalId,
+          e2bApiOptions(this.#config),
+        );
+        await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "e2b",
+          ns,
+          externalId,
+          request.metadata,
+        );
         return sandbox;
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("e2b", ns, externalId).catch(() => { });
+        await deleteSandboxInstance("e2b", ns, externalId).catch(() => {});
       }
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
     if (await claimSandboxInstance("e2b", ns, created.sandboxId)) {
-      await upsertSandboxInstance(this.#config.controlPlane, "e2b", ns, created.sandboxId, request.metadata);
+      await upsertSandboxInstance(
+        this.#config.controlPlane,
+        "e2b",
+        ns,
+        created.sandboxId,
+        request.metadata,
+      );
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
     const winner = await getSandboxExternalId("e2b", ns);
-    await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(() => { });
-    if (!winner) throw new Error("failed to reserve e2b sandbox (lost create race)");
+    await Sandbox.kill(created.sandboxId, e2bApiOptions(this.#config)).catch(
+      () => {},
+    );
+    if (!winner)
+      throw new Error("failed to reserve e2b sandbox (lost create race)");
     return Sandbox.connect(winner, e2bApiOptions(this.#config));
   }
-
 }
 
-function e2bBackgroundCommand(request: SandboxRunRequest, jobId: string): string {
+function e2bBackgroundCommand(
+  request: SandboxRunRequest,
+  jobId: string,
+): string {
   if (!request.callback) {
     return request.code;
   }
@@ -152,20 +210,29 @@ function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
   return {
     ...(apiKey ? { apiKey } : {}),
-    timeoutMs: resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
+    timeoutMs:
+      resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
   };
 }
 
-function e2bCreateOptions(config: SandboxExecutorConfig, persistent: boolean): Record<string, unknown> {
+function e2bCreateOptions(
+  config: SandboxExecutorConfig,
+  persistent: boolean,
+): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
-  const template = configString(options.template) ?? configString(options.templateId);
+  const template =
+    configString(options.template) ?? configString(options.templateId);
   return {
     ...(apiKey ? { apiKey } : {}),
     ...(template ? { template } : {}),
     // Auto-pause on idle (instead of kill) so a reserved sandbox can be resumed.
     ...(persistent
-      ? { timeoutMs: resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000, lifecycle: { onTimeout: "pause" } }
+      ? {
+          timeoutMs:
+            resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
+          lifecycle: { onTimeout: "pause" },
+        }
       : {}),
   };
 }

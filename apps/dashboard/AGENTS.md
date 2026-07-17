@@ -34,13 +34,15 @@ WorkOS AuthKit handles SSO with Google OAuth. Dashboard-owned auth code lives in
 Convex user sync, JWT config, and authenticated Convex functions are backend concerns. Read `../../packages/convex/AGENTS.md` before changing them.
 
 - Ignore or skip `components/ui/` (Shadcn components)
-- React components: one-line description of what it displays
-- Update docstrings when modifying functions
 - Component files use CamelCase naming
 
 Do not create new function unless it is completely different from and cannot reusable code in any way. Try to figure it out a way to write less code but still maintainable. Remember the larger the code base and more complex -> the more technical debt.
 
 - Each return clause have to seperate 1 line before the return statement.
+
+Do not use sonner, toast, or any transient popup notification library. Feedback and state must be visible and interactive through the main components themselves.
+
+Do not add custom `gap`, `margin`, or `padding`. shadcn/ui already ships its own theme and spacing — use the defaults, and only reach for custom spacing when explicitly asked.
 
 UI/UX cursor rules — every interactive element must have an explicit cursor class:
 

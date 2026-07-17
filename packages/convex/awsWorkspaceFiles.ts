@@ -9,20 +9,20 @@
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import {
-    deleteWorkspacePath,
-    listWorkspaceFiles,
-    purgeWorkspaceFilesystem,
-    renameWorkspacePath,
-    uploadWorkspaceFile,
-    workspaceFileDownloadUrl,
+  deleteWorkspacePath,
+  listWorkspaceFiles,
+  purgeWorkspaceFilesystem,
+  renameWorkspacePath,
+  uploadWorkspaceFile,
+  workspaceFileDownloadUrl,
 } from "./model/workspaceFs";
 
 const fileEntry = v.object({
-    path: v.string(),
-    name: v.string(),
-    isFolder: v.boolean(),
-    sizeBytes: v.optional(v.number()),
-    updatedAt: v.optional(v.string()),
+  path: v.string(),
+  name: v.string(),
+  isFolder: v.boolean(),
+  sizeBytes: v.optional(v.number()),
+  updatedAt: v.optional(v.string()),
 });
 
 /**
@@ -32,11 +32,11 @@ const fileEntry = v.object({
  * @returns files plus synthesized folder entries
  */
 export const list = internalAction({
-    args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") },
-    returns: v.array(fileEntry),
-    handler: async (_ctx, args) => {
-        return await listWorkspaceFiles(args.accountId, args.workspaceId);
-    },
+  args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") },
+  returns: v.array(fileEntry),
+  handler: async (_ctx, args) => {
+    return await listWorkspaceFiles(args.accountId, args.workspaceId);
+  },
 });
 
 /**
@@ -47,21 +47,21 @@ export const list = internalAction({
  * @returns the stored file entry
  */
 export const upload = internalAction({
-    args: {
-        accountId: v.id("accounts"),
-        workspaceId: v.id("workspaceConfigs"),
-        path: v.string(),
-        contentBase64: v.string(),
-        contentType: v.optional(v.string()),
-    },
-    returns: fileEntry,
-    handler: async (_ctx, args) => {
-        return await uploadWorkspaceFile(args.accountId, args.workspaceId, {
-            path: args.path,
-            contentBase64: args.contentBase64,
-            contentType: args.contentType,
-        });
-    },
+  args: {
+    accountId: v.id("accounts"),
+    workspaceId: v.id("workspaceConfigs"),
+    path: v.string(),
+    contentBase64: v.string(),
+    contentType: v.optional(v.string()),
+  },
+  returns: fileEntry,
+  handler: async (_ctx, args) => {
+    return await uploadWorkspaceFile(args.accountId, args.workspaceId, {
+      path: args.path,
+      contentBase64: args.contentBase64,
+      contentType: args.contentType,
+    });
+  },
 });
 
 /**
@@ -72,11 +72,19 @@ export const upload = internalAction({
  * @returns a short-lived S3 GET URL
  */
 export const downloadUrl = internalAction({
-    args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs"), path: v.string() },
-    returns: v.string(),
-    handler: async (_ctx, args) => {
-        return await workspaceFileDownloadUrl(args.accountId, args.workspaceId, args.path);
-    },
+  args: {
+    accountId: v.id("accounts"),
+    workspaceId: v.id("workspaceConfigs"),
+    path: v.string(),
+  },
+  returns: v.string(),
+  handler: async (_ctx, args) => {
+    return await workspaceFileDownloadUrl(
+      args.accountId,
+      args.workspaceId,
+      args.path,
+    );
+  },
 });
 
 /**
@@ -87,11 +95,19 @@ export const downloadUrl = internalAction({
  * @returns the number of objects deleted
  */
 export const removePath = internalAction({
-    args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs"), path: v.string() },
-    returns: v.number(),
-    handler: async (_ctx, args) => {
-        return await deleteWorkspacePath(args.accountId, args.workspaceId, args.path);
-    },
+  args: {
+    accountId: v.id("accounts"),
+    workspaceId: v.id("workspaceConfigs"),
+    path: v.string(),
+  },
+  returns: v.number(),
+  handler: async (_ctx, args) => {
+    return await deleteWorkspacePath(
+      args.accountId,
+      args.workspaceId,
+      args.path,
+    );
+  },
 });
 
 /**
@@ -101,11 +117,11 @@ export const removePath = internalAction({
  * @returns the number of objects deleted
  */
 export const purge = internalAction({
-    args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") },
-    returns: v.number(),
-    handler: async (_ctx, args) => {
-        return await purgeWorkspaceFilesystem(args.accountId, args.workspaceId);
-    },
+  args: { accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") },
+  returns: v.number(),
+  handler: async (_ctx, args) => {
+    return await purgeWorkspaceFilesystem(args.accountId, args.workspaceId);
+  },
 });
 
 /**
@@ -116,14 +132,19 @@ export const purge = internalAction({
  * @returns the number of objects moved
  */
 export const renamePath = internalAction({
-    args: {
-        accountId: v.id("accounts"),
-        workspaceId: v.id("workspaceConfigs"),
-        path: v.string(),
-        newPath: v.string(),
-    },
-    returns: v.number(),
-    handler: async (_ctx, args) => {
-        return await renameWorkspacePath(args.accountId, args.workspaceId, args.path, args.newPath);
-    },
+  args: {
+    accountId: v.id("accounts"),
+    workspaceId: v.id("workspaceConfigs"),
+    path: v.string(),
+    newPath: v.string(),
+  },
+  returns: v.number(),
+  handler: async (_ctx, args) => {
+    return await renameWorkspacePath(
+      args.accountId,
+      args.workspaceId,
+      args.path,
+      args.newPath,
+    );
+  },
 });

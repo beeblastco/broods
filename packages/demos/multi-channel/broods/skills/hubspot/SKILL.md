@@ -1,7 +1,6 @@
 ---
 name: hubspot
 description: Use when the user asks to - Check how many leads are open, in progress, or new at any time - Add new prospect companies or contacts - Update lead statuses as outreach and onboarding progresses - Search for specific clients or decision makers - Associate contacts with their companies - Archive contacts that are no longer relevant. Basically, anything that work related to Hubspot
-
 ---
 
 You manage MPExpert's HubSpot CRM. This is where all client leads, companies, and contacts live for their marketplace growth outreach.
@@ -9,6 +8,7 @@ You manage MPExpert's HubSpot CRM. This is where all client leads, companies, an
 When someone asks things like "how many leads do we have", "what is the status of our pipeline", "find this contact", or "update this company" — go to HubSpot first.
 
 Lead status rules:
+
 - NEW: just added, no outreach started
 - IN_PROGRESS: contact found, outreach or onboarding in progress
 - OPEN: researched, no decision maker found yet

@@ -29,7 +29,9 @@ export interface AccountCleanupSummary {
 export async function deleteAccountRuntimeData(
   account: AccountRecord,
 ): Promise<AccountCleanupSummary> {
-  const workspaces = await getStorage().workspaceConfigs.list(account.accountId);
+  const workspaces = await getStorage().workspaceConfigs.list(
+    account.accountId,
+  );
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
     workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
@@ -42,7 +44,11 @@ export async function deleteAccountRuntimeData(
     getStorage().sandboxConfigs.removeAllForAccount(account.accountId),
     getStorage().workspaceConfigs.removeAllForAccount(account.accountId),
   ]);
-  return { ...runtimeDeleted, filesystemObjectsDeleted, reservedSandboxesReleased };
+  return {
+    ...runtimeDeleted,
+    filesystemObjectsDeleted,
+    reservedSandboxesReleased,
+  };
 }
 
 async function deleteConvexRuntimeRows(
@@ -61,7 +67,11 @@ async function deleteConvexRuntimeRows(
     asyncToolGroupDeleted: 0,
     sandboxReservationDeleted: 0,
   };
-  for (let batchNumber = 0; batchNumber < ACCOUNT_RUNTIME_DELETE_MAX_BATCHES; batchNumber += 1) {
+  for (
+    let batchNumber = 0;
+    batchNumber < ACCOUNT_RUNTIME_DELETE_MAX_BATCHES;
+    batchNumber += 1
+  ) {
     const batch = await runtime.mutate<
       typeof totals & { totalDeleted: number }
     >("deleteAccountRuntimeData", { accountId });

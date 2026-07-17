@@ -14,7 +14,12 @@ test("init writes gitignore entries for generated folders", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-cli-init-"));
   try {
     const proc = Bun.spawn({
-      cmd: [process.execPath, new URL("../src/cli/index.ts", import.meta.url).pathname, "init", "--force"],
+      cmd: [
+        process.execPath,
+        new URL("../src/cli/index.ts", import.meta.url).pathname,
+        "init",
+        "--force",
+      ],
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -41,12 +46,20 @@ test("formatDiffEntries prints nothing for no changes", () => {
 });
 
 test("formatDiffEntries renders create, rename, update, and delete labels", () => {
-  const lines = formatDiffEntries([
-    { operation: "create", kind: "agent", name: "support" },
-    { operation: "rename", kind: "agent", previousName: "old-support", name: "support" },
-    { operation: "update", kind: "workspace", name: "repo" },
-    { operation: "delete", kind: "sandbox", name: "old" },
-  ], { color: false });
+  const lines = formatDiffEntries(
+    [
+      { operation: "create", kind: "agent", name: "support" },
+      {
+        operation: "rename",
+        kind: "agent",
+        previousName: "old-support",
+        name: "support",
+      },
+      { operation: "update", kind: "workspace", name: "repo" },
+      { operation: "delete", kind: "sandbox", name: "old" },
+    ],
+    { color: false },
+  );
 
   expect(lines).toEqual([
     "  [+] agent:support",
@@ -57,12 +70,20 @@ test("formatDiffEntries renders create, rename, update, and delete labels", () =
 });
 
 test("formatDiffEntries colors create, rename, update, and delete markers", () => {
-  const lines = formatDiffEntries([
-    { operation: "create", kind: "agent", name: "support" },
-    { operation: "rename", kind: "agent", previousName: "old-support", name: "support" },
-    { operation: "update", kind: "workspace", name: "repo" },
-    { operation: "delete", kind: "sandbox", name: "old" },
-  ], { color: true });
+  const lines = formatDiffEntries(
+    [
+      { operation: "create", kind: "agent", name: "support" },
+      {
+        operation: "rename",
+        kind: "agent",
+        previousName: "old-support",
+        name: "support",
+      },
+      { operation: "update", kind: "workspace", name: "repo" },
+      { operation: "delete", kind: "sandbox", name: "old" },
+    ],
+    { color: true },
+  );
 
   expect(lines[0]).toBe("  [\x1b[32m+\x1b[0m] agent:support");
   expect(lines[1]).toBe("  [\x1b[33m~\x1b[0m] agent:old-support -> support");
@@ -80,24 +101,35 @@ test("formatReadyLine includes a checkmark, time, message, and duration", () => 
 });
 
 test("formatDeploymentTarget includes project, environment, and dashboard URL", () => {
-  const output = formatDeploymentTarget({
-    project: "sandbox-stateless",
-    environment: "development",
-    dashboardUrl: "https://dashboard.dev.broods.app",
-  }, { color: false });
+  const output = formatDeploymentTarget(
+    {
+      project: "sandbox-stateless",
+      environment: "development",
+      dashboardUrl: "https://dashboard.dev.broods.app",
+    },
+    { color: false },
+  );
 
   expect(output).toContain("▌ Syncing Development: sandbox-stateless");
   expect(output).toContain("[Development] development (dashboard)");
-  expect(output).toContain("▌ └─ https://dashboard.dev.broods.app?project=sandbox-stateless&env=development");
+  expect(output).toContain(
+    "▌ └─ https://dashboard.dev.broods.app?project=sandbox-stateless&env=development",
+  );
 });
 
 test("formatEnvSync lists the synced env var names", () => {
-  const line = formatEnvSync(["OPENAI_API_KEY", "STRIPE_API_KEY"], { color: false });
+  const line = formatEnvSync(["OPENAI_API_KEY", "STRIPE_API_KEY"], {
+    color: false,
+  });
 
-  expect(line).toBe("▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, STRIPE_API_KEY");
+  expect(line).toBe(
+    "▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, STRIPE_API_KEY",
+  );
 });
 
 test("formatWarning renders yellow warning output", () => {
   expect(formatWarning("⚠ Heads up", { color: false })).toBe("⚠ Heads up");
-  expect(formatWarning("⚠ Heads up", { color: true })).toBe("\x1b[33m⚠ Heads up\x1b[0m");
+  expect(formatWarning("⚠ Heads up", { color: true })).toBe(
+    "\x1b[33m⚠ Heads up\x1b[0m",
+  );
 });

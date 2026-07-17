@@ -11,7 +11,10 @@
  * without importing across the _shared/harness boundary.
  */
 
-import type { SandboxNetworkMode, SandboxPermissionMode } from "./domain/sandbox-config.ts";
+import type {
+  SandboxNetworkMode,
+  SandboxPermissionMode,
+} from "./domain/sandbox-config.ts";
 
 export type SandboxSize = "tiny" | "xsmall" | "small" | "medium" | "large";
 
@@ -45,7 +48,13 @@ export const SANDBOX_SIZES: Record<SandboxSize, SandboxSpecs> = {
   large: { vcpu: 4, memoryMb: 8192, storageGb: 32 },
 };
 
-export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = ["tiny", "xsmall", "small", "medium", "large"];
+export const SANDBOX_SIZE_NAMES: readonly SandboxSize[] = [
+  "tiny",
+  "xsmall",
+  "small",
+  "medium",
+  "large",
+];
 
 /** The size used for the mirror specs when a config pins no explicit size or resources. */
 const DEFAULT_SIZE: SandboxSize = "xsmall";
@@ -94,7 +103,8 @@ export function resolveSandboxSpecs(input: {
   const options = input.options ?? {};
   return {
     vcpu: numberOrUndefined(options.cpu) ?? base.vcpu,
-    memoryMb: numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
+    memoryMb:
+      numberOrUndefined(options.memoryMb) ?? input.memoryLimit ?? base.memoryMb,
     storageGb: numberOrUndefined(options.diskGb) ?? base.storageGb,
   };
 }
@@ -105,13 +115,21 @@ export function resolveSandboxSpecs(input: {
  * @param size the pinned sandbox size.
  * @returns the cpu/memoryMb/diskGb to request from workdir.
  */
-export function workdirSizeResources(size: SandboxSize): { cpu: number; memoryMb: number; diskGb: number } {
+export function workdirSizeResources(size: SandboxSize): {
+  cpu: number;
+  memoryMb: number;
+  diskGb: number;
+} {
   const specs = SANDBOX_SIZES[size];
-  const cpu = WORKDIR_CPU_CHOICES.find((choice) => choice >= specs.vcpu) ?? WORKDIR_CPU_CHOICES[WORKDIR_CPU_CHOICES.length - 1]!;
+  const cpu =
+    WORKDIR_CPU_CHOICES.find((choice) => choice >= specs.vcpu) ??
+    WORKDIR_CPU_CHOICES[WORKDIR_CPU_CHOICES.length - 1]!;
 
   return { cpu, memoryMb: specs.memoryMb, diskGb: specs.storageGb };
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }

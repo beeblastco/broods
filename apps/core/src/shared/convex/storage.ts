@@ -23,12 +23,15 @@ import {
 import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
 import type { CronRecord } from "../domain/cron.ts";
-import type { SandboxConfig, SandboxConfigRecord } from "../domain/sandbox-config.ts";
-import type { WorkspaceConfig, WorkspaceConfigRecord } from "../domain/workspace-config.ts";
 import type {
-  AgentDeploymentScope,
-  Storage,
-} from "../storage.ts";
+  SandboxConfig,
+  SandboxConfigRecord,
+} from "../domain/sandbox-config.ts";
+import type {
+  WorkspaceConfig,
+  WorkspaceConfigRecord,
+} from "../domain/workspace-config.ts";
+import type { AgentDeploymentScope, Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
 
@@ -44,9 +47,14 @@ const internal: any = require("@broods/convex/_generated/api").internal;
 const ACCOUNT_DELETE_MAX_BATCHES = 100_000;
 const DELETE_CONCURRENCY = 20;
 
-async function removeInBatches<T>(docs: T[], remove: (doc: T) => Promise<unknown>): Promise<void> {
+async function removeInBatches<T>(
+  docs: T[],
+  remove: (doc: T) => Promise<unknown>,
+): Promise<void> {
   for (let offset = 0; offset < docs.length; offset += DELETE_CONCURRENCY) {
-    await Promise.all(docs.slice(offset, offset + DELETE_CONCURRENCY).map(remove));
+    await Promise.all(
+      docs.slice(offset, offset + DELETE_CONCURRENCY).map(remove),
+    );
   }
 }
 
@@ -88,15 +96,16 @@ interface ConvexAgentDoc {
 
 function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
   if (!doc) return null;
-  const config = doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-    ? decodeStoredAgentConfig({
-      encrypted: true as const,
-      algorithm: "aes-256-gcm",
-      ciphertext: doc.encryptedConfig,
-      iv: doc.encryptionIv,
-      tag: doc.encryptionTag,
-    })
-    : {};
+  const config =
+    doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
+      ? decodeStoredAgentConfig({
+          encrypted: true as const,
+          algorithm: "aes-256-gcm",
+          ciphertext: doc.encryptedConfig,
+          iv: doc.encryptionIv,
+          tag: doc.encryptionTag,
+        })
+      : {};
   return {
     accountId: doc.accountId,
     agentId: doc._id,
@@ -146,7 +155,9 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
     schedulerGroupName: doc.schedulerGroupName,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.lastInvokedAt ? { lastInvokedAt: new Date(doc.lastInvokedAt).toISOString() } : {}),
+    ...(doc.lastInvokedAt
+      ? { lastInvokedAt: new Date(doc.lastInvokedAt).toISOString() }
+      : {}),
     ...(doc.lastStatus ? { lastStatus: doc.lastStatus } : {}),
     ...(doc.lastError ? { lastError: doc.lastError } : {}),
   };
@@ -160,21 +171,24 @@ const accounts: Storage["accounts"] = {
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
   async getBySecretHash(secretHash) {
-    const doc = await getConvexClient().query(internal.accounts.getBySecretHash, {
-      secretHash,
-    });
+    const doc = await getConvexClient().query(
+      internal.accounts.getBySecretHash,
+      {
+        secretHash,
+      },
+    );
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
   async create(input) {
     const normalized = normalizeCreateAccountInput(input);
     const secret = createAccountSecret();
-    const doc = await getConvexClient().mutation(internal.accounts.create, {
+    const doc = (await getConvexClient().mutation(internal.accounts.create, {
       orgId: `admin:${createAccountId()}`,
       username: normalized.username,
       description: normalized.description,
       secretHash: hashAccountSecret(secret),
       status: "active",
-    }) as ConvexAccountDoc;
+    })) as ConvexAccountDoc;
     const account = accountFromConvex(doc);
     if (!account) throw new Error("Failed to fetch created account");
     return { account, secret };
@@ -188,12 +202,17 @@ const accounts: Storage["accounts"] = {
   },
   async remove(accountId) {
     for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {
-      const complete = await getConvexClient().mutation(internal.accounts.removeBatch, {
-        accountId: accountId as any,
-      });
+      const complete = await getConvexClient().mutation(
+        internal.accounts.removeBatch,
+        {
+          accountId: accountId as any,
+        },
+      );
       if (complete) return true;
     }
-    throw new Error(`Account deletion exceeded ${ACCOUNT_DELETE_MAX_BATCHES} Convex batches`);
+    throw new Error(
+      `Account deletion exceeded ${ACCOUNT_DELETE_MAX_BATCHES} Convex batches`,
+    );
   },
 };
 
@@ -213,7 +232,7 @@ const agents: Storage["agents"] = {
       getConvexClient().mutation(internal.agents.remove, {
         accountId: accountId as any,
         agentId: doc._id as any,
-      })
+      }),
     );
     return docs.length;
   },
@@ -221,16 +240,22 @@ const agents: Storage["agents"] = {
 
 const agentDeployments: Storage["agentDeployments"] = {
   async getByApiKeyHash(apiKeyHash) {
-    const doc = await getConvexClient().query(internal.agentDeployments.getByApiKeyHash, {
-      apiKeyHash: apiKeyHash,
-    }) as AgentDeploymentScope | null;
+    const doc = (await getConvexClient().query(
+      internal.agentDeployments.getByApiKeyHash,
+      {
+        apiKeyHash: apiKeyHash,
+      },
+    )) as AgentDeploymentScope | null;
     return doc;
   },
   async getByAgentId(accountId, agentId) {
-    const doc = await getConvexClient().query(internal.agentDeployments.getByAgentId, {
-      accountId: accountId as any,
-      agentId: agentId,
-    }) as AgentDeploymentScope | null;
+    const doc = (await getConvexClient().query(
+      internal.agentDeployments.getByAgentId,
+      {
+        accountId: accountId as any,
+        agentId: agentId,
+      },
+    )) as AgentDeploymentScope | null;
     return doc;
   },
 };
@@ -279,12 +304,12 @@ const crons: Storage["crons"] = {
     });
   },
   async createRun(input) {
-    const runId = await getConvexClient().mutation(internal.cron.createRun, {
+    const runId = (await getConvexClient().mutation(internal.cron.createRun, {
       accountId: input.accountId as any,
       cronId: input.cronId as any,
       eventId: input.eventId,
       conversationKey: input.conversationKey,
-    }) as string;
+    })) as string;
     return {
       ...input,
       runId,
@@ -324,17 +349,24 @@ interface ConvexSandboxConfigDoc {
   updatedAt: number;
 }
 
-function sandboxConfigFromConvex(doc: ConvexSandboxConfigDoc | null): SandboxConfigRecord | null {
+function sandboxConfigFromConvex(
+  doc: ConvexSandboxConfigDoc | null,
+): SandboxConfigRecord | null {
   if (!doc) return null;
-  const config = doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
-    ? (decodeStoredConfigObject({
-      encrypted: true as const,
-      algorithm: "aes-256-gcm",
-      ciphertext: doc.encryptedConfig,
-      iv: doc.encryptionIv,
-      tag: doc.encryptionTag,
-    }) as unknown as SandboxConfig)
-    : ({ provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } } as SandboxConfig);
+  const config =
+    doc.encryptedConfig && doc.encryptionIv && doc.encryptionTag
+      ? (decodeStoredConfigObject({
+          encrypted: true as const,
+          algorithm: "aes-256-gcm",
+          ciphertext: doc.encryptedConfig,
+          iv: doc.encryptionIv,
+          tag: doc.encryptionTag,
+        }) as unknown as SandboxConfig)
+      : ({
+          provider: "sandbox",
+          permissionMode: "ask",
+          network: { mode: "deny-all" },
+        } as SandboxConfig);
   return {
     accountId: doc.accountId,
     sandboxId: doc._id,
@@ -358,7 +390,9 @@ interface ConvexWorkspaceConfigDoc {
   updatedAt: number;
 }
 
-function workspaceConfigFromConvex(doc: ConvexWorkspaceConfigDoc | null): WorkspaceConfigRecord | null {
+function workspaceConfigFromConvex(
+  doc: ConvexWorkspaceConfigDoc | null,
+): WorkspaceConfigRecord | null {
   if (!doc) return null;
   return {
     accountId: doc.accountId,
@@ -393,7 +427,7 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
       getConvexClient().mutation(internal.sandboxConfigs.remove, {
         accountId: accountId as any,
         sandboxId: doc._id as any,
-      })
+      }),
     );
     return docs.length;
   },
@@ -401,27 +435,36 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
 
 const workspaceConfigs: Storage["workspaceConfigs"] = {
   async getById(accountId, workspaceId) {
-    const doc = await getConvexClient().query(internal.workspaceConfigs.getById, {
-      accountId: accountId as any,
-      workspaceId: workspaceId as any,
-    });
+    const doc = await getConvexClient().query(
+      internal.workspaceConfigs.getById,
+      {
+        accountId: accountId as any,
+        workspaceId: workspaceId as any,
+      },
+    );
     return workspaceConfigFromConvex(doc as ConvexWorkspaceConfigDoc | null);
   },
   async list(accountId) {
-    const docs = (await getConvexClient().query(internal.workspaceConfigs.list, {
-      accountId: accountId as any,
-    })) as ConvexWorkspaceConfigDoc[];
+    const docs = (await getConvexClient().query(
+      internal.workspaceConfigs.list,
+      {
+        accountId: accountId as any,
+      },
+    )) as ConvexWorkspaceConfigDoc[];
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
   async removeAllForAccount(accountId) {
-    const docs = (await getConvexClient().query(internal.workspaceConfigs.list, {
-      accountId: accountId as any,
-    })) as ConvexWorkspaceConfigDoc[];
+    const docs = (await getConvexClient().query(
+      internal.workspaceConfigs.list,
+      {
+        accountId: accountId as any,
+      },
+    )) as ConvexWorkspaceConfigDoc[];
     await removeInBatches(docs, (doc) =>
       getConvexClient().mutation(internal.workspaceConfigs.remove, {
         accountId: accountId as any,
         workspaceId: doc._id as any,
-      })
+      }),
     );
     return docs.length;
   },
@@ -443,7 +486,9 @@ interface ConvexAccountToolDoc {
   deletedAt?: number;
 }
 
-function accountToolFromConvex(doc: ConvexAccountToolDoc | null): AccountToolRecord | null {
+function accountToolFromConvex(
+  doc: ConvexAccountToolDoc | null,
+): AccountToolRecord | null {
   if (!doc) return null;
   return {
     accountId: doc.accountId,
@@ -454,11 +499,15 @@ function accountToolFromConvex(doc: ConvexAccountToolDoc | null): AccountToolRec
     bundleStorageKey: doc.bundleStorageKey,
     sha256: doc.sha256,
     runtime: doc.runtime === "isolate" ? "isolate" : "sandbox",
-    ...(doc.defaultConfig !== undefined ? { defaultConfig: doc.defaultConfig } : {}),
+    ...(doc.defaultConfig !== undefined
+      ? { defaultConfig: doc.defaultConfig }
+      : {}),
     status: doc.status,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.deletedAt ? { deletedAt: new Date(doc.deletedAt).toISOString() } : {}),
+    ...(doc.deletedAt
+      ? { deletedAt: new Date(doc.deletedAt).toISOString() }
+      : {}),
   };
 }
 
@@ -473,7 +522,9 @@ interface ConvexAgentPolicyDoc {
   updatedAt: number;
 }
 
-function agentPolicyFromConvex(doc: ConvexAgentPolicyDoc | null): AgentPolicyRecord | null {
+function agentPolicyFromConvex(
+  doc: ConvexAgentPolicyDoc | null,
+): AgentPolicyRecord | null {
   if (!doc) return null;
 
   return {
@@ -502,7 +553,9 @@ interface ConvexAccountHookDoc {
   deletedAt?: number;
 }
 
-function accountHookFromConvex(doc: ConvexAccountHookDoc | null): AccountHookRecord | null {
+function accountHookFromConvex(
+  doc: ConvexAccountHookDoc | null,
+): AccountHookRecord | null {
   if (!doc) return null;
   return {
     accountId: doc.accountId,
@@ -515,7 +568,9 @@ function accountHookFromConvex(doc: ConvexAccountHookDoc | null): AccountHookRec
     status: doc.status,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.deletedAt ? { deletedAt: new Date(doc.deletedAt).toISOString() } : {}),
+    ...(doc.deletedAt
+      ? { deletedAt: new Date(doc.deletedAt).toISOString() }
+      : {}),
   };
 }
 
@@ -546,7 +601,7 @@ const accountTools: Storage["accountTools"] = {
       getConvexClient().mutation(internal.accountTools.remove, {
         accountId: accountId as any,
         toolId: doc._id as any,
-      })
+      }),
     );
     return docs.length;
   },
@@ -568,7 +623,7 @@ const accountHooks: Storage["accountHooks"] = {
       getConvexClient().mutation(internal.accountHooks.remove, {
         accountId: accountId as any,
         hookId: doc._id as any,
-      })
+      }),
     );
     return docs.length;
   },

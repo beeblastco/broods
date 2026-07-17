@@ -4,11 +4,15 @@ export const streamProgressTool = defineTool({
   name: "stream_progress",
   config: {
     path: "tools/stream-progress.ts",
-    description: "Counts to `steps`, streaming one progress update per step before the final summary.",
+    description:
+      "Counts to `steps`, streaming one progress update per step before the final summary.",
     inputSchema: {
       type: "object",
       properties: {
-        steps: { type: "number", description: "How many progress updates to stream." },
+        steps: {
+          type: "number",
+          description: "How many progress updates to stream.",
+        },
       },
       required: ["steps"],
       additionalProperties: false,
@@ -31,7 +35,8 @@ export const streamingToolAgent = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: "You are a helpful assistant. When asked, call the stream_progress tool and then report its final result.",
+      system:
+        "You are a helpful assistant. When asked, call the stream_progress tool and then report its final result.",
     },
     tools: {
       [streamProgressTool.name]: {

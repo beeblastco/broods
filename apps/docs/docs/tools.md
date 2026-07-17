@@ -22,14 +22,14 @@ flowchart LR
 
 ## Current Tools
 
-| Tool | File | External dependency | Config key |
-| --- | --- | --- | --- |
-| `tavilySearch` | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts) | Tavily AI SDK search | `config.tools.tavilySearch` |
-| `tavilyExtract` | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts) | Tavily AI SDK extract | `config.tools.tavilyExtract` |
-| `googleSearch` | [`src/harness/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/google-search.tool.ts) | Google provider-defined tool | `config.tools.googleSearch` |
-| `handoffs` | [`src/harness/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/handoffs.tool.ts) | Pancake tags + Zalo staff ping | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
-| `async_status` | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below) | — |
-| Uploaded custom tool | S3 bundle + account tool metadata | V8 isolate for `runtime: "isolate"`; sandbox runtime deferred (#82) | `config.tools.<toolId>` |
+| Tool                 | File                                                                                                                                         | External dependency                                                 | Config key                                                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `tavilySearch`       | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts)               | Tavily AI SDK search                                                | `config.tools.tavilySearch`                                                                         |
+| `tavilyExtract`      | [`src/harness/tools/tavily.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/tavily.tool.ts)               | Tavily AI SDK extract                                               | `config.tools.tavilyExtract`                                                                        |
+| `googleSearch`       | [`src/harness/tools/google-search.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/google-search.tool.ts) | Google provider-defined tool                                        | `config.tools.googleSearch`                                                                         |
+| `handoffs`           | [`src/harness/tools/handoffs.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/handoffs.tool.ts)           | Pancake tags + Zalo staff ping                                      | `config.tools.handoffs` (`pancake.scenarioTagIds.{order,pending}`, `zalo.{botToken,notifyUserIds}`) |
+| `async_status`       | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts)   | — (auto-registered, see below)                                      | —                                                                                                   |
+| Uploaded custom tool | S3 bundle + account tool metadata                                                                                                            | V8 isolate for `runtime: "isolate"`; sandbox runtime deferred (#82) | `config.tools.<toolId>`                                                                             |
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
@@ -97,14 +97,14 @@ SSE fullStream: tool-result(preliminary) … tool-result(preliminary) … tool-r
 
 When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle from the tool type and request path:
 
-| Tool type | Request path | Tool code runs in | Request/worker waits? | Result completion | Model continuation |
-| --- | --- | --- | --- | --- | --- |
-| Built-in sync | all paths | `harness-processing` | Yes | tool `execute()` return value | same active agent loop |
-| Built-in async | all paths | `harness-processing` | Yes | tool `execute()` return value | same active agent loop injects result |
-| Uploaded isolate sync | all paths | V8 isolate in Node child | Yes | isolate returns final result | same active agent loop |
-| Uploaded isolate async | SSE and other non-detached paths | V8 isolate in Node child | Yes | isolate returns final result | same active agent loop injects result |
-| Uploaded sandbox runtime | all paths | deferred external tier | — | unsupported off Lambda (#82) | clear dispatcher error |
-| Uploaded detached async | `/async`, channel, NATS | deferred external tier | — | unsupported off Lambda (#82) | clear dispatcher error |
+| Tool type                | Request path                     | Tool code runs in        | Request/worker waits? | Result completion             | Model continuation                    |
+| ------------------------ | -------------------------------- | ------------------------ | --------------------- | ----------------------------- | ------------------------------------- |
+| Built-in sync            | all paths                        | `harness-processing`     | Yes                   | tool `execute()` return value | same active agent loop                |
+| Built-in async           | all paths                        | `harness-processing`     | Yes                   | tool `execute()` return value | same active agent loop injects result |
+| Uploaded isolate sync    | all paths                        | V8 isolate in Node child | Yes                   | isolate returns final result  | same active agent loop                |
+| Uploaded isolate async   | SSE and other non-detached paths | V8 isolate in Node child | Yes                   | isolate returns final result  | same active agent loop injects result |
+| Uploaded sandbox runtime | all paths                        | deferred external tier   | —                     | unsupported off Lambda (#82)  | clear dispatcher error                |
+| Uploaded detached async  | `/async`, channel, NATS          | deferred external tier   | —                     | unsupported off Lambda (#82)  | clear dispatcher error                |
 
 The async coordination subsystem still exists. It creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results for built-in async tools and non-detached uploaded isolate tools. Uploaded detached async execution has no background execution path today; the dispatcher returns a clear error that detached uploaded tools are not yet supported off Lambda and are tracked in #82.
 
@@ -305,7 +305,7 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
         const response = await fetch("https://api.example.com/search", {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${apiKey}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ query, ...options }),

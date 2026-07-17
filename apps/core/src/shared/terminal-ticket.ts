@@ -5,7 +5,12 @@
  * AES-256-GCM ciphertext, so the browser only ever holds an opaque token.
  */
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import { isPlainObject } from "./object.ts";
 
 const TICKET_ALGORITHM = "aes-256-gcm";
@@ -30,13 +35,21 @@ export interface TerminalTicket {
 // The ticket key is derived, not the raw service secret, so a leaked ticket key
 // context can never stand in for service-to-service auth.
 function ticketKey(secret: string): Buffer {
-  return createHash("sha256").update(`sandbox-terminal-ticket:${secret}`).digest();
+  return createHash("sha256")
+    .update(`sandbox-terminal-ticket:${secret}`)
+    .digest();
 }
 
-export function sealTerminalTicket(ticket: TerminalTicket, secret: string): string {
+export function sealTerminalTicket(
+  ticket: TerminalTicket,
+  secret: string,
+): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv(TICKET_ALGORITHM, ticketKey(secret), iv);
-  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(ticket), "utf-8"), cipher.final()]);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(ticket), "utf-8"),
+    cipher.final(),
+  ]);
 
   return [
     TICKET_VERSION,
@@ -50,11 +63,26 @@ export function sealTerminalTicket(ticket: TerminalTicket, secret: string): stri
  * Decrypts and validates a ticket. Returns null (never throws) on any tamper,
  * wrong-secret, or expiry failure so callers can try their other stage secrets.
  */
-export function openTerminalTicket(token: string, secret: string, now = Date.now()): TerminalTicket | null {
+export function openTerminalTicket(
+  token: string,
+  secret: string,
+  now = Date.now(),
+): TerminalTicket | null {
   const [version, iv, tag, ciphertext, extra] = token.split(".");
-  if (version !== TICKET_VERSION || !iv || !tag || !ciphertext || extra !== undefined) return null;
+  if (
+    version !== TICKET_VERSION ||
+    !iv ||
+    !tag ||
+    !ciphertext ||
+    extra !== undefined
+  )
+    return null;
   try {
-    const decipher = createDecipheriv(TICKET_ALGORITHM, ticketKey(secret), Buffer.from(iv, "base64url"));
+    const decipher = createDecipheriv(
+      TICKET_ALGORITHM,
+      ticketKey(secret),
+      Buffer.from(iv, "base64url"),
+    );
     decipher.setAuthTag(Buffer.from(tag, "base64url"));
     const plaintext = Buffer.concat([
       decipher.update(Buffer.from(ciphertext, "base64url")),
@@ -62,12 +90,28 @@ export function openTerminalTicket(token: string, secret: string, now = Date.now
     ]).toString("utf-8");
     const parsed: unknown = JSON.parse(plaintext);
     if (!isPlainObject(parsed)) return null;
-    const { url, authorization, authorizationHeader, accountId, expiresAt } = parsed;
-    if (typeof url !== "string" || typeof authorization !== "string" || typeof accountId !== "string") return null;
-    if (authorizationHeader !== undefined && typeof authorizationHeader !== "string") return null;
+    const { url, authorization, authorizationHeader, accountId, expiresAt } =
+      parsed;
+    if (
+      typeof url !== "string" ||
+      typeof authorization !== "string" ||
+      typeof accountId !== "string"
+    )
+      return null;
+    if (
+      authorizationHeader !== undefined &&
+      typeof authorizationHeader !== "string"
+    )
+      return null;
     if (typeof expiresAt !== "number" || expiresAt <= now) return null;
 
-    return { url, authorization, accountId, expiresAt, ...(authorizationHeader ? { authorizationHeader } : {}) };
+    return {
+      url,
+      authorization,
+      accountId,
+      expiresAt,
+      ...(authorizationHeader ? { authorizationHeader } : {}),
+    };
   } catch {
     return null;
   }

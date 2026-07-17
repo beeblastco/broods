@@ -24,9 +24,16 @@ import {
 
 export const MEMORY_DIR = "memory";
 export const MEMORY_INDEX_PATH = `${MEMORY_DIR}/MEMORY.md`;
-export const MEMORY_TYPES = ["user", "feedback", "project", "reference"] as const;
+export const MEMORY_TYPES = [
+  "user",
+  "feedback",
+  "project",
+  "reference",
+] as const;
 
-export type MemoryToolContext = SandboxToolContext & { conversationKey: string };
+export type MemoryToolContext = SandboxToolContext & {
+  conversationKey: string;
+};
 
 interface MemorySaveInput {
   title: string;
@@ -34,37 +41,6 @@ interface MemorySaveInput {
   content: string;
   type?: (typeof MEMORY_TYPES)[number];
   workspace?: string;
-}
-
-function inputSchema(context: MemoryToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-  return {
-    type: "object",
-    properties: {
-      title: { type: "string", description: "Short title of the fact; it becomes the entry's file name (kebab-cased)." },
-      description: { type: "string", description: "One-line summary, shown in the MEMORY.md index and used to decide relevance later." },
-      content: { type: "string", description: "The memory itself (markdown). One fact per entry." },
-      type: {
-        type: "string",
-        enum: [...MEMORY_TYPES],
-        description: "Kind of memory: \"user\" for who a person is, \"feedback\" for guidance or corrections on how to behave, \"project\" for ongoing work or goals, \"reference\" for pointers to resources. Defaults to \"project\".",
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["title", "description", "content"],
-    additionalProperties: false,
-  };
-}
-
-// kebab-case file slug from the title; capped so index lines and paths stay short.
-export function memorySlug(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/, "");
-  return slug.length > 0 ? slug : "memory";
 }
 
 export default function memoryTool(context: MemoryToolContext): ToolSet {
@@ -78,25 +54,35 @@ Usage notes:
 - Check the memory index already in your context first: saving an existing title updates that entry instead of duplicating it.`,
       inputSchema: jsonSchema(inputSchema(context)),
       async execute(input) {
-        const { title, description, content, type, workspace } = input as MemorySaveInput;
+        const { title, description, content, type, workspace } =
+          input as MemorySaveInput;
         try {
           const ws = resolveWorkspace(context.workspaces, workspace);
           if (!ws?.sandbox) {
             return toolError("Error: workspace is read-only");
           }
           if (!workspaceMemoryHarnessEnabled(ws.config)) {
-            return toolError(`Error: the memory harness is disabled for workspace ${ws.name}`);
+            return toolError(
+              `Error: the memory harness is disabled for workspace ${ws.name}`,
+            );
           }
           const cleanTitle = (title ?? "").replace(/\s+/g, " ").trim();
-          const cleanDescription = (description ?? "").replace(/\s+/g, " ").trim();
+          const cleanDescription = (description ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
           if (!cleanTitle) {
             return toolError("Error: title must not be empty");
           }
           if (!cleanDescription) {
             return toolError("Error: description must not be empty");
           }
-          const memoryType = type && (MEMORY_TYPES as readonly string[]).includes(type) ? type : "project";
-          const originSessionId = channelScopeKeyFromConversation(context.conversationKey);
+          const memoryType =
+            type && (MEMORY_TYPES as readonly string[]).includes(type)
+              ? type
+              : "project";
+          const originSessionId = channelScopeKeyFromConversation(
+            context.conversationKey,
+          );
           const slug = memorySlug(cleanTitle);
           const filePath = `${MEMORY_DIR}/${slug}.md`;
 
@@ -132,13 +118,61 @@ Usage notes:
             metadata: sandboxRunMetadata(context, ws),
           });
           if (!result.ok) {
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: memory save failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() ||
+                "Error: memory save failed",
+            );
           }
           return toolText(result.stdout.trim());
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),
   };
+}
+
+function inputSchema(context: MemoryToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+  return {
+    type: "object",
+    properties: {
+      title: {
+        type: "string",
+        description:
+          "Short title of the fact; it becomes the entry's file name (kebab-cased).",
+      },
+      description: {
+        type: "string",
+        description:
+          "One-line summary, shown in the MEMORY.md index and used to decide relevance later.",
+      },
+      content: {
+        type: "string",
+        description: "The memory itself (markdown). One fact per entry.",
+      },
+      type: {
+        type: "string",
+        enum: [...MEMORY_TYPES],
+        description:
+          'Kind of memory: "user" for who a person is, "feedback" for guidance or corrections on how to behave, "project" for ongoing work or goals, "reference" for pointers to resources. Defaults to "project".',
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["title", "description", "content"],
+    additionalProperties: false,
+  };
+}
+
+// kebab-case file slug from the title; capped so index lines and paths stay short.
+export function memorySlug(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/, "");
+  return slug.length > 0 ? slug : "memory";
 }

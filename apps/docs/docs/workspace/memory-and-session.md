@@ -43,7 +43,7 @@ Workspaces are account-scoped records. Any agent or conversation that references
 
 ```mermaid
 flowchart LR
-  Define["defineWorkspace({ name: \"notes\" })"] --> A["Agent A config<br/>notes → ws_notes"]
+  Define["defineWorkspace({ name: &quot;notes&quot; })"] --> A["Agent A config<br/>notes → ws_notes"]
   Define --> B["Agent B config<br/>notes → ws_notes"]
   A --> Files["shared files<br/>MEMORY.md / TASKS.md / project files"]
   B --> Files
@@ -77,12 +77,25 @@ omits the optional `workspace` argument:
 ```ts
 import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
-export const personal = defineWorkspace({ name: "personal", config: { storage: { provider: "s3" } } });
-export const team = defineWorkspace({ name: "team", config: { storage: { provider: "s3" } } });
-export const docs = defineWorkspace({ name: "docs", config: { storage: { provider: "s3" } } });
+export const personal = defineWorkspace({
+  name: "personal",
+  config: { storage: { provider: "s3" } },
+});
+export const team = defineWorkspace({
+  name: "team",
+  config: { storage: { provider: "s3" } },
+});
+export const docs = defineWorkspace({
+  name: "docs",
+  config: { storage: { provider: "s3" } },
+});
 export const lockedDown = defineSandbox({
   name: "locked-down",
-  config: { provider: "lambda", network: { mode: "deny-all" }, permissionMode: "ask" },
+  config: {
+    provider: "lambda",
+    network: { mode: "deny-all" },
+    permissionMode: "ask",
+  },
 });
 
 export const myAgent = defineAgent({
@@ -90,9 +103,9 @@ export const myAgent = defineAgent({
   config: {
     sandbox: lambdaSandbox,
     workspaces: [
-      personal,                                    // inherit agent sandbox
-      { workspace: team, sandbox: lockedDown },    // per-workspace override
-      { workspace: docs, sandbox: null },          // read-only S3 access
+      personal, // inherit agent sandbox
+      { workspace: team, sandbox: lockedDown }, // per-workspace override
+      { workspace: docs, sandbox: null }, // read-only S3 access
     ],
   },
 });

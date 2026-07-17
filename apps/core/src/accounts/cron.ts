@@ -15,12 +15,17 @@ const scheduler = new SchedulerClient({ region: process.env.AWS_REGION });
 
 export async function deleteCronSchedule(job: CronRecord): Promise<void> {
   try {
-    await scheduler.send(new DeleteScheduleCommand({
-      Name: job.schedulerName,
-      GroupName: job.schedulerGroupName,
-    }));
+    await scheduler.send(
+      new DeleteScheduleCommand({
+        Name: job.schedulerName,
+        GroupName: job.schedulerGroupName,
+      }),
+    );
   } catch (err) {
-    if (err instanceof ResourceNotFoundException || (err instanceof Error && err.name === "ResourceNotFoundException")) {
+    if (
+      err instanceof ResourceNotFoundException ||
+      (err instanceof Error && err.name === "ResourceNotFoundException")
+    ) {
       return;
     }
     throw err;

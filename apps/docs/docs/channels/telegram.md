@@ -9,11 +9,7 @@ Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapt
 Define a Telegram channel with `defineTelegramChannel` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineTelegramChannel,
-  env,
-} from "broods";
+import { defineAgent, defineTelegramChannel, env } from "broods";
 
 export const telegram = defineTelegramChannel({
   botToken: env.TELEGRAM_BOT_TOKEN,

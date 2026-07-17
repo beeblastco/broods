@@ -77,31 +77,32 @@ function NavLinksInner() {
 
   return (
     <nav className="flex items-center gap-1">
-      {projectId && NAV_ITEMS.map(({ segment, label }) => {
-        const href = `/${projectId}${segment}${envParam ? `?env=${envParam}` : ""}`;
-        const isActive =
-          segment === ""
-            ? pathname === `/${projectId}`
-            : pathname.startsWith(`/${projectId}${segment}`);
+      {projectId &&
+        NAV_ITEMS.map(({ segment, label }) => {
+          const href = `/${projectId}${segment}${envParam ? `?env=${envParam}` : ""}`;
+          const isActive =
+            segment === ""
+              ? pathname === `/${projectId}`
+              : pathname.startsWith(`/${projectId}${segment}`);
 
-        return (
-          <button
-            key={segment}
-            type="button"
-            onClick={() => router.push(href)}
-            onMouseEnter={() => warmProjectRoute(segment)}
-            onFocus={() => warmProjectRoute(segment)}
-            className={cn(
-              "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
-              isActive
-                ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {label}
-          </button>
-        );
-      })}
+          return (
+            <button
+              key={segment}
+              type="button"
+              onClick={() => router.push(href)}
+              onMouseEnter={() => warmProjectRoute(segment)}
+              onFocus={() => warmProjectRoute(segment)}
+              className={cn(
+                "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
+                isActive
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          );
+        })}
     </nav>
   );
 }

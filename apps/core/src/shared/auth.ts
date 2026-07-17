@@ -6,10 +6,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
-import {
-  hashAccountSecret,
-  type AccountRecord,
-} from "./domain/accounts.ts";
+import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv } from "./env.ts";
 import { getStorage } from "./storage.ts";
 
@@ -17,20 +14,27 @@ export type AuthContext =
   | { kind: "admin" }
   | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean }
   | {
-    // Project + environment scoped runtime key. It does not bind to a single
-    // agent — the agent is chosen per request by id and loaded against this
-    // account, so any deployed agent in the environment is reachable.
-    kind: "deployment";
-    account: AccountRecord;
-    endpointId: string;
-    projectSlug: string;
-    environmentSlug: string;
-  };
+      // Project + environment scoped runtime key. It does not bind to a single
+      // agent — the agent is chosen per request by id and loaded against this
+      // account, so any deployed agent in the environment is reachable.
+      kind: "deployment";
+      account: AccountRecord;
+      endpointId: string;
+      projectSlug: string;
+      environmentSlug: string;
+    };
 
-export function extractBearerToken(authorization: string | undefined): string | null {
+export function extractBearerToken(
+  authorization: string | undefined,
+): string | null {
   if (!authorization) return null;
   const [scheme, token, ...rest] = authorization.trim().split(/\s+/);
-  if (rest.length > 0 || !scheme || !token || scheme.toLowerCase() !== "bearer") {
+  if (
+    rest.length > 0 ||
+    !scheme ||
+    !token ||
+    scheme.toLowerCase() !== "bearer"
+  ) {
     return null;
   }
   return token;
@@ -60,7 +64,9 @@ export async function resolveBearerAuth(
     return { kind: "account", account, viaServiceToken: true };
   }
 
-  const deployment = await getStorage().agentDeployments.getByApiKeyHash(sha256Hex(token));
+  const deployment = await getStorage().agentDeployments.getByApiKeyHash(
+    sha256Hex(token),
+  );
   if (deployment) {
     const account = await getStorage().accounts.getById(deployment.accountId);
     if (!account || account.status !== "active") return null;
@@ -74,8 +80,14 @@ export async function resolveBearerAuth(
     };
   }
 
-  const account = await getStorage().accounts.getBySecretHash(hashAccountSecret(token));
-  if (!account || (account.status !== "active" && options.allowDisabledAccountSecret !== true)) return null;
+  const account = await getStorage().accounts.getBySecretHash(
+    hashAccountSecret(token),
+  );
+  if (
+    !account ||
+    (account.status !== "active" && options.allowDisabledAccountSecret !== true)
+  )
+    return null;
   return { kind: "account", account };
 }
 
@@ -84,7 +96,10 @@ function sha256Hex(value: string): string {
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.
-export function timingSafeStringEqual(actual: string, expected: string): boolean {
+export function timingSafeStringEqual(
+  actual: string,
+  expected: string,
+): boolean {
   const actualDigest = createHash("sha256").update(actual).digest();
   const expectedDigest = createHash("sha256").update(expected).digest();
   return timingSafeEqual(actualDigest, expectedDigest);

@@ -25,7 +25,8 @@ export const asyncToolAgent = defineAgent({
       modelId: "gemma-4-31b-it",
     },
     agent: {
-      system: "When the user asks, call the test_async tool and then report the injected async result.",
+      system:
+        "When the user asks, call the test_async tool and then report the injected async result.",
     },
     tools: {
       [testAsyncTool.name]: {

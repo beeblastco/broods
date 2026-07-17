@@ -10,9 +10,18 @@
 
 import type { Readable } from "node:stream";
 import type { WorkspaceStorageConfig } from "../../shared/domain/workspace-config.ts";
-import type { SandboxControlPlane, SandboxRunMetadata, SandboxSize } from "../../shared/sandbox-sizes.ts";
+import type {
+  SandboxControlPlane,
+  SandboxRunMetadata,
+  SandboxSize,
+} from "../../shared/sandbox-sizes.ts";
 
-export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
+export type SandboxProvider =
+  | "sandbox"
+  | "lambda"
+  | "e2b"
+  | "daytona"
+  | "vercel";
 export type SandboxRuntime = "bash" | "python" | "node";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 
@@ -191,7 +200,10 @@ export interface SandboxExecutor {
   // Best-effort: create/resume the reserved sandbox and wait until its pod is
   // Ready, ahead of the first real call, to hide cold-start. No-op for
   // non-persistent configs. Callers feature-detect and fire-and-forget.
-  prewarm?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
+  prewarm?(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): Promise<void>;
   // Low-level exec in the reserved pod with optional stdin streaming. Unlike
   // `run` it does not cd into a workspace or wrap output — used to talk to the
   // resident in-pod tool worker. Persistent-only; absent for non-pod providers.
@@ -200,8 +212,19 @@ export interface SandboxExecutor {
     command: string[],
     // onStdout receives each stdout chunk as it arrives (used to stream a custom
     // tool's NDJSON frames live). The returned stdout still holds the full output.
-    opts?: { stdin?: Readable; timeoutSeconds?: number; outputLimitBytes?: number; onStdout?: (chunk: string) => void },
-  ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut?: boolean; cpuUsec?: number }>;
+    opts?: {
+      stdin?: Readable;
+      timeoutSeconds?: number;
+      outputLimitBytes?: number;
+      onStdout?: (chunk: string) => void;
+    },
+  ): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut?: boolean;
+    cpuUsec?: number;
+  }>;
   // Persistent-only background capabilities. Implemented by sandbox/daytona/
   // e2b when config.persistent is true; absent otherwise (callers feature-detect).
   runBackground?(request: SandboxRunRequest): Promise<SandboxJobHandle>;
@@ -212,7 +235,10 @@ export interface SandboxExecutor {
   // (workdir/daytona/e2b sandbox) plus its instance record.
   // Best-effort + idempotent: a missing sandbox is a no-op. Called on
   // account/workspace deletion to prevent leaked compute/disk.
-  release?(request: { namespace?: string; reservationKey?: string }): Promise<void>;
+  release?(request: {
+    namespace?: string;
+    reservationKey?: string;
+  }): Promise<void>;
   // --- Snapshot/standby lifecycle (workdir + lambda-microvm). All optional; callers
   // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---
   // Suspend a reserved sandbox, preserving disk+memory while freeing compute.
@@ -222,5 +248,7 @@ export interface SandboxExecutor {
   // Capture the current sandbox state as a reusable snapshot/image.
   snapshot?(request: SandboxReservationRef): Promise<SandboxSnapshotResult>;
   // Best-effort live instance info (external id + state) for control-plane sync.
-  getInstanceInfo?(request: SandboxReservationRef): Promise<SandboxInstanceInfo | null>;
+  getInstanceInfo?(
+    request: SandboxReservationRef,
+  ): Promise<SandboxInstanceInfo | null>;
 }

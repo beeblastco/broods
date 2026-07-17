@@ -28,6 +28,15 @@ export function isDeployedRuntime(): boolean {
   return Boolean(process.env.BROODS_CONTAINER_RUNTIME);
 }
 
+// The harness's own public base URL — the gateway front door. Background-job
+// callbacks and async status URLs need an absolute URL to reach this service.
+// Undefined when PUBLIC_BASE_URL is unset, so callers can degrade to poll-only
+// delivery.
+export function getHarnessPublicUrl(): string | undefined {
+  const configured = optionalEnv("PUBLIC_BASE_URL");
+  return configured ? configured.replace(/\/+$/, "") : undefined;
+}
+
 export function booleanEnv(name: string, defaultValue = false): boolean {
   const value = optionalEnv(name);
   if (value === undefined) {

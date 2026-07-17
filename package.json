@@ -18,9 +18,12 @@
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",
     "docs": "bun run --filter @broods/docs start",
-    "docs:build": "bun run --filter @broods/docs build"
+    "docs:build": "bun run --filter @broods/docs build",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "prettier": "^3.5.0",
     "typescript": "^7.0.2"
   }
 }

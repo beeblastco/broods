@@ -268,7 +268,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     applyAgentConfigUpdate,
   );
   const removeConfig = useMutation(api.agentConfig.remove);
-  const ensureDeployment = useMutation(api.agentDeployments.ensureForEnvironment);
+  const ensureDeployment = useMutation(
+    api.agentDeployments.ensureForEnvironment,
+  );
   const rotateDeployment = useMutation(api.agentDeployments.rotate);
 
   // The environment's runtime API key (shared by every agent in it). The agent
@@ -292,10 +294,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     api.toolService.getByNode,
     canQueryToolStatus
       ? {
-        projectId: projectId,
-        environmentId: environmentId,
-        nodeId: nodeId,
-      }
+          projectId: projectId,
+          environmentId: environmentId,
+          nodeId: nodeId,
+        }
       : "skip",
   );
 
@@ -373,9 +375,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     () =>
       Array.isArray(agentConfig?.runtimeVariables)
         ? agentConfig.runtimeVariables.filter(
-          (value: unknown): value is RuntimeVariable =>
-            isRuntimeVariable(value),
-        )
+            (value: unknown): value is RuntimeVariable =>
+              isRuntimeVariable(value),
+          )
         : [],
     [agentConfig],
   );
@@ -542,12 +544,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }) {
     if (!agentConfigId) return;
 
-    const base = agentConfig ? toNestedAgentConfig(agentConfig) as Record<string, unknown> : {};
+    const base = agentConfig
+      ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
+      : {};
     const currentProvider = isPlainObject(base.provider) ? base.provider : {};
     const nextProviderConfig = { ...currentProvider };
     if (next.provider === "custom") {
       nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom) ? currentProvider.custom : {}),
+        ...(isPlainObject(currentProvider.custom)
+          ? currentProvider.custom
+          : {}),
         base_url: next.customBaseUrl,
         baseURL: next.customBaseUrl,
       };
@@ -645,8 +651,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       setIsSavingKey(true);
       try {
         const result = rotate
-          ? await rotateDeployment({ projectId: projectId, environmentId: environmentId })
-          : await ensureDeployment({ projectId: projectId, environmentId: environmentId });
+          ? await rotateDeployment({
+              projectId: projectId,
+              environmentId: environmentId,
+            })
+          : await ensureDeployment({
+              projectId: projectId,
+              environmentId: environmentId,
+            });
         if (result?.rawApiKey) {
           setDeploymentApiKey(result.rawApiKey);
         }
@@ -656,8 +668,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     },
     [isAgent, projectId, environmentId, ensureDeployment, rotateDeployment],
   );
-  const handleGenerateKey = useCallback(() => ensureRuntimeKey(false), [ensureRuntimeKey]);
-  const handleRotateKey = useCallback(() => ensureRuntimeKey(true), [ensureRuntimeKey]);
+  const handleGenerateKey = useCallback(
+    () => ensureRuntimeKey(false),
+    [ensureRuntimeKey],
+  );
+  const handleRotateKey = useCallback(
+    () => ensureRuntimeKey(true),
+    [ensureRuntimeKey],
+  );
 
   const handleUpdateToolConfig = useCallback(
     async (toolName: string, config: Record<string, unknown> | null) => {
@@ -849,8 +867,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             {(isWorkspace ||
               (isSkill &&
                 (nodeData?.config?.skillSource ?? "") === "files")) && (
-                <TabsTrigger value="files">Files</TabsTrigger>
-              )}
+              <TabsTrigger value="files">Files</TabsTrigger>
+            )}
             {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && (
               <TabsTrigger value="config">Config</TabsTrigger>
             )}

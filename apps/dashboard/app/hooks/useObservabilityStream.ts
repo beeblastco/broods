@@ -19,7 +19,11 @@ import type {
 // Re-export for consumers.
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
-export type ObservabilityStreamStatus = "idle" | "connecting" | "live" | "error";
+export type ObservabilityStreamStatus =
+  | "idle"
+  | "connecting"
+  | "live"
+  | "error";
 
 interface UseObservabilityStreamOptions {
   /** Which realtime stream to subscribe to. */
@@ -52,7 +56,10 @@ const MAX_ENTRIES = 2_000;
 // dashboard tabs unmounts the panel; on remount we seed from this cache so the
 // last entries paint instantly while the socket reconnects and refreshes in the
 // background — no re-spinner and no waiting on the slow durable backfill.
-const STREAM_CACHE = new Map<string, (ObservabilityLogEntry | ObservabilitySpanRow)[]>();
+const STREAM_CACHE = new Map<
+  string,
+  (ObservabilityLogEntry | ObservabilitySpanRow)[]
+>();
 
 export function useObservabilityStream(
   options: UseObservabilityStreamOptions & { stream: "logs" },
@@ -63,15 +70,22 @@ export function useObservabilityStream(
 export function useObservabilityStream(
   options: UseObservabilityStreamOptions,
 ): UseObservabilityStreamResult<ObservabilityLogEntry | ObservabilitySpanRow> {
-  const { stream, projectSlug, environmentSlug, apiKey, backfill = 0, minLevel } = options;
+  const {
+    stream,
+    projectSlug,
+    environmentSlug,
+    apiKey,
+    backfill = 0,
+    minLevel,
+  } = options;
 
   // Cache key for this stream + scope; entries are seeded from / written back to
   // STREAM_CACHE so remounts (tab switches) are instant.
   const connKey = `${stream}|${projectSlug ?? ""}|${environmentSlug ?? ""}|${apiKey ?? ""}`;
 
-  const [entries, setEntries] = useState<(ObservabilityLogEntry | ObservabilitySpanRow)[]>(
-    () => STREAM_CACHE.get(connKey) ?? [],
-  );
+  const [entries, setEntries] = useState<
+    (ObservabilityLogEntry | ObservabilitySpanRow)[]
+  >(() => STREAM_CACHE.get(connKey) ?? []);
   const [status, setStatus] = useState<ObservabilityStreamStatus>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +112,7 @@ export function useObservabilityStream(
   // Holds the latest `connect` so the reconnect timer can call it without
   // `connect` referencing itself (which would capture a stale closure / trip the
   // "used before declared" lint).
-  const connectRef = useRef<() => void>(() => { });
+  const connectRef = useRef<() => void>(() => {});
 
   const coreEndpoint = resolveCoreEndpoint();
   // Extract the ok-guarded fields so the connect deps below stay stable primitives
@@ -117,7 +131,10 @@ export function useObservabilityStream(
     const s = socketRef.current;
     if (s) {
       socketRef.current = null;
-      if (s.readyState === WebSocket.OPEN || s.readyState === WebSocket.CONNECTING) {
+      if (
+        s.readyState === WebSocket.OPEN ||
+        s.readyState === WebSocket.CONNECTING
+      ) {
         s.close(1000, "cleanup");
       }
     }
@@ -182,14 +199,19 @@ export function useObservabilityStream(
 
       if (msg.type === "backfill") {
         setEntries((prev) => {
-          const incoming = msg.entries as (ObservabilityLogEntry | ObservabilitySpanRow)[];
+          const incoming = msg.entries as (
+            | ObservabilityLogEntry
+            | ObservabilitySpanRow
+          )[];
           const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
           for (const entry of incoming) {
             const key = entryKey(entry);
             const existing = merged.get(key);
             merged.set(key, existing ? preferEntry(existing, entry) : entry);
           }
-          const combined = [...merged.values()].sort((a, b) => entryTime(b) - entryTime(a));
+          const combined = [...merged.values()].sort(
+            (a, b) => entryTime(b) - entryTime(a),
+          );
 
           return combined.length > MAX_ENTRIES
             ? combined.slice(0, MAX_ENTRIES)
@@ -203,10 +225,17 @@ export function useObservabilityStream(
         const entry = msg.entry;
         setEntries((prev) => {
           const key = entryKey(entry);
-          const existingIndex = prev.findIndex((candidate) => entryKey(candidate) === key);
-          const next = existingIndex === -1
-            ? [entry, ...prev]
-            : prev.map((candidate, index) => index === existingIndex ? preferEntry(candidate, entry) : candidate);
+          const existingIndex = prev.findIndex(
+            (candidate) => entryKey(candidate) === key,
+          );
+          const next =
+            existingIndex === -1
+              ? [entry, ...prev]
+              : prev.map((candidate, index) =>
+                  index === existingIndex
+                    ? preferEntry(candidate, entry)
+                    : candidate,
+                );
           next.sort((a, b) => entryTime(b) - entryTime(a));
 
           return next.length > MAX_ENTRIES ? next.slice(0, MAX_ENTRIES) : next;
@@ -241,7 +270,10 @@ export function useObservabilityStream(
       // Unexpected close — show the failure while waiting, then reconnect after
       // a delay without clearing existing entries.
       setStatus("error");
-      setError((current) => (current ?? event.reason) || `WebSocket closed (${event.code}).`);
+      setError(
+        (current) =>
+          (current ?? event.reason) || `WebSocket closed (${event.code}).`,
+      );
       reconnectTimerRef.current = setTimeout(() => {
         if (!destroyedRef.current) connectRef.current();
       }, RECONNECT_DELAY_MS);
@@ -306,7 +338,9 @@ function entryKey(entry: ObservabilityLogEntry | ObservabilitySpanRow): string {
   return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
 }
 
-function entryTime(entry: ObservabilityLogEntry | ObservabilitySpanRow): number {
+function entryTime(
+  entry: ObservabilityLogEntry | ObservabilitySpanRow,
+): number {
   return "spanId" in entry ? entry.startTimeMs : entry.ts;
 }
 
@@ -315,15 +349,20 @@ function entryTime(entry: ObservabilityLogEntry | ObservabilitySpanRow): number 
 // truncates large attributes). Keep the better copy so a reload never downgrades a
 // span: a terminal status beats "running", and among equals the richer payload
 // wins. Logs have no such progression — the incoming copy wins.
-function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(existing: T, incoming: T): T {
+function preferEntry<T extends ObservabilityLogEntry | ObservabilitySpanRow>(
+  existing: T,
+  incoming: T,
+): T {
   if (!("spanId" in existing) || !("spanId" in incoming)) return incoming;
   const a = existing as ObservabilitySpanRow;
   const b = incoming as ObservabilitySpanRow;
-  const rank = (status: ObservabilitySpanRow["status"]): number => (status === "running" ? 0 : 1);
+  const rank = (status: ObservabilitySpanRow["status"]): number =>
+    status === "running" ? 0 : 1;
   if (rank(b.status) !== rank(a.status)) {
     return rank(b.status) > rank(a.status) ? incoming : existing;
   }
-  const size = (span: ObservabilitySpanRow): number => JSON.stringify(span.attributes ?? {}).length;
+  const size = (span: ObservabilitySpanRow): number =>
+    JSON.stringify(span.attributes ?? {}).length;
 
   return size(b) >= size(a) ? incoming : existing;
 }

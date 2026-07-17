@@ -24,7 +24,7 @@ name: Drift Cleanup
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 # Serialize against the deploy workflow so a manual prod deploy + a same-hour
@@ -77,7 +77,7 @@ jobs:
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
       # Mirrors deploy.yaml env block for SST/Pulumi to compose the same
       # identity, runtime, and Convex credentials it sees on a normal deploy.
-      CI: 'true'
+      CI: "true"
       SERVICE_AUTH_SECRET: ${{ secrets.SERVICE_AUTH_SECRET }}
       PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
       CONVEX_URL: ${{ secrets.CONVEX_URL }}

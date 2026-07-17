@@ -7,26 +7,34 @@
  */
 
 export type CliManifestResource = {
-    kind: "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "hook" | "policy";
-    name: string;
-    description?: string;
-    config: unknown;
+  kind:
+    | "agent"
+    | "workspace"
+    | "sandbox"
+    | "cron"
+    | "skill"
+    | "tool"
+    | "hook"
+    | "policy";
+  name: string;
+  description?: string;
+  config: unknown;
 };
 
 export type GeneratedIds = {
-    agents: Record<string, string>;
-    workspaces: Record<string, string>;
-    sandboxes: Record<string, string>;
-    crons: Record<string, string>;
-    skills: Record<string, string>;
-    tools: Record<string, string>;
-    hooks: Record<string, string>;
-    policies: Record<string, string>;
+  agents: Record<string, string>;
+  workspaces: Record<string, string>;
+  sandboxes: Record<string, string>;
+  crons: Record<string, string>;
+  skills: Record<string, string>;
+  tools: Record<string, string>;
+  hooks: Record<string, string>;
+  policies: Record<string, string>;
 };
 
 export type CliManifest = {
-    version: 1;
-    project: string;
-    environment: string;
-    resources: CliManifestResource[];
+  version: 1;
+  project: string;
+  environment: string;
+  resources: CliManifestResource[];
 };

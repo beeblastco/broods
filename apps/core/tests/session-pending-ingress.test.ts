@@ -7,10 +7,15 @@ import { Session } from "../src/harness/session.ts";
 
 const originalMutation = runtime.mutate;
 const originalQuery = runtime.query;
-const mutationMock = mock(async (name: string, _args: Record<string, unknown>) =>
-  name === "takeIngress" ? [] : null);
+const mutationMock = mock(
+  async (name: string, _args: Record<string, unknown>) =>
+    name === "takeIngress" ? [] : null,
+);
 const queryMock = mock(
-  async (_name: string, _args: Record<string, unknown>): Promise<{
+  async (
+    _name: string,
+    _args: Record<string, unknown>,
+  ): Promise<{
     page: Array<{ cursor: string; event: unknown }>;
     isDone: boolean;
     continueCursor: string | null;
@@ -20,7 +25,13 @@ const queryMock = mock(
     continueCursor: null,
   }),
 );
-const newSession = () => new Session("acct:acct:event-1", "acct:acct:agent:agent:tg:123", "acct", "agent");
+const newSession = () =>
+  new Session(
+    "acct:acct:event-1",
+    "acct:acct:agent:agent:tg:123",
+    "acct",
+    "agent",
+  );
 
 beforeEach(() => {
   runtime.mutate = mutationMock as never;
@@ -41,26 +52,38 @@ describe("Session pending ingress queue", () => {
     await expect(session.claim()).resolves.toBe(true);
     await session.release();
     expect(mutationMock.mock.calls).toEqual([
-      ["claimEvent", {
-        accountId: "acct",
-        key: "acct:acct:event-1",
-        ttlSeconds: 86400,
-      }],
-      ["releaseClaim", {
-        accountId: "acct",
-        key: "acct:acct:event-1",
-      }],
+      [
+        "claimEvent",
+        {
+          accountId: "acct",
+          key: "acct:acct:event-1",
+          ttlSeconds: 86400,
+        },
+      ],
+      [
+        "releaseClaim",
+        {
+          accountId: "acct",
+          key: "acct:acct:event-1",
+        },
+      ],
     ]);
   });
 
   it("enqueues structured events under the per-conversation pending key", async () => {
-    const message: UserModelMessage = { role: "user", content: "second message" };
+    const message: UserModelMessage = {
+      role: "user",
+      content: "second message",
+    };
     await newSession().enqueuePendingIngress([message]);
-    expect(mutationMock).toHaveBeenCalledWith("enqueueIngress", expect.objectContaining({
-      key: expect.stringContaining("pending:conversation-lease:"),
-      conversationKey: "acct:acct:agent:agent:tg:123",
-      events: [message],
-    }));
+    expect(mutationMock).toHaveBeenCalledWith(
+      "enqueueIngress",
+      expect.objectContaining({
+        key: expect.stringContaining("pending:conversation-lease:"),
+        conversationKey: "acct:acct:agent:agent:tg:123",
+        events: [message],
+      }),
+    );
   });
 
   it("does not write when there is nothing to enqueue", async () => {
@@ -69,7 +92,10 @@ describe("Session pending ingress queue", () => {
   });
 
   it("returns the transactionally drained event list", async () => {
-    const events: UserModelMessage[] = [{ role: "user", content: "first" }, { role: "user", content: "second" }];
+    const events: UserModelMessage[] = [
+      { role: "user", content: "first" },
+      { role: "user", content: "second" },
+    ];
     mutationMock.mockResolvedValueOnce(events as never);
     await expect(newSession().takePendingIngress()).resolves.toEqual(events);
     expect(mutationMock).toHaveBeenCalledWith("takeIngress", {
@@ -80,34 +106,40 @@ describe("Session pending ingress queue", () => {
   it("loads every conversation page including later compaction summaries", async () => {
     queryMock
       .mockResolvedValueOnce({
-        page: [{
-          cursor: "001",
-          event: {
-            version: 1,
-            sourceEventId: "event-1",
-            message: { role: "user", content: "first" },
+        page: [
+          {
+            cursor: "001",
+            event: {
+              version: 1,
+              sourceEventId: "event-1",
+              message: { role: "user", content: "first" },
+            },
           },
-        }],
+        ],
         isDone: false,
         continueCursor: "001",
       })
       .mockResolvedValueOnce({
-        page: [{
-          cursor: "002",
-          event: {
-            version: 1,
-            sourceEventId: "event-2",
-            message: { role: "system", content: "later compaction summary" },
+        page: [
+          {
+            cursor: "002",
+            event: {
+              version: 1,
+              sourceEventId: "event-2",
+              message: { role: "system", content: "later compaction summary" },
+            },
           },
-        }],
+        ],
         isDone: true,
         continueCursor: null,
       });
     const session = newSession() as unknown as {
-      loadConversationEntries(): Promise<Array<{
-        createdAt: string;
-        event: { message: { role: string; content: string } };
-      }>>;
+      loadConversationEntries(): Promise<
+        Array<{
+          createdAt: string;
+          event: { message: { role: string; content: string } };
+        }>
+      >;
     };
 
     await expect(session.loadConversationEntries()).resolves.toEqual([
@@ -120,14 +152,20 @@ describe("Session pending ingress queue", () => {
       }),
     ]);
     expect(queryMock.mock.calls).toEqual([
-      ["listConversationEvents", {
-        conversationKey: "acct:acct:agent:agent:tg:123",
-        afterCursor: undefined,
-      }],
-      ["listConversationEvents", {
-        conversationKey: "acct:acct:agent:agent:tg:123",
-        afterCursor: "001",
-      }],
+      [
+        "listConversationEvents",
+        {
+          conversationKey: "acct:acct:agent:agent:tg:123",
+          afterCursor: undefined,
+        },
+      ],
+      [
+        "listConversationEvents",
+        {
+          conversationKey: "acct:acct:agent:agent:tg:123",
+          afterCursor: "001",
+        },
+      ],
     ]);
   });
 });

@@ -111,21 +111,45 @@ export function assertValidPublicEventId(value: string): string {
 export function assertValidPublicConversationKey(value: string): string {
   const normalized = normalizeDirectIdentifier("conversationKey", value);
   if (hasReservedConversationPrefix(normalized)) {
-    throw new Error("conversationKey uses a reserved channel or internal prefix");
+    throw new Error(
+      "conversationKey uses a reserved channel or internal prefix",
+    );
   }
   return normalized;
 }
 
-export function scopedDirectEventId(accountId: string, agentId: string, publicEventId: string): string {
-  return accountAgentScopedKey(accountId, agentId, `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`);
+export function scopedDirectEventId(
+  accountId: string,
+  agentId: string,
+  publicEventId: string,
+): string {
+  return accountAgentScopedKey(
+    accountId,
+    agentId,
+    `${DIRECT_API_EVENT_ID_PREFIX}${publicEventId}`,
+  );
 }
 
-export function scopedDirectConversationKey(accountId: string, agentId: string, publicConversationKey: string): string {
-  return accountAgentScopedKey(accountId, agentId, `${DIRECT_API_CONVERSATION_PREFIX}${publicConversationKey}`);
+export function scopedDirectConversationKey(
+  accountId: string,
+  agentId: string,
+  publicConversationKey: string,
+): string {
+  return accountAgentScopedKey(
+    accountId,
+    agentId,
+    `${DIRECT_API_CONVERSATION_PREFIX}${publicConversationKey}`,
+  );
 }
 
-export function publicConversationKeyFromScoped(conversationKey: string, accountId: string, agentId?: string): string {
-  const accountPrefix = agentId ? `acct:${accountId}:agent:${agentId}:` : `acct:${accountId}:`;
+export function publicConversationKeyFromScoped(
+  conversationKey: string,
+  accountId: string,
+  agentId?: string,
+): string {
+  const accountPrefix = agentId
+    ? `acct:${accountId}:agent:${agentId}:`
+    : `acct:${accountId}:`;
   const unscoped = conversationKey.startsWith(accountPrefix)
     ? conversationKey.slice(accountPrefix.length)
     : conversationKey;
@@ -137,7 +161,11 @@ export function accountScopedKey(accountId: string, key: string): string {
   return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:${key}`;
 }
 
-export function accountAgentScopedKey(accountId: string, agentId: string, key: string): string {
+export function accountAgentScopedKey(
+  accountId: string,
+  agentId: string,
+  key: string,
+): string {
   return accountScopedKey(accountId, `agent:${agentId}:${key}`);
 }
 
@@ -146,7 +174,9 @@ export function accountScopedPrefix(accountId: string): string {
 }
 
 function hasReservedConversationPrefix(value: string): boolean {
-  return RESERVED_CONVERSATION_PREFIXES.some((prefix) => value.startsWith(prefix));
+  return RESERVED_CONVERSATION_PREFIXES.some((prefix) =>
+    value.startsWith(prefix),
+  );
 }
 
 function hasReservedEventIdPrefix(value: string): boolean {

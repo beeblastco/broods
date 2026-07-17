@@ -41,8 +41,8 @@ writes `BROODS_API_KEY` to `.env.local`; the SDK also accepts `apiKey`,
 ## Two ways to configure agents
 
 **Config-first (`broods dev` / `broods deploy`).** Resources declared in your
-`broods/` folder with `defineAgent`, `defineWorkspace`, etc. are *predefined
-configs*: the CLI syncs them to your project on deploy and codegen gives you
+`broods/` folder with `defineAgent`, `defineWorkspace`, etc. are _predefined
+configs_: the CLI syncs them to your project on deploy and codegen gives you
 typed references. Use this when the set of agents is fixed and versioned with
 your code.
 
@@ -103,8 +103,16 @@ const sandbox = await account.createSandbox({
   name: "reserved",
   config: { provider: "lambda", persistent: true, permissionMode: "ask" },
 });
-await account.uploadWorkspaceFile("ws_1", { path: "memory/seed.md", contentBase64: "IyBTZWVk" });
-await account.createSkill({ source: "json", name: "triage", description: "Triage flow", content: "# Triage" });
+await account.uploadWorkspaceFile("ws_1", {
+  path: "memory/seed.md",
+  contentBase64: "IyBTZWVk",
+});
+await account.createSkill({
+  source: "json",
+  name: "triage",
+  description: "Triage flow",
+  content: "# Triage",
+});
 const runs = await account.listCronRuns("cron_1", { limit: 20 });
 
 // Persistent sandbox lifecycle is driven by reservationKey.

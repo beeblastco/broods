@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'apps/docs/**'
-      - '.github/workflows/deploy-docs.yaml'
+      - "apps/docs/**"
+      - ".github/workflows/deploy-docs.yaml"
   workflow_dispatch:
 
 concurrency:

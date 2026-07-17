@@ -8,7 +8,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const COMPACTION_PROMPT_SOURCE = new URL("../COMPACTION.md", import.meta.url);
 const GENERATED_DIR = new URL("../src/shared/.generated/", import.meta.url);
-const COMPACTION_PROMPT_MODULE = new URL("./compaction-prompt.ts", GENERATED_DIR);
+const COMPACTION_PROMPT_MODULE = new URL(
+  "./compaction-prompt.ts",
+  GENERATED_DIR,
+);
 
 export async function syncCompactionPromptModule(): Promise<void> {
   const compactionPrompt = await readFile(COMPACTION_PROMPT_SOURCE, "utf8");

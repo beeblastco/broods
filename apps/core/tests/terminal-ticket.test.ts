@@ -37,14 +37,23 @@ describe("terminal tickets", () => {
       authorization: "jwe-shell-token",
       authorizationHeader: "X-aws-proxy-auth",
     });
-    const opened = openTerminalTicket(sealTerminalTicket(microvm, SECRET), SECRET);
+    const opened = openTerminalTicket(
+      sealTerminalTicket(microvm, SECRET),
+      SECRET,
+    );
     expect(opened).toEqual(microvm);
     // workdir tickets omit the field and keep defaulting to `authorization`.
-    expect(openTerminalTicket(sealTerminalTicket(ticket(), SECRET), SECRET)?.authorizationHeader).toBeUndefined();
+    expect(
+      openTerminalTicket(sealTerminalTicket(ticket(), SECRET), SECRET)
+        ?.authorizationHeader,
+    ).toBeUndefined();
   });
 
   test("rejects an expired ticket", () => {
-    const sealed = sealTerminalTicket(ticket({ expiresAt: Date.now() - 1 }), SECRET);
+    const sealed = sealTerminalTicket(
+      ticket({ expiresAt: Date.now() - 1 }),
+      SECRET,
+    );
     expect(openTerminalTicket(sealed, SECRET)).toBeNull();
   });
 
@@ -55,9 +64,18 @@ describe("terminal tickets", () => {
 
   test("rejects tampered tokens and garbage", () => {
     const sealed = sealTerminalTicket(ticket(), SECRET);
-    const [version, iv, tag, ciphertext] = sealed.split(".") as [string, string, string, string];
-    const flipped = ciphertext.startsWith("A") ? `B${ciphertext.slice(1)}` : `A${ciphertext.slice(1)}`;
-    expect(openTerminalTicket([version, iv, tag, flipped].join("."), SECRET)).toBeNull();
+    const [version, iv, tag, ciphertext] = sealed.split(".") as [
+      string,
+      string,
+      string,
+      string,
+    ];
+    const flipped = ciphertext.startsWith("A")
+      ? `B${ciphertext.slice(1)}`
+      : `A${ciphertext.slice(1)}`;
+    expect(
+      openTerminalTicket([version, iv, tag, flipped].join("."), SECRET),
+    ).toBeNull();
     expect(openTerminalTicket("st1.not.a.ticket", SECRET)).toBeNull();
     expect(openTerminalTicket("", SECRET)).toBeNull();
     expect(openTerminalTicket(`${sealed}.extra`, SECRET)).toBeNull();

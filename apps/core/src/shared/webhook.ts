@@ -11,7 +11,10 @@ export interface WebhookConfig {
   secret: string;
 }
 
-export async function fireWebhook(config: WebhookConfig, payload: unknown): Promise<void> {
+export async function fireWebhook(
+  config: WebhookConfig,
+  payload: unknown,
+): Promise<void> {
   // Re-checked at delivery (configs may predate validation); redirects are
   // refused so a public URL cannot 302 into a private address.
   assertPublicHttpsUrl(config.url, "webhook url");

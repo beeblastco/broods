@@ -6,10 +6,20 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { drainInFlight, routesToAccountManage, toCoreRequest, waitUntil } from "../src/server.ts";
+import {
+  drainInFlight,
+  routesToAccountManage,
+  toCoreRequest,
+  waitUntil,
+} from "../src/server.ts";
 
 async function buildCoreRequest(
-  input: { url?: string; method?: string; headers?: Record<string, string>; body?: string },
+  input: {
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+  },
   socketAddress?: string,
 ) {
   const url = new URL(input.url ?? "http://127.0.0.1/");
@@ -72,7 +82,10 @@ describe("toCoreRequest", () => {
   });
 
   it("passes UTF-8 request bodies through as text and uses empty string when bodyless", async () => {
-    const withBody = await buildCoreRequest({ method: "POST", body: "hello\nworld" });
+    const withBody = await buildCoreRequest({
+      method: "POST",
+      body: "hello\nworld",
+    });
     expect(withBody.body).toBe("hello\nworld");
 
     const bodyless = await buildCoreRequest({ url: "http://127.0.0.1/status" });
@@ -86,7 +99,9 @@ describe("routesToAccountManage", () => {
     expect(routesToAccountManage("DELETE", "/accounts/acct_1")).toBe(true);
     expect(routesToAccountManage("DELETE", "/v1/account")).toBe(true);
     expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/exec")).toBe(true);
-    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(true);
+    expect(routesToAccountManage("POST", "/v1/sandboxes/sbx/terminate")).toBe(
+      true,
+    );
   });
 
   it("routes config-plane CRUD paths and invocations to the harness", () => {
@@ -118,10 +133,14 @@ describe("routesToAccountManage", () => {
     expect(routesToAccountManage("GET", "/accounts")).toBe(false);
     expect(routesToAccountManage("GET", "/accounts/acct_1")).toBe(false);
     expect(routesToAccountManage("PATCH", "/accounts/acct_1")).toBe(false);
-    expect(routesToAccountManage("POST", "/accounts/acct_1/rotate-secret")).toBe(false);
+    expect(
+      routesToAccountManage("POST", "/accounts/acct_1/rotate-secret"),
+    ).toBe(false);
     expect(routesToAccountManage("GET", "/v1/account")).toBe(false);
     expect(routesToAccountManage("PATCH", "/v1/account")).toBe(false);
-    expect(routesToAccountManage("POST", "/v1/account/rotate-secret")).toBe(false);
+    expect(routesToAccountManage("POST", "/v1/account/rotate-secret")).toBe(
+      false,
+    );
   });
 });
 
@@ -129,15 +148,20 @@ describe("waitUntil drain", () => {
   it("does not drain until tracked work settles, and swallows failures", async () => {
     let release!: () => void;
     let afterDone = false;
-    waitUntil(new Promise<void>((resolve) => {
-      release = resolve;
-    }).then(() => {
-      afterDone = true;
-    }));
+    waitUntil(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }).then(() => {
+        afterDone = true;
+      }),
+    );
     waitUntil(Promise.reject(new Error("boom")));
 
     const drained = drainInFlight().then(() => "drained" as const);
-    const raced = await Promise.race([drained, Bun.sleep(50).then(() => "pending" as const)]);
+    const raced = await Promise.race([
+      drained,
+      Bun.sleep(50).then(() => "pending" as const),
+    ]);
     expect(raced).toBe("pending");
     expect(afterDone).toBe(false);
 

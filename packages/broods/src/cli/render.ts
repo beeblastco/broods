@@ -50,15 +50,24 @@ function preview(value: unknown, max = 500): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   if (text === undefined) return "";
 
-  return text.length > max ? `${text.slice(0, max)}… [${text.length - max} more chars]` : text;
+  return text.length > max
+    ? `${text.slice(0, max)}… [${text.length - max} more chars]`
+    : text;
 }
 
 /** Compact `12 in / 34 out` usage summary; empty when the provider omits counts. */
-function formatUsage(usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): string {
+function formatUsage(usage: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}): string {
   const parts: string[] = [];
-  if (typeof usage.inputTokens === "number") parts.push(`${usage.inputTokens} in`);
-  if (typeof usage.outputTokens === "number") parts.push(`${usage.outputTokens} out`);
-  if (parts.length === 0 && typeof usage.totalTokens === "number") parts.push(`${usage.totalTokens} tokens`);
+  if (typeof usage.inputTokens === "number")
+    parts.push(`${usage.inputTokens} in`);
+  if (typeof usage.outputTokens === "number")
+    parts.push(`${usage.outputTokens} out`);
+  if (parts.length === 0 && typeof usage.totalTokens === "number")
+    parts.push(`${usage.totalTokens} tokens`);
 
   return parts.join(" / ");
 }
@@ -68,7 +77,10 @@ function formatUsage(usage: { inputTokens?: number; outputTokens?: number; total
  * handled; purely structural parts (`start`, `start-step`, `finish-step`, `raw`)
  * are intentionally silent so the transcript stays focused on visible output.
  */
-export function renderStreamPart(part: TextStreamPart<ToolSet>, state: RenderState): void {
+export function renderStreamPart(
+  part: TextStreamPart<ToolSet>,
+  state: RenderState,
+): void {
   switch (part.type) {
     case "reasoning-start":
       write("\n💭 thinking\n", DIM);
@@ -121,14 +133,20 @@ export function renderStreamPart(part: TextStreamPart<ToolSet>, state: RenderSta
       break;
 
     case "source":
-      write(`🔗 source: ${part.sourceType === "url" ? part.url : part.title}\n`, DIM);
+      write(
+        `🔗 source: ${part.sourceType === "url" ? part.url : part.title}\n`,
+        DIM,
+      );
       break;
     case "file":
       write(`📎 file: ${part.file.mediaType}\n`, DIM);
       break;
 
     case "finish":
-      write(`\n[finished: ${part.finishReason}${formatUsage(part.totalUsage) ? ` · ${formatUsage(part.totalUsage)}` : ""}]\n`, GREY);
+      write(
+        `\n[finished: ${part.finishReason}${formatUsage(part.totalUsage) ? ` · ${formatUsage(part.totalUsage)}` : ""}]\n`,
+        GREY,
+      );
       break;
     case "abort":
       write(`\n[aborted${part.reason ? `: ${part.reason}` : ""}]\n`, RED);

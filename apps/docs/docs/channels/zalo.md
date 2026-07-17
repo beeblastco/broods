@@ -7,11 +7,7 @@ Zalo integration allows your agent to answer direct text messages through the of
 Define a Zalo channel with `defineZaloChannel` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import {
-  defineAgent,
-  defineZaloChannel,
-  env,
-} from "broods";
+import { defineAgent, defineZaloChannel, env } from "broods";
 
 export const zalo = defineZaloChannel({
   botToken: env.ZALO_BOT_TOKEN,

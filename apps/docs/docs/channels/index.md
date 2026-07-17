@@ -50,14 +50,14 @@ Webhook handling is split deliberately:
 
 ## Supported Channels
 
-| Channel | Runtime adapter | Chat SDK package | Required config | Documentation |
-| --- | --- | --- | --- | --- |
-| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds` | [Telegram Details](telegram.md) |
-| `github` | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts) | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github) | `webhookSecret`, `appId`, `privateKey` (+ optional `userName` for @-mention gating) | [GitHub Details](github.md) |
-| `slack` | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts) | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack) | `botToken`, `signingSecret` | [Slack Details](slack.md) |
-| `discord` | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts) | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord) | `botToken`, `publicKey` | [Discord Details](discord.md) |
-| `pancake` | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts) | Broods-native | `pageId`, `pageAccessToken`, `webhookSecret` | [Pancake Details](pancake.md) |
-| `zalo` | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts) | Broods-native | `botToken`, `webhookSecret` (+ optional `allowedUserIds`) | [Zalo Details](zalo.md) |
+| Channel    | Runtime adapter                                                                                                            | Chat SDK package                                                                 | Required config                                                                     | Documentation                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------- |
+| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds`                                       | [Telegram Details](telegram.md) |
+| `github`   | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts)     | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)     | `webhookSecret`, `appId`, `privateKey` (+ optional `userName` for @-mention gating) | [GitHub Details](github.md)     |
+| `slack`    | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts)       | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)       | `botToken`, `signingSecret`                                                         | [Slack Details](slack.md)       |
+| `discord`  | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts)   | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)   | `botToken`, `publicKey`                                                             | [Discord Details](discord.md)   |
+| `pancake`  | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts)   | Broods-native                                                                    | `pageId`, `pageAccessToken`, `webhookSecret`                                        | [Pancake Details](pancake.md)   |
+| `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret` (+ optional `allowedUserIds`)                           | [Zalo Details](zalo.md)         |
 
 ---
 
@@ -66,7 +66,12 @@ Webhook handling is split deliberately:
 The CLI SDK exposes one constructor per provider. Attach the resulting definitions to one agent; an agent may receive from multiple channel types, while one channel definition cannot be shared by multiple agents.
 
 ```ts
-import { defineAgent, defineGitHubChannel, defineSlackChannel, env } from "broods";
+import {
+  defineAgent,
+  defineGitHubChannel,
+  defineSlackChannel,
+  env,
+} from "broods";
 
 export const github = defineGitHubChannel({
   appId: env.GITHUB_APP_ID,
@@ -126,20 +131,20 @@ Channel markdown formatting is delegated to the Chat SDK adapters for Slack, Tel
 
 Each channel implements `ChannelAdapter` from [`src/shared/channels.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/channels.ts):
 
-| Method | Purpose |
-| --- | --- |
-| `name` | Stable URL segment and config key, such as `telegram` |
-| `canHandle(req)` | Quick provider-shape check, usually based on headers |
-| `authenticate(req)` | Provider-native signature or secret verification |
-| `parse(req)` | Converts the webhook into `message`, `ignore`, or direct `response` |
-| `actions(msg)` | Returns reply, typing, and reaction actions scoped to the inbound message |
+| Method              | Purpose                                                                   |
+| ------------------- | ------------------------------------------------------------------------- |
+| `name`              | Stable URL segment and config key, such as `telegram`                     |
+| `canHandle(req)`    | Quick provider-shape check, usually based on headers                      |
+| `authenticate(req)` | Provider-native signature or secret verification                          |
+| `parse(req)`        | Converts the webhook into `message`, `ignore`, or direct `response`       |
+| `actions(msg)`      | Returns reply, typing, and reaction actions scoped to the inbound message |
 
 `parse()` returns one of three outcomes:
 
-| Result | Meaning |
-| --- | --- |
-| `message` | Continue into the agent loop after sending `ack` or a default `200` |
-| `ignore` | Stop without running the agent, usually for unsupported events |
+| Result     | Meaning                                                                    |
+| ---------- | -------------------------------------------------------------------------- |
+| `message`  | Continue into the agent loop after sending `ack` or a default `200`        |
+| `ignore`   | Stop without running the agent, usually for unsupported events             |
 | `response` | Return a provider-specific response immediately, such as a challenge reply |
 
 The normalized `InboundMessage` contains:
@@ -225,7 +230,7 @@ export function createExampleChannel(
           await fetch("https://api.example.com/messages", {
             method: "POST",
             headers: {
-              "Authorization": `Bearer ${token}`,
+              Authorization: `Bearer ${token}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
