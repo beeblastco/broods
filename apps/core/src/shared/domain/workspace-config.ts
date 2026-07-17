@@ -128,6 +128,8 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   };
 }
 
+// Features default to on, so only an explicit opt-out is worth storing:
+// `enabled: true` normalizes away to the omitted (default) form.
 function normalizeHarnessFeature(value: unknown, name: string): { enabled?: boolean } | undefined {
   if (value === undefined) {
     return undefined;
@@ -136,7 +138,7 @@ function normalizeHarnessFeature(value: unknown, name: string): { enabled?: bool
     throw new Error(`${name} must be an object`);
   }
   assertOptionalBoolean(value.enabled, `${name}.enabled`);
-  return value.enabled !== undefined ? { enabled: value.enabled as boolean } : undefined;
+  return value.enabled === false ? { enabled: false } : undefined;
 }
 
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {

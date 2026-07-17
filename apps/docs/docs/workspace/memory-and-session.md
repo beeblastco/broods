@@ -81,7 +81,6 @@ export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { workspace: { enabled: true }, memory: { enabled: true } },
   },
 });
 
@@ -157,12 +156,12 @@ The harness is a set of named features, each on by default and toggled independe
 ```ts
 import { defineWorkspace } from "broods";
 
-// Everything on (the default — an empty config does the same):
+// Everything on — the default. There is nothing to set: an explicit
+// `enabled: true` is redundant and normalizes away to this same form.
 export const notes = defineWorkspace({
   name: "notes",
   config: {
     storage: { provider: "s3" },
-    harness: { workspace: { enabled: true }, memory: { enabled: true } },
   },
 });
 ```

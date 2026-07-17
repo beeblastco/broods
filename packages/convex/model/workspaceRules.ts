@@ -222,7 +222,9 @@ function normalizeHarnessFeature(value: unknown, name: string): { enabled?: bool
         throw new Error(`${name} must be an object`);
     }
     assertOptionalBoolean(value.enabled, `${name}.enabled`);
-    return value.enabled !== undefined ? { enabled: value.enabled as boolean } : undefined;
+
+    // Features default to on: `enabled: true` normalizes away to the omitted form.
+    return value.enabled === false ? { enabled: false } : undefined;
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {

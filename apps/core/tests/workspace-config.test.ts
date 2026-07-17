@@ -46,8 +46,10 @@ describe("workspace config", () => {
   it("normalizes the harness memory toggle and validates its shape", () => {
     expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } }))
       .toEqual({ storage: { provider: "s3" }, harness: { memory: { enabled: false } } });
+    // Features default to on, so a redundant `enabled: true` (or an empty
+    // feature object) normalizes away to the omitted form.
     expect(normalizeWorkspaceConfig({ storage: { provider: "s3" }, harness: { workspace: { enabled: true }, memory: {} } }))
-      .toEqual({ storage: { provider: "s3" }, harness: { workspace: { enabled: true } } });
+      .toEqual({ storage: { provider: "s3" } });
     expect(() => normalizeWorkspaceConfig({ harness: { memory: true } }))
       .toThrow("config.harness.memory must be an object");
     expect(() => normalizeWorkspaceConfig({ harness: { memory: { enabled: "yes" } } }))
@@ -140,15 +142,17 @@ describe("workspace config", () => {
       description: null,
       config: { harness: { workspace: { enabled: true } } },
     });
+    // Re-enabling a feature restores the default form: the opt-out is removed
+    // rather than replaced with a stored `enabled: true`.
     expect(patched).toEqual({
       name: "renamed",
       description: null,
-      config: { storage: { provider: "s3" }, harness: { workspace: { enabled: true } } },
+      config: { storage: { provider: "s3" } },
     });
   });
 
   it("keeps the existing config when no config patch is supplied", () => {
-    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { workspace: { enabled: true } } };
+    const existing: WorkspaceConfig = { storage: { provider: "s3" }, harness: { memory: { enabled: false } } };
     expect(normalizeUpdateWorkspaceConfigInput(existing, { name: "renamed" }))
       .toEqual({ name: "renamed", config: existing });
   });
