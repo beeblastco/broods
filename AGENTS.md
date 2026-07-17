@@ -35,7 +35,7 @@ Applies to every workspace. Follow it strictly when writing, editing, or deletin
 - Lay each file out in this order: constants, types, and interfaces first; then the exports and main logic; then the private, internal-only functions used inside that file.
 - Keep functions of the same kind next to each other — all async functions in one run, then all plain functions, and so on. Order each group alphabetically so they are quick to find.
 - Comment only key sections. Keep each comment to two lines at most, with a clear explanation. Do not add per-function docstrings by default.
-- Always check lint, TypeScript errors, and warnings before treating work as done, and format with Prettier. Typecheck through each package's own script (`bun run check`, `bun run format`) — never run `tsc` or `bunx tsc --noEmit` raw, which resolves the wrong config.
+- Before treating work as done, run each package's own scripts: `bun run check` for lint and TypeScript validation, and `bun run format` for Prettier formatting. Never run `tsc` or `bunx tsc --noEmit` raw, which resolves the wrong config.
 
 ## Cross-Workspace Notes
 

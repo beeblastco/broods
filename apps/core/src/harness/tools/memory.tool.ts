@@ -149,6 +149,27 @@ Usage notes:
   };
 }
 
+// kebab-case file slug from the title (diacritics folded), capped so index lines
+// and paths stay short. A capped or empty slug is no longer unique per title, so
+// those get a stable hash suffix — distinct titles must never share a file.
+export function memorySlug(title: string): string {
+  const kebab = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = kebab.slice(0, 60).replace(/-+$/, "");
+  if (slug.length > 0 && slug === kebab) {
+    return slug;
+  }
+  const hash = createHash("sha256")
+    .update(title, "utf8")
+    .digest("hex")
+    .slice(0, 8);
+  return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
+}
+
 function inputSchema(context: MemoryToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
   return {
@@ -179,25 +200,4 @@ function inputSchema(context: MemoryToolContext): JSONSchema7 {
     required: ["title", "description", "content"],
     additionalProperties: false,
   };
-}
-
-// kebab-case file slug from the title (diacritics folded), capped so index lines
-// and paths stay short. A capped or empty slug is no longer unique per title, so
-// those get a stable hash suffix — distinct titles must never share a file.
-export function memorySlug(title: string): string {
-  const kebab = title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  const slug = kebab.slice(0, 60).replace(/-+$/, "");
-  if (slug.length > 0 && slug === kebab) {
-    return slug;
-  }
-  const hash = createHash("sha256")
-    .update(title, "utf8")
-    .digest("hex")
-    .slice(0, 8);
-  return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
 }
