@@ -432,8 +432,14 @@ describe("memory tool", () => {
     expect(payload.code).toContain("base64 -d");
     expect(payload.code).toContain("grep -v ");
     expect(payload.code).toContain("^- \\[[^]]*](name-in-this-channel\\.md) — ");
-    expect(payload.code).toContain("mv ");
     expect(payload.code).toContain("sync ");
+    // The workspace is a mountpoint-s3 FUSE mount: O_APPEND and rename() fail
+    // with EPERM, so the index must be rebuilt in one `>` write — never `>>`,
+    // `mv`, or a temp file.
+    expect(payload.code).toContain('printf \'%s\\n%s\\n\' "$index_body"');
+    expect(payload.code).not.toContain(">>");
+    expect(payload.code).not.toContain("mv ");
+    expect(payload.code).not.toContain(".tmp");
     expect(result.type).toBe("text");
 
     const entryB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(payload.code)?.[1];
