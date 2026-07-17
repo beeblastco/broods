@@ -1,6 +1,7 @@
 /** Account cleanup retry-safety tests. */
 
 import { afterEach, expect, it } from "bun:test";
+import { getFunctionName } from "convex/server";
 import { deleteAccountRuntimeData } from "../src/accounts/cleanup.ts";
 import {
   resetStorageForTests,
@@ -78,4 +79,17 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
     }),
   ).rejects.toThrow("Account runtime cleanup exceeded 100 Convex batches");
   expect(attempts).toBe(100);
+});
+
+// The storage adapter reaches this reference through an any-typed require, so
+// nothing but this check catches a path that stops deleting EventBridge rules.
+it("removes crons through the Convex action that also deletes the schedule", () => {
+  const registered = require("@broods/convex/awsCrons") as Record<
+    string,
+    { isInternal?: boolean; isAction?: boolean } | undefined
+  >;
+  const internal = require("@broods/convex/_generated/api").internal;
+
+  expect(registered.remove).toMatchObject({ isInternal: true, isAction: true });
+  expect(getFunctionName(internal.awsCrons.remove)).toBe("awsCrons:remove");
 });

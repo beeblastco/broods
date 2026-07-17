@@ -55,7 +55,6 @@ import {
   deleteAccountSkills,
   deleteAccountToolBundles,
 } from "./cleanup.ts";
-import { deleteCronSchedule } from "./cron.ts";
 
 type SandboxLifecycleAction =
   | "suspend"
@@ -588,10 +587,7 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
   const cronsStore = getStorage().crons;
   const crons = await cronsStore.list(accountId);
   await Promise.all(
-    crons.map(async (cron) => {
-      await deleteCronSchedule(cron);
-      await cronsStore.remove(accountId, cron.cronId);
-    }),
+    crons.map((cron) => cronsStore.remove(accountId, cron.cronId)),
   );
   return crons.length;
 }

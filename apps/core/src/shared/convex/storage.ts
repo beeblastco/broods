@@ -274,12 +274,13 @@ const crons: Storage["crons"] = {
     })) as ConvexCronDoc[];
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
+  // awsCrons.remove is a Node action that drops the EventBridge schedule and the
+  // row together, so a schedule can never outlive the cron row that names it.
   async remove(accountId, cronId) {
-    await getConvexClient().mutation(internal.cron.remove, {
+    return (await getConvexClient().action(internal.awsCrons.remove, {
       accountId: accountId as any,
       cronId: cronId as any,
-    });
-    return true;
+    })) as boolean;
   },
   async markStarted(accountId, cronId) {
     await getConvexClient().mutation(internal.cron.recordInvocation, {
