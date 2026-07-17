@@ -16,6 +16,7 @@ import {
   type AgentToolConfig,
 } from "../../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
+import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
@@ -33,6 +34,7 @@ import googleSearchTool from "./google-search.tool.ts";
 import grepTool from "./grep.tool.ts";
 import handoffsTool from "./handoffs.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
+import memoryTool from "./memory.tool.ts";
 import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
@@ -153,6 +155,12 @@ export async function createTools(context: Omit<ToolContext, "config">, agentCon
       editTool(fsContext),
       grepTool(fsContext),
     );
+    // memory_save: structured memory on the same sandbox write path. It ships
+    // with the workspace harness (config.harness.memory, default on) rather
+    // than config.tools, and only touches the memory/ folder and its index.
+    if (sandboxWorkspaces.some((workspace) => workspaceMemoryHarnessEnabled(workspace.config))) {
+      Object.assign(sandboxTools, memoryTool({ ...fsContext, conversationKey: context.conversationKey }));
+    }
   }
   Object.assign(tools, sandboxTools);
   const asyncModes: AsyncToolModeMap = new Map();
