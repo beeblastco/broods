@@ -58,6 +58,16 @@ describe("agent policy input", () => {
       workspaceId: "ws_123",
       workspaceName: "repo",
     });
+
+    // memory_save derives its target path from the title, so the policy input
+    // carries the same workspace.write + filePath surface as write/edit.
+    expect(policyInputForTool("memory_save", { workspace: "repo", title: "Owner prefers short replies", description: "d", content: "c" }, workspaces)).toMatchObject({
+      action: "workspace.write",
+      toolName: "memory_save",
+      workspaceId: "ws_123",
+      workspaceName: "repo",
+      filePath: "memory/owner-prefers-short-replies.md",
+    });
   });
 
   it("maps skill and subagent references", () => {

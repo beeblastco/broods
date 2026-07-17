@@ -49,6 +49,30 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const harnessFeatureEnabled = (key: "workspace" | "memory") => {
+    const feature = isPlainObject(harness[key])
+      ? (harness[key] as Record<string, unknown>)
+      : {};
+
+    return feature.enabled !== false;
+  };
+  // Features default to on: an enabled feature is stored as an omitted key, a
+  // disabled one as { enabled: false }; an empty harness object is dropped.
+  const setHarnessFeature = (key: "workspace" | "memory", enabled: boolean) => {
+    const next: Record<string, unknown> = { ...harness };
+    if (enabled) {
+      delete next[key];
+    } else {
+      next[key] = { enabled: false };
+    }
+    onUpdateNodeData({
+      config: {
+        ...config,
+        storage: { provider: "s3" },
+        harness: Object.keys(next).length > 0 ? next : undefined,
+      },
+    });
+  };
 
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -98,18 +122,16 @@ export function WorkspaceResourceDetailsTab({
           </Select>
         </div>
         <ToggleRow
-          label="Harness"
-          description="Inject workspace harness guidance."
-          checked={harness.enabled === true}
-          onCheckedChange={(enabled) =>
-            onUpdateNodeData({
-              config: {
-                ...config,
-                storage: { provider: "s3" },
-                harness: enabled ? { enabled: true } : undefined,
-              },
-            })
-          }
+          label="Guidance"
+          description="Inject the workspace guidance prompt."
+          checked={harnessFeatureEnabled("workspace")}
+          onCheckedChange={(enabled) => setHarnessFeature("workspace", enabled)}
+        />
+        <ToggleRow
+          label="Memory"
+          description="Structured memory: memory_save tool and memory/MEMORY.md index."
+          checked={harnessFeatureEnabled("memory")}
+          onCheckedChange={(enabled) => setHarnessFeature("memory", enabled)}
         />
       </div>
     </div>

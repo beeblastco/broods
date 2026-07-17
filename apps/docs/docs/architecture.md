@@ -405,8 +405,9 @@ Every sandbox-backed tool compiles to a single `run` against the provider (`sand
 (the old four-function grid is gone) and mounts the workspace inside the VM. A workspace's namespace is
 derived from `accountId:workspaceId`, so agents that reference the same `workspaceId` share
 files — including across the sandbox-backed and read-only S3 paths. A workspace with no
-sandbox still serves `MEMORY.md` via the S3 API. `workspace.harness.enabled=false`
-suppresses only the MEMORY/TASKS guidance.
+sandbox still serves `memory/MEMORY.md` via the S3 API. The harness is per-feature:
+`workspace.harness.workspace.enabled=false` suppresses the workspace guidance prompt,
+`workspace.harness.memory.enabled=false` disables structured memory.
 
 ```mermaid
 flowchart LR

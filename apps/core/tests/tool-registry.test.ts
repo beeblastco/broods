@@ -146,6 +146,9 @@ describe("createTools", () => {
     await expect(approvalStatus("edit", {}, context)).resolves.toBe(
       "user-approval",
     );
+    await expect(approvalStatus("memory_save", {}, context)).resolves.toBe(
+      "user-approval",
+    );
     await expect(approvalStatus("bash", {}, context)).resolves.toBe(
       "user-approval",
     );

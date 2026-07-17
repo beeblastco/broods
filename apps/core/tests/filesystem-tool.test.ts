@@ -584,10 +584,22 @@ describe("memory tool", () => {
     expect(payload.code).toContain("memory/name-in-this-channel.md");
     expect(payload.code).toContain("memory/MEMORY.md");
     // Same durability discipline as write: base64-piped body, fsynced files, and
-    // an index append deduplicated by the entry's link target.
+    // the entry's index line replaced (not skipped), matched by its anchored
+    // defining shape so a cross-reference to this slug in another entry's
+    // description is never deleted.
     expect(payload.code).toContain("base64 -d");
-    expect(payload.code).toContain("grep -qF");
+    expect(payload.code).toContain("grep -v ");
+    expect(payload.code).toContain(
+      "^- \\[[^]]*](name-in-this-channel\\.md) — ",
+    );
     expect(payload.code).toContain("sync ");
+    // The workspace is a mountpoint-s3 FUSE mount: O_APPEND and rename() fail
+    // with EPERM, so the index must be rebuilt in one `>` write — never `>>`,
+    // `mv`, or a temp file.
+    expect(payload.code).toContain("printf '%s\\n%s\\n' \"$index_body\"");
+    expect(payload.code).not.toContain(">>");
+    expect(payload.code).not.toContain("mv ");
+    expect(payload.code).not.toContain(".tmp");
     expect(result.type).toBe("text");
 
     const entryB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(
@@ -643,10 +655,20 @@ describe("memory tool", () => {
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("kebab-cases titles into slugs and rejects blank titles", async () => {
+  it("kebab-cases titles into collision-free slugs and rejects blank titles", async () => {
     const { memorySlug } = await import("../src/harness/tools/memory.tool.ts");
     expect(memorySlug("Owner's Slack handle!")).toBe("owner-s-slack-handle");
-    expect(memorySlug("---")).toBe("memory");
+    // Diacritics fold into readable ASCII instead of dashes.
+    expect(memorySlug("Phích prefers tiếng Việt")).toBe(
+      "phich-prefers-tieng-viet",
+    );
+    // Capped or empty slugs get a stable hash suffix so distinct titles never share a file.
+    expect(memorySlug("---")).toMatch(/^memory-[0-9a-f]{8}$/);
+    expect(memorySlug("---")).toBe(memorySlug("---"));
+    const longA = `${"very long shared prefix ".repeat(4)}variant alpha`;
+    const longB = `${"very long shared prefix ".repeat(4)}variant beta`;
+    expect(memorySlug(longA)).not.toBe(memorySlug(longB));
+    expect(memorySlug(longA).length).toBeLessThanOrEqual(69);
     const memory_save = await memorySave(
       workspaceCtx() as unknown as Record<string, unknown>,
     );

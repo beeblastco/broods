@@ -34,7 +34,12 @@ export interface WorkspaceStorageConfig {
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
   isolation?: boolean;
-  harness?: { enabled?: boolean };
+  // Named harness features, each with its own options (no top-level enabled):
+  // workspace = the <workspace> prompt, memory = structured memory.
+  harness?: {
+    workspace?: { enabled?: boolean };
+    memory?: { enabled?: boolean };
+  };
 }
 
 /**
@@ -56,14 +61,26 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
   assertOptionalBoolean(config.isolation, "config.isolation");
   const isolation = config.isolation as boolean | undefined;
 
-  let harness: { enabled?: boolean } | undefined;
+  let harness:
+    | { workspace?: { enabled?: boolean }; memory?: { enabled?: boolean } }
+    | undefined;
   if (config.harness !== undefined) {
     if (!isPlainObject(config.harness)) {
       throw new Error("config.harness must be an object");
     }
-    assertOptionalBoolean(config.harness.enabled, "config.harness.enabled");
-    if (config.harness.enabled !== undefined) {
-      harness = { enabled: config.harness.enabled as boolean };
+    const workspacePrompt = normalizeHarnessFeature(
+      config.harness.workspace,
+      "config.harness.workspace",
+    );
+    const memory = normalizeHarnessFeature(
+      config.harness.memory,
+      "config.harness.memory",
+    );
+    if (workspacePrompt || memory) {
+      harness = {
+        ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
+        ...(memory ? { memory: memory } : {}),
+      };
     }
   }
 
@@ -247,6 +264,22 @@ function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
 
   return value;
+}
+
+function normalizeHarnessFeature(
+  value: unknown,
+  name: string,
+): { enabled?: boolean } | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  assertOptionalBoolean(value.enabled, `${name}.enabled`);
+
+  // Features default to on: `enabled: true` normalizes away to the omitted form.
+  return value.enabled === false ? { enabled: false } : undefined;
 }
 
 function assertOptionalBoolean(value: unknown, name: string): void {

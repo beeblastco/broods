@@ -75,7 +75,7 @@ import { defineWorkspace } from "broods";
 
 export const projectWorkspace = defineWorkspace({
   name: "project",
-  config: { storage: { provider: "s3" }, harness: { enabled: true } },
+  config: { storage: { provider: "s3" } },
 });
 
 // then on the agent: workspaces: [projectWorkspace]
