@@ -399,7 +399,6 @@ export async function backSyncCanvasFromAgentRow(
   // Draw the wiring the config blob declares (sandbox, workspaces, skills)
   // as locked canvas nodes/edges next to the agent node.
   await syncApiAgentCanvasWiring(ctx, {
-    accountId: agent.accountId,
     projectId: project._id,
     environmentId: environment._id,
   });
@@ -481,7 +480,6 @@ export async function mirrorAgentRowOntoConfig(
     linkedConfig.environmentId
   ) {
     await syncApiAgentCanvasWiring(ctx, {
-      accountId: agent.accountId,
       projectId: linkedConfig.projectId,
       environmentId: linkedConfig.environmentId,
     });

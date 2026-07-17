@@ -55,6 +55,7 @@ const NODE_TYPE_LABELS: Record<NodeType, string> = {
   skill: "skill",
 };
 
+/** Danger-zone settings for a canvas node: delete, or why delete is locked. */
 export function SettingsTab({
   nodeType,
   nodeName,

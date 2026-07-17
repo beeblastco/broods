@@ -357,12 +357,27 @@ export const remove = internalMutation({
         )
         .unique();
       if (layout) {
-        const filtered = (
-          layout.nodes as Array<{ data?: { agentConfigId?: string } }>
-        ).filter((n) => n.data?.agentConfigId !== linkedConfig._id);
-        if (filtered.length !== layout.nodes.length) {
+        const nodes = layout.nodes as Array<{
+          id: string;
+          data?: { agentConfigId?: string };
+        }>;
+        const removedIds = new Set(
+          nodes
+            .filter((n) => n.data?.agentConfigId === linkedConfig._id)
+            .map((n) => n.id),
+        );
+        if (removedIds.size > 0) {
+          // A deleted node takes its incident edges with it — a dangling edge
+          // would survive every later reconciliation pass.
+          const edges = layout.edges as Array<{
+            source: string;
+            target: string;
+          }>;
           await ctx.db.patch(layout._id, {
-            nodes: filtered,
+            nodes: nodes.filter((n) => !removedIds.has(n.id)),
+            edges: edges.filter(
+              (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
+            ),
             updatedAt: Date.now(),
           });
         }
@@ -373,7 +388,6 @@ export const remove = internalMutation({
       // no remaining API agent references disappear with their agent.
       if (linkedConfig.projectId && linkedConfig.environmentId) {
         await syncApiAgentCanvasWiring(ctx, {
-          accountId: agent.accountId,
           projectId: linkedConfig.projectId,
           environmentId: linkedConfig.environmentId,
         });

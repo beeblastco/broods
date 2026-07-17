@@ -23,6 +23,7 @@ import type { MutationCtx } from "../_generated/server";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
 import { isPlainObject } from "./objects";
 
+/** Persisted canvas node shape (mirrors `canvasNodeValidator`). */
 type CanvasNode = {
   id: string;
   type: "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill";
@@ -30,6 +31,7 @@ type CanvasNode = {
   data: Record<string, unknown>;
 };
 
+/** Persisted canvas edge shape (mirrors `canvasEdgeValidator`). */
 type CanvasEdge = {
   id: string;
   source: string;
@@ -37,19 +39,28 @@ type CanvasEdge = {
   animated?: boolean;
 };
 
+/**
+ * Recomputes the desired API-managed wiring for one environment's canvas and
+ * patches the layout: locked workspace/sandbox/skill nodes, agent→resource
+ * edges, and pruning of wiring the configs no longer declare. Resources are
+ * resolved against each agent's own account, so a mixed environment never
+ * aliases or prunes another account's wiring. Agents whose blob cannot be
+ * decrypted keep their existing wiring untouched.
+ */
 export async function syncApiAgentCanvasWiring(
   ctx: MutationCtx,
   options: {
-    accountId: Id<"accounts">;
     projectId: Id<"projects">;
     environmentId: Id<"environments">;
   },
 ): Promise<void> {
-  const { accountId, projectId, environmentId } = options;
+  const { projectId, environmentId } = options;
   // Without the shared secret no blob can be decrypted, so no wiring is known;
   // leave the canvas untouched rather than pruning edges we cannot recompute.
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return;
+  if (!secret) {
+    return;
+  }
 
   const layout = await ctx.db
     .query("canvasLayouts")
@@ -57,7 +68,9 @@ export async function syncApiAgentCanvasWiring(
       q.eq("projectId", projectId).eq("environmentId", environmentId),
     )
     .unique();
-  if (!layout) return;
+  if (!layout) {
+    return;
+  }
 
   const existingNodes = (layout.nodes as CanvasNode[]).map((node) => ({
     id: String(node.id),
@@ -92,19 +105,34 @@ export async function syncApiAgentCanvasWiring(
       .collect()
   ).filter((config) => config.managedBy === "api" && config.agentId);
 
-  const accountSkillNames = new Set(
-    (
-      await ctx.db
-        .query("skills")
-        .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-        .collect()
-    ).map((skill) => skill.name),
-  );
+  /** Lazily loaded skill names per owning account. */
+  const skillNamesByAccount = new Map<Id<"accounts">, Set<string>>();
+  const skillNamesFor = async (
+    ownerAccountId: Id<"accounts">,
+  ): Promise<Set<string>> => {
+    const cached = skillNamesByAccount.get(ownerAccountId);
+    if (cached) {
+      return cached;
+    }
+    const names = new Set(
+      (
+        await ctx.db
+          .query("skills")
+          .withIndex("by_accountId", (q) => q.eq("accountId", ownerAccountId))
+          .collect()
+      ).map((skill) => skill.name),
+    );
+    skillNamesByAccount.set(ownerAccountId, names);
+
+    return names;
+  };
 
   // Same column layout as the CLI canvas sync; agents keep whatever position
   // the back-sync or the user gave them.
   const columnX = { sandbox: 340, workspace: 600, skill: 860 } as const;
   const rowY = { sandbox: 80, workspace: 80, skill: 80 };
+
+  /** Next free slot in a resource kind's column. */
   const nextPosition = (kind: keyof typeof columnX) => {
     const position = { x: columnX[kind], y: rowY[kind] };
     rowY[kind] += 132;
@@ -112,6 +140,7 @@ export async function syncApiAgentCanvasWiring(
     return position;
   };
 
+  /** Creates or refreshes a node in `nextById`, keeping any existing position. */
   const upsertNode = (
     preferred: CanvasNode | undefined,
     id: string,
@@ -132,14 +161,20 @@ export async function syncApiAgentCanvasWiring(
     return node;
   };
 
-  // Adopt an API-created (account-scoped) row into this environment so canvas
-  // saves accept it; rows already living in another environment cannot be
-  // drawn here and are skipped. Dashboard-owned rows keep their owner — an API
-  // agent may reference a dashboard-created resource without stealing it.
+  /**
+   * Adopt an API-created (account-scoped) row into this environment so canvas
+   * saves accept it; rows owned by another account or living in another
+   * environment cannot be drawn here and are skipped. Dashboard-owned rows in
+   * this environment keep their owner — an API agent may reference a
+   * dashboard-created resource without stealing it.
+   */
   const adoptRow = async (
     row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
+    ownerAccountId: Id<"accounts">,
   ): Promise<boolean> => {
-    if (row.accountId !== accountId) return false;
+    if (row.accountId !== ownerAccountId) {
+      return false;
+    }
     if (row.environmentId === undefined) {
       await ctx.db.patch(row._id, {
         projectId: projectId,
@@ -159,15 +194,26 @@ export async function syncApiAgentCanvasWiring(
   const workspaceReferenced = new Set<string>();
   const workspaceHasWriter = new Set<string>();
   const agentNodeByConfigId = new Map<string, string>();
+  // Agent nodes whose config blob could not be read this pass: their existing
+  // wiring must survive reconciliation, since the desired state is unknown.
+  const unresolvedAgentNodeIds = new Set<string>();
 
+  /** Resolves a sandbox ref into an adopted, materialized node id. */
   const sandboxNodeFor = async (
     sandboxRef: unknown,
+    ownerAccountId: Id<"accounts">,
   ): Promise<string | null> => {
-    if (typeof sandboxRef !== "string" || !sandboxRef.trim()) return null;
+    if (typeof sandboxRef !== "string" || !sandboxRef.trim()) {
+      return null;
+    }
     const normalized = ctx.db.normalizeId("sandboxConfigs", sandboxRef);
-    if (!normalized) return null;
+    if (!normalized) {
+      return null;
+    }
     const row = await ctx.db.get(normalized);
-    if (!row || !(await adoptRow(row))) return null;
+    if (!row || !(await adoptRow(row, ownerAccountId))) {
+      return null;
+    }
     const node = upsertNode(
       existingByResourceId.get(row._id),
       `api-sandbox-${row._id}`,
@@ -190,17 +236,22 @@ export async function syncApiAgentCanvasWiring(
   for (const config of configs) {
     const agentRowId = ctx.db.normalizeId("agents", config.agentId!);
     const agent = agentRowId ? await ctx.db.get(agentRowId) : null;
-    if (!agent?.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag)
+    const nested =
+      agent?.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+        ? await decryptAgentConfigBlob(
+            {
+              ciphertext: agent.encryptedConfig,
+              iv: agent.encryptionIv,
+              tag: agent.encryptionTag,
+            },
+            secret,
+          )
+        : null;
+    if (!agent || !nested) {
+      const agentNode = existingByAgentConfigId.get(config._id);
+      if (agentNode) unresolvedAgentNodeIds.add(agentNode.id);
       continue;
-    const nested = await decryptAgentConfigBlob(
-      {
-        ciphertext: agent.encryptedConfig,
-        iv: agent.encryptionIv,
-        tag: agent.encryptionTag,
-      },
-      secret,
-    );
-    if (!nested) continue;
+    }
 
     const agentNode = upsertNode(
       existingByAgentConfigId.get(config._id),
@@ -215,7 +266,10 @@ export async function syncApiAgentCanvasWiring(
     );
     agentNodeByConfigId.set(config._id, agentNode.id);
 
-    const defaultSandboxNodeId = await sandboxNodeFor(nested.sandbox);
+    const defaultSandboxNodeId = await sandboxNodeFor(
+      nested.sandbox,
+      agent.accountId,
+    );
     if (defaultSandboxNodeId)
       addDefaultEdge(desiredEdges, agentNode.id, defaultSandboxNodeId);
 
@@ -229,7 +283,7 @@ export async function syncApiAgentCanvasWiring(
         );
         if (!normalized) continue;
         const row = await ctx.db.get(normalized);
-        if (!row || !(await adoptRow(row))) continue;
+        if (!row || !(await adoptRow(row, agent.accountId))) continue;
         const workspaceNode = upsertNode(
           existingByResourceId.get(row._id),
           `api-workspace-${row._id}`,
@@ -255,10 +309,16 @@ export async function syncApiAgentCanvasWiring(
         workspaceReferenced.add(workspaceNode.id);
         if (typeof ref.sandbox === "string") {
           // Per-workspace sandbox override → writable, drawn as a mount edge.
-          const overrideNodeId = await sandboxNodeFor(ref.sandbox);
-          workspaceHasWriter.add(workspaceNode.id);
-          if (overrideNodeId)
+          // A ref that fails to resolve grants no writer: readOnly must never
+          // claim writability without the mount edge that backs it.
+          const overrideNodeId = await sandboxNodeFor(
+            ref.sandbox,
+            agent.accountId,
+          );
+          if (overrideNodeId) {
+            workspaceHasWriter.add(workspaceNode.id);
             addMountEdge(desiredEdges, workspaceNode.id, overrideNodeId);
+          }
         } else if (ref.sandbox !== null && defaultSandboxNodeId) {
           // Omitted sandbox inherits the agent-level default (writable);
           // `null` explicitly forces read-only, so it stays a non-writer.
@@ -273,15 +333,17 @@ export async function syncApiAgentCanvasWiring(
       skills.enabled !== false &&
       Array.isArray(skills.allowed)
     ) {
+      const skillNames = await skillNamesFor(agent.accountId);
       for (const entry of skills.allowed) {
         if (typeof entry !== "string" || !entry.trim()) continue;
-        // Allowed refs are `<accountId>/<name>` paths; the account-local name
-        // identifies the skill node (mirroring the CLI sync's node ids).
+        // Allowed refs are `<accountId>/<name>` paths; the node id carries the
+        // owning account so same-named skills never alias across accounts.
         const name = entry.slice(entry.lastIndexOf("/") + 1).trim();
-        if (!name || !accountSkillNames.has(name)) continue;
+        if (!name || !skillNames.has(name)) continue;
+        const skillNodeId = `api-skill-${agent.accountId}-${name}`;
         const skillNode = upsertNode(
-          nextById.get(`api-skill-${name}`),
-          `api-skill-${name}`,
+          nextById.get(skillNodeId),
+          skillNodeId,
           "skill",
           nextPosition("skill"),
           {
@@ -330,27 +392,44 @@ export async function syncApiAgentCanvasWiring(
     };
   }
 
-  // API-managed edges (both endpoints API-owned) not in the desired set are
-  // stale wiring; everything the user drew survives.
+  /** API-managed edge: both endpoints are API-owned nodes. */
   const isApiManagedEdge = (edge: CanvasEdge) =>
     nextById.get(edge.source)?.data.managedBy === "api" &&
     nextById.get(edge.target)?.data.managedBy === "api";
+  // Stale API wiring is pruned; user-drawn edges and the wiring of agents
+  // whose desired state is unknown this pass survive.
   const existingEdgeIds = new Set(existingEdges.map((edge) => edge.id));
-  const nextEdges = existingEdges.filter(
-    (edge) => desiredEdges.has(edge.id) || !isApiManagedEdge(edge),
+  const keptEdges = existingEdges.filter(
+    (edge) =>
+      desiredEdges.has(edge.id) ||
+      !isApiManagedEdge(edge) ||
+      unresolvedAgentNodeIds.has(edge.source) ||
+      unresolvedAgentNodeIds.has(edge.target),
   );
   for (const edge of desiredEdges.values()) {
     if (existingEdgeIds.has(edge.id)) continue;
-    nextEdges.push(edge);
+    keptEdges.push(edge);
   }
 
-  // Prune API-managed wiring nodes no agent references anymore. Agent nodes
-  // are owned by the create/remove back-sync, not by this wiring pass.
+  // Prune API-managed wiring nodes nothing references anymore: neither the
+  // desired sets nor a surviving edge (an unresolved agent's wiring). Agent
+  // nodes are owned by the create/remove back-sync, not by this wiring pass.
+  const edgeEndpointIds = new Set(
+    keptEdges.flatMap((edge) => [edge.source, edge.target]),
+  );
   const nextNodes = [...nextById.values()].filter(
     (node) =>
       node.type === "agent" ||
       node.data.managedBy !== "api" ||
-      desiredWiringNodeIds.has(node.id),
+      desiredWiringNodeIds.has(node.id) ||
+      edgeEndpointIds.has(node.id),
+  );
+
+  // Invariant: every persisted edge has two persisted endpoints — a pruned or
+  // externally deleted node must take its edges with it.
+  const nextNodeIds = new Set(nextNodes.map((node) => node.id));
+  const nextEdges = keptEdges.filter(
+    (edge) => nextNodeIds.has(edge.source) && nextNodeIds.has(edge.target),
   );
 
   await ctx.db.patch(layout._id, {

@@ -525,7 +525,7 @@ export const resourceOwnership = query({
   },
   returns: v.record(
     v.string(),
-    v.union(v.literal("cli"), v.literal("dashboard")),
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
   ),
   handler: async (ctx, { projectId, environmentId }) => {
     const authUser = await authKit.getAuthUser(ctx);
@@ -560,10 +560,15 @@ export const resourceOwnership = query({
       )
       .collect();
 
-    const ownership: Record<string, "cli" | "dashboard"> = {};
+    const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
     for (const row of [...workspaces, ...sandboxes]) {
       if (row.accountId !== account._id) continue;
-      ownership[row._id] = row.managedBy === "cli" ? "cli" : "dashboard";
+      // Preserve both code-owner markers — collapsing "api" into "dashboard"
+      // would unlock API-managed resources in the side panel.
+      ownership[row._id] =
+        row.managedBy === "cli" || row.managedBy === "api"
+          ? row.managedBy
+          : "dashboard";
     }
 
     return ownership;

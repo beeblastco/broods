@@ -249,29 +249,30 @@ describe("syncApiAgentCanvasWiring", () => {
     tt.run(async (ctx) => {
       const now = Date.now();
       const workspaceId = await ctx.db.insert("workspaceConfigs", {
-        accountId,
+        accountId: accountId,
         name: "beeblast-ws-cust1",
         config: { storage: { provider: "s3" }, isolation: true },
         createdAt: now,
         updatedAt: now,
       });
       const sandboxId = await ctx.db.insert("sandboxConfigs", {
-        accountId,
+        accountId: accountId,
         name: "beeblast-sandbox",
         createdAt: now,
         updatedAt: now,
       });
       await ctx.db.insert("skills", {
-        accountId,
+        accountId: accountId,
         name: "crm-sync",
         s3Key: "skills/crm-sync.zip",
         createdAt: now,
         updatedAt: now,
       });
 
-      return { workspaceId, sandboxId };
+      return { workspaceId: workspaceId, sandboxId: sandboxId };
     });
 
+  /** The canvas layout of the environment the config was back-synced into. */
   const layoutFor = (tt: T, config: Doc<"agentConfigs">) =>
     tt.run(async (ctx) =>
       ctx.db
@@ -297,7 +298,7 @@ describe("syncApiAgentCanvasWiring", () => {
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
     await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
-      agentId,
+      agentId: agentId,
       config: {
         model: { provider: "custom", modelId: "Qwen3.6-27B" },
         sandbox: sandboxId,
@@ -364,10 +365,11 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    /** Writes an encrypted config onto the agent the way an API PATCH does. */
     const seed = (config: Record<string, unknown>) =>
       tt.mutation(internal.agents.seedEncryptedConfigForTest, {
-        agentId,
-        config,
+        agentId: agentId,
+        config: config,
       });
     await seed({
       sandbox: sandboxId,
@@ -390,5 +392,59 @@ describe("syncApiAgentCanvasWiring", () => {
     const edges = layout!.edges as Array<{ source: string; target: string }>;
     expect(edges.some((e) => e.target === sandboxNode.id)).toBe(true);
     expect(edges).toHaveLength(1);
+  });
+
+  test("preserves an agent's wiring while its blob cannot be decrypted", async () => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+    const tt = t();
+    const { accountId } = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+    const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
+
+    const first = await createAgent(tt, accountId, "beeblast-agent-cust1");
+    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+      agentId: first,
+      config: {
+        sandbox: sandboxId,
+        workspaces: [{ name: "memory", workspaceId: workspaceId }],
+      },
+    });
+
+    // The first agent's blob becomes unreadable (e.g. written under another
+    // secret); a second agent's sync must not prune the first one's wiring.
+    await tt.run(async (ctx) => {
+      await ctx.db.patch(first, {
+        encryptedConfig: "not-decodable",
+        encryptionIv: "bad",
+        encryptionTag: "bad",
+      });
+    });
+    const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
+    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+      agentId: second,
+      config: { sandbox: sandboxId },
+    });
+
+    const config = await configFor(tt, first);
+    const layout = await layoutFor(tt, config!);
+    const nodes = layout!.nodes as Array<{
+      id: string;
+      type: string;
+      data: Record<string, unknown>;
+    }>;
+    const firstNode = nodes.find((n) => n.data.agentConfigId === config!._id)!;
+    const workspaceNode = nodes.find((n) => n.type === "workspace")!;
+    expect(workspaceNode.data.resourceId).toBe(workspaceId);
+    const edges = layout!.edges as Array<{ source: string; target: string }>;
+    expect(edges).toContainEqual(
+      expect.objectContaining({
+        source: firstNode.id,
+        target: workspaceNode.id,
+      }),
+    );
   });
 });

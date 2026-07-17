@@ -616,6 +616,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       currentResourceName,
     );
 
+  /** Deletes the node (and its agent config); no-op while code owns it. */
   async function handleDelete() {
     if (isCodeManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
