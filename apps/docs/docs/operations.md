@@ -127,7 +127,7 @@ Deploy outputs include:
 
 ## Container Runtime (Phase 9a)
 
-The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, Scheduler, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane. Core does not talk to EventBridge Scheduler — the Convex config plane owns every schedule, including the account-deletion sweep.
 
 ```mermaid
 flowchart LR
@@ -135,7 +135,7 @@ flowchart LR
     Ingress --> Gateway[broods gateway]
     Gateway --> Pod[broods-core pod\nBun.serve]
     Pod --> Handlers[harness + account handlers]
-    Handlers --> Data[(Convex / S3 / NATS\nOPA / Scheduler / sandboxes)]
+    Handlers --> Data[(Convex / S3 / NATS\nOPA / sandboxes)]
 ```
 
 Runtime notes:
