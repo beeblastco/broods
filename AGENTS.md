@@ -28,6 +28,15 @@ This is a Bun workspaces monorepo for Broods / broods.
 - Do not deploy unless explicitly asked to do it locally. `bun run deploy` targets `apps/core`; use `dev` only when a stage is needed. Always push to the `dev` branch and let CI/CD handle deployment. `main` is branch-protected and only receives fast-forward merges from `dev` via the "Promote dev to main" workflow (Actions tab, one click), which triggers the production deploys.
 - Keep changes scoped to the workspace you are touching, but update linked docs, examples, generated Convex files, and tests when behavior or public contracts change.
 
+## Code Style
+
+Applies to every workspace. Follow it strictly when writing, editing, or deleting code.
+
+- Lay each file out in this order: constants, types, and interfaces first; then the exports and main logic; then the private, internal-only functions used inside that file.
+- Keep functions of the same kind next to each other — all async functions in one run, then all plain functions, and so on. Order each group alphabetically so they are quick to find.
+- Comment only key sections. Keep each comment to two lines at most, with a clear explanation. Do not add per-function docstrings by default.
+- Before treating work as done, run each package's own scripts: `bun run check` for lint and TypeScript validation, and `bun run format` for Prettier formatting. Never run `tsc` or `bunx tsc --noEmit` raw, which resolves the wrong config.
+
 ## Cross-Workspace Notes
 
 - Core is the source of truth for runtime behavior.

@@ -38,22 +38,9 @@ if (!user) {
 }
 ```
 
-## Docstrings
-
-Add JSDoc to all functions and types. Keep it to 1-2 sentences focused on what the code does and why.
-
-```typescript
-/**
- * Brief description of purpose.
- * @param name description
- * @returns description
- * @throws description
- */
-```
-
-Do not put `-` between the parameter name and description. Update docstrings when modifying functions.
-
 ## Code Style
+
+File layout, function grouping, comments, and lint/typecheck rules are monorepo-wide — see `../../AGENTS.md`. Comment key sections only; do not add JSDoc to every function and type.
 
 - Use `key: value` object syntax instead of shorthand.
 - Keep code simple and readable. Do not add abstractions unless they remove real duplication or complexity.
