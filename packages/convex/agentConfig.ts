@@ -365,6 +365,14 @@ export const updateRuntimeRefs = mutation({
       throw new Error("Agent config not found.");
     }
 
+    // Code-managed agents get their wiring from their owner (CLI deploy or
+    // account API); canvas-derived refs must not overwrite it. Before the
+    // API wiring was drawn on the canvas, a save on a layout holding a bare
+    // API agent node derived "no refs" here and stripped the live config.
+    if (existing.managedBy === "cli" || existing.managedBy === "api") {
+      return configId;
+    }
+
     const extraConfig = { ...asRecord(existing.extraConfig) };
     if (sandbox) {
       extraConfig.sandbox = sandbox;
@@ -415,6 +423,11 @@ export const updateSubagentRefs = mutation({
     const existing = await ctx.db.get(configId);
     if (!existing || !(await canAccessAgentConfig(ctx, user.id, existing))) {
       throw new Error("Agent config not found.");
+    }
+
+    // Code-managed agents own their subagent allow-list; see updateRuntimeRefs.
+    if (existing.managedBy === "cli" || existing.managedBy === "api") {
+      return configId;
     }
 
     // Map each callee config to its broods agents-row id, skipping

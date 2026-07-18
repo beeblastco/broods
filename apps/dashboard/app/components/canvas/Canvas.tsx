@@ -3,7 +3,10 @@
 /** Main canvas component that renders nodes and edges from the database. */
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
-import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
+import {
+  isCodeManagedEdgeId,
+  isCodeManagedOwner,
+} from "@/app/components/canvas/edgeOwnership";
 import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
 import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
@@ -194,7 +197,9 @@ function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
   )?.managedBy;
   if (
     !isCodeManagedEdgeId(edge.id) &&
-    !(sourceManagedBy === "cli" && targetManagedBy === "cli")
+    !(
+      isCodeManagedOwner(sourceManagedBy) && isCodeManagedOwner(targetManagedBy)
+    )
   ) {
     return edge;
   }
@@ -437,12 +442,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
-            | "agent"
-            | "database"
-            | "sandbox"
-            | "workspace"
-            | "tool"
-            | "skill",
+            "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
           position: n.position,
           data: n.data as {
             label: string;
