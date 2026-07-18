@@ -296,8 +296,12 @@ export class Session {
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
-    await this.ensureResolvedRuntime();
-    const entries = await this.loadConversationEntries();
+    // Runtime resolution and history load hit Convex independently, so overlap
+    // them — the first token should not wait on two sequential round-trips.
+    const [, entries] = await Promise.all([
+      this.ensureResolvedRuntime(),
+      this.loadConversationEntries(),
+    ]);
     const activeEntries = projectActiveConversationEntries(entries);
     // Snapshot persisted system context separately from chat messages. The
     // harness passes this through prepareStep so long-running tool loops can
