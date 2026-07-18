@@ -269,7 +269,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!key) return;
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
-    await deleteSandboxInstance(PROVIDER, key).catch(() => {});
+    await deleteSandboxInstance(
+      PROVIDER,
+      key,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
   }
 
   #optionOrEnv(option: string, env: string): string | undefined {
@@ -356,7 +360,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (existing) {
       try {
         const reconnected = await this.#reconnect(existing);
-        await saveSandboxInstance(PROVIDER, key, existing).catch(() => {});
+        await saveSandboxInstance(
+          PROVIDER,
+          key,
+          existing,
+          this.#config.controlPlane?.accountId,
+        ).catch(() => {});
         await upsertSandboxInstance(
           this.#config.controlPlane,
           PROVIDER,
@@ -371,11 +380,23 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         // a still-allocated (e.g. suspended) VM leaks it and burns the account's
         // MicroVM memory quota until nothing can launch.
         if (!isMicrovmNotFound(error)) throw error;
-        await deleteSandboxInstance(PROVIDER, key, existing).catch(() => {});
+        await deleteSandboxInstance(
+          PROVIDER,
+          key,
+          this.#config.controlPlane?.accountId,
+          existing,
+        ).catch(() => {});
       }
     }
     const created = await this.#runMicrovm(request);
-    if (await claimSandboxInstance(PROVIDER, key, created.microvmId)) {
+    if (
+      await claimSandboxInstance(
+        PROVIDER,
+        key,
+        created.microvmId,
+        this.#config.controlPlane?.accountId,
+      )
+    ) {
       await upsertSandboxInstance(
         this.#config.controlPlane,
         PROVIDER,

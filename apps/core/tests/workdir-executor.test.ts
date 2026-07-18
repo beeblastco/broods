@@ -598,6 +598,7 @@ describe("WorkdirSandboxExecutor.run", () => {
       "sandbox",
       "tool:acct_1",
       "sbx_new",
+      undefined,
     );
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
 
@@ -725,7 +726,11 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
         (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_stored",
       ),
     ).toBe(true);
-    expect(deleteSandboxInstanceMock).toHaveBeenCalledWith("sandbox", NS);
+    expect(deleteSandboxInstanceMock).toHaveBeenCalledWith(
+      "sandbox",
+      NS,
+      undefined,
+    );
   });
 
   it("returns null instance info when nothing is reserved", async () => {

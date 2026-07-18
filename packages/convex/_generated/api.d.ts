@@ -52,6 +52,7 @@ import type * as model_agentConfigCodec from "../model/agentConfigCodec.js";
 import type * as model_agentRules from "../model/agentRules.js";
 import type * as model_agentRuntimeSecrets from "../model/agentRuntimeSecrets.js";
 import type * as model_agentSync from "../model/agentSync.js";
+import type * as model_apiCanvasSync from "../model/apiCanvasSync.js";
 import type * as model_auditEvents from "../model/auditEvents.js";
 import type * as model_aws from "../model/aws.js";
 import type * as model_cascade from "../model/cascade.js";
@@ -147,6 +148,7 @@ declare const fullApi: ApiFromModules<{
   "model/agentRules": typeof model_agentRules;
   "model/agentRuntimeSecrets": typeof model_agentRuntimeSecrets;
   "model/agentSync": typeof model_agentSync;
+  "model/apiCanvasSync": typeof model_apiCanvasSync;
   "model/auditEvents": typeof model_auditEvents;
   "model/aws": typeof model_aws;
   "model/cascade": typeof model_cascade;
