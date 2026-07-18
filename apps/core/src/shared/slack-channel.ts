@@ -616,9 +616,15 @@ function cleanSlackText(value: string): string {
  * for models that put the whole answer in a tool-call step.
  *
  * Slack's chat.appendStream APPENDS every task_update's `details` to the task
- * card — it never replaces. Reasoning must therefore stream as per-chunk
+ * card — it never replaces. Reasoning must therefore stream as new-suffix
  * deltas: sending the accumulated text re-appends each snapshot and renders
  * "TheThe user isThe user is asking…" (broods#115 follow-up).
+ *
+ * Every yielded task_update costs one blocking Slack API round trip (the chunk
+ * path in ChatStreamer flushes immediately), and this generator is the model
+ * stream's only consumer — so per-delta reasoning yields throttle generation to
+ * Slack's pace. Reasoning deltas are therefore coalesced and flushed at most
+ * once per REASONING_FLUSH_INTERVAL_MS.
  */
 export async function* toSlackStream(
   textStream: AsyncIterable<unknown>,
@@ -629,8 +635,37 @@ export async function* toSlackStream(
   let stepHadToolCalls = false;
   let reasoningChars = 0;
   let reasoningSegment = 0;
+  let pendingReasoning = "";
+  let pendingReasoningId: unknown;
+  let lastReasoningFlushAt = 0;
   const reasoningTaskIds = new Map<string, string>();
   const toolNamesById = new Map<string, string>();
+
+  // Drain the coalesced reasoning buffer into one task_update, clipped to the
+  // per-segment card budget. Returns null when there is nothing left to send.
+  const flushReasoning = (): StreamChunk | null => {
+    if (!pendingReasoning || reasoningChars >= SLACK_TASK_TEXT_LIMIT) {
+      pendingReasoning = "";
+      return null;
+    }
+    const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
+    const details =
+      pendingReasoning.length <= remaining
+        ? pendingReasoning
+        : remaining > 3
+          ? `${pendingReasoning.slice(0, remaining - 3)}...`
+          : pendingReasoning.slice(0, remaining);
+    reasoningChars += details.length;
+    pendingReasoning = "";
+    lastReasoningFlushAt = Date.now();
+    return {
+      type: "task_update",
+      id: reasoningTaskId(pendingReasoningId, false),
+      title: "Thinking",
+      status: "in_progress",
+      details,
+    };
+  };
 
   // Adapters reuse the same reasoning id (e.g. `reasoning-0`) on every step,
   // which would merge all thinking segments into one task pinned wherever the
@@ -676,6 +711,8 @@ export async function* toSlackStream(
       }
 
       case "finish-step": {
+        const pending = flushReasoning();
+        if (pending) yield pending;
         // finishReason is absent on UI-stream chunks; the tool events seen
         // during the step stand in for it there.
         const finishReason = stringValue(event.finishReason);
@@ -697,6 +734,9 @@ export async function* toSlackStream(
 
       case "reasoning-start": {
         reasoningChars = 0;
+        pendingReasoning = "";
+        pendingReasoningId = event.id;
+        lastReasoningFlushAt = Date.now();
         yield {
           type: "task_update",
           id: reasoningTaskId(event.id, true),
@@ -709,28 +749,22 @@ export async function* toSlackStream(
       case "reasoning-delta": {
         const text = (event.text ?? event.delta ?? "") as string;
         if (text && reasoningChars < SLACK_TASK_TEXT_LIMIT) {
-          const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
-          // The ellipsis counts against the budget; with under 4 characters
-          // left there is no room for it, so the clip ends the text plain.
-          const details =
-            text.length <= remaining
-              ? text
-              : remaining > 3
-                ? `${text.slice(0, remaining - 3)}...`
-                : text.slice(0, remaining);
-          reasoningChars += details.length;
-          yield {
-            type: "task_update",
-            id: reasoningTaskId(event.id, false),
-            title: "Thinking",
-            status: "in_progress",
-            details,
-          };
+          pendingReasoning += text;
+          pendingReasoningId = event.id;
+          if (
+            Date.now() - lastReasoningFlushAt >=
+            REASONING_FLUSH_INTERVAL_MS
+          ) {
+            const update = flushReasoning();
+            if (update) yield update;
+          }
         }
         break;
       }
 
       case "reasoning-end": {
+        const update = flushReasoning();
+        if (update) yield update;
         // No `output` here: the appended details already carry the reasoning,
         // and output would re-append the whole text as one more copy.
         yield {
@@ -745,6 +779,10 @@ export async function* toSlackStream(
       }
 
       case "tool-input-start": {
+        // Providers may jump into tool calls without a reasoning-end; commit
+        // pending reasoning first so the card keeps the real execution order.
+        const pending = flushReasoning();
+        if (pending) yield pending;
         stepHadToolCalls = true;
         const toolName = (event.toolName ?? "tool") as string;
         const id = stringValue(event.id) ?? toolName;
@@ -764,6 +802,8 @@ export async function* toSlackStream(
       }
 
       case "tool-call": {
+        const pending = flushReasoning();
+        if (pending) yield pending;
         stepHadToolCalls = true;
         const toolName = (event.toolName ?? "tool") as string;
         const id =
@@ -872,6 +912,11 @@ function formatToolOutput(value: unknown): string {
 // Cap on the text a single task accumulates in the card, whether appended
 // delta-by-delta (reasoning details) or set once (tool output).
 const SLACK_TASK_TEXT_LIMIT = 1200;
+
+// Minimum gap between reasoning task_update flushes. Each flush blocks the
+// model stream on one Slack API round trip (~200ms), so this bounds the
+// streaming slowdown to roughly one round trip per interval.
+const REASONING_FLUSH_INTERVAL_MS = 500;
 
 function truncateForSlackTask(value: string): string {
   const normalized = value.trim();

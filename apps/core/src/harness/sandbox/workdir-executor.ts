@@ -557,6 +557,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       {
         env: {
           ...mount.credentials,
+          // The guest has no EC2 IMDS; without this the AWS client probes
+          // 169.254.169.254 and stalls every mount ~4s on the connect timeout.
+          AWS_EC2_METADATA_DISABLED: "true",
           ...(mount.region
             ? { AWS_REGION: mount.region, AWS_DEFAULT_REGION: mount.region }
             : {}),

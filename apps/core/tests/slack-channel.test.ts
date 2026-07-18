@@ -540,9 +540,11 @@ describe("slack channel adapter", () => {
     ]);
   });
 
-  it("streams reasoning as per-chunk deltas because Slack appends details", async () => {
-    // chat.appendStream appends every task_update's details to the card.
-    // Re-sending accumulated text renders "TheThe user isThe user is…".
+  it("coalesces rapid reasoning deltas into one append without duplication", async () => {
+    // Every task_update costs a blocking Slack API round trip, so deltas that
+    // arrive within the flush interval must merge into a single append. Each
+    // suffix is still sent exactly once — chat.appendStream appends details,
+    // so re-sending accumulated text would render "TheThe user is…".
     const chunks = await collect(
       toSlackStream(
         (async function* () {
@@ -561,9 +563,7 @@ describe("slack channel adapter", () => {
           typeof chunk === "object" && chunk !== null && "details" in chunk,
       )
       .map((chunk) => (chunk as { details?: string }).details);
-    // Each delta must stream as its own append — a joined match would also
-    // pass if the stream buffered everything into one update.
-    expect(details).toEqual(["The", " user is", " asking."]);
+    expect(details).toEqual(["The user is asking."]);
 
     const complete = chunks.at(-1);
     expect(complete).toEqual({
@@ -572,6 +572,36 @@ describe("slack channel adapter", () => {
       title: "Thinking",
       status: "complete",
     });
+  });
+
+  it("flushes coalesced reasoning on the interval while a long think streams", async () => {
+    // The interval check reads Date.now(); undo the suite's frozen clock so
+    // elapsed time is real here (beforeEach re-freezes it for other tests).
+    setSystemTime();
+    const wait = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+    const chunks = await collect(
+      toSlackStream(
+        (async function* () {
+          yield { type: "reasoning-start", id: "r1" };
+          yield { type: "reasoning-delta", id: "r1", text: "first" };
+          await wait(550);
+          yield { type: "reasoning-delta", id: "r1", text: " second" };
+          yield { type: "reasoning-delta", id: "r1", text: " third" };
+          yield { type: "reasoning-end", id: "r1" };
+        })(),
+      ),
+    );
+
+    const details = chunks
+      .filter(
+        (chunk) =>
+          typeof chunk === "object" && chunk !== null && "details" in chunk,
+      )
+      .map((chunk) => (chunk as { details: string }).details);
+    // The delta arriving after the interval flushes what has accumulated so
+    // far; the remainder flushes at reasoning-end.
+    expect(details).toEqual(["first second", " third"]);
   });
 
   it("stops appending reasoning details once the task text budget is spent", async () => {
