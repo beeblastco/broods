@@ -185,7 +185,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     } catch (err) {
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("vercel", key).catch(() => {});
+    await deleteSandboxInstance(
+      "vercel",
+      key,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
   }
 
   #persistent(request: {
@@ -247,7 +251,12 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           name: storedName,
           ...vercelAuthOptions(this.#config),
         });
-        await saveSandboxInstance("vercel", key, storedName).catch(() => {});
+        await saveSandboxInstance(
+          "vercel",
+          key,
+          storedName,
+          this.#config.controlPlane?.accountId,
+        ).catch(() => {});
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "vercel",
@@ -261,7 +270,12 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("vercel", key, storedName).catch(() => {});
+        await deleteSandboxInstance(
+          "vercel",
+          key,
+          this.#config.controlPlane?.accountId,
+          storedName,
+        ).catch(() => {});
       }
     }
 
@@ -270,7 +284,14 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       ...vercelCreateOptions(this.#config, request, true),
       name,
     });
-    if (await claimSandboxInstance("vercel", key, name)) {
+    if (
+      await claimSandboxInstance(
+        "vercel",
+        key,
+        name,
+        this.#config.controlPlane?.accountId,
+      )
+    ) {
       await upsertSandboxInstance(
         this.#config.controlPlane,
         "vercel",

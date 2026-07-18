@@ -180,7 +180,11 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("daytona", key).catch(() => {});
+    await deleteSandboxInstance(
+      "daytona",
+      key,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
   }
 
   #persistent(request: {
@@ -235,7 +239,12 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(client, externalId);
-        await saveSandboxInstance("daytona", ns, externalId).catch(() => {});
+        await saveSandboxInstance(
+          "daytona",
+          ns,
+          externalId,
+          this.#config.controlPlane?.accountId,
+        ).catch(() => {});
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "daytona",
@@ -249,14 +258,26 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("daytona", ns, externalId).catch(() => {});
+        await deleteSandboxInstance(
+          "daytona",
+          ns,
+          this.#config.controlPlane?.accountId,
+          externalId,
+        ).catch(() => {});
       }
     }
     const sandbox = await this.#create(
       client,
       await daytonaCreateOptions(this.#config, request, true),
     );
-    if (await claimSandboxInstance("daytona", ns, sandbox.id)) {
+    if (
+      await claimSandboxInstance(
+        "daytona",
+        ns,
+        sandbox.id,
+        this.#config.controlPlane?.accountId,
+      )
+    ) {
       await upsertSandboxInstance(
         this.#config.controlPlane,
         "daytona",

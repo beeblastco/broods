@@ -111,7 +111,11 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("e2b", key).catch(() => {});
+    await deleteSandboxInstance(
+      "e2b",
+      key,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
   }
 
   #persistent(request: {
@@ -144,7 +148,12 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           e2bApiOptions(this.#config),
         );
-        await saveSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await saveSandboxInstance(
+          "e2b",
+          ns,
+          externalId,
+          this.#config.controlPlane?.accountId,
+        ).catch(() => {});
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "e2b",
@@ -158,11 +167,23 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("e2b", ns, externalId).catch(() => {});
+        await deleteSandboxInstance(
+          "e2b",
+          ns,
+          this.#config.controlPlane?.accountId,
+          externalId,
+        ).catch(() => {});
       }
     }
     const created = await Sandbox.create(e2bCreateOptions(this.#config, true));
-    if (await claimSandboxInstance("e2b", ns, created.sandboxId)) {
+    if (
+      await claimSandboxInstance(
+        "e2b",
+        ns,
+        created.sandboxId,
+        this.#config.controlPlane?.accountId,
+      )
+    ) {
       await upsertSandboxInstance(
         this.#config.controlPlane,
         "e2b",

@@ -357,6 +357,7 @@ describe("runtime persistence", () => {
       provider: "sandbox" as const,
       reservationKey: `acct:${accountId}:workspace:one`,
       externalId: "sandbox-1",
+      accountId,
     };
     expect(
       await t.mutation(internal.runtime.claimSandboxReservation, args),
@@ -368,6 +369,7 @@ describe("runtime persistence", () => {
       provider: args.provider,
       reservationKey: args.reservationKey,
       expectedExternalId: "sandbox-2",
+      accountId,
     });
     expect(
       await t.query(internal.runtime.getSandboxReservation, {
@@ -379,6 +381,7 @@ describe("runtime persistence", () => {
       provider: args.provider,
       reservationKey: args.reservationKey,
       expectedExternalId: "sandbox-1",
+      accountId,
     });
     expect(
       await t.query(internal.runtime.getSandboxReservation, {
@@ -442,6 +445,7 @@ describe("runtime persistence", () => {
       provider: "sandbox",
       reservationKey: reservationKey,
       externalId: "sandbox-existing",
+      accountId,
     });
 
     await t.run(
@@ -541,17 +545,20 @@ describe("runtime persistence", () => {
           provider: "sandbox",
           reservationKey: `acct:${accountId}:workspace:new`,
           externalId: "sandbox-new",
+          accountId,
         }),
       () =>
         t.mutation(internal.runtime.saveSandboxReservation, {
           provider: "sandbox",
           reservationKey: reservationKey,
           externalId: "sandbox-late",
+          accountId,
         }),
       () =>
         t.mutation(internal.runtime.deleteSandboxReservation, {
           provider: "sandbox",
           reservationKey: reservationKey,
+          accountId,
         }),
     ];
     for (const write of blockedWrites) {

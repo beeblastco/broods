@@ -258,7 +258,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
-    await deleteSandboxInstance("sandbox", key).catch(() => {});
+    await deleteSandboxInstance(
+      "sandbox",
+      key,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
   }
 
   #options(): Record<string, unknown> {
@@ -441,7 +445,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(externalId);
-        await saveSandboxInstance("sandbox", ns, externalId).catch(() => {});
+        await saveSandboxInstance(
+          "sandbox",
+          ns,
+          externalId,
+          this.#config.controlPlane?.accountId,
+        ).catch(() => {});
         await upsertSandboxInstance(
           this.#config.controlPlane,
           "sandbox",
@@ -455,13 +464,25 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         // propagate or the still-live sandbox is orphaned at the provider. The
         // conditional delete keeps a row a concurrent call already re-claimed.
         if (!isSandboxGoneError(error)) throw error;
-        await deleteSandboxInstance("sandbox", ns, externalId).catch(() => {});
+        await deleteSandboxInstance(
+          "sandbox",
+          ns,
+          this.#config.controlPlane?.accountId,
+          externalId,
+        ).catch(() => {});
       }
     }
     const created = await this.#client.sandboxes.create(
       this.#createOptions(request, true),
     );
-    if (await claimSandboxInstance("sandbox", ns, created.id)) {
+    if (
+      await claimSandboxInstance(
+        "sandbox",
+        ns,
+        created.id,
+        this.#config.controlPlane?.accountId,
+      )
+    ) {
       await upsertSandboxInstance(
         this.#config.controlPlane,
         "sandbox",

@@ -54,11 +54,15 @@ export async function releaseReservedSandboxes(
     if (await releaseFromConfigs("e2b", e2b, namespace)) released++;
     if (await releaseFromConfigs("vercel", vercel, namespace)) released++;
     // Drop any orphaned instance rows (e.g. all configs deleted, or none owned it).
-    await deleteSandboxInstance("sandbox", namespace).catch(() => {});
-    await deleteSandboxInstance("lambda", namespace).catch(() => {});
-    await deleteSandboxInstance("daytona", namespace).catch(() => {});
-    await deleteSandboxInstance("e2b", namespace).catch(() => {});
-    await deleteSandboxInstance("vercel", namespace).catch(() => {});
+    await deleteSandboxInstance("sandbox", namespace, accountId).catch(
+      () => {},
+    );
+    await deleteSandboxInstance("lambda", namespace, accountId).catch(() => {});
+    await deleteSandboxInstance("daytona", namespace, accountId).catch(
+      () => {},
+    );
+    await deleteSandboxInstance("e2b", namespace, accountId).catch(() => {});
+    await deleteSandboxInstance("vercel", namespace, accountId).catch(() => {});
     await removeSandboxInstance(accountId, namespace);
   }
   return released;

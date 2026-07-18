@@ -567,6 +567,7 @@ describe("createSandboxExecutor", () => {
     expect(deleteSandboxInstanceMock).toHaveBeenCalledWith(
       "lambda",
       NS,
+      undefined,
       "microvm-gone",
     );
   });

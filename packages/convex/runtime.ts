@@ -701,11 +701,13 @@ export const claimSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
+    accountId: v.string(),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.reservationKey);
-    await requireActiveAccount(ctx, accountId);
+    // The reservation key is a hashed workspace namespace, so the owning account
+    // can't be parsed from it — core passes accountId explicitly.
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -718,7 +720,6 @@ export const claimSandboxReservation = internalMutation({
       return false;
     }
     await ctx.db.insert("sandboxReservations", {
-      accountId: accountId,
       ...args,
       expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
     });
@@ -735,11 +736,11 @@ export const saveSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
+    accountId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.reservationKey);
-    await requireActiveAccount(ctx, accountId);
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -755,7 +756,6 @@ export const saveSandboxReservation = internalMutation({
     if (row) await ctx.db.patch(row._id, patch);
     else
       await ctx.db.insert("sandboxReservations", {
-        accountId: accountId,
         ...args,
         ...patch,
       });
@@ -772,10 +772,11 @@ export const deleteSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     expectedExternalId: v.optional(v.string()),
+    accountId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireActiveAccount(ctx, accountIdFromKey(args.reservationKey));
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
