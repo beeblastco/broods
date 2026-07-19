@@ -2489,14 +2489,8 @@ async function validateAgentReferences(
   await validateAgentPolicyIds(ctx, accountId, config);
 }
 
-/**
- * Skills are account-scoped, so the account-id prefix in a skill path is
- * derivable — the API accepts bare skill names (`gmail`) and canonicalizes
- * them to the `<accountId>/<name>` form the runtime loads from. Prefixed
- * paths pass through unchanged (ownership is still enforced by
- * validateAgentSkillPaths). Mutates `config` in place, so callers must run
- * this BEFORE the config is encrypted for persistence.
- */
+// Skills are account-scoped, so bare names canonicalize to <accountId>/<name>
+// in place — callers must run this BEFORE the config is encrypted to persist.
 export function canonicalizeAgentSkillPaths(
   accountId: Id<"accounts">,
   config: AgentConfig | undefined,
