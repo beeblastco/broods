@@ -58,14 +58,21 @@ export type WebSocketServerMessage =
       status: IngressStatus | "not_found";
       statusUrl?: string;
     }
-  | {
-      type: "output";
-      eventId: string;
-      cursor: string;
-      replay: boolean;
-      data: WebSocketStreamMessage;
-    }
+  | WebSocketOutputMessage
   | WebSocketStreamMessage;
+
+/**
+ * Durable-stream envelope around one stream part. The SDK unwraps `data` for
+ * handlers and surfaces the envelope itself through `onOutput` so clients can
+ * persist `cursor` for attach-based resume.
+ */
+export type WebSocketOutputMessage = {
+  type: "output";
+  eventId: string;
+  cursor: string;
+  replay: boolean;
+  data: WebSocketStreamMessage;
+};
 
 export type WebSocketClientExecuteMessage = {
   type: "execute";

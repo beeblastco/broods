@@ -311,9 +311,29 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
-      return handlers.handleStatusRequest(
-        parseStatusPath(request.path, request.search, account),
-      );
+      const parsed = parseStatusPath(request.path, request.search, account);
+      // A deployment key only reaches agents that opted into public access —
+      // the same gate as the run path, so retained status/output of private
+      // agents in the account is not readable through a public key.
+      if (auth?.kind === "deployment") {
+        const agent = await context.agentLoader(
+          account.accountId,
+          parsed.agentId,
+        );
+        if (
+          !agent ||
+          agent.status !== "active" ||
+          toRuntimeAgentConfig(agent.config).publicAccess !== true
+        ) {
+          return errorResponse(
+            403,
+            `Agent ${parsed.agentId} is not publicly accessible.`,
+            { code: "public_access_disabled", agentId: parsed.agentId },
+          );
+        }
+      }
+
+      return handlers.handleStatusRequest(parsed);
     } catch (err) {
       return badRequestResponse(err);
     }

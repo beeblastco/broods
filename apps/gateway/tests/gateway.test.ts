@@ -7,7 +7,11 @@ import {
   websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
-import { isConfigHttpPath, isCoreHttpRoute } from "../src/routes.ts";
+import {
+  isConfigHttpPath,
+  isCoreHttpRoute,
+  matchAgentWebSocketPath,
+} from "../src/routes.ts";
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   lokiLogEntry,
@@ -372,6 +376,29 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(
     isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET"),
   ).toBe(false);
+});
+
+test("parses agent websocket paths so the upgrade can bind the key's endpoint scope", () => {
+  expect(matchAgentWebSocketPath("/v1/agents/env_123/ws")).toEqual({
+    endpointId: "env_123",
+  });
+  expect(
+    matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
+  ).toEqual({
+    projectSlug: "demo",
+    environmentSlug: "development",
+    endpointId: "env_123",
+  });
+  expect(
+    matchAgentWebSocketPath("/v1/demo/agents/dev%20env/env%20123/ws"),
+  ).toEqual({
+    projectSlug: "demo",
+    environmentSlug: "dev env",
+    endpointId: "env 123",
+  });
+  expect(matchAgentWebSocketPath("/v1/agents/env_123")).toBeNull();
+  expect(matchAgentWebSocketPath("/v1/demo/observability/ws")).toBeNull();
+  expect(matchAgentWebSocketPath("/v1/demo/agents/development/ws")).toBeNull();
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

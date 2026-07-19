@@ -3,7 +3,8 @@
  * Convex owns atomic FIFO and fencing; handlers decide how accepted work is delivered.
  */
 
-import type { ModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage } from "ai";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
@@ -48,6 +49,23 @@ export interface IngressCandidate {
   requestedMode: IngressMode;
   idempotencyKey: string;
   delivery: IngressDelivery;
+  // Per-request execution context persisted with the envelope so a queued
+  // request runs under its own config/overrides, never a previous owner's.
+  agentConfig?: AgentConfig;
+  ephemeralSystem?: SystemModelMessage[];
+}
+
+export interface AppliedIngress {
+  eventId: string;
+  events: ModelMessage[];
+  delivery: IngressDelivery;
+  requestedMode: IngressMode;
+  appliedMode: AppliedIngressMode;
+  appliedToEventId: string;
+  contributingEventIds: string[];
+  ownerGeneration: number;
+  agentConfig?: AgentConfig;
+  ephemeralSystem?: SystemModelMessage[];
 }
 
 export type IngressAdmission = {
@@ -62,18 +80,10 @@ export type IngressAdmission = {
   status?: IngressStatus;
   ownerGeneration?: number;
   sequence?: number;
+  // Set when admission recovered an expired owner by promoting the oldest
+  // queued envelope; the caller must schedule this recovered application.
+  recovered?: AppliedIngress;
 };
-
-export interface AppliedIngress {
-  eventId: string;
-  events: ModelMessage[];
-  delivery: IngressDelivery;
-  requestedMode: IngressMode;
-  appliedMode: AppliedIngressMode;
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-}
 
 export interface IngressStatusRecord {
   eventId: string;
@@ -111,19 +121,31 @@ async function sha256Hex(value: string): Promise<string> {
 export async function acceptIngress(
   candidate: IngressCandidate,
 ): Promise<IngressAdmission> {
-  const serializedEvents = JSON.stringify(candidate.events);
+  const serializedPayload = JSON.stringify({
+    events: candidate.events,
+    ...(candidate.agentConfig !== undefined
+      ? { agentConfig: candidate.agentConfig }
+      : {}),
+    ...(candidate.ephemeralSystem !== undefined
+      ? { ephemeralSystem: candidate.ephemeralSystem }
+      : {}),
+  });
+  // The digest covers every execution-changing field so an idempotent retry
+  // with different overrides is a conflict, not a silent duplicate.
   const payloadDigest = await sha256Hex(
     JSON.stringify({
       events: candidate.events,
       requestedMode: candidate.requestedMode,
       deliveryKind: candidate.delivery.kind,
+      agentConfig: candidate.agentConfig,
+      ephemeralSystem: candidate.ephemeralSystem,
     }),
   );
 
   return runtime.mutate<IngressAdmission>("acceptIngress", {
     ...candidate,
     payloadDigest: payloadDigest,
-    sizeBytes: new TextEncoder().encode(serializedEvents).byteLength,
+    sizeBytes: new TextEncoder().encode(serializedPayload).byteLength,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     envelopeTtlMs: DEFAULT_INGRESS_TTL_MS,
     statusTtlMs: DEFAULT_INGRESS_STATUS_TTL_MS,

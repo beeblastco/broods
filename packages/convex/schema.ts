@@ -787,6 +787,10 @@ export const runtimeIngressEnvelopesFields = {
   events: v.array(v.any()),
   delivery: v.any(),
   requestedMode: ingressModeValidator,
+  // Per-request execution context so a queued envelope runs with its own
+  // resolved config and one-turn system, never the previous owner's.
+  agentConfig: v.optional(v.any()),
+  ephemeralSystem: v.optional(v.array(v.any())),
   appliedMode: v.optional(appliedIngressModeValidator),
   appliedToEventId: v.optional(v.string()),
   applicationId: v.optional(v.string()),

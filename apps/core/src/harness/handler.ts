@@ -54,6 +54,7 @@ import {
 import { Session, type ConversationIngressEvent } from "./session.ts";
 import {
   createPendingAsyncAgentResult,
+  getAsyncAgentResult,
   markAsyncAgentResultAwaitingApproval,
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
@@ -76,6 +77,7 @@ import {
 import {
   acceptIngress,
   getIngressStatus,
+  type AppliedIngress,
   type IngressAdmission,
   type IngressDelivery,
 } from "./ingress.ts";
@@ -549,7 +551,12 @@ async function handleDirectRequest(
     requestedMode: event.requestedMode,
     idempotencyKey: event.idempotencyKey,
     delivery: delivery,
+    agentConfig: event.agentConfig,
+    ...(event.ephemeralSystem
+      ? { ephemeralSystem: event.ephemeralSystem }
+      : {}),
   });
+  await dispatchRecoveredIngress(event, admission);
   if (admission.outcome !== "owner") {
     return directAdmissionResponse(
       event,
@@ -652,7 +659,12 @@ async function handleAsyncRequest(
       publicConversationKey: event.publicConversationKey,
       statusUrl: event.statusUrl,
     },
+    agentConfig: event.agentConfig,
+    ...(event.ephemeralSystem
+      ? { ephemeralSystem: event.ephemeralSystem }
+      : {}),
   });
+  await dispatchRecoveredIngress(event, admission);
   if (admission.outcome !== "owner") {
     return asyncAdmissionResponse(event, admission);
   }
@@ -899,21 +911,23 @@ async function handleNatsWorkerRequest(
     natsToken,
   );
 
+  let session: Session | undefined;
+  let transferred = false;
   try {
     const turn = await prepareDirectTurn(event);
     if (!turn) {
       return;
     }
 
-    const { session, turnContext } = turn;
+    ({ session } = turn);
+    const { turnContext } = turn;
     const fencedPublisher: NatsPublisher = {
       publish: async (data) => {
-        await session.assertCurrentOwner();
+        await session!.assertCurrentOwner();
         await publisher.publish(data);
       },
       close: () => publisher.close(),
     };
-    let transferred = false;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
       await session
         .settleIngress("failed", {
@@ -1009,14 +1023,29 @@ async function handleNatsWorkerRequest(
         await fencedPublisher.publish({ type: "done" });
         transferred = await dispatchNextIngress(session, event);
       }
-    } finally {
+      // Release here, not in the finally: the crash path must settle the
+      // envelope first, and settling requires still holding the lease.
       if (!transferred) {
         await session.releaseConversationLease().catch(() => {});
       }
+    } finally {
       await publisher.close();
     }
   } catch (err) {
     await publisher.close().catch(() => {});
+    // Terminal settlement on the crash path: without it the envelope stays
+    // processing and the queue never drains for this conversation.
+    if (session && !transferred) {
+      const error =
+        err instanceof Error ? err.message : "NATS worker processing failed";
+      await session.settleIngress("failed", { error: error }).catch(() => {});
+      transferred = await dispatchNextIngress(session, event).catch(
+        () => false,
+      );
+      if (!transferred) {
+        await session.releaseConversationLease().catch(() => {});
+      }
+    }
     logError("NATS worker processing failed", {
       eventId: event.eventId,
       error: err instanceof Error ? err.message : String(err),
@@ -1091,7 +1120,25 @@ async function handleChannelRequest(
       channel: event.channelName,
       source: event.source,
     },
+    agentConfig: event.agentConfig ?? {},
   });
+  await dispatchRecoveredIngress(
+    {
+      accountId: event.accountId,
+      agentId: event.agentId,
+      agentConfig: event.agentConfig ?? {},
+      conversationKey: event.conversationKey,
+      publicConversationKey: eventPublicConversationKey(
+        event.conversationKey,
+        event.accountId,
+        event.agentId,
+      ),
+      endpointId: event.endpointId,
+      projectSlug: event.projectSlug,
+      environmentSlug: event.environmentSlug,
+    },
+    admission,
+  );
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
     return;
@@ -1135,6 +1182,8 @@ async function handleChannelRequest(
     admission.ownerGeneration,
   );
   let incoming: ConversationIngressEvent[] = event.events;
+  let incomingEphemeral: SystemModelMessage[] = [];
+  let activeConfig = event.agentConfig ?? {};
   let released = false;
   const hooks = await createAgentHookDispatcher(
     event.accountId,
@@ -1143,92 +1192,109 @@ async function handleChannelRequest(
 
   try {
     while (true) {
-      const ephemeralSystem = await session.appendIngressEvents(incoming);
-      const turnContext = await session.createTurnContext(ephemeralSystem);
-      if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-        await session.settleIngress("failed", {
-          error: "Request did not produce pending model input",
-        });
-      } else {
-        let terminal: "completed" | "failed" | null = null;
-        let finalResult: JSONValue | undefined;
-        let approvalRequired = false;
-        let streamed = false;
-        const result = await runAgentLoopUntilSubagentsIdle(
-          session,
-          turnContext,
-          event.agentConfig ?? {},
-          context,
-          {
-            ...(event.channel.stream
-              ? {
-                  streamMessage: async (stream) => {
-                    await session.assertCurrentOwner();
-                    const streamedResult = await event.channel.stream!(
-                      readAgentFullStream(stream),
-                    );
-                    streamed = Boolean(streamedResult);
-                    if (!streamed) await stream.consumeStream();
-                  },
-                }
-              : {}),
-            onFinalText: async (response, traceId) => {
-              await session.assertCurrentOwner();
-              terminal = "completed";
-              finalResult = response;
-              if (streamed && typeof response === "string") return;
-              const formatted = formatChannelFinalText(
-                typeof response === "string"
-                  ? response
-                  : JSON.stringify(response, null, 2),
-                traceId,
-                event,
-              );
-              const text = await applyMessageSendingHook(
-                hooks,
-                event.channelName,
-                formatted,
-              );
-              if (text !== null) await event.channel.sendText(text);
-            },
-            onErrorText: async (error, traceId) => {
-              await session.assertCurrentOwner();
-              terminal = "failed";
-              await event.channel.sendText(
-                formatChannelFinalText(
-                  formatChannelErrorText(error),
+      // A thrown turn must still settle its envelope terminally before the
+      // queue drains on; otherwise accepted work is stranded in processing.
+      try {
+        const ephemeralSystem = await session.appendIngressEvents(incoming);
+        ephemeralSystem.push(...incomingEphemeral);
+        const turnContext = await session.createTurnContext(ephemeralSystem);
+        if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+          await session.settleIngress("failed", {
+            error: "Request did not produce pending model input",
+          });
+        } else {
+          let terminal: "completed" | "failed" | null = null;
+          let finalResult: JSONValue | undefined;
+          let approvalRequired = false;
+          let streamed = false;
+          const result = await runAgentLoopUntilSubagentsIdle(
+            session,
+            turnContext,
+            activeConfig,
+            context,
+            {
+              ...(event.channel.stream
+                ? {
+                    streamMessage: async (stream) => {
+                      await session.assertCurrentOwner();
+                      const streamedResult = await event.channel.stream!(
+                        readAgentFullStream(stream),
+                      );
+                      streamed = Boolean(streamedResult);
+                      if (!streamed) await stream.consumeStream();
+                    },
+                  }
+                : {}),
+              onFinalText: async (response, traceId) => {
+                await session.assertCurrentOwner();
+                terminal = "completed";
+                finalResult = response;
+                if (streamed && typeof response === "string") return;
+                const formatted = formatChannelFinalText(
+                  typeof response === "string"
+                    ? response
+                    : JSON.stringify(response, null, 2),
                   traceId,
                   event,
-                ),
-              );
+                );
+                const text = await applyMessageSendingHook(
+                  hooks,
+                  event.channelName,
+                  formatted,
+                );
+                if (text !== null) await event.channel.sendText(text);
+              },
+              onErrorText: async (error, traceId) => {
+                await session.assertCurrentOwner();
+                terminal = "failed";
+                await event.channel.sendText(
+                  formatChannelFinalText(
+                    formatChannelErrorText(error),
+                    traceId,
+                    event,
+                  ),
+                );
+              },
+              onApprovalRequired: async (approvals) => {
+                approvalRequired = true;
+                await session.persistModelMessages([
+                  createChannelApprovalDenial(approvals),
+                ]);
+              },
             },
-            onApprovalRequired: async (approvals) => {
-              approvalRequired = true;
-              await session.persistModelMessages([
-                createChannelApprovalDenial(approvals),
-              ]);
-            },
-          },
-          hooks,
-        );
-        if (approvalRequired) {
-          incoming = [];
-          continue;
+            hooks,
+          );
+          if (approvalRequired) {
+            incoming = [];
+            incomingEphemeral = [];
+            continue;
+          }
+          if (result.didFail) terminal = "failed";
+          if (terminal === "failed") {
+            await session.settleIngress("failed", {
+              error: result.failureText ?? AGENT_PROCESSING_FAILED,
+            });
+          } else if (terminal === "completed") {
+            await session.settleIngress("completed", {
+              ...(finalResult !== undefined ? { result: finalResult } : {}),
+            });
+          } else if (result.hasDetachedCallbacks) {
+            await session.settleIngress("completed", {
+              result: { status: "waiting_for_async_tools" },
+            });
+          }
         }
-        if (result.didFail) terminal = "failed";
-        if (terminal === "failed") {
-          await session.settleIngress("failed", {
-            error: result.failureText ?? AGENT_PROCESSING_FAILED,
-          });
-        } else if (terminal === "completed") {
-          await session.settleIngress("completed", {
-            ...(finalResult !== undefined ? { result: finalResult } : {}),
-          });
-        } else if (result.hasDetachedCallbacks) {
-          await session.settleIngress("completed", {
-            result: { status: "waiting_for_async_tools" },
-          });
-        }
+      } catch (err) {
+        logError("Channel turn failed", {
+          eventId: session.eventId,
+          conversationKey: session.conversationKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await session
+          .settleIngress("failed", {
+            error: err instanceof Error ? err.message : "Channel turn failed",
+          })
+          .catch(() => {});
       }
 
       const next = await session.takeNextIngress();
@@ -1241,12 +1307,13 @@ async function handleChannelRequest(
         next.delivery.kind === "channel"
           ? (next.delivery.source ?? event.source)
           : event.source;
+      activeConfig = next.agentConfig ?? event.agentConfig ?? {};
       session = new Session(
         next.eventId,
         event.conversationKey,
         event.accountId,
         event.agentId,
-        event.agentConfig ?? {},
+        activeConfig,
         { kind: "channel", channelName: event.channelName, source: source },
         event.endpointId,
         event.projectSlug,
@@ -1254,6 +1321,7 @@ async function handleChannelRequest(
         next.ownerGeneration,
       );
       incoming = next.events as ConversationIngressEvent[];
+      incomingEphemeral = next.ephemeralSystem ?? [];
     }
   } finally {
     if (!released) {
@@ -1317,31 +1385,49 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
 async function handleStatusRequest(
   event: StatusInboundEvent,
 ): Promise<Response> {
-  const result = await getIngressStatus({
-    accountId: event.accountId,
-    agentId: event.agentId,
-    eventId: event.eventId,
-  });
-  if (!result) {
+  const [result, asyncResult] = await Promise.all([
+    getIngressStatus({
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+    }),
+    getAsyncAgentResult(event.eventId),
+  ]);
+  if (!result && !asyncResult) {
     return jsonResponse(404, {
       eventId: event.publicEventId,
       status: "not_found",
     });
   }
 
+  // The async agent record keeps the public approval contract: while it is
+  // nonterminal its status (processing/awaiting_approval) overrides the
+  // envelope's terminal settle so pollers keep waiting and see approvals
+  // top-level, exactly as before durable ingress statuses existed.
+  const status =
+    asyncResult &&
+    (asyncResult.status === "awaiting_approval" ||
+      (asyncResult.status === "processing" && result?.status !== "failed"))
+      ? asyncResult.status
+      : (result?.status ?? asyncResult!.status);
+  const conversationKey =
+    result?.conversationKey ?? asyncResult!.conversationKey;
+
   return jsonResponse(200, {
     eventId: event.publicEventId,
     conversationKey: eventPublicConversationKey(
-      result.conversationKey,
+      conversationKey,
       event.accountId,
       event.agentId,
     ),
-    status: result.status,
-    requestedMode: result.requestedMode,
-    ...(result.appliedMode !== undefined
+    status: status,
+    ...(result?.requestedMode !== undefined
+      ? { requestedMode: result.requestedMode }
+      : {}),
+    ...(result?.appliedMode !== undefined
       ? { appliedMode: result.appliedMode }
       : {}),
-    ...(result.appliedToEventId !== undefined
+    ...(result?.appliedToEventId !== undefined
       ? {
           appliedToEventId: publicEventIdForScope(
             result.appliedToEventId,
@@ -1351,8 +1437,16 @@ async function handleStatusRequest(
           ),
         }
       : {}),
-    ...(result.result !== undefined ? { result: result.result } : {}),
-    ...(result.error ? { error: result.error } : {}),
+    ...(result?.result !== undefined ? { result: result.result } : {}),
+    ...(asyncResult?.response !== undefined
+      ? { response: asyncResult.response }
+      : {}),
+    ...(asyncResult?.approvals !== undefined
+      ? { approvals: asyncResult.approvals }
+      : {}),
+    ...((result?.error ?? asyncResult?.error)
+      ? { error: result?.error ?? asyncResult?.error }
+      : {}),
   });
 }
 
@@ -1577,15 +1671,45 @@ async function dispatchNextIngress(
 ): Promise<boolean> {
   const next = await session.takeNextIngress();
   if (!next) return false;
+  await dispatchAppliedIngress(previous, next);
+
+  return true;
+}
+
+/**
+ * Schedules one durably applied envelope on its worker. The envelope's own
+ * persisted agentConfig/ephemeralSystem win over the base event's so a queued
+ * request never inherits a previous request's overrides.
+ */
+async function dispatchAppliedIngress(
+  base: Pick<
+    DirectInboundEvent,
+    | "accountId"
+    | "agentId"
+    | "agentConfig"
+    | "conversationKey"
+    | "publicConversationKey"
+    | "endpointId"
+    | "projectSlug"
+    | "environmentSlug"
+  >,
+  next: AppliedIngress,
+): Promise<void> {
   const delivery = next.delivery;
   const publicEventId =
     delivery.kind === "channel" ? next.eventId : delivery.publicEventId;
   const publicConversationKey =
     delivery.kind === "channel"
-      ? previous.publicConversationKey
+      ? base.publicConversationKey
       : delivery.publicConversationKey;
   const event: DirectInboundEvent = {
-    ...previous,
+    accountId: base.accountId,
+    agentId: base.agentId,
+    agentConfig: next.agentConfig ?? base.agentConfig,
+    conversationKey: base.conversationKey,
+    endpointId: base.endpointId,
+    projectSlug: base.projectSlug,
+    environmentSlug: base.environmentSlug,
     eventId: next.eventId,
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
@@ -1593,9 +1717,10 @@ async function dispatchNextIngress(
     requestedMode: next.requestedMode,
     idempotencyKey: next.eventId,
     ownerGeneration: next.ownerGeneration,
+    ...(next.ephemeralSystem ? { ephemeralSystem: next.ephemeralSystem } : {}),
     ...(delivery.kind === "websocket"
       ? { connectionId: delivery.connectionId }
-      : { connectionId: undefined }),
+      : {}),
     ...(delivery.kind === "channel"
       ? {
           replyTarget: {
@@ -1603,7 +1728,7 @@ async function dispatchNextIngress(
             source: delivery.source ?? {},
           },
         }
-      : { replyTarget: undefined }),
+      : {}),
   };
   try {
     if (delivery.kind === "websocket") {
@@ -1631,8 +1756,26 @@ async function dispatchNextIngress(
     appliedMode: next.appliedMode,
     contributorCount: next.contributingEventIds.length,
   });
+}
 
-  return true;
+/**
+ * Best-effort dispatch of an application that admission recovered from an
+ * expired owner. Never throws: the caller's own admission response must win.
+ */
+async function dispatchRecoveredIngress(
+  base: Parameters<typeof dispatchAppliedIngress>[0],
+  admission: IngressAdmission,
+): Promise<void> {
+  if (!admission.recovered) return;
+  try {
+    await dispatchAppliedIngress(base, admission.recovered);
+  } catch (error) {
+    logError("Recovered ingress dispatch failed", {
+      conversationKey: base.conversationKey,
+      eventId: admission.recovered.eventId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** Durably admits an internally generated continuation before scheduling it. */
@@ -1649,7 +1792,12 @@ async function admitInternalContinuation(
     requestedMode: event.requestedMode,
     idempotencyKey: event.idempotencyKey,
     delivery: delivery,
+    agentConfig: event.agentConfig,
+    ...(event.ephemeralSystem
+      ? { ephemeralSystem: event.ephemeralSystem }
+      : {}),
   });
+  await dispatchRecoveredIngress(event, admission);
   if (admission.outcome !== "owner") return null;
   if (admission.ownerGeneration === undefined) {
     throw new Error(

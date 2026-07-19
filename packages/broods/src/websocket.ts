@@ -18,6 +18,7 @@ import type {
   WebSocketClientControlMessage,
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
+  WebSocketOutputMessage,
   WebSocketServerMessage,
   WebSocketStreamMessage,
 } from "./websocket-contracts.ts";
@@ -52,7 +53,14 @@ export type WebSocketAttachInput = Omit<
 };
 
 export interface WebSocketHandlers {
+  /**
+   * Receives every server message with durable output envelopes unwrapped:
+   * stream parts arrive as themselves (`message.type === "text-delta"`), never
+   * nested under `data`. Use `onOutput` when the envelope cursor is needed.
+   */
   onMessage?(message: WebSocketServerMessage): void;
+  /** Receives the raw durable output envelope (cursor, replay flag, part). */
+  onOutput?(output: WebSocketOutputMessage): void;
   onMeta?(meta: Extract<WebSocketServerMessage, { type: "meta" }>): void;
   onDone?(): void;
   onError?(error: Error): void;
@@ -191,11 +199,9 @@ export class BroodsWebSocketClient {
       const payload = parseServerMessage(event.data);
       if (!payload) return;
 
-      handlers.onMessage?.(payload);
+      const effective = unwrapServerMessage(payload, handlers);
+      handlers.onMessage?.(effective);
 
-      const effective = (
-        payload.type === "output" ? payload.data : payload
-      ) as WebSocketServerMessage;
       switch (effective.type) {
         case "meta":
           handlers.onMeta?.(
@@ -261,10 +267,8 @@ export class BroodsWebSocketClient {
       if (typeof event.data !== "string") return;
       const payload = parseServerMessage(event.data);
       if (!payload) return;
-      handlers.onMessage?.(payload);
-      const effective = (
-        payload.type === "output" ? payload.data : payload
-      ) as WebSocketServerMessage;
+      const effective = unwrapServerMessage(payload, handlers);
+      handlers.onMessage?.(effective);
       if (effective.type === "done") handlers.onDone?.();
       if (effective.type === "error")
         handlers.onError?.(new Error(formatWireError(effective.error)));
@@ -398,6 +402,7 @@ export type {
   WebSocketClientControlMessage,
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
+  WebSocketOutputMessage,
   WebSocketServerMessage,
   WebSocketStreamMessage,
 };
@@ -419,6 +424,18 @@ function normalizeWebSocketServiceUrl(value: string): string {
 
 function webSocketAccessError(baseUrl: string): Error {
   return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
+}
+
+/** Unwraps durable output envelopes and forwards them to onOutput. */
+function unwrapServerMessage(
+  payload: WebSocketServerMessage,
+  handlers: WebSocketHandlers,
+): WebSocketServerMessage {
+  if (payload.type !== "output") return payload;
+  const output = payload as WebSocketOutputMessage;
+  handlers.onOutput?.(output);
+
+  return output.data as WebSocketServerMessage;
 }
 
 function parseServerMessage(data: string): WebSocketServerMessage | null {

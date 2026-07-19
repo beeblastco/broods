@@ -20,6 +20,19 @@ import {
 const MAX_DRAIN_ENVELOPES = 100;
 const CLEAR_BATCH_SIZE = 100;
 
+const appliedEnvelopeValidator = v.object({
+  eventId: v.string(),
+  events: v.array(v.any()),
+  delivery: v.any(),
+  requestedMode: ingressModeValidator,
+  appliedMode: appliedIngressModeValidator,
+  appliedToEventId: v.string(),
+  contributingEventIds: v.array(v.string()),
+  ownerGeneration: v.number(),
+  agentConfig: v.optional(v.any()),
+  ephemeralSystem: v.optional(v.array(v.any())),
+});
+
 const admissionResultValidator = v.object({
   outcome: v.union(
     v.literal("owner"),
@@ -33,17 +46,9 @@ const admissionResultValidator = v.object({
   status: v.optional(ingressStatusValidator),
   ownerGeneration: v.optional(v.number()),
   sequence: v.optional(v.number()),
-});
-
-const appliedEnvelopeValidator = v.object({
-  eventId: v.string(),
-  events: v.array(v.any()),
-  delivery: v.any(),
-  requestedMode: ingressModeValidator,
-  appliedMode: appliedIngressModeValidator,
-  appliedToEventId: v.string(),
-  contributingEventIds: v.array(v.string()),
-  ownerGeneration: v.number(),
+  // Present when admission recovered an expired owner by promoting the oldest
+  // queued envelope; the caller must schedule this recovered application.
+  recovered: v.optional(appliedEnvelopeValidator),
 });
 
 const ingressStatusResultValidator = v.object({
@@ -224,6 +229,109 @@ async function expireStaleOwner(
   }
 }
 
+/**
+ * Promotes the oldest runnable queued group (one follow-up/steer, or a
+ * contiguous collect prefix) to processing under the supplied owner generation.
+ */
+async function promoteQueuedGroup(
+  ctx: MutationCtx,
+  options: {
+    coordinator: Doc<"runtimeConversationCoordinators">;
+    queue: { queuedCount: number; queuedBytes: number };
+    now: number;
+    leaseTtlMs: number;
+    ownerGeneration: number;
+  },
+): Promise<{
+  eventId: string;
+  events: unknown[];
+  delivery: unknown;
+  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
+  appliedMode: "collect" | "followup";
+  appliedToEventId: string;
+  contributingEventIds: string[];
+  ownerGeneration: number;
+  agentConfig?: unknown;
+  ephemeralSystem?: unknown[];
+} | null> {
+  const { coordinator, queue, now } = options;
+  const rows = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q
+        .eq("conversationKey", coordinator.conversationKey)
+        .eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+  const active = rows.filter((row) => row.expiresAt > now);
+  const first = active[0];
+  if (!first) return null;
+  const selected =
+    first.requestedMode === "collect"
+      ? active.slice(
+          0,
+          active.findIndex((row) => row.requestedMode !== "collect") === -1
+            ? active.length
+            : active.findIndex((row) => row.requestedMode !== "collect"),
+        )
+      : [first];
+  const appliedMode: "collect" | "followup" =
+    first.requestedMode === "collect" ? "collect" : "followup";
+  const appliedToEventId = first.eventId;
+  const eventIds = selected.map((row) => row.eventId);
+  const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
+  for (const row of selected) {
+    await ctx.db.patch(row._id, {
+      status: "processing",
+      appliedMode: appliedMode,
+      appliedToEventId: appliedToEventId,
+      applicationId: applicationId,
+      ownerGeneration: options.ownerGeneration,
+      updatedAt: now,
+    });
+  }
+  await ctx.db.insert("runtimeIngressApplications", {
+    accountId: coordinator.accountId,
+    conversationKey: coordinator.conversationKey,
+    applicationId: applicationId,
+    appliedMode: appliedMode,
+    appliedToEventId: appliedToEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: options.ownerGeneration,
+    createdAt: now,
+    expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
+  });
+  const removedBytes = selected.reduce(
+    (total, row) => total + row.sizeBytes,
+    0,
+  );
+  await ctx.db.patch(coordinator._id, {
+    ownerEventId: appliedToEventId,
+    ownerGeneration: options.ownerGeneration,
+    queuedCount: Math.max(0, queue.queuedCount - selected.length),
+    queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
+    leaseExpiresAt: now + options.leaseTtlMs,
+    updatedAt: now,
+  });
+
+  return {
+    eventId: appliedToEventId,
+    events: selected.flatMap((row) => row.events),
+    delivery: first.delivery,
+    requestedMode: first.requestedMode,
+    appliedMode: appliedMode,
+    appliedToEventId: appliedToEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: options.ownerGeneration,
+    ...(first.agentConfig !== undefined
+      ? { agentConfig: first.agentConfig }
+      : {}),
+    ...(first.ephemeralSystem !== undefined
+      ? { ephemeralSystem: first.ephemeralSystem }
+      : {}),
+  };
+}
+
 /** Requires the exact owner event and fencing generation for a mutation. */
 async function requireOwner(
   ctx: QueryCtx | MutationCtx,
@@ -264,6 +372,8 @@ export const accept = internalMutation({
     events: v.array(v.any()),
     delivery: v.any(),
     requestedMode: ingressModeValidator,
+    agentConfig: v.optional(v.any()),
+    ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
     envelopeTtlMs: v.number(),
@@ -334,16 +444,38 @@ export const accept = internalMutation({
       coordinator = { ...coordinator, ...queue, updatedAt: now };
     }
 
+    // Durable FIFO recovery: when the owner lease expired with work still
+    // queued, the oldest queued group must run before this new arrival.
+    let recovered: Awaited<ReturnType<typeof promoteQueuedGroup>> = null;
+    if (!hasActiveOwner(coordinator, now) && queue.queuedCount > 0) {
+      recovered = await promoteQueuedGroup(ctx, {
+        coordinator: coordinator,
+        queue: queue,
+        now: now,
+        leaseTtlMs: args.leaseTtlMs,
+        ownerGeneration: coordinator.ownerGeneration + 1,
+      });
+      if (recovered) {
+        coordinator = (await ctx.db.get(coordinator._id))!;
+      }
+    }
+
     const busy = hasActiveOwner(coordinator, now);
     if (busy && args.requestedMode === "reject") {
-      return { outcome: "rejected" as const };
+      return {
+        outcome: "rejected" as const,
+        ...(recovered ? { recovered } : {}),
+      };
     }
     if (
       busy &&
       (coordinator.queuedCount >= args.maxQueuedCount ||
         coordinator.queuedBytes + args.sizeBytes > args.maxQueuedBytes)
     ) {
-      return { outcome: "capacity" as const };
+      return {
+        outcome: "capacity" as const,
+        ...(recovered ? { recovered } : {}),
+      };
     }
 
     const sequence = coordinator.nextSequence;
@@ -359,6 +491,12 @@ export const accept = internalMutation({
       events: args.events,
       delivery: args.delivery,
       requestedMode: args.requestedMode,
+      ...(args.agentConfig !== undefined
+        ? { agentConfig: args.agentConfig }
+        : {}),
+      ...(args.ephemeralSystem !== undefined
+        ? { ephemeralSystem: args.ephemeralSystem }
+        : {}),
       sizeBytes: args.sizeBytes,
       createdAt: now,
       updatedAt: now,
@@ -382,6 +520,7 @@ export const accept = internalMutation({
         eventId: args.eventId,
         status: "queued" as const,
         sequence: sequence,
+        ...(recovered ? { recovered } : {}),
       };
     }
 
@@ -606,15 +745,14 @@ export const takeNext = internalMutation({
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    const rows = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-        q.eq("conversationKey", args.conversationKey).eq("status", "queued"),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
-    const active = rows.filter((row) => row.expiresAt > now);
-    const first = active[0];
-    if (!first) {
+    const promoted = await promoteQueuedGroup(ctx, {
+      coordinator: coordinator,
+      queue: queue,
+      now: now,
+      leaseTtlMs: args.leaseTtlMs,
+      ownerGeneration: args.ownerGeneration,
+    });
+    if (!promoted) {
       await ctx.db.patch(coordinator._id, {
         ...queue,
         leaseExpiresAt: now + args.leaseTtlMs,
@@ -622,63 +760,8 @@ export const takeNext = internalMutation({
       });
       return null;
     }
-    const selected =
-      first.requestedMode === "collect"
-        ? active.slice(
-            0,
-            active.findIndex((row) => row.requestedMode !== "collect") === -1
-              ? active.length
-              : active.findIndex((row) => row.requestedMode !== "collect"),
-          )
-        : [first];
-    const appliedMode: "collect" | "followup" =
-      first.requestedMode === "collect" ? "collect" : "followup";
-    const appliedToEventId = first.eventId;
-    const eventIds = selected.map((row) => row.eventId);
-    const applicationId = `${appliedToEventId}:${appliedMode}:${args.ownerGeneration}:${first.sequence}`;
-    for (const row of selected) {
-      await ctx.db.patch(row._id, {
-        status: "processing",
-        appliedMode: appliedMode,
-        appliedToEventId: appliedToEventId,
-        applicationId: applicationId,
-        ownerGeneration: args.ownerGeneration,
-        updatedAt: now,
-      });
-    }
-    await ctx.db.insert("runtimeIngressApplications", {
-      accountId: coordinator.accountId,
-      conversationKey: args.conversationKey,
-      applicationId: applicationId,
-      appliedMode: appliedMode,
-      appliedToEventId: appliedToEventId,
-      contributingEventIds: eventIds,
-      ownerGeneration: args.ownerGeneration,
-      createdAt: now,
-      expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
-    });
-    const removedBytes = selected.reduce(
-      (total, row) => total + row.sizeBytes,
-      0,
-    );
-    await ctx.db.patch(coordinator._id, {
-      ownerEventId: appliedToEventId,
-      queuedCount: Math.max(0, queue.queuedCount - selected.length),
-      queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
-      leaseExpiresAt: now + args.leaseTtlMs,
-      updatedAt: now,
-    });
 
-    return {
-      eventId: appliedToEventId,
-      events: selected.flatMap((row) => row.events),
-      delivery: first.delivery,
-      requestedMode: first.requestedMode,
-      appliedMode: appliedMode,
-      appliedToEventId: appliedToEventId,
-      contributingEventIds: eventIds,
-      ownerGeneration: args.ownerGeneration,
-    };
+    return promoted;
   },
 });
 
@@ -696,21 +779,30 @@ export const settle = internalMutation({
   handler: async (ctx, args) => {
     await requireOwner(ctx, args);
     const now = Date.now();
-    const rows = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_conversationKey_and_appliedToEventId_and_sequence", (q) =>
-        q
-          .eq("conversationKey", args.conversationKey)
-          .eq("appliedToEventId", args.ownerEventId),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
+    const ids = new Set<Id<"runtimeIngressEnvelopes">>();
+    // Page by sequence so more than one drain batch of contributors still
+    // settles; a fixed take() would leave the tail stuck in processing.
+    let afterSequence = -1;
+    while (true) {
+      const rows = await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex(
+          "by_conversationKey_and_appliedToEventId_and_sequence",
+          (q) =>
+            q
+              .eq("conversationKey", args.conversationKey)
+              .eq("appliedToEventId", args.ownerEventId)
+              .gt("sequence", afterSequence),
+        )
+        .take(MAX_DRAIN_ENVELOPES);
+      for (const row of rows) ids.add(row._id);
+      if (rows.length < MAX_DRAIN_ENVELOPES) break;
+      afterSequence = rows[rows.length - 1]!.sequence;
+    }
     const own = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
       .unique();
-    const ids = new Set<Id<"runtimeIngressEnvelopes">>(
-      rows.map((row) => row._id),
-    );
     if (own?.conversationKey === args.conversationKey) ids.add(own._id);
     for (const id of ids) {
       const row = await ctx.db.get(id);
@@ -892,9 +984,18 @@ export const maintain = internalMutation({
   returns: v.object({ expired: v.number(), deleted: v.number() }),
   handler: async (ctx) => {
     const now = Date.now();
+    // Filter inside the query: retained terminal rows share this index, and a
+    // plain take() would let 100 of them pin overdue nonterminal work forever.
     const due = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_expiresAt", (q) => q.lte("expiresAt", now))
+      .filter((q) =>
+        q.and(
+          q.neq(q.field("status"), "completed"),
+          q.neq(q.field("status"), "failed"),
+          q.neq(q.field("status"), "expired"),
+        ),
+      )
       .take(MAX_DRAIN_ENVELOPES);
     let expired = 0;
     for (const row of due) {
@@ -939,10 +1040,16 @@ export const maintain = internalMutation({
     const retained = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_statusExpiresAt", (q) => q.lte("statusExpiresAt", now))
+      .filter((q) =>
+        q.or(
+          q.eq(q.field("status"), "completed"),
+          q.eq(q.field("status"), "failed"),
+          q.eq(q.field("status"), "expired"),
+        ),
+      )
       .take(MAX_DRAIN_ENVELOPES);
     let deleted = 0;
     for (const row of retained) {
-      if (!["completed", "failed", "expired"].includes(row.status)) continue;
       await ctx.db.delete(row._id);
       deleted += 1;
     }

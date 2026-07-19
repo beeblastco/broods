@@ -481,6 +481,12 @@ Wait until the socket is open before calling `sendControl`; `onMeta` is a useful
 signal for this. See the runnable
 [`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
 
+`onMessage` always receives stream parts directly — the SDK unwraps the durable
+`output` envelopes the gateway sends. To track replay cursors for
+`attach`-based resume after a disconnect, add an `onOutput` handler; it receives
+the raw envelope (`{ cursor, replay, data }`) alongside the unwrapped
+`onMessage` delivery.
+
 In supported channels, the equivalent commands are `/steer <message>` and
 `/queue reject|followup|collect|steer`. An idle `/steer` starts a normal turn.
 

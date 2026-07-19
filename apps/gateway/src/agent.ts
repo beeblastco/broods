@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolveRunEvents } from "../../../packages/broods/src/run-input.ts";
 import type {
   IngressStatus,
@@ -8,8 +9,11 @@ import type {
   WebSocketServerMessage,
 } from "../../../packages/broods/src/websocket-contracts.ts";
 import {
+  conversationLastSequence,
   conversationReplaySnapshot,
   readConversationStream,
+  retainedMessageSubject,
+  streamResponseSubject,
   type NatsConnection,
   type NatsStreamEvent,
 } from "../../core/src/shared/nats.ts";
@@ -252,6 +256,18 @@ async function runCoreStream(
         status: payload.status,
         ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
       });
+      // A durable 202 is not a terminal answer: follow the queued event to a
+      // terminal frame so the client's stream never hangs on a bare ack.
+      await followQueuedExecution(
+        socket,
+        active,
+        {
+          eventId: payload.eventId,
+          status: payload.status,
+          ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
+        },
+        getNatsConnection,
+      );
       return;
     }
     await streamNatsResponses(
@@ -268,6 +284,139 @@ async function runCoreStream(
       sendAgentTest(socket, { type: "error", error: "Run start timed out" });
   } finally {
     stopActiveRun(socket);
+  }
+}
+
+/**
+ * Follows a queued (non-owner) execute to completion: live-streams its output
+ * once the durable envelope runs, polls its ingress status, and always closes
+ * the client stream with a terminal done/error frame.
+ */
+async function followQueuedExecution(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  active: ActiveRun,
+  accepted: { eventId: string; status: IngressStatus; statusUrl?: string },
+  getNatsConnection: () => Promise<NatsConnection>,
+): Promise<void> {
+  const signal = active.abort.signal;
+  const finishTerminal = (status: IngressStatus, error?: string) => {
+    if (TERMINAL_STATUSES.has(status) && status !== "completed") {
+      sendAgentTest(socket, {
+        type: "error",
+        error: error ?? `Queued run ended with status ${status}`,
+      });
+      return;
+    }
+    sendAgentTest(socket, { type: "done" });
+  };
+  if (TERMINAL_STATUSES.has(accepted.status)) {
+    finishTerminal(accepted.status);
+    return;
+  }
+
+  const scope = {
+    accountId: socket.data.accountId,
+    agentId: active.agentId,
+    conversationKey: active.publicConversationKey,
+  };
+  const connection = await getNatsConnection();
+  const snapshot = await conversationReplaySnapshot({ connection, ...scope });
+  const eventKey = cursorEventKey(accepted.eventId);
+  let sawDone = false;
+  void (async () => {
+    const messages = await readConversationStream({
+      connection,
+      ...scope,
+      startSequence: snapshot.lastSequence + 1,
+    });
+    const closeOnAbort = () => void messages.close().catch(() => {});
+    signal.addEventListener("abort", closeOnAbort, { once: true });
+    try {
+      for await (const message of messages) {
+        if (signal.aborted) break;
+        const event = decodeNatsStreamEvent(message.data);
+        if (!event || event.headers.eventId !== accepted.eventId) {
+          ackNatsMessage(message);
+          continue;
+        }
+        const outbound = websocketMessageForNatsData(event.data);
+        if (outbound) {
+          sendAgentTest(socket, {
+            type: "output",
+            eventId: accepted.eventId,
+            cursor: formatCursor(snapshot.generation, message.seq, eventKey),
+            replay: false,
+            data: outbound,
+          });
+        }
+        ackNatsMessage(message);
+        if (event.data.type === "done") {
+          sawDone = true;
+          break;
+        }
+      }
+    } finally {
+      signal.removeEventListener("abort", closeOnAbort);
+      await messages.close().catch(() => {});
+    }
+  })().catch(() => {});
+
+  let previous = "";
+  let terminal: IngressHttpResponse | null = null;
+  while (!signal.aborted && !sawDone) {
+    await Bun.sleep(500);
+    if (sawDone || signal.aborted) break;
+    const status = await fetchStatus(
+      socket,
+      active.agentId,
+      accepted.eventId,
+      signal,
+      accepted.statusUrl,
+    ).catch(() => null);
+    if (!status?.status) continue;
+    const fingerprint = JSON.stringify([
+      status.status,
+      status.appliedMode,
+      status.appliedToEventId,
+      status.error,
+    ]);
+    if (fingerprint !== previous) {
+      previous = fingerprint;
+      sendAgentTest(socket, {
+        type: "status",
+        requestId: accepted.eventId,
+        eventId: accepted.eventId,
+        status: isIngressStatus(status.status) ? status.status : "expired",
+        ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
+        ...(status.appliedToEventId
+          ? { appliedToEventId: status.appliedToEventId }
+          : {}),
+        ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
+        ...(status.error ? { error: status.error } : {}),
+      });
+    }
+    if (
+      status.status === "not_found" ||
+      (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
+    ) {
+      terminal = status;
+      break;
+    }
+  }
+  if (signal.aborted) return;
+  if (!sawDone && terminal) {
+    // Give in-flight stream frames a short grace window before the terminal
+    // frame: settle can land in Convex just ahead of the NATS done marker.
+    for (let i = 0; i < 4 && !sawDone && !signal.aborted; i += 1) {
+      await Bun.sleep(500);
+    }
+  }
+  if (sawDone) return;
+  if (terminal) {
+    const status = isIngressStatus(terminal.status)
+      ? terminal.status
+      : ("expired" as const);
+    finishTerminal(status, terminal.error);
   }
 }
 
@@ -425,21 +574,20 @@ async function attachCoreStream(
       return;
     }
     const connection = await getNatsConnection();
-    const snapshot = await conversationReplaySnapshot({
-      connection,
+    const scope = {
       accountId: socket.data.accountId,
       agentId: message.agentId,
       conversationKey: message.conversationKey,
+    };
+    const snapshot = await conversationReplaySnapshot({
+      connection,
+      ...scope,
     });
     const cursor = message.afterCursor
       ? parseCursor(message.afterCursor)
       : null;
-    if (
-      (message.afterCursor && !cursor) ||
-      (cursor && cursor.generation !== snapshot.generation) ||
-      (cursor && cursor.sequence < snapshot.firstSequence - 1) ||
-      (snapshot.bufferedCount === 0 && !TERMINAL_STATUSES.has(status.status))
-    ) {
+    const eventKey = cursorEventKey(message.eventId);
+    const unavailable = () =>
       sendAgentTest(socket, {
         type: "replay_unavailable",
         requestId: message.requestId,
@@ -447,7 +595,43 @@ async function attachCoreStream(
         status: status.status,
         statusUrl,
       });
+    if (
+      (message.afterCursor && !cursor) ||
+      (cursor && cursor.generation !== snapshot.generation) ||
+      (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey) ||
+      (snapshot.bufferedCount === 0 && !TERMINAL_STATUSES.has(status.status))
+    ) {
+      unavailable();
       return;
+    }
+    if (cursor) {
+      // A cursor is only resumable when its own message is still retained for
+      // this conversation subject: head eviction guarantees everything after a
+      // retained message is intact, and a sequence past the subject's last
+      // message is a fabricated future cursor, not a resume point.
+      const lastSequence = await conversationLastSequence({
+        connection,
+        ...scope,
+      });
+      if (lastSequence === null || cursor.sequence > lastSequence) {
+        unavailable();
+        return;
+      }
+      const subjectAtCursor = await retainedMessageSubject(
+        connection,
+        cursor.sequence,
+      );
+      if (
+        subjectAtCursor !==
+        streamResponseSubject(
+          scope.accountId,
+          scope.agentId,
+          scope.conversationKey,
+        )
+      ) {
+        unavailable();
+        return;
+      }
     }
     const replayFrom = cursor ? cursor.sequence + 1 : snapshot.firstSequence;
     sendAgentTest(socket, {
@@ -457,10 +641,15 @@ async function attachCoreStream(
       status: status.status,
       ...(snapshot.bufferedCount > 0
         ? {
-            replayFromCursor: formatCursor(snapshot.generation, replayFrom),
+            replayFromCursor: formatCursor(
+              snapshot.generation,
+              replayFrom,
+              eventKey,
+            ),
             replayThroughCursor: formatCursor(
               snapshot.generation,
               snapshot.lastSequence,
+              eventKey,
             ),
           }
         : {}),
@@ -497,7 +686,11 @@ async function attachCoreStream(
           sendAgentTest(socket, {
             type: "output",
             eventId: message.eventId,
-            cursor: formatCursor(snapshot.generation, natsMessage.seq),
+            cursor: formatCursor(
+              snapshot.generation,
+              natsMessage.seq,
+              eventKey,
+            ),
             replay: natsMessage.seq <= snapshot.lastSequence,
             data: outbound,
           });
@@ -528,6 +721,7 @@ async function streamNatsResponses(
     connection,
     ...started.nats,
   });
+  const eventKey = cursorEventKey(started.eventId);
   const messages = await readConversationStream({
     connection,
     ...started.nats,
@@ -545,7 +739,7 @@ async function streamNatsResponses(
         sendAgentTest(socket, {
           type: "output",
           eventId: started.eventId,
-          cursor: formatCursor(snapshot.generation, message.seq),
+          cursor: formatCursor(snapshot.generation, message.seq, eventKey),
           replay: replay || message.seq <= snapshot.lastSequence,
           data: outbound,
         });
@@ -615,19 +809,34 @@ function sendAgentTest(
   socket.send(JSON.stringify(payload));
 }
 
-function formatCursor(generation: string, sequence: number): string {
-  return `${CURSOR_PREFIX}:${generation}:${sequence}`;
+/** Binds a cursor to its originating event so it cannot resume another one. */
+function cursorEventKey(eventId: string): string {
+  return createHash("sha256").update(eventId).digest("base64url").slice(0, 16);
 }
 
-function parseCursor(
-  value: string,
-): { generation: string; sequence: number } | null {
-  const match = /^ws-responses:([^:]+):(\d+)$/.exec(value);
+function formatCursor(
+  generation: string,
+  sequence: number,
+  eventKey: string,
+): string {
+  return `${CURSOR_PREFIX}:${generation}:${sequence}:${eventKey}`;
+}
+
+function parseCursor(value: string): {
+  generation: string;
+  sequence: number;
+  eventKey?: string;
+} | null {
+  const match = /^ws-responses:([^:]+):(\d+)(?::([^:]+))?$/.exec(value);
   if (!match?.[1] || !match[2]) return null;
   const sequence = Number(match[2]);
-  return Number.isSafeInteger(sequence) && sequence >= 0
-    ? { generation: match[1], sequence }
-    : null;
+  if (!Number.isSafeInteger(sequence) || sequence < 0) return null;
+
+  return {
+    generation: match[1],
+    sequence,
+    ...(match[3] ? { eventKey: match[3] } : {}),
+  };
 }
 
 function isIngressStatus(value: unknown): value is IngressStatus {

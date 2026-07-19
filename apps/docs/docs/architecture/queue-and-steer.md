@@ -178,10 +178,18 @@ its stale result and follow-on writes are rejected; true remote abort remains
 outside v1. Channel/provider delivery remains best-effort and must use the
 provider's idempotency metadata when that surface supports it.
 
-After a process crash, maintenance marks elapsed work `expired`. The next owner
-acquires a higher generation and drains the remaining pre-crash FIFO before
-releasing the conversation. Stale workers cannot apply an envelope or commit
-outputs after recovery. A failed owner releases or times out its lease without
+After a process crash, maintenance marks elapsed work `expired`. When a new
+event arrives on a conversation whose owner lease expired with work still
+queued, admission first promotes the oldest queued group to the new owner
+generation and schedules it, and the new arrival queues behind it — recovery
+preserves FIFO order rather than letting the newcomer jump the queue. Stale
+workers cannot apply an envelope or commit outputs after recovery.
+
+Each envelope durably carries its own request execution context — the resolved
+agent config (including per-run `model` overrides) and one-turn `system`
+messages — and its payload digest covers them. A queued request therefore runs
+with exactly its own overrides when it later reaches a boundary, and never
+inherits the previous owner's. A failed owner releases or times out its lease without
 leaving accepted work permanently `accepted`, `queued`, `applied`, or
 `processing`.
 
@@ -283,11 +291,19 @@ it fully processed:
 { "type": "output", "eventId": "event-1", "cursor": "ws-responses:4:1235", "replay": true, "data": { "type": "text-delta", "text": "..." } }
 ```
 
-The cursor is opaque to clients. It encodes the JetStream stream generation and
-global `JsMsg.seq`; the publisher-local `NatsStreamEvent.sequence` is not a
-resume cursor because it resets for each publisher. `afterCursor` is exclusive:
-the first delivered frame has the next retained JetStream sequence. The client
-advances its cursor only after it has processed the complete `output` frame.
+The cursor is opaque to clients. It encodes the JetStream stream generation,
+the global `JsMsg.seq`, and a binding to its originating event, so a cursor can
+never resume a different event's stream; the publisher-local
+`NatsStreamEvent.sequence` is not a resume cursor because it resets for each
+publisher. `afterCursor` is exclusive: the first delivered frame has the next
+retained JetStream sequence. The client advances its cursor only after it has
+processed the complete `output` frame.
+
+The SDK unwraps `output` envelopes before delivery: `onMessage` and `stream()`
+receive the inner stream part directly (`message.type === "text-delta"`), and
+the optional `onOutput` handler receives the raw envelope for clients that
+persist cursors for attach-based resume. The wire protocol above is what a
+bare WebSocket client sees.
 
 After authorization, the gateway creates one ordered JetStream consumer starting
 at `afterCursor + 1` and snapshots the current high-water mark as
@@ -298,9 +314,18 @@ When `afterCursor` is omitted, replay begins at the earliest retained frame for
 the target `eventId`. The gateway filters the conversation-scoped stream by the
 event ID in the NATS envelope headers.
 
-If the cursor's stream generation is stale or any requested sequence has already
-been purged/expired, attach returns `replay_unavailable` with the latest durable
-status and `statusUrl`; it never silently skips a gap. On terminal status, the
+If the cursor's stream generation is stale, the cursor is bound to a different
+event, the cursor sequence is beyond the subject's last retained message (a
+future cursor), or the message at the cursor sequence is no longer retained for
+the conversation subject (its replay tail may have gaps), attach returns
+`replay_unavailable` with the latest durable status and `statusUrl`; it never
+silently skips a gap.
+
+A busy WebSocket `execute` that is durably queued (`followup`, `collect`, or
+`steer`) receives its ACK and then stays live: the gateway streams the queued
+event's output once it reaches a runnable boundary and polls its durable status,
+always closing the client stream with a terminal `done` or `error` frame. A bare
+ACK is never the final frame. On terminal status, the
 conversation stream may already be purged, so reconnect returns the terminal
 status/result rather than recreating token-by-token output. An attached socket
 does not own the run, and status remains pollable for seven days independently

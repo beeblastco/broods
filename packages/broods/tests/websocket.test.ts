@@ -199,6 +199,77 @@ test("websocket client subscribes to the core service and forwards server messag
   expect(done).toBe(true);
 });
 
+test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {
+  const messages: WebSocketServerMessage[] = [];
+  const outputs: unknown[] = [];
+  let done = false;
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+
+  client.subscribe(
+    {
+      endpointId: "agent_1",
+      agentId: "agent_1",
+      sessionId: "conversation-1",
+      input: "start",
+    },
+    {
+      onMessage(message) {
+        messages.push(message);
+      },
+      onOutput(output) {
+        outputs.push(output);
+      },
+      onDone() {
+        done = true;
+      },
+    },
+  );
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.emit({
+    type: "output",
+    eventId: "event-1",
+    cursor: "ws-responses:generation:42:event-key",
+    replay: false,
+    data: { type: "text-delta", id: "text-1", text: "hello" },
+  });
+  socket.emit({
+    type: "output",
+    eventId: "event-1",
+    cursor: "ws-responses:generation:43:event-key",
+    replay: false,
+    data: { type: "done" },
+  });
+
+  // Handlers see the inner stream parts (message.type === "text-delta"), and
+  // onOutput receives the raw envelope so clients can persist resume cursors.
+  expect(messages).toEqual([
+    { type: "text-delta", id: "text-1", text: "hello" },
+    { type: "done" },
+  ]);
+  expect(outputs).toEqual([
+    {
+      type: "output",
+      eventId: "event-1",
+      cursor: "ws-responses:generation:42:event-key",
+      replay: false,
+      data: { type: "text-delta", id: "text-1", text: "hello" },
+    },
+    {
+      type: "output",
+      eventId: "event-1",
+      cursor: "ws-responses:generation:43:event-key",
+      replay: false,
+      data: { type: "done" },
+    },
+  ]);
+  expect(done).toBe(true);
+});
+
 test("websocket client sends correlated control and attach frames", async () => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",

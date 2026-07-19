@@ -1250,6 +1250,51 @@ describe("direct API ingress", () => {
     ]);
   });
 
+  it("refuses deployment-key status reads for agents without public access", async () => {
+    const handledEvents: StatusInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          method: "GET",
+          rawPath: "/status/one",
+          rawQueryString: "agentId=agent_private",
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
+      },
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      code: "public_access_disabled",
+    });
+    expect(handledEvents).toEqual([]);
+  });
+
   it("routes async tool completion requests through account auth", async () => {
     const handledEvents: AsyncToolCompletionInboundEvent[] = [];
     const response = await routeIncomingEvent(

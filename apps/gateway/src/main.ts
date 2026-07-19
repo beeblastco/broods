@@ -25,7 +25,7 @@ import {
 import {
   isConfigHttpPath,
   isCoreHttpRoute,
-  isWebSocketPath,
+  matchAgentWebSocketPath,
   matchObservabilityWebSocketPath,
 } from "./routes.ts";
 import { RateLimiter } from "./rate-limiter.ts";
@@ -189,7 +189,8 @@ if (import.meta.main) {
           : json({ error: "WebSocket upgrade failed" }, { status: 400 });
       }
 
-      if (isWebSocketPath(url.pathname)) {
+      const agentWebSocketPath = matchAgentWebSocketPath(url.pathname);
+      if (agentWebSocketPath) {
         if (activeSocketCount >= limits.maxConnections) {
           return json({ error: "Gateway is at capacity" }, { status: 503 });
         }
@@ -202,6 +203,23 @@ if (import.meta.main) {
         if (!resolved) {
           authFailureLimiter.allow(ip);
           return json({ error: "Invalid WebSocket token" }, { status: 401 });
+        }
+        // Bind the socket to the key's own endpoint scope: attach never posts
+        // through the core run path, so the door check must happen here.
+        if (
+          !resolved.scope.endpointIds.includes(agentWebSocketPath.endpointId) ||
+          (agentWebSocketPath.projectSlug !== undefined &&
+            resolved.scope.projectSlug !== agentWebSocketPath.projectSlug) ||
+          (agentWebSocketPath.environmentSlug !== undefined &&
+            resolved.scope.environmentSlug !==
+              agentWebSocketPath.environmentSlug)
+        ) {
+          return json(
+            {
+              error: "WebSocket scope does not match the requested endpoint",
+            },
+            { status: 403 },
+          );
         }
 
         const upgraded = server.upgrade(request, {
