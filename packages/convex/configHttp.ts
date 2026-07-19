@@ -924,6 +924,8 @@ async function handleAgentConfigRoute(
           409,
         );
       }
+      // Before encryption: canonicalization must land in the persisted config.
+      canonicalizeAgentSkillPaths(accountId, input.config);
       const config = await prepareAccountAgentConfig(
         ctx,
         accountId,
@@ -1026,6 +1028,8 @@ async function handleAgentConfigRoute(
         );
       }
     }
+    // Before encryption: canonicalization must land in the persisted config.
+    canonicalizeAgentSkillPaths(accountId, patch.config);
     const config = await prepareAccountAgentConfig(
       ctx,
       accountId,
@@ -2483,6 +2487,25 @@ async function validateAgentReferences(
   await validateAgentSkillPaths(ctx, accountId, config);
   await validateAgentSubagentIds(ctx, accountId, config);
   await validateAgentPolicyIds(ctx, accountId, config);
+}
+
+/**
+ * Skills are account-scoped, so the account-id prefix in a skill path is
+ * derivable — the API accepts bare skill names (`gmail`) and canonicalizes
+ * them to the `<accountId>/<name>` form the runtime loads from. Prefixed
+ * paths pass through unchanged (ownership is still enforced by
+ * validateAgentSkillPaths). Mutates `config` in place, so callers must run
+ * this BEFORE the config is encrypted for persistence.
+ */
+export function canonicalizeAgentSkillPaths(
+  accountId: Id<"accounts">,
+  config: AgentConfig | undefined,
+): void {
+  const skills = config?.skills;
+  if (!skills?.allowed) return;
+  skills.allowed = skills.allowed.map((skillPath) =>
+    skillPath.includes("/") ? skillPath : `${accountId}/${skillPath}`,
+  );
 }
 
 async function validateAgentSkillPaths(
