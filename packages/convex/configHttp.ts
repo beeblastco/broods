@@ -924,6 +924,8 @@ async function handleAgentConfigRoute(
           409,
         );
       }
+      // Before encryption: canonicalization must land in the persisted config.
+      canonicalizeAgentSkillPaths(accountId, input.config);
       const config = await prepareAccountAgentConfig(
         ctx,
         accountId,
@@ -1026,6 +1028,8 @@ async function handleAgentConfigRoute(
         );
       }
     }
+    // Before encryption: canonicalization must land in the persisted config.
+    canonicalizeAgentSkillPaths(accountId, patch.config);
     const config = await prepareAccountAgentConfig(
       ctx,
       accountId,
@@ -2483,6 +2487,19 @@ async function validateAgentReferences(
   await validateAgentSkillPaths(ctx, accountId, config);
   await validateAgentSubagentIds(ctx, accountId, config);
   await validateAgentPolicyIds(ctx, accountId, config);
+}
+
+// Skills are account-scoped, so bare names canonicalize to <accountId>/<name>
+// in place — callers must run this BEFORE the config is encrypted to persist.
+export function canonicalizeAgentSkillPaths(
+  accountId: Id<"accounts">,
+  config: AgentConfig | undefined,
+): void {
+  const skills = config?.skills;
+  if (!skills?.allowed) return;
+  skills.allowed = skills.allowed.map((skillPath) =>
+    skillPath.includes("/") ? skillPath : `${accountId}/${skillPath}`,
+  );
 }
 
 async function validateAgentSkillPaths(
