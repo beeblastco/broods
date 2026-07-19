@@ -924,6 +924,23 @@ function isChannelWorkspaceScope(
   return value.level === "conversation" && typeof value.alias === "string";
 }
 
+// Attaches an onMessageReceived hook's opaque metadata to the newest user
+// ingress event; the session persists it and re-exposes it on hook payloads.
+export function attachMetadataToLatestUserIngress(
+  events: ConversationIngressEvent[],
+  metadata: unknown,
+): ConversationIngressEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.role !== "user") continue;
+    const next = [...events];
+    next[i] = { ...event, metadata };
+    return next;
+  }
+
+  return events;
+}
+
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -991,6 +1008,9 @@ async function processChannelMessage(
         // `content` (handler.ts appendIngressEvents) — a rewrite that only
         // touches `content` is computed and then dropped.
         events = rewriteLatestUserIngressText(events, mutation.text);
+      }
+      if (mutation !== undefined && mutation.metadata !== undefined) {
+        events = attachMetadataToLatestUserIngress(events, mutation.metadata);
       }
     }
 

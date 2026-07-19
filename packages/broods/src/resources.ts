@@ -73,13 +73,7 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  | "agent"
-  | "workspace"
-  | "sandbox"
-  | "cron"
-  | "skill"
-  | "tool"
-  | "policy";
+  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -134,12 +128,7 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  | "telegram"
-  | "github"
-  | "slack"
-  | "discord"
-  | "pancake"
-  | "zalo";
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -346,6 +335,8 @@ export type ChannelMessageReceived =
  * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
  */
 export interface AgentHooks {
+  // User messages in `messages` carry `createdAt` plus any `metadata` an
+  // onMessageReceived hook returned, for reading identity without text parsing.
   onStart?: Handler<
     { system: string; messages: unknown[] },
     { system?: string; messages?: unknown[] }
@@ -376,9 +367,11 @@ export interface AgentHooks {
     { taskId: string; result: unknown },
     { visibleResult?: unknown }
   >;
+  // Returned `metadata` (opaque JSON) persists with the stored message and
+  // resurfaces on onStart's messages — the receive→run channel ctx.state lacks.
   onMessageReceived?: Handler<
     ChannelMessageReceived,
-    { drop?: boolean; text?: string }
+    { drop?: boolean; text?: string; metadata?: unknown }
   >;
   onMessageSending?: Handler<
     { channel: ChannelType; text: string },
