@@ -2,7 +2,11 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CORE_BASE_URL, BroodsClient, IngressAcceptedError } from "../src/client.ts";
+import {
+  DEFAULT_CORE_BASE_URL,
+  BroodsClient,
+  IngressAcceptedError,
+} from "../src/client.ts";
 
 afterEach(() => {
   delete process.env.BROODS_DASHBOARD_URL;
@@ -49,23 +53,30 @@ test("client streams directly from core with apiKey auth", async () => {
 test("stream reports a busy accepted ingress without treating JSON as SSE", async () => {
   const client = new BroodsClient({
     apiKey: "test-key",
-    fetch: async () => Response.json({
-      eventId: "steer-2",
-      conversationKey: "conversation-1",
-      status: "queued",
-      requestedMode: "steer",
-      statusUrl: "https://gateway.broods.app/status/steer-2?agentId=agent_1",
-    }, { status: 202 }),
+    fetch: async () =>
+      Response.json(
+        {
+          eventId: "steer-2",
+          conversationKey: "conversation-1",
+          status: "queued",
+          requestedMode: "steer",
+          statusUrl:
+            "https://gateway.broods.app/status/steer-2?agentId=agent_1",
+        },
+        { status: 202 },
+      ),
   });
 
-  await expect(client.run({
-    agentId: "agent_1",
-    eventId: "steer-2",
-    conversationKey: "conversation-1",
-    mode: "steer",
-    idempotencyKey: "operation-2",
-    input: "change direction",
-  })).rejects.toBeInstanceOf(IngressAcceptedError);
+  await expect(
+    client.run({
+      agentId: "agent_1",
+      eventId: "steer-2",
+      conversationKey: "conversation-1",
+      mode: "steer",
+      idempotencyKey: "operation-2",
+      input: "change direction",
+    }),
+  ).rejects.toBeInstanceOf(IngressAcceptedError);
 });
 
 test("client accepts host as a shorthand for https baseUrl", async () => {

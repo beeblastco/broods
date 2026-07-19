@@ -485,15 +485,24 @@ export async function conversationReplaySnapshot(options: {
 }> {
   await ensureResponseStream(options.connection);
   const jsm = await options.connection.jetstreamManager();
-  const subject = streamResponseSubject(options.accountId, options.agentId, options.conversationKey);
-  const info = await jsm.streams.info(RESPONSE_STREAM_NAME, { subjects_filter: subject });
-  const created = typeof info.created === "string" ? info.created : String(info.created);
+  const subject = streamResponseSubject(
+    options.accountId,
+    options.agentId,
+    options.conversationKey,
+  );
+  const info = await jsm.streams.info(RESPONSE_STREAM_NAME, {
+    subjects_filter: subject,
+  });
+  const created =
+    typeof info.created === "string" ? info.created : String(info.created);
 
   return {
     generation: Buffer.from(created, "utf8").toString("base64url"),
     firstSequence: info.state.first_seq,
     lastSequence: info.state.last_seq,
-    bufferedCount: (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0,
+    bufferedCount:
+      (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
+      0,
   };
 }
 

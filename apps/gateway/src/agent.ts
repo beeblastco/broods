@@ -59,7 +59,11 @@ const activeRuns = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
   ActiveRun
 >();
-const TERMINAL_STATUSES = new Set<IngressStatus>(["completed", "failed", "expired"]);
+const TERMINAL_STATUSES = new Set<IngressStatus>([
+  "completed",
+  "failed",
+  "expired",
+]);
 const CURSOR_PREFIX = "ws-responses";
 
 export function handleAgentMessage(
@@ -70,7 +74,10 @@ export function handleAgentMessage(
 ): void {
   const message = parseGatewayMessage(rawMessage);
   if (!message) {
-    sendAgentTest(socket, { type: "error", error: "Invalid WebSocket message" });
+    sendAgentTest(socket, {
+      type: "error",
+      error: "Invalid WebSocket message",
+    });
     socket.close(1003, "invalid message");
     return;
   }
@@ -83,7 +90,10 @@ export function handleAgentMessage(
   if (message.type === "control") {
     const active = activeRuns.get(socket);
     if (!active) {
-      sendAgentTest(socket, { type: "error", error: "No active run to control" });
+      sendAgentTest(socket, {
+        type: "error",
+        error: "No active run to control",
+      });
       return;
     }
     void submitControl(socket, active, message);
@@ -91,7 +101,10 @@ export function handleAgentMessage(
   }
 
   if (activeRuns.has(socket)) {
-    sendAgentTest(socket, { type: "error", error: "A run is already active on this WebSocket" });
+    sendAgentTest(socket, {
+      type: "error",
+      error: "A run is already active on this WebSocket",
+    });
     return;
   }
 
@@ -103,13 +116,17 @@ export function handleAgentMessage(
   void runCoreStream(socket, message, limits, getNatsConnection);
 }
 
-export function buildCoreRunBody(message: ExecuteMessage): Record<string, unknown> {
-  const eventId = typeof message.eventId === "string" && message.eventId.trim()
-    ? message.eventId.trim()
-    : `ws-${Date.now()}-${crypto.randomUUID()}`;
-  const conversationKey = typeof message.sessionId === "string" && message.sessionId.trim()
-    ? message.sessionId.trim()
-    : eventId;
+export function buildCoreRunBody(
+  message: ExecuteMessage,
+): Record<string, unknown> {
+  const eventId =
+    typeof message.eventId === "string" && message.eventId.trim()
+      ? message.eventId.trim()
+      : `ws-${Date.now()}-${crypto.randomUUID()}`;
+  const conversationKey =
+    typeof message.sessionId === "string" && message.sessionId.trim()
+      ? message.sessionId.trim()
+      : eventId;
 
   return {
     agentId: message.agentId.trim(),
@@ -118,7 +135,9 @@ export function buildCoreRunBody(message: ExecuteMessage): Record<string, unknow
     connectionId: `ws-${crypto.randomUUID()}`,
     events: resolveRunEvents(message),
     ...(message.mode !== undefined ? { mode: message.mode } : {}),
-    ...(message.idempotencyKey !== undefined ? { idempotencyKey: message.idempotencyKey } : {}),
+    ...(message.idempotencyKey !== undefined
+      ? { idempotencyKey: message.idempotencyKey }
+      : {}),
     ...(message.system !== undefined ? { system: message.system } : {}),
     ...(message.model !== undefined ? { model: message.model } : {}),
   };
@@ -127,11 +146,16 @@ export function buildCoreRunBody(message: ExecuteMessage): Record<string, unknow
 export function websocketMessageForNatsData(
   data: Record<string, unknown>,
 ): WebSocketServerMessage | null {
-  return typeof data.type === "string" ? (data as WebSocketServerMessage) : null;
+  return typeof data.type === "string"
+    ? (data as WebSocketServerMessage)
+    : null;
 }
 
-export function parseGatewayMessage(rawMessage: string | Buffer): WebSocketClientMessage | null {
-  const text = typeof rawMessage === "string" ? rawMessage : decoder.decode(rawMessage);
+export function parseGatewayMessage(
+  rawMessage: string | Buffer,
+): WebSocketClientMessage | null {
+  const text =
+    typeof rawMessage === "string" ? rawMessage : decoder.decode(rawMessage);
   const parsed = parseJson(text);
   if (!parsed || typeof parsed !== "object") return null;
   const type = (parsed as { type?: unknown }).type;
@@ -141,7 +165,9 @@ export function parseGatewayMessage(rawMessage: string | Buffer): WebSocketClien
   return isExecuteMessage(parsed) ? parsed : null;
 }
 
-export function stopActiveRun(socket: Bun.ServerWebSocket<AgentTestGatewayData>): void {
+export function stopActiveRun(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): void {
   const activeRun = activeRuns.get(socket);
   if (!activeRun) return;
   clearTimeout(activeRun.startTimeout);
@@ -183,26 +209,40 @@ async function runCoreStream(
   });
 
   try {
-    const response = await fetch(`${socket.data.coreBaseUrl}${socket.data.corePath}`, {
-      method: "POST",
-      headers: coreHeaders(socket),
-      body: JSON.stringify(body),
-      signal: abort.signal,
-    });
+    const response = await fetch(
+      `${socket.data.coreBaseUrl}${socket.data.corePath}`,
+      {
+        method: "POST",
+        headers: coreHeaders(socket),
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      },
+    );
     if (!response.ok) {
       clearTimeout(startTimeout);
-      sendAgentTest(socket, { type: "error", status: response.status, error: await response.text() });
+      sendAgentTest(socket, {
+        type: "error",
+        status: response.status,
+        error: await response.text(),
+      });
       return;
     }
     if (!response.headers.get("content-type")?.includes("application/json")) {
-      sendAgentTest(socket, { type: "error", error: "Core WebSocket start did not return JSON" });
+      sendAgentTest(socket, {
+        type: "error",
+        error: "Core WebSocket start did not return JSON",
+      });
       return;
     }
-    const payload = await response.json() as NatsStartResponse & IngressHttpResponse;
+    const payload = (await response.json()) as NatsStartResponse &
+      IngressHttpResponse;
     clearTimeout(startTimeout);
     if (!payload.nats) {
       if (!payload.eventId || !isIngressStatus(payload.status)) {
-        sendAgentTest(socket, { type: "error", error: "Core did not return a WebSocket stream or ingress status" });
+        sendAgentTest(socket, {
+          type: "error",
+          error: "Core did not return a WebSocket stream or ingress status",
+        });
         return;
       }
       sendAgentTest(socket, {
@@ -214,10 +254,18 @@ async function runCoreStream(
       });
       return;
     }
-    await streamNatsResponses(socket, payload, abort.signal, getNatsConnection, false);
+    await streamNatsResponses(
+      socket,
+      payload,
+      abort.signal,
+      getNatsConnection,
+      false,
+    );
   } catch (error) {
-    if (!abort.signal.aborted) sendAgentTest(socket, { type: "error", error: errorMessage(error) });
-    else if (startTimedOut) sendAgentTest(socket, { type: "error", error: "Run start timed out" });
+    if (!abort.signal.aborted)
+      sendAgentTest(socket, { type: "error", error: errorMessage(error) });
+    else if (startTimedOut)
+      sendAgentTest(socket, { type: "error", error: "Run start timed out" });
   } finally {
     stopActiveRun(socket);
   }
@@ -229,28 +277,37 @@ async function submitControl(
   message: WebSocketClientControlMessage,
 ): Promise<void> {
   try {
-    const response = await fetch(`${socket.data.coreBaseUrl}${socket.data.corePath}`, {
-      method: "POST",
-      headers: coreHeaders(socket),
-      body: JSON.stringify({
-        agentId: active.agentId,
-        eventId: message.eventId,
-        conversationKey: active.publicConversationKey,
-        connectionId: `ws-${crypto.randomUUID()}`,
-        events: resolveRunEvents(message),
-        mode: message.mode,
-        idempotencyKey: message.idempotencyKey ?? message.eventId,
-      }),
-      signal: active.abort.signal,
-    });
+    const response = await fetch(
+      `${socket.data.coreBaseUrl}${socket.data.corePath}`,
+      {
+        method: "POST",
+        headers: coreHeaders(socket),
+        body: JSON.stringify({
+          agentId: active.agentId,
+          eventId: message.eventId,
+          conversationKey: active.publicConversationKey,
+          connectionId: `ws-${crypto.randomUUID()}`,
+          events: resolveRunEvents(message),
+          mode: message.mode,
+          idempotencyKey: message.idempotencyKey ?? message.eventId,
+        }),
+        signal: active.abort.signal,
+      },
+    );
     const payload = await responseJson(response);
-    if (response.status !== 202 || !payload.eventId || !isIngressStatus(payload.status)) {
+    if (
+      response.status !== 202 ||
+      !payload.eventId ||
+      !isIngressStatus(payload.status)
+    ) {
       sendAgentTest(socket, {
         type: "status",
         requestId: message.requestId,
         eventId: message.eventId,
         status: payload.status ?? "not_found",
-        error: payload.error ?? `Control input was rejected with HTTP ${response.status}`,
+        error:
+          payload.error ??
+          `Control input was rejected with HTTP ${response.status}`,
       });
       return;
     }
@@ -261,7 +318,13 @@ async function submitControl(
       status: payload.status,
       ...(payload.statusUrl ? { statusUrl: payload.statusUrl } : {}),
     });
-    void pollControlStatus(socket, active, message.requestId, payload.eventId, payload.statusUrl);
+    void pollControlStatus(
+      socket,
+      active,
+      message.requestId,
+      payload.eventId,
+      payload.statusUrl,
+    );
   } catch (error) {
     if (!active.abort.signal.aborted) {
       sendAgentTest(socket, {
@@ -285,9 +348,20 @@ async function pollControlStatus(
   let previous = "";
   while (!active.abort.signal.aborted) {
     await Bun.sleep(500);
-    const payload = await fetchStatus(socket, active.agentId, eventId, active.abort.signal, statusUrl).catch(() => null);
+    const payload = await fetchStatus(
+      socket,
+      active.agentId,
+      eventId,
+      active.abort.signal,
+      statusUrl,
+    ).catch(() => null);
     if (!payload?.status) continue;
-    const fingerprint = JSON.stringify([payload.status, payload.appliedMode, payload.appliedToEventId, payload.error]);
+    const fingerprint = JSON.stringify([
+      payload.status,
+      payload.appliedMode,
+      payload.appliedToEventId,
+      payload.error,
+    ]);
     if (fingerprint !== previous) {
       previous = fingerprint;
       sendAgentTest(socket, {
@@ -295,14 +369,22 @@ async function pollControlStatus(
         requestId,
         eventId,
         status: payload.status,
-        ...(payload.requestedMode ? { requestedMode: payload.requestedMode } : {}),
+        ...(payload.requestedMode
+          ? { requestedMode: payload.requestedMode }
+          : {}),
         ...(payload.appliedMode ? { appliedMode: payload.appliedMode } : {}),
-        ...(payload.appliedToEventId ? { appliedToEventId: payload.appliedToEventId } : {}),
+        ...(payload.appliedToEventId
+          ? { appliedToEventId: payload.appliedToEventId }
+          : {}),
         ...(statusUrl ? { statusUrl } : {}),
         ...(payload.error ? { error: payload.error } : {}),
       });
     }
-    if (payload.status === "not_found" || (isIngressStatus(payload.status) && TERMINAL_STATUSES.has(payload.status))) return;
+    if (
+      payload.status === "not_found" ||
+      (isIngressStatus(payload.status) && TERMINAL_STATUSES.has(payload.status))
+    )
+      return;
   }
 }
 
@@ -313,7 +395,10 @@ async function attachCoreStream(
   getNatsConnection: () => Promise<NatsConnection>,
 ): Promise<void> {
   const abort = new AbortController();
-  const startTimeout = setTimeout(() => abort.abort(), limits.runStartTimeoutMs);
+  const startTimeout = setTimeout(
+    () => abort.abort(),
+    limits.runStartTimeoutMs,
+  );
   activeRuns.set(socket, {
     abort,
     startTimeout,
@@ -323,9 +408,20 @@ async function attachCoreStream(
   });
   const statusUrl = `/status/${encodeURIComponent(message.eventId)}?agentId=${encodeURIComponent(message.agentId)}`;
   try {
-    const status = await fetchStatus(socket, message.agentId, message.eventId, abort.signal);
+    const status = await fetchStatus(
+      socket,
+      message.agentId,
+      message.eventId,
+      abort.signal,
+    );
     if (!status.status || status.status === "not_found") {
-      sendAgentTest(socket, { type: "replay_unavailable", requestId: message.requestId, eventId: message.eventId, status: "not_found", statusUrl });
+      sendAgentTest(socket, {
+        type: "replay_unavailable",
+        requestId: message.requestId,
+        eventId: message.eventId,
+        status: "not_found",
+        statusUrl,
+      });
       return;
     }
     const connection = await getNatsConnection();
@@ -335,14 +431,22 @@ async function attachCoreStream(
       agentId: message.agentId,
       conversationKey: message.conversationKey,
     });
-    const cursor = message.afterCursor ? parseCursor(message.afterCursor) : null;
+    const cursor = message.afterCursor
+      ? parseCursor(message.afterCursor)
+      : null;
     if (
       (message.afterCursor && !cursor) ||
       (cursor && cursor.generation !== snapshot.generation) ||
       (cursor && cursor.sequence < snapshot.firstSequence - 1) ||
       (snapshot.bufferedCount === 0 && !TERMINAL_STATUSES.has(status.status))
     ) {
-      sendAgentTest(socket, { type: "replay_unavailable", requestId: message.requestId, eventId: message.eventId, status: status.status, statusUrl });
+      sendAgentTest(socket, {
+        type: "replay_unavailable",
+        requestId: message.requestId,
+        eventId: message.eventId,
+        status: status.status,
+        statusUrl,
+      });
       return;
     }
     const replayFrom = cursor ? cursor.sequence + 1 : snapshot.firstSequence;
@@ -351,15 +455,26 @@ async function attachCoreStream(
       requestId: message.requestId,
       eventId: message.eventId,
       status: status.status,
-      ...(snapshot.bufferedCount > 0 ? {
-        replayFromCursor: formatCursor(snapshot.generation, replayFrom),
-        replayThroughCursor: formatCursor(snapshot.generation, snapshot.lastSequence),
-      } : {}),
+      ...(snapshot.bufferedCount > 0
+        ? {
+            replayFromCursor: formatCursor(snapshot.generation, replayFrom),
+            replayThroughCursor: formatCursor(
+              snapshot.generation,
+              snapshot.lastSequence,
+            ),
+          }
+        : {}),
       statusUrl,
     });
     clearTimeout(startTimeout);
     if (snapshot.bufferedCount === 0) {
-      sendAgentTest(socket, { type: "status", requestId: message.requestId, eventId: message.eventId, status: status.status, statusUrl });
+      sendAgentTest(socket, {
+        type: "status",
+        requestId: message.requestId,
+        eventId: message.eventId,
+        status: status.status,
+        statusUrl,
+      });
       return;
     }
     const messages = await readConversationStream({
@@ -394,7 +509,8 @@ async function attachCoreStream(
       await messages.close().catch(() => {});
     }
   } catch (error) {
-    if (!abort.signal.aborted) sendAgentTest(socket, { type: "error", error: errorMessage(error) });
+    if (!abort.signal.aborted)
+      sendAgentTest(socket, { type: "error", error: errorMessage(error) });
   } finally {
     stopActiveRun(socket);
   }
@@ -408,8 +524,14 @@ async function streamNatsResponses(
   replay: boolean,
 ): Promise<void> {
   const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({ connection, ...started.nats });
-  const messages = await readConversationStream({ connection, ...started.nats });
+  const snapshot = await conversationReplaySnapshot({
+    connection,
+    ...started.nats,
+  });
+  const messages = await readConversationStream({
+    connection,
+    ...started.nats,
+  });
   try {
     for await (const message of messages) {
       if (signal.aborted) break;
@@ -443,13 +565,18 @@ async function fetchStatus(
   signal: AbortSignal,
   statusUrl?: string,
 ): Promise<IngressHttpResponse> {
-  const target = statusUrl && /^https?:\/\//.test(statusUrl)
-    ? statusUrl
-    : `${socket.data.coreBaseUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
-  return responseJson(await fetch(target, { headers: coreHeaders(socket), signal }));
+  const target =
+    statusUrl && /^https?:\/\//.test(statusUrl)
+      ? statusUrl
+      : `${socket.data.coreBaseUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+  return responseJson(
+    await fetch(target, { headers: coreHeaders(socket), signal }),
+  );
 }
 
-function coreHeaders(socket: Bun.ServerWebSocket<AgentTestGatewayData>): Record<string, string> {
+function coreHeaders(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+): Record<string, string> {
   return {
     Accept: "application/json",
     Authorization: `Bearer ${socket.data.token}`,
@@ -459,18 +586,26 @@ function coreHeaders(socket: Bun.ServerWebSocket<AgentTestGatewayData>): Record<
 
 async function responseJson(response: Response): Promise<IngressHttpResponse> {
   const payload = await response.json().catch(() => ({}));
-  return payload && typeof payload === "object" ? payload as IngressHttpResponse : {};
+  return payload && typeof payload === "object"
+    ? (payload as IngressHttpResponse)
+    : {};
 }
 
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
   const parsed = parseJson(decoder.decode(data));
-  return parsed && typeof parsed === "object" && (parsed as { type?: unknown }).type === "stream"
-    ? parsed as NatsStreamEvent
+  return parsed &&
+    typeof parsed === "object" &&
+    (parsed as { type?: unknown }).type === "stream"
+    ? (parsed as NatsStreamEvent)
     : null;
 }
 
 function ackNatsMessage(message: { ack?: () => void }): void {
-  try { message.ack?.(); } catch { return; }
+  try {
+    message.ack?.();
+  } catch {
+    return;
+  }
 }
 
 function sendAgentTest(
@@ -484,37 +619,100 @@ function formatCursor(generation: string, sequence: number): string {
   return `${CURSOR_PREFIX}:${generation}:${sequence}`;
 }
 
-function parseCursor(value: string): { generation: string; sequence: number } | null {
+function parseCursor(
+  value: string,
+): { generation: string; sequence: number } | null {
   const match = /^ws-responses:([^:]+):(\d+)$/.exec(value);
   if (!match?.[1] || !match[2]) return null;
   const sequence = Number(match[2]);
-  return Number.isSafeInteger(sequence) && sequence >= 0 ? { generation: match[1], sequence } : null;
+  return Number.isSafeInteger(sequence) && sequence >= 0
+    ? { generation: match[1], sequence }
+    : null;
 }
 
 function isIngressStatus(value: unknown): value is IngressStatus {
-  return value === "accepted" || value === "queued" || value === "applied" || value === "processing" || value === "completed" || value === "failed" || value === "expired";
+  return (
+    value === "accepted" ||
+    value === "queued" ||
+    value === "applied" ||
+    value === "processing" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "expired"
+  );
 }
 
-function isIngressMode(value: unknown): value is "reject" | "followup" | "collect" | "steer" {
-  return value === "reject" || value === "followup" || value === "collect" || value === "steer";
+function isIngressMode(
+  value: unknown,
+): value is "reject" | "followup" | "collect" | "steer" {
+  return (
+    value === "reject" ||
+    value === "followup" ||
+    value === "collect" ||
+    value === "steer"
+  );
 }
 
 function hasEventInput(value: object): boolean {
   const record = value as { input?: unknown; events?: unknown };
-  return typeof record.input === "string" || (Array.isArray(record.events) && record.events.length > 0);
+  return (
+    typeof record.input === "string" ||
+    (Array.isArray(record.events) && record.events.length > 0)
+  );
 }
 
-function isExecuteMessage(value: object): value is WebSocketClientExecuteMessage {
+function isExecuteMessage(
+  value: object,
+): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown; mode?: unknown };
-  return record.type === "execute" && typeof record.agentId === "string" && record.agentId.trim().length > 0 && (record.mode === undefined || isIngressMode(record.mode)) && hasEventInput(value);
+  return (
+    record.type === "execute" &&
+    typeof record.agentId === "string" &&
+    record.agentId.trim().length > 0 &&
+    (record.mode === undefined || isIngressMode(record.mode)) &&
+    hasEventInput(value)
+  );
 }
 
-function isControlMessage(value: object): value is WebSocketClientControlMessage {
-  const record = value as { type?: unknown; requestId?: unknown; eventId?: unknown; mode?: unknown };
-  return record.type === "control" && typeof record.requestId === "string" && record.requestId.length > 0 && typeof record.eventId === "string" && record.eventId.length > 0 && isIngressMode(record.mode) && hasEventInput(value);
+function isControlMessage(
+  value: object,
+): value is WebSocketClientControlMessage {
+  const record = value as {
+    type?: unknown;
+    requestId?: unknown;
+    eventId?: unknown;
+    mode?: unknown;
+  };
+  return (
+    record.type === "control" &&
+    typeof record.requestId === "string" &&
+    record.requestId.length > 0 &&
+    typeof record.eventId === "string" &&
+    record.eventId.length > 0 &&
+    isIngressMode(record.mode) &&
+    hasEventInput(value)
+  );
 }
 
 function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
-  const record = value as { type?: unknown; requestId?: unknown; agentId?: unknown; conversationKey?: unknown; eventId?: unknown; afterCursor?: unknown };
-  return record.type === "attach" && typeof record.requestId === "string" && record.requestId.length > 0 && typeof record.agentId === "string" && record.agentId.length > 0 && typeof record.conversationKey === "string" && record.conversationKey.length > 0 && typeof record.eventId === "string" && record.eventId.length > 0 && (record.afterCursor === undefined || typeof record.afterCursor === "string");
+  const record = value as {
+    type?: unknown;
+    requestId?: unknown;
+    agentId?: unknown;
+    conversationKey?: unknown;
+    eventId?: unknown;
+    afterCursor?: unknown;
+  };
+  return (
+    record.type === "attach" &&
+    typeof record.requestId === "string" &&
+    record.requestId.length > 0 &&
+    typeof record.agentId === "string" &&
+    record.agentId.length > 0 &&
+    typeof record.conversationKey === "string" &&
+    record.conversationKey.length > 0 &&
+    typeof record.eventId === "string" &&
+    record.eventId.length > 0 &&
+    (record.afterCursor === undefined || typeof record.afterCursor === "string")
+  );
 }

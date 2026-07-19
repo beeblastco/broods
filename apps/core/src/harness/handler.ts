@@ -3,12 +3,7 @@
  * Keep request orchestration, session setup, and response shaping here.
  */
 
-import type {
-  SystemModelMessage,
-  ToolModelMessage,
-  JSONValue,
-  UserModelMessage,
-} from "ai";
+import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
@@ -19,9 +14,9 @@ import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import {
   booleanEnv,
+  getHarnessPublicUrl,
   optionalEnv,
   positiveIntegerEnv,
-  requireEnv,
 } from "../shared/env.ts";
 import {
   errorResponse,
@@ -84,7 +79,6 @@ import {
   type IngressAdmission,
   type IngressDelivery,
 } from "./ingress.ts";
-import { getHarnessPublicUrl } from "./self-url.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type ContinuationOutcome =

@@ -161,8 +161,8 @@ function hasActiveOwner(
 ): boolean {
   return Boolean(
     coordinator.ownerEventId &&
-      coordinator.leaseExpiresAt &&
-      coordinator.leaseExpiresAt >= now,
+    coordinator.leaseExpiresAt &&
+    coordinator.leaseExpiresAt >= now,
   );
 }
 
@@ -275,7 +275,8 @@ export const accept = internalMutation({
   handler: async (ctx, args) => {
     await requireActiveAccount(ctx, args.accountId);
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
-    if (args.sizeBytes < 0) throw new Error("Ingress size must not be negative");
+    if (args.sizeBytes < 0)
+      throw new Error("Ingress size must not be negative");
     const now = Date.now();
     const identity = await canonicalIdentity(args);
     const existing = await ctx.db
@@ -385,7 +386,8 @@ export const accept = internalMutation({
     }
 
     const ownerGeneration = coordinator.ownerGeneration + 1;
-    const appliedMode = args.requestedMode === "steer" ? "followup" : args.requestedMode;
+    const appliedMode =
+      args.requestedMode === "steer" ? "followup" : args.requestedMode;
     await ctx.db.insert("runtimeIngressEnvelopes", {
       ...baseEnvelope,
       appliedMode,
@@ -567,7 +569,10 @@ export const applySteering = internalMutation({
       createdAt: now,
       expiresAt: Math.max(...active.map((row) => row.statusExpiresAt)),
     });
-    const removedBytes = active.reduce((total, row) => total + row.sizeBytes, 0);
+    const removedBytes = active.reduce(
+      (total, row) => total + row.sizeBytes,
+      0,
+    );
     await ctx.db.patch(coordinator._id, {
       queuedCount: Math.max(0, queue.queuedCount - active.length),
       queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
@@ -617,11 +622,15 @@ export const takeNext = internalMutation({
       });
       return null;
     }
-    const selected = first.requestedMode === "collect"
-      ? active.slice(0, active.findIndex((row) => row.requestedMode !== "collect") === -1
-        ? active.length
-        : active.findIndex((row) => row.requestedMode !== "collect"))
-      : [first];
+    const selected =
+      first.requestedMode === "collect"
+        ? active.slice(
+            0,
+            active.findIndex((row) => row.requestedMode !== "collect") === -1
+              ? active.length
+              : active.findIndex((row) => row.requestedMode !== "collect"),
+          )
+        : [first];
     const appliedMode: "collect" | "followup" =
       first.requestedMode === "collect" ? "collect" : "followup";
     const appliedToEventId = first.eventId;
@@ -648,7 +657,10 @@ export const takeNext = internalMutation({
       createdAt: now,
       expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
     });
-    const removedBytes = selected.reduce((total, row) => total + row.sizeBytes, 0);
+    const removedBytes = selected.reduce(
+      (total, row) => total + row.sizeBytes,
+      0,
+    );
     await ctx.db.patch(coordinator._id, {
       ownerEventId: appliedToEventId,
       queuedCount: Math.max(0, queue.queuedCount - selected.length),
@@ -696,11 +708,14 @@ export const settle = internalMutation({
       .query("runtimeIngressEnvelopes")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
       .unique();
-    const ids = new Set<Id<"runtimeIngressEnvelopes">>(rows.map((row) => row._id));
+    const ids = new Set<Id<"runtimeIngressEnvelopes">>(
+      rows.map((row) => row._id),
+    );
     if (own?.conversationKey === args.conversationKey) ids.add(own._id);
     for (const id of ids) {
       const row = await ctx.db.get(id);
-      if (!row || ["completed", "failed", "expired"].includes(row.status)) continue;
+      if (!row || ["completed", "failed", "expired"].includes(row.status))
+        continue;
       await ctx.db.patch(id, {
         status: args.status,
         updatedAt: now,
@@ -726,7 +741,11 @@ export const getStatus = internalQuery({
       .query("runtimeIngressEnvelopes")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
       .unique();
-    if (!row || row.accountId !== args.accountId || row.agentId !== args.agentId) {
+    if (
+      !row ||
+      row.accountId !== args.accountId ||
+      row.agentId !== args.agentId
+    ) {
       return null;
     }
 
@@ -734,7 +753,9 @@ export const getStatus = internalQuery({
       eventId: row.eventId,
       conversationKey: row.conversationKey,
       requestedMode: row.requestedMode,
-      ...(row.appliedMode !== undefined ? { appliedMode: row.appliedMode } : {}),
+      ...(row.appliedMode !== undefined
+        ? { appliedMode: row.appliedMode }
+        : {}),
       ...(row.appliedToEventId !== undefined
         ? { appliedToEventId: row.appliedToEventId }
         : {}),
@@ -879,14 +900,19 @@ export const maintain = internalMutation({
     for (const row of due) {
       if (["completed", "failed", "expired"].includes(row.status)) continue;
       const coordinator = await getCoordinator(ctx, row.conversationKey);
-      if (row.status === "processing" && coordinator?.leaseExpiresAt && coordinator.leaseExpiresAt > now) {
+      if (
+        row.status === "processing" &&
+        coordinator?.leaseExpiresAt &&
+        coordinator.leaseExpiresAt > now
+      ) {
         continue;
       }
       await ctx.db.patch(row._id, {
         status: "expired",
-        error: row.status === "queued"
-          ? "Ingress expired before it reached a runnable boundary"
-          : "Conversation owner lease expired before completion",
+        error:
+          row.status === "queued"
+            ? "Ingress expired before it reached a runnable boundary"
+            : "Conversation owner lease expired before completion",
         updatedAt: now,
       });
       expired += 1;

@@ -18,9 +18,25 @@ export type IngressStatus =
   | "expired";
 
 export type IngressDelivery =
-  | { kind: "http"; publicEventId: string; publicConversationKey: string; statusUrl?: string }
-  | { kind: "async"; publicEventId: string; publicConversationKey: string; statusUrl: string }
-  | { kind: "websocket"; publicEventId: string; publicConversationKey: string; connectionId: string; statusUrl?: string }
+  | {
+      kind: "http";
+      publicEventId: string;
+      publicConversationKey: string;
+      statusUrl?: string;
+    }
+  | {
+      kind: "async";
+      publicEventId: string;
+      publicConversationKey: string;
+      statusUrl: string;
+    }
+  | {
+      kind: "websocket";
+      publicEventId: string;
+      publicConversationKey: string;
+      connectionId: string;
+      statusUrl?: string;
+    }
   | { kind: "channel"; channel: string; source?: Record<string, unknown> };
 
 export interface IngressCandidate {

@@ -91,9 +91,9 @@ export const agentConfigsFields = {
    * Ownership marker. `"cli"` means a `broods/` project is the source of
    * truth: the dashboard may still edit it, but those edits are overwritten on
    * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
-   * means the account REST API owns it and mirrors its config onto the canvas.
-   * Unset (or `"dashboard"`) means the dashboard owns it and neither sync
-   * prunes it.
+   * means the account REST API owns it — its config is re-mirrored onto the
+   * canvas on every API write and dashboard edits are locked. Unset (or
+   * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
    */
   managedBy: v.optional(
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),

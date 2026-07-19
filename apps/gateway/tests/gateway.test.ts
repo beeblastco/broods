@@ -112,21 +112,32 @@ test("parses only valid gateway websocket messages", () => {
   expect(
     parseGatewayMessage(JSON.stringify({ type: "execute", agentId: "   " })),
   ).toBeNull();
-  expect(parseGatewayMessage(JSON.stringify({
-    type: "control",
-    requestId: "request-2",
-    eventId: "event-2",
-    mode: "steer",
-    input: "change direction",
-  }))).toMatchObject({ type: "control", mode: "steer" });
-  expect(parseGatewayMessage(JSON.stringify({
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "control",
+        requestId: "request-2",
+        eventId: "event-2",
+        mode: "steer",
+        input: "change direction",
+      }),
+    ),
+  ).toMatchObject({ type: "control", mode: "steer" });
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-1",
+        agentId: "agent_123",
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        afterCursor: "ws-responses:generation:42",
+      }),
+    ),
+  ).toMatchObject({
     type: "attach",
-    requestId: "attach-1",
-    agentId: "agent_123",
-    conversationKey: "conversation-1",
-    eventId: "event-1",
     afterCursor: "ws-responses:generation:42",
-  }))).toMatchObject({ type: "attach", afterCursor: "ws-responses:generation:42" });
+  });
 });
 
 test("rejects invalid agent websocket messages and closes the socket", () => {

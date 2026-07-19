@@ -35,7 +35,8 @@ export const runtimeMutations = {
   updateAsyncToolResult: internal.runtime.updateAsyncToolResult,
   acceptIngress: internal.runtimeIngress.accept,
   acquireIngressClear: internal.runtimeIngress.acquireClear,
-  appendFencedConversationEvent: internal.runtimeIngress.appendConversationEvent,
+  appendFencedConversationEvent:
+    internal.runtimeIngress.appendConversationEvent,
   applyIngressSteering: internal.runtimeIngress.applySteering,
   clearFencedConversation: internal.runtimeIngress.clearConversation,
   releaseIngressOwner: internal.runtimeIngress.releaseOwner,

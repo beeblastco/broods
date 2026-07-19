@@ -2352,10 +2352,10 @@ components:
           type: string
           enum: [accepted, queued, applied, processing, completed, failed, expired]
         requestedMode:
-                type: string
+          type: string
           enum: [reject, followup, collect, steer]
         appliedMode:
-                type: string
+          type: string
           enum: [reject, followup, collect, steer]
         appliedToEventId:
           type: string
