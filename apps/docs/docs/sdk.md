@@ -156,6 +156,73 @@ curl "https://gateway.broods.app/status/req-003?agentId=agent_..." \
   -H "Authorization: Bearer $BROODS_API_KEY"
 ```
 
+### Queue or steer a busy conversation
+
+Use the same `conversationKey` and select how the second request should behave.
+This example asks Broods to steer the active run at its next AI SDK step
+boundary:
+
+```ts
+const conversationKey = "support-ticket-42";
+
+const active = await client.runAsync(api.agents.myAgent, {
+  conversationKey,
+  eventId: "turn-1",
+  input: "Investigate the failed deployment and propose a recovery plan.",
+});
+
+const incoming = await client.runAsync(api.agents.myAgent, {
+  conversationKey,
+  eventId: "turn-2",
+  idempotencyKey: "support-ticket-42-turn-2",
+  mode: "steer",
+  input: "New information: the database is healthy. Focus on the gateway.",
+});
+
+const status = await incoming.wait();
+
+console.log({
+  status: status.status,
+  requestedMode: status.requestedMode,
+  appliedMode: status.appliedMode,
+  appliedToEventId: status.appliedToEventId,
+});
+
+await active.wait();
+```
+
+When the active run reaches another model boundary, the second request reports
+`appliedMode: "steer"` and `appliedToEventId: "turn-1"`. If no boundary remains,
+Broods preserves the request as a FIFO follow-up and reports
+`appliedMode: "followup"`. Use `mode: "followup"` when every message should be a
+separate later turn, or `mode: "collect"` to combine compatible queued messages
+into one later turn. Omitting `mode` uses `reject` for HTTP, async, and WebSocket
+requests.
+
+If a busy synchronous `stream()` call is accepted for later work, the iterator
+throws `IngressAcceptedError` because that second request does not own an SSE
+stream. Poll its durable status instead:
+
+```ts
+import { IngressAcceptedError } from "broods";
+
+try {
+  for await (const part of client.stream(api.agents.myAgent, {
+    conversationKey,
+    eventId: "turn-3",
+    mode: "followup",
+    input: "After that, summarize the incident timeline.",
+  })) {
+    console.log(part);
+  }
+} catch (error) {
+  if (!(error instanceof IngressAcceptedError)) throw error;
+
+  const terminal = await client.waitForAsyncStatus(error.accepted);
+  console.log(terminal.status, terminal.result);
+}
+```
+
 ### Full-Fidelity Events
 
 For multimodal input, tool responses, or ephemeral system instructions, use the `events` array instead of the `input` shorthand:
@@ -375,6 +442,47 @@ for await (const message of wsClient.stream({
   }
 }
 ```
+
+To steer an active WebSocket run, keep the subscription and send a correlated
+control message. The server sends `ack` only after durable acceptance, followed
+by `status` frames showing whether the request steered the current event or fell
+back to a FIFO follow-up:
+
+```ts
+let subscription!: ReturnType<typeof wsClient.subscribe>;
+
+subscription = wsClient.subscribe(
+  {
+    agent: api.agents.myAgent,
+    sessionId: "support-ticket-42",
+    eventId: "turn-1",
+    input: "Investigate the deployment failure.",
+  },
+  {
+    onMeta() {
+      subscription.sendControl({
+        requestId: "control-2",
+        eventId: "turn-2",
+        idempotencyKey: "support-ticket-42-turn-2",
+        mode: "steer",
+        input: "The database is healthy. Check the gateway first.",
+      });
+    },
+    onMessage(message) {
+      if (message.type === "ack" || message.type === "status") {
+        console.log(message);
+      }
+    },
+  },
+);
+```
+
+Wait until the socket is open before calling `sendControl`; `onMeta` is a useful
+signal for this. See the runnable
+[`websocket` demo](https://github.com/beeblastco/broods/tree/dev/packages/demos/websocket).
+
+In supported channels, the equivalent commands are `/steer <message>` and
+`/queue reject|followup|collect|steer`. An idle `/steer` starts a normal turn.
 
 See [Architecture](architecture.md) for the WebSocket protocol details.
 

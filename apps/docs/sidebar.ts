@@ -20,7 +20,7 @@ const sidebars: SidebarsConfig = {
     {
       type: "doc",
       id: "architecture/queue-and-steer",
-      label: "Queue and Steer (Proposed v1)",
+      label: "Queue and Steer",
     },
     {
       type: "doc",
