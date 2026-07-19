@@ -9,13 +9,13 @@
  */
 
 import type { JSONValue } from "ai";
+import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
+import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
-import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
-import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
-import { streamIsolatePayload } from "./tools/isolate-executor.ts";
 import { toolBundlesBucket } from "./tools/custom-tool-executor.ts";
+import { streamIsolatePayload } from "./tools/isolate-executor.ts";
 
 // A hook's return is capped before it re-enters the harness so a runaway hook
 // cannot balloon the conversation or a channel payload.
@@ -34,13 +34,17 @@ const HOOK_MUTABLE_FIELDS = {
   "tool.call.started": ["decision", "args", "denyReason"],
   "tool.result": ["output"],
   "subagent.task.finished": ["visibleResult"],
-  "channel.message.received": ["drop", "text"],
+  // `metadata` is opaque per-message data (persisted on the stored-event
+  // envelope, projected back onto agent.started payload messages).
+  "channel.message.received": ["drop", "text", "metadata"],
   "channel.message.sending": ["drop", "text"],
 } as const satisfies Partial<Record<AgentHookEventName, readonly string[]>>;
 
 export type HookMutableEvent = keyof typeof HOOK_MUTABLE_FIELDS;
 
-export function isHookMutableEvent(event: AgentHookEventName): event is HookMutableEvent {
+export function isHookMutableEvent(
+  event: AgentHookEventName,
+): event is HookMutableEvent {
   return event in HOOK_MUTABLE_FIELDS;
 }
 
@@ -68,14 +72,17 @@ export interface CodeHookOutcome {
  * (possibly hook-mutated) run state. Never throws: on decline/error/timeout the
  * mutation is undefined and the incoming state is echoed back unchanged.
  */
-export async function runCodeHook(params: RunCodeHookParams): Promise<CodeHookOutcome> {
+export async function runCodeHook(
+  params: RunCodeHookParams,
+): Promise<CodeHookOutcome> {
   const { accountId, record, event } = params;
   const incomingState = params.state;
   try {
     const payload = await createHookRunnerPayload(params);
     // Hook mode always yields { result, state } — the runner reads ctx.state
     // back out so the host can thread it into the next fire-point.
-    const raw = await runForResult(accountId, payload) as { result?: unknown; state?: unknown } | undefined;
+    const raw = (await runForResult(accountId, payload)) as
+      { result?: unknown; state?: unknown } | undefined;
     return {
       mutation: sanitizeHookResult(event, raw?.result),
       state: sanitizeHookState(raw?.state, incomingState),
@@ -93,7 +100,9 @@ export async function runCodeHook(params: RunCodeHookParams): Promise<CodeHookOu
 }
 
 /** Loads the hook bundle from S3 and builds the isolate runner payload. */
-async function createHookRunnerPayload(params: RunCodeHookParams): Promise<Record<string, unknown>> {
+async function createHookRunnerPayload(
+  params: RunCodeHookParams,
+): Promise<Record<string, unknown>> {
   const { record, event, payload, config } = params;
   const bytes = await readS3Bytes(toolBundlesBucket(), record.bundleStorageKey);
   return {
@@ -112,19 +121,28 @@ async function createHookRunnerPayload(params: RunCodeHookParams): Promise<Recor
  * object; otherwise fall back to the state the hook was given (a bad/oversized
  * state must not silently replace what earlier hooks accumulated).
  */
-function sanitizeHookState(state: unknown, fallback: Record<string, unknown>): Record<string, unknown> {
+function sanitizeHookState(
+  state: unknown,
+  fallback: Record<string, unknown>,
+): Record<string, unknown> {
   if (!isPlainObject(state)) return fallback;
   if (Object.keys(state).length === 0) return state;
 
   const serialized = safeStringify(state);
-  if (serialized === undefined || Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES) {
+  if (
+    serialized === undefined ||
+    Buffer.byteLength(serialized, "utf8") > MAX_HOOK_STATE_BYTES
+  ) {
     return fallback;
   }
 
   return state;
 }
 
-async function runForResult(accountId: string, payload: Record<string, unknown>): Promise<unknown> {
+async function runForResult(
+  accountId: string,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
   // A hook returns a single value; the isolate yields chunks only for the async
   // -iterable tool path, so the last yielded value is the handler's return.
   let result: unknown;
@@ -139,7 +157,10 @@ async function runForResult(accountId: string, payload: Record<string, unknown>)
  * cap. Returns undefined when the event is observe-only, the return is not an
  * object, or no mutable field is present.
  */
-export function sanitizeHookResult(event: AgentHookEventName, raw: unknown): Record<string, unknown> | undefined {
+export function sanitizeHookResult(
+  event: AgentHookEventName,
+  raw: unknown,
+): Record<string, unknown> | undefined {
   if (!isHookMutableEvent(event)) return undefined;
   if (!isPlainObject(raw)) return undefined;
 

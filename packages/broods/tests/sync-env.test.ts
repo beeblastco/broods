@@ -17,8 +17,13 @@ function clientWith(handler: (url: string, init: RequestInit) => Response) {
 }
 
 test("listEnv GETs the env collection and returns variable names", async () => {
-  const { client, calls } = clientWith(() =>
-    new Response(JSON.stringify({ variables: [{ name: "OPENAI_API_KEY", updatedAt: 1 }] })),
+  const { client, calls } = clientWith(
+    () =>
+      new Response(
+        JSON.stringify({
+          variables: [{ name: "OPENAI_API_KEY", updatedAt: 1 }],
+        }),
+      ),
   );
 
   const variables = await client.listEnv("demo-app", "development");
@@ -37,14 +42,17 @@ test("listEnv returns an empty array when the payload omits variables", async ()
 });
 
 test("getRuntimeKey recovers the environment runtime key", async () => {
-  const { client, calls } = clientWith(() =>
-    new Response(JSON.stringify({
-      apiKey: "fp_agent_secret",
-      keyHint: "fp_agent_…cret",
-      endpointId: "env_123",
-      projectSlug: "demo-app",
-      environmentSlug: "development",
-    })),
+  const { client, calls } = clientWith(
+    () =>
+      new Response(
+        JSON.stringify({
+          apiKey: "fp_agent_secret",
+          keyHint: "fp_agent_…cret",
+          endpointId: "env_123",
+          projectSlug: "demo-app",
+          environmentSlug: "development",
+        }),
+      ),
   );
 
   const key = await client.getRuntimeKey("demo-app", "development");
@@ -63,15 +71,23 @@ test("getRuntimeKey recovers the environment runtime key", async () => {
 });
 
 test("getRuntimeKey returns null when the environment is unknown", async () => {
-  const { client } = clientWith(() => new Response("not found", { status: 404 }));
+  const { client } = clientWith(
+    () => new Response("not found", { status: 404 }),
+  );
 
   expect(await client.getRuntimeKey("missing", "development")).toBeNull();
 });
 
 test("getEnv GETs the named env var and returns its value", async () => {
-  const { client, calls } = clientWith(() => new Response(JSON.stringify({ value: "sk-secret" })));
+  const { client, calls } = clientWith(
+    () => new Response(JSON.stringify({ value: "sk-secret" })),
+  );
 
-  const value = await client.getEnv("demo-app", "development", "OPENAI_API_KEY");
+  const value = await client.getEnv(
+    "demo-app",
+    "development",
+    "OPENAI_API_KEY",
+  );
 
   expect(value).toBe("sk-secret");
   expect(calls[0]).toEqual({
@@ -81,13 +97,17 @@ test("getEnv GETs the named env var and returns its value", async () => {
 });
 
 test("getEnv returns null when the var is not set (404)", async () => {
-  const { client } = clientWith(() => new Response("not found", { status: 404 }));
+  const { client } = clientWith(
+    () => new Response("not found", { status: 404 }),
+  );
 
   expect(await client.getEnv("demo-app", "development", "MISSING")).toBeNull();
 });
 
 test("removeEnv DELETEs the named env var", async () => {
-  const { client, calls } = clientWith(() => new Response(JSON.stringify({ removed: true })));
+  const { client, calls } = clientWith(
+    () => new Response(JSON.stringify({ removed: true })),
+  );
 
   await client.removeEnv("demo-app", "development", "OPENAI_API_KEY");
 
@@ -100,7 +120,7 @@ test("removeEnv DELETEs the named env var", async () => {
 test("removeEnv throws on a non-ok response", async () => {
   const { client } = clientWith(() => new Response("nope", { status: 500 }));
 
-  await expect(client.removeEnv("demo-app", "development", "X")).rejects.toThrow(
-    "Remove environment variable failed",
-  );
+  await expect(
+    client.removeEnv("demo-app", "development", "X"),
+  ).rejects.toThrow("Remove environment variable failed");
 });

@@ -92,13 +92,13 @@ There are two ways to reach the same workspace bytes, and they are **not** inter
 
 So pick the door by **who last wrote the file**, not by how much time has passed. There is no timer or "switch to the mount after writing" — each read site is wired to the correct door:
 
-| Reading… | Last writer | Read via | Rationale |
-| --- | --- | --- | --- |
-| Agent-written workspace files (agent-created files, agent-edited `MEMORY.md`) | sandbox, through the mount | **Sandbox mount** — `bash`, `read`, `glob`, `grep` | the S3 API is stale for up to ~2 min, so it can miss very recent sandbox writes |
-| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3 | **S3 API** (`src/shared/s3.ts`) | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
-| Account skill bucket (the skill "origin") | harness, via S3 | **S3 API** | a separate bucket, never mounted |
+| Reading…                                                                                                                  | Last writer                | Read via                                           | Rationale                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------- | -------------------------- | -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Agent-written workspace files (agent-created files, agent-edited `MEMORY.md`)                                             | sandbox, through the mount | **Sandbox mount** — `bash`, `read`, `glob`, `grep` | the S3 API is stale for up to ~2 min, so it can miss very recent sandbox writes              |
+| Harness-written workspace files (`.stage.json` manifest, the staged copy `load_skill` wrote, sandbox artifact write-back) | harness, via S3            | **S3 API** (`src/shared/s3.ts`)                    | already in the bucket and instantly correct through both doors; no sandbox round-trip needed |
+| Account skill bucket (the skill "origin")                                                                                 | harness, via S3            | **S3 API**                                         | a separate bucket, never mounted                                                             |
 
-The agent always reads through the mount (its `bash` tool *is* the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.
+The agent always reads through the mount (its `bash` tool _is_ the mount), so it always sees its own writes instantly regardless of elapsed time. The S3-API-vs-mount decision only applies to **harness-side reads**.
 
 Concretely, the model-facing workspace tools read sandbox-backed workspaces through the mounted sandbox path. Read-only workspaces read through a service-managed read-only mount by default (same fresh-read semantics); the `sandbox: null` opt-out instead reads directly from S3 under the same prefix (cheaper, but lagged — see [Lambda](sandbox/lambda.md)). Harness-side S3 reads (`MEMORY.md`, the read-only `read`/`glob` path) resolve the workspace's `storage`: the managed bucket is read directly on the harness role, and a [bring-your-own bucket](#bring-your-own-bucket) is read with the same prefix-scoped assume-role credentials the mount uses.
 
@@ -125,17 +125,17 @@ storage: {
 }
 ```
 
-`endpoint` selects *where* the S3 API lives — every S3-compatible vendor stays
+`endpoint` selects _where_ the S3 API lives — every S3-compatible vendor stays
 `provider: "s3"` and only changes the host. `provider` is reserved for a different
 protocol (e.g. native Azure Blob / GCS), not a different S3 vendor.
 
 Authentication (`storage.auth`) is **keyless** — no access keys are stored in the
 workspace config (it is plaintext):
 
-| `auth.type` | Credentials | Use |
-| --- | --- | --- |
-| `managed` (default) | broods-managed platform role | the managed bucket |
-| `assumeRole` | your cross-account IAM role, assumed per run | a bucket in your own AWS account |
+| `auth.type`         | Credentials                                  | Use                              |
+| ------------------- | -------------------------------------------- | -------------------------------- |
+| `managed` (default) | broods-managed platform role                 | the managed bucket               |
+| `assumeRole`        | your cross-account IAM role, assumed per run | a bucket in your own AWS account |
 
 For `assumeRole` the harness calls STS `AssumeRole` and narrows the session with a
 policy scoped to `bucket/prefix*`, so the short-lived credentials can only touch the
@@ -173,7 +173,6 @@ export const notes = defineWorkspace({
   config: {
     storage: { provider: "s3" },
     isolation: true,
-    harness: { enabled: true },
   },
 });
 ```

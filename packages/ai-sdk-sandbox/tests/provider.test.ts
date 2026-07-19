@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { HarnessCapabilityUnsupportedError, type HarnessV1NetworkPolicy } from "@ai-sdk/harness";
+import {
+  HarnessCapabilityUnsupportedError,
+  type HarnessV1NetworkPolicy,
+} from "@ai-sdk/harness";
 import type { Experimental_SandboxProcess } from "@ai-sdk/provider-utils";
 import {
   createBroodsSandbox,
@@ -35,7 +38,10 @@ describe("BroodsSandboxProvider", () => {
         calls.push({ operation: "setNetworkPolicy", input: policy });
       },
       async setPorts(nextPorts, options) {
-        calls.push({ operation: "setPorts", input: { ports: nextPorts, options } });
+        calls.push({
+          operation: "setPorts",
+          input: { ports: nextPorts, options },
+        });
         ports = [...nextPorts];
       },
       async stop() {
@@ -65,8 +71,14 @@ describe("BroodsSandboxProvider", () => {
       onFirstCreate: async (restricted, options) => {
         expect(options.abortSignal).toBe(signal);
         expect("stop" in restricted).toBe(false);
-        await restricted.writeTextFile({ path: "/workspace/bootstrap.txt", content: "ready" });
-        await restricted.run({ command: "pwd", workingDirectory: "/workspace" });
+        await restricted.writeTextFile({
+          path: "/workspace/bootstrap.txt",
+          content: "ready",
+        });
+        await restricted.run({
+          command: "pwd",
+          workingDirectory: "/workspace",
+        });
       },
     });
 
@@ -79,19 +91,30 @@ describe("BroodsSandboxProvider", () => {
     expect(networkSession.ports).toEqual([4_321]);
     expect(calls[0]).toEqual({
       operation: "createSession",
-      input: { sessionId: "session-1", identity: "bootstrap-v1", abortSignal: signal },
+      input: {
+        sessionId: "session-1",
+        identity: "bootstrap-v1",
+        abortSignal: signal,
+      },
     });
     expect(calls[1]?.operation).toBe("writeFile");
-    expect(decoder.decode((calls[1]?.input as BroodsSandboxWriteFileOptions).content)).toBe("ready");
+    expect(
+      decoder.decode(
+        (calls[1]?.input as BroodsSandboxWriteFileOptions).content,
+      ),
+    ).toBe("ready");
     expect(calls[2]).toEqual({
       operation: "runCommand",
       input: { command: "pwd", workingDirectory: "/workspace" },
     });
 
-    expect(await networkSession.getPortUrl({ port: 4_321, protocol: "ws" })).toBe(
-      "wss://sandbox.example.test:4321",
-    );
-    const policy: HarnessV1NetworkPolicy = { mode: "custom", allowedHosts: ["example.com"] };
+    expect(
+      await networkSession.getPortUrl({ port: 4_321, protocol: "ws" }),
+    ).toBe("wss://sandbox.example.test:4321");
+    const policy: HarnessV1NetworkPolicy = {
+      mode: "custom",
+      allowedHosts: ["example.com"],
+    };
     await networkSession.setNetworkPolicy?.(policy);
     await networkSession.setPorts?.([8_080], { abortSignal: signal });
     expect(networkSession.ports).toEqual([8_080]);
@@ -99,7 +122,9 @@ describe("BroodsSandboxProvider", () => {
     await Promise.all([networkSession.stop(), networkSession.stop()]);
     await Promise.all([networkSession.destroy?.(), networkSession.destroy?.()]);
     expect(calls.filter((call) => call.operation === "stop")).toHaveLength(1);
-    expect(calls.filter((call) => call.operation === "destroy")).toHaveLength(1);
+    expect(calls.filter((call) => call.operation === "destroy")).toHaveLength(
+      1,
+    );
   });
 
   test("maps command, process, and file operations without changing driver failures", async () => {
@@ -129,18 +154,35 @@ describe("BroodsSandboxProvider", () => {
     });
     const sandbox = await provider.createSession();
 
-    expect(await sandbox.run({ command: "exit 7", env: { MODE: "test" } })).toEqual({
+    expect(
+      await sandbox.run({ command: "exit 7", env: { MODE: "test" } }),
+    ).toEqual({
       exitCode: 7,
       stdout: "out",
       stderr: "err",
     });
-    expect(await sandbox.spawn({ command: "server", workingDirectory: "/workspace" })).toBe(process);
-    expect(await sandbox.readTextFile({ path: "/file", startLine: 2, endLine: 3 })).toBe("two\nthree");
+    expect(
+      await sandbox.spawn({
+        command: "server",
+        workingDirectory: "/workspace",
+      }),
+    ).toBe(process);
+    expect(
+      await sandbox.readTextFile({ path: "/file", startLine: 2, endLine: 3 }),
+    ).toBe("two\nthree");
     expect(await sandbox.readBinaryFile({ path: "/missing" })).toBeNull();
-    expect(await readStream(await sandbox.readFile({ path: "/file" }))).toBe("one\ntwo\nthree\n");
+    expect(await readStream(await sandbox.readFile({ path: "/file" }))).toBe(
+      "one\ntwo\nthree\n",
+    );
 
-    await sandbox.writeBinaryFile({ path: "/binary", content: new Uint8Array([1, 2, 3]) });
-    await sandbox.writeFile({ path: "/stream", content: byteStream("hello", " world") });
+    await sandbox.writeBinaryFile({
+      path: "/binary",
+      content: new Uint8Array([1, 2, 3]),
+    });
+    await sandbox.writeFile({
+      path: "/stream",
+      content: byteStream("hello", " world"),
+    });
     await sandbox.writeTextFile({ path: "/text", content: "héllo" });
     expect([...writes[0]!.content]).toEqual([1, 2, 3]);
     expect(decoder.decode(writes[1]!.content)).toBe("hello world");
@@ -170,7 +212,11 @@ describe("BroodsSandboxProvider", () => {
     });
     const failure = new DOMException("write cancelled", "AbortError");
 
-    const write = sandbox.writeFile({ path: "/stalled", content, abortSignal: controller.signal });
+    const write = sandbox.writeFile({
+      path: "/stalled",
+      content,
+      abortSignal: controller.signal,
+    });
     await Promise.resolve();
     controller.abort(failure);
 
@@ -218,7 +264,10 @@ describe("BroodsSandboxProvider", () => {
     const resumed = fakeSession({ id: "resumed-sandbox" });
     const provider = createBroodsSandbox({
       driver: {
-        createSession: async () => ({ session: fakeSession(), isFirstCreate: true }),
+        createSession: async () => ({
+          session: fakeSession(),
+          isFirstCreate: true,
+        }),
         async resumeSession(options) {
           resumeCalls.push(options);
           return resumed;
@@ -232,7 +281,12 @@ describe("BroodsSandboxProvider", () => {
     expect(resumeCalls).toEqual([{ sessionId: "session-2" }]);
 
     const createOnly = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: fakeSession(), isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({
+          session: fakeSession(),
+          isFirstCreate: true,
+        }),
+      },
     });
     expect(createOnly.resumeSession).toBeUndefined();
   });
@@ -241,7 +295,10 @@ describe("BroodsSandboxProvider", () => {
     let bootstraps = 0;
     const provider = createBroodsSandbox({
       driver: {
-        createSession: async () => ({ session: fakeSession(), isFirstCreate: false }),
+        createSession: async () => ({
+          session: fakeSession(),
+          isFirstCreate: false,
+        }),
       },
     });
 
@@ -301,7 +358,10 @@ describe("BroodsSandboxProvider", () => {
       );
 
     expect(error).toBeInstanceOf(AggregateError);
-    expect((error as AggregateError).errors).toEqual([setupFailure, cleanupFailure]);
+    expect((error as AggregateError).errors).toEqual([
+      setupFailure,
+      cleanupFailure,
+    ]);
     expect((error as Error).cause).toBe(setupFailure);
   });
 
@@ -323,12 +383,18 @@ describe("BroodsSandboxProvider", () => {
     await expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
       HarnessCapabilityUnsupportedError,
     );
-    await Promise.all([sandbox.destroy?.(), sandbox.destroy?.(), sandbox.stop()]);
+    await Promise.all([
+      sandbox.destroy?.(),
+      sandbox.destroy?.(),
+      sandbox.stop(),
+    ]);
     expect(stops).toBe(1);
   });
 });
 
-function fakeSession(overrides: Partial<BroodsSandboxDriverSession> = {}): BroodsSandboxDriverSession {
+function fakeSession(
+  overrides: Partial<BroodsSandboxDriverSession> = {},
+): BroodsSandboxDriverSession {
   const session: BroodsSandboxDriverSession = {
     id: "sandbox-1",
     description: "Fake Broods sandbox",
@@ -372,7 +438,9 @@ function byteStream(...chunks: string[]): ReadableStream<Uint8Array> {
   });
 }
 
-async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string | null> {
+async function readStream(
+  stream: ReadableStream<Uint8Array> | null,
+): Promise<string | null> {
   if (stream === null) return null;
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];

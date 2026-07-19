@@ -5,22 +5,22 @@ import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
 import {
+  DetailsTab,
+  type AgentProvider,
+} from "@/app/components/side-panel/DetailsTab";
+import {
   ResourceConfigTab,
   SandboxResourceDetailsTab,
   WorkspaceResourceDetailsTab,
 } from "@/app/components/side-panel/ResourceNodeTabs";
 import { SessionDetailsTab } from "@/app/components/side-panel/SessionDetailsTab";
+import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { SkillConfigTab } from "@/app/components/side-panel/SkillConfigTab";
 import { SkillDetailsTab } from "@/app/components/side-panel/SkillDetailsTab";
-import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { SkillFilesTab } from "@/app/components/side-panel/SkillFilesTab";
-import {
-  DetailsTab,
-  type AgentProvider,
-} from "@/app/components/side-panel/DetailsTab";
-import { SettingsTab } from "@/app/components/side-panel/SettingsTab";
 import { ToolConfigTab } from "@/app/components/side-panel/ToolConfigTab";
 import { ToolDetailsTab } from "@/app/components/side-panel/ToolDetailsTab";
+import { WorkspaceFilesTab } from "@/app/components/side-panel/WorkspaceFilesTab";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
@@ -121,12 +121,7 @@ const ToolTestTab = dynamic(loadToolTestTab, {
 });
 
 type NodeType =
-  | "agent"
-  | "database"
-  | "tool"
-  | "workspace"
-  | "sandbox"
-  | "skill";
+  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 type HeaderStatusBadge = {
   text: string;
   color: string;
@@ -193,8 +188,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const agentConfigId = nodeData?.agentConfigId as
-    | Id<"agentConfigs">
-    | undefined;
+    Id<"agentConfigs"> | undefined;
   const nodeId = node?.id;
   const canQueryToolStatus =
     isTool && !!projectId && !!environmentId && !!nodeId;
@@ -268,7 +262,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     applyAgentConfigUpdate,
   );
   const removeConfig = useMutation(api.agentConfig.remove);
-  const ensureDeployment = useMutation(api.agentDeployments.ensureForEnvironment);
+  const ensureDeployment = useMutation(
+    api.agentDeployments.ensureForEnvironment,
+  );
   const rotateDeployment = useMutation(api.agentDeployments.rotate);
 
   // The environment's runtime API key (shared by every agent in it). The agent
@@ -542,12 +538,16 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   }) {
     if (!agentConfigId) return;
 
-    const base = agentConfig ? toNestedAgentConfig(agentConfig) as Record<string, unknown> : {};
+    const base = agentConfig
+      ? (toNestedAgentConfig(agentConfig) as Record<string, unknown>)
+      : {};
     const currentProvider = isPlainObject(base.provider) ? base.provider : {};
     const nextProviderConfig = { ...currentProvider };
     if (next.provider === "custom") {
       nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom) ? currentProvider.custom : {}),
+        ...(isPlainObject(currentProvider.custom)
+          ? currentProvider.custom
+          : {}),
         base_url: next.customBaseUrl,
         baseURL: next.customBaseUrl,
       };
@@ -583,11 +583,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       ? { projectId: projectId, environmentId: environmentId }
       : "skip",
   );
-  const isCliManaged = isAgent
-    ? agentConfig?.managedBy === "cli"
+  const codeOwner = isAgent
+    ? agentConfig?.managedBy
     : resourceId && resourceOwnership
-      ? resourceOwnership[resourceId] === "cli"
-      : (nodeData as { managedBy?: string } | undefined)?.managedBy === "cli";
+      ? resourceOwnership[resourceId]
+      : (nodeData as { managedBy?: string } | undefined)?.managedBy;
+  const isCodeManaged = codeOwner === "cli" || codeOwner === "api";
   const isOwnershipLoading =
     (isAgent && !!agentConfigId && agentConfig === undefined) ||
     ((isWorkspace || isSandbox) &&
@@ -607,7 +608,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     ? agentConfig?.name
     : (nodeData?.mountName ?? nodeData?.label);
   const collidesWithCode =
-    !isCliManaged &&
+    !isCodeManaged &&
     !!currentResourceName &&
     !!cliManagedNames &&
     (isAgent || isWorkspace || isSandbox) &&
@@ -615,8 +616,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       currentResourceName,
     );
 
+  /** Deletes the node (and its agent config); no-op while code owns it. */
   async function handleDelete() {
-    if (isCliManaged || isOwnershipLoading) return;
+    if (isCodeManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
       await removeConfig({ configId: agentConfigId });
     }
@@ -645,8 +647,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       setIsSavingKey(true);
       try {
         const result = rotate
-          ? await rotateDeployment({ projectId: projectId, environmentId: environmentId })
-          : await ensureDeployment({ projectId: projectId, environmentId: environmentId });
+          ? await rotateDeployment({
+              projectId: projectId,
+              environmentId: environmentId,
+            })
+          : await ensureDeployment({
+              projectId: projectId,
+              environmentId: environmentId,
+            });
         if (result?.rawApiKey) {
           setDeploymentApiKey(result.rawApiKey);
         }
@@ -656,8 +664,14 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     },
     [isAgent, projectId, environmentId, ensureDeployment, rotateDeployment],
   );
-  const handleGenerateKey = useCallback(() => ensureRuntimeKey(false), [ensureRuntimeKey]);
-  const handleRotateKey = useCallback(() => ensureRuntimeKey(true), [ensureRuntimeKey]);
+  const handleGenerateKey = useCallback(
+    () => ensureRuntimeKey(false),
+    [ensureRuntimeKey],
+  );
+  const handleRotateKey = useCallback(
+    () => ensureRuntimeKey(true),
+    [ensureRuntimeKey],
+  );
 
   const handleUpdateToolConfig = useCallback(
     async (toolName: string, config: Record<string, unknown> | null) => {
@@ -821,10 +835,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
       <Separator />
 
-      {isCliManaged && (
+      {isCodeManaged && (
         <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5">
           <p className="text-sm text-amber-600 dark:text-amber-400">
-            Managed by broods packages, edits sync on deploy, delete is locked.
+            {codeOwner === "api"
+              ? "Managed through the account API, edits re-sync on every API write, delete is locked."
+              : "Managed by broods packages, edits sync on deploy, delete is locked."}
           </p>
         </div>
       )}
@@ -1066,8 +1082,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               nodeName={resolvedName}
               openDeleteDialogToken={deleteRequestToken}
               onDelete={handleDelete}
-              managedByCode={isCliManaged}
-              deleteLocked={isCliManaged || isOwnershipLoading}
+              managedByCode={isCodeManaged}
+              codeOwner={codeOwner === "api" ? "api" : "cli"}
+              deleteLocked={isCodeManaged || isOwnershipLoading}
             />
           </TabsContent>
         </Tabs>

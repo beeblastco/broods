@@ -37,7 +37,11 @@ function assertSafeJobId(jobId: string): void {
  * onCreate runs once, guarded by a marker file in the workDir; onResume runs on
  * every acquisition. Returns undefined when no hooks are configured.
  */
-export function lifecycleScript(workDir: string, onCreate?: string[], onResume?: string[]): string | undefined {
+export function lifecycleScript(
+  workDir: string,
+  onCreate?: string[],
+  onResume?: string[],
+): string | undefined {
   if (!onCreate?.length && !onResume?.length) return undefined;
   const marker = `${workDir}/.fp-setup-done`;
   return [
@@ -62,7 +66,13 @@ export function lifecycleScript(workDir: string, onCreate?: string[], onResume?:
  * current boot id so a later poll can tell "still running" from "killed when the
  * sandbox was recreated". Exits non-zero (caller throws) if the job cap is hit.
  */
-export function launchScript(jobsDir: string, jobId: string, workDir: string, code: string, options: LaunchOptions): string {
+export function launchScript(
+  jobsDir: string,
+  jobId: string,
+  workDir: string,
+  code: string,
+  options: LaunchOptions,
+): string {
   assertSafeJobId(jobId);
   const q = shellQuote;
   const f = (ext: string) => q(`${jobsDir}/${jobId}.${ext}`);
@@ -72,7 +82,9 @@ export function launchScript(jobsDir: string, jobId: string, workDir: string, co
     `{\n${code}\n} > ${f("log")} 2>&1`,
     `__rc=$?`,
     `echo $__rc > ${f("exit")}`,
-    ...(options.callback ? [callbackSnippet(options.callback, `${jobsDir}/${jobId}.log`)] : []),
+    ...(options.callback
+      ? [callbackSnippet(options.callback, `${jobsDir}/${jobId}.log`)]
+      : []),
     `rm -f ${f("running")}`,
   ].join("\n");
   const wrapperB64 = Buffer.from(wrapper, "utf8").toString("base64");
@@ -104,7 +116,11 @@ export function statusScript(jobsDir: string, jobId: string): string {
   ].join("\n");
 }
 
-export function logsScript(jobsDir: string, jobId: string, bytes: number): string {
+export function logsScript(
+  jobsDir: string,
+  jobId: string,
+  bytes: number,
+): string {
   assertSafeJobId(jobId);
   return `tail -c ${bytes} ${shellQuote(`${jobsDir}/${jobId}.log`)} 2>/dev/null || true`;
 }
@@ -119,7 +135,10 @@ export function stopScript(jobsDir: string, jobId: string): string {
   ].join("; ");
 }
 
-export function parseJobStatus(jobId: string, stdout: string): SandboxJobStatus {
+export function parseJobStatus(
+  jobId: string,
+  stdout: string,
+): SandboxJobStatus {
   const text = stdout.trim();
   if (text.startsWith("done")) {
     const code = Number(text.split(/\s+/)[1]);
@@ -132,7 +151,10 @@ export function parseJobStatus(jobId: string, stdout: string): SandboxJobStatus 
 // POSTs the job's outcome back to the harness so the conversation resumes without
 // the model having to poll. python3 is on PATH in every sandbox image; failures
 // (no egress, no python) are swallowed and the model can still poll async_status.
-export function callbackSnippet(callback: SandboxJobCallback, logFile: string): string {
+export function callbackSnippet(
+  callback: SandboxJobCallback,
+  logFile: string,
+): string {
   const env = [
     `__CB_URL=${shellQuote(callback.url)}`,
     `__CB_TOKEN=${shellQuote(callback.token)}`,

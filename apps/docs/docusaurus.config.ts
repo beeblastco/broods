@@ -2,43 +2,43 @@
  * Docusaurus configuration for Broods documentation.
  */
 
-import type * as Preset from '@docusaurus/preset-classic';
-import type { Config } from '@docusaurus/types';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import type * as Preset from "@docusaurus/preset-classic";
+import type { Config } from "@docusaurus/types";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const config: Config = {
-  title: 'Broods Developer Docs',
-  favicon: 'img/broods-favicon.ico',
+  title: "Broods Developer Docs",
+  favicon: "img/broods-favicon.ico",
 
-  url: 'https://docs.broods.app',
-  baseUrl: '/',
+  url: "https://docs.broods.app",
+  baseUrl: "/",
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: "throw",
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: "warn",
     },
   },
 
   i18n: {
-    defaultLocale: 'en',
-    locales: ['en'],
+    defaultLocale: "en",
+    locales: ["en"],
   },
 
   presets: [
     [
-      'classic',
+      "classic",
       {
         docs: {
-          sidebarPath: './sidebar.ts',
-          routeBasePath: '/',
-          path: 'docs',
-          exclude: ['**/*.test.*', '**/_*/**'],
+          sidebarPath: "./sidebar.ts",
+          routeBasePath: "/",
+          path: "docs",
+          exclude: ["**/*.test.*", "**/_*/**"],
         },
       } satisfies Preset.Options,
     ],
@@ -46,21 +46,24 @@ const config: Config = {
 
   plugins: [
     [
-      '@scalar/docusaurus',
+      "@scalar/docusaurus",
       {
-        id: 'api-reference',
-        label: 'API Reference',
-        route: '/api-reference',
+        id: "api-reference",
+        label: "API Reference",
+        route: "/api-reference",
         configuration: {
           spec: {
-            content: fs.readFileSync(path.resolve(__dirname, 'docs/api-reference/openapi.yaml'), 'utf8'),
+            content: fs.readFileSync(
+              path.resolve(__dirname, "docs/api-reference/openapi.yaml"),
+              "utf8",
+            ),
           },
         },
       },
     ],
     function generatedModulesWebpackMode() {
       return {
-        name: 'generated-modules-webpack-mode',
+        name: "generated-modules-webpack-mode",
         configureWebpack() {
           return {
             module: {
@@ -68,7 +71,7 @@ const config: Config = {
                 {
                   test: /\.js$/,
                   include: /[\\/]\.docusaurus[\\/]/,
-                  type: 'javascript/auto',
+                  type: "javascript/auto",
                 },
                 {
                   test: /\.js$/,
@@ -84,37 +87,37 @@ const config: Config = {
     },
   ],
 
-  themes: ['@docusaurus/theme-mermaid'],
+  themes: ["@docusaurus/theme-mermaid"],
 
   themeConfig: {
     mermaid: {
       theme: {
-        light: 'neutral',
-        dark: 'dark',
+        light: "neutral",
+        dark: "dark",
       },
     },
     navbar: {
-      title: 'Docs',
+      title: "Docs",
       logo: {
-        alt: 'Broods Logo',
-        src: 'img/light-broods-full.svg',
-        srcDark: 'img/dark-broods-full.svg',
+        alt: "Broods Logo",
+        src: "img/light-broods-full.svg",
+        srcDark: "img/dark-broods-full.svg",
       },
       items: [
         {
-          href: 'https://dashboard.broods.app/',
-          label: 'Dashboard',
-          position: 'right',
+          href: "https://dashboard.broods.app/",
+          label: "Dashboard",
+          position: "right",
         },
         {
-          href: 'https://discord.gg/F48633Uca',
-          label: 'Discord',
-          position: 'right',
+          href: "https://discord.gg/F48633Uca",
+          label: "Discord",
+          position: "right",
         },
         {
-          href: 'https://github.com/beeblastco/broods',
-          label: 'GitHub',
-          position: 'right',
+          href: "https://github.com/beeblastco/broods",
+          label: "GitHub",
+          position: "right",
         },
       ],
     },

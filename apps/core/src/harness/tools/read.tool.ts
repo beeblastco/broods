@@ -9,8 +9,8 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
   runSandbox,
-  sandboxRunMetadata,
   s3ReadNumbered,
+  sandboxRunMetadata,
   shellQuote,
   toWorkspaceRelative,
   toolError,
@@ -33,9 +33,18 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   return {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Path to the file, relative to the workspace root." },
-      offset: { type: "integer", description: "1-based line number to start reading from." },
-      limit: { type: "integer", description: `Maximum number of lines to read (default ${DEFAULT_LIMIT}).` },
+      file_path: {
+        type: "string",
+        description: "Path to the file, relative to the workspace root.",
+      },
+      offset: {
+        type: "integer",
+        description: "1-based line number to start reading from.",
+      },
+      limit: {
+        type: "integer",
+        description: `Maximum number of lines to read (default ${DEFAULT_LIMIT}).`,
+      },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
     required: ["file_path"],
@@ -70,17 +79,26 @@ Usage notes:
           }
           const q = shellQuote(rel);
           const start = typeof offset === "number" && offset > 0 ? offset : 1;
-          const end = start + (typeof limit === "number" && limit > 0 ? limit : DEFAULT_LIMIT) - 1;
+          const end =
+            start +
+            (typeof limit === "number" && limit > 0 ? limit : DEFAULT_LIMIT) -
+            1;
           const code =
             `if [ ! -f ${q} ]; then printf 'Error: file not found: %s\\n' ${q} >&2; exit 1; fi; ` +
             `sed -n '${start},${end}p' -- ${q} | nl -ba -v ${start}`;
-          const result = await runSandbox(runner, ws.namespace, code, { metadata: sandboxRunMetadata(context, ws) });
+          const result = await runSandbox(runner, ws.namespace, code, {
+            metadata: sandboxRunMetadata(context, ws),
+          });
           if (!result.ok) {
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: read failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() || "Error: read failed",
+            );
           }
           return toolText(result.stdout);
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

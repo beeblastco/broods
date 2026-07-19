@@ -5,10 +5,13 @@
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
-import type { ToolContext } from "./index.ts";
 import { streamAccountTool } from "./custom-tool-executor.ts";
+import type { ToolContext } from "./index.ts";
 
-export default function accountTool(record: AccountToolRecord, context: ToolContext & { accountId: string }): ToolSet {
+export default function accountTool(
+  record: AccountToolRecord,
+  context: ToolContext & { accountId: string },
+): ToolSet {
   return {
     [record.name]: tool({
       description: record.description,
@@ -16,13 +19,14 @@ export default function accountTool(record: AccountToolRecord, context: ToolCont
       // Return the async generator synchronously (no `async` wrapper) so the AI SDK
       // detects an async-iterable and streams a bundle's `yield`s as preliminary
       // tool results; a non-streaming bundle simply yields once (its result).
-      execute: (input, options) => streamAccountTool({
-        accountId: context.accountId,
-        tool: record,
-        input,
-        config: context.config,
-        options,
-      }),
+      execute: (input, options) =>
+        streamAccountTool({
+          accountId: context.accountId,
+          tool: record,
+          input,
+          config: context.config,
+          options,
+        }),
     }),
   };
 }

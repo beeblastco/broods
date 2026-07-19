@@ -10,8 +10,8 @@ import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import {
   resolveWorkspace,
   runSandbox,
-  sandboxRunMetadata,
   s3Glob,
+  sandboxRunMetadata,
   toBase64,
   toWorkspaceRelative,
   toolError,
@@ -31,8 +31,15 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   return {
     type: "object",
     properties: {
-      pattern: { type: "string", description: "Glob pattern, e.g. `**/*.ts` or `src/**/*.py`." },
-      path: { type: "string", description: "Directory to search in, relative to the workspace root. Defaults to the root." },
+      pattern: {
+        type: "string",
+        description: "Glob pattern, e.g. `**/*.ts` or `src/**/*.py`.",
+      },
+      path: {
+        type: "string",
+        description:
+          "Directory to search in, relative to the workspace root. Defaults to the root.",
+      },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
     required: ["pattern"],
@@ -118,13 +125,19 @@ Usage notes:
           }
           const root = path ? toWorkspaceRelative(path) : ".";
           const code = globScript(toBase64(pattern), toBase64(root));
-          const result = await runSandbox(runner, ws.namespace, code, { metadata: sandboxRunMetadata(context, ws) });
+          const result = await runSandbox(runner, ws.namespace, code, {
+            metadata: sandboxRunMetadata(context, ws),
+          });
           if (!result.ok) {
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: glob failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() || "Error: glob failed",
+            );
           }
           return toolText(result.stdout);
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

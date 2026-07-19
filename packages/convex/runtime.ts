@@ -4,7 +4,11 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  type MutationCtx,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import {
   runtimeAsyncAgentResultsFields,
@@ -38,7 +42,6 @@ function accountIdFromKey(value: string): string {
  */
 function claimKeyForAccount(accountId: string, key: string): string {
   if (!key.startsWith("acct:")) {
-
     return `acct:${accountId}:claim:${key}`;
   }
   if (accountIdFromKey(key) !== accountId) {
@@ -143,7 +146,6 @@ export const claimEvent = internalMutation({
     }
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-
       return false;
     }
     if (existing) await ctx.db.delete(existing._id);
@@ -202,7 +204,6 @@ export const acquireLease = internalMutation({
       .unique();
     const now = Math.floor(Date.now() / 1000);
     if (existing && existing.expiresAt >= now) {
-
       return false;
     }
     if (existing) await ctx.db.delete(existing._id);
@@ -231,9 +232,11 @@ export const releaseLease = internalMutation({
       .query("runtimeClaims")
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
-    const accountId = row?.accountId ?? (row?.conversationKey
-      ? accountIdFromKey(row.conversationKey)
-      : undefined);
+    const accountId =
+      row?.accountId ??
+      (row?.conversationKey
+        ? accountIdFromKey(row.conversationKey)
+        : undefined);
     if (accountId) await requireActiveAccount(ctx, accountId);
     if (row?.kind === "lease" && row.ownerEventId === args.ownerEventId)
       await ctx.db.delete(row._id);
@@ -292,12 +295,11 @@ export const takeIngress = internalMutation({
       .withIndex("by_key", (q) => q.eq("key", args.key))
       .unique();
     if (!row || row.kind !== "pendingIngress") {
-
       return [];
     }
-    const accountId = row.accountId ?? (row.conversationKey
-      ? accountIdFromKey(row.conversationKey)
-      : undefined);
+    const accountId =
+      row.accountId ??
+      (row.conversationKey ? accountIdFromKey(row.conversationKey) : undefined);
     if (accountId) await requireActiveAccount(ctx, accountId);
     await ctx.db.delete(row._id);
 
@@ -400,7 +402,6 @@ export const createAsyncAgentResult = internalMutation({
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
       .unique();
     if (existing) {
-
       return false;
     }
     const now = new Date().toISOString();
@@ -488,7 +489,6 @@ export const createAsyncToolResult = internalMutation({
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
     if (existing) {
-
       return false;
     }
     const group = args.delivery
@@ -564,7 +564,6 @@ export const getAsyncToolToken = internalQuery({
       .withIndex("by_resultId", (q) => q.eq("resultId", args.resultId))
       .unique();
     if (!row?.completionTokenHash) {
-
       return false;
     }
 
@@ -621,7 +620,6 @@ export const sealAsyncToolGroup = internalMutation({
       )
       .unique();
     if (!row) {
-
       return null;
     }
     await requireActiveAccount(ctx, row.accountId);
@@ -653,7 +651,6 @@ export const updateAsyncToolResult = internalMutation({
       .unique();
     if (row) await requireActiveAccount(ctx, row.accountId);
     if (!row || (args.onlyWhenProcessing && row.status !== "processing")) {
-
       return null;
     }
     const patch = {
@@ -704,11 +701,13 @@ export const claimSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
+    accountId: v.string(),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.reservationKey);
-    await requireActiveAccount(ctx, accountId);
+    // The reservation key is a hashed workspace namespace, so the owning account
+    // can't be parsed from it — core passes accountId explicitly.
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -718,11 +717,9 @@ export const claimSandboxReservation = internalMutation({
       )
       .unique();
     if (row) {
-
       return false;
     }
     await ctx.db.insert("sandboxReservations", {
-      accountId: accountId,
       ...args,
       expiresAt: Math.floor(Date.now() / 1000) + 30 * DAY_SECONDS,
     });
@@ -739,11 +736,11 @@ export const saveSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     externalId: v.string(),
+    accountId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const accountId = accountIdFromKey(args.reservationKey);
-    await requireActiveAccount(ctx, accountId);
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -759,7 +756,6 @@ export const saveSandboxReservation = internalMutation({
     if (row) await ctx.db.patch(row._id, patch);
     else
       await ctx.db.insert("sandboxReservations", {
-        accountId: accountId,
         ...args,
         ...patch,
       });
@@ -776,10 +772,11 @@ export const deleteSandboxReservation = internalMutation({
     provider: sandboxProviderValidator,
     reservationKey: v.string(),
     expectedExternalId: v.optional(v.string()),
+    accountId: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await requireActiveAccount(ctx, accountIdFromKey(args.reservationKey));
+    await requireActiveAccount(ctx, args.accountId);
     const row = await ctx.db
       .query("sandboxReservations")
       .withIndex("by_provider_and_reservationKey", (q) =>
@@ -911,11 +908,7 @@ export const pruneExpired = internalMutation({
         (batch) => batch.length === 100,
       )
     ) {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.runtime.pruneExpired,
-        {},
-      );
+      await ctx.scheduler.runAfter(0, internal.runtime.pruneExpired, {});
     }
 
     return rows.length;

@@ -8,9 +8,9 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import { getConvexClient } from "./client.ts";
-import { logError } from "../log.ts";
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
+import { logError } from "../log.ts";
+import { getConvexClient } from "./client.ts";
 
 /** Unified (Daytona-aligned) snapshot build status; mirrors sandboxSnapshotsFields.status. */
 export type SandboxSnapshotStatus =

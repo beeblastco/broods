@@ -4,28 +4,33 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedProject } from "./model/ownership/project";
 
 function pathPrefixUpperBound(path: string): string {
-    return `${path}\uffff`;
+  return `${path}\uffff`;
 }
 
 const workspaceFileDoc = v.object({
-    _id: v.id("workspaceFiles"),
-    _creationTime: v.number(),
-    authId: v.string(),
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    path: v.string(),
-    name: v.string(),
-    isFolder: v.boolean(),
-    storageId: v.optional(v.id("_storage")),
-    mimeType: v.optional(v.string()),
-    sizeBytes: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  _id: v.id("workspaceFiles"),
+  _creationTime: v.number(),
+  authId: v.string(),
+  projectId: v.id("projects"),
+  nodeId: v.string(),
+  path: v.string(),
+  name: v.string(),
+  isFolder: v.boolean(),
+  storageId: v.optional(v.id("_storage")),
+  mimeType: v.optional(v.string()),
+  sizeBytes: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 });
 
 /**
@@ -35,31 +40,31 @@ const workspaceFileDoc = v.object({
  * @returns flat array of file metadata records
  */
 export const list = query({
-    args: {
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-    },
-    handler: async (ctx, args) => {
-        const { projectId, nodeId } = args;
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        // Return empty rather than throwing so a just-deleted project doesn't crash
-        // the reactive workspace panel before it unmounts.
-        const project = await getOwnedProject(ctx, user.id, projectId);
-        if (!project) return [];
+    // Return empty rather than throwing so a just-deleted project doesn't crash
+    // the reactive workspace panel before it unmounts.
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) return [];
 
-        return await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) =>
-                q.eq("projectId", projectId).eq("nodeId", nodeId),
-            )
-            .collect();
-    },
+    return await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_and_nodeId", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId),
+      )
+      .collect();
+  },
 });
 
 /**
@@ -69,27 +74,36 @@ export const list = query({
  * @returns runtime account/workspace identifiers, or null when inaccessible
  */
 export const resolveRuntimeWorkspace = query({
-    args: {
-        projectId: v.id("projects"),
-        workspaceId: v.string(),
-    },
-    returns: v.union(v.object({ accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") }), v.null()),
-    handler: async (ctx, args) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: {
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      accountId: v.id("accounts"),
+      workspaceId: v.id("workspaceConfigs"),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const project = await getOwnedProject(ctx, user.id, args.projectId);
-        if (!project) return null;
-        const workspaceId = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
-        if (!workspaceId) return null;
-        const workspace = await ctx.db.get(workspaceId);
-        if (!workspace || workspace.projectId !== args.projectId) return null;
+    const project = await getOwnedProject(ctx, user.id, args.projectId);
+    if (!project) return null;
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      args.workspaceId,
+    );
+    if (!workspaceId) return null;
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace || workspace.projectId !== args.projectId) return null;
 
-        return { accountId: workspace.accountId, workspaceId: workspace._id };
-    },
+    return { accountId: workspace.accountId, workspaceId: workspace._id };
+  },
 });
 
 /**
@@ -100,22 +114,31 @@ export const resolveRuntimeWorkspace = query({
  * @returns runtime account/workspace identifiers, or null when inaccessible
  */
 export const resolveRuntimeWorkspaceInternal = internalQuery({
-    args: {
-        authId: v.string(),
-        projectId: v.id("projects"),
-        workspaceId: v.string(),
-    },
-    returns: v.union(v.object({ accountId: v.id("accounts"), workspaceId: v.id("workspaceConfigs") }), v.null()),
-    handler: async (ctx, args) => {
-        const project = await getOwnedProject(ctx, args.authId, args.projectId);
-        if (!project) return null;
-        const workspaceId = ctx.db.normalizeId("workspaceConfigs", args.workspaceId);
-        if (!workspaceId) return null;
-        const workspace = await ctx.db.get(workspaceId);
-        if (!workspace || workspace.projectId !== args.projectId) return null;
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    workspaceId: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      accountId: v.id("accounts"),
+      workspaceId: v.id("workspaceConfigs"),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    if (!project) return null;
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      args.workspaceId,
+    );
+    if (!workspaceId) return null;
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace || workspace.projectId !== args.projectId) return null;
 
-        return { accountId: workspace.accountId, workspaceId: workspace._id };
-    },
+    return { accountId: workspace.accountId, workspaceId: workspace._id };
+  },
 });
 
 /**
@@ -123,16 +146,16 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
  * @returns a pre-signed upload URL
  */
 export const generateUploadUrl = mutation({
-    args: {},
-    handler: async (ctx) => {
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+  args: {},
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        return await ctx.storage.generateUploadUrl();
-    },
+    return await ctx.storage.generateUploadUrl();
+  },
 });
 
 /**
@@ -148,44 +171,53 @@ export const generateUploadUrl = mutation({
  * @returns the new document ID
  */
 export const create = mutation({
-    args: {
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-        path: v.string(),
-        name: v.string(),
-        isFolder: v.boolean(),
-        storageId: v.optional(v.id("_storage")),
-        mimeType: v.optional(v.string()),
-        sizeBytes: v.optional(v.number()),
-    },
-    handler: async (ctx, args) => {
-        const { projectId, nodeId, path, name, isFolder, storageId, mimeType, sizeBytes } = args;
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+    name: v.string(),
+    isFolder: v.boolean(),
+    storageId: v.optional(v.id("_storage")),
+    mimeType: v.optional(v.string()),
+    sizeBytes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const {
+      projectId,
+      nodeId,
+      path,
+      name,
+      isFolder,
+      storageId,
+      mimeType,
+      sizeBytes,
+    } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const project = await getOwnedProject(ctx, user.id, projectId);
-        if (!project) throw new Error("Project not found.");
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) throw new Error("Project not found.");
 
-        const now = Date.now();
+    const now = Date.now();
 
-        return await ctx.db.insert("workspaceFiles", {
-            authId: user.id,
-            projectId: projectId,
-            nodeId: nodeId,
-            path: path,
-            name: name,
-            isFolder: isFolder,
-            storageId: storageId,
-            mimeType: mimeType,
-            sizeBytes: sizeBytes,
-            createdAt: now,
-            updatedAt: now,
-        });
-    },
+    return await ctx.db.insert("workspaceFiles", {
+      authId: user.id,
+      projectId: projectId,
+      nodeId: nodeId,
+      path: path,
+      name: name,
+      isFolder: isFolder,
+      storageId: storageId,
+      mimeType: mimeType,
+      sizeBytes: sizeBytes,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
 });
 
 /**
@@ -193,28 +225,28 @@ export const create = mutation({
  * @param fileId the workspaceFiles document to remove
  */
 export const remove = mutation({
-    args: { fileId: v.id("workspaceFiles") },
-    handler: async (ctx, args) => {
-        const { fileId } = args;
+  args: { fileId: v.id("workspaceFiles") },
+  handler: async (ctx, args) => {
+    const { fileId } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const file = await ctx.db.get(fileId);
-        if (!file) throw new Error("File not found.");
-        const project = await getOwnedProject(ctx, user.id, file.projectId);
-        if (!project) throw new Error("File not found.");
+    const file = await ctx.db.get(fileId);
+    if (!file) throw new Error("File not found.");
+    const project = await getOwnedProject(ctx, user.id, file.projectId);
+    if (!project) throw new Error("File not found.");
 
-        if (file.storageId) {
-            await ctx.storage.delete(file.storageId);
-        }
-        await ctx.db.delete(fileId);
+    if (file.storageId) {
+      await ctx.storage.delete(file.storageId);
+    }
+    await ctx.db.delete(fileId);
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -223,53 +255,58 @@ export const remove = mutation({
  * @param newName the new filename or folder name (no slashes)
  */
 export const rename = mutation({
-    args: {
-        fileId: v.id("workspaceFiles"),
-        newName: v.string(),
-    },
-    handler: async (ctx, args) => {
-        const { fileId, newName } = args;
+  args: {
+    fileId: v.id("workspaceFiles"),
+    newName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { fileId, newName } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const file = await ctx.db.get(fileId);
-        if (!file) throw new Error("File not found.");
-        const project = await getOwnedProject(ctx, user.id, file.projectId);
-        if (!project) throw new Error("File not found.");
+    const file = await ctx.db.get(fileId);
+    if (!file) throw new Error("File not found.");
+    const project = await getOwnedProject(ctx, user.id, file.projectId);
+    if (!project) throw new Error("File not found.");
 
-        const trimmed = newName.trim();
-        if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed.includes("/")) throw new Error("Invalid name.");
 
-        const slash = file.path.lastIndexOf("/");
-        const newPath = slash === -1 ? trimmed : `${file.path.slice(0, slash)}/${trimmed}`;
-        const now = Date.now();
+    const slash = file.path.lastIndexOf("/");
+    const newPath =
+      slash === -1 ? trimmed : `${file.path.slice(0, slash)}/${trimmed}`;
+    const now = Date.now();
 
-        if (file.isFolder) {
-            const descendants = await ctx.db
-                .query("workspaceFiles")
-                .withIndex("by_projectId_nodeId_and_path", (q) =>
-                    q
-                        .eq("projectId", file.projectId)
-                        .eq("nodeId", file.nodeId)
-                        .gte("path", `${file.path}/`)
-                        .lt("path", pathPrefixUpperBound(`${file.path}/`)),
-                )
-                .collect();
+    if (file.isFolder) {
+      const descendants = await ctx.db
+        .query("workspaceFiles")
+        .withIndex("by_projectId_nodeId_and_path", (q) =>
+          q
+            .eq("projectId", file.projectId)
+            .eq("nodeId", file.nodeId)
+            .gte("path", `${file.path}/`)
+            .lt("path", pathPrefixUpperBound(`${file.path}/`)),
+        )
+        .collect();
 
-            for (const doc of descendants) {
-                const childNewPath = newPath + doc.path.slice(file.path.length);
-                await ctx.db.patch(doc._id, { path: childNewPath, updatedAt: now });
-            }
-        }
+      for (const doc of descendants) {
+        const childNewPath = newPath + doc.path.slice(file.path.length);
+        await ctx.db.patch(doc._id, { path: childNewPath, updatedAt: now });
+      }
+    }
 
-        await ctx.db.patch(fileId, { name: trimmed, path: newPath, updatedAt: now });
+    await ctx.db.patch(fileId, {
+      name: trimmed,
+      path: newPath,
+      updatedAt: now,
+    });
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -280,34 +317,34 @@ export const rename = mutation({
  * @returns signed URL, or null if the file does not exist / has no storageId
  */
 export const getFileDownloadUrl = query({
-    args: {
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-        path: v.string(),
-    },
-    handler: async (ctx, args) => {
-        const { projectId, nodeId, path } = args;
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId, path } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const project = await getOwnedProject(ctx, user.id, projectId);
-        if (!project) return null;
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) return null;
 
-        const file = await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_nodeId_and_path", (q) =>
-                q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
-            )
-            .first();
+    const file = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
+      )
+      .first();
 
-        if (!file?.storageId) return null;
+    if (!file?.storageId) return null;
 
-        return await ctx.storage.getUrl(file.storageId);
-    },
+    return await ctx.storage.getUrl(file.storageId);
+  },
 });
 
 /**
@@ -317,44 +354,45 @@ export const getFileDownloadUrl = query({
  * @param folderPath the folder path to remove including all children
  */
 export const removeFolder = mutation({
-    args: {
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-        folderPath: v.string(),
-    },
-    handler: async (ctx, args) => {
-        const { projectId, nodeId, folderPath } = args;
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    folderPath: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId, folderPath } = args;
 
-        // Check authenticated user
-        const user = await authKit.getAuthUser(ctx);
-        if (!user) {
-            throw new Error("User not found or not authenticated");
-        }
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
 
-        const project = await getOwnedProject(ctx, user.id, projectId);
-        if (!project) throw new Error("Project not found.");
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) throw new Error("Project not found.");
 
-        const descendants = await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_nodeId_and_path", (q) =>
-                q
-                    .eq("projectId", projectId)
-                    .eq("nodeId", nodeId)
-                    .gte("path", folderPath)
-                    .lt("path", pathPrefixUpperBound(folderPath)),
-            )
-            .collect();
+    const descendants = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", projectId)
+          .eq("nodeId", nodeId)
+          .gte("path", folderPath)
+          .lt("path", pathPrefixUpperBound(folderPath)),
+      )
+      .collect();
 
-        for (const doc of descendants) {
-            if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/")) continue;
-            if (doc.storageId) {
-                await ctx.storage.delete(doc.storageId);
-            }
-            await ctx.db.delete(doc._id);
-        }
+    for (const doc of descendants) {
+      if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/"))
+        continue;
+      if (doc.storageId) {
+        await ctx.storage.delete(doc.storageId);
+      }
+      await ctx.db.delete(doc._id);
+    }
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -365,23 +403,23 @@ export const removeFolder = mutation({
  * @returns legacy file metadata rows for migration
  */
 export const listForMigrationInternal = internalQuery({
-    args: {
-        authId: v.string(),
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-    },
-    returns: v.array(workspaceFileDoc),
-    handler: async (ctx, args) => {
-        const project = await getOwnedProject(ctx, args.authId, args.projectId);
-        if (!project) return [];
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  returns: v.array(workspaceFileDoc),
+  handler: async (ctx, args) => {
+    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    if (!project) return [];
 
-        return await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) =>
-                q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
-            )
-            .collect();
-    },
+    return await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_and_nodeId", (q) =>
+        q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
+      )
+      .collect();
+  },
 });
 
 /**
@@ -393,28 +431,31 @@ export const listForMigrationInternal = internalQuery({
  * @returns signed URL or null when the file cannot be read
  */
 export const getFileDownloadUrlInternal = internalQuery({
-    args: {
-        authId: v.string(),
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-        path: v.string(),
-    },
-    returns: v.union(v.string(), v.null()),
-    handler: async (ctx, args) => {
-        const project = await getOwnedProject(ctx, args.authId, args.projectId);
-        if (!project) return null;
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+  },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    if (!project) return null;
 
-        const file = await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_nodeId_and_path", (q) =>
-                q.eq("projectId", args.projectId).eq("nodeId", args.nodeId).eq("path", args.path),
-            )
-            .first();
+    const file = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", args.projectId)
+          .eq("nodeId", args.nodeId)
+          .eq("path", args.path),
+      )
+      .first();
 
-        if (!file?.storageId) return null;
+    if (!file?.storageId) return null;
 
-        return await ctx.storage.getUrl(file.storageId);
-    },
+    return await ctx.storage.getUrl(file.storageId);
+  },
 });
 
 /**
@@ -423,25 +464,25 @@ export const getFileDownloadUrlInternal = internalQuery({
  * @param fileId legacy workspaceFiles row to delete
  */
 export const removeForMigrationInternal = internalMutation({
-    args: {
-        authId: v.string(),
-        fileId: v.id("workspaceFiles"),
-    },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        const file = await ctx.db.get(args.fileId);
-        if (!file) return null;
+  args: {
+    authId: v.string(),
+    fileId: v.id("workspaceFiles"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args.fileId);
+    if (!file) return null;
 
-        const project = await getOwnedProject(ctx, args.authId, file.projectId);
-        if (!project) return null;
+    const project = await getOwnedProject(ctx, args.authId, file.projectId);
+    if (!project) return null;
 
-        if (file.storageId) {
-            await ctx.storage.delete(file.storageId);
-        }
-        await ctx.db.delete(args.fileId);
+    if (file.storageId) {
+      await ctx.storage.delete(file.storageId);
+    }
+    await ctx.db.delete(args.fileId);
 
-        return null;
-    },
+    return null;
+  },
 });
 
 /**
@@ -450,27 +491,27 @@ export const removeForMigrationInternal = internalMutation({
  * @param nodeId canvas node whose files should be wiped
  */
 export const clearNodeInternal = internalMutation({
-    args: {
-        projectId: v.id("projects"),
-        nodeId: v.string(),
-    },
-    handler: async (ctx, args) => {
-        const { projectId, nodeId } = args;
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId } = args;
 
-        const all = await ctx.db
-            .query("workspaceFiles")
-            .withIndex("by_projectId_and_nodeId", (q) =>
-                q.eq("projectId", projectId).eq("nodeId", nodeId),
-            )
-            .collect();
+    const all = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_and_nodeId", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId),
+      )
+      .collect();
 
-        for (const doc of all) {
-            if (doc.storageId) {
-                await ctx.storage.delete(doc.storageId);
-            }
-            await ctx.db.delete(doc._id);
-        }
+    for (const doc of all) {
+      if (doc.storageId) {
+        await ctx.storage.delete(doc.storageId);
+      }
+      await ctx.db.delete(doc._id);
+    }
 
-        return null;
-    },
+    return null;
+  },
 });

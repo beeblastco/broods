@@ -7,7 +7,6 @@
 import { BroodsClient } from "broods";
 import { api } from "./broods/_generated/api";
 
-
 const client = new BroodsClient();
 
 const runs = await client.listCronRuns(api.crons.oneMinuteCron, { limit: 10 });

@@ -8,16 +8,16 @@ name: CI
 on:
   pull_request:
     paths-ignore:
-      - 'apps/docs/**'
-      - '.github/workflows/deploy-docs.yaml'
-      - '**/*.md'
+      - "apps/docs/**"
+      - ".github/workflows/deploy-docs.yaml"
+      - "**/*.md"
   push:
     branches-ignore:
       - main
     paths-ignore:
-      - 'apps/docs/**'
-      - '.github/workflows/deploy-docs.yaml'
-      - '**/*.md'
+      - "apps/docs/**"
+      - ".github/workflows/deploy-docs.yaml"
+      - "**/*.md"
 
 jobs:
   validate:

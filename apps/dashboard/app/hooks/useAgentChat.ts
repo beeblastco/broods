@@ -4,10 +4,14 @@
  * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { parseJsonEventStream, readUIMessageStream, uiMessageChunkSchema } from "ai";
-import type { UIMessage } from "ai";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import type { UIMessage } from "ai";
+import {
+  parseJsonEventStream,
+  readUIMessageStream,
+  uiMessageChunkSchema,
+} from "ai";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type ChatStatus = "ready" | "streaming" | "error";
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
@@ -16,15 +20,21 @@ type WsServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
   | { type: "sse"; chunk: string }
   | { type: "continuation_delta"; delta: string }
-  | { type: "subagent_delta"; sessionId: string; taskId: string; agentName?: string; delta: string }
   | {
-    type: "subagent_activity";
-    sessionId: string;
-    taskId: string;
-    agentName?: string;
-    phase: "started" | "tool_call" | "tool_result";
-    toolNames?: string[];
-  }
+      type: "subagent_delta";
+      sessionId: string;
+      taskId: string;
+      agentName?: string;
+      delta: string;
+    }
+  | {
+      type: "subagent_activity";
+      sessionId: string;
+      taskId: string;
+      agentName?: string;
+      phase: "started" | "tool_call" | "tool_result";
+      toolNames?: string[];
+    }
   | { type: "subagent_result"; output: string }
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
@@ -92,18 +102,25 @@ async function startHttpSseStream(options: {
       agentId: agentId,
       eventId: `evt-${crypto.randomUUID()}`,
       conversationKey: conversationKey,
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: message }],
-      }],
+      events: [
+        {
+          role: "user",
+          content: [{ type: "text", text: message }],
+        },
+      ],
       stream: true,
     }),
     signal: signal,
   });
 
   if (!response.ok) {
-    const responseBody = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(responseBody.error ?? `HTTP stream request failed with status ${response.status}.`);
+    const responseBody = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(
+      responseBody.error ??
+        `HTTP stream request failed with status ${response.status}.`,
+    );
   }
 
   if (!response.body) {
@@ -169,7 +186,8 @@ async function startWebSocketSseStream(options: {
   const socket = new WebSocket(wsUrl);
   const encoder = new TextEncoder();
 
-  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null =
+    null;
   let opened = false;
   let settled = false;
 
@@ -252,10 +270,12 @@ async function startWebSocketSseStream(options: {
       socket.send(
         JSON.stringify({
           type: "execute",
-          events: [{
-            role: "user",
-            content: [{ type: "text", text: message }],
-          }],
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: message }],
+            },
+          ],
           agentId: agentId,
           sessionId: sessionId,
         }),
@@ -388,7 +408,8 @@ function upsertMainAssistantMessage(options: {
 }): { messages: UIMessage[]; messageId: string } {
   const requestedId = options.messageId;
   const assistantId =
-    typeof options.assistantMessage.id === "string" && options.assistantMessage.id.length > 0
+    typeof options.assistantMessage.id === "string" &&
+    options.assistantMessage.id.length > 0
       ? options.assistantMessage.id
       : null;
   const resolvedId = assistantId ?? requestedId ?? crypto.randomUUID();
@@ -438,7 +459,9 @@ function appendAssistantTextDelta(options: {
   }
 
   if (options.messageId) {
-    const index = options.previousMessages.findIndex((message) => message.id === options.messageId);
+    const index = options.previousMessages.findIndex(
+      (message) => message.id === options.messageId,
+    );
     if (index >= 0) {
       const existing = options.previousMessages[index];
       const currentText = existing.parts
@@ -481,9 +504,12 @@ function formatSubagentActivityText(event: {
   }
 
   const toolNames = Array.isArray(event.toolNames)
-    ? event.toolNames.filter((name) => typeof name === "string" && name.trim().length > 0)
+    ? event.toolNames.filter(
+        (name) => typeof name === "string" && name.trim().length > 0,
+      )
     : [];
-  const formattedTools = toolNames.length > 0 ? ` (${toolNames.join(", ")})` : "";
+  const formattedTools =
+    toolNames.length > 0 ? ` (${toolNames.join(", ")})` : "";
 
   if (event.phase === "tool_call") {
     return `Using tools${formattedTools}`;
@@ -538,17 +564,23 @@ function upsertSubagentPanel(options: {
   };
 
   const existingIndex = options.messageId
-    ? options.previousMessages.findIndex((message) => message.id === options.messageId)
+    ? options.previousMessages.findIndex(
+        (message) => message.id === options.messageId,
+      )
     : -1;
 
   if (existingIndex >= 0) {
     const existingMessage = options.previousMessages[existingIndex];
-    const existingPanel = existingMessage.parts.find((part) => isSubagentPanelPart(part));
+    const existingPanel = existingMessage.parts.find((part) =>
+      isSubagentPanelPart(part),
+    );
     if (existingPanel) {
       const nextMessages = [...options.previousMessages];
       nextMessages[existingIndex] = {
         ...existingMessage,
-        parts: [updatePanel(existingPanel) as unknown as UIMessage["parts"][number]],
+        parts: [
+          updatePanel(existingPanel) as unknown as UIMessage["parts"][number],
+        ],
       } as UIMessage;
 
       return {
@@ -693,7 +725,8 @@ export function useAgentChat({
               },
               onSubagentDelta: ({ taskId, sessionId, delta, agentName }) => {
                 setMessages((prev) => {
-                  const currentMessageId = subagentMessageIdsRef.current[taskId] ?? null;
+                  const currentMessageId =
+                    subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
                     previousMessages: prev,
                     messageId: currentMessageId,
@@ -708,9 +741,16 @@ export function useAgentChat({
                   return next.messages;
                 });
               },
-              onSubagentActivity: ({ taskId, sessionId, agentName, phase, toolNames }) => {
+              onSubagentActivity: ({
+                taskId,
+                sessionId,
+                agentName,
+                phase,
+                toolNames,
+              }) => {
                 setMessages((prev) => {
-                  const currentMessageId = subagentMessageIdsRef.current[taskId] ?? null;
+                  const currentMessageId =
+                    subagentMessageIdsRef.current[taskId] ?? null;
                   const next = upsertSubagentPanel({
                     previousMessages: prev,
                     messageId: currentMessageId,
@@ -821,14 +861,25 @@ export function useAgentChat({
             ? `Cannot reach core service at ${baseUrl}. Is the service running?`
             : err instanceof Error && err.message.includes("WebSocket")
               ? err.message
-            : err instanceof Error
-              ? err.message
-              : String(err);
+              : err instanceof Error
+                ? err.message
+                : String(err);
         setError(new Error(message));
         setStatus("error");
       }
     },
-    [endpointId, agentId, apiKey, projectSlug, environmentSlug, coreEndpointOk, coreEndpointMessage, baseUrl, websocketBaseUrl, webSocketEnabled],
+    [
+      endpointId,
+      agentId,
+      apiKey,
+      projectSlug,
+      environmentSlug,
+      coreEndpointOk,
+      coreEndpointMessage,
+      baseUrl,
+      websocketBaseUrl,
+      webSocketEnabled,
+    ],
   );
 
   /** Reset chat history and server session for a new conversation. */

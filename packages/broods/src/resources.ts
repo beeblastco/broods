@@ -45,12 +45,15 @@ export interface EnvAccessor {
   readonly [name: string]: EnvRef;
 }
 
-export type EnvRefString<T> =
-  T extends string ? T | EnvRef :
-  T extends readonly (infer Item)[] ? readonly EnvRefString<Item>[] :
-  T extends (infer Item)[] ? EnvRefString<Item>[] :
-  T extends object ? { [Key in keyof T]: EnvRefString<T[Key]> } :
-  T;
+export type EnvRefString<T> = T extends string
+  ? T | EnvRef
+  : T extends readonly (infer Item)[]
+    ? readonly EnvRefString<Item>[]
+    : T extends (infer Item)[]
+      ? EnvRefString<Item>[]
+      : T extends object
+        ? { [Key in keyof T]: EnvRefString<T[Key]> }
+        : T;
 
 export interface BroodsProjectConfig {
   project?: string;
@@ -69,7 +72,8 @@ export interface BroodsConfigDefinition {
   readonly config: BroodsProjectConfig;
 }
 
-export type ResourceKind = "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+export type ResourceKind =
+  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -123,7 +127,8 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
   version?: AgentPolicyDocument["version"];
 };
 
-export type ChannelType = "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+export type ChannelType =
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -133,33 +138,74 @@ export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly config: Config;
 }
 
-type RequiredChannelKeys<Config, Keys extends keyof Config> =
-  & Required<Pick<Config, Keys>>
-  & Omit<Config, Keys>;
+type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
+  Pick<Config, Keys>
+> &
+  Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 type ChannelIdentityInput = {
   workspaceScope?: AgentChannelWorkspaceScope;
 };
 
-export type TelegramChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentTelegramChannelConfig, "apiUrl" | "botToken" | "webhookSecret" | "allowedChatIds" | "reactionEmoji">,
-  "botToken" | "webhookSecret" | "allowedChatIds"
->> & ChannelIdentityInput;
+export type TelegramChannelInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentTelegramChannelConfig,
+      | "apiUrl"
+      | "botToken"
+      | "webhookSecret"
+      | "allowedChatIds"
+      | "reactionEmoji"
+    >,
+    "botToken" | "webhookSecret" | "allowedChatIds"
+  >
+> &
+  ChannelIdentityInput;
 
-export type GitHubChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentGitHubChannelConfig, "apiUrl" | "webhookSecret" | "appId" | "privateKey" | "allowedRepos" | "userName" | "botUserId" | "triggerOnIssueOpen" | "triggerOnPROpen">,
-  "webhookSecret" | "appId" | "privateKey"
->> & ChannelIdentityInput;
+export type GitHubChannelInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentGitHubChannelConfig,
+      | "apiUrl"
+      | "webhookSecret"
+      | "appId"
+      | "privateKey"
+      | "allowedRepos"
+      | "userName"
+      | "botUserId"
+      | "triggerOnIssueOpen"
+      | "triggerOnPROpen"
+    >,
+    "webhookSecret" | "appId" | "privateKey"
+  >
+> &
+  ChannelIdentityInput;
 
-export type SlackChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentSlackChannelConfig, "apiUrl" | "botToken" | "signingSecret" | "allowedChannelIds" | "reactionEmoji">,
-  "botToken" | "signingSecret"
->> & ChannelIdentityInput;
+export type SlackChannelInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentSlackChannelConfig,
+      | "apiUrl"
+      | "botToken"
+      | "signingSecret"
+      | "allowedChannelIds"
+      | "reactionEmoji"
+    >,
+    "botToken" | "signingSecret"
+  >
+> &
+  ChannelIdentityInput;
 
-export type DiscordChannelInput = EnvRefString<RequiredChannelKeys<
-  Pick<AgentDiscordChannelConfig, "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds">,
-  "botToken" | "publicKey"
->> & ChannelIdentityInput;
+export type DiscordChannelInput = EnvRefString<
+  RequiredChannelKeys<
+    Pick<
+      AgentDiscordChannelConfig,
+      "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds"
+    >,
+    "botToken" | "publicKey"
+  >
+> &
+  ChannelIdentityInput;
 export interface PancakeChannelInput extends ChannelIdentityInput {
   pageId: ChannelSecret;
   pageAccessToken: ChannelSecret;
@@ -173,11 +219,26 @@ export interface ZaloChannelInput extends ChannelIdentityInput {
   allowedUserIds?: readonly (string | EnvRef)[];
 }
 
-export type TelegramChannelDefinition = ChannelDefinition<"telegram", TelegramChannelInput>;
-export type GitHubChannelDefinition = ChannelDefinition<"github", GitHubChannelInput>;
-export type SlackChannelDefinition = ChannelDefinition<"slack", SlackChannelInput>;
-export type DiscordChannelDefinition = ChannelDefinition<"discord", DiscordChannelInput>;
-export type PancakeChannelDefinition = ChannelDefinition<"pancake", PancakeChannelInput>;
+export type TelegramChannelDefinition = ChannelDefinition<
+  "telegram",
+  TelegramChannelInput
+>;
+export type GitHubChannelDefinition = ChannelDefinition<
+  "github",
+  GitHubChannelInput
+>;
+export type SlackChannelDefinition = ChannelDefinition<
+  "slack",
+  SlackChannelInput
+>;
+export type DiscordChannelDefinition = ChannelDefinition<
+  "discord",
+  DiscordChannelInput
+>;
+export type PancakeChannelDefinition = ChannelDefinition<
+  "pancake",
+  PancakeChannelInput
+>;
 export type ZaloChannelDefinition = ChannelDefinition<"zalo", ZaloChannelInput>;
 export type AnyChannelDefinition =
   | TelegramChannelDefinition
@@ -205,11 +266,17 @@ export type AgentWorkspaceInput = WorkspaceResource | AgentWorkspaceRefInput;
  * resources directly; the compiler rewrites them to agent names and the backend
  * resolves those to deploy-time agent ids.
  */
-export type AgentSubagentDefinitionConfig = Omit<NonNullable<AgentConfig["subagent"]>, "allowed"> & {
+export type AgentSubagentDefinitionConfig = Omit<
+  NonNullable<AgentConfig["subagent"]>,
+  "allowed"
+> & {
   allowed?: readonly (AgentResource | string)[];
 };
 
-export type AgentSkillsDefinitionConfig = Omit<NonNullable<AgentConfig["skills"]>, "allowed"> & {
+export type AgentSkillsDefinitionConfig = Omit<
+  NonNullable<AgentConfig["skills"]>,
+  "allowed"
+> & {
   allowed?: readonly (SkillResource | string)[];
 };
 
@@ -268,25 +335,54 @@ export type ChannelMessageReceived =
  * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
  */
 export interface AgentHooks {
-  onStart?: Handler<{ system: string; messages: unknown[] }, { system?: string; messages?: unknown[] }>;
-  onStepFinish?: Handler<{ stepNumber: number; finishReason: string; toolCallCount: number }, void>;
+  // User messages in `messages` carry `createdAt` plus any `metadata` an
+  // onMessageReceived hook returned, for reading identity without text parsing.
+  onStart?: Handler<
+    { system: string; messages: unknown[] },
+    { system?: string; messages?: unknown[] }
+  >;
+  onStepFinish?: Handler<
+    { stepNumber: number; finishReason: string; toolCallCount: number },
+    void
+  >;
   onToolCall?: Handler<
     { toolName: string; input: unknown },
-    { decision?: "allow" | "deny"; args?: Record<string, unknown>; denyReason?: string }
+    {
+      decision?: "allow" | "deny";
+      args?: Record<string, unknown>;
+      denyReason?: string;
+    }
   >;
-  onToolResult?: Handler<{ toolName: string; output: unknown }, { output?: unknown }>;
-  onFinish?: Handler<{ finishReason: string; response: unknown }, { output?: unknown }>;
+  onToolResult?: Handler<
+    { toolName: string; output: unknown },
+    { output?: unknown }
+  >;
+  onFinish?: Handler<
+    { finishReason: string; response: unknown },
+    { output?: unknown }
+  >;
   onApproval?: Handler<{ approvals: unknown }, { approve?: boolean }>;
   onError?: Handler<{ error: string }, void>;
-  onSubagentFinish?: Handler<{ taskId: string; result: unknown }, { visibleResult?: unknown }>;
+  onSubagentFinish?: Handler<
+    { taskId: string; result: unknown },
+    { visibleResult?: unknown }
+  >;
+  // Returned `metadata` (opaque JSON) persists with the stored message and
+  // resurfaces on onStart's messages — the receive→run channel ctx.state lacks.
   onMessageReceived?: Handler<
     ChannelMessageReceived,
+    { drop?: boolean; text?: string; metadata?: unknown }
+  >;
+  onMessageSending?: Handler<
+    { channel: ChannelType; text: string },
     { drop?: boolean; text?: string }
   >;
-  onMessageSending?: Handler<{ channel: ChannelType; text: string }, { drop?: boolean; text?: string }>;
 }
 
-export type AgentPolicyDefinitionConfig = Omit<AgentPolicyConfig, "policyIds"> & {
+export type AgentPolicyDefinitionConfig = Omit<
+  AgentPolicyConfig,
+  "policyIds"
+> & {
   policies?: readonly (PolicyResource | string)[];
 };
 
@@ -330,41 +426,74 @@ export type ProviderConfigInput = Partial<
 // AgentProviderSettings keys, so a new core provider setting cannot silently
 // bypass the SDK's excess-property checking. If this line fails to compile,
 // add/remove the key in ProviderSettingsInput to match AgentProviderSettings.
-type KeysEqual<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : false) : false;
-const _providerKeyParity: KeysEqual<ProviderSettingsInput, NonNullable<AgentProviderSettings>> = true;
+type KeysEqual<A, B> = [keyof A] extends [keyof B]
+  ? [keyof B] extends [keyof A]
+    ? true
+    : false
+  : false;
+const _providerKeyParity: KeysEqual<
+  ProviderSettingsInput,
+  NonNullable<AgentProviderSettings>
+> = true;
 void _providerKeyParity;
 
-export type AgentDefinitionConfig =
-  & EnvRefString<Pick<AgentConfig, "agent" | "model" | "session" | "tools">>
-  & { provider?: ProviderConfigInput }
-  & {
-    hooks?: AgentHooks & { webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[] };
-    channels?: readonly AnyChannelDefinition[];
-    sandbox?: SandboxResource | string;
-    workspaces?: readonly AgentWorkspaceInput[];
-    subagent?: AgentSubagentDefinitionConfig;
-    skills?: AgentSkillsDefinitionConfig;
-    policy?: AgentPolicyDefinitionConfig;
-    /**
-     * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-     * environment runtime key). Off by default — secured: when unset the public
-     * endpoint refuses requests for this agent. Reach a private agent through an
-     * internal endpoint or a channel webhook. See issue #65.
-     */
-    publicAccess?: boolean;
+export type AgentDefinitionConfig = EnvRefString<
+  Pick<AgentConfig, "agent" | "model" | "session" | "tools">
+> & { provider?: ProviderConfigInput } & {
+  hooks?: AgentHooks & {
+    webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
+  channels?: readonly AnyChannelDefinition[];
+  sandbox?: SandboxResource | string;
+  workspaces?: readonly AgentWorkspaceInput[];
+  subagent?: AgentSubagentDefinitionConfig;
+  skills?: AgentSkillsDefinitionConfig;
+  policy?: AgentPolicyDefinitionConfig;
+  /**
+   * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
+   * environment runtime key). Off by default — secured: when unset the public
+   * endpoint refuses requests for this agent. Reach a private agent through an
+   * internal endpoint or a channel webhook. See issue #65.
+   */
+  publicAccess?: boolean;
+};
 
 export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {
   agent: AgentResource | string;
 };
 
-export type AgentResource<Name extends string = string> = ResourceDefinition<"agent", Name, AgentDefinitionConfig>;
-export type WorkspaceResource<Name extends string = string> = ResourceDefinition<"workspace", Name, WorkspaceConfig>;
-export type SandboxResource<Name extends string = string> = ResourceDefinition<"sandbox", Name, SandboxDefinitionConfig>;
-export type SkillResource<Name extends string = string> = ResourceDefinition<"skill", Name, SkillDefinitionConfig>;
-export type ToolResource<Name extends string = string> = ResourceDefinition<"tool", Name, ToolDefinitionConfig>;
-export type PolicyResource<Name extends string = string> = ResourceDefinition<"policy", Name, PolicyDefinitionConfig>;
-export type CronResource<Name extends string = string> = ResourceDefinition<"cron", Name, CronDefinitionConfig>;
+export type AgentResource<Name extends string = string> = ResourceDefinition<
+  "agent",
+  Name,
+  AgentDefinitionConfig
+>;
+export type WorkspaceResource<Name extends string = string> =
+  ResourceDefinition<"workspace", Name, WorkspaceConfig>;
+export type SandboxResource<Name extends string = string> = ResourceDefinition<
+  "sandbox",
+  Name,
+  SandboxDefinitionConfig
+>;
+export type SkillResource<Name extends string = string> = ResourceDefinition<
+  "skill",
+  Name,
+  SkillDefinitionConfig
+>;
+export type ToolResource<Name extends string = string> = ResourceDefinition<
+  "tool",
+  Name,
+  ToolDefinitionConfig
+>;
+export type PolicyResource<Name extends string = string> = ResourceDefinition<
+  "policy",
+  Name,
+  PolicyDefinitionConfig
+>;
+export type CronResource<Name extends string = string> = ResourceDefinition<
+  "cron",
+  Name,
+  CronDefinitionConfig
+>;
 
 export type AnyResource =
   | AgentResource
@@ -394,7 +523,8 @@ export const env: EnvAccessor = new Proxy(
   } as unknown as EnvAccessor,
   {
     get(target, property, receiver) {
-      if (typeof property === "string") return { __beeblastEnv: true, name: property };
+      if (typeof property === "string")
+        return { __beeblastEnv: true, name: property };
       return Reflect.get(target, property, receiver);
     },
   },
@@ -406,7 +536,11 @@ export const env: EnvAccessor = new Proxy(
  * (the discriminant the sync/codegen pipeline switches on) and constrains
  * `config` to that resource's shape so callers get autocomplete and typo checks.
  */
-function defineResource<const Kind extends ResourceKind, const Name extends string, Config>(
+function defineResource<
+  const Kind extends ResourceKind,
+  const Name extends string,
+  Config,
+>(
   kind: Kind,
   input: ResourceDefinitionInput<Name, Config>,
 ): ResourceDefinition<Kind, Name, Config> {
@@ -440,31 +574,45 @@ function defineChannel<const Type extends ChannelType, Config>(
   };
 }
 
-export function defineTelegramChannel(config: TelegramChannelInput): TelegramChannelDefinition {
+export function defineTelegramChannel(
+  config: TelegramChannelInput,
+): TelegramChannelDefinition {
   return defineChannel("telegram", config);
 }
 
-export function defineGitHubChannel(config: GitHubChannelInput): GitHubChannelDefinition {
+export function defineGitHubChannel(
+  config: GitHubChannelInput,
+): GitHubChannelDefinition {
   return defineChannel("github", config);
 }
 
-export function defineSlackChannel(config: SlackChannelInput): SlackChannelDefinition {
+export function defineSlackChannel(
+  config: SlackChannelInput,
+): SlackChannelDefinition {
   return defineChannel("slack", config);
 }
 
-export function defineDiscordChannel(config: DiscordChannelInput): DiscordChannelDefinition {
+export function defineDiscordChannel(
+  config: DiscordChannelInput,
+): DiscordChannelDefinition {
   return defineChannel("discord", config);
 }
 
-export function definePancakeChannel(config: PancakeChannelInput): PancakeChannelDefinition {
+export function definePancakeChannel(
+  config: PancakeChannelInput,
+): PancakeChannelDefinition {
   return defineChannel("pancake", config);
 }
 
-export function defineZaloChannel(config: ZaloChannelInput): ZaloChannelDefinition {
+export function defineZaloChannel(
+  config: ZaloChannelInput,
+): ZaloChannelDefinition {
   return defineChannel("zalo", config);
 }
 
-export function defineBroods(config: BroodsProjectConfig): BroodsConfigDefinition {
+export function defineBroods(
+  config: BroodsProjectConfig,
+): BroodsConfigDefinition {
   return { [CONFIG_MARKER]: true, config };
 }
 
@@ -511,13 +659,29 @@ export function defineCron<const Name extends string>(
 }
 
 export function isResource(value: unknown): value is AnyResource {
-  return Boolean(value && typeof value === "object" && (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER]);
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { [RESOURCE_MARKER]?: boolean })[RESOURCE_MARKER],
+  );
 }
 
-export function isChannelDefinition(value: unknown): value is AnyChannelDefinition {
-  return Boolean(value && typeof value === "object" && (value as { [CHANNEL_MARKER]?: boolean })[CHANNEL_MARKER]);
+export function isChannelDefinition(
+  value: unknown,
+): value is AnyChannelDefinition {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { [CHANNEL_MARKER]?: boolean })[CHANNEL_MARKER],
+  );
 }
 
-export function isBroodsConfig(value: unknown): value is BroodsConfigDefinition {
-  return Boolean(value && typeof value === "object" && (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER]);
+export function isBroodsConfig(
+  value: unknown,
+): value is BroodsConfigDefinition {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    (value as { [CONFIG_MARKER]?: boolean })[CONFIG_MARKER],
+  );
 }

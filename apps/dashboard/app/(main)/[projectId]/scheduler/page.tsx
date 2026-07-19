@@ -21,92 +21,99 @@ import { CronDialog } from "./components/CronDialog";
 import { CronsTable } from "./components/CronsTable";
 
 export default function CronsPage({
-    params,
+  params,
 }: {
-    params: Promise<{ projectId: string }>;
+  params: Promise<{ projectId: string }>;
 }) {
-    const { projectId } = use(params);
-    const typedProjectId = projectId as Id<"projects">;
+  const { projectId } = use(params);
+  const typedProjectId = projectId as Id<"projects">;
 
-    const crons = useQuery(api.cron.listForProject, { projectId: typedProjectId });
-    const agents = useQuery(api.agents.listForProject, { projectId: typedProjectId });
-    const account = useQuery(api.org.getActiveAccount, {});
-    const project = useQuery(api.project.getById, { projectId: typedProjectId });
+  const crons = useQuery(api.cron.listForProject, {
+    projectId: typedProjectId,
+  });
+  const agents = useQuery(api.agents.listForProject, {
+    projectId: typedProjectId,
+  });
+  const account = useQuery(api.org.getActiveAccount, {});
+  const project = useQuery(api.project.getById, { projectId: typedProjectId });
 
-    const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
-    const loading = crons === undefined || agents === undefined || account === undefined;
+  const loading =
+    crons === undefined || agents === undefined || account === undefined;
 
-    return (
-        <div className="mx-auto w-full max-w-5xl px-8 pt-9 pb-12">
-            <div className="flex items-center justify-between pb-6">
-                <div>
-                    <h2 className="text-xl font-semibold text-foreground">Scheduler</h2>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Scheduled runs for{" "}
-                        <span className="font-medium text-foreground">
-                            {project?.name ?? "this project"}
-                        </span>
-                        , powered by AWS EventBridge Scheduler.
-                    </p>
-                </div>
-                <Button
-                    size="sm"
-                    className="cursor-pointer disabled:cursor-not-allowed"
-                    // A cron runs an agent, so with none in this project the
-                    // dialog's picker would be empty and the form unsubmittable.
-                    // Undefined means still loading, which is also not usable yet.
-                    disabled={!account || account.status !== "active" || !agents?.length}
-                    onClick={() => setCreateOpen(true)}
-                >
-                    <Plus className="size-4 mr-1" />
-                    New cron job
-                </Button>
-            </div>
-
-            {loading ? (
-                <p className="text-sm text-muted-foreground">Loading...</p>
-            ) : !account ? (
-                <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-                    <p className="text-sm text-muted-foreground">
-                        Your organization is not provisioned yet. Provision the broods
-                        account in settings before creating cron jobs.
-                    </p>
-                </div>
-            ) : agents.length === 0 ? (
-                <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
-                    <p className="text-sm text-foreground">This project has no agents yet.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Add an agent on the Architecture canvas, or create one through the
-                        account API, before scheduling a run.
-                    </p>
-                </div>
-            ) : crons.length === 0 ? (
-                <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
-                    <p className="text-sm text-foreground">No scheduled jobs yet.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Create one to run an agent on a recurring schedule.
-                    </p>
-                    <Button
-                        size="sm"
-                        className="mt-4 cursor-pointer"
-                        onClick={() => setCreateOpen(true)}
-                    >
-                        <Plus className="size-4 mr-1" />
-                        Create your first cron job
-                    </Button>
-                </div>
-            ) : (
-                <CronsTable crons={crons} agents={agents} />
-            )}
-
-            {createOpen && (
-                <CronDialog
-                    mode="create"
-                    agents={agents ?? []}
-                    onClose={() => setCreateOpen(false)}
-                />
-            )}
+  return (
+    <div className="mx-auto w-full max-w-5xl px-8 pt-9 pb-12">
+      <div className="flex items-center justify-between pb-6">
+        <div>
+          <h2 className="text-xl font-semibold text-foreground">Scheduler</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Scheduled runs for{" "}
+            <span className="font-medium text-foreground">
+              {project?.name ?? "this project"}
+            </span>
+            , powered by AWS EventBridge Scheduler.
+          </p>
         </div>
-    );
+        <Button
+          size="sm"
+          className="cursor-pointer disabled:cursor-not-allowed"
+          // A cron runs an agent, so with none in this project the
+          // dialog's picker would be empty and the form unsubmittable.
+          // Undefined means still loading, which is also not usable yet.
+          disabled={!account || account.status !== "active" || !agents?.length}
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="size-4 mr-1" />
+          New cron job
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      ) : !account ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            Your organization is not provisioned yet. Provision the broods
+            account in settings before creating cron jobs.
+          </p>
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center">
+          <p className="text-sm text-foreground">
+            This project has no agents yet.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Add an agent on the Architecture canvas, or create one through the
+            account API, before scheduling a run.
+          </p>
+        </div>
+      ) : crons.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
+          <p className="text-sm text-foreground">No scheduled jobs yet.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Create one to run an agent on a recurring schedule.
+          </p>
+          <Button
+            size="sm"
+            className="mt-4 cursor-pointer"
+            onClick={() => setCreateOpen(true)}
+          >
+            <Plus className="size-4 mr-1" />
+            Create your first cron job
+          </Button>
+        </div>
+      ) : (
+        <CronsTable crons={crons} agents={agents} />
+      )}
+
+      {createOpen && (
+        <CronDialog
+          mode="create"
+          agents={agents ?? []}
+          onClose={() => setCreateOpen(false)}
+        />
+      )}
+    </div>
+  );
 }

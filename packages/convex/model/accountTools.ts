@@ -6,12 +6,12 @@
 import { isPlainObject } from "./objects";
 
 export interface AccountToolUploadInput {
-    name?: unknown;
-    description?: unknown;
-    inputSchema?: unknown;
-    bundle?: unknown;
-    runtime?: unknown;
-    defaultConfig?: unknown;
+  name?: unknown;
+  description?: unknown;
+  inputSchema?: unknown;
+  bundle?: unknown;
+  runtime?: unknown;
+  defaultConfig?: unknown;
 }
 
 /**
@@ -21,29 +21,31 @@ export interface AccountToolUploadInput {
 export type AccountToolRuntime = "isolate" | "sandbox";
 
 export interface NormalizedAccountToolUpload {
-    name?: string;
-    description?: string;
-    inputSchema?: Record<string, unknown>;
-    bundle?: string;
-    sha256?: string;
-    runtime?: AccountToolRuntime;
-    defaultConfig?: Record<string, unknown>;
+  name?: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  bundle?: string;
+  sha256?: string;
+  runtime?: AccountToolRuntime;
+  defaultConfig?: Record<string, unknown>;
 }
 
 export interface RequiredAccountToolUpload {
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown>;
-    bundle: string;
-    sha256: string;
-    runtime: AccountToolRuntime;
-    defaultConfig?: Record<string, unknown>;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  bundle: string;
+  sha256: string;
+  runtime: AccountToolRuntime;
+  defaultConfig?: Record<string, unknown>;
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
-const NODE_BUILTIN_IMPORT_PATTERN = /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
-const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
+const NODE_BUILTIN_IMPORT_PATTERN =
+  /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
+const BARE_IMPORT_PATTERN =
+  /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
 
 /**
  * Normalize and validate a CLI-supplied custom tool upload.
@@ -52,62 +54,62 @@ const BARE_IMPORT_PATTERN = /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](
  * @returns normalized fields with bundle sha256 when a bundle is present
  */
 export async function normalizeAccountToolUpload(
-    input: unknown,
-    options: { requireBundle: true },
+  input: unknown,
+  options: { requireBundle: true },
 ): Promise<RequiredAccountToolUpload>;
 export async function normalizeAccountToolUpload(
-    input: unknown,
-    options: { requireBundle: false },
+  input: unknown,
+  options: { requireBundle: false },
 ): Promise<NormalizedAccountToolUpload>;
 export async function normalizeAccountToolUpload(
-    input: unknown,
-    options: { requireBundle: boolean },
+  input: unknown,
+  options: { requireBundle: boolean },
 ): Promise<NormalizedAccountToolUpload> {
-    if (!isPlainObject(input)) {
-        throw new Error("tool upload body must be an object");
-    }
+  if (!isPlainObject(input)) {
+    throw new Error("tool upload body must be an object");
+  }
 
-    const value = input as AccountToolUploadInput;
-    const result: Partial<NormalizedAccountToolUpload> = {};
+  const value = input as AccountToolUploadInput;
+  const result: Partial<NormalizedAccountToolUpload> = {};
 
-    if (value.name !== undefined) {
-        result.name = normalizeToolName(value.name);
-    } else if (options.requireBundle) {
-        throw new Error("tool.name is required");
-    }
+  if (value.name !== undefined) {
+    result.name = normalizeToolName(value.name);
+  } else if (options.requireBundle) {
+    throw new Error("tool.name is required");
+  }
 
-    if (value.description !== undefined) {
-        result.description = normalizeDescription(value.description);
-    } else if (options.requireBundle) {
-        throw new Error("tool.description is required");
-    }
+  if (value.description !== undefined) {
+    result.description = normalizeDescription(value.description);
+  } else if (options.requireBundle) {
+    throw new Error("tool.description is required");
+  }
 
-    if (value.inputSchema !== undefined) {
-        result.inputSchema = normalizeInputSchema(value.inputSchema);
-    } else if (options.requireBundle) {
-        throw new Error("tool.inputSchema is required");
-    }
+  if (value.inputSchema !== undefined) {
+    result.inputSchema = normalizeInputSchema(value.inputSchema);
+  } else if (options.requireBundle) {
+    throw new Error("tool.inputSchema is required");
+  }
 
-    if (value.bundle !== undefined) {
-        result.bundle = normalizeBundle(value.bundle);
-        result.sha256 = await sha256Hex(result.bundle);
-    } else if (options.requireBundle) {
-        throw new Error("tool.bundle is required");
-    }
+  if (value.bundle !== undefined) {
+    result.bundle = normalizeBundle(value.bundle);
+    result.sha256 = await sha256Hex(result.bundle);
+  } else if (options.requireBundle) {
+    throw new Error("tool.bundle is required");
+  }
 
-    if (value.runtime !== undefined) {
-        result.runtime = normalizeRuntime(value.runtime);
-    } else if (options.requireBundle && result.bundle !== undefined) {
-        // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
-        // stored runtime so it cannot silently flip an explicitly chosen tier.
-        result.runtime = inferAccountToolRuntime(result.bundle);
-    }
+  if (value.runtime !== undefined) {
+    result.runtime = normalizeRuntime(value.runtime);
+  } else if (options.requireBundle && result.bundle !== undefined) {
+    // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
+    // stored runtime so it cannot silently flip an explicitly chosen tier.
+    result.runtime = inferAccountToolRuntime(result.bundle);
+  }
 
-    if (value.defaultConfig !== undefined) {
-        result.defaultConfig = normalizeDefaultConfig(value.defaultConfig);
-    }
+  if (value.defaultConfig !== undefined) {
+    result.defaultConfig = normalizeDefaultConfig(value.defaultConfig);
+  }
 
-    return result as NormalizedAccountToolUpload;
+  return result as NormalizedAccountToolUpload;
 }
 
 /**
@@ -116,8 +118,11 @@ export async function normalizeAccountToolUpload(
  * @param sha256 hex sha256 of the bundle contents
  * @returns stable S3 key for the bundle object
  */
-export function accountToolBundleStorageKey(accountId: string, sha256: string): string {
-    return `account-tools/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
+export function accountToolBundleStorageKey(
+  accountId: string,
+  sha256: string,
+): string {
+  return `account-tools/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
 }
 
 /**
@@ -127,68 +132,76 @@ export function accountToolBundleStorageKey(accountId: string, sha256: string): 
  * @param bundleSource bundled JavaScript module source
  * @returns the inferred runtime tier
  */
-export function inferAccountToolRuntime(bundleSource: string): AccountToolRuntime {
-    if (
-        /\brequire\s*\(/.test(bundleSource) ||
-        NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-        /\bprocess\./.test(bundleSource) ||
-        /\b__dirname\b/.test(bundleSource) ||
-        BARE_IMPORT_PATTERN.test(bundleSource)
-    ) {
-        return "sandbox";
-    }
+export function inferAccountToolRuntime(
+  bundleSource: string,
+): AccountToolRuntime {
+  if (
+    /\brequire\s*\(/.test(bundleSource) ||
+    NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
+    /\bprocess\./.test(bundleSource) ||
+    /\b__dirname\b/.test(bundleSource) ||
+    BARE_IMPORT_PATTERN.test(bundleSource)
+  ) {
+    return "sandbox";
+  }
 
-    return "isolate";
+  return "isolate";
 }
 
 function normalizeToolName(value: unknown): string {
-    if (typeof value !== "string" || value.trim().length === 0) {
-        throw new Error("tool.name must be a non-empty string");
-    }
-    const name = value.trim();
-    if (!MODEL_TOOL_NAME_PATTERN.test(name)) {
-        throw new Error("tool.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens");
-    }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("tool.name must be a non-empty string");
+  }
+  const name = value.trim();
+  if (!MODEL_TOOL_NAME_PATTERN.test(name)) {
+    throw new Error(
+      "tool.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
+  }
 
-    return name;
+  return name;
 }
 
 function normalizeDescription(value: unknown): string {
-    if (typeof value !== "string" || value.trim().length === 0) {
-        throw new Error("tool.description must be a non-empty string");
-    }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("tool.description must be a non-empty string");
+  }
 
-    return value.trim();
+  return value.trim();
 }
 
 function normalizeInputSchema(value: unknown): Record<string, unknown> {
-    if (!isPlainObject(value)) {
-        throw new Error("tool.inputSchema must be a JSON Schema object");
-    }
-    if (value.type !== undefined && typeof value.type !== "string" && !Array.isArray(value.type)) {
-        throw new Error("tool.inputSchema.type must be a string or array");
-    }
+  if (!isPlainObject(value)) {
+    throw new Error("tool.inputSchema must be a JSON Schema object");
+  }
+  if (
+    value.type !== undefined &&
+    typeof value.type !== "string" &&
+    !Array.isArray(value.type)
+  ) {
+    throw new Error("tool.inputSchema.type must be a string or array");
+  }
 
-    return value;
+  return value;
 }
 
 function normalizeBundle(value: unknown): string {
-    if (typeof value !== "string" || value.length === 0) {
-        throw new Error("tool.bundle must be a non-empty string");
-    }
-    if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-        throw new Error(`tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
-    }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("tool.bundle must be a non-empty string");
+  }
+  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
+    throw new Error(`tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
+  }
 
-    return value;
+  return value;
 }
 
 function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
-    if (!isPlainObject(value)) {
-        throw new Error("tool.defaultConfig must be an object");
-    }
+  if (!isPlainObject(value)) {
+    throw new Error("tool.defaultConfig must be an object");
+  }
 
-    return value;
+  return value;
 }
 
 /**
@@ -198,13 +211,18 @@ function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
  * @throws when the value is not "isolate" or "sandbox"
  */
 function normalizeRuntime(value: unknown): AccountToolRuntime {
-    if (value === "isolate" || value === "sandbox") return value;
+  if (value === "isolate" || value === "sandbox") return value;
 
-    throw new Error('tool.runtime must be "isolate" or "sandbox"');
+  throw new Error('tool.runtime must be "isolate" or "sandbox"');
 }
 
 async function sha256Hex(value: string): Promise<string> {
-    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
 
-    return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [...new Uint8Array(hash)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }

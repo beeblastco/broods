@@ -3,8 +3,8 @@
  * Keep app-level defaults and environment overrides here.
  */
 
-import { optionalEnv } from "./env.ts";
 import type { SandboxProvider } from "./domain/sandbox-config.ts";
+import { optionalEnv } from "./env.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
@@ -57,11 +57,13 @@ export interface ResolvedSandboxLifecycle {
  * account-configured `lifecycle` block, applying defaults. Used by the executors
  * (workdir standby, daytona autoStopInterval, e2b timeout).
  */
-export function resolveSandboxLifecycle(
-  lifecycle?: { idleTimeoutSeconds?: number; maxLifetimeSeconds?: number },
-): ResolvedSandboxLifecycle {
+export function resolveSandboxLifecycle(lifecycle?: {
+  idleTimeoutSeconds?: number;
+  maxLifetimeSeconds?: number;
+}): ResolvedSandboxLifecycle {
   return {
-    idleTimeoutSeconds: lifecycle?.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS,
+    idleTimeoutSeconds:
+      lifecycle?.idleTimeoutSeconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS,
     ...(lifecycle?.maxLifetimeSeconds !== undefined
       ? { maxLifetimeSeconds: lifecycle.maxLifetimeSeconds }
       : {}),
@@ -84,18 +86,40 @@ export interface WorkspaceSandboxLimits {
  * persistent providers are operator-sized. Output truncation always applies (output
  * is read back into the harness regardless of provider).
  */
-export function workspaceSandboxLimits(provider: SandboxProvider = "lambda"): WorkspaceSandboxLimits {
+export function workspaceSandboxLimits(
+  provider: SandboxProvider = "lambda",
+): WorkspaceSandboxLimits {
   const isLambda = provider === "lambda";
   return {
-    defaultTimeoutSeconds: positiveIntegerEnv("WORKSPACE_SANDBOX_DEFAULT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
-    defaultOutputLimitBytes: positiveIntegerEnv("WORKSPACE_SANDBOX_DEFAULT_OUTPUT_LIMIT_BYTES", DEFAULT_OUTPUT_LIMIT_BYTES),
+    defaultTimeoutSeconds: positiveIntegerEnv(
+      "WORKSPACE_SANDBOX_DEFAULT_TIMEOUT_SECONDS",
+      DEFAULT_TIMEOUT_SECONDS,
+    ),
+    defaultOutputLimitBytes: positiveIntegerEnv(
+      "WORKSPACE_SANDBOX_DEFAULT_OUTPUT_LIMIT_BYTES",
+      DEFAULT_OUTPUT_LIMIT_BYTES,
+    ),
     maxTimeoutSeconds: isLambda
-      ? positiveIntegerEnv("WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS", LAMBDA_MAX_TIMEOUT_SECONDS)
-      : positiveIntegerEnv("WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS", PERSISTENT_MAX_TIMEOUT_SECONDS),
+      ? positiveIntegerEnv(
+          "WORKSPACE_SANDBOX_LAMBDA_MAX_TIMEOUT_SECONDS",
+          LAMBDA_MAX_TIMEOUT_SECONDS,
+        )
+      : positiveIntegerEnv(
+          "WORKSPACE_SANDBOX_MAX_TIMEOUT_SECONDS",
+          PERSISTENT_MAX_TIMEOUT_SECONDS,
+        ),
     ...(isLambda
-      ? { maxMemoryLimitMb: positiveIntegerEnv("WORKSPACE_SANDBOX_LAMBDA_MAX_MEMORY_LIMIT_MB", LAMBDA_MAX_MEMORY_LIMIT_MB) }
+      ? {
+          maxMemoryLimitMb: positiveIntegerEnv(
+            "WORKSPACE_SANDBOX_LAMBDA_MAX_MEMORY_LIMIT_MB",
+            LAMBDA_MAX_MEMORY_LIMIT_MB,
+          ),
+        }
       : {}),
-    maxOutputLimitBytes: positiveIntegerEnv("WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES", DEFAULT_MAX_OUTPUT_LIMIT_BYTES),
+    maxOutputLimitBytes: positiveIntegerEnv(
+      "WORKSPACE_SANDBOX_MAX_OUTPUT_LIMIT_BYTES",
+      DEFAULT_MAX_OUTPUT_LIMIT_BYTES,
+    ),
   };
 }
 

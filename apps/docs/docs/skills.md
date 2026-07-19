@@ -24,11 +24,11 @@ flowchart LR
 
 When skills are enabled, the model sees a compact skill panel in system context. The panel lists only configured skill metadata and tells the model to load the detailed instructions before using them:
 
-| Panel field | Source | Purpose |
-| --- | --- | --- |
-| `path` | `config.skills.allowed[]` | Exact value the model must pass to `load_skill` |
-| `name` | `SKILL.md` frontmatter | Human-readable skill identifier |
-| `description` | `SKILL.md` frontmatter | Routing hint for when to load the skill |
+| Panel field   | Source                    | Purpose                                         |
+| ------------- | ------------------------- | ----------------------------------------------- |
+| `path`        | `config.skills.allowed[]` | Exact value the model must pass to `load_skill` |
+| `name`        | `SKILL.md` frontmatter    | Human-readable skill identifier                 |
+| `description` | `SKILL.md` frontmatter    | Routing hint for when to load the skill         |
 
 The detailed `SKILL.md` content is not injected up front. The agent calls `load_skill` with an allowed path, and may request extra resource files from the same bundle only when `SKILL.md` references them. This S3 API path works even when Workspace or Sandbox is disabled: the skill instructions still load. Bundled helper files are executable only when the turn has a sandbox staging path.
 
@@ -167,10 +167,7 @@ Creating a skill only stores the bundle. Add the generated skill paths to the ag
 {
   "skills": {
     "enabled": true,
-    "allowed": [
-      "acct_abc123/support-flow",
-      "acct_abc123/knowledge-base"
-    ]
+    "allowed": ["acct_abc123/support-flow", "acct_abc123/knowledge-base"]
   }
 }
 ```

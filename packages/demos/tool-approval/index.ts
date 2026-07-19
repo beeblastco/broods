@@ -16,7 +16,8 @@ const conversationKey = `approval-${Date.now()}`;
 let approvalRequest: ToolApprovalRequestChunk | null = null;
 
 for await (const chunk of client.stream(api.agents.approvalAgent, {
-  input: "Search the web for the latest OpenAI model release and summarize one result.",
+  input:
+    "Search the web for the latest OpenAI model release and summarize one result.",
   conversationKey,
 })) {
   switch (chunk.type) {
@@ -39,10 +40,14 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
-      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
       break;
     case "finish":
-      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
       break;
   }
 
@@ -53,22 +58,31 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
 }
 
 if (!approvalRequest) {
-  throw new Error("Expected sync stream to include a tool-approval-request chunk");
+  throw new Error(
+    "Expected sync stream to include a tool-approval-request chunk",
+  );
 }
 
-console.log("\n\nApproving tool call:", JSON.stringify(approvalRequest, null, 2));
+console.log(
+  "\n\nApproving tool call:",
+  JSON.stringify(approvalRequest, null, 2),
+);
 
 // Second pass: respond with approval.
 for await (const chunk of client.stream(api.agents.approvalAgent, {
-  events: [{
-    role: "tool",
-    content: [{
-      type: "tool-approval-response",
-      approvalId: approvalRequest.approvalId,
-      approved: true,
-      reason: "Approved by example script",
-    }],
-  }],
+  events: [
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-approval-response",
+          approvalId: approvalRequest.approvalId,
+          approved: true,
+          reason: "Approved by example script",
+        },
+      ],
+    },
+  ],
   conversationKey,
 })) {
   switch (chunk.type) {
@@ -91,18 +105,28 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
       process.stdout.write(`\n\x1b[36m[Tool Call: ${chunk.toolName}]\x1b[0m\n`);
       break;
     case "tool-result":
-      process.stdout.write(`\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+      );
       break;
     case "finish":
-      process.stdout.write(`\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`);
+      process.stdout.write(
+        `\n\x1b[37m[Finished: ${chunk.finishReason}]\x1b[0m\n`,
+      );
       break;
   }
 }
 
-function parseToolApprovalRequestChunk(chunk: unknown): ToolApprovalRequestChunk | null {
+function parseToolApprovalRequestChunk(
+  chunk: unknown,
+): ToolApprovalRequestChunk | null {
   try {
     const parsed = chunk as unknown;
-    if (!isPlainObject(parsed) || parsed.type !== "tool-approval-request" || typeof parsed.approvalId !== "string") {
+    if (
+      !isPlainObject(parsed) ||
+      parsed.type !== "tool-approval-request" ||
+      typeof parsed.approvalId !== "string"
+    ) {
       return null;
     }
 

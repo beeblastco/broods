@@ -8,8 +8,11 @@
 
 import { createHash } from "node:crypto";
 import { isPlainObject } from "../object.ts";
-import { AGENT_HOOK_EVENT_NAMES, type AgentHookEventName } from "./agent-config.ts";
 import { inferAccountToolRuntime } from "./account-tools.ts";
+import {
+  AGENT_HOOK_EVENT_NAMES,
+  type AgentHookEventName,
+} from "./agent-config.ts";
 
 export type AccountHookStatus = "active" | "deleted";
 
@@ -75,7 +78,10 @@ export interface PublicAccountHookRecord {
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const MAX_BUNDLE_BYTES = 512 * 1024;
 
-export function normalizeAccountHookUpload(input: unknown, options: { requireBundle: boolean }): NormalizedAccountHookUpload {
+export function normalizeAccountHookUpload(
+  input: unknown,
+  options: { requireBundle: boolean },
+): NormalizedAccountHookUpload {
   if (!isPlainObject(input)) {
     throw new Error("hook upload body must be an object");
   }
@@ -109,38 +115,55 @@ export function normalizeAccountHookUpload(input: unknown, options: { requireBun
   return result as NormalizedAccountHookUpload;
 }
 
-export function normalizeCreateAccountHookInput(input: CreateAccountHookInput): CreateAccountHookInput {
+export function normalizeCreateAccountHookInput(
+  input: CreateAccountHookInput,
+): CreateAccountHookInput {
   return {
     name: normalizeHookName(input.name),
-    ...(input.description !== undefined ? { description: normalizeDescription(input.description) } : {}),
+    ...(input.description !== undefined
+      ? { description: normalizeDescription(input.description) }
+      : {}),
     events: normalizeEvents(input.events),
     bundleStorageKey: normalizeStorageKey(input.bundleStorageKey),
     sha256: normalizeSha256(input.sha256),
   };
 }
 
-export function normalizeUpdateAccountHookInput(input: UpdateAccountHookInput): UpdateAccountHookInput {
+export function normalizeUpdateAccountHookInput(
+  input: UpdateAccountHookInput,
+): UpdateAccountHookInput {
   const patch: UpdateAccountHookInput = {};
   if (input.name !== undefined) patch.name = normalizeHookName(input.name);
   if (input.description !== undefined) {
-    patch.description = input.description === null ? null : normalizeDescription(input.description);
+    patch.description =
+      input.description === null
+        ? null
+        : normalizeDescription(input.description);
   }
   if (input.events !== undefined) patch.events = normalizeEvents(input.events);
-  if (input.bundleStorageKey !== undefined) patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
+  if (input.bundleStorageKey !== undefined)
+    patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
   if (input.sha256 !== undefined) patch.sha256 = normalizeSha256(input.sha256);
   return patch;
 }
 
-export function accountHookBundleStorageKey(accountId: string, sha256: string): string {
+export function accountHookBundleStorageKey(
+  accountId: string,
+  sha256: string,
+): string {
   return `account-hooks/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
 }
 
-export function toPublicAccountHook(record: AccountHookRecord): PublicAccountHookRecord {
+export function toPublicAccountHook(
+  record: AccountHookRecord,
+): PublicAccountHookRecord {
   return {
     accountId: record.accountId,
     hookId: record.hookId,
     name: record.name,
-    ...(record.description !== undefined ? { description: record.description } : {}),
+    ...(record.description !== undefined
+      ? { description: record.description }
+      : {}),
     events: record.events,
     sha256: record.sha256,
     status: record.status,
@@ -156,7 +179,9 @@ function normalizeHookName(value: unknown): string {
   }
   const name = value.trim();
   if (!HOOK_NAME_PATTERN.test(name)) {
-    throw new Error("hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens");
+    throw new Error(
+      "hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+    );
   }
   return name;
 }
@@ -174,8 +199,13 @@ function normalizeEvents(value: unknown): AgentHookEventName[] {
   }
   const events: AgentHookEventName[] = [];
   for (const event of value) {
-    if (typeof event !== "string" || !AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)) {
-      throw new Error(`hook.events must contain only: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`);
+    if (
+      typeof event !== "string" ||
+      !AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)
+    ) {
+      throw new Error(
+        `hook.events must contain only: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
+      );
     }
     if (!events.includes(event as AgentHookEventName)) {
       events.push(event as AgentHookEventName);
@@ -195,7 +225,9 @@ function normalizeBundle(value: unknown): string {
   // the custom-tool tier scan: anything that would need the sandbox tier
   // (node:/npm/require/process) is rejected outright.
   if (inferAccountToolRuntime(value) === "sandbox") {
-    throw new Error("hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed");
+    throw new Error(
+      "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
+    );
   }
   return value;
 }

@@ -7,14 +7,14 @@
  */
 
 import {
-    copyS3Object,
-    deleteS3Object,
-    deleteS3Prefix,
-    ensureS3DirectoryMarkers,
-    getS3ObjectUrl,
-    listS3Prefix,
-    s3ObjectExists,
-    writeS3Object,
+  copyS3Object,
+  deleteS3Object,
+  deleteS3Prefix,
+  ensureS3DirectoryMarkers,
+  getS3ObjectUrl,
+  listS3Prefix,
+  s3ObjectExists,
+  writeS3Object,
 } from "./s3";
 import { workspaceNamespace } from "./workspaceRules";
 
@@ -24,11 +24,11 @@ export const MAX_WORKSPACE_FILE_BYTES = 512 * 1024;
  * One listed workspace file or synthesized folder entry.
  */
 export interface WorkspaceFileEntry {
-    path: string;
-    name: string;
-    isFolder: boolean;
-    sizeBytes?: number;
-    updatedAt?: string;
+  path: string;
+  name: string;
+  isFolder: boolean;
+  sizeBytes?: number;
+  updatedAt?: string;
 }
 
 /**
@@ -37,34 +37,39 @@ export interface WorkspaceFileEntry {
  * @param workspaceId the workspace config id
  * @returns files plus synthesized parent folders
  */
-export async function listWorkspaceFiles(accountId: string, workspaceId: string): Promise<WorkspaceFileEntry[]> {
-    const prefix = await workspacePrefix(accountId, workspaceId);
-    const objects = await listS3Prefix(filesystemBucketName(), `${prefix}/`);
-    const entries = new Map<string, WorkspaceFileEntry>();
+export async function listWorkspaceFiles(
+  accountId: string,
+  workspaceId: string,
+): Promise<WorkspaceFileEntry[]> {
+  const prefix = await workspacePrefix(accountId, workspaceId);
+  const objects = await listS3Prefix(filesystemBucketName(), `${prefix}/`);
+  const entries = new Map<string, WorkspaceFileEntry>();
 
-    for (const object of objects) {
-        const path = object.key.slice(prefix.length + 1).replace(/\/$/, "");
-        if (!path) continue;
-        const parts = path.split("/");
-        for (let index = 1; index < parts.length; index += 1) {
-            const folderPath = parts.slice(0, index).join("/");
-            entries.set(folderPath, {
-                path: folderPath,
-                name: parts[index - 1]!,
-                isFolder: true,
-            });
-        }
-        const isFolder = object.key.endsWith("/");
-        entries.set(path, {
-            path: path,
-            name: parts[parts.length - 1]!,
-            isFolder: isFolder,
-            ...(isFolder || object.size === undefined ? {} : { sizeBytes: object.size }),
-            ...(object.lastModified ? { updatedAt: object.lastModified } : {}),
-        });
+  for (const object of objects) {
+    const path = object.key.slice(prefix.length + 1).replace(/\/$/, "");
+    if (!path) continue;
+    const parts = path.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      const folderPath = parts.slice(0, index).join("/");
+      entries.set(folderPath, {
+        path: folderPath,
+        name: parts[index - 1]!,
+        isFolder: true,
+      });
     }
+    const isFolder = object.key.endsWith("/");
+    entries.set(path, {
+      path: path,
+      name: parts[parts.length - 1]!,
+      isFolder: isFolder,
+      ...(isFolder || object.size === undefined
+        ? {}
+        : { sizeBytes: object.size }),
+      ...(object.lastModified ? { updatedAt: object.lastModified } : {}),
+    });
+  }
 
-    return [...entries.values()];
+  return [...entries.values()];
 }
 
 /**
@@ -76,26 +81,30 @@ export async function listWorkspaceFiles(accountId: string, workspaceId: string)
  * @throws when the path is invalid or the file exceeds the size limit
  */
 export async function uploadWorkspaceFile(
-    accountId: string,
-    workspaceId: string,
-    input: { path: unknown; contentBase64: unknown; contentType?: unknown },
+  accountId: string,
+  workspaceId: string,
+  input: { path: unknown; contentBase64: unknown; contentType?: unknown },
 ): Promise<WorkspaceFileEntry> {
-    const path = normalizeFilePath(input.path);
-    if (typeof input.contentBase64 !== "string") throw new Error("contentBase64 is required");
-    const content = Buffer.from(input.contentBase64, "base64");
-    if (content.byteLength > MAX_WORKSPACE_FILE_BYTES) throw new Error("Workspace uploads must not exceed 512 KiB");
-    const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
-    await ensureS3DirectoryMarkers(filesystemBucketName(), key);
-    await writeS3Object(filesystemBucketName(), key, content, {
-        ...(typeof input.contentType === "string" && input.contentType ? { contentType: input.contentType } : {}),
-    });
+  const path = normalizeFilePath(input.path);
+  if (typeof input.contentBase64 !== "string")
+    throw new Error("contentBase64 is required");
+  const content = Buffer.from(input.contentBase64, "base64");
+  if (content.byteLength > MAX_WORKSPACE_FILE_BYTES)
+    throw new Error("Workspace uploads must not exceed 512 KiB");
+  const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
+  await ensureS3DirectoryMarkers(filesystemBucketName(), key);
+  await writeS3Object(filesystemBucketName(), key, content, {
+    ...(typeof input.contentType === "string" && input.contentType
+      ? { contentType: input.contentType }
+      : {}),
+  });
 
-    return {
-        path: path,
-        name: path.split("/").at(-1)!,
-        isFolder: false,
-        sizeBytes: content.byteLength,
-    };
+  return {
+    path: path,
+    name: path.split("/").at(-1)!,
+    isFolder: false,
+    sizeBytes: content.byteLength,
+  };
 }
 
 /**
@@ -106,12 +115,17 @@ export async function uploadWorkspaceFile(
  * @returns a presigned S3 GET URL
  * @throws when the file does not exist
  */
-export async function workspaceFileDownloadUrl(accountId: string, workspaceId: string, rawPath: unknown): Promise<string> {
-    const path = normalizeFilePath(rawPath);
-    const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
-    if (!await s3ObjectExists(filesystemBucketName(), key)) throw new Error("Workspace file not found");
+export async function workspaceFileDownloadUrl(
+  accountId: string,
+  workspaceId: string,
+  rawPath: unknown,
+): Promise<string> {
+  const path = normalizeFilePath(rawPath);
+  const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
+  if (!(await s3ObjectExists(filesystemBucketName(), key)))
+    throw new Error("Workspace file not found");
 
-    return await getS3ObjectUrl(filesystemBucketName(), key);
+  return await getS3ObjectUrl(filesystemBucketName(), key);
 }
 
 /**
@@ -121,17 +135,21 @@ export async function workspaceFileDownloadUrl(accountId: string, workspaceId: s
  * @param rawPath the file or folder path
  * @returns the number of objects deleted
  */
-export async function deleteWorkspacePath(accountId: string, workspaceId: string, rawPath: unknown): Promise<number> {
-    const path = normalizeFilePath(rawPath);
-    const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
-    const descendants = await deleteS3Prefix(filesystemBucketName(), `${key}/`);
-    if (await s3ObjectExists(filesystemBucketName(), key)) {
-        await deleteS3Object(filesystemBucketName(), key);
+export async function deleteWorkspacePath(
+  accountId: string,
+  workspaceId: string,
+  rawPath: unknown,
+): Promise<number> {
+  const path = normalizeFilePath(rawPath);
+  const key = `${await workspacePrefix(accountId, workspaceId)}/${path}`;
+  const descendants = await deleteS3Prefix(filesystemBucketName(), `${key}/`);
+  if (await s3ObjectExists(filesystemBucketName(), key)) {
+    await deleteS3Object(filesystemBucketName(), key);
 
-        return descendants + 1;
-    }
+    return descendants + 1;
+  }
 
-    return descendants;
+  return descendants;
 }
 
 /**
@@ -140,8 +158,14 @@ export async function deleteWorkspacePath(accountId: string, workspaceId: string
  * @param workspaceId workspace config id
  * @returns the number of objects deleted
  */
-export async function purgeWorkspaceFilesystem(accountId: string, workspaceId: string): Promise<number> {
-    return await deleteS3Prefix(filesystemBucketName(), await workspacePrefix(accountId, workspaceId));
+export async function purgeWorkspaceFilesystem(
+  accountId: string,
+  workspaceId: string,
+): Promise<number> {
+  return await deleteS3Prefix(
+    filesystemBucketName(),
+    await workspacePrefix(accountId, workspaceId),
+  );
 }
 
 /**
@@ -154,34 +178,53 @@ export async function purgeWorkspaceFilesystem(accountId: string, workspaceId: s
  * @throws when the source is missing or the destination is inside the source
  */
 export async function renameWorkspacePath(
-    accountId: string,
-    workspaceId: string,
-    rawPath: unknown,
-    rawNewPath: unknown,
+  accountId: string,
+  workspaceId: string,
+  rawPath: unknown,
+  rawNewPath: unknown,
 ): Promise<number> {
-    const path = normalizeFilePath(rawPath);
-    const newPath = normalizeFilePath(rawNewPath);
-    if (newPath === path || newPath.startsWith(`${path}/`)) throw new Error("Invalid destination path");
-    const prefix = await workspacePrefix(accountId, workspaceId);
-    const sourceKey = `${prefix}/${path}`;
-    const destinationKey = `${prefix}/${newPath}`;
-    const exact = await s3ObjectExists(filesystemBucketName(), sourceKey);
-    const descendants = await listS3Prefix(filesystemBucketName(), `${sourceKey}/`);
-    if (!exact && descendants.length === 0) throw new Error("Workspace path not found");
+  const path = normalizeFilePath(rawPath);
+  const newPath = normalizeFilePath(rawNewPath);
+  if (newPath === path || newPath.startsWith(`${path}/`))
+    throw new Error("Invalid destination path");
+  const prefix = await workspacePrefix(accountId, workspaceId);
+  const sourceKey = `${prefix}/${path}`;
+  const destinationKey = `${prefix}/${newPath}`;
+  const exact = await s3ObjectExists(filesystemBucketName(), sourceKey);
+  const descendants = await listS3Prefix(
+    filesystemBucketName(),
+    `${sourceKey}/`,
+  );
+  if (!exact && descendants.length === 0)
+    throw new Error("Workspace path not found");
 
-    if (exact) {
-        await ensureS3DirectoryMarkers(filesystemBucketName(), destinationKey);
-        await copyS3Object(filesystemBucketName(), sourceKey, filesystemBucketName(), destinationKey);
-    }
-    for (const object of descendants) {
-        const target = `${destinationKey}${object.key.slice(sourceKey.length)}`;
-        await ensureS3DirectoryMarkers(filesystemBucketName(), target);
-        await copyS3Object(filesystemBucketName(), object.key, filesystemBucketName(), target);
-    }
-    await Promise.all(descendants.map((object) => deleteS3Object(filesystemBucketName(), object.key)));
-    if (exact) await deleteS3Object(filesystemBucketName(), sourceKey);
+  if (exact) {
+    await ensureS3DirectoryMarkers(filesystemBucketName(), destinationKey);
+    await copyS3Object(
+      filesystemBucketName(),
+      sourceKey,
+      filesystemBucketName(),
+      destinationKey,
+    );
+  }
+  for (const object of descendants) {
+    const target = `${destinationKey}${object.key.slice(sourceKey.length)}`;
+    await ensureS3DirectoryMarkers(filesystemBucketName(), target);
+    await copyS3Object(
+      filesystemBucketName(),
+      object.key,
+      filesystemBucketName(),
+      target,
+    );
+  }
+  await Promise.all(
+    descendants.map((object) =>
+      deleteS3Object(filesystemBucketName(), object.key),
+    ),
+  );
+  if (exact) await deleteS3Object(filesystemBucketName(), sourceKey);
 
-    return descendants.length + (exact ? 1 : 0);
+  return descendants.length + (exact ? 1 : 0);
 }
 
 /**
@@ -192,8 +235,11 @@ export async function renameWorkspacePath(
  * @param workspaceId the workspace config id
  * @returns the `fs-…` namespace prefix
  */
-async function workspacePrefix(accountId: string, workspaceId: string): Promise<string> {
-    return await workspaceNamespace(accountId, workspaceId);
+async function workspacePrefix(
+  accountId: string,
+  workspaceId: string,
+): Promise<string> {
+  return await workspaceNamespace(accountId, workspaceId);
 }
 
 /**
@@ -203,14 +249,19 @@ async function workspacePrefix(accountId: string, workspaceId: string): Promise<
  * @throws when the path is empty or contains traversal segments
  */
 export function normalizeFilePath(value: unknown): string {
-    if (typeof value !== "string") throw new Error("path is required");
-    const path = value.trim().replace(/^\/+|\/+$/g, "");
-    const parts = path.split("/");
-    if (!path || parts.some((part) => !part || part === "." || part === ".." || part.includes("\\"))) {
-        throw new Error("Invalid workspace path");
-    }
+  if (typeof value !== "string") throw new Error("path is required");
+  const path = value.trim().replace(/^\/+|\/+$/g, "");
+  const parts = path.split("/");
+  if (
+    !path ||
+    parts.some(
+      (part) => !part || part === "." || part === ".." || part.includes("\\"),
+    )
+  ) {
+    throw new Error("Invalid workspace path");
+  }
 
-    return parts.join("/");
+  return parts.join("/");
 }
 
 /**
@@ -219,8 +270,11 @@ export function normalizeFilePath(value: unknown): string {
  * @throws when FILESYSTEM_BUCKET_NAME is not configured
  */
 export function filesystemBucketName(): string {
-    const bucket = process.env.FILESYSTEM_BUCKET_NAME;
-    if (!bucket) throw new Error("FILESYSTEM_BUCKET_NAME is required to manage workspace files");
+  const bucket = process.env.FILESYSTEM_BUCKET_NAME;
+  if (!bucket)
+    throw new Error(
+      "FILESYSTEM_BUCKET_NAME is required to manage workspace files",
+    );
 
-    return bucket;
+  return bucket;
 }

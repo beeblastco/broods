@@ -2,8 +2,11 @@
 
 /** Usage panel: live Convex usage rollups — tokens, activity, and compute — as charts and tables. */
 import { Section } from "@/app/components/Section";
+import {
+  useObservabilityStream,
+  type ObservabilitySpanRow,
+} from "@/app/hooks/useObservabilityStream";
 import { cn } from "@/app/lib/utils";
-import { useObservabilityStream, type ObservabilitySpanRow } from "@/app/hooks/useObservabilityStream";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { estimateModelTokenCost } from "@broods/convex/modelPricing";
@@ -105,16 +108,30 @@ function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   const totals = { ...EMPTY_LIVE_OVERLAY };
   totals.invocations = runningRoots.length;
   for (const root of runningRoots) {
-    totals.agentSandboxCpuUsec += numericAttribute(root, "sandbox.cpu_usec.role.agent");
-    totals.toolSandboxCpuUsec += numericAttribute(root, "sandbox.cpu_usec.role.tool");
+    totals.agentSandboxCpuUsec += numericAttribute(
+      root,
+      "sandbox.cpu_usec.role.agent",
+    );
+    totals.toolSandboxCpuUsec += numericAttribute(
+      root,
+      "sandbox.cpu_usec.role.tool",
+    );
   }
   for (const span of spans) {
-    if (span.kind !== "model.step" || !span.parentSpanId || !runningRootSpanIds.has(span.parentSpanId)) continue;
+    if (
+      span.kind !== "model.step" ||
+      !span.parentSpanId ||
+      !runningRootSpanIds.has(span.parentSpanId)
+    )
+      continue;
     totals.modelCalls += 1;
     totals.inputTokens += numericAttribute(span, "model.input_tokens");
     totals.outputTokens += numericAttribute(span, "model.output_tokens");
     totals.reasoningTokens += numericAttribute(span, "model.reasoning_tokens");
-    totals.cachedInputTokens += numericAttribute(span, "model.cached_input_tokens");
+    totals.cachedInputTokens += numericAttribute(
+      span,
+      "model.cached_input_tokens",
+    );
   }
 
   return totals;
@@ -129,13 +146,14 @@ const RANGE_OPTIONS: Array<{ id: Range; label: string }> = [
   { id: "1y", label: "1y" },
 ];
 
-const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> = [
-  { key: "inputTokens", label: "Input", color: "#60a5fa" },
-  { key: "outputTokens", label: "Output", color: "#34d399" },
-  { key: "reasoningTokens", label: "Reasoning", color: "#a78bfa" },
-  { key: "cachedInputTokens", label: "Cache read", color: "#fbbf24" },
-  { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
-];
+const TOKEN_SERIES: Array<{ key: keyof Bucket; label: string; color: string }> =
+  [
+    { key: "inputTokens", label: "Input", color: "#60a5fa" },
+    { key: "outputTokens", label: "Output", color: "#34d399" },
+    { key: "reasoningTokens", label: "Reasoning", color: "#a78bfa" },
+    { key: "cachedInputTokens", label: "Cache read", color: "#fbbf24" },
+    { key: "cacheWriteTokens", label: "Cache write", color: "#fb7185" },
+  ];
 
 // Sandbox CPU split: agent's own sandbox vs user-uploaded tool sandboxes.
 const SANDBOX_CPU_SERIES: Array<{
@@ -288,7 +306,9 @@ function fillBucketsAcrossRange(
   const binMs = binSeconds * 1000;
   const endMs = Math.ceil(now / binMs) * binMs;
   const startMs = endMs - rangeSeconds * 1000;
-  const indexed = new Map(merged.map((b) => [Math.floor(b.bucketStart / binMs) * binMs, b]));
+  const indexed = new Map(
+    merged.map((b) => [Math.floor(b.bucketStart / binMs) * binMs, b]),
+  );
   const out: ReturnType<typeof mergeByBucket> = [];
   for (let t = startMs; t < endMs; t += binMs) {
     const existing = indexed.get(t);
@@ -352,7 +372,15 @@ interface StackedBarChartProps {
  * Floating tooltip that hovers above a chart bar. Positioned in container-
  * relative coordinates so it follows the bar regardless of chart width.
  */
-function ChartTooltip({ xPct, yPct, children }: { xPct: number; yPct: number; children: React.ReactNode }) {
+function ChartTooltip({
+  xPct,
+  yPct,
+  children,
+}: {
+  xPct: number;
+  yPct: number;
+  children: React.ReactNode;
+}) {
   return (
     <div
       className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-border bg-popover/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur"
@@ -382,18 +410,34 @@ function StackedBarChart({
   const { ref: containerRef, fontSize } = useChartFontSize(width, 9);
 
   const binTotal = (b: ReturnType<typeof mergeByBucket>[number]): number =>
-    total ? total(b) : series.reduce((sum, s) => sum + (b[s.key as keyof typeof b] as number), 0);
+    total
+      ? total(b)
+      : series.reduce(
+          (sum, s) => sum + (b[s.key as keyof typeof b] as number),
+          0,
+        );
 
   const maxTotal = Math.max(...bins.map(binTotal), 1);
   const barW = innerW / bins.length;
   const gap = Math.min(2, barW * 0.2);
   const hovered = hoverIndex !== null ? bins[hoverIndex] : null;
-  const hoveredCenterPct = hoverIndex !== null ? ((padding.left + barW * hoverIndex + barW / 2) / width) * 100 : 0;
-  const hoveredTopPct = hovered ? ((padding.top + innerH - (binTotal(hovered) / maxTotal) * innerH) / height) * 100 : 0;
+  const hoveredCenterPct =
+    hoverIndex !== null
+      ? ((padding.left + barW * hoverIndex + barW / 2) / width) * 100
+      : 0;
+  const hoveredTopPct = hovered
+    ? ((padding.top + innerH - (binTotal(hovered) / maxTotal) * innerH) /
+        height) *
+      100
+    : 0;
 
   return (
     <div className="relative" ref={containerRef}>
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-auto"
+        onMouseLeave={() => setHoverIndex(null)}
+      >
         {/* Y-axis ticks */}
         {[0, 0.25, 0.5, 0.75, 1].map((t, i) => {
           const y = padding.top + innerH * (1 - t);
@@ -431,9 +475,19 @@ function StackedBarChart({
           const isHover = hoverIndex === i;
 
           return (
-            <g key={b.bucketStart} onMouseEnter={() => setHoverIndex(i)} style={{ cursor: "pointer" }}>
+            <g
+              key={b.bucketStart}
+              onMouseEnter={() => setHoverIndex(i)}
+              style={{ cursor: "pointer" }}
+            >
               {/* Full-height invisible hit target so empty space above the stack is also hoverable */}
-              <rect x={padding.left + barW * i} y={padding.top} width={barW} height={innerH} fill="transparent" />
+              <rect
+                x={padding.left + barW * i}
+                y={padding.top}
+                width={barW}
+                height={innerH}
+                fill="transparent"
+              />
               {series.map((s) => {
                 const value = b[s.key as keyof typeof b] as number;
                 if (!value) return null;
@@ -479,14 +533,22 @@ function StackedBarChart({
 
       {hovered && (
         <ChartTooltip xPct={hoveredCenterPct} yPct={hoveredTopPct}>
-          <div className="font-medium tabular-nums">{formatBucketLabel(hovered.bucketStart, binSeconds)}</div>
+          <div className="font-medium tabular-nums">
+            {formatBucketLabel(hovered.bucketStart, binSeconds)}
+          </div>
           <div className="mt-1 grid gap-0.5">
             {series.map((s) => {
               const value = hovered[s.key as keyof typeof hovered] as number;
               return (
-                <div key={s.key as string} className="flex items-center justify-between gap-3">
+                <div
+                  key={s.key as string}
+                  className="flex items-center justify-between gap-3"
+                >
                   <span className="flex items-center gap-1.5 text-muted-foreground">
-                    <span className="size-2 rounded-sm" style={{ backgroundColor: s.color }} />
+                    <span
+                      className="size-2 rounded-sm"
+                      style={{ backgroundColor: s.color }}
+                    />
                     {s.label}
                   </span>
                   <span className="tabular-nums">{formatValue(value)}</span>
@@ -495,7 +557,9 @@ function StackedBarChart({
             })}
             <div className="mt-0.5 flex items-center justify-between gap-3 border-t border-border/60 pt-0.5 font-medium">
               <span className="text-muted-foreground">{totalLabel}</span>
-              <span className="tabular-nums">{formatValue(binTotal(hovered))}</span>
+              <span className="tabular-nums">
+                {formatValue(binTotal(hovered))}
+              </span>
             </div>
           </div>
         </ChartTooltip>
@@ -519,18 +583,32 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const { ref: containerRef, fontSize } = useChartFontSize(width, 9);
 
-  const maxVal = Math.max(...bins.map((b) => Math.max(b.invocations, b.modelCalls)), 1);
+  const maxVal = Math.max(
+    ...bins.map((b) => Math.max(b.invocations, b.modelCalls)),
+    1,
+  );
   const slot = innerW / bins.length;
   const barW = Math.max((slot - 4) / 2, 1);
   const hovered = hoverIndex !== null ? bins[hoverIndex] : null;
-  const hoveredCenterPct = hoverIndex !== null ? ((padding.left + slot * hoverIndex + slot / 2) / width) * 100 : 0;
+  const hoveredCenterPct =
+    hoverIndex !== null
+      ? ((padding.left + slot * hoverIndex + slot / 2) / width) * 100
+      : 0;
   const hoveredTopPct = hovered
-    ? ((padding.top + innerH - (Math.max(hovered.invocations, hovered.modelCalls) / maxVal) * innerH) / height) * 100
+    ? ((padding.top +
+        innerH -
+        (Math.max(hovered.invocations, hovered.modelCalls) / maxVal) * innerH) /
+        height) *
+      100
     : 0;
 
   return (
     <div className="relative" ref={containerRef}>
-      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto" onMouseLeave={() => setHoverIndex(null)}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-auto"
+        onMouseLeave={() => setHoverIndex(null)}
+      >
         {[0, 0.5, 1].map((t, i) => {
           const y = padding.top + innerH * (1 - t);
 
@@ -565,8 +643,18 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
           const isHover = hoverIndex === i;
 
           return (
-            <g key={b.bucketStart} onMouseEnter={() => setHoverIndex(i)} style={{ cursor: "pointer" }}>
-              <rect x={padding.left + slot * i} y={padding.top} width={slot} height={innerH} fill="transparent" />
+            <g
+              key={b.bucketStart}
+              onMouseEnter={() => setHoverIndex(i)}
+              style={{ cursor: "pointer" }}
+            >
+              <rect
+                x={padding.left + slot * i}
+                y={padding.top}
+                width={slot}
+                height={innerH}
+                fill="transparent"
+              />
               <rect
                 x={x}
                 y={padding.top + innerH - hTasks}
@@ -609,21 +697,33 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
 
       {hovered && (
         <ChartTooltip xPct={hoveredCenterPct} yPct={hoveredTopPct}>
-          <div className="font-medium tabular-nums">{formatBucketLabel(hovered.bucketStart, binSeconds)}</div>
+          <div className="font-medium tabular-nums">
+            {formatBucketLabel(hovered.bucketStart, binSeconds)}
+          </div>
           <div className="mt-1 grid gap-0.5">
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="size-2 rounded-sm" style={{ backgroundColor: "#22d3ee" }} />
+                <span
+                  className="size-2 rounded-sm"
+                  style={{ backgroundColor: "#22d3ee" }}
+                />
                 Tasks
               </span>
-              <span className="tabular-nums">{hovered.invocations.toLocaleString()}</span>
+              <span className="tabular-nums">
+                {hovered.invocations.toLocaleString()}
+              </span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <span className="size-2 rounded-sm" style={{ backgroundColor: "#f472b6" }} />
+                <span
+                  className="size-2 rounded-sm"
+                  style={{ backgroundColor: "#f472b6" }}
+                />
                 Model calls
               </span>
-              <span className="tabular-nums">{hovered.modelCalls.toLocaleString()}</span>
+              <span className="tabular-nums">
+                {hovered.modelCalls.toLocaleString()}
+              </span>
             </div>
           </div>
         </ChartTooltip>
@@ -633,11 +733,22 @@ function InvocationsChart({ bins, binSeconds }: InvocationsChartProps) {
 }
 
 /** Single labelled compute metric with a colour swatch. */
-function ComputeTile({ label, value, color }: { label: string; value: string; color: string }) {
+function ComputeTile({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color: string;
+}) {
   return (
     <div className="rounded-lg px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span className="size-2.5 rounded-sm" style={{ backgroundColor: color }} />
+        <span
+          className="size-2.5 rounded-sm"
+          style={{ backgroundColor: color }}
+        />
         {label}
       </div>
       <div className="mt-1 text-lg font-semibold tabular-nums">{value}</div>
@@ -645,7 +756,13 @@ function ComputeTile({ label, value, color }: { label: string; value: string; co
   );
 }
 
-export function TokensUsagePanel({ projectId, environmentId, projectSlug, environmentSlug, apiKey }: Props) {
+export function TokensUsagePanel({
+  projectId,
+  environmentId,
+  projectSlug,
+  environmentSlug,
+  apiKey,
+}: Props) {
   const [range, setRange] = useState<Range>("1h");
 
   // Reactive subscription: usage totals update live as the harness meters tokens.
@@ -667,7 +784,10 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
     apiKey: apiKey,
     backfill: 30,
   });
-  const liveOverlay = useMemo(() => liveOverlayFromTraces(liveSpans), [liveSpans]);
+  const liveOverlay = useMemo(
+    () => liveOverlayFromTraces(liveSpans),
+    [liveSpans],
+  );
   const isStreamingLive = liveOverlay.invocations > 0;
 
   // Always span the window with zero-filled bins — even before the first query
@@ -675,7 +795,11 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
   const binSeconds = stats?.binSeconds ?? RANGE_BIN_SECONDS[range];
   const bins = useMemo(() => {
     const merged = stats ? mergeByBucket(stats.buckets) : [];
-    const filled = fillBucketsAcrossRange(merged, binSeconds, RANGE_SECONDS[range]);
+    const filled = fillBucketsAcrossRange(
+      merged,
+      binSeconds,
+      RANGE_SECONDS[range],
+    );
     // Fold in-progress tokens, task/model counts, and sandbox CPU into the most
     // recent bin so every chart (tokens, tasks & model calls, compute) grows live.
     if (filled.length > 0 && liveOverlay.invocations > 0) {
@@ -685,28 +809,47 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
         inputTokens: last.inputTokens + liveOverlay.inputTokens,
         outputTokens: last.outputTokens + liveOverlay.outputTokens,
         reasoningTokens: last.reasoningTokens + liveOverlay.reasoningTokens,
-        cachedInputTokens: last.cachedInputTokens + liveOverlay.cachedInputTokens,
-        totalTokens: last.totalTokens + liveOverlay.inputTokens + liveOverlay.outputTokens + liveOverlay.reasoningTokens,
+        cachedInputTokens:
+          last.cachedInputTokens + liveOverlay.cachedInputTokens,
+        totalTokens:
+          last.totalTokens +
+          liveOverlay.inputTokens +
+          liveOverlay.outputTokens +
+          liveOverlay.reasoningTokens,
         invocations: last.invocations + liveOverlay.invocations,
         modelCalls: last.modelCalls + liveOverlay.modelCalls,
-        agentSandboxCpuUsec: last.agentSandboxCpuUsec + liveOverlay.agentSandboxCpuUsec,
-        toolSandboxCpuUsec: last.toolSandboxCpuUsec + liveOverlay.toolSandboxCpuUsec,
+        agentSandboxCpuUsec:
+          last.agentSandboxCpuUsec + liveOverlay.agentSandboxCpuUsec,
+        toolSandboxCpuUsec:
+          last.toolSandboxCpuUsec + liveOverlay.toolSandboxCpuUsec,
       };
     }
 
     return filled;
   }, [stats, binSeconds, range, liveOverlay]);
-  const byModel = useMemo(() => (stats ? aggregateByModel(stats.buckets) : []), [stats]);
+  const byModel = useMemo(
+    () => (stats ? aggregateByModel(stats.buckets) : []),
+    [stats],
+  );
   const pricedByModel = useMemo(
     () =>
       byModel.map((model) => ({
         ...model,
-        estimatedCost: estimateModelTokenCost(model.modelProvider, model.modelId, model),
+        estimatedCost: estimateModelTokenCost(
+          model.modelProvider,
+          model.modelId,
+          model,
+        ),
       })),
     [byModel],
   );
-  const estimatedCost = pricedByModel.reduce((total, model) => total + (model.estimatedCost?.total ?? 0), 0);
-  const unpricedModels = pricedByModel.filter((model) => model.estimatedCost === null).length;
+  const estimatedCost = pricedByModel.reduce(
+    (total, model) => total + (model.estimatedCost?.total ?? 0),
+    0,
+  );
+  const unpricedModels = pricedByModel.filter(
+    (model) => model.estimatedCost === null,
+  ).length;
   const compute = stats?.totals;
 
   return (
@@ -725,7 +868,9 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
                 onClick={() => setRange(opt.id)}
                 className={cn(
                   "px-2.5 py-1 text-xs rounded cursor-pointer transition-colors",
-                  range === opt.id ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+                  range === opt.id
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {opt.label}
@@ -733,23 +878,40 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
             ))}
           </div>
           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <RefreshCw className={`size-3.5 ${isFetching || isStreamingLive ? "animate-spin" : ""}`} />
-            {isFetching ? "Connecting…" : isStreamingLive ? "Streaming" : "Live"}
+            <RefreshCw
+              className={`size-3.5 ${isFetching || isStreamingLive ? "animate-spin" : ""}`}
+            />
+            {isFetching
+              ? "Connecting…"
+              : isStreamingLive
+                ? "Streaming"
+                : "Live"}
           </span>
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <ComputeTile label="Estimated token cost" value={formatUsd(estimatedCost)} color="#34d399" />
+          <ComputeTile
+            label="Estimated token cost"
+            value={formatUsd(estimatedCost)}
+            color="#34d399"
+          />
           <ComputeTile
             label="Cache read"
-            value={formatNumber((stats?.totals.cachedInputTokens ?? 0) + liveOverlay.cachedInputTokens)}
+            value={formatNumber(
+              (stats?.totals.cachedInputTokens ?? 0) +
+                liveOverlay.cachedInputTokens,
+            )}
             color="#fbbf24"
           />
-          <ComputeTile label="Cache write" value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)} color="#fb7185" />
+          <ComputeTile
+            label="Cache write"
+            value={formatNumber(stats?.totals.cacheWriteTokens ?? 0)}
+            color="#fb7185"
+          />
         </div>
         {unpricedModels > 0 && (
           <p className="mt-2 text-xs text-muted-foreground">
-            {unpricedModels} model{unpricedModels === 1 ? " is" : "s are"} not included in the estimate because no
-            standard rate is configured.
+            {unpricedModels} model{unpricedModels === 1 ? " is" : "s are"} not
+            included in the estimate because no standard rate is configured.
           </p>
         )}
       </Section>
@@ -759,11 +921,22 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
         description="Stacked: input, output, reasoning, cache reads, and cache writes."
       >
         <div className="rounded-lg border border-border bg-card p-3">
-          <StackedBarChart bins={bins} binSeconds={binSeconds} series={TOKEN_SERIES} total={(b) => b.totalTokens} />
+          <StackedBarChart
+            bins={bins}
+            binSeconds={binSeconds}
+            series={TOKEN_SERIES}
+            total={(b) => b.totalTokens}
+          />
           <div className="flex flex-wrap gap-3 pt-2 pl-1">
             {TOKEN_SERIES.map((s) => (
-              <div key={s.key as string} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="size-2.5 rounded-sm" style={{ backgroundColor: s.color }} />
+              <div
+                key={s.key as string}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  className="size-2.5 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
                 {s.label}
               </div>
             ))}
@@ -779,11 +952,17 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
           <InvocationsChart bins={bins} binSeconds={binSeconds} />
           <div className="flex flex-wrap gap-3 pt-2 pl-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="size-2.5 rounded-sm" style={{ backgroundColor: "#22d3ee" }} />
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ backgroundColor: "#22d3ee" }}
+              />
               Tasks
             </div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="size-2.5 rounded-sm" style={{ backgroundColor: "#f472b6" }} />
+              <span
+                className="size-2.5 rounded-sm"
+                style={{ backgroundColor: "#f472b6" }}
+              />
               Model calls
             </div>
           </div>
@@ -795,15 +974,25 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
         description="Harness runtime time and sandbox CPU — agent sandbox vs user-uploaded tool sandbox."
       >
         <div className="mb-4 grid grid-cols-3 gap-3">
-          <ComputeTile label="Runtime" value={formatMs(compute?.runtimeWallMs ?? 0)} color="#818cf8" />
+          <ComputeTile
+            label="Runtime"
+            value={formatMs(compute?.runtimeWallMs ?? 0)}
+            color="#818cf8"
+          />
           <ComputeTile
             label="Agent sandbox CPU"
-            value={formatCpuUsec((compute?.agentSandboxCpuUsec ?? 0) + liveOverlay.agentSandboxCpuUsec)}
+            value={formatCpuUsec(
+              (compute?.agentSandboxCpuUsec ?? 0) +
+                liveOverlay.agentSandboxCpuUsec,
+            )}
             color="#2dd4bf"
           />
           <ComputeTile
             label="Tool sandbox CPU"
-            value={formatCpuUsec((compute?.toolSandboxCpuUsec ?? 0) + liveOverlay.toolSandboxCpuUsec)}
+            value={formatCpuUsec(
+              (compute?.toolSandboxCpuUsec ?? 0) +
+                liveOverlay.toolSandboxCpuUsec,
+            )}
             color="#fb923c"
           />
         </div>
@@ -818,8 +1007,14 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
           />
           <div className="flex flex-wrap gap-3 pt-2 pl-1">
             {SANDBOX_CPU_SERIES.map((s) => (
-              <div key={s.key as string} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="size-2.5 rounded-sm" style={{ backgroundColor: s.color }} />
+              <div
+                key={s.key as string}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
+                <span
+                  className="size-2.5 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
                 {s.label}
               </div>
             ))}
@@ -827,46 +1022,94 @@ export function TokensUsagePanel({ projectId, environmentId, projectSlug, enviro
         </div>
       </Section>
 
-      <Section title="By model & provider" description="Per-(provider, model) totals over the selected window.">
+      <Section
+        title="By model & provider"
+        description="Per-(provider, model) totals over the selected window."
+      >
         <div className="rounded-lg border border-border bg-card overflow-x-auto">
           <table className="w-full min-w-170 text-xs">
             <thead>
               <tr className="text-left text-muted-foreground border-b border-border">
-                <th className="px-3 py-2 font-medium whitespace-nowrap">Provider</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap">Model</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Input</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Output</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Reasoning</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Cache read</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Cache write</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Total</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Tasks</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Calls</th>
-                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">Est. cost</th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap">
+                  Provider
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap">
+                  Model
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Input
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Output
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Reasoning
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Cache read
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Cache write
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Total
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Tasks
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Calls
+                </th>
+                <th className="px-3 py-2 font-medium whitespace-nowrap text-right">
+                  Est. cost
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border font-mono">
               {byModel.length === 0 && (
                 <tr>
-                  <td colSpan={11} className="px-3 py-6 text-center text-muted-foreground/60">
+                  <td
+                    colSpan={11}
+                    className="px-3 py-6 text-center text-muted-foreground/60"
+                  >
                     Waiting for model activity…
                   </td>
                 </tr>
               )}
               {pricedByModel.map((m) => (
                 <tr key={`${m.modelProvider}::${m.modelId}`}>
-                  <td className="px-3 py-2 whitespace-nowrap">{m.modelProvider}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {m.modelProvider}
+                  </td>
                   <td className="px-3 py-2 whitespace-nowrap">{m.modelId}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.inputTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.outputTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.reasoningTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.cachedInputTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.cacheWriteTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.totalTokens)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.invocations)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right">{formatNumber(m.modelCalls)}</td>
                   <td className="px-3 py-2 whitespace-nowrap text-right">
-                    {m.estimatedCost ? formatUsd(m.estimatedCost.total) : "Unpriced"}
+                    {formatNumber(m.inputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.outputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.reasoningTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.cachedInputTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.cacheWriteTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.totalTokens)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.invocations)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {formatNumber(m.modelCalls)}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap text-right">
+                    {m.estimatedCost
+                      ? formatUsd(m.estimatedCost.total)
+                      : "Unpriced"}
                   </td>
                 </tr>
               ))}

@@ -4,26 +4,41 @@
  * Account types and auth live in `./accounts.ts` and `../auth.ts`.
  */
 
-import type { JSONSchema7, LanguageModelCallOptions, RequestOptions, SystemModelMessage, streamText } from "ai";
-import { systemModelMessageSchema } from "ai";
 import type { DiscordAdapterConfig } from "@chat-adapter/discord";
 import type { GitHubAdapterConfig } from "@chat-adapter/github";
 import type { SlackAdapterConfig } from "@chat-adapter/slack";
 import type { TelegramAdapterConfig } from "@chat-adapter/telegram";
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import type {
+  JSONSchema7,
+  LanguageModelCallOptions,
+  RequestOptions,
+  SystemModelMessage,
+  streamText,
+} from "ai";
+import { systemModelMessageSchema } from "ai";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import { requireEnv } from "../env.ts";
 import { assertPublicHttpsUrl } from "../http.ts";
-import { assertOptionalStringArray, isPlainObject, isStringRecord } from "../object.ts";
-import { isAccountToolId } from "./account-tools.ts";
 import {
-  normalizeAgentPolicyConfig,
-  type AgentPolicyConfig,
-} from "./agent-policy.ts";
+  assertOptionalStringArray,
+  isPlainObject,
+  isStringRecord,
+} from "../object.ts";
 import {
   accountModelProviderNames,
   isAccountModelProviderName,
   type AccountModelProviderName,
 } from "../providers.ts";
+import { isAccountToolId } from "./account-tools.ts";
+import {
+  normalizeAgentPolicyConfig,
+  type AgentPolicyConfig,
+} from "./agent-policy.ts";
 export type { AccountModelProviderName } from "../providers.ts";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -150,7 +165,10 @@ export interface AgentSubagentConfig {
   [key: string]: unknown;
 }
 
-export interface AgentModelConfig extends LanguageModelCallOptions, Pick<RequestOptions, "maxRetries" | "timeout"> {
+export interface AgentModelConfig
+  extends
+    LanguageModelCallOptions,
+    Pick<RequestOptions, "maxRetries" | "timeout"> {
   provider?: AccountModelProviderName;
   modelId?: string;
   providerOptions?: AgentModelProviderOptions;
@@ -170,7 +188,9 @@ type AgentModelOutputMetadata = {
   [key: string]: unknown;
 };
 
-export type AgentProviderConfig = Partial<Record<AccountModelProviderName, AgentProviderSettings>>;
+export type AgentProviderConfig = Partial<
+  Record<AccountModelProviderName, AgentProviderSettings>
+>;
 
 /**
  * Constructor settings for a model provider. The keys are an explicit allow-list
@@ -279,7 +299,9 @@ export type AgentChannelHookEventName =
   | "channel.message.sending";
 
 // The full set of events a user code hook can subscribe to.
-export type AgentHookEventName = AgentLifecycleEventName | AgentChannelHookEventName;
+export type AgentHookEventName =
+  | AgentLifecycleEventName
+  | AgentChannelHookEventName;
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
@@ -322,7 +344,10 @@ export interface AgentTelegramChannelConfig {
 export interface AgentGitHubChannelConfig {
   id?: string;
   apiUrl?: Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"];
-  webhookSecret?: Extract<GitHubAdapterConfig, { appId: string }>["webhookSecret"];
+  webhookSecret?: Extract<
+    GitHubAdapterConfig,
+    { appId: string }
+  >["webhookSecret"];
   appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
   privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
   allowedRepos?: string[];
@@ -379,11 +404,11 @@ export interface AgentZaloChannelConfig {
 }
 
 interface EncryptedAgentConfig {
-    encrypted: true;
-    algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
-    iv: string;
-    tag: string;
-    ciphertext: string;
+  encrypted: true;
+  algorithm: typeof CONFIG_ENCRYPTION_ALGORITHM;
+  iv: string;
+  tag: string;
+  ciphertext: string;
 }
 
 type AgentConfigPatch = Record<string, unknown>;
@@ -420,7 +445,10 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   });
 }
 
-export function toChannelRuntimeAgentConfig(config: AgentConfig, channelName: string): AgentConfig {
+export function toChannelRuntimeAgentConfig(
+  config: AgentConfig,
+  channelName: string,
+): AgentConfig {
   const runtimeConfig = toRuntimeAgentConfig(config);
   const channelConfig = config.channels?.[channelName];
 
@@ -501,7 +529,11 @@ function normalizeAgentBehaviorConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalPositiveInteger(config.maxTurn, "config.agent.maxTurn", AGENT_MAX_TURN_LIMIT);
+  assertOptionalPositiveInteger(
+    config.maxTurn,
+    "config.agent.maxTurn",
+    AGENT_MAX_TURN_LIMIT,
+  );
   validateAgentSystemConfig(config.system);
 }
 
@@ -517,9 +549,11 @@ function validateAgentSystemConfig(value: unknown): void {
   for (const entry of values) {
     const parsed = systemModelMessageSchema.safeParse(entry);
     if (!parsed.success) {
-      throw new Error(`config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${
-        parsed.error.issues[0]?.message ?? "invalid system message"
-      }`);
+      throw new Error(
+        `config.agent.system must be a string, SystemModelMessage, or SystemModelMessage[]: ${
+          parsed.error.issues[0]?.message ?? "invalid system message"
+        }`,
+      );
     }
   }
 }
@@ -534,8 +568,14 @@ function normalizeModelConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
-    if (!MODEL_CONFIG_SETTING_KEYS.includes(key as (typeof MODEL_CONFIG_SETTING_KEYS)[number])) {
-      throw new Error(`config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`);
+    if (
+      !MODEL_CONFIG_SETTING_KEYS.includes(
+        key as (typeof MODEL_CONFIG_SETTING_KEYS)[number],
+      )
+    ) {
+      throw new Error(
+        `config.model.${key} is not supported; use config.model.providerOptions for provider-specific settings`,
+      );
     }
   }
   assertOptionalProviderName(config.provider, "config.model.provider");
@@ -549,7 +589,10 @@ function normalizeModelConfig(value: unknown): void {
     "high",
     "xhigh",
   ]);
-  if (config.providerOptions !== undefined && !isPlainObject(config.providerOptions)) {
+  if (
+    config.providerOptions !== undefined &&
+    !isPlainObject(config.providerOptions)
+  ) {
     throw new Error("config.model.providerOptions must be an object");
   }
   normalizeModelOutputConfig(config.output);
@@ -564,9 +607,17 @@ function normalizeModelOutputConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
-  assertOptionalEnum(config.type, "config.model.output.type", ["text", "object", "array", "choice", "json"]);
+  assertOptionalEnum(config.type, "config.model.output.type", [
+    "text",
+    "object",
+    "array",
+    "choice",
+    "json",
+  ]);
   if (config.type === undefined) {
-    throw new Error("config.model.output.type must be one of: text, object, array, choice, json");
+    throw new Error(
+      "config.model.output.type must be one of: text, object, array, choice, json",
+    );
   }
   assertOptionalString(config.name, "config.model.output.name");
   assertOptionalString(config.description, "config.model.output.description");
@@ -591,7 +642,9 @@ function normalizeModelOutputConfig(value: unknown): void {
         config.options.length === 0 ||
         !config.options.every((entry) => typeof entry === "string")
       ) {
-        throw new Error("config.model.output.options must be a non-empty array of strings");
+        throw new Error(
+          "config.model.output.options must be a non-empty array of strings",
+        );
       }
       return;
   }
@@ -607,24 +660,37 @@ function normalizeProviderConfig(value: unknown): void {
 
   for (const [providerName, providerConfig] of Object.entries(value)) {
     if (!isAccountModelProviderName(providerName)) {
-      throw new Error(`config.provider.${providerName} is not a supported provider`);
+      throw new Error(
+        `config.provider.${providerName} is not a supported provider`,
+      );
     }
     normalizeProviderSettings(providerName, providerConfig);
   }
 }
 
-function normalizeProviderSettings(providerName: AccountModelProviderName, value: unknown): void {
+function normalizeProviderSettings(
+  providerName: AccountModelProviderName,
+  value: unknown,
+): void {
   if (!isPlainObject(value)) {
     throw new Error(`config.provider.${providerName} must be an object`);
   }
 
   const config = value as Record<string, unknown>;
   assertOptionalString(config.apiKey, `config.provider.${providerName}.apiKey`);
-  assertOptionalString(config.base_url, `config.provider.${providerName}.base_url`);
-  assertOptionalString(config.baseURL, `config.provider.${providerName}.baseURL`);
+  assertOptionalString(
+    config.base_url,
+    `config.provider.${providerName}.base_url`,
+  );
+  assertOptionalString(
+    config.baseURL,
+    `config.provider.${providerName}.baseURL`,
+  );
   const baseURL = providerBaseURL(config);
   if (providerName === "custom" && !baseURL) {
-    throw new Error(`config.provider.custom.base_url is required${baseUrlTypoHint(config)}`);
+    throw new Error(
+      `config.provider.custom.base_url is required${baseUrlTypoHint(config)}`,
+    );
   }
   if (baseURL) {
     const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
@@ -632,25 +698,43 @@ function normalizeProviderSettings(providerName: AccountModelProviderName, value
     config.baseURL = baseURL;
   }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
-    throw new Error(`config.provider.${providerName}.headers must be an object with string values`);
+    throw new Error(
+      `config.provider.${providerName}.headers must be an object with string values`,
+    );
   }
 
   if (providerName === "openai" || providerName === "custom") {
-    assertOptionalString(config.organization, `config.provider.${providerName}.organization`);
-    assertOptionalString(config.project, `config.provider.${providerName}.project`);
+    assertOptionalString(
+      config.organization,
+      `config.provider.${providerName}.organization`,
+    );
+    assertOptionalString(
+      config.project,
+      `config.provider.${providerName}.project`,
+    );
     assertOptionalString(config.name, `config.provider.${providerName}.name`);
   }
 
   if (providerName === "bedrock") {
     assertOptionalString(config.region, "config.provider.bedrock.region");
-    assertOptionalString(config.accessKeyId, "config.provider.bedrock.accessKeyId");
-    assertOptionalString(config.secretAccessKey, "config.provider.bedrock.secretAccessKey");
-    assertOptionalString(config.sessionToken, "config.provider.bedrock.sessionToken");
+    assertOptionalString(
+      config.accessKeyId,
+      "config.provider.bedrock.accessKeyId",
+    );
+    assertOptionalString(
+      config.secretAccessKey,
+      "config.provider.bedrock.secretAccessKey",
+    );
+    assertOptionalString(
+      config.sessionToken,
+      "config.provider.bedrock.sessionToken",
+    );
   }
 }
 
 function providerBaseURL(config: Record<string, unknown>): string | undefined {
-  const raw = typeof config.base_url === "string" ? config.base_url : config.baseURL;
+  const raw =
+    typeof config.base_url === "string" ? config.base_url : config.baseURL;
   if (typeof raw !== "string") {
     return undefined;
   }
@@ -664,7 +748,9 @@ function providerBaseURL(config: Record<string, unknown>): string | undefined {
  * is actionable instead of a bare "required".
  */
 function baseUrlTypoHint(config: Record<string, unknown>): string {
-  return config.baseUrl !== undefined ? ` (found "baseUrl" — use "base_url" or "baseURL")` : "";
+  return config.baseUrl !== undefined
+    ? ` (found "baseUrl" — use "base_url" or "baseURL")`
+    : "";
 }
 
 // The concrete sandbox/workspace configs live in their own account-scoped tables;
@@ -690,21 +776,35 @@ function normalizeWorkspaceRefs(value: unknown): void {
     const ref = entry as Record<string, unknown>;
     const name = ref.name;
     if (typeof name !== "string" || name.trim().length === 0) {
-      throw new Error(`config.workspaces[${index}].name must be a non-empty string`);
+      throw new Error(
+        `config.workspaces[${index}].name must be a non-empty string`,
+      );
     }
     assertWorkspaceId(name, `config.workspaces[${index}].name`);
-    assertOptionalNonEmptyString(ref.workspaceId, `config.workspaces[${index}].workspaceId`);
-    if (typeof ref.workspaceId !== "string" || ref.workspaceId.trim().length === 0) {
-      throw new Error(`config.workspaces[${index}].workspaceId must be a non-empty string`);
+    assertOptionalNonEmptyString(
+      ref.workspaceId,
+      `config.workspaces[${index}].workspaceId`,
+    );
+    if (
+      typeof ref.workspaceId !== "string" ||
+      ref.workspaceId.trim().length === 0
+    ) {
+      throw new Error(
+        `config.workspaces[${index}].workspaceId must be a non-empty string`,
+      );
     }
     // `null` is allowed: it forces this workspace read-only even when config.sandbox is set.
     if (ref.sandbox !== null && ref.sandbox !== undefined) {
       if (typeof ref.sandbox !== "string" || ref.sandbox.trim().length === 0) {
-        throw new Error(`config.workspaces[${index}].sandbox must be a non-empty string or null`);
+        throw new Error(
+          `config.workspaces[${index}].sandbox must be a non-empty string or null`,
+        );
       }
     }
     if (seenNames.has(name)) {
-      throw new Error(`config.workspaces[${index}].name "${name}" is used more than once`);
+      throw new Error(
+        `config.workspaces[${index}].name "${name}" is used more than once`,
+      );
     }
     seenNames.add(name);
   });
@@ -785,15 +885,25 @@ function normalizeCodeHookConfig(value: unknown, path: string): void {
   }
 
   const config = value as Record<string, unknown>;
-  if (typeof config.hookId !== "string" || !CONVEX_DOCUMENT_ID_PATTERN.test(config.hookId)) {
+  if (
+    typeof config.hookId !== "string" ||
+    !CONVEX_DOCUMENT_ID_PATTERN.test(config.hookId)
+  ) {
     throw new Error(`${path}.hookId must be a native Convex document id`);
   }
   assertOptionalBoolean(config.enabled, `${path}.enabled`);
   if (config.events !== undefined) {
-    if (!Array.isArray(config.events) || !config.events.every((event) =>
-      typeof event === "string" && AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName)
-    )) {
-      throw new Error(`${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`);
+    if (
+      !Array.isArray(config.events) ||
+      !config.events.every(
+        (event) =>
+          typeof event === "string" &&
+          AGENT_HOOK_EVENT_NAMES.includes(event as AgentHookEventName),
+      )
+    ) {
+      throw new Error(
+        `${path}.events must be an array of: ${AGENT_HOOK_EVENT_NAMES.join(", ")}`,
+      );
     }
   }
 }
@@ -808,10 +918,19 @@ function normalizeWebhookHookConfig(value: unknown, path: string): void {
   assertOptionalNonEmptyString(config.url, `${path}.url`);
   assertOptionalNonEmptyString(config.secret, `${path}.secret`);
   if (config.events !== undefined) {
-    if (!Array.isArray(config.events) || !config.events.every((event) =>
-      typeof event === "string" && AGENT_LIFECYCLE_EVENT_NAMES.includes(event as AgentLifecycleEventName)
-    )) {
-      throw new Error(`${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`);
+    if (
+      !Array.isArray(config.events) ||
+      !config.events.every(
+        (event) =>
+          typeof event === "string" &&
+          AGENT_LIFECYCLE_EVENT_NAMES.includes(
+            event as AgentLifecycleEventName,
+          ),
+      )
+    ) {
+      throw new Error(
+        `${path}.events must be an array of: ${AGENT_LIFECYCLE_EVENT_NAMES.join(", ")}`,
+      );
     }
   }
 
@@ -819,8 +938,13 @@ function normalizeWebhookHookConfig(value: unknown, path: string): void {
     if (typeof config.url !== "string" || config.url.trim().length === 0) {
       throw new Error(`${path}.url is required when ${path}.enabled is true`);
     }
-    if (typeof config.secret !== "string" || config.secret.trim().length === 0) {
-      throw new Error(`${path}.secret is required when ${path}.enabled is true`);
+    if (
+      typeof config.secret !== "string" ||
+      config.secret.trim().length === 0
+    ) {
+      throw new Error(
+        `${path}.secret is required when ${path}.enabled is true`,
+      );
     }
   }
 
@@ -866,9 +990,19 @@ function normalizeSubagentConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.subagent.enabled");
   assertOptionalStringArray(config.allowed, "config.subagent.allowed");
-  assertOptionalEnum(config.context, "config.subagent.context", ["new", "inherited"]);
-  assertOptionalEnum(config.mode, "config.subagent.mode", ["ephemeral", "persistent"]);
-  assertOptionalEnum(config.visibility, "config.subagent.visibility", ["full", "result", "none"]);
+  assertOptionalEnum(config.context, "config.subagent.context", [
+    "new",
+    "inherited",
+  ]);
+  assertOptionalEnum(config.mode, "config.subagent.mode", [
+    "ephemeral",
+    "persistent",
+  ]);
+  assertOptionalEnum(config.visibility, "config.subagent.visibility", [
+    "full",
+    "result",
+    "none",
+  ]);
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {
@@ -882,7 +1016,10 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
 
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, `config.tools.${toolName}.enabled`);
-  assertOptionalBoolean(config.needsApproval, `config.tools.${toolName}.needsApproval`);
+  assertOptionalBoolean(
+    config.needsApproval,
+    `config.tools.${toolName}.needsApproval`,
+  );
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   if (config.config !== undefined && !isPlainObject(config.config)) {
     throw new Error(`config.tools.${toolName}.config must be an object`);
@@ -929,65 +1066,125 @@ function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
     "config.tools.handoffs.pancake.scenarioTagIds.pending",
   );
   if (!pancake.scenarioTagIds.order) {
-    throw new Error("config.tools.handoffs.pancake.scenarioTagIds.order is required");
+    throw new Error(
+      "config.tools.handoffs.pancake.scenarioTagIds.order is required",
+    );
   }
   if (!pancake.scenarioTagIds.pending) {
-    throw new Error("config.tools.handoffs.pancake.scenarioTagIds.pending is required");
+    throw new Error(
+      "config.tools.handoffs.pancake.scenarioTagIds.pending is required",
+    );
   }
 
   if (!isPlainObject(config.zalo)) {
     throw new Error("config.tools.handoffs.zalo is required");
   }
   const zalo = config.zalo;
-  assertOptionalNonEmptyString(zalo.botToken, "config.tools.handoffs.zalo.botToken");
+  assertOptionalNonEmptyString(
+    zalo.botToken,
+    "config.tools.handoffs.zalo.botToken",
+  );
   if (!zalo.botToken) {
     throw new Error("config.tools.handoffs.zalo.botToken is required");
   }
-  assertRequiredNonEmptyStringArray(zalo.notifyUserIds, "config.tools.handoffs.zalo.notifyUserIds");
+  assertRequiredNonEmptyStringArray(
+    zalo.notifyUserIds,
+    "config.tools.handoffs.zalo.notifyUserIds",
+  );
 }
 
 function isSupportedConfigToolName(
   toolName: string,
 ): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" {
-  return toolName === "tavilySearch" ||
+  return (
+    toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
     toolName === "googleSearch" ||
-    toolName === "handoffs";
+    toolName === "handoffs"
+  );
 }
 
-function normalizeTavilySearchToolConfig(config: Record<string, unknown>): void {
-  assertOptionalEnum(config.searchDepth, "config.tools.tavilySearch.searchDepth", ["basic", "advanced"]);
-  assertOptionalBoolean(config.includeAnswer, "config.tools.tavilySearch.includeAnswer");
-  assertOptionalPositiveInteger(config.maxResults, "config.tools.tavilySearch.maxResults", 20);
-  assertOptionalEnum(config.topic, "config.tools.tavilySearch.topic", ["general", "news", "finance"]);
+function normalizeTavilySearchToolConfig(
+  config: Record<string, unknown>,
+): void {
+  assertOptionalEnum(
+    config.searchDepth,
+    "config.tools.tavilySearch.searchDepth",
+    ["basic", "advanced"],
+  );
+  assertOptionalBoolean(
+    config.includeAnswer,
+    "config.tools.tavilySearch.includeAnswer",
+  );
+  assertOptionalPositiveInteger(
+    config.maxResults,
+    "config.tools.tavilySearch.maxResults",
+    20,
+  );
+  assertOptionalEnum(config.topic, "config.tools.tavilySearch.topic", [
+    "general",
+    "news",
+    "finance",
+  ]);
 }
 
-function normalizeTavilyExtractToolConfig(config: Record<string, unknown>): void {
-  assertOptionalEnum(config.extractDepth, "config.tools.tavilyExtract.extractDepth", ["basic", "advanced"]);
-  assertOptionalEnum(config.format, "config.tools.tavilyExtract.format", ["markdown", "text"]);
+function normalizeTavilyExtractToolConfig(
+  config: Record<string, unknown>,
+): void {
+  assertOptionalEnum(
+    config.extractDepth,
+    "config.tools.tavilyExtract.extractDepth",
+    ["basic", "advanced"],
+  );
+  assertOptionalEnum(config.format, "config.tools.tavilyExtract.format", [
+    "markdown",
+    "text",
+  ]);
 }
 
-function normalizeGoogleSearchToolConfig(config: Record<string, unknown>): void {
+function normalizeGoogleSearchToolConfig(
+  config: Record<string, unknown>,
+): void {
   if (config.searchTypes !== undefined) {
     if (!isPlainObject(config.searchTypes)) {
-      throw new Error("config.tools.googleSearch.searchTypes must be an object");
+      throw new Error(
+        "config.tools.googleSearch.searchTypes must be an object",
+      );
     }
     const searchTypes = config.searchTypes as Record<string, unknown>;
-    if (searchTypes.webSearch !== undefined && !isPlainObject(searchTypes.webSearch)) {
-      throw new Error("config.tools.googleSearch.searchTypes.webSearch must be an object");
+    if (
+      searchTypes.webSearch !== undefined &&
+      !isPlainObject(searchTypes.webSearch)
+    ) {
+      throw new Error(
+        "config.tools.googleSearch.searchTypes.webSearch must be an object",
+      );
     }
-    if (searchTypes.imageSearch !== undefined && !isPlainObject(searchTypes.imageSearch)) {
-      throw new Error("config.tools.googleSearch.searchTypes.imageSearch must be an object");
+    if (
+      searchTypes.imageSearch !== undefined &&
+      !isPlainObject(searchTypes.imageSearch)
+    ) {
+      throw new Error(
+        "config.tools.googleSearch.searchTypes.imageSearch must be an object",
+      );
     }
   }
 
   if (config.timeRangeFilter !== undefined) {
     if (!isPlainObject(config.timeRangeFilter)) {
-      throw new Error("config.tools.googleSearch.timeRangeFilter must be an object");
+      throw new Error(
+        "config.tools.googleSearch.timeRangeFilter must be an object",
+      );
     }
     const timeRangeFilter = config.timeRangeFilter as Record<string, unknown>;
-    assertOptionalString(timeRangeFilter.startTime, "config.tools.googleSearch.timeRangeFilter.startTime");
-    assertOptionalString(timeRangeFilter.endTime, "config.tools.googleSearch.timeRangeFilter.endTime");
+    assertOptionalString(
+      timeRangeFilter.startTime,
+      "config.tools.googleSearch.timeRangeFilter.startTime",
+    );
+    assertOptionalString(
+      timeRangeFilter.endTime,
+      "config.tools.googleSearch.timeRangeFilter.endTime",
+    );
   }
 }
 
@@ -1005,7 +1202,9 @@ function validateConfigPatch(value: unknown, path: string): void {
   }
 }
 
-function removeNullConfigValues(value: Record<string, unknown>): Record<string, unknown> {
+function removeNullConfigValues(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, entry]) => {
       if (entry === null) {
@@ -1021,84 +1220,140 @@ function removeNullConfigValues(value: Record<string, unknown>): Record<string, 
 
 function normalizeTelegramConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.telegram must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.telegram must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.telegram");
   assertOptionalString(config.apiUrl, "config.channels.telegram.apiUrl");
   assertOptionalString(config.botToken, "config.channels.telegram.botToken");
-  assertOptionalString(config.webhookSecret, "config.channels.telegram.webhookSecret");
-  assertOptionalNumberArray(config.allowedChatIds, "config.channels.telegram.allowedChatIds");
-  assertOptionalString(config.reactionEmoji, "config.channels.telegram.reactionEmoji");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.telegram.webhookSecret",
+  );
+  assertOptionalNumberArray(
+    config.allowedChatIds,
+    "config.channels.telegram.allowedChatIds",
+  );
+  assertOptionalString(
+    config.reactionEmoji,
+    "config.channels.telegram.reactionEmoji",
+  );
 }
 
 function normalizeGitHubConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.github must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.github must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.github");
   assertOptionalString(config.apiUrl, "config.channels.github.apiUrl");
-  assertOptionalString(config.webhookSecret, "config.channels.github.webhookSecret");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.github.webhookSecret",
+  );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalStringArray(config.allowedRepos, "config.channels.github.allowedRepos");
+  assertOptionalStringArray(
+    config.allowedRepos,
+    "config.channels.github.allowedRepos",
+  );
   assertOptionalString(config.userName, "config.channels.github.userName");
-  assertOptionalPositiveInteger(config.botUserId, "config.channels.github.botUserId", Number.MAX_SAFE_INTEGER);
+  assertOptionalPositiveInteger(
+    config.botUserId,
+    "config.channels.github.botUserId",
+    Number.MAX_SAFE_INTEGER,
+  );
 }
 
 function normalizeSlackConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.slack must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.slack must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.slack");
   assertOptionalString(config.apiUrl, "config.channels.slack.apiUrl");
   assertOptionalString(config.botToken, "config.channels.slack.botToken");
-  assertOptionalString(config.signingSecret, "config.channels.slack.signingSecret");
-  assertOptionalStringArray(config.allowedChannelIds, "config.channels.slack.allowedChannelIds");
-  assertOptionalString(config.reactionEmoji, "config.channels.slack.reactionEmoji");
+  assertOptionalString(
+    config.signingSecret,
+    "config.channels.slack.signingSecret",
+  );
+  assertOptionalStringArray(
+    config.allowedChannelIds,
+    "config.channels.slack.allowedChannelIds",
+  );
+  assertOptionalString(
+    config.reactionEmoji,
+    "config.channels.slack.reactionEmoji",
+  );
 }
 
 function normalizeDiscordConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.discord must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.discord must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.discord");
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalStringArray(config.allowedGuildIds, "config.channels.discord.allowedGuildIds");
+  assertOptionalStringArray(
+    config.allowedGuildIds,
+    "config.channels.discord.allowedGuildIds",
+  );
 }
 
 function normalizePancakeConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.pancake must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.pancake must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.pancake");
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
-  assertOptionalString(config.pageAccessToken, "config.channels.pancake.pageAccessToken");
-  assertOptionalString(config.webhookSecret, "config.channels.pancake.webhookSecret");
+  assertOptionalString(
+    config.pageAccessToken,
+    "config.channels.pancake.pageAccessToken",
+  );
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.pancake.webhookSecret",
+  );
   assertOptionalString(config.senderId, "config.channels.pancake.senderId");
 }
 
 function normalizeZaloConfig(value: unknown): void {
   if (value == null) return;
-  if (!isPlainObject(value)) throw new Error("config.channels.zalo must be an object");
+  if (!isPlainObject(value))
+    throw new Error("config.channels.zalo must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.zalo");
   assertOptionalString(config.botToken, "config.channels.zalo.botToken");
-  assertOptionalString(config.webhookSecret, "config.channels.zalo.webhookSecret");
-  assertOptionalStringArray(config.allowedUserIds, "config.channels.zalo.allowedUserIds");
+  assertOptionalString(
+    config.webhookSecret,
+    "config.channels.zalo.webhookSecret",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.zalo.allowedUserIds",
+  );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {
-      throw new Error("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+      throw new Error(
+        "config.channels.zalo.webhookSecret must be 8 to 256 characters",
+      );
     }
   }
 }
 
-function normalizeChannelIdentityConfig(config: Record<string, unknown>, name: string): void {
+function normalizeChannelIdentityConfig(
+  config: Record<string, unknown>,
+  name: string,
+): void {
   normalizeRequiredString(config.id, `${name}.id`);
   if (config.workspaceIsolationScope !== undefined) {
-    throw new Error(`${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`);
+    throw new Error(
+      `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
+    );
   }
   if (config.workspaceScope === undefined) {
     return;
@@ -1107,18 +1362,29 @@ function normalizeChannelIdentityConfig(config: Record<string, unknown>, name: s
     throw new Error(`${name}.workspaceScope must be an object`);
   }
   const workspaceScope = config.workspaceScope as Record<string, unknown>;
-  assertOptionalEnum(workspaceScope.level, `${name}.workspaceScope.level`, CHANNEL_WORKSPACE_SCOPE_LEVELS);
+  assertOptionalEnum(
+    workspaceScope.level,
+    `${name}.workspaceScope.level`,
+    CHANNEL_WORKSPACE_SCOPE_LEVELS,
+  );
   if (workspaceScope.level === undefined) {
-    throw new Error(`${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`);
+    throw new Error(
+      `${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`,
+    );
   }
   if (workspaceScope.level === "channel") {
     if ("alias" in workspaceScope && workspaceScope.alias !== undefined) {
-      throw new Error(`${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`);
+      throw new Error(
+        `${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`,
+      );
     }
     return;
   }
   normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
-  assertWorkspaceScopeAlias(workspaceScope.alias, `${name}.workspaceScope.alias`);
+  assertWorkspaceScopeAlias(
+    workspaceScope.alias,
+    `${name}.workspaceScope.alias`,
+  );
 }
 
 function assertOptionalString(value: unknown, name: string): void {
@@ -1132,7 +1398,9 @@ function assertOptionalProviderName(value: unknown, name: string): void {
     return;
   }
   if (typeof value !== "string" || !isAccountModelProviderName(value)) {
-    throw new Error(`${name} must be one of: ${accountModelProviderNames().join(", ")}`);
+    throw new Error(
+      `${name} must be one of: ${accountModelProviderNames().join(", ")}`,
+    );
   }
 }
 
@@ -1142,8 +1410,15 @@ function assertOptionalBoolean(value: unknown, name: string): void {
   }
 }
 
-function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
-  if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
@@ -1156,7 +1431,10 @@ function normalizeRequiredString(value: unknown, name: string): string {
   return value.trim();
 }
 
-function normalizeOptionalString(value: unknown, name: string): string | undefined {
+function normalizeOptionalString(
+  value: unknown,
+  name: string,
+): string | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -1178,17 +1456,25 @@ function assertOptionalNonEmptyString(value: unknown, name: string): void {
 
 function assertWorkspaceId(value: string, name: string): void {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error(`${name} must use only letters, numbers, dots, underscores, or hyphens`);
+    throw new Error(
+      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
+    );
   }
 }
 
 function assertWorkspaceScopeAlias(value: unknown, name: string): void {
   if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
-    throw new Error(`${name} must use only letters, numbers, dots, underscores, or hyphens`);
+    throw new Error(
+      `${name} must use only letters, numbers, dots, underscores, or hyphens`,
+    );
   }
 }
 
-function assertOptionalPositiveInteger(value: unknown, name: string, max: number): void {
+function assertOptionalPositiveInteger(
+  value: unknown,
+  name: string,
+  max: number,
+): void {
   if (value === undefined) {
     return;
   }
@@ -1204,7 +1490,10 @@ function assertOptionalPositiveInteger(value: unknown, name: string, max: number
 }
 
 function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => typeof entry === "string")
+  ) {
     throw new Error(`${name} must be an array of strings`);
   }
 
@@ -1215,88 +1504,104 @@ function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
 
 function assertOptionalNumberArray(value: unknown, name: string): void {
   if (value === undefined) return;
-  if (!Array.isArray(value) || !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")) {
+  if (
+    !Array.isArray(value) ||
+    !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")
+  ) {
     throw new Error(`${name} must be an array of numbers`);
   }
 }
 
 export function decodeStoredAgentConfig(value: unknown): AgentConfig {
-    return decodeStoredConfigObject(value) as AgentConfig;
+  return decodeStoredConfigObject(value) as AgentConfig;
 }
 
 export function encryptAgentConfig(config: AgentConfig): EncryptedAgentConfig {
-    return encryptConfigObject(config);
+  return encryptConfigObject(config);
 }
 
 // Generic config encryption (aes-256-gcm) reused by the sandbox-config store so
 // account-scoped sandbox configs (which carry envVars secrets) are also encrypted
 // at rest. Workspace configs hold no secrets and are stored in plaintext.
 export function encryptConfigObject(config: object): EncryptedAgentConfig {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv(CONFIG_ENCRYPTION_ALGORITHM, agentConfigEncryptionKey(), iv);
-    const plaintext = JSON.stringify(config);
-    const ciphertext = Buffer.concat([
-        cipher.update(plaintext, "utf-8"),
-        cipher.final(),
-    ]);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv(
+    CONFIG_ENCRYPTION_ALGORITHM,
+    agentConfigEncryptionKey(),
+    iv,
+  );
+  const plaintext = JSON.stringify(config);
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext, "utf-8"),
+    cipher.final(),
+  ]);
 
-    return {
-        encrypted: true,
-        algorithm: CONFIG_ENCRYPTION_ALGORITHM,
-        iv: iv.toString("base64url"),
-        tag: cipher.getAuthTag().toString("base64url"),
-        ciphertext: ciphertext.toString("base64url"),
-    };
+  return {
+    encrypted: true,
+    algorithm: CONFIG_ENCRYPTION_ALGORITHM,
+    iv: iv.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+  };
 }
 
-export function decodeStoredConfigObject(value: unknown): Record<string, unknown> {
-    if (isEncryptedAgentConfig(value)) {
-        return decryptConfigObject(value);
-    }
+export function decodeStoredConfigObject(
+  value: unknown,
+): Record<string, unknown> {
+  if (isEncryptedAgentConfig(value)) {
+    return decryptConfigObject(value);
+  }
 
-    throw new Error("Stored config must be encrypted");
+  throw new Error("Stored config must be encrypted");
 }
 
-function decryptConfigObject(config: EncryptedAgentConfig): Record<string, unknown> {
-    const decipher = createDecipheriv(
-        CONFIG_ENCRYPTION_ALGORITHM,
-        agentConfigEncryptionKey(),
-        Buffer.from(config.iv, "base64url"),
-    );
-    decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
-    const plaintext = Buffer.concat([
-        decipher.update(Buffer.from(config.ciphertext, "base64url")),
-        decipher.final(),
-    ]).toString("utf-8");
+function decryptConfigObject(
+  config: EncryptedAgentConfig,
+): Record<string, unknown> {
+  const decipher = createDecipheriv(
+    CONFIG_ENCRYPTION_ALGORITHM,
+    agentConfigEncryptionKey(),
+    Buffer.from(config.iv, "base64url"),
+  );
+  decipher.setAuthTag(Buffer.from(config.tag, "base64url"));
+  const plaintext = Buffer.concat([
+    decipher.update(Buffer.from(config.ciphertext, "base64url")),
+    decipher.final(),
+  ]).toString("utf-8");
 
-    const parsed = JSON.parse(plaintext) as unknown;
-    if (!isPlainObject(parsed)) {
-        throw new Error("Stored config must be an object");
-    }
+  const parsed = JSON.parse(plaintext) as unknown;
+  if (!isPlainObject(parsed)) {
+    throw new Error("Stored config must be an object");
+  }
 
-    return parsed;
+  return parsed;
 }
 
 function agentConfigEncryptionKey(): Buffer {
-    return createHash("sha256")
-        .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
-        .digest();
+  return createHash("sha256")
+    .update(requireEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET"))
+    .digest();
 }
 
 function isEncryptedAgentConfig(value: unknown): value is EncryptedAgentConfig {
-    if (!isPlainObject(value)) {
-        return false;
-    }
+  if (!isPlainObject(value)) {
+    return false;
+  }
 
-    return value.encrypted === true &&
-        value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
-        typeof value.iv === "string" &&
-        typeof value.tag === "string" &&
-        typeof value.ciphertext === "string";
+  return (
+    value.encrypted === true &&
+    value.algorithm === CONFIG_ENCRYPTION_ALGORITHM &&
+    typeof value.iv === "string" &&
+    typeof value.tag === "string" &&
+    typeof value.ciphertext === "string"
+  );
 }
 
-export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch): AgentConfig {
-    return normalizeAgentConfig(mergeConfigValue(existing, patch));
+export function mergeAgentConfig(
+  existing: AgentConfig,
+  patch: AgentConfigPatch,
+): AgentConfig {
+  return normalizeAgentConfig(mergeConfigValue(existing, patch));
 }
 
 /**
@@ -1305,46 +1610,52 @@ export function mergeAgentConfig(existing: AgentConfig, patch: AgentConfigPatch)
  * already flows. `system` is handled separately as ephemeral system messages.
  * Returns the original config untouched when there are no model overrides.
  */
-export function applyRunOverrides(config: AgentConfig, overrides?: RunOverrides): AgentConfig {
-    if (!overrides || !(overrides.model && Object.keys(overrides.model).length > 0)) {
-        return config;
-    }
-    const next: AgentConfig = { ...config };
-    if (overrides.model && Object.keys(overrides.model).length > 0) {
-        next.model = { ...config.model, ...overrides.model };
-    }
-    return next;
+export function applyRunOverrides(
+  config: AgentConfig,
+  overrides?: RunOverrides,
+): AgentConfig {
+  if (
+    !overrides ||
+    !(overrides.model && Object.keys(overrides.model).length > 0)
+  ) {
+    return config;
+  }
+  const next: AgentConfig = { ...config };
+  if (overrides.model && Object.keys(overrides.model).length > 0) {
+    next.model = { ...config.model, ...overrides.model };
+  }
+  return next;
 }
 
 function mergeConfigValue(existing: unknown, patch: unknown): unknown {
-    if (patch === undefined) {
-        return existing;
-    }
+  if (patch === undefined) {
+    return existing;
+  }
 
-    if (patch === REDACTED_SECRET_VALUE) {
-        return existing;
-    }
+  if (patch === REDACTED_SECRET_VALUE) {
+    return existing;
+  }
 
-    if (patch === null) {
-        return undefined;
-    }
+  if (patch === null) {
+    return undefined;
+  }
 
-    if (Array.isArray(patch) || !isPlainObject(patch)) {
-        return patch;
-    }
+  if (Array.isArray(patch) || !isPlainObject(patch)) {
+    return patch;
+  }
 
-    const existingObject = isPlainObject(existing) ? existing : {};
-    const merged = { ...existingObject };
-    for (const [key, value] of Object.entries(patch)) {
-        const mergedValue = mergeConfigValue(existingObject[key], value);
-        if (mergedValue === undefined) {
-            delete merged[key];
-        } else {
-            merged[key] = mergedValue;
-        }
+  const existingObject = isPlainObject(existing) ? existing : {};
+  const merged = { ...existingObject };
+  for (const [key, value] of Object.entries(patch)) {
+    const mergedValue = mergeConfigValue(existingObject[key], value);
+    if (mergedValue === undefined) {
+      delete merged[key];
+    } else {
+      merged[key] = mergedValue;
     }
+  }
 
-    return merged;
+  return merged;
 }
 
 export function redactAgentConfig(config: AgentConfig): AgentConfig {
@@ -1354,7 +1665,10 @@ export function redactAgentConfig(config: AgentConfig): AgentConfig {
 // Generic deep-merge + secret redaction reused by the sandbox/workspace config
 // stores so they share the agent config's patch semantics (null deletes a key,
 // the REDACTED sentinel preserves the existing secret).
-export function mergeConfigObjects(existing: object, patch: object): Record<string, unknown> {
+export function mergeConfigObjects(
+  existing: object,
+  patch: object,
+): Record<string, unknown> {
   const merged = mergeConfigValue(existing, patch);
   return isPlainObject(merged) ? merged : {};
 }
@@ -1375,14 +1689,17 @@ function redactSecrets(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, entry]) => [
       key,
-      isSecretConfigKey(key) && typeof entry === "string" ? REDACTED_SECRET_VALUE : redactSecrets(entry),
+      isSecretConfigKey(key) && typeof entry === "string"
+        ? REDACTED_SECRET_VALUE
+        : redactSecrets(entry),
     ]),
   );
 }
 
 function isSecretConfigKey(key: string): boolean {
   const normalized = key.toLowerCase();
-  return normalized.includes("secret") ||
+  return (
+    normalized.includes("secret") ||
     normalized.includes("token") ||
     normalized.includes("privatekey") ||
     normalized.includes("private_key") ||
@@ -1394,5 +1711,6 @@ function isSecretConfigKey(key: string): boolean {
     normalized.includes("password") ||
     normalized.includes("passwd") ||
     normalized === "apikey" ||
-    normalized === "api_key";
+    normalized === "api_key"
+  );
 }

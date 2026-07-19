@@ -29,7 +29,15 @@ afterEach(() => {
 describe("sendChannelReply", () => {
   it("rebuilds the telegram sender from config + source and posts to the chat", async () => {
     const fetchMock = installFetchMock();
-    fetchMock.responses.push(new Response(JSON.stringify({ ok: true, result: { message_id: 101, chat: { id: 555 } } }), { status: 200 }));
+    fetchMock.responses.push(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { message_id: 101, chat: { id: 555 } },
+        }),
+        { status: 200 },
+      ),
+    );
 
     const config: AgentConfig = {
       channels: {

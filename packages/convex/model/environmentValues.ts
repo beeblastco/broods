@@ -15,31 +15,33 @@ import { decryptAgentConfigBlob } from "./agentConfigCodec";
  * @throws when `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not configured.
  */
 export async function loadEnvironmentVariableValues(
-    ctx: QueryCtx | MutationCtx,
-    projectId: Id<"projects">,
-    environmentId: Id<"environments">,
+  ctx: QueryCtx | MutationCtx,
+  projectId: Id<"projects">,
+  environmentId: Id<"environments">,
 ): Promise<Record<string, string>> {
-    const rows = await ctx.db
-        .query("environmentVariables")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-            q.eq("projectId", projectId).eq("environmentId", environmentId),
-        )
-        .collect();
+  const rows = await ctx.db
+    .query("environmentVariables")
+    .withIndex("by_projectId_and_environmentId", (q) =>
+      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    )
+    .collect();
 
-    const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-    if (!secret) {
-        throw new Error("ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables");
-    }
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read environment variables",
+    );
+  }
 
-    const values: Record<string, string> = {};
-    for (const row of rows) {
-        const decrypted = await decryptAgentConfigBlob(
-            { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
-            secret,
-        );
-        const value = decrypted?.value;
-        values[row.name] = typeof value === "string" ? value : "";
-    }
+  const values: Record<string, string> = {};
+  for (const row of rows) {
+    const decrypted = await decryptAgentConfigBlob(
+      { ciphertext: row.ciphertext, iv: row.iv, tag: row.tag },
+      secret,
+    );
+    const value = decrypted?.value;
+    values[row.name] = typeof value === "string" ? value : "";
+  }
 
-    return values;
+  return values;
 }

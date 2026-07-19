@@ -1369,13 +1369,23 @@ paths:
                       description: Enables hierarchical workspace folders. Omit or set false to share the workspace root.
                     harness:
                       type: object
+                      description: Named harness features, each defaulting to enabled. No top-level enabled flag.
                       properties:
-                        enabled: { type: boolean }
+                        workspace:
+                          type: object
+                          description: The injected <workspace> guidance prompt.
+                          properties:
+                            enabled: { type: boolean }
+                        memory:
+                          type: object
+                          description: Structured memory (memory_save + memory/MEMORY.md index loading + <memory> prompt).
+                          properties:
+                            enabled: { type: boolean }
             examples:
               notes:
                 value:
                   name: notes
-                  config: { storage: { provider: s3 }, isolation: true, harness: { enabled: true } }
+                  config: { storage: { provider: s3 }, isolation: true }
       responses:
         '201': { description: Workspace created }
     get:

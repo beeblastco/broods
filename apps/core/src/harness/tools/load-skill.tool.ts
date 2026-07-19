@@ -10,7 +10,13 @@ import type { Session } from "../session.ts";
 export type LoadSkillPrompt = (
   skillPath: string,
   resourcePaths?: string[],
-) => Promise<{ path: string; loadedPaths: string[]; stagedPath?: string; stagedFiles: string[]; bytes: number }>;
+) => Promise<{
+  path: string;
+  loadedPaths: string[];
+  stagedPath?: string;
+  stagedFiles: string[];
+  bytes: number;
+}>;
 
 export default function loadSkillTool(
   session: Session,
@@ -18,18 +24,21 @@ export default function loadSkillTool(
 ): ToolSet {
   return {
     load_skill: tool({
-      description: "Load detailed instructions for an enabled skill. Use the exact path from the available skills list.",
+      description:
+        "Load detailed instructions for an enabled skill. Use the exact path from the available skills list.",
       inputSchema: jsonSchema({
         type: "object",
         properties: {
           path: {
             type: "string",
-            description: "Exact configured skill path, for example acct_abc/example-skill.",
+            description:
+              "Exact configured skill path, for example acct_abc/example-skill.",
           },
           resources: {
             type: "array",
             items: { type: "string" },
-            description: "Optional additional resource file paths inside the skill bundle.",
+            description:
+              "Optional additional resource file paths inside the skill bundle.",
           },
         },
         required: ["path"],
@@ -41,12 +50,19 @@ export default function loadSkillTool(
         if (typeof skillPath !== "string") {
           throw new Error("path is required");
         }
-        if (resources !== undefined && (!Array.isArray(resources) || !resources.every((item) => typeof item === "string"))) {
+        if (
+          resources !== undefined &&
+          (!Array.isArray(resources) ||
+            !resources.every((item) => typeof item === "string"))
+        ) {
           throw new Error("resources must be an array of strings");
         }
 
         try {
-          const result = await loadSkillPrompt(skillPath, resources as string[] | undefined);
+          const result = await loadSkillPrompt(
+            skillPath,
+            resources as string[] | undefined,
+          );
           logInfo("load_skill completed", {
             accountId: session.accountId,
             agentId: session.agentId,

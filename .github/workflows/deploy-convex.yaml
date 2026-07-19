@@ -11,8 +11,8 @@ on:
       - main
       - dev
     paths:
-      - 'packages/convex/**'
-      - '.github/workflows/deploy-convex.yaml'
+      - "packages/convex/**"
+      - ".github/workflows/deploy-convex.yaml"
   workflow_dispatch:
 
 concurrency:

@@ -9,7 +9,9 @@
 const AWS_ACCOUNT_ID = requiredEnv("AWS_ACCOUNT_ID");
 const PROJECT_NAME = requiredEnv("PROJECT_NAME");
 const PROJECT_OWNER_EMAIL = requiredEnv("PROJECT_OWNER_EMAIL");
-const AWS_PROFILE = process.env.CI ? undefined : (process.env.AWS_PROFILE ?? "default");
+const AWS_PROFILE = process.env.CI
+  ? undefined
+  : (process.env.AWS_PROFILE ?? "default");
 // Whether to import (vs first-create) the region-scoped sandbox ECR repo. The 4 image-based
 // sandbox Lambdas this used to gate are gone — the "lambda" provider is now an AWS Lambda
 // MicroVM (MicrovmSandboxExecutor) whose image is built from an S3 zip, not pulled from ECR.
@@ -54,7 +56,11 @@ function resourceName(service: string, stage: string, region: string): string {
   return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_ACCOUNT_ID}-${region}`;
 }
 
-function accountRegionalBucketName(service: string, stage: string, region: string): string {
+function accountRegionalBucketName(
+  service: string,
+  stage: string,
+  region: string,
+): string {
   const name = `${resourceName(service, stage, region)}-an`;
   if (name.length > 63) {
     throw new Error(`S3 bucket name is too long (${name.length}/63): ${name}`);
@@ -112,7 +118,9 @@ function ecrRepositoryExists(name: string, region: string): boolean {
 
 // SST's `permissions` shorthand -> a raw IAM policy doc, for the container
 // runtime user and the Convex config-plane role. $jsonStringify resolves Outputs.
-function permissionsPolicy(perms: { actions: string[]; resources: $util.Input<string>[] }[]) {
+function permissionsPolicy(
+  perms: { actions: string[]; resources: $util.Input<string>[] }[],
+) {
   return $jsonStringify({
     Version: "2012-10-17",
     Statement: perms.map((p) => ({
@@ -189,14 +197,20 @@ export default $config({
     // Convex credentials are mandatory because every persistence domain lives there.
     const useConvexStorage = Boolean(CONVEX_URL && CONVEX_DEPLOY_KEY);
     if (!useConvexStorage) {
-      throw new Error("All stages require CONVEX_URL and CONVEX_DEPLOY_KEY env vars");
+      throw new Error(
+        "All stages require CONVEX_URL and CONVEX_DEPLOY_KEY env vars",
+      );
     }
     const names = {
       cronSchedules: resourceName("cron-schedules", stage, region),
       filesystem: accountRegionalBucketName("filesystem", stage, region),
       skills: accountRegionalBucketName("skills", stage, region),
       toolBundles: accountRegionalBucketName("tool-bundles", stage, region),
-      microvmArtifacts: accountRegionalBucketName("microvm-artifacts", stage, region),
+      microvmArtifacts: accountRegionalBucketName(
+        "microvm-artifacts",
+        stage,
+        region,
+      ),
       microvmBuildRole: resourceName("microvm-build", stage, region),
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
     };
@@ -319,8 +333,14 @@ export default $config({
             {
               Sid: "WriteMicrovmBuildLogs",
               Effect: "Allow",
-              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
-              Resource: [`arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`],
+              Action: [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+              ],
+              Resource: [
+                `arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:/aws/lambda-microvms/*`,
+              ],
             },
             {
               Sid: "PullPrivateEcrBaseImages",
@@ -331,8 +351,14 @@ export default $config({
             {
               Sid: "PullPrivateEcrLayers",
               Effect: "Allow",
-              Action: ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-              Resource: [`arn:aws:ecr:${region}:${AWS_ACCOUNT_ID}:repository/*`],
+              Action: [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+              ],
+              Resource: [
+                `arn:aws:ecr:${region}:${AWS_ACCOUNT_ID}:repository/*`,
+              ],
             },
           ],
         }),
@@ -362,7 +388,11 @@ export default $config({
             {
               Sid: "WriteMicrovmRuntimeLogs",
               Effect: "Allow",
-              Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+              Action: [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents",
+              ],
               Resource: [
                 `arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:${microvmLogGroupName}`,
                 `arn:aws:logs:${region}:${AWS_ACCOUNT_ID}:log-group:${microvmLogGroupName}:*`,
@@ -414,7 +444,12 @@ export default $config({
         Statement: [
           {
             Effect: "Allow",
-            Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+            Action: [
+              "s3:GetObject",
+              "s3:PutObject",
+              "s3:DeleteObject",
+              "s3:AbortMultipartUpload",
+            ],
             Resource: [`${filesystemBucketArn}/*`],
           },
           {
@@ -444,8 +479,12 @@ export default $config({
     // land before the sandbox functions can be created (the first deploy creates the empty
     // repo, then re-deploy once the image exists). See docs/workspace/sandbox/lambda.md.
     const sandboxImageRepoName = `beeblast-lambda-sandbox-${AWS_ACCOUNT_ID}-${region}`;
-    const sandboxImageRepoExists = ecrRepositoryExists(sandboxImageRepoName, region);
-    const sandboxImageRepoShouldImport = SANDBOX_IMAGE_READY || sandboxImageRepoExists;
+    const sandboxImageRepoExists = ecrRepositoryExists(
+      sandboxImageRepoName,
+      region,
+    );
+    const sandboxImageRepoShouldImport =
+      SANDBOX_IMAGE_READY || sandboxImageRepoExists;
     const sandboxEcr = new aws.ecr.Repository(
       "SandboxImage",
       {
@@ -460,7 +499,9 @@ export default $config({
         // CI pushes `latest-arm64` to this exact name). When SANDBOX_IMAGE_READY is true,
         // the deploy workflow has already ensured the regional repo exists, so import it
         // even if the local describe probe cannot run from inside SST config evaluation.
-        ...(sandboxImageRepoShouldImport ? { import: sandboxImageRepoName } : {}),
+        ...(sandboxImageRepoShouldImport
+          ? { import: sandboxImageRepoName }
+          : {}),
       },
     );
 
@@ -475,7 +516,11 @@ export default $config({
             Sid: "AllowCrossAccountPull",
             Effect: "Allow",
             Principal: "*",
-            Action: ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:BatchCheckLayerAvailability"],
+            Action: [
+              "ecr:GetDownloadUrlForLayer",
+              "ecr:BatchGetImage",
+              "ecr:BatchCheckLayerAvailability",
+            ],
           },
         ],
       }),
@@ -532,7 +577,12 @@ export default $config({
           ]
         : []),
       {
-        actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+        actions: [
+          "s3:GetObject",
+          "s3:HeadObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+        ],
         resources: [`${filesystemBucketArn}/*`],
       },
       {
@@ -540,7 +590,12 @@ export default $config({
         resources: [filesystemBucketArn],
       },
       {
-        actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+        actions: [
+          "s3:GetObject",
+          "s3:HeadObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+        ],
         resources: [`${skillsBucketArn}/*`],
       },
       {
@@ -558,7 +613,12 @@ export default $config({
       ...(microvmArtifactsBucket
         ? [
             {
-              actions: ["s3:GetObject", "s3:HeadObject", "s3:PutObject", "s3:DeleteObject"],
+              actions: [
+                "s3:GetObject",
+                "s3:HeadObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+              ],
               resources: [`${microvmArtifactsBucketArn}/microvm-images/*`],
             },
             {
@@ -569,9 +629,12 @@ export default $config({
         : []),
     ];
 
-    const cronScheduleGroup = new aws.scheduler.ScheduleGroup("CronScheduleGroup", {
-      name: names.cronSchedules,
-    });
+    const cronScheduleGroup = new aws.scheduler.ScheduleGroup(
+      "CronScheduleGroup",
+      {
+        name: names.cronSchedules,
+      },
+    );
 
     const cronSchedulerRole = new aws.iam.Role("CronSchedulerRole", {
       name: resourceName("cron-scheduler", stage, region),
@@ -596,22 +659,28 @@ export default $config({
     const cronRunBus = new aws.cloudwatch.EventBus("CronRunBus", {
       name: resourceName("cron-runs", stage, region),
     });
-    const cronRunConnection = new aws.cloudwatch.EventConnection("CronRunConnection", {
-      name: resourceName("cron-run", stage, region),
-      authorizationType: "API_KEY",
-      authParameters: {
-        apiKey: {
-          key: "Authorization",
-          value: `Bearer ${SERVICE_AUTH_SECRET}`,
+    const cronRunConnection = new aws.cloudwatch.EventConnection(
+      "CronRunConnection",
+      {
+        name: resourceName("cron-run", stage, region),
+        authorizationType: "API_KEY",
+        authParameters: {
+          apiKey: {
+            key: "Authorization",
+            value: `Bearer ${SERVICE_AUTH_SECRET}`,
+          },
         },
       },
-    });
-    const cronRunApiDestination = new aws.cloudwatch.EventApiDestination("CronRunApiDestination", {
-      name: resourceName("cron-run", stage, region),
-      connectionArn: cronRunConnection.arn,
-      invocationEndpoint: `${PUBLIC_BASE_URL}/v1/cron-runs`,
-      httpMethod: "POST",
-    });
+    );
+    const cronRunApiDestination = new aws.cloudwatch.EventApiDestination(
+      "CronRunApiDestination",
+      {
+        name: resourceName("cron-run", stage, region),
+        connectionArn: cronRunConnection.arn,
+        invocationEndpoint: `${PUBLIC_BASE_URL}/v1/cron-runs`,
+        httpMethod: "POST",
+      },
+    );
     const cronRunInvokeRole = new aws.iam.Role("CronRunInvokeRole", {
       name: resourceName("cron-run-invoke", stage, region),
       assumeRolePolicy: JSON.stringify({
@@ -643,7 +712,10 @@ export default $config({
     const cronRunRule = new aws.cloudwatch.EventRule("CronRunRule", {
       name: resourceName("cron-run", stage, region),
       eventBusName: cronRunBus.name,
-      eventPattern: JSON.stringify({ source: ["broods.crons"], "detail-type": ["cron-run"] }),
+      eventPattern: JSON.stringify({
+        source: ["broods.crons"],
+        "detail-type": ["cron-run"],
+      }),
     });
     new aws.cloudwatch.EventTarget("CronRunRuleTarget", {
       rule: cronRunRule.name,
@@ -674,8 +746,14 @@ export default $config({
     // Also granted to CoreRuntimeUser below, same as harnessPermissions.
     const accountManagePermissions = [
       {
-        actions: ["scheduler:CreateSchedule", "scheduler:DeleteSchedule", "scheduler:UpdateSchedule"],
-        resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+        actions: [
+          "scheduler:CreateSchedule",
+          "scheduler:DeleteSchedule",
+          "scheduler:UpdateSchedule",
+        ],
+        resources: [
+          $interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`,
+        ],
       },
       {
         actions: ["iam:PassRole"],
@@ -729,14 +807,20 @@ export default $config({
     const coreRuntimeUser = new aws.iam.User("CoreRuntimeUser", {
       name: resourceName("core-runtime", stage, region),
     });
-    const coreRuntimeHarnessPolicy = new aws.iam.Policy("CoreRuntimeHarnessPolicy", {
-      name: resourceName("core-runtime-harness", stage, region),
-      policy: permissionsPolicy(harnessPermissions),
-    });
-    const coreRuntimeAccountPolicy = new aws.iam.Policy("CoreRuntimeAccountPolicy", {
-      name: resourceName("core-runtime-account", stage, region),
-      policy: permissionsPolicy(accountManagePermissions),
-    });
+    const coreRuntimeHarnessPolicy = new aws.iam.Policy(
+      "CoreRuntimeHarnessPolicy",
+      {
+        name: resourceName("core-runtime-harness", stage, region),
+        policy: permissionsPolicy(harnessPermissions),
+      },
+    );
+    const coreRuntimeAccountPolicy = new aws.iam.Policy(
+      "CoreRuntimeAccountPolicy",
+      {
+        name: resourceName("core-runtime-account", stage, region),
+        policy: permissionsPolicy(accountManagePermissions),
+      },
+    );
     new aws.iam.UserPolicyAttachment("CoreRuntimeHarnessPolicyAttachment", {
       user: coreRuntimeUser.name,
       policyArn: coreRuntimeHarnessPolicy.arn,
@@ -756,8 +840,17 @@ export default $config({
     // denyUnlessProjectPrincipal so its S3 calls are not denied.
     const convexAwsPermissions = [
       {
-        actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:HeadObject"],
-        resources: [`${skillsBucketArn}/*`, `${toolBundlesBucketArn}/*`, `${filesystemBucketArn}/*`],
+        actions: [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:HeadObject",
+        ],
+        resources: [
+          `${skillsBucketArn}/*`,
+          `${toolBundlesBucketArn}/*`,
+          `${filesystemBucketArn}/*`,
+        ],
       },
       {
         actions: ["s3:ListBucket"],
@@ -770,7 +863,9 @@ export default $config({
           "scheduler:DeleteSchedule",
           "scheduler:GetSchedule",
         ],
-        resources: [$interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`],
+        resources: [
+          $interpolate`arn:aws:scheduler:${region}:${AWS_ACCOUNT_ID}:schedule/${cronScheduleGroup.name}/*`,
+        ],
       },
       {
         // Convex creates schedules that run as the cron scheduler role.
@@ -785,7 +880,9 @@ export default $config({
         Statement: [
           {
             Effect: "Allow",
-            Principal: { AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("convex-bootstrap", stage, region)}` },
+            Principal: {
+              AWS: `arn:aws:iam::${AWS_ACCOUNT_ID}:user/${resourceName("convex-bootstrap", stage, region)}`,
+            },
             Action: "sts:AssumeRole",
             Condition: { StringEquals: { "sts:ExternalId": "broods-convex" } },
           },
@@ -811,7 +908,9 @@ export default $config({
       policy: convexAwsRole.arn.apply((arn) =>
         JSON.stringify({
           Version: "2012-10-17",
-          Statement: [{ Effect: "Allow", Action: "sts:AssumeRole", Resource: arn }],
+          Statement: [
+            { Effect: "Allow", Action: "sts:AssumeRole", Resource: arn },
+          ],
         }),
       ),
     });

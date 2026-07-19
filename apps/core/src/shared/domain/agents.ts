@@ -3,6 +3,13 @@
  * public/redacted projection.
  */
 
+import { isPlainObject } from "../object.ts";
+import {
+  assertAccountOwnsSkillPath,
+  SkillAuthorizationError,
+  SkillNotFoundError,
+} from "../skills.ts";
+import { getStorage } from "../storage.ts";
 import {
   mergeAgentConfig,
   normalizeAgentConfig,
@@ -10,13 +17,6 @@ import {
   redactAgentConfig,
   type AgentConfig,
 } from "./agent-config.ts";
-import {
-  assertAccountOwnsSkillPath,
-  SkillAuthorizationError,
-  SkillNotFoundError,
-} from "../skills.ts";
-import { isPlainObject } from "../object.ts";
-import { getStorage } from "../storage.ts";
 
 export type AgentStatus = "active" | "disabled";
 
@@ -79,19 +79,27 @@ export class AgentPolicyNotFoundError extends Error {
   }
 }
 
-export async function validateAgentSkillPaths(accountId: string, config: AgentConfig): Promise<void> {
+export async function validateAgentSkillPaths(
+  accountId: string,
+  config: AgentConfig,
+): Promise<void> {
   for (const skillPath of config.skills?.allowed ?? []) {
     try {
       await assertAccountOwnsSkillPath(accountId, skillPath);
     } catch (err) {
-      if (err instanceof SkillAuthorizationError) throw new AgentSkillAuthorizationError(err.skillPath);
-      if (err instanceof SkillNotFoundError) throw new AgentSkillNotFoundError(err.skillPath);
+      if (err instanceof SkillAuthorizationError)
+        throw new AgentSkillAuthorizationError(err.skillPath);
+      if (err instanceof SkillNotFoundError)
+        throw new AgentSkillNotFoundError(err.skillPath);
       throw err;
     }
   }
 }
 
-export async function validateAgentSubagentIds(accountId: string, config: AgentConfig): Promise<void> {
+export async function validateAgentSubagentIds(
+  accountId: string,
+  config: AgentConfig,
+): Promise<void> {
   for (const agentId of config.subagent?.allowed ?? []) {
     const agent = await getStorage().agents.getById(accountId, agentId);
     if (!agent || agent.status !== "active") {
@@ -100,9 +108,15 @@ export async function validateAgentSubagentIds(accountId: string, config: AgentC
   }
 }
 
-export async function validateAgentPolicyIds(accountId: string, config: AgentConfig): Promise<void> {
+export async function validateAgentPolicyIds(
+  accountId: string,
+  config: AgentConfig,
+): Promise<void> {
   for (const policyId of config.policy?.policyIds ?? []) {
-    const policy = await getStorage().agentPolicies.getById(accountId, policyId);
+    const policy = await getStorage().agentPolicies.getById(
+      accountId,
+      policyId,
+    );
     if (!policy || policy.status !== "active") {
       throw new AgentPolicyNotFoundError(policyId);
     }
@@ -134,19 +148,32 @@ export async function normalizeUpdateAgentInput(
 ): Promise<UpdateAgentInput & { config: AgentConfig }> {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
 
-  const config = "config" in value
-    ? mergeAgentConfig(existingConfig, normalizeAgentConfigPatch(value.config))
-    : existingConfig;
+  const config =
+    "config" in value
+      ? mergeAgentConfig(
+          existingConfig,
+          normalizeAgentConfigPatch(value.config),
+        )
+      : existingConfig;
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
   await validateAgentPolicyIds(accountId, config);
 
   return {
-    ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),
-    ...(value.description !== undefined
-      ? { description: value.description === null ? null : optionalString(value.description, "description") }
+    ...(value.name !== undefined
+      ? { name: requireString(value.name, "name") }
       : {}),
-    ...(value.status !== undefined ? { status: requireAgentStatus(value.status) } : {}),
+    ...(value.description !== undefined
+      ? {
+          description:
+            value.description === null
+              ? null
+              : optionalString(value.description, "description"),
+        }
+      : {}),
+    ...(value.status !== undefined
+      ? { status: requireAgentStatus(value.status) }
+      : {}),
     config,
   };
 }
@@ -169,7 +196,8 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
 }
 
 function requireAgentStatus(value: unknown): AgentStatus {
-  if (!isAgentStatus(value)) throw new Error("status must be one of: active, disabled");
+  if (!isAgentStatus(value))
+    throw new Error("status must be one of: active, disabled");
   return value;
 }
 

@@ -29,10 +29,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const ALLOWED_EXTENSIONS = new Set([
   "css",
   "csv",
@@ -67,10 +63,6 @@ function buildSkillMdContent(name: string, description: string): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDescribe what this skill does and when the agent should use it.\n`;
 }
 
-// ---------------------------------------------------------------------------
-// Bearer token prompt (inline, not a modal)
-// ---------------------------------------------------------------------------
-
 function TokenPrompt({
   label,
   onConfirm,
@@ -100,8 +92,8 @@ function TokenPrompt({
         </button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>).
-        Saved in session only.
+        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
+        session only.
       </p>
       <div className="flex items-center gap-1.5">
         <Input
@@ -209,10 +201,6 @@ function CreateSkillMdForm({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
 
 /** Skill file explorer with publish/import against the broods account-manage API. */
 export function SkillFilesTab({

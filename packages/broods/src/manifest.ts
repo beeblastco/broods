@@ -6,7 +6,11 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import type { AgentHookEventName, CliManifest, CliManifestResource } from "./contracts.ts";
+import type {
+  AgentHookEventName,
+  CliManifest,
+  CliManifestResource,
+} from "./contracts.ts";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -46,7 +50,9 @@ export interface CompiledChannel {
   agentName: string;
 }
 
-export type ResourceAliases = Partial<Record<AnyResource["kind"], Record<string, string>>>;
+export type ResourceAliases = Partial<
+  Record<AnyResource["kind"], Record<string, string>>
+>;
 
 type ExportedValue = {
   exportName: string;
@@ -82,7 +88,9 @@ const INLINE_AGENT_HOOK_EVENTS = {
 
 type InlineAgentHookName = keyof typeof INLINE_AGENT_HOOK_EVENTS;
 
-export async function compileProject(options: CompileOptions = {}): Promise<CompiledProject> {
+export async function compileProject(
+  options: CompileOptions = {},
+): Promise<CompiledProject> {
   const cwd = options.cwd ?? process.cwd();
   loadBroodsRuntimeConfig(cwd);
   const root = resolve(cwd, PROJECT_DIR);
@@ -90,23 +98,38 @@ export async function compileProject(options: CompileOptions = {}): Promise<Comp
   const exports = await loadExports(files);
   const config = await findConfig(exports, cwd, options.project);
   const resourceExports = exports
-    .filter((entry): entry is ExportedValue & { value: AnyResource } => isResource(entry.value))
-    .map((entry): ExportedResource => ({ exportName: entry.exportName, resource: entry.value }));
+    .filter((entry): entry is ExportedValue & { value: AnyResource } =>
+      isResource(entry.value),
+    )
+    .map(
+      (entry): ExportedResource => ({
+        exportName: entry.exportName,
+        resource: entry.value,
+      }),
+    );
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
   const channels = compileChannels(resourceExports, exports);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
-  for (const resource of resources) assertSupportedWorkspaceIsolationShape(resource);
+  for (const resource of resources)
+    assertSupportedWorkspaceIsolationShape(resource);
   assertWorkspaceIsolationConsistency(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
   const resourceAliases = aliasesForResources(resourceExports);
   const environment = resolveEnvironment(
     config,
-    options.environment ?? (options.useRuntimeEnvironment === false ? undefined : process.env.BROODS_ENVIRONMENT),
+    options.environment ??
+      (options.useRuntimeEnvironment === false
+        ? undefined
+        : process.env.BROODS_ENVIRONMENT),
     options.command ?? "dev",
   );
-  const manifestResources = (await Promise.all(resources.map((resource) => toManifestResources(resource, root))))
+  const manifestResources = (
+    await Promise.all(
+      resources.map((resource) => toManifestResources(resource, root)),
+    )
+  )
     .flat()
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
 
@@ -172,7 +195,8 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
     for (const entry of entries) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name === GENERATED_DIR || entry.name === "generated") continue;
+        if (entry.name === GENERATED_DIR || entry.name === "generated")
+          continue;
         await walk(full);
       } else if (entry.isFile() && entry.name.endsWith(".ts")) {
         results.push(full);
@@ -181,15 +205,22 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
   }
 
   await walk(root);
-  return results.sort((a, b) => relative(root, a).localeCompare(relative(root, b)));
+  return results.sort((a, b) =>
+    relative(root, a).localeCompare(relative(root, b)),
+  );
 }
 
 async function loadExports(files: string[]): Promise<ExportedValue[]> {
   const values: ExportedValue[] = [];
   for (const file of files) {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
-    const mod = await import(href) as Record<string, unknown>;
-    values.push(...Object.entries(mod).map(([exportName, value]) => ({ exportName, value })));
+    const mod = (await import(href)) as Record<string, unknown>;
+    values.push(
+      ...Object.entries(mod).map(([exportName, value]) => ({
+        exportName,
+        value,
+      })),
+    );
   }
   return values;
 }
@@ -199,16 +230,20 @@ async function findConfig(
   cwd: string,
   explicitProject: string | undefined,
 ): Promise<BroodsProjectConfig> {
-  const config = exports.find((entry): entry is ExportedValue & { value: BroodsConfigDefinition } =>
-    isBroodsConfig(entry.value)
+  const config = exports.find(
+    (entry): entry is ExportedValue & { value: BroodsConfigDefinition } =>
+      isBroodsConfig(entry.value),
   )?.value;
   const configValue = config?.config ?? {};
-  const project = explicitProject ??
+  const project =
+    explicitProject ??
     process.env.BROODS_PROJECT ??
     configValue.project ??
     normalizeProjectName(basename(resolve(cwd)));
   if (!project.trim()) {
-    throw new Error("Project name is required. Pass --project <name> or set BROODS_PROJECT.");
+    throw new Error(
+      "Project name is required. Pass --project <name> or set BROODS_PROJECT.",
+    );
   }
 
   return {
@@ -269,7 +304,9 @@ function assertKnownConfigKeys(resource: AnyResource): void {
     const hint = suggestion
       ? ` Did you mean "${suggestion}"?`
       : ` Allowed keys: ${[...KNOWN_AGENT_CONFIG_KEYS].sort().join(", ")}.`;
-    throw new Error(`Agent "${resource.name}" has an unknown config key "${key}".${hint}`);
+    throw new Error(
+      `Agent "${resource.name}" has an unknown config key "${key}".${hint}`,
+    );
   }
 }
 
@@ -284,7 +321,9 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
   const storage = config.storage;
   if (storage === undefined) return;
   if (!storage || typeof storage !== "object" || Array.isArray(storage)) {
-    throw new Error(`Workspace "${resource.name}" config.storage must be an object`);
+    throw new Error(
+      `Workspace "${resource.name}" config.storage must be an object`,
+    );
   }
   const provider = (storage as Record<string, unknown>).provider;
   if (provider === undefined || provider === "s3") return;
@@ -294,7 +333,9 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
         `Use storage.provider "s3" or omit storage until Vercel Drive is wired.`,
     );
   }
-  throw new Error(`Workspace "${resource.name}" config.storage.provider must be one of: s3`);
+  throw new Error(
+    `Workspace "${resource.name}" config.storage.provider must be one of: s3`,
+  );
 }
 
 function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
@@ -306,13 +347,19 @@ function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
     );
   }
   if (config.isolation !== undefined && typeof config.isolation !== "boolean") {
-    throw new Error(`Workspace "${resource.name}" config.isolation must be a boolean`);
+    throw new Error(
+      `Workspace "${resource.name}" config.isolation must be a boolean`,
+    );
   }
 }
 
 function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   const workspaceResources = new Map(
-    resources.filter((resource): resource is WorkspaceResource => resource.kind === "workspace")
+    resources
+      .filter(
+        (resource): resource is WorkspaceResource =>
+          resource.kind === "workspace",
+      )
       .map((resource) => [resource.name, resource]),
   );
 
@@ -321,21 +368,33 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
     const config = resource.config as Record<string, unknown>;
     const channels = config.channels;
     if (channels !== undefined && !Array.isArray(channels)) {
-      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+      throw new Error(
+        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+      );
     }
-    const channelDefinitions = Array.isArray(channels) ? channels.filter(isChannelDefinition) : [];
+    const channelDefinitions = Array.isArray(channels)
+      ? channels.filter(isChannelDefinition)
+      : [];
     const channelIds = new Set<string>();
     for (const channel of channelDefinitions) {
       const config = channel.config as Record<string, unknown>;
       const channelId = typeof config.id === "string" ? config.id : undefined;
       if (channelId) {
-        if (channelIds.has(channelId)) throw new Error(`Duplicate channel id: ${channelId}`);
+        if (channelIds.has(channelId))
+          throw new Error(`Duplicate channel id: ${channelId}`);
         channelIds.add(channelId);
       }
       if (channel.workspaceScope) {
-        assertWorkspaceScopeShape(channel.workspaceScope, `Agent "${resource.name}" channel "${channel.type}"`);
+        assertWorkspaceScopeShape(
+          channel.workspaceScope,
+          `Agent "${resource.name}" channel "${channel.type}"`,
+        );
       }
-      if (channel.config && typeof channel.config === "object" && "workspaceIsolationScope" in channel.config) {
+      if (
+        channel.config &&
+        typeof channel.config === "object" &&
+        "workspaceIsolationScope" in channel.config
+      ) {
         throw new Error(
           `Agent "${resource.name}" channel "${channel.type}" uses workspaceIsolationScope, which is no longer supported; use workspaceScope.`,
         );
@@ -344,13 +403,17 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
 
     const attachedWorkspaces = Array.isArray(config.workspaces)
       ? config.workspaces
-        .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
-        .filter((entry): entry is WorkspaceResource => Boolean(entry))
+          .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
+          .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
-    const isolatedWorkspaces = attachedWorkspaces.filter((workspace) =>
-      (workspace.config as unknown as Record<string, unknown>).isolation === true
+    const isolatedWorkspaces = attachedWorkspaces.filter(
+      (workspace) =>
+        (workspace.config as unknown as Record<string, unknown>).isolation ===
+        true,
     );
-    const scopedChannels = channelDefinitions.filter((channel) => channel.workspaceScope);
+    const scopedChannels = channelDefinitions.filter(
+      (channel) => channel.workspaceScope,
+    );
 
     if (scopedChannels.length > 0 && isolatedWorkspaces.length === 0) {
       const channel = scopedChannels[0]!;
@@ -371,22 +434,37 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   }
 }
 
-function assertWorkspaceScopeShape(scope: AnyChannelDefinition["workspaceScope"], name: string): void {
+function assertWorkspaceScopeShape(
+  scope: AnyChannelDefinition["workspaceScope"],
+  name: string,
+): void {
   if (!scope) return;
   if (scope.level === "channel") {
     if ("alias" in scope && scope.alias !== undefined) {
-      throw new Error(`${name} workspaceScope.alias is only supported when workspaceScope.level is conversation`);
+      throw new Error(
+        `${name} workspaceScope.alias is only supported when workspaceScope.level is conversation`,
+      );
     }
     return;
   }
   if (scope.level !== "conversation") {
-    throw new Error(`${name} workspaceScope.level must be one of: channel, conversation`);
+    throw new Error(
+      `${name} workspaceScope.level must be one of: channel, conversation`,
+    );
   }
-  if (!("alias" in scope) || typeof scope.alias !== "string" || scope.alias.length === 0) {
-    throw new Error(`${name} workspaceScope.alias must be a non-empty string when workspaceScope.level is conversation`);
+  if (
+    !("alias" in scope) ||
+    typeof scope.alias !== "string" ||
+    scope.alias.length === 0
+  ) {
+    throw new Error(
+      `${name} workspaceScope.alias must be a non-empty string when workspaceScope.level is conversation`,
+    );
   }
   if (!/^[A-Za-z0-9._-]+$/.test(scope.alias)) {
-    throw new Error(`${name} workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens`);
+    throw new Error(
+      `${name} workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens`,
+    );
   }
 }
 
@@ -398,14 +476,19 @@ function resolveLocalWorkspace(
   if (typeof entry === "string") return workspaces.get(entry);
   if (entry && typeof entry === "object" && "workspace" in entry) {
     const workspace = (entry as { workspace: unknown }).workspace;
-    if (isResource(workspace) && workspace.kind === "workspace") return workspace;
+    if (isResource(workspace) && workspace.kind === "workspace")
+      return workspace;
     if (typeof workspace === "string") return workspaces.get(workspace);
   }
   return undefined;
 }
 
 function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
-  const sandboxes = new Map(resources.filter((resource) => resource.kind === "sandbox").map((resource) => [resource.name, resource]));
+  const sandboxes = new Map(
+    resources
+      .filter((resource) => resource.kind === "sandbox")
+      .map((resource) => [resource.name, resource]),
+  );
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
@@ -425,7 +508,10 @@ function assertSupportedWorkspaceSandboxMounts(resources: AnyResource[]): void {
   }
 }
 
-function resolveLocalSandbox(value: unknown, sandboxes: Map<string, SandboxResource>): SandboxResource | undefined {
+function resolveLocalSandbox(
+  value: unknown,
+  sandboxes: Map<string, SandboxResource>,
+): SandboxResource | undefined {
   if (isResource(value) && value.kind === "sandbox") return value;
   if (typeof value === "string") return sandboxes.get(value);
   return undefined;
@@ -459,12 +545,18 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
   if (provider === "lambda" || provider === "sandbox") return true;
   if (provider !== "daytona") return false;
   const options = (sandbox.config as { options?: unknown }).options;
-  return Boolean(options && typeof options === "object" && !Array.isArray(options) &&
-    (options as Record<string, unknown>).mountAwsS3Buckets === true);
+  return Boolean(
+    options &&
+    typeof options === "object" &&
+    !Array.isArray(options) &&
+    (options as Record<string, unknown>).mountAwsS3Buckets === true,
+  );
 }
 
 function sandboxProvider(sandbox: SandboxResource): string {
-  return typeof sandbox.config.provider === "string" ? sandbox.config.provider : "sandbox";
+  return typeof sandbox.config.provider === "string"
+    ? sandbox.config.provider
+    : "sandbox";
 }
 
 function assertUniqueResources(resources: AnyResource[]): void {
@@ -485,7 +577,9 @@ function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
     if (exportName === "default" || !isValidIdentifier(exportName)) continue;
     const key = `${resource.kind}:${exportName}`;
     if (seenAliases.has(key)) {
-      throw new Error(`Duplicate export alias for ${resource.kind}: ${exportName}`);
+      throw new Error(
+        `Duplicate export alias for ${resource.kind}: ${exportName}`,
+      );
     }
     seenAliases.add(key);
     aliases[resource.kind] ??= {};
@@ -495,13 +589,23 @@ function aliasesForResources(resources: ExportedResource[]): ResourceAliases {
   return aliases;
 }
 
-function compileChannels(resources: ExportedResource[], exports: ExportedValue[]): CompiledChannel[] {
+function compileChannels(
+  resources: ExportedResource[],
+  exports: ExportedValue[],
+): CompiledChannel[] {
   const exportedAliases = new Map<AnyChannelDefinition, string>();
   for (const entry of exports) {
-    if (!isChannelDefinition(entry.value) || entry.exportName === "default" || !isValidIdentifier(entry.exportName)) continue;
+    if (
+      !isChannelDefinition(entry.value) ||
+      entry.exportName === "default" ||
+      !isValidIdentifier(entry.exportName)
+    )
+      continue;
     const previous = exportedAliases.get(entry.value);
     if (previous && previous !== entry.exportName) {
-      throw new Error(`Channel is exported more than once: ${previous}, ${entry.exportName}`);
+      throw new Error(
+        `Channel is exported more than once: ${previous}, ${entry.exportName}`,
+      );
     }
     exportedAliases.set(entry.value, entry.exportName);
   }
@@ -515,25 +619,39 @@ function compileChannels(resources: ExportedResource[], exports: ExportedValue[]
     const value = (resource.config as { channels?: unknown }).channels;
     if (value === undefined) continue;
     if (!Array.isArray(value)) {
-      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+      throw new Error(
+        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+      );
     }
     const types = new Set<string>();
     for (const entry of value) {
       if (!isChannelDefinition(entry)) {
-        throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
+        throw new Error(
+          `Agent "${resource.name}" config.channels must contain channel definitions`,
+        );
       }
       const owner = owners.get(entry);
       if (owner && owner !== resource.name) {
-        throw new Error(`Channel ${entry.type} is already attached to agent "${owner}" and cannot also attach to "${resource.name}"`);
+        throw new Error(
+          `Channel ${entry.type} is already attached to agent "${owner}" and cannot also attach to "${resource.name}"`,
+        );
       }
       if (types.has(entry.type)) {
-        throw new Error(`Agent "${resource.name}" cannot configure more than one ${entry.type} channel`);
+        throw new Error(
+          `Agent "${resource.name}" cannot configure more than one ${entry.type} channel`,
+        );
       }
       owners.set(entry, resource.name);
       types.add(entry.type);
-      const fallbackAgent = exportName !== "default" && isValidIdentifier(exportName) ? exportName : resource.name;
-      const alias = exportedAliases.get(entry) ?? `${fallbackAgent}${capitalize(entry.type)}Channel`;
-      if (aliases.has(alias)) throw new Error(`Duplicate channel export alias: ${alias}`);
+      const fallbackAgent =
+        exportName !== "default" && isValidIdentifier(exportName)
+          ? exportName
+          : resource.name;
+      const alias =
+        exportedAliases.get(entry) ??
+        `${fallbackAgent}${capitalize(entry.type)}Channel`;
+      if (aliases.has(alias))
+        throw new Error(`Duplicate channel export alias: ${alias}`);
       aliases.add(alias);
       compiled.push({
         alias,
@@ -545,7 +663,10 @@ function compileChannels(resources: ExportedResource[], exports: ExportedValue[]
   }
 
   for (const [channel, alias] of exportedAliases) {
-    if (!owners.has(channel)) throw new Error(`Channel "${alias}" must be attached to exactly one agent`);
+    if (!owners.has(channel))
+      throw new Error(
+        `Channel "${alias}" must be attached to exactly one agent`,
+      );
   }
 
   return compiled.sort((left, right) => left.alias.localeCompare(right.alias));
@@ -559,7 +680,10 @@ function isValidIdentifier(value: string): boolean {
   return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(value);
 }
 
-async function toManifestResources(resource: AnyResource, projectRoot: string): Promise<CliManifestResource[]> {
+async function toManifestResources(
+  resource: AnyResource,
+  projectRoot: string,
+): Promise<CliManifestResource[]> {
   if (resource.kind === "agent") {
     const normalized = normalizeAgentConfig(resource, projectRoot);
     return [
@@ -573,27 +697,38 @@ async function toManifestResources(resource: AnyResource, projectRoot: string): 
     ];
   }
 
-  return [{
-    kind: resource.kind,
-    name: resource.name,
-    ...(resource.description ? { description: resource.description } : {}),
-    config: await normalizeConfig(resource, projectRoot),
-  }];
+  return [
+    {
+      kind: resource.kind,
+      name: resource.name,
+      ...(resource.description ? { description: resource.description } : {}),
+      config: await normalizeConfig(resource, projectRoot),
+    },
+  ];
 }
 
-async function normalizeConfig(resource: AnyResource, projectRoot: string): Promise<unknown> {
+async function normalizeConfig(
+  resource: AnyResource,
+  projectRoot: string,
+): Promise<unknown> {
   if (resource.kind === "skill") {
-    return await normalizeSkillConfig(resource.config as { path: string }, projectRoot);
+    return await normalizeSkillConfig(
+      resource.config as { path: string },
+      projectRoot,
+    );
   }
 
   if (resource.kind === "tool") {
-    return await normalizeToolConfig(resource.config as {
-      path: string;
-      description: string;
-      inputSchema: Record<string, unknown>;
-      runtime?: "isolate" | "sandbox";
-      defaultConfig?: Record<string, unknown>;
-    }, projectRoot);
+    return await normalizeToolConfig(
+      resource.config as {
+        path: string;
+        description: string;
+        inputSchema: Record<string, unknown>;
+        runtime?: "isolate" | "sandbox";
+        defaultConfig?: Record<string, unknown>;
+      },
+      projectRoot,
+    );
   }
 
   if (resource.kind === "policy") {
@@ -611,7 +746,9 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
     // Mirror the agent direct API: collapse the `input` shorthand into the
     // canonical events list so local and remote manifests diff identically.
     if (typeof config.input === "string") {
-      config.events = [{ role: "user", content: [{ type: "text", text: config.input }] }];
+      config.events = [
+        { role: "user", content: [{ type: "text", text: config.input }] },
+      ];
       delete config.input;
     }
     return rewriteValues(config);
@@ -624,11 +761,27 @@ async function normalizeConfig(resource: AnyResource, projectRoot: string): Prom
 // core's `ACCOUNT_MODEL_PROVIDERS` / `normalizeProviderSettings` (kept as plain
 // values rather than a runtime import so core is not bundled into the SDK). Keep
 // in sync with core's `AgentProviderSettings`.
-const KNOWN_PROVIDER_NAMES = ["google", "openai", "anthropic", "bedrock", "gateway", "minimax", "custom"] as const;
+const KNOWN_PROVIDER_NAMES = [
+  "google",
+  "openai",
+  "anthropic",
+  "bedrock",
+  "gateway",
+  "minimax",
+  "custom",
+] as const;
 const KNOWN_PROVIDER_SETTING_KEYS = new Set([
-  "apiKey", "base_url", "baseURL", "headers",
-  "organization", "project", "name",
-  "region", "accessKeyId", "secretAccessKey", "sessionToken",
+  "apiKey",
+  "base_url",
+  "baseURL",
+  "headers",
+  "organization",
+  "project",
+  "name",
+  "region",
+  "accessKeyId",
+  "secretAccessKey",
+  "sessionToken",
 ]);
 
 /** Suggest the canonical key for a common misspelling, else "". */
@@ -646,19 +799,30 @@ function suggestProviderKey(key: string): string {
  * throws inside the `broods dev` watcher (and `deploy`) instead of surfacing as
  * a 400 at run time. Values may be `env(...)` refs, so only keys are checked.
  */
-export function validateProviderConfig(agentName: string, provider: unknown): void {
+export function validateProviderConfig(
+  agentName: string,
+  provider: unknown,
+): void {
   if (provider === undefined || provider === null) return;
   if (typeof provider !== "object" || Array.isArray(provider)) {
     throw new Error(`Agent "${agentName}" config.provider must be an object`);
   }
-  for (const [providerName, settings] of Object.entries(provider as Record<string, unknown>)) {
+  for (const [providerName, settings] of Object.entries(
+    provider as Record<string, unknown>,
+  )) {
     if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(providerName)) {
       throw new Error(
         `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${KNOWN_PROVIDER_NAMES.join(", ")})`,
       );
     }
-    if (typeof settings !== "object" || settings === null || Array.isArray(settings)) {
-      throw new Error(`Agent "${agentName}" config.provider.${providerName} must be an object`);
+    if (
+      typeof settings !== "object" ||
+      settings === null ||
+      Array.isArray(settings)
+    ) {
+      throw new Error(
+        `Agent "${agentName}" config.provider.${providerName} must be an object`,
+      );
     }
     const record = settings as Record<string, unknown>;
     for (const key of Object.keys(record)) {
@@ -668,8 +832,14 @@ export function validateProviderConfig(agentName: string, provider: unknown): vo
         `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}"${suggestion ? ` — did you mean ${suggestion}?` : ""}`,
       );
     }
-    if (providerName === "custom" && record.base_url === undefined && record.baseURL === undefined) {
-      throw new Error(`Agent "${agentName}" config.provider.custom.base_url is required (use "base_url" or "baseURL")`);
+    if (
+      providerName === "custom" &&
+      record.base_url === undefined &&
+      record.baseURL === undefined
+    ) {
+      throw new Error(
+        `Agent "${agentName}" config.provider.custom.base_url is required (use "base_url" or "baseURL")`,
+      );
     }
   }
 }
@@ -688,21 +858,29 @@ function normalizeAgentConfig(
   }
   if (config.channels !== undefined) {
     if (!Array.isArray(config.channels)) {
-      throw new Error(`Agent "${resource.name}" config.channels must be an array of channel definitions`);
+      throw new Error(
+        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+      );
     }
-    config.channels = Object.fromEntries(config.channels.map((channel) => {
-      if (!isChannelDefinition(channel)) {
-        throw new Error(`Agent "${resource.name}" config.channels must contain channel definitions`);
-      }
-      const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-      return [channel.type, { id: channelId, ...channel.config }];
-    }));
+    config.channels = Object.fromEntries(
+      config.channels.map((channel) => {
+        if (!isChannelDefinition(channel)) {
+          throw new Error(
+            `Agent "${resource.name}" config.channels must contain channel definitions`,
+          );
+        }
+        const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+        return [channel.type, { id: channelId, ...channel.config }];
+      }),
+    );
   }
   if (isResource(config.sandbox)) {
     config.sandbox = config.sandbox.name;
   }
   if (Array.isArray(config.workspaces)) {
-    config.workspaces = config.workspaces.map((workspace) => normalizeWorkspaceRef(workspace, resource.name));
+    config.workspaces = config.workspaces.map((workspace) =>
+      normalizeWorkspaceRef(workspace, resource.name),
+    );
   }
   if (config.policy !== undefined) {
     const policy = normalizeAgentPolicyConfig(config.policy, resource.name);
@@ -712,32 +890,44 @@ function normalizeAgentConfig(
 
   return {
     config: rewriteValues(config),
-    ...(inlineHooks?.hookResource ? { hookResource: inlineHooks.hookResource } : {}),
+    ...(inlineHooks?.hookResource
+      ? { hookResource: inlineHooks.hookResource }
+      : {}),
   };
 }
 
 function normalizeInlineAgentHooks(
   agentName: string,
   hooks: unknown,
-): { agentHooksConfig: Record<string, unknown>; hookResource: CliManifestResource } | undefined {
+):
+  | {
+      agentHooksConfig: Record<string, unknown>;
+      hookResource: CliManifestResource;
+    }
+  | undefined {
   if (hooks === undefined) return undefined;
   if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
     throw new Error(`Agent "${agentName}" config.hooks must be an object`);
   }
   const hookConfig = hooks as Record<string, unknown>;
-  const entries = (Object.keys(INLINE_AGENT_HOOK_EVENTS) as InlineAgentHookName[])
-    .flatMap((name) => {
-      const handler = hookConfig[name];
-      if (handler === undefined) return [];
-      if (typeof handler !== "function") {
-        throw new Error(`Agent "${agentName}" config.hooks.${name} must be a function`);
-      }
-      return [{
+  const entries = (
+    Object.keys(INLINE_AGENT_HOOK_EVENTS) as InlineAgentHookName[]
+  ).flatMap((name) => {
+    const handler = hookConfig[name];
+    if (handler === undefined) return [];
+    if (typeof handler !== "function") {
+      throw new Error(
+        `Agent "${agentName}" config.hooks.${name} must be a function`,
+      );
+    }
+    return [
+      {
         name,
         event: INLINE_AGENT_HOOK_EVENTS[name],
         source: toHookFunctionExpression(handler.toString()),
-      }];
-    });
+      },
+    ];
+  });
 
   if (entries.length === 0) return undefined;
 
@@ -745,7 +935,9 @@ function normalizeInlineAgentHooks(
   const bundle = transpileInlineHookBundle(agentName, entries);
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(`Agent "${agentName}" hook bundle is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+    throw new Error(
+      `Agent "${agentName}" hook bundle is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+    );
   }
   const events = entries.map((entry) => entry.event);
   const agentHooksConfig = stripInlineHookKeys(hookConfig, agentName);
@@ -766,7 +958,10 @@ function normalizeInlineAgentHooks(
   };
 }
 
-function stripInlineHookKeys(hooks: unknown, agentName: string): Record<string, unknown> {
+function stripInlineHookKeys(
+  hooks: unknown,
+  agentName: string,
+): Record<string, unknown> {
   if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
     throw new Error(`Agent "${agentName}" config.hooks must be an object`);
   }
@@ -778,7 +973,9 @@ function stripInlineHookKeys(hooks: unknown, agentName: string): Record<string, 
         `Use inline hook callbacks or hooks.webhooks.`,
     );
   }
-  const result = Object.fromEntries(entries.filter(([key]) => key === "webhooks"));
+  const result = Object.fromEntries(
+    entries.filter(([key]) => key === "webhooks"),
+  );
   return result;
 }
 
@@ -789,9 +986,9 @@ function stripInlineHookKeys(hooks: unknown, agentName: string): Record<string, 
 function toHookFunctionExpression(source: string): string {
   const trimmed = source.trim();
   if (
-    /^(async\s+)?function\b/.test(trimmed) // function expression
-    || /^(async\s*)?\(/.test(trimmed) // (args) => arrow
-    || /^(async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed) // single-arg arrow
+    /^(async\s+)?function\b/.test(trimmed) || // function expression
+    /^(async\s*)?\(/.test(trimmed) || // (args) => arrow
+    /^(async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(trimmed) // single-arg arrow
   ) {
     return trimmed;
   }
@@ -805,35 +1002,51 @@ function transpileInlineHookBundle(
   agentName: string,
   entries: Array<{ event: AgentHookEventName; source: string }>,
 ): string {
-  const moduleSource = `export default {\n${
-    entries.map((entry) => `  ${JSON.stringify(entry.event)}: ${entry.source},`).join("\n")
-  }\n};\n`;
+  const moduleSource = `export default {\n${entries
+    .map((entry) => `  ${JSON.stringify(entry.event)}: ${entry.source},`)
+    .join("\n")}\n};\n`;
   try {
     return new Bun.Transpiler({ loader: "ts" }).transformSync(moduleSource);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Agent "${agentName}" inline hooks failed to transpile: ${message}`);
+    throw new Error(
+      `Agent "${agentName}" inline hooks failed to transpile: ${message}`,
+    );
   }
 }
 
-function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<string, unknown> | undefined {
+function normalizeAgentPolicyConfig(
+  config: unknown,
+  agentName: string,
+): Record<string, unknown> | undefined {
   if (!config || typeof config !== "object" || Array.isArray(config)) {
     throw new Error(`Agent "${agentName}" config.policy must be an object`);
   }
   const input = config as Record<string, unknown>;
   for (const key of Object.keys(input)) {
-    if (key !== "enabled" && key !== "policyIds" && key !== "policies" && key !== "mode") {
-      throw new Error(`Agent "${agentName}" config.policy.${key} is not supported`);
+    if (
+      key !== "enabled" &&
+      key !== "policyIds" &&
+      key !== "policies" &&
+      key !== "mode"
+    ) {
+      throw new Error(
+        `Agent "${agentName}" config.policy.${key} is not supported`,
+      );
     }
   }
   const policyIds = input.policyIds;
   const policies = input.policies;
   if (policyIds !== undefined && policies !== undefined) {
-    throw new Error(`Agent "${agentName}" config.policy cannot set both policyIds and policies`);
+    throw new Error(
+      `Agent "${agentName}" config.policy cannot set both policyIds and policies`,
+    );
   }
   const refs = policies ?? policyIds;
   if (refs !== undefined && !Array.isArray(refs)) {
-    throw new Error(`Agent "${agentName}" config.policy.policies must be an array`);
+    throw new Error(
+      `Agent "${agentName}" config.policy.policies must be an array`,
+    );
   }
 
   const normalized: Record<string, unknown> = {
@@ -841,24 +1054,39 @@ function normalizeAgentPolicyConfig(config: unknown, agentName: string): Record<
     ...(Array.isArray(refs)
       ? {
           policyIds: refs.map((entry) => {
-            if (isResource(entry) && entry.kind === "policy") return (entry as PolicyResource).name;
+            if (isResource(entry) && entry.kind === "policy")
+              return (entry as PolicyResource).name;
             if (typeof entry === "string") return entry;
-            throw new Error(`Agent "${agentName}" config.policy.policies must contain definePolicy(...) resources or strings`);
+            throw new Error(
+              `Agent "${agentName}" config.policy.policies must contain definePolicy(...) resources or strings`,
+            );
           }),
         }
       : {}),
   };
   delete normalized.policies;
   delete normalized.enabled;
-  if (Array.isArray(normalized.policyIds) && normalized.policyIds.length === 0) {
+  if (
+    Array.isArray(normalized.policyIds) &&
+    normalized.policyIds.length === 0
+  ) {
     delete normalized.policyIds;
   }
 
-  return Array.isArray(normalized.policyIds) && normalized.policyIds.length > 0 ? normalized : undefined;
+  return Array.isArray(normalized.policyIds) && normalized.policyIds.length > 0
+    ? normalized
+    : undefined;
 }
 
-async function normalizeSkillConfig(config: { path: string }, projectRoot: string): Promise<Record<string, unknown>> {
-  const skillRoot = resolveContainedResourcePath(projectRoot, config.path, "Skill");
+async function normalizeSkillConfig(
+  config: { path: string },
+  projectRoot: string,
+): Promise<Record<string, unknown>> {
+  const skillRoot = resolveContainedResourcePath(
+    projectRoot,
+    config.path,
+    "Skill",
+  );
   const manifestPath = relative(projectRoot, skillRoot).split("\\").join("/");
   const files = await readBundleFiles(skillRoot);
   if (!files.some((file) => file.path === "SKILL.md")) {
@@ -882,12 +1110,18 @@ async function normalizeToolConfig(
   },
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const bundlePath = resolveContainedResourcePath(projectRoot, config.path, "Tool");
+  const bundlePath = resolveContainedResourcePath(
+    projectRoot,
+    config.path,
+    "Tool",
+  );
   const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "Tool");
   const sourceSize = Buffer.byteLength(await readFile(bundlePath));
   if (sourceSize > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(`Tool source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+    throw new Error(
+      `Tool source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+    );
   }
   const build = await Bun.build({
     entrypoints: [bundlePath],
@@ -897,13 +1131,20 @@ async function normalizeToolConfig(
     minify: false,
   });
   if (!build.success || build.outputs.length !== 1) {
-    const details = build.logs.map((entry) => entry.message).filter(Boolean).join("; ");
-    throw new Error(`Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`);
+    const details = build.logs
+      .map((entry) => entry.message)
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(
+      `Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
+    );
   }
   const bundle = await build.outputs[0]!.text();
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
-    throw new Error(`Tool bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+    throw new Error(
+      `Tool bundle ${manifestPath} is too large (${bundleSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+    );
   }
 
   return {
@@ -911,7 +1152,9 @@ async function normalizeToolConfig(
     description: config.description,
     inputSchema: config.inputSchema,
     ...(config.runtime !== undefined ? { runtime: config.runtime } : {}),
-    ...(config.defaultConfig !== undefined ? { defaultConfig: config.defaultConfig } : {}),
+    ...(config.defaultConfig !== undefined
+      ? { defaultConfig: config.defaultConfig }
+      : {}),
     bundle: bundle,
     sha256: sha256Hex(bundle),
   };
@@ -924,7 +1167,10 @@ async function normalizeToolConfig(
  * doubles as the `workspaceId` placeholder that the backend resolves to a real
  * id, and a per-workspace `sandbox` (resource, name, or `null`) is preserved.
  */
-function normalizeWorkspaceRef(entry: unknown, agentName: string): Record<string, unknown> {
+function normalizeWorkspaceRef(
+  entry: unknown,
+  agentName: string,
+): Record<string, unknown> {
   if (isResource(entry)) {
     return { name: entry.name, workspaceId: entry.name };
   }
@@ -932,28 +1178,44 @@ function normalizeWorkspaceRef(entry: unknown, agentName: string): Record<string
     const ref = (entry as { workspace: unknown }).workspace;
     const name = isResource(ref) ? ref.name : ref;
     if (typeof name !== "string") {
-      throw new Error(`Agent ${agentName} workspace ref must be a defineWorkspace(...) resource or its name`);
+      throw new Error(
+        `Agent ${agentName} workspace ref must be a defineWorkspace(...) resource or its name`,
+      );
     }
-    const normalized: Record<string, unknown> = { name: name, workspaceId: name };
+    const normalized: Record<string, unknown> = {
+      name: name,
+      workspaceId: name,
+    };
     if ("sandbox" in entry) {
       const sandbox = (entry as { sandbox?: unknown }).sandbox;
-      normalized.sandbox = sandbox === null ? null : isResource(sandbox) ? sandbox.name : sandbox;
+      normalized.sandbox =
+        sandbox === null ? null : isResource(sandbox) ? sandbox.name : sandbox;
     }
     return normalized;
   }
-  throw new Error(`Agent ${agentName} workspaces must be defineWorkspace(...) resources or { workspace, sandbox } refs`);
+  throw new Error(
+    `Agent ${agentName} workspaces must be defineWorkspace(...) resources or { workspace, sandbox } refs`,
+  );
 }
 
-function resolveContainedResourcePath(projectRoot: string, resourcePath: string, kind: "Skill" | "Tool"): string {
-  if (resourcePath.trim().length === 0) throw new Error(`${kind} path is required`);
-  if (resourcePath.includes("\0")) throw new Error(`${kind} path must not contain null bytes`);
+function resolveContainedResourcePath(
+  projectRoot: string,
+  resourcePath: string,
+  kind: "Skill" | "Tool",
+): string {
+  if (resourcePath.trim().length === 0)
+    throw new Error(`${kind} path is required`);
+  if (resourcePath.includes("\0"))
+    throw new Error(`${kind} path must not contain null bytes`);
   const root = resolve(projectRoot);
   const target = resolve(root, resourcePath);
   const rel = relative(root, target);
 
   if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return target;
 
-  throw new Error(`${kind} path ${resourcePath} must stay inside ${PROJECT_DIR}/`);
+  throw new Error(
+    `${kind} path ${resourcePath} must stay inside ${PROJECT_DIR}/`,
+  );
 }
 
 function rewriteValues(value: unknown): unknown {
@@ -964,13 +1226,17 @@ function rewriteValues(value: unknown): unknown {
     return value.name;
   }
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, rewriteValues(entry)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, rewriteValues(entry)]),
+    );
   }
 
   return value;
 }
 
-async function readBundleFiles(root: string): Promise<Array<Record<string, unknown>>> {
+async function readBundleFiles(
+  root: string,
+): Promise<Array<Record<string, unknown>>> {
   const files: Array<Record<string, unknown>> = [];
   let totalBytes = 0;
 
@@ -983,17 +1249,24 @@ async function readBundleFiles(root: string): Promise<Array<Record<string, unkno
         if (shouldSkipBundleEntry(entry.name)) continue;
         await walk(absolute);
       } else if (entry.isFile()) {
-        if (shouldSkipBundleEntry(entry.name) || isUnsafeBundlePath(rel)) continue;
+        if (shouldSkipBundleEntry(entry.name) || isUnsafeBundlePath(rel))
+          continue;
         const bytes = await readFile(absolute);
         if (bytes.byteLength > MAX_BUNDLE_FILE_BYTES) {
-          throw new Error(`Skill bundle file ${rel} is too large (${bytes.byteLength} bytes, max ${MAX_BUNDLE_FILE_BYTES})`);
+          throw new Error(
+            `Skill bundle file ${rel} is too large (${bytes.byteLength} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
+          );
         }
         totalBytes += bytes.byteLength;
         if (totalBytes > MAX_BUNDLE_TOTAL_BYTES) {
-          throw new Error(`Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_BUNDLE_TOTAL_BYTES})`);
+          throw new Error(
+            `Skill bundle at ${root} is too large (${totalBytes} bytes, max ${MAX_BUNDLE_TOTAL_BYTES})`,
+          );
         }
         if (files.length >= MAX_BUNDLE_FILES) {
-          throw new Error(`Skill bundle at ${root} has too many files (max ${MAX_BUNDLE_FILES})`);
+          throw new Error(
+            `Skill bundle at ${root} has too many files (max ${MAX_BUNDLE_FILES})`,
+          );
         }
         files.push({
           path: rel,
@@ -1016,15 +1289,18 @@ function shouldSkipBundleEntry(name: string): boolean {
 
 function assertSafeBundlePath(path: string, kind: "Skill" | "Tool"): void {
   if (isUnsafeBundlePath(path)) {
-    throw new Error(`${kind} bundle path ${path} looks like a hidden file or secret and will not be bundled`);
+    throw new Error(
+      `${kind} bundle path ${path} looks like a hidden file or secret and will not be bundled`,
+    );
   }
 }
 
 function isUnsafeBundlePath(path: string): boolean {
   const parts = path.split("/");
-  return parts.some((part) =>
-    part.startsWith(".") ||
-    UNSAFE_BUNDLE_FILE_NAMES.some((pattern) => pattern.test(part))
+  return parts.some(
+    (part) =>
+      part.startsWith(".") ||
+      UNSAFE_BUNDLE_FILE_NAMES.some((pattern) => pattern.test(part)),
   );
 }
 
@@ -1035,7 +1311,8 @@ function sha256Hex(value: string | Buffer): string {
 function contentTypeForPath(path: string): string {
   if (path.endsWith(".md")) return "text/markdown; charset=utf-8";
   if (path.endsWith(".json")) return "application/json";
-  if (path.endsWith(".js") || path.endsWith(".mjs")) return "application/javascript";
+  if (path.endsWith(".js") || path.endsWith(".mjs"))
+    return "application/javascript";
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";

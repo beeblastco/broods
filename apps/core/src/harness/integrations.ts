@@ -3,6 +3,7 @@
  * Keep request normalization, account/agent lookup, provider ACKs, and normalized channel events here.
  */
 
+import { context as otelContextApi } from "@opentelemetry/api";
 import type {
   SystemModelMessage,
   ToolModelMessage,
@@ -14,21 +15,7 @@ import {
   toolModelMessageSchema,
   userModelMessageSchema,
 } from "ai";
-import { context as otelContextApi } from "@opentelemetry/api";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
-import { getStorage } from "../shared/storage.ts";
-import {
-  applyRunOverrides,
-  MODEL_CONFIG_SETTING_KEYS,
-  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
-  toChannelRuntimeAgentConfig,
-  toRuntimeAgentConfig,
-  type AgentChannelWorkspaceScope,
-  type AgentConfig,
-  type RunOverrides,
-} from "../shared/domain/agent-config.ts";
-import type { AccountRecord } from "../shared/domain/accounts.ts";
-import type { AgentRecord } from "../shared/domain/agents.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -39,30 +26,42 @@ import type {
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
+import type { AccountRecord } from "../shared/domain/accounts.ts";
+import {
+  applyRunOverrides,
+  MODEL_CONFIG_SETTING_KEYS,
+  RUN_OVERRIDE_RESERVED_MODEL_KEYS,
+  toChannelRuntimeAgentConfig,
+  toRuntimeAgentConfig,
+  type AgentChannelWorkspaceScope,
+  type AgentConfig,
+  type RunOverrides,
+} from "../shared/domain/agent-config.ts";
+import type { AgentRecord } from "../shared/domain/agents.ts";
+import { getHarnessPublicUrl } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import {
   errorResponse,
   jsonResponse,
   type CoreRequest,
-  type RequestContext,
 } from "../shared/http.ts";
-import { collectSecretValues, logError, logInfo, logWarn } from "../shared/log.ts";
+import {
+  collectSecretValues,
+  logError,
+  logInfo,
+  logWarn,
+} from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
-import { applyMessageSendingHook, createAgentHookDispatcher } from "./hook-dispatcher.ts";
-import { toLifecycleValue } from "./lifecycle.ts";
 import {
   getObservabilityContext,
   mintTraceId,
   setObservabilityContext,
 } from "../shared/otel.ts";
 import { createPancakeChannel } from "../shared/pancake-channel.ts";
-import { createSlackChannel } from "../shared/slack-channel.ts";
-import { createTelegramChannel } from "../shared/telegram-channel.ts";
-import { createZaloChannel } from "../shared/zalo-channel.ts";
 import {
+  accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
-  accountAgentScopedKey,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
   scopedDirectConversationKey,
@@ -70,17 +69,25 @@ import {
 } from "../shared/runtime-keys.ts";
 import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
+import { createSlackChannel } from "../shared/slack-channel.ts";
+import type { AgentDeploymentScope } from "../shared/storage.ts";
+import { getStorage } from "../shared/storage.ts";
+import { createTelegramChannel } from "../shared/telegram-channel.ts";
 import {
   isolatedWorkspaceNamespace,
   workspaceNamespace,
 } from "../shared/workspaces.ts";
+import { createZaloChannel } from "../shared/zalo-channel.ts";
+import {
+  applyMessageSendingHook,
+  createAgentHookDispatcher,
+} from "./hook-dispatcher.ts";
+import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
 import type { ConversationIngressEvent } from "./session.ts";
-import { getHarnessPublicUrl } from "./self-url.ts";
-import type { AgentDeploymentScope } from "../shared/storage.ts";
 
 type DirectIngressEvent =
   | UserModelMessage
@@ -187,8 +194,12 @@ interface IntegrationHandlers {
   handleDirectRequest(event: DirectInboundEvent): Promise<Response>;
   handleAsyncRequest?(event: AsyncDirectInboundEvent): Promise<Response>;
   handleStatusRequest?(event: StatusInboundEvent): Promise<Response>;
-  handleAsyncToolCompletionRequest?(event: AsyncToolCompletionInboundEvent): Promise<Response>;
-  handleSandboxJobCompletionRequest?(event: SandboxJobCompletionInboundEvent): Promise<Response>;
+  handleAsyncToolCompletionRequest?(
+    event: AsyncToolCompletionInboundEvent,
+  ): Promise<Response>;
+  handleSandboxJobCompletionRequest?(
+    event: SandboxJobCompletionInboundEvent,
+  ): Promise<Response>;
   handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
   handleChannelContext?(event: ChannelContextEvent): Promise<void>;
 }
@@ -198,10 +209,18 @@ export interface ChannelRegistry {
 }
 
 export interface IntegrationRoutingOptions {
-  authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
+  authResolver?: (
+    headers: Record<string, string>,
+  ) => Promise<AuthContext | null>;
   accountLoader?: (accountId: string) => Promise<AccountRecord | null>;
-  agentLoader?: (accountId: string, agentId: string) => Promise<AgentRecord | null>;
-  deploymentLoader?: (accountId: string, agentId: string) => Promise<AgentDeploymentScope | null>;
+  agentLoader?: (
+    accountId: string,
+    agentId: string,
+  ) => Promise<AgentRecord | null>;
+  deploymentLoader?: (
+    accountId: string,
+    agentId: string,
+  ) => Promise<AgentDeploymentScope | null>;
   directApiEnabled?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -211,14 +230,17 @@ interface HttpRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
-  deploymentLoader(accountId: string, agentId: string): Promise<AgentDeploymentScope | null>;
+  deploymentLoader(
+    accountId: string,
+    agentId: string,
+  ): Promise<AgentDeploymentScope | null>;
   directApiEnabled: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
 
-class DirectNotFoundError extends Error { }
+class DirectNotFoundError extends Error {}
 
-class StatusUrlConfigError extends Error { }
+class StatusUrlConfigError extends Error {}
 
 export async function routeIncomingEvent(
   request: CoreRequest,
@@ -228,26 +250,37 @@ export async function routeIncomingEvent(
   return createIncomingEventRouter(options)(request, handlers);
 }
 
-export function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
+export function createIncomingEventRouter(
+  options: IntegrationRoutingOptions = {},
+) {
   const authResolver = options.authResolver ?? resolveBearerAuth;
-  const accountLoader = options.accountLoader ?? ((accountId: string) => getStorage().accounts.getById(accountId));
-  const agentLoader = options.agentLoader ?? ((accountId: string, agentId: string) => getStorage().agents.getById(accountId, agentId));
-  const deploymentLoader = options.deploymentLoader ?? ((accountId: string, agentId: string) =>
-    getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ?? Promise.resolve(null));
+  const accountLoader =
+    options.accountLoader ??
+    ((accountId: string) => getStorage().accounts.getById(accountId));
+  const agentLoader =
+    options.agentLoader ??
+    ((accountId: string, agentId: string) =>
+      getStorage().agents.getById(accountId, agentId));
+  const deploymentLoader =
+    options.deploymentLoader ??
+    ((accountId: string, agentId: string) =>
+      getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ??
+      Promise.resolve(null));
   const directApiEnabled = options.directApiEnabled ?? true;
   const waitUntil = options.waitUntil ?? (() => {});
 
   return async (
     request: CoreRequest,
     handlers: IntegrationHandlers,
-  ): Promise<Response> => handleHttpRequest(request, handlers, {
-    authResolver,
-    accountLoader,
-    agentLoader,
-    deploymentLoader,
-    directApiEnabled,
-    waitUntil,
-  });
+  ): Promise<Response> =>
+    handleHttpRequest(request, handlers, {
+      authResolver,
+      accountLoader,
+      agentLoader,
+      deploymentLoader,
+      directApiEnabled,
+      waitUntil,
+    });
 }
 
 async function handleHttpRequest(
@@ -260,7 +293,10 @@ async function handleHttpRequest(
 
   if (method === "GET" && isStatusPath(request.path)) {
     const auth = await context.authResolver(headers);
-    const account = auth?.kind === "account" || auth?.kind === "deployment" ? auth.account : null;
+    const account =
+      auth?.kind === "account" || auth?.kind === "deployment"
+        ? auth.account
+        : null;
     if (!account) {
       return unauthorizedResponse();
     }
@@ -270,7 +306,9 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
-      return handlers.handleStatusRequest(parseStatusPath(request.path, request.search, account));
+      return handlers.handleStatusRequest(
+        parseStatusPath(request.path, request.search, account),
+      );
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -299,7 +337,9 @@ async function handleHttpRequest(
   } satisfies ChannelRequest;
 
   // Check for the tool async results return
-  const asyncToolCompletionMatch = request.path.match(/^\/async-tools\/([^/]+)\/complete$/);
+  const asyncToolCompletionMatch = request.path.match(
+    /^\/async-tools\/([^/]+)\/complete$/,
+  );
   if (asyncToolCompletionMatch?.[1]) {
     const auth = await context.authResolver(request.headers);
     const account = auth?.kind === "account" ? auth.account : null;
@@ -311,11 +351,13 @@ async function handleHttpRequest(
     }
 
     try {
-      return handlers.handleAsyncToolCompletionRequest(parseAsyncToolCompletionPayload(
-        asyncToolCompletionMatch[1],
-        request.body,
-        account,
-      ));
+      return handlers.handleAsyncToolCompletionRequest(
+        parseAsyncToolCompletionPayload(
+          asyncToolCompletionMatch[1],
+          request.body,
+          account,
+        ),
+      );
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -323,25 +365,35 @@ async function handleHttpRequest(
 
   // Background-job completion: authenticated by the per-job token, not an account
   // secret, so the sandbox never needs to hold account credentials.
-  const sandboxJobCompletionMatch = request.path.match(/^\/sandbox-jobs\/([^/]+)\/complete$/);
+  const sandboxJobCompletionMatch = request.path.match(
+    /^\/sandbox-jobs\/([^/]+)\/complete$/,
+  );
   if (sandboxJobCompletionMatch?.[1]) {
     if (!handlers.handleSandboxJobCompletionRequest) {
       return notFoundResponse();
     }
     try {
-      return handlers.handleSandboxJobCompletionRequest(parseSandboxJobCompletionPayload(
-        sandboxJobCompletionMatch[1],
-        request.headers,
-        request.body,
-      ));
+      return handlers.handleSandboxJobCompletionRequest(
+        parseSandboxJobCompletionPayload(
+          sandboxJobCompletionMatch[1],
+          request.headers,
+          request.body,
+        ),
+      );
     } catch (err) {
       return badRequestResponse(err);
     }
   }
 
   // Check for the webhook channel integration
-  const accountWebhookMatch = request.path.match(/^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/);
-  if (accountWebhookMatch?.[1] && accountWebhookMatch[2] && accountWebhookMatch[3]) {
+  const accountWebhookMatch = request.path.match(
+    /^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/,
+  );
+  if (
+    accountWebhookMatch?.[1] &&
+    accountWebhookMatch[2] &&
+    accountWebhookMatch[3]
+  ) {
     const accountId = decodeURIComponent(accountWebhookMatch[1]);
     const agentId = decodeURIComponent(accountWebhookMatch[2]);
     const channelName = decodeURIComponent(accountWebhookMatch[3]);
@@ -395,8 +447,9 @@ async function handleHttpRequest(
     }
 
     const accountChannelRegistry = createChannelRegistry(agent.config);
-    const accountChannel = accountChannelRegistry.webhookChannels.find((channel) =>
-      channel.name === channelName && channel.canHandle(channelRequest)
+    const accountChannel = accountChannelRegistry.webhookChannels.find(
+      (channel) =>
+        channel.name === channelName && channel.canHandle(channelRequest),
     );
 
     logInfo("Webhook received", {
@@ -405,22 +458,42 @@ async function handleHttpRequest(
       channel: channelName,
       method: request.method,
       rawPath: request.path,
-      channelConfigured: accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName),
+      channelConfigured: accountChannelRegistry.webhookChannels.some(
+        (channel) => channel.name === channelName,
+      ),
       channelMatched: !!accountChannel,
     });
 
     if (!accountChannel) {
-      const isConfigured = accountChannelRegistry.webhookChannels.some((channel) => channel.name === channelName);
-      return integrationNotConfigured(isConfigured ? `Webhook ${channelName}` : channelName);
+      const isConfigured = accountChannelRegistry.webhookChannels.some(
+        (channel) => channel.name === channelName,
+      );
+      return integrationNotConfigured(
+        isConfigured ? `Webhook ${channelName}` : channelName,
+      );
     }
 
-    const deployment = await context.deploymentLoader(account.accountId, agent.agentId);
+    const deployment = await context.deploymentLoader(
+      account.accountId,
+      agent.agentId,
+    );
 
-    return handleChannelWebhook(accountChannel, channelRequest, handlers, account, agent, deployment, context.waitUntil);
+    return handleChannelWebhook(
+      accountChannel,
+      channelRequest,
+      handlers,
+      account,
+      agent,
+      deployment,
+      context.waitUntil,
+    );
   }
 
   const publicEndpoint = parsePublicEndpointPath(request.path);
-  if (!context.directApiEnabled && (request.path === "/" || isAsyncPath(request.path) || publicEndpoint)) {
+  if (
+    !context.directApiEnabled &&
+    (request.path === "/" || isAsyncPath(request.path) || publicEndpoint)
+  ) {
     return directApiDisabledResponse();
   }
 
@@ -454,7 +527,12 @@ async function handleHttpRequest(
     }
 
     try {
-      const parsed = await parseDirectPayload(request.body, request.headers, auth.account, context.agentLoader);
+      const parsed = await parseDirectPayload(
+        request.body,
+        request.headers,
+        auth.account,
+        context.agentLoader,
+      );
       // Secure by default: the public runtime key only reaches agents that have
       // explicitly opted into the public endpoint. Internal callers (account/
       // admin secret), channel webhooks, and cron paths are never gated here.
@@ -472,7 +550,10 @@ async function handleHttpRequest(
 
         const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
         if (!statusUrl) {
-          return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+          return errorResponse(
+            503,
+            "Async API is unavailable: PUBLIC_BASE_URL is not configured",
+          );
         }
 
         return handlers.handleAsyncRequest({
@@ -506,7 +587,12 @@ async function handleHttpRequest(
   }
 
   try {
-    const parsed = await parseDirectPayload(request.body, request.headers, account, context.agentLoader);
+    const parsed = await parseDirectPayload(
+      request.body,
+      request.headers,
+      account,
+      context.agentLoader,
+    );
     if (isAsyncPath(request.path)) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -514,7 +600,10 @@ async function handleHttpRequest(
 
       const statusUrl = buildStatusUrl(parsed.publicEventId, parsed.agentId);
       if (!statusUrl) {
-        return errorResponse(503, "Async API is unavailable: PUBLIC_BASE_URL is not configured");
+        return errorResponse(
+          503,
+          "Async API is unavailable: PUBLIC_BASE_URL is not configured",
+        );
       }
 
       return handlers.handleAsyncRequest({
@@ -583,15 +672,15 @@ async function handleChannelWebhook(
       kind: parsed.kind,
       ...(parsed.kind === "message"
         ? {
-          eventId: parsed.message.eventId,
-          conversationKey: parsed.message.conversationKey,
-          source: parsed.message.source,
-        }
+            eventId: parsed.message.eventId,
+            conversationKey: parsed.message.conversationKey,
+            source: parsed.message.source,
+          }
         : {}),
     });
 
     // Global event check for webhook event.
-    // Provider needs a direct HTTP response, but no agent run. 
+    // Provider needs a direct HTTP response, but no agent run.
     // Example: Slack URL verification or Discord interaction response.
     if (parsed.kind === "response") {
       logInfo("Channel webhook responded without agent run", {
@@ -604,7 +693,7 @@ async function handleChannelWebhook(
       return toResponse(parsed.response);
     }
 
-    // Webhook is valid enough to accept, but should not run the agent. 
+    // Webhook is valid enough to accept, but should not run the agent.
     // Example: unsupported Pancake event, wrong page ID, hidden/removed message, page-originated message,
     // or a configured channel handoff gate.
     if (parsed.kind === "ignore") {
@@ -628,14 +717,16 @@ async function handleChannelWebhook(
         conversationKey: parsed.conversationKey,
         statusCode: response.statusCode,
       });
-      waitUntil(Promise.resolve().then(() =>
-        cleanupChannelWorkspaceScopes({
-          accountId: account.accountId,
-          agentConfig: agent.config,
-          channelName: parsed.channelName,
-          conversationKey: parsed.conversationKey,
-        })
-      ));
+      waitUntil(
+        Promise.resolve().then(() =>
+          cleanupChannelWorkspaceScopes({
+            accountId: account.accountId,
+            agentConfig: agent.config,
+            channelName: parsed.channelName,
+            conversationKey: parsed.conversationKey,
+          }),
+        ),
+      );
       return toResponse(response);
     }
 
@@ -651,26 +742,41 @@ async function handleChannelWebhook(
         statusCode: response.statusCode,
       });
 
-      waitUntil(Promise.resolve().then(() =>
-        handlers.handleChannelContext?.({
-          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
-          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
-          content: message.content,
-          events: message.events ?? [{ role: "user", content: message.content }],
-          channelName: message.channelName,
-          source: message.source,
-          accountId: account.accountId,
-          agentId: agent.agentId,
-          agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
-          ...(deployment
-            ? {
-              endpointId: deployment.endpointId,
-              projectSlug: deployment.projectSlug,
-              environmentSlug: deployment.environmentSlug,
-            }
-            : {}),
-        })
-      ));
+      waitUntil(
+        Promise.resolve().then(() =>
+          handlers.handleChannelContext?.({
+            eventId: accountAgentScopedKey(
+              account.accountId,
+              agent.agentId,
+              message.eventId,
+            ),
+            conversationKey: accountAgentScopedKey(
+              account.accountId,
+              agent.agentId,
+              message.conversationKey,
+            ),
+            content: message.content,
+            events: message.events ?? [
+              { role: "user", content: message.content },
+            ],
+            channelName: message.channelName,
+            source: message.source,
+            accountId: account.accountId,
+            agentId: agent.agentId,
+            agentConfig: toChannelRuntimeAgentConfig(
+              agent.config,
+              message.channelName,
+            ),
+            ...(deployment
+              ? {
+                  endpointId: deployment.endpointId,
+                  projectSlug: deployment.projectSlug,
+                  environmentSlug: deployment.environmentSlug,
+                }
+              : {}),
+          }),
+        ),
+      );
       return toResponse(response);
     }
 
@@ -689,30 +795,45 @@ async function handleChannelWebhook(
       statusCode: response.statusCode,
     });
 
-    waitUntil(Promise.resolve().then(() =>
-      processChannelMessage(
-        {
-          eventId: accountAgentScopedKey(account.accountId, agent.agentId, message.eventId),
-          conversationKey: accountAgentScopedKey(account.accountId, agent.agentId, message.conversationKey),
-          content: message.content,
-          events: message.events ?? [{ role: "user", content: message.content }],
-          channelName: message.channelName,
-          source: message.source,
-          channel: channel,
-          accountId: account.accountId,
-          agentId: agent.agentId,
-          agentConfig: toChannelRuntimeAgentConfig(agent.config, message.channelName),
-          ...(deployment
-            ? {
-              endpointId: deployment.endpointId,
-              projectSlug: deployment.projectSlug,
-              environmentSlug: deployment.environmentSlug,
-            }
-            : {}),
-        },
-        handlers,
-      )
-    ));
+    waitUntil(
+      Promise.resolve().then(() =>
+        processChannelMessage(
+          {
+            eventId: accountAgentScopedKey(
+              account.accountId,
+              agent.agentId,
+              message.eventId,
+            ),
+            conversationKey: accountAgentScopedKey(
+              account.accountId,
+              agent.agentId,
+              message.conversationKey,
+            ),
+            content: message.content,
+            events: message.events ?? [
+              { role: "user", content: message.content },
+            ],
+            channelName: message.channelName,
+            source: message.source,
+            channel: channel,
+            accountId: account.accountId,
+            agentId: agent.agentId,
+            agentConfig: toChannelRuntimeAgentConfig(
+              agent.config,
+              message.channelName,
+            ),
+            ...(deployment
+              ? {
+                  endpointId: deployment.endpointId,
+                  projectSlug: deployment.projectSlug,
+                  environmentSlug: deployment.environmentSlug,
+                }
+              : {}),
+          },
+          handlers,
+        ),
+      ),
+    );
     return toResponse(response);
   } catch (err) {
     logError("Failed to process webhook request", {
@@ -735,8 +856,12 @@ async function cleanupChannelWorkspaceScopes(options: {
   conversationKey: string;
 }): Promise<void> {
   const channelConfig = options.agentConfig.channels?.[options.channelName];
-  const rawWorkspaceScope = isPlainObject(channelConfig) ? channelConfig.workspaceScope : undefined;
-  const workspaceScope = isChannelWorkspaceScope(rawWorkspaceScope) ? rawWorkspaceScope : undefined;
+  const rawWorkspaceScope = isPlainObject(channelConfig)
+    ? channelConfig.workspaceScope
+    : undefined;
+  const workspaceScope = isChannelWorkspaceScope(rawWorkspaceScope)
+    ? rawWorkspaceScope
+    : undefined;
   if (workspaceScope?.level !== "conversation") {
     return;
   }
@@ -745,7 +870,10 @@ async function cleanupChannelWorkspaceScopes(options: {
   let deleted = 0;
   let reservedSandboxesReleased = 0;
   for (const ref of options.agentConfig.workspaces ?? []) {
-    const record = await storage.workspaceConfigs.getById(options.accountId, ref.workspaceId);
+    const record = await storage.workspaceConfigs.getById(
+      options.accountId,
+      ref.workspaceId,
+    );
     if (!record || record.config.isolation !== true) {
       continue;
     }
@@ -755,14 +883,28 @@ async function cleanupChannelWorkspaceScopes(options: {
       record.config.isolation,
       {
         channelName: options.channelName,
-        channelScopeKey: channelScopeKeyFromConversation(options.conversationKey),
-        conversationKey: channelScopeKeyFromConversation(options.conversationKey, "conversation"),
+        channelScopeKey: channelScopeKeyFromConversation(
+          options.conversationKey,
+        ),
+        conversationKey: channelScopeKeyFromConversation(
+          options.conversationKey,
+          "conversation",
+        ),
         workspaceScope,
       },
     );
-    reservedSandboxesReleased += await releaseReservedSandboxes(options.accountId, [namespace]);
-    const target = await resolveS3ReadTarget(workspaceReadContext(record.config.storage, namespace));
-    deleted += await deleteS3Prefix(target.bucket, target.prefix, target.access);
+    reservedSandboxesReleased += await releaseReservedSandboxes(
+      options.accountId,
+      [namespace],
+    );
+    const target = await resolveS3ReadTarget(
+      workspaceReadContext(record.config.storage, namespace),
+    );
+    deleted += await deleteS3Prefix(
+      target.bucket,
+      target.prefix,
+      target.access,
+    );
   }
 
   logInfo("Channel workspace scoped cleanup completed", {
@@ -774,10 +916,29 @@ async function cleanupChannelWorkspaceScopes(options: {
   });
 }
 
-function isChannelWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+function isChannelWorkspaceScope(
+  value: unknown,
+): value is AgentChannelWorkspaceScope {
   if (!isPlainObject(value)) return false;
   if (value.level === "channel") return value.alias === undefined;
   return value.level === "conversation" && typeof value.alias === "string";
+}
+
+// Attaches an onMessageReceived hook's opaque metadata to the newest user
+// ingress event; the session persists it and re-exposes it on hook payloads.
+export function attachMetadataToLatestUserIngress(
+  events: ConversationIngressEvent[],
+  metadata: unknown,
+): ConversationIngressEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.role !== "user") continue;
+    const next = [...events];
+    next[i] = { ...event, metadata };
+    return next;
+  }
+
+  return events;
 }
 
 async function processChannelMessage(
@@ -820,8 +981,12 @@ async function processChannelMessage(
     // reaches the agent (spam filter, redaction). Cheap when unused: the
     // dispatcher is a no-op unless the agent configured code hooks.
     let content = event.content;
+    let events = event.events;
     if (event.agentConfig) {
-      const hooks = await createAgentHookDispatcher(event.accountId, event.agentConfig);
+      const hooks = await createAgentHookDispatcher(
+        event.accountId,
+        event.agentConfig,
+      );
       const mutation = await hooks.runMutation("channel.message.received", {
         channel: event.channelName,
         text: extractText(event.content),
@@ -839,16 +1004,26 @@ async function processChannelMessage(
       }
       if (typeof mutation?.text === "string") {
         content = mutation.text;
+        // The turn is persisted and built from the ingress events, not from
+        // `content` (handler.ts appendIngressEvents) — a rewrite that only
+        // touches `content` is computed and then dropped.
+        events = rewriteLatestUserIngressText(events, mutation.text);
+      }
+      if (mutation !== undefined && mutation.metadata !== undefined) {
+        events = attachMetadataToLatestUserIngress(events, mutation.metadata);
       }
     }
 
-    event.channel.sendTyping().catch(() => { });
-    event.channel.reactToMessage().catch(() => { });
+    event.channel.sendTyping().catch(() => {});
+    event.channel.reactToMessage().catch(() => {});
 
     await handlers.handleChannelRequest({
       ...event,
       content,
-      commandToken: resolveCommandToken(content, event.source, event.channelName) ?? undefined,
+      events,
+      commandToken:
+        resolveCommandToken(content, event.source, event.channelName) ??
+        undefined,
     });
     logInfo("Channel message processing completed", {
       channel: event.channelName,
@@ -864,18 +1039,40 @@ async function processChannelMessage(
       eventId: event.eventId,
       error,
     });
-    await event.channel.sendText(formatChannelErrorText(error)).catch((sendErr) => {
-      logError("Failed to send channel error message", {
-        channel: event.channelName,
-        eventId: event.eventId,
-        error: sendErr instanceof Error ? sendErr.message : String(sendErr),
+    await event.channel
+      .sendText(formatChannelErrorText(error))
+      .catch((sendErr) => {
+        logError("Failed to send channel error message", {
+          channel: event.channelName,
+          eventId: event.eventId,
+          error: sendErr instanceof Error ? sendErr.message : String(sendErr),
+        });
       });
-    });
   } finally {
     if (hasDeploymentScope) {
       setObservabilityContext(previousObservabilityContext);
     }
   }
+}
+
+/**
+ * Applies a channel.message.received text rewrite to the ingress events that
+ * actually reach the session. The newest user event is the inbound message the
+ * hook saw; earlier events (context, prior turns a channel may batch) are kept.
+ */
+export function rewriteLatestUserIngressText(
+  events: ConversationIngressEvent[],
+  text: string,
+): ConversationIngressEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.role !== "user") continue;
+    const next = [...events];
+    next[i] = { ...event, content: text };
+    return next;
+  }
+
+  return events;
 }
 
 function resolveCommandToken(
@@ -900,7 +1097,11 @@ function resolveCommandToken(
 }
 
 function supportsInlineCommands(channelName: string): boolean {
-  return channelName === "discord" || channelName === "slack" || channelName === "telegram";
+  return (
+    channelName === "discord" ||
+    channelName === "slack" ||
+    channelName === "telegram"
+  );
 }
 
 function toResponse(response: ChannelResponse): Response {
@@ -954,16 +1155,29 @@ export async function sendChannelReply(options: {
   text: string;
 }): Promise<void> {
   const registry = createChannelRegistry(options.config);
-  const adapter = registry.webhookChannels.find((channel) => channel.name === options.channelName);
+  const adapter = registry.webhookChannels.find(
+    (channel) => channel.name === options.channelName,
+  );
   if (!adapter) {
-    throw new Error(`Channel ${options.channelName} is not configured for this agent`);
+    throw new Error(
+      `Channel ${options.channelName} is not configured for this agent`,
+    );
   }
 
   // Outbound policy applies to delayed replies too, not just the sync path.
-  const hooks = await createAgentHookDispatcher(options.accountId, options.config);
-  const text = await applyMessageSendingHook(hooks, options.channelName, options.text);
+  const hooks = await createAgentHookDispatcher(
+    options.accountId,
+    options.config,
+  );
+  const text = await applyMessageSendingHook(
+    hooks,
+    options.channelName,
+    options.text,
+  );
   if (text === null) {
-    logInfo("Channel reply dropped by onMessageSending hook", { channel: options.channelName });
+    logInfo("Channel reply dropped by onMessageSending hook", {
+      channel: options.channelName,
+    });
     return;
   }
 
@@ -978,7 +1192,9 @@ export async function sendChannelReply(options: {
 }
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
-  const scoped = rawPath.match(/^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/);
+  const scoped = rawPath.match(
+    /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)(?:\/(async))?$/,
+  );
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
@@ -1003,23 +1219,32 @@ function deploymentMatchesPath(
   auth: Extract<AuthContext, { kind: "deployment" }>,
   endpoint: PublicEndpointPath,
 ): boolean {
-  return auth.endpointId === endpoint.endpointId &&
-    (endpoint.projectSlug === undefined || auth.projectSlug === endpoint.projectSlug) &&
-    (endpoint.environmentSlug === undefined || auth.environmentSlug === endpoint.environmentSlug);
+  return (
+    auth.endpointId === endpoint.endpointId &&
+    (endpoint.projectSlug === undefined ||
+      auth.projectSlug === endpoint.projectSlug) &&
+    (endpoint.environmentSlug === undefined ||
+      auth.environmentSlug === endpoint.environmentSlug)
+  );
 }
 
 async function parseDirectPayload(
   bodyText: string,
   headers: Record<string, string>,
   account: AccountRecord,
-  agentLoader: (accountId: string, agentId: string) => Promise<AgentRecord | null>,
+  agentLoader: (
+    accountId: string,
+    agentId: string,
+  ) => Promise<AgentRecord | null>,
 ): Promise<DirectInboundEvent> {
   let parsed: unknown;
 
   try {
     parsed = JSON.parse(bodyText);
   } catch (err) {
-    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (typeof parsed !== "object" || parsed === null) {
@@ -1027,11 +1252,17 @@ async function parseDirectPayload(
   }
 
   const record = parsed as Record<string, unknown>;
-  if (typeof record.eventId !== "string" || typeof record.conversationKey !== "string") {
+  if (
+    typeof record.eventId !== "string" ||
+    typeof record.conversationKey !== "string"
+  ) {
     throw new Error("Request body must include eventId and conversationKey");
   }
 
-  if (typeof record.agentId !== "string" || record.agentId.trim().length === 0) {
+  if (
+    typeof record.agentId !== "string" ||
+    record.agentId.trim().length === 0
+  ) {
     throw new Error("Request body must include agentId");
   }
   const agentId = normalizeDirectIdentifier("agentId", record.agentId);
@@ -1041,28 +1272,44 @@ async function parseDirectPayload(
   }
 
   const rawEventId = assertValidPublicEventId(record.eventId as string);
-  const rawConversationKey = assertValidPublicConversationKey(record.conversationKey as string);
+  const rawConversationKey = assertValidPublicConversationKey(
+    record.conversationKey as string,
+  );
 
   const events = parseDirectIngressEvents(record);
   if (events.length === 0) {
     throw new Error("Request body must include a non-empty events array");
   }
-  if (record.webhookUrl !== undefined || headers["x-webhook-secret"] !== undefined) {
-    throw new Error("Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent");
+  if (
+    record.webhookUrl !== undefined ||
+    headers["x-webhook-secret"] !== undefined
+  ) {
+    throw new Error(
+      "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+    );
   }
 
   const overrides = parseRunOverrides(record);
-  const connectionId = typeof record.connectionId === "string" && record.connectionId.trim().length > 0
-    ? record.connectionId.trim()
-    : undefined;
+  const connectionId =
+    typeof record.connectionId === "string" &&
+    record.connectionId.trim().length > 0
+      ? record.connectionId.trim()
+      : undefined;
 
   return {
     accountId: account.accountId,
     agentId: agent.agentId,
-    agentConfig: applyRunOverrides(toRuntimeAgentConfig(agent.config), overrides),
+    agentConfig: applyRunOverrides(
+      toRuntimeAgentConfig(agent.config),
+      overrides,
+    ),
     eventId: scopedDirectEventId(account.accountId, agent.agentId, rawEventId),
     publicEventId: rawEventId,
-    conversationKey: scopedDirectConversationKey(account.accountId, agent.agentId, rawConversationKey),
+    conversationKey: scopedDirectConversationKey(
+      account.accountId,
+      agent.agentId,
+      rawConversationKey,
+    ),
     publicConversationKey: rawConversationKey,
     events,
     ...(connectionId ? { connectionId } : {}),
@@ -1076,9 +1323,13 @@ async function parseDirectPayload(
  * keys, and forwards AI SDK call settings/providerOptions to the same
  * model path as the stored config. Returns undefined when absent.
  */
-export function parseRunOverrides(record: Record<string, unknown>): RunOverrides | undefined {
+export function parseRunOverrides(
+  record: Record<string, unknown>,
+): RunOverrides | undefined {
   if (record.params !== undefined) {
-    throw new Error("Request body params is not supported; use top-level system and model");
+    throw new Error(
+      "Request body params is not supported; use top-level system and model",
+    );
   }
   const overrides: RunOverrides = {};
 
@@ -1087,7 +1338,11 @@ export function parseRunOverrides(record: Record<string, unknown>): RunOverrides
   }
 
   if (record.model !== undefined) {
-    if (typeof record.model !== "object" || record.model === null || Array.isArray(record.model)) {
+    if (
+      typeof record.model !== "object" ||
+      record.model === null ||
+      Array.isArray(record.model)
+    ) {
       throw new Error("model must be an object");
     }
     const reserved = new Set<string>(RUN_OVERRIDE_RESERVED_MODEL_KEYS);
@@ -1098,7 +1353,9 @@ export function parseRunOverrides(record: Record<string, unknown>): RunOverrides
         throw new Error(`model.${key} cannot be overridden per run`);
       }
       if (!supportedSettings.has(key)) {
-        throw new Error(`model.${key} is not supported; use model.providerOptions for provider-specific settings`);
+        throw new Error(
+          `model.${key} is not supported; use model.providerOptions for provider-specific settings`,
+        );
       }
       model[key] = value;
     }
@@ -1119,16 +1376,22 @@ function parseSystemOverride(raw: unknown): SystemModelMessage[] {
   return values.map((value) => {
     const parsed = systemModelMessageSchema.safeParse(value);
     if (!parsed.success) {
-      throw new Error(`system must be a SystemModelMessage or array of SystemModelMessage: ${
-        parsed.error.issues[0]?.message ?? "invalid system message"
-      }`);
+      throw new Error(
+        `system must be a SystemModelMessage or array of SystemModelMessage: ${
+          parsed.error.issues[0]?.message ?? "invalid system message"
+        }`,
+      );
     }
 
     return parsed.data;
   });
 }
 
-function parseStatusPath(rawPath: string, rawQueryString: string, account: AccountRecord): StatusInboundEvent {
+function parseStatusPath(
+  rawPath: string,
+  rawQueryString: string,
+  account: AccountRecord,
+): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
   const publicEventId = assertValidPublicEventId(rawEventId);
@@ -1158,7 +1421,9 @@ function parseAsyncToolCompletionPayload(
   try {
     parsed = JSON.parse(bodyText);
   } catch (err) {
-    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!parsed || typeof parsed !== "object") {
@@ -1171,7 +1436,9 @@ function parseAsyncToolCompletionPayload(
   }
 
   if (record.status === "failed" && typeof record.error !== "string") {
-    throw new Error("Async tool completion error must be a string when status is failed");
+    throw new Error(
+      "Async tool completion error must be a string when status is failed",
+    );
   }
 
   return {
@@ -1190,14 +1457,18 @@ function parseSandboxJobCompletionPayload(
 ): SandboxJobCompletionInboundEvent {
   const token = headers["x-job-token"]?.trim();
   if (!token) {
-    throw new Error("Background job completion requires the x-job-token header");
+    throw new Error(
+      "Background job completion requires the x-job-token header",
+    );
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(bodyText);
   } catch (err) {
-    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!parsed || typeof parsed !== "object") {
@@ -1206,7 +1477,9 @@ function parseSandboxJobCompletionPayload(
 
   const record = parsed as Record<string, unknown>;
   if (record.status !== "completed" && record.status !== "failed") {
-    throw new Error("Background job completion status must be completed or failed");
+    throw new Error(
+      "Background job completion status must be completed or failed",
+    );
   }
 
   return {
@@ -1233,7 +1506,10 @@ function badRequestResponse(err: unknown): Response {
   if (err instanceof StatusUrlConfigError) {
     return errorResponse(500, err.message);
   }
-  return errorResponse(400, err instanceof Error ? err.message : "Invalid request");
+  return errorResponse(
+    400,
+    err instanceof Error ? err.message : "Invalid request",
+  );
 }
 
 function notFoundResponse(): Response {
@@ -1257,7 +1533,9 @@ function buildStatusUrl(publicEventId: string, agentId: string): string | null {
   return `${baseUrl}/status/${encodeURIComponent(publicEventId)}?agentId=${encodeURIComponent(agentId)}`;
 }
 
-function parseDirectIngressEvents(record: Record<string, unknown>): DirectIngressEvent[] {
+function parseDirectIngressEvents(
+  record: Record<string, unknown>,
+): DirectIngressEvent[] {
   const explicitEvents = record.events;
 
   if (explicitEvents == null) {
@@ -1289,7 +1567,9 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   if (candidate.role === "user") {
     const parsedUser = userModelMessageSchema.safeParse(candidate);
     if (!parsedUser.success) {
-      throw new Error(`Invalid direct event: ${parsedUser.error.issues[0]?.message ?? "must match UserModelMessage"}`);
+      throw new Error(
+        `Invalid direct event: ${parsedUser.error.issues[0]?.message ?? "must match UserModelMessage"}`,
+      );
     }
 
     return parsedUser.data;
@@ -1298,20 +1578,28 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   if (candidate.role === "tool") {
     const parsedTool = toolModelMessageSchema.safeParse(candidate);
     if (!parsedTool.success) {
-      throw new Error(`Invalid direct event: ${parsedTool.error.issues[0]?.message ?? "must match ToolModelMessage"}`);
+      throw new Error(
+        `Invalid direct event: ${parsedTool.error.issues[0]?.message ?? "must match ToolModelMessage"}`,
+      );
     }
     if (
       parsedTool.data.content.length === 0 ||
-      !parsedTool.data.content.every((part) => part.type === "tool-approval-response")
+      !parsedTool.data.content.every(
+        (part) => part.type === "tool-approval-response",
+      )
     ) {
-      throw new Error("Direct API tool events may include only tool-approval-response parts");
+      throw new Error(
+        "Direct API tool events may include only tool-approval-response parts",
+      );
     }
 
     return parsedTool.data;
   }
 
   if (candidate.role !== "system") {
-    throw new Error("Direct API accepts only user, tool approval, and ephemeral system events");
+    throw new Error(
+      "Direct API accepts only user, tool approval, and ephemeral system events",
+    );
   }
 
   if (persist === true) {
@@ -1320,7 +1608,9 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
 
   const parsedSystem = systemModelMessageSchema.safeParse(candidate);
   if (!parsedSystem.success) {
-    throw new Error(`Invalid direct event: ${parsedSystem.error.issues[0]?.message ?? "must match SystemModelMessage"}`);
+    throw new Error(
+      `Invalid direct event: ${parsedSystem.error.issues[0]?.message ?? "must match SystemModelMessage"}`,
+    );
   }
 
   return {
@@ -1329,7 +1619,9 @@ function parseDirectIngressEvent(rawEvent: unknown): DirectIngressEvent {
   };
 }
 
-function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createTelegramChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.telegram;
   if (!channel?.botToken || !channel.webhookSecret || !channel.allowedChatIds) {
     return null;
@@ -1344,7 +1636,9 @@ function createTelegramChannelFromConfig(config: AgentConfig): ChannelAdapter | 
   );
 }
 
-function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createGitHubChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.github;
   if (!channel?.webhookSecret || !channel.appId || !channel.privateKey) {
     return null;
@@ -1365,7 +1659,9 @@ function createGitHubChannelFromConfig(config: AgentConfig): ChannelAdapter | nu
   );
 }
 
-function createSlackChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createSlackChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.slack;
   if (!channel?.botToken || !channel.signingSecret) {
     return null;
@@ -1380,7 +1676,9 @@ function createSlackChannelFromConfig(config: AgentConfig): ChannelAdapter | nul
   );
 }
 
-function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createDiscordChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.discord;
   if (!channel?.botToken || !channel.publicKey) {
     return null;
@@ -1394,7 +1692,9 @@ function createDiscordChannelFromConfig(config: AgentConfig): ChannelAdapter | n
   );
 }
 
-function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createPancakeChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.pancake;
   if (!channel?.pageId || !channel.pageAccessToken || !channel.webhookSecret) {
     return null;
@@ -1408,7 +1708,9 @@ function createPancakeChannelFromConfig(config: AgentConfig): ChannelAdapter | n
   );
 }
 
-function createZaloChannelFromConfig(config: AgentConfig): ChannelAdapter | null {
+function createZaloChannelFromConfig(
+  config: AgentConfig,
+): ChannelAdapter | null {
   const channel = config.channels?.zalo;
   if (!channel?.botToken || !channel.webhookSecret) {
     return null;
@@ -1417,6 +1719,8 @@ function createZaloChannelFromConfig(config: AgentConfig): ChannelAdapter | null
   return createZaloChannel(
     channel.botToken,
     channel.webhookSecret,
-    channel.allowedUserIds?.length ? new Set(channel.allowedUserIds) : undefined,
+    channel.allowedUserIds?.length
+      ? new Set(channel.allowedUserIds)
+      : undefined,
   );
 }

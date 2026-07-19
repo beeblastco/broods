@@ -5,7 +5,10 @@
 
 import { describe, expect, it } from "bun:test";
 import { parseRunOverrides } from "../src/harness/integrations.ts";
-import { applyRunOverrides, type AgentConfig } from "../src/shared/domain/agent-config.ts";
+import {
+  applyRunOverrides,
+  type AgentConfig,
+} from "../src/shared/domain/agent-config.ts";
 
 describe("parseRunOverrides", () => {
   it("returns undefined when overrides are absent", () => {
@@ -33,7 +36,9 @@ describe("parseRunOverrides", () => {
 
   it("rejects reserved identity/credential keys (provider/modelId/output/apiKey)", () => {
     for (const key of ["provider", "modelId", "output", "apiKey"]) {
-      expect(() => parseRunOverrides({ model: { [key]: "x" } })).toThrow(/cannot be overridden per run/);
+      expect(() => parseRunOverrides({ model: { [key]: "x" } })).toThrow(
+        /cannot be overridden per run/,
+      );
     }
   });
 
@@ -55,7 +60,12 @@ describe("parseRunOverrides", () => {
   });
 
   it("rejects unsupported model override keys", () => {
-    for (const key of ["options", "thinking", "thinkingConfig", "unknownSetting"]) {
+    for (const key of [
+      "options",
+      "thinking",
+      "thinkingConfig",
+      "unknownSetting",
+    ]) {
       expect(() => parseRunOverrides({ model: { [key]: "x" } })).toThrow(
         `model.${key} is not supported; use model.providerOptions for provider-specific settings`,
       );
@@ -63,12 +73,18 @@ describe("parseRunOverrides", () => {
   });
 
   it("rejects non-message system overrides", () => {
-    expect(() => parseRunOverrides({ system: "one-turn instructions" })).toThrow(/SystemModelMessage/);
-    expect(() => parseRunOverrides({ system: 42 })).toThrow(/SystemModelMessage/);
+    expect(() =>
+      parseRunOverrides({ system: "one-turn instructions" }),
+    ).toThrow(/SystemModelMessage/);
+    expect(() => parseRunOverrides({ system: 42 })).toThrow(
+      /SystemModelMessage/,
+    );
   });
 
   it("rejects the params wrapper", () => {
-    expect(() => parseRunOverrides({ params: { model: { temperature: 0 } } })).toThrow("Request body params is not supported");
+    expect(() =>
+      parseRunOverrides({ params: { model: { temperature: 0 } } }),
+    ).toThrow("Request body params is not supported");
   });
 });
 
@@ -80,13 +96,24 @@ describe("applyRunOverrides", () => {
 
   it("returns the original config untouched when there are no overrides", () => {
     expect(applyRunOverrides(base, undefined)).toBe(base);
-    expect(applyRunOverrides(base, { system: [{ role: "system", content: "only-system" }] })).toBe(base);
+    expect(
+      applyRunOverrides(base, {
+        system: [{ role: "system", content: "only-system" }],
+      }),
+    ).toBe(base);
   });
 
   it("folds model overrides without mutating the original", () => {
-    const next = applyRunOverrides(base, { model: { temperature: 0.2, maxOutputTokens: 512 } });
+    const next = applyRunOverrides(base, {
+      model: { temperature: 0.2, maxOutputTokens: 512 },
+    });
     expect(next).not.toBe(base);
-    expect(next.model).toMatchObject({ provider: "minimax", modelId: "MiniMax-M3", temperature: 0.2, maxOutputTokens: 512 });
+    expect(next.model).toMatchObject({
+      provider: "minimax",
+      modelId: "MiniMax-M3",
+      temperature: 0.2,
+      maxOutputTokens: 512,
+    });
     expect(base.model?.temperature).toBe(1);
   });
 });

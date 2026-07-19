@@ -4,7 +4,10 @@
  */
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
-import { createAgentLifecycleEmitter, toLifecycleValue } from "../src/harness/lifecycle.ts";
+import {
+  createAgentLifecycleEmitter,
+  toLifecycleValue,
+} from "../src/harness/lifecycle.ts";
 
 const originalFetch = globalThis.fetch;
 
@@ -26,11 +29,13 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: false,
-          url: "https://example.com/hook",
-          secret: "secret",
-        }],
+        webhooks: [
+          {
+            enabled: false,
+            url: "https://example.com/hook",
+            secret: "secret",
+          },
+        ],
       },
     });
 
@@ -45,10 +50,12 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          secret: "secret",
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            secret: "secret",
+          },
+        ],
       },
     });
 
@@ -63,10 +70,12 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+          },
+        ],
       },
     });
 
@@ -79,7 +88,9 @@ describe("createAgentLifecycleEmitter", () => {
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as never;
 
-    const emitter = createAgentLifecycleEmitter(baseSession, { hooks: { webhooks: [] } });
+    const emitter = createAgentLifecycleEmitter(baseSession, {
+      hooks: { webhooks: [] },
+    });
 
     await emitter.emit("agent.started", {});
 
@@ -92,12 +103,14 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-          events: ["agent.finished"],
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+            secret: "secret",
+            events: ["agent.finished"],
+          },
+        ],
       },
     });
 
@@ -107,21 +120,29 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("fires webhook for subscribed events", async () => {
-    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    const fetchMock = mock(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-          events: ["agent.started", "agent.finished"],
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+            secret: "secret",
+            events: ["agent.started", "agent.finished"],
+          },
+        ],
       },
     });
 
-    await emitter.emit("agent.started", { modelProvider: "google", modelId: "gemini-2.0" });
+    await emitter.emit("agent.started", {
+      modelProvider: "google",
+      modelId: "gemini-2.0",
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://example.com/hook");
@@ -145,16 +166,29 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("fires every matching webhook when several are registered", async () => {
-    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    const fetchMock = mock(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
         webhooks: [
-          { enabled: true, url: "https://a.example.com/hook", secret: "s1", events: ["agent.started"] },
+          {
+            enabled: true,
+            url: "https://a.example.com/hook",
+            secret: "s1",
+            events: ["agent.started"],
+          },
           { enabled: true, url: "https://b.example.com/hook", secret: "s2" },
           { enabled: false, url: "https://c.example.com/hook", secret: "s3" },
-          { enabled: true, url: "https://d.example.com/hook", secret: "s4", events: ["agent.finished"] },
+          {
+            enabled: true,
+            url: "https://d.example.com/hook",
+            secret: "s4",
+            events: ["agent.finished"],
+          },
         ],
       },
     });
@@ -164,7 +198,10 @@ describe("createAgentLifecycleEmitter", () => {
     // a (subscribed) and b (no allow-list) fire; c is disabled; d only wants agent.finished.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const calledUrls = fetchMock.mock.calls.map((call) => call[0]).sort();
-    expect(calledUrls).toEqual(["https://a.example.com/hook", "https://b.example.com/hook"]);
+    expect(calledUrls).toEqual([
+      "https://a.example.com/hook",
+      "https://b.example.com/hook",
+    ]);
   });
 
   it("fires all events when no events allow-list is configured", async () => {
@@ -173,11 +210,13 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+            secret: "secret",
+          },
+        ],
       },
     });
 
@@ -193,11 +232,13 @@ describe("createAgentLifecycleEmitter", () => {
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+            secret: "secret",
+          },
+        ],
       },
     });
 
@@ -207,21 +248,29 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("includes accountId and agentId only when present in session", async () => {
-    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    const fetchMock = mock(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
     globalThis.fetch = fetchMock as never;
 
-    const emitter = createAgentLifecycleEmitter({
-      eventId: "evt_456",
-      conversationKey: "direct:conv_2",
-    } as never, {
-      hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-        }],
+    const emitter = createAgentLifecycleEmitter(
+      {
+        eventId: "evt_456",
+        conversationKey: "direct:conv_2",
+      } as never,
+      {
+        hooks: {
+          webhooks: [
+            {
+              enabled: true,
+              url: "https://example.com/hook",
+              secret: "secret",
+            },
+          ],
+        },
       },
-    });
+    );
 
     await emitter.emit("agent.started", {});
 
@@ -234,16 +283,21 @@ describe("createAgentLifecycleEmitter", () => {
   });
 
   it("generates ISO timestamp for each event", async () => {
-    const fetchMock = mock(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    const fetchMock = mock(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(null, { status: 200 }),
+    );
     globalThis.fetch = fetchMock as never;
 
     const emitter = createAgentLifecycleEmitter(baseSession, {
       hooks: {
-        webhooks: [{
-          enabled: true,
-          url: "https://example.com/hook",
-          secret: "secret",
-        }],
+        webhooks: [
+          {
+            enabled: true,
+            url: "https://example.com/hook",
+            secret: "secret",
+          },
+        ],
       },
     });
 
@@ -251,7 +305,9 @@ describe("createAgentLifecycleEmitter", () => {
 
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
     const body = JSON.parse(String(init?.body));
-    expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/);
+    expect(body.timestamp).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/,
+    );
   });
 });
 

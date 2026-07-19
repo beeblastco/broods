@@ -102,7 +102,9 @@ export type ObservabilityServerMessage =
   | ObservabilitySpanMessage
   | ObservabilityErrorMessage;
 
-export function isObservabilityClientMessage(v: unknown): v is ObservabilityClientMessage {
+export function isObservabilityClientMessage(
+  v: unknown,
+): v is ObservabilityClientMessage {
   if (typeof v !== "object" || v === null) return false;
   const msg = v as Record<string, unknown>;
   if (msg["type"] === "subscribe") {
@@ -115,10 +117,18 @@ export function isObservabilityClientMessage(v: unknown): v is ObservabilityClie
         !Number.isSafeInteger(backfill) ||
         backfill < 0 ||
         backfill > MAX_OBSERVABILITY_BACKFILL)
-    ) return false;
-    if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean") return false;
+    )
+      return false;
+    if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
+      return false;
     const minLevel = msg["minLevel"];
-    if (minLevel !== undefined && minLevel !== "INFO" && minLevel !== "WARN" && minLevel !== "ERROR") return false;
+    if (
+      minLevel !== undefined &&
+      minLevel !== "INFO" &&
+      minLevel !== "WARN" &&
+      minLevel !== "ERROR"
+    )
+      return false;
     return true;
   }
   if (msg["type"] === "unsubscribe") {

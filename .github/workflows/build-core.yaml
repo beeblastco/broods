@@ -6,11 +6,11 @@ on:
       - main
       - dev
     paths:
-      - 'apps/core/**'
-      - 'packages/convex/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/build-core.yaml'
+      - "apps/core/**"
+      - "packages/convex/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/build-core.yaml"
   workflow_dispatch:
 
 env:

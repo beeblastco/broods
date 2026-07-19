@@ -1,21 +1,7 @@
 "use client";
 
 /** Dropdown selector for switching between project environments and creating new ones. */
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { api } from "@broods/convex/_generated/api";
-import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
-import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/app/components/ui/dropdown-menu";
+import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -25,28 +11,59 @@ import {
   DialogTitle,
 } from "@/app/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/app/components/ui/dropdown-menu";
+import { Input } from "@/app/components/ui/input";
+import { Label } from "@/app/components/ui/label";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { Button } from "@/app/components/ui/button";
-import { Input } from "@/app/components/ui/input";
-import { Label } from "@/app/components/ui/label";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { cn } from "@/app/lib/utils";
+import { api } from "@broods/convex/_generated/api";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
+import { useMutation, useQuery } from "convex/react";
+import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
 
 type EnvironmentKind = "development" | "production" | "custom";
 type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
-const regionOptions: Array<{ value: DeploymentRegion; label: string; flag: string; enabled: boolean }> = [
+const regionOptions: Array<{
+  value: DeploymentRegion;
+  label: string;
+  flag: string;
+  enabled: boolean;
+}> = [
   { value: "eu-west-1", label: "Europe (Ireland)", flag: "🇮🇪", enabled: true },
-  { value: "ap-southeast-1", label: "Asia Pacific (Singapore)", flag: "🇸🇬", enabled: false },
-  { value: "us-east-1", label: "US East (N. Virginia)", flag: "🇺🇸", enabled: false },
+  {
+    value: "ap-southeast-1",
+    label: "Asia Pacific (Singapore)",
+    flag: "🇸🇬",
+    enabled: false,
+  },
+  {
+    value: "us-east-1",
+    label: "US East (N. Virginia)",
+    flag: "🇺🇸",
+    enabled: false,
+  },
 ];
 
 /** Infer environment type for legacy rows that predate the explicit kind field. */
-function environmentKind(env: Pick<Doc<"environments">, "name" | "kind"> | null | undefined): EnvironmentKind {
+function environmentKind(
+  env: Pick<Doc<"environments">, "name" | "kind"> | null | undefined,
+): EnvironmentKind {
   if (!env) return "custom";
   if (env.kind) return env.kind;
   const normalized = env.name.trim().toLowerCase();
@@ -62,18 +79,23 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
     <Circle
       className={cn(
         "size-2 fill-current",
-        kind === "development" ? "text-emerald-500" : kind === "production" ? "text-violet-500" : "text-cyan-500",
+        kind === "development"
+          ? "text-emerald-500"
+          : kind === "production"
+            ? "text-violet-500"
+            : "text-cyan-500",
       )}
     />
   );
 }
 
-/** Dropdown to list, switch, and create project environments. */
+/**
+ * Dropdown to list, switch, and create project environments. The Initialize
+ * Production panel opens only when the user selects a Production environment
+ * that has no deployment region yet, so nothing else can prompt for one.
+ */
 export function EnvironmentSelector() {
   const params = useParams<{ projectId?: string }>();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const shouldOpenProductionPanel = searchParams.get("initialize") === "production";
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { environmentId, setEnvironmentId } = useEnvironment();
 
@@ -83,35 +105,40 @@ export function EnvironmentSelector() {
   ) as Doc<"environments">[] | undefined;
   const ensureDefault = useMutation(api.environment.ensureDefault);
   const createEnvironment = useMutation(api.environment.create);
-  const initializeProduction = useMutation(api.environment.initializeProduction);
+  const initializeProduction = useMutation(
+    api.environment.initializeProduction,
+  );
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [productionOpen, setProductionOpen] = useState(shouldOpenProductionPanel);
-  const [productionRegion, setProductionRegion] = useState<DeploymentRegion>("eu-west-1");
+  const [productionOpen, setProductionOpen] = useState(false);
+  const [productionRegion, setProductionRegion] =
+    useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
   const [duplicateFromId, setDuplicateFromId] =
     useState<Id<"environments"> | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [isInitializingProduction, setIsInitializingProduction] = useState(false);
+  const [isInitializingProduction, setIsInitializingProduction] =
+    useState(false);
 
-  const developmentEnv = environments?.find((env) => environmentKind(env) === "development");
-  const productionEnv = environments?.find((env) => environmentKind(env) === "production");
-
-  useEffect(() => {
-    if (!projectId || !environments || !shouldOpenProductionPanel) return;
-    const next = new URLSearchParams(searchParams.toString());
-    next.delete("initialize");
-    const suffix = next.toString();
-    router.replace(`/${projectId}${suffix ? `?${suffix}` : ""}`, { scroll: false });
-  }, [environments, shouldOpenProductionPanel, projectId, router, searchParams]);
+  const developmentEnv = environments?.find(
+    (env) => environmentKind(env) === "development",
+  );
+  const productionEnv = environments?.find(
+    (env) => environmentKind(env) === "production",
+  );
 
   // Ensure default Development environment exists when project loads.
   useEffect(() => {
     if (!projectId || environments === undefined) return;
     const defaultEnv = environments.find((env) => env.isDefault);
-    const hasDevelopmentDefault = defaultEnv && environmentKind(defaultEnv) === "development";
-    if (environments.length === 0 || !developmentEnv || !hasDevelopmentDefault) {
+    const hasDevelopmentDefault =
+      defaultEnv && environmentKind(defaultEnv) === "development";
+    if (
+      environments.length === 0 ||
+      !developmentEnv ||
+      !hasDevelopmentDefault
+    ) {
       ensureDefault({ projectId: projectId }).catch(console.error);
     }
   }, [projectId, environments, developmentEnv, ensureDefault]);
@@ -124,8 +151,13 @@ export function EnvironmentSelector() {
     );
     if (!currentValid) {
       const defaultEnv =
-        environments.find((e: Doc<"environments">) => environmentKind(e) === "development" && e.isDefault) ??
-        environments.find((e: Doc<"environments">) => environmentKind(e) === "development") ??
+        environments.find(
+          (e: Doc<"environments">) =>
+            environmentKind(e) === "development" && e.isDefault,
+        ) ??
+        environments.find(
+          (e: Doc<"environments">) => environmentKind(e) === "development",
+        ) ??
         environments.find((e: Doc<"environments">) => e.isDefault) ??
         environments[0];
       setEnvironmentId(defaultEnv._id);
@@ -215,7 +247,11 @@ export function EnvironmentSelector() {
           </Button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" sideOffset={8} className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-56 flex-col overflow-hidden">
+        <DropdownMenuContent
+          align="start"
+          sideOffset={8}
+          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-56 flex-col overflow-hidden"
+        >
           <DropdownMenuLabel>Environments</DropdownMenuLabel>
           <DropdownMenuSeparator />
 
@@ -386,7 +422,8 @@ export function EnvironmentSelector() {
           <DialogHeader>
             <DialogTitle>Initialize Production</DialogTitle>
             <DialogDescription>
-              Copy the current Development configuration into a deployable Production environment.
+              Copy the current Development configuration into a deployable
+              Production environment.
             </DialogDescription>
           </DialogHeader>
 
@@ -401,7 +438,9 @@ export function EnvironmentSelector() {
                   onClick={() => setProductionRegion(region.value)}
                   className={cn(
                     "flex items-center justify-between rounded-md border px-3 py-2 text-left transition-colors",
-                    region.enabled ? "cursor-pointer hover:bg-accent/50" : "cursor-not-allowed opacity-50",
+                    region.enabled
+                      ? "cursor-pointer hover:bg-accent/50"
+                      : "cursor-not-allowed opacity-50",
                     productionRegion === region.value
                       ? "border-violet-500 bg-violet-500/10"
                       : "border-border",
@@ -410,8 +449,12 @@ export function EnvironmentSelector() {
                   <span className="flex items-center gap-2">
                     <span className="text-lg">{region.flag}</span>
                     <span className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{region.label}</span>
-                      <span className="text-xs text-muted-foreground">{region.value}</span>
+                      <span className="text-sm font-medium">
+                        {region.label}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {region.value}
+                      </span>
                     </span>
                   </span>
                   {!region.enabled && (
@@ -439,7 +482,9 @@ export function EnvironmentSelector() {
               disabled={!developmentEnv || isInitializingProduction}
               onClick={handleInitializeProduction}
             >
-              {isInitializingProduction ? "Initializing…" : "Initialize Production"}
+              {isInitializingProduction
+                ? "Initializing…"
+                : "Initialize Production"}
             </Button>
           </DialogFooter>
         </DialogContent>

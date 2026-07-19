@@ -66,39 +66,58 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (ORIGINAL_PUBLIC_BASE_URL === undefined) delete process.env.PUBLIC_BASE_URL;
+  if (ORIGINAL_PUBLIC_BASE_URL === undefined)
+    delete process.env.PUBLIC_BASE_URL;
   else process.env.PUBLIC_BASE_URL = ORIGINAL_PUBLIC_BASE_URL;
 });
 
 describe("direct API ingress", () => {
-
   it("returns 401 when the account bearer token is missing", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent({
+        eventId: "one",
+        conversationKey: "alpha",
+        events: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "hello" }],
+          },
+        ],
+      }),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 200 for GET probes without requiring direct API configuration", async () => {
-    const response = await routeIncomingEvent(createEvent(undefined, {}, {
-      method: "GET",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {},
+        {
+          method: "GET",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(200);
     expect(responseJson(response)).toEqual({ status: "ok", method: "POST" });
   });
 
   it("returns 405 for unsupported request methods", async () => {
-    const response = await routeIncomingEvent(createEvent(undefined, {}, {
-      method: "PUT",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {},
+        {
+          method: "PUT",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(405);
     expect(responseJson(response)).toEqual({
@@ -110,151 +129,193 @@ describe("direct API ingress", () => {
 
   it("accepts an env-scoped runtime key on the public endpoint path and selects the agent by id", async () => {
     const handledEvents: DirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "chat_1",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint",
-      addDefaultAgentId: false,
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "one",
+          conversationKey: "chat_1",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          rawPath: "/v1/demo/agents/development/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
 
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+            body: "ok",
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
       },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    );
 
     expect(response.statusCode).toBe(200);
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.agentId).toBe("agent_test");
     expect(handledEvents[0]?.publicConversationKey).toBe("chat_1");
-    expect(handledEvents[0]?.events).toEqual([{
-      role: "user",
-      content: [{ type: "text", text: "hello" }],
-    }]);
+    expect(handledEvents[0]?.events).toEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      },
+    ]);
   });
 
   it("preserves websocket connection ids for the NATS worker path", async () => {
     const handledEvents: DirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "chat_1",
-      connectionId: "conn_123",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint",
-      addDefaultAgentId: false,
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "one",
+          conversationKey: "chat_1",
+          connectionId: "conn_123",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          rawPath: "/v1/demo/agents/development/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
 
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-        };
+          return {
+            statusCode: 202,
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
       },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    );
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents[0]?.connectionId).toBe("conn_123");
   });
 
   it("rejects an env-scoped runtime key when the scoped path endpoint does not match", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "chat_1",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      rawPath: "/v1/demo/agents/development/some-other-endpoint",
-      addDefaultAgentId: false,
-    }), createHandlers(), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "one",
+          conversationKey: "chat_1",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          rawPath: "/v1/demo/agents/development/some-other-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers(),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
+      },
+    );
 
     expect(response.statusCode).toBe(401);
   });
 
   it("refuses the public runtime key for an agent that has not opted into public access", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_private",
-      eventId: "one",
-      conversationKey: "chat_1",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint",
-      addDefaultAgentId: false,
-    }), createHandlers(), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_private",
+          eventId: "one",
+          conversationKey: "chat_1",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          rawPath: "/v1/demo/agents/development/env-endpoint",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers(),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
+      },
+    );
 
     expect(response.statusCode).toBe(403);
     expect(responseJson(response).code).toBe("public_access_disabled");
@@ -264,258 +325,396 @@ describe("direct API ingress", () => {
     const body = {
       eventId: "one",
       conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
+      events: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      ],
     };
 
-    const syncResponse = await routeIncomingEvent(createEvent(body, {
-      authorization: "Bearer secret",
-    }), createHandlers(), { directApiEnabled: false });
-    const asyncResponse = await routeIncomingEvent(createEvent(body, {
-      authorization: "Bearer secret",
-    }, { rawPath: "/async" }), createHandlers(), { directApiEnabled: false });
+    const syncResponse = await routeIncomingEvent(
+      createEvent(body, {
+        authorization: "Bearer secret",
+      }),
+      createHandlers(),
+      { directApiEnabled: false },
+    );
+    const asyncResponse = await routeIncomingEvent(
+      createEvent(
+        body,
+        {
+          authorization: "Bearer secret",
+        },
+        { rawPath: "/async" },
+      ),
+      createHandlers(),
+      { directApiEnabled: false },
+    );
 
     expect(syncResponse.statusCode).toBe(404);
-    expect(responseJson(syncResponse)).toEqual({ error: "Direct API is disabled" });
+    expect(responseJson(syncResponse)).toEqual({
+      error: "Direct API is disabled",
+    });
     expect(asyncResponse.statusCode).toBe(404);
-    expect(responseJson(asyncResponse)).toEqual({ error: "Direct API is disabled" });
+    expect(responseJson(asyncResponse)).toEqual({
+      error: "Direct API is disabled",
+    });
   });
 
   it("returns 401 when the bearer token is malformed", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret extra",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret extra",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 401 when the bearer token does not match", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secrets",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secrets",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(401);
     expect(responseJson(response)).toEqual({ error: "Unauthorized" });
   });
 
   it("returns 400 for invalid direct API JSON", async () => {
-    const response = await routeIncomingEvent(createEvent(undefined, {
-      authorization: "Bearer secret",
-    }, {
-      rawBody: "{",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          rawBody: "{",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response).error).toContain("Invalid request JSON:");
   });
 
   it("returns 400 when eventId or conversationKey is missing", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Request body must include eventId and conversationKey" });
+    expect(responseJson(response)).toEqual({
+      error: "Request body must include eventId and conversationKey",
+    });
   });
 
   it("requires an agentId for direct API requests", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      agentId: undefined,
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }, {
-      addDefaultAgentId: false,
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: undefined,
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Request body must include agentId" });
+    expect(responseJson(response)).toEqual({
+      error: "Request body must include agentId",
+    });
   });
 
   it("returns 404 when the requested agent does not exist", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "missing-agent",
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "missing-agent",
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(404);
     expect(responseJson(response)).toEqual({ error: "Agent not found" });
   });
 
   it("rejects reserved direct event prefixes", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "gh:issue",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "gh:issue",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "eventId uses a reserved internal prefix" });
+    expect(responseJson(response)).toEqual({
+      error: "eventId uses a reserved internal prefix",
+    });
   });
 
   it("rejects reserved direct conversation prefixes", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "gh:owner/repo:issue:1",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "gh:owner/repo:issue:1",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "conversationKey uses a reserved channel or internal prefix" });
+    expect(responseJson(response)).toEqual({
+      error: "conversationKey uses a reserved channel or internal prefix",
+    });
   });
 
   it("returns 400 when the events field is not an array", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: "hello",
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: "hello",
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Request body field 'events' must be an array" });
+    expect(responseJson(response)).toEqual({
+      error: "Request body field 'events' must be an array",
+    });
   });
 
   it("returns 400 when the events array is empty", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Request body must include a non-empty events array" });
+    expect(responseJson(response)).toEqual({
+      error: "Request body must include a non-empty events array",
+    });
   });
 
   it("returns 400 when a direct event is not an object", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: ["hello"],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: ["hello"],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Each direct event must be an object" });
+    expect(responseJson(response)).toEqual({
+      error: "Each direct event must be an object",
+    });
   });
 
   it("returns 400 when persist is set on a non-system event", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-        persist: false,
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+              persist: false,
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Only system-role events may set persist" });
+    expect(responseJson(response)).toEqual({
+      error: "Only system-role events may set persist",
+    });
   });
 
   it("rejects persisted system events", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [
+    const response = await routeIncomingEvent(
+      createEvent(
         {
-          role: "system",
-          content: "persist me",
-          persist: true,
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "system",
+              content: "persist me",
+              persist: true,
+            },
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
         },
         {
-          role: "user",
-          content: [{ type: "text", text: "hello" }],
+          authorization: "Bearer secret",
         },
-      ],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
-    expect(responseJson(response)).toEqual({ error: "Direct API system events cannot be persisted" });
+    expect(responseJson(response)).toEqual({
+      error: "Direct API system events cannot be persisted",
+    });
   });
 
   it("normalizes direct events before handing them to the application handler", async () => {
     const handledEvents: DirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [
+    const response = await routeIncomingEvent(
+      createEvent(
         {
-          role: "system",
-          content: "be brief",
-          persist: false,
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "system",
+              content: "be brief",
+              persist: false,
+            },
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
         },
         {
-          role: "user",
-          content: [{ type: "text", text: "hello" }],
+          authorization: "Bearer secret",
         },
-      ],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
-      },
-    }));
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+            body: "ok",
+          };
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
     expect(handledEvents).toHaveLength(1);
@@ -541,7 +740,9 @@ describe("direct API ingress", () => {
       publicAccess: true,
     });
     expect(directEvent.publicEventId).toBe("one");
-    expect(directEvent.conversationKey).toBe("acct:acct_test:agent:agent_test:api:alpha");
+    expect(directEvent.conversationKey).toBe(
+      "acct:acct_test:agent:agent_test:api:alpha",
+    );
     expect(directEvent.publicConversationKey).toBe("alpha");
     expect(directEvent.events).toEqual([
       {
@@ -558,48 +759,68 @@ describe("direct API ingress", () => {
 
   it("passes top-level system as ephemeral AI SDK system messages", async () => {
     const handledEvents: DirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "system-override",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-      system: {
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "system-override",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+          system: {
+            role: "system",
+            content: "one-turn instruction",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral" } },
+            },
+          },
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+            body: "ok",
+          };
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents[0]?.ephemeralSystem).toEqual([
+      {
         role: "system",
         content: "one-turn instruction",
         providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
       },
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
-      },
-    }));
-
-    expect(response.statusCode).toBe(200);
-    expect(handledEvents[0]?.ephemeralSystem).toEqual([{
-      role: "system",
-      content: "one-turn instruction",
-      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-    }]);
+    ]);
   });
 
   it("rejects the params wrapper on direct API requests", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "params-wrapper",
-      conversationKey: "alpha",
-      events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
-      params: { model: { temperature: 0 } },
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "params-wrapper",
+          conversationKey: "alpha",
+          events: [
+            { role: "user", content: [{ type: "text", text: "hello" }] },
+          ],
+          params: { model: { temperature: 0 } },
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
     expect(response.body).toContain("Request body params is not supported");
@@ -607,365 +828,493 @@ describe("direct API ingress", () => {
 
   it("accepts direct tool approval response events", async () => {
     const handledEvents: DirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "approval-one",
-      conversationKey: "alpha",
-      events: [{
-        role: "tool",
-        content: [{
-          type: "tool-approval-response",
-          approvalId: "approval-1",
-          approved: true,
-          reason: "confirmed",
-        }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers({
-      handleDirectRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "text/plain; charset=utf-8" },
-          body: "ok",
-        };
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "approval-one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-approval-response",
+                  approvalId: "approval-1",
+                  approved: true,
+                  reason: "confirmed",
+                },
+              ],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers({
+        handleDirectRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+            body: "ok",
+          };
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents[0]?.events).toEqual([{
-      role: "tool",
-      content: [{
-        type: "tool-approval-response",
-        approvalId: "approval-1",
-        approved: true,
-        reason: "confirmed",
-      }],
-    }]);
+    expect(handledEvents[0]?.events).toEqual([
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-approval-response",
+            approvalId: "approval-1",
+            approved: true,
+            reason: "confirmed",
+          },
+        ],
+      },
+    ]);
   });
 
   it("rejects direct tool events that are not approval responses", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "tool-result",
-      conversationKey: "alpha",
-      events: [{
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: "tool-call-1",
-          toolName: "bash",
-          output: { type: "text", value: "done" },
-        }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "tool-result",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "tool",
+              content: [
+                {
+                  type: "tool-result",
+                  toolCallId: "tool-call-1",
+                  toolName: "bash",
+                  output: { type: "text", value: "done" },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({
-      error: "Direct API tool events may include only tool-approval-response parts",
+      error:
+        "Direct API tool events may include only tool-approval-response parts",
     });
   });
 
   it("rejects empty direct tool events", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "empty-tool",
-      conversationKey: "alpha",
-      events: [{
-        role: "tool",
-        content: [],
-      }],
-    }, {
-      authorization: "Bearer secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "empty-tool",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "tool",
+              content: [],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({
-      error: "Direct API tool events may include only tool-approval-response parts",
+      error:
+        "Direct API tool events may include only tool-approval-response parts",
     });
   });
 
   it("routes async direct API requests with a status URL", async () => {
     const handledEvents: AsyncDirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-      host: "example.lambda-url.aws",
-      "x-forwarded-proto": "https",
-    }, {
-      rawPath: "/async",
-    }), createHandlers({
-      handleAsyncRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ statusUrl: event.statusUrl }),
-        };
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+          host: "example.lambda-url.aws",
+          "x-forwarded-proto": "https",
+        },
+        {
+          rawPath: "/async",
+        },
+      ),
+      createHandlers({
+        handleAsyncRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 202,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ statusUrl: event.statusUrl }),
+          };
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
+    expect(handledEvents[0]?.eventId).toBe(
+      "acct:acct_test:agent:agent_test:api:one",
+    );
+    expect(handledEvents[0]?.statusUrl).toBe(
+      "https://gateway.broods.app/status/one?agentId=agent_test",
+    );
   });
 
   it("routes async direct API requests with an env-scoped runtime key", async () => {
     const handledEvents: AsyncDirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-      host: "example.lambda-url.aws",
-      "x-forwarded-proto": "https",
-    }, {
-      rawPath: "/async",
-      addDefaultAgentId: false,
-    }), createHandlers({
-      handleAsyncRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ statusUrl: event.statusUrl }),
-        };
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+          host: "example.lambda-url.aws",
+          "x-forwarded-proto": "https",
+        },
+        {
+          rawPath: "/async",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleAsyncRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 202,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ statusUrl: event.statusUrl }),
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
       },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    );
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
-    expect(handledEvents[0]?.eventId).toBe("acct:acct_test:agent:agent_test:api:one");
-    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
+    expect(handledEvents[0]?.eventId).toBe(
+      "acct:acct_test:agent:agent_test:api:one",
+    );
+    expect(handledEvents[0]?.statusUrl).toBe(
+      "https://gateway.broods.app/status/one?agentId=agent_test",
+    );
   });
 
   it("routes scoped async direct API requests with an env-scoped runtime key", async () => {
     const handledEvents: AsyncDirectInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      agentId: "agent_test",
-      eventId: "one",
-      conversationKey: "alpha",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer fp_agent_test",
-      host: "gateway.broods.app",
-      "x-forwarded-proto": "https",
-    }, {
-      rawPath: "/v1/demo/agents/development/env-endpoint/async",
-      addDefaultAgentId: false,
-    }), createHandlers({
-      handleAsyncRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ statusUrl: event.statusUrl }),
-        };
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          agentId: "agent_test",
+          eventId: "one",
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+          host: "gateway.broods.app",
+          "x-forwarded-proto": "https",
+        },
+        {
+          rawPath: "/v1/demo/agents/development/env-endpoint/async",
+          addDefaultAgentId: false,
+        },
+      ),
+      createHandlers({
+        handleAsyncRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 202,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ statusUrl: event.statusUrl }),
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
       },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    );
 
     expect(response.statusCode).toBe(202);
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.endpointId).toBe("env-endpoint");
     expect(handledEvents[0]?.projectSlug).toBe("demo");
     expect(handledEvents[0]?.environmentSlug).toBe("development");
-    expect(handledEvents[0]?.statusUrl).toBe("https://gateway.broods.app/status/one?agentId=agent_test");
+    expect(handledEvents[0]?.statusUrl).toBe(
+      "https://gateway.broods.app/status/one?agentId=agent_test",
+    );
   });
 
   it("rejects per-request webhook callback config for direct API requests", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      eventId: "one",
-      conversationKey: "alpha",
-      webhookUrl: "https://callbacks.example/hook",
-      events: [{
-        role: "user",
-        content: [{ type: "text", text: "hello" }],
-      }],
-    }, {
-      authorization: "Bearer secret",
-      "x-webhook-secret": "webhook-secret",
-    }), createHandlers());
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: "one",
+          conversationKey: "alpha",
+          webhookUrl: "https://callbacks.example/hook",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer secret",
+          "x-webhook-secret": "webhook-secret",
+        },
+      ),
+      createHandlers(),
+    );
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({
-      error: "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
+      error:
+        "Per-request webhook callbacks are no longer supported; configure config.hooks.webhook on the agent",
     });
   });
 
   it("routes status requests through direct API auth", async () => {
     const handledEvents: StatusInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent(undefined, {
-      authorization: "Bearer secret",
-    }, {
-      method: "GET",
-      rawPath: "/status/one",
-      rawQueryString: "agentId=agent_test",
-    }), createHandlers({
-      handleStatusRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "processing" }),
-        };
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          method: "GET",
+          rawPath: "/status/one",
+          rawQueryString: "agentId=agent_test",
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          };
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([{
-      accountId: "acct_test",
-      agentId: "agent_test",
-      eventId: "acct:acct_test:agent:agent_test:api:one",
-      publicEventId: "one",
-    }]);
+    expect(handledEvents).toEqual([
+      {
+        accountId: "acct_test",
+        agentId: "agent_test",
+        eventId: "acct:acct_test:agent:agent_test:api:one",
+        publicEventId: "one",
+      },
+    ]);
   });
 
   it("routes status requests through env-scoped runtime key auth", async () => {
     const handledEvents: StatusInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent(undefined, {
-      authorization: "Bearer fp_agent_test",
-    }, {
-      method: "GET",
-      rawPath: "/status/one",
-      rawQueryString: "agentId=agent_test",
-    }), createHandlers({
-      handleStatusRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 200,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "processing" }),
-        };
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+        {
+          method: "GET",
+          rawPath: "/status/one",
+          rawQueryString: "agentId=agent_test",
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          };
+        },
+      }),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
       },
-    }), {
-      authResolver: async (headers) =>
-        headers.authorization === "Bearer fp_agent_test"
-          ? {
-            kind: "deployment",
-            account: TEST_ACCOUNT,
-            endpointId: "env-endpoint",
-            projectSlug: "demo",
-            environmentSlug: "development",
-          }
-          : null,
-    });
+    );
 
     expect(response.statusCode).toBe(200);
-    expect(handledEvents).toEqual([{
-      accountId: "acct_test",
-      agentId: "agent_test",
-      eventId: "acct:acct_test:agent:agent_test:api:one",
-      publicEventId: "one",
-    }]);
+    expect(handledEvents).toEqual([
+      {
+        accountId: "acct_test",
+        agentId: "agent_test",
+        eventId: "acct:acct_test:agent:agent_test:api:one",
+        publicEventId: "one",
+      },
+    ]);
   });
 
   it("routes async tool completion requests through account auth", async () => {
     const handledEvents: AsyncToolCompletionInboundEvent[] = [];
-    const response = await routeIncomingEvent(createEvent({
-      status: "completed",
-      response: { answer: "done" },
-    }, {
-      authorization: "Bearer secret",
-    }, {
-      rawPath: "/async-tools/async_tool_1/complete",
-    }), createHandlers({
-      handleAsyncToolCompletionRequest: async (event) => {
-        handledEvents.push(event);
-        return {
-          statusCode: 202,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "accepted" }),
-        };
-      },
-    }));
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          status: "completed",
+          response: { answer: "done" },
+        },
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          rawPath: "/async-tools/async_tool_1/complete",
+        },
+      ),
+      createHandlers({
+        handleAsyncToolCompletionRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 202,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "accepted" }),
+          };
+        },
+      }),
+    );
 
     expect(response.statusCode).toBe(202);
-    expect(handledEvents).toEqual([{
-      accountId: "acct_test",
-      resultId: "async_tool_1",
-      status: "completed",
-      response: { answer: "done" },
-    }]);
+    expect(handledEvents).toEqual([
+      {
+        accountId: "acct_test",
+        resultId: "async_tool_1",
+        status: "completed",
+        response: { answer: "done" },
+      },
+    ]);
   });
 
   it("validates async tool failed completion errors", async () => {
-    const response = await routeIncomingEvent(createEvent({
-      status: "failed",
-    }, {
-      authorization: "Bearer secret",
-    }, {
-      rawPath: "/async-tools/async_tool_1/complete",
-    }), createHandlers({
-      handleAsyncToolCompletionRequest: async () => ({
-        statusCode: 202,
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          status: "failed",
+        },
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          rawPath: "/async-tools/async_tool_1/complete",
+        },
+      ),
+      createHandlers({
+        handleAsyncToolCompletionRequest: async () => ({
+          statusCode: 202,
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        }),
       }),
-    }));
+    );
 
     expect(response.statusCode).toBe(400);
     expect(responseJson(response)).toEqual({
-      error: "Async tool completion error must be a string when status is failed",
+      error:
+        "Async tool completion error must be a string when status is failed",
     });
   });
 });
 
-function createHandlers(overrides: Partial<{
-  handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
-  handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<ResponseShape>;
-  handleStatusRequest(event: StatusInboundEvent): Promise<ResponseShape>;
-  handleAsyncToolCompletionRequest(event: AsyncToolCompletionInboundEvent): Promise<ResponseShape>;
-  handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
-}> = {}) {
+function createHandlers(
+  overrides: Partial<{
+    handleDirectRequest(event: DirectInboundEvent): Promise<ResponseShape>;
+    handleAsyncRequest(event: AsyncDirectInboundEvent): Promise<ResponseShape>;
+    handleStatusRequest(event: StatusInboundEvent): Promise<ResponseShape>;
+    handleAsyncToolCompletionRequest(
+      event: AsyncToolCompletionInboundEvent,
+    ): Promise<ResponseShape>;
+    handleChannelRequest(event: ChannelInboundEvent): Promise<void>;
+  }> = {},
+) {
   return {
     handleDirectRequest: async (event: DirectInboundEvent) =>
-      responseFromShape(await (overrides.handleDirectRequest ?? defaultDirectHandler)(event)),
+      responseFromShape(
+        await (overrides.handleDirectRequest ?? defaultDirectHandler)(event),
+      ),
     handleAsyncRequest: overrides.handleAsyncRequest
-      ? async (event: AsyncDirectInboundEvent) => responseFromShape(await overrides.handleAsyncRequest!(event))
+      ? async (event: AsyncDirectInboundEvent) =>
+          responseFromShape(await overrides.handleAsyncRequest!(event))
       : undefined,
     handleStatusRequest: overrides.handleStatusRequest
-      ? async (event: StatusInboundEvent) => responseFromShape(await overrides.handleStatusRequest!(event))
+      ? async (event: StatusInboundEvent) =>
+          responseFromShape(await overrides.handleStatusRequest!(event))
       : undefined,
     handleAsyncToolCompletionRequest: overrides.handleAsyncToolCompletionRequest
       ? async (event: AsyncToolCompletionInboundEvent) =>
-        responseFromShape(await overrides.handleAsyncToolCompletionRequest!(event))
+          responseFromShape(
+            await overrides.handleAsyncToolCompletionRequest!(event),
+          )
       : undefined,
     handleChannelRequest: overrides.handleChannelRequest ?? (async () => {}),
   };
@@ -984,14 +1333,18 @@ async function routeIncomingEvent(
   handlers: ReturnType<typeof createHandlers>,
   options: {
     directApiEnabled?: boolean;
-    authResolver?: (headers: Record<string, string>) => Promise<AuthContext | null>;
+    authResolver?: (
+      headers: Record<string, string>,
+    ) => Promise<AuthContext | null>;
   } = {},
 ): Promise<ResponseShape> {
   const router = createIncomingEventRouter({
-    authResolver: options.authResolver ?? (async (headers) =>
-      headers.authorization === "Bearer secret"
-        ? { kind: "account", account: TEST_ACCOUNT }
-        : null),
+    authResolver:
+      options.authResolver ??
+      (async (headers) =>
+        headers.authorization === "Bearer secret"
+          ? { kind: "account", account: TEST_ACCOUNT }
+          : null),
     agentLoader: async (_accountId, agentId) =>
       agentId === TEST_AGENT.agentId
         ? TEST_AGENT
@@ -1018,13 +1371,14 @@ function createEvent(
   }> = {},
 ): ReturnType<typeof coreRequest> {
   const rawPath = options.rawPath ?? "/";
-  const normalizedBody = options.addDefaultAgentId !== false &&
+  const normalizedBody =
+    options.addDefaultAgentId !== false &&
     body &&
     typeof body === "object" &&
     !Array.isArray(body) &&
     !("agentId" in body)
-    ? { agentId: "agent_test", ...body as Record<string, unknown> }
-    : body;
+      ? { agentId: "agent_test", ...(body as Record<string, unknown>) }
+      : body;
 
   return coreRequest(
     options.method ?? "POST",

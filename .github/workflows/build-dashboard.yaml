@@ -6,11 +6,11 @@ on:
       - main
       - dev
     paths:
-      - 'apps/dashboard/**'
-      - 'packages/convex/**'
-      - 'package.json'
-      - 'bun.lock'
-      - '.github/workflows/build-dashboard.yaml'
+      - "apps/dashboard/**"
+      - "packages/convex/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/build-dashboard.yaml"
   workflow_dispatch:
 
 env:

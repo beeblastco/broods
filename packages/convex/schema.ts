@@ -6,101 +6,116 @@ import { v } from "convex/values";
  * Synced from WorkOS AuthKit webhooks with app-specific extensions.
  */
 export const usersFields = {
-    authId: v.string(),
-    email: v.string(),
-    name: v.string(),
-    avatarUrl: v.optional(v.string()),
-    accountHandle: v.optional(v.string()),
-    plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    deletionScheduledFor: v.optional(v.number()),
-    /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
-    workosDeletionRequestedAt: v.optional(v.number()),
-    /** Number of runtime-cleanup retries after a WorkOS deletion webhook. */
-    workosDeletionAttempts: v.optional(v.number()),
-    /** Org the user last switched to. Falls back to most recent membership when unset. */
-    activeOrgId: v.optional(v.id("orgs")),
+  authId: v.string(),
+  email: v.string(),
+  name: v.string(),
+  avatarUrl: v.optional(v.string()),
+  accountHandle: v.optional(v.string()),
+  plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+  deletionScheduledFor: v.optional(v.number()),
+  /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
+  workosDeletionRequestedAt: v.optional(v.number()),
+  /** Number of runtime-cleanup retries after a WorkOS deletion webhook. */
+  workosDeletionAttempts: v.optional(v.number()),
+  /** Org the user last switched to. Falls back to most recent membership when unset. */
+  activeOrgId: v.optional(v.id("orgs")),
 };
 
 export const projectsFields = {
-    authId: v.string(),
-    /** Org that owns this project. Optional only for legacy rows created before org scoping. */
-    orgId: v.optional(v.id("orgs")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    slug: v.string(),
-    updatedAt: v.number(),
+  authId: v.string(),
+  /** Org that owns this project. Optional only for legacy rows created before org scoping. */
+  orgId: v.optional(v.id("orgs")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  slug: v.string(),
+  updatedAt: v.number(),
 };
 
 export const environmentsFields = {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    name: v.string(),
-    /** Semantic environment role. Optional for legacy rows created before roles existed. */
-    kind: v.optional(v.union(v.literal("development"), v.literal("production"), v.literal("custom"))),
-    /** Lambda deploy region for promoted/deployable environments. */
-    deploymentRegion: v.optional(
-        v.union(v.literal("ap-southeast-1"), v.literal("eu-west-1"), v.literal("us-east-1")),
+  authId: v.string(),
+  projectId: v.id("projects"),
+  name: v.string(),
+  /** Semantic environment role. Optional for legacy rows created before roles existed. */
+  kind: v.optional(
+    v.union(
+      v.literal("development"),
+      v.literal("production"),
+      v.literal("custom"),
     ),
-    isDefault: v.boolean(),
-    updatedAt: v.number(),
+  ),
+  /** Lambda deploy region for promoted/deployable environments. */
+  deploymentRegion: v.optional(
+    v.union(
+      v.literal("ap-southeast-1"),
+      v.literal("eu-west-1"),
+      v.literal("us-east-1"),
+    ),
+  ),
+  isDefault: v.boolean(),
+  updatedAt: v.number(),
 };
 
 /** Minimal agent config fields; extra UI settings are stored as optional fields. */
 export const agentConfigsFields = {
-    authId: v.string(),
-    name: v.string(),
-    description: v.optional(v.string()),
-    agentId: v.optional(v.string()),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    provider: v.optional(v.string()),
-    modelId: v.optional(v.string()),
-    systemPrompt: v.optional(v.string()),
-    maxTurns: v.optional(v.number()),
-    allowedTools: v.optional(v.array(v.string())),
-    permissionMode: v.optional(v.string()),
-    outputFormat: v.optional(v.any()),
-    providerOptions: v.optional(v.any()),
-    temperature: v.optional(v.number()),
-    maxTokens: v.optional(v.number()),
-    memoryToolEnabled: v.optional(v.boolean()),
-    searchToolEnabled: v.optional(v.boolean()),
-    searchToolConfig: v.optional(v.any()),
-    runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
-    /**
-     * Broods AgentConfig branches that don't live as flat columns:
-     * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
-     * `subagent`, and `provider` settings. Stored verbatim so the Config tab
-     * can edit the full nested shape. Secrets should be expressed as
-     * `${ENV_NAME}` placeholders resolved from encrypted runtime secrets.
-     */
-    extraConfig: v.optional(v.any()),
-    /**
-     * Ownership marker. `"cli"` means a `broods/` project is the source of
-     * truth: the dashboard may still edit it, but those edits are overwritten on
-     * the next CLI sync and deleting it from the dashboard is blocked. Unset (or
-     * `"dashboard"`) means the dashboard owns it and the CLI never prunes it. The
-     * CLI stamps `"cli"` on every sync.
-     */
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
-    updatedAt: v.number(),
+  authId: v.string(),
+  name: v.string(),
+  description: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  provider: v.optional(v.string()),
+  modelId: v.optional(v.string()),
+  systemPrompt: v.optional(v.string()),
+  maxTurns: v.optional(v.number()),
+  allowedTools: v.optional(v.array(v.string())),
+  permissionMode: v.optional(v.string()),
+  outputFormat: v.optional(v.any()),
+  providerOptions: v.optional(v.any()),
+  temperature: v.optional(v.number()),
+  maxTokens: v.optional(v.number()),
+  memoryToolEnabled: v.optional(v.boolean()),
+  searchToolEnabled: v.optional(v.boolean()),
+  searchToolConfig: v.optional(v.any()),
+  runtimeVariables: v.optional(
+    v.array(v.object({ key: v.string(), value: v.string() })),
+  ),
+  /**
+   * Broods AgentConfig branches that don't live as flat columns:
+   * `agent`, `workspace`, `session`, `hooks`, `channels`, `tools`, `skills`,
+   * `subagent`, and `provider` settings. Stored verbatim so the Config tab
+   * can edit the full nested shape. Secrets should be expressed as
+   * `${ENV_NAME}` placeholders resolved from encrypted runtime secrets.
+   */
+  extraConfig: v.optional(v.any()),
+  /**
+   * Ownership marker. `"cli"` means a `broods/` project is the source of
+   * truth: the dashboard may still edit it, but those edits are overwritten on
+   * the next CLI sync and deleting it from the dashboard is blocked. `"api"`
+   * means the account REST API owns it — its config is re-mirrored onto the
+   * canvas on every API write and dashboard edits are locked. Unset (or
+   * `"dashboard"`) means the dashboard owns it and neither sync prunes it.
+   */
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  updatedAt: v.number(),
 };
 
 export const agentRuntimeSecretsFields = {
-    agentConfigId: v.id("agentConfigs"),
-    ciphertext: v.string(),
-    iv: v.string(),
-    tag: v.string(),
-    updatedAt: v.number(),
+  agentConfigId: v.id("agentConfigs"),
+  ciphertext: v.string(),
+  iv: v.string(),
+  tag: v.string(),
+  updatedAt: v.number(),
 };
 
 export const canvasLayoutsFields = {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    nodes: v.array(v.any()),
-    edges: v.array(v.any()),
-    updatedAt: v.number(),
+  authId: v.string(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  nodes: v.array(v.any()),
+  edges: v.array(v.any()),
+  updatedAt: v.number(),
 };
 
 /**
@@ -111,21 +126,21 @@ export const canvasLayoutsFields = {
  * and CLI reconnect without rotating.
  */
 export const agentDeploymentsFields = {
-    authId: v.string(),
-    accountId: v.id("accounts"),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    status: v.union(v.literal("active"), v.literal("revoked")),
-    endpointId: v.string(),
-    projectSlug: v.string(),
-    environmentSlug: v.string(),
-    apiKeyHash: v.string(),
-    keyHint: v.string(),
-    // AES-GCM blob of the plaintext key (owner-recoverable without rotating).
-    apiKeyCiphertext: v.string(),
-    apiKeyIv: v.string(),
-    apiKeyTag: v.string(),
-    updatedAt: v.number(),
+  authId: v.string(),
+  accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  status: v.union(v.literal("active"), v.literal("revoked")),
+  endpointId: v.string(),
+  projectSlug: v.string(),
+  environmentSlug: v.string(),
+  apiKeyHash: v.string(),
+  keyHint: v.string(),
+  // AES-GCM blob of the plaintext key (owner-recoverable without rotating).
+  apiKeyCiphertext: v.string(),
+  apiKeyIv: v.string(),
+  apiKeyTag: v.string(),
+  updatedAt: v.number(),
 };
 
 /**
@@ -134,128 +149,130 @@ export const agentDeploymentsFields = {
  * which grants the whole account. Only the SHA-256 hash is stored.
  */
 export const deployKeysFields = {
-    /** Org account this key resolves to (mirrors the project's org account). */
-    accountId: v.id("accounts"),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    name: v.string(),
-    /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
-    keyHash: v.string(),
-    /** Masked display label (prefix + last four), safe to list without revealing the secret. */
-    keyHint: v.string(),
-    status: v.union(v.literal("active"), v.literal("revoked")),
-    lastUsedAt: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  /** Org account this key resolves to (mirrors the project's org account). */
+  accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  name: v.string(),
+  /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
+  keyHash: v.string(),
+  /** Masked display label (prefix + last four), safe to list without revealing the secret. */
+  keyHint: v.string(),
+  status: v.union(v.literal("active"), v.literal("revoked")),
+  lastUsedAt: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** One-time WorkOS-backed login code minted by the dashboard for CLI login. */
 export const cliAuthCodesFields = {
-    codeHash: v.string(),
-    authId: v.string(),
-    orgId: v.id("orgs"),
-    accountId: v.id("accounts"),
-    expiresAt: v.number(),
-    usedAt: v.optional(v.number()),
-    createdAt: v.number(),
+  codeHash: v.string(),
+  authId: v.string(),
+  orgId: v.id("orgs"),
+  accountId: v.id("accounts"),
+  expiresAt: v.number(),
+  usedAt: v.optional(v.number()),
+  createdAt: v.number(),
 };
 
 /** Long-lived CLI bearer token created from a one-time WorkOS-backed login code. */
 export const cliTokensFields = {
-    tokenHash: v.string(),
-    authId: v.string(),
-    orgId: v.id("orgs"),
-    accountId: v.id("accounts"),
-    status: v.union(v.literal("active"), v.literal("revoked")),
-    expiresAt: v.optional(v.number()),
-    createdAt: v.number(),
-    lastUsedAt: v.optional(v.number()),
+  tokenHash: v.string(),
+  authId: v.string(),
+  orgId: v.id("orgs"),
+  accountId: v.id("accounts"),
+  status: v.union(v.literal("active"), v.literal("revoked")),
+  expiresAt: v.optional(v.number()),
+  createdAt: v.number(),
+  lastUsedAt: v.optional(v.number()),
 };
 
 /** Lightweight desired-state snapshots for CLI-managed account-service resources. */
 export const cliExternalResourcesFields = {
-    accountId: v.id("accounts"),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    kind: v.union(v.literal("skill"), v.literal("tool"), v.literal("hook")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    externalId: v.string(),
-    config: v.any(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  kind: v.union(v.literal("skill"), v.literal("tool"), v.literal("hook")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  externalId: v.string(),
+  config: v.any(),
+  updatedAt: v.number(),
 };
 
 export const toolServicesFields = {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    nodeId: v.string(),
-    nodeLabel: v.string(),
-    language: v.union(v.literal("javascript"), v.literal("python")),
-    sourceCode: v.string(),
-    status: v.union(v.literal("enabled"), v.literal("disabled")),
-    updatedAt: v.number(),
+  authId: v.string(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  nodeId: v.string(),
+  nodeLabel: v.string(),
+  language: v.union(v.literal("javascript"), v.literal("python")),
+  sourceCode: v.string(),
+  status: v.union(v.literal("enabled"), v.literal("disabled")),
+  updatedAt: v.number(),
 };
 
 /** Account-owned custom tool metadata; bundle bytes live in S3. */
 export const accountToolsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    description: v.string(),
-    inputSchema: v.any(),
-    bundleStorageKey: v.string(),
-    sha256: v.string(),
-    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
-    defaultConfig: v.optional(v.any()),
-    status: v.union(v.literal("active"), v.literal("deleted")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    deletedAt: v.optional(v.number()),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.string(),
+  inputSchema: v.any(),
+  bundleStorageKey: v.string(),
+  sha256: v.string(),
+  runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+  defaultConfig: v.optional(v.any()),
+  status: v.union(v.literal("active"), v.literal("deleted")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  deletedAt: v.optional(v.number()),
 };
 
 export const accountHookEventValidator = v.union(
-    v.literal("agent.started"),
-    v.literal("agent.step.finished"),
-    v.literal("agent.finished"),
-    v.literal("agent.failed"),
-    v.literal("agent.approval.required"),
-    v.literal("tool.call.started"),
-    v.literal("tool.call.finished"),
-    v.literal("tool.result"),
-    v.literal("subagent.task.started"),
-    v.literal("subagent.task.finished"),
-    v.literal("channel.message.received"),
-    v.literal("channel.message.sending"),
+  v.literal("agent.started"),
+  v.literal("agent.step.finished"),
+  v.literal("agent.finished"),
+  v.literal("agent.failed"),
+  v.literal("agent.approval.required"),
+  v.literal("tool.call.started"),
+  v.literal("tool.call.finished"),
+  v.literal("tool.result"),
+  v.literal("subagent.task.started"),
+  v.literal("subagent.task.finished"),
+  v.literal("channel.message.received"),
+  v.literal("channel.message.sending"),
 );
 
 /** Account-owned code hook metadata; bundle bytes live in the tool bundles S3 bucket. */
 export const accountHooksFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    description: v.optional(v.string()),
-    events: v.array(accountHookEventValidator),
-    bundleStorageKey: v.string(),
-    sha256: v.string(),
-    status: v.union(v.literal("active"), v.literal("deleted")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    deletedAt: v.optional(v.number()),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  events: v.array(accountHookEventValidator),
+  bundleStorageKey: v.string(),
+  sha256: v.string(),
+  status: v.union(v.literal("active"), v.literal("deleted")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  deletedAt: v.optional(v.number()),
 };
 
 /** Environment-scoped reusable agent authorization policy. */
 export const agentPoliciesFields = {
-    accountId: v.id("accounts"),
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    document: v.any(),
-    status: v.union(v.literal("active"), v.literal("deleted")),
-    /** Ownership marker; see `agentConfigsFields.managedBy`. */
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-    deletedAt: v.optional(v.number()),
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  document: v.any(),
+  status: v.union(v.literal("active"), v.literal("deleted")),
+  /** Ownership marker; see `agentConfigsFields.managedBy`. */
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  deletedAt: v.optional(v.number()),
 };
 
 /**
@@ -263,53 +280,53 @@ export const agentPoliciesFields = {
  * row; `orgId` on `accounts` points back to one of these.
  */
 export const orgsFields = {
-    name: v.string(),
-    slug: v.string(),
-    ownerAuthId: v.string(),
-    plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
-    createdAt: v.number(),
-    /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */
-    onboardedAt: v.optional(v.number()),
+  name: v.string(),
+  slug: v.string(),
+  ownerAuthId: v.string(),
+  plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+  createdAt: v.number(),
+  /** Set the first time a project is created in this org; gates the home-page auto-onboarding. */
+  onboardedAt: v.optional(v.number()),
 };
 
 /** Membership join table between users and orgs with role-based access. */
 export const orgMembersFields = {
-    orgId: v.id("orgs"),
-    userId: v.id("users"),
-    role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
-    createdAt: v.number(),
+  orgId: v.id("orgs"),
+  userId: v.id("users"),
+  role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+  createdAt: v.number(),
 };
 
 /** Tenant root for broods. One row per dashboard org. The doc id IS the accountId. */
 export const accountsFields = {
-    orgId: v.string(),
-    username: v.string(),
-    description: v.optional(v.string()),
-    secretHash: v.string(),
-    status: v.union(v.literal("active"), v.literal("disabled")),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  orgId: v.string(),
+  username: v.string(),
+  description: v.optional(v.string()),
+  secretHash: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Agent configuration, stored encrypted so the dashboard cannot read provider secrets. */
 export const agentsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    description: v.optional(v.string()),
-    encryptedConfig: v.optional(v.string()),
-    encryptionIv: v.optional(v.string()),
-    encryptionTag: v.optional(v.string()),
-    /**
-     * Unresolved account-plane config retaining `${NAME}` placeholders (the
-     * form before account env vars are substituted into `encryptedConfig`).
-     * Kept so an account env-var change can re-resolve `encryptedConfig`
-     * without the client re-syncing this agent. Absent on legacy rows.
-     */
-    encryptedSourceConfig: v.optional(v.string()),
-    sourceEncryptionIv: v.optional(v.string()),
-    sourceEncryptionTag: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  encryptedConfig: v.optional(v.string()),
+  encryptionIv: v.optional(v.string()),
+  encryptionTag: v.optional(v.string()),
+  /**
+   * Unresolved account-plane config retaining `${NAME}` placeholders (the
+   * form before account env vars are substituted into `encryptedConfig`).
+   * Kept so an account env-var change can re-resolve `encryptedConfig`
+   * without the client re-syncing this agent. Absent on legacy rows.
+   */
+  encryptedSourceConfig: v.optional(v.string()),
+  sourceEncryptionIv: v.optional(v.string()),
+  sourceEncryptionTag: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /**
@@ -320,49 +337,53 @@ export const agentsFields = {
  * the dashboard only ever persists the opaque blob.
  */
 export const sandboxConfigsFields = {
-    accountId: v.id("accounts"),
-    /**
-     * Environment scope. Optional for backward compatibility: legacy rows and
-     * rows created through the account-management REST API are account-scoped
-     * (env unset) and shared, while CLI- and dashboard-managed rows are scoped
-     * to one `(projectId, environmentId)` so the same name can repeat — and stay
-     * isolated — across environments. The runtime resolves sandboxes by `_id`,
-     * so a per-environment row already yields a per-environment resource.
-     */
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    encryptedConfig: v.optional(v.string()),
-    encryptionIv: v.optional(v.string()),
-    encryptionTag: v.optional(v.string()),
-    /**
-     * Unresolved config blob retaining `${ENV_NAME}` placeholders (the form
-     * before env vars are substituted into `encryptedConfig`). Kept so a later
-     * `environmentVariables.set` can re-resolve and re-push `encryptedConfig`
-     * without a CLI re-sync — the sandbox equivalent of how `agentConfigs` keeps
-     * its flat columns as the placeholder source. Absent on legacy rows.
-     */
-    encryptedSourceConfig: v.optional(v.string()),
-    sourceEncryptionIv: v.optional(v.string()),
-    sourceEncryptionTag: v.optional(v.string()),
-    /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
-    runtimeVariables: v.optional(v.array(v.object({ key: v.string(), value: v.string() }))),
-    /** Prebuilt snapshot/image id this sandbox launches from, when pinned (see `sandboxSnapshotsFields`). */
-    snapshotId: v.optional(v.string()),
-    /** Ownership marker; see `agentConfigsFields.managedBy`. */
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  /**
+   * Environment scope. Optional for backward compatibility: legacy rows and
+   * rows created through the account-management REST API are account-scoped
+   * (env unset) and shared, while CLI- and dashboard-managed rows are scoped
+   * to one `(projectId, environmentId)` so the same name can repeat — and stay
+   * isolated — across environments. The runtime resolves sandboxes by `_id`,
+   * so a per-environment row already yields a per-environment resource.
+   */
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  encryptedConfig: v.optional(v.string()),
+  encryptionIv: v.optional(v.string()),
+  encryptionTag: v.optional(v.string()),
+  /**
+   * Unresolved config blob retaining `${ENV_NAME}` placeholders (the form
+   * before env vars are substituted into `encryptedConfig`). Kept so a later
+   * `environmentVariables.set` can re-resolve and re-push `encryptedConfig`
+   * without a CLI re-sync — the sandbox equivalent of how `agentConfigs` keeps
+   * its flat columns as the placeholder source. Absent on legacy rows.
+   */
+  encryptedSourceConfig: v.optional(v.string()),
+  sourceEncryptionIv: v.optional(v.string()),
+  sourceEncryptionTag: v.optional(v.string()),
+  /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
+  runtimeVariables: v.optional(
+    v.array(v.object({ key: v.string(), value: v.string() })),
+  ),
+  /** Prebuilt snapshot/image id this sandbox launches from, when pinned (see `sandboxSnapshotsFields`). */
+  snapshotId: v.optional(v.string()),
+  /** Ownership marker; see `agentConfigsFields.managedBy`. */
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Sandbox compute backends a persistent instance / snapshot can target. */
 export const sandboxProviderValidator = v.union(
-    v.literal("sandbox"),
-    v.literal("lambda"),
-    v.literal("daytona"),
-    v.literal("e2b"),
-    v.literal("vercel"),
+  v.literal("sandbox"),
+  v.literal("lambda"),
+  v.literal("daytona"),
+  v.literal("e2b"),
+  v.literal("vercel"),
 );
 
 /**
@@ -375,47 +396,55 @@ export const sandboxProviderValidator = v.union(
  * reconnection key, globally unique since it embeds the account + workspace).
  */
 export const sandboxInstancesFields = {
-    accountId: v.id("accounts"),
-    /** Environment scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    provider: sandboxProviderValidator,
-    /** Stable reservation key used by broods reconnects. */
-    reservationKey: v.string(),
-    /** Sandbox config this instance was reserved from; lets the dashboard drive its write-path. */
-    sandboxConfigId: v.optional(v.id("sandboxConfigs")),
-    /** Provider-side id: workdir `sbx_…` / MicroVM `microvmId` / daytona id / vercel name. */
-    externalId: v.string(),
-    name: v.string(),
-    status: v.union(
-        v.literal("running"),
-        v.literal("suspended"),
-        v.literal("terminating"),
-        v.literal("error"),
+  accountId: v.id("accounts"),
+  /** Environment scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  provider: sandboxProviderValidator,
+  /** Stable reservation key used by broods reconnects. */
+  reservationKey: v.string(),
+  /** Sandbox config this instance was reserved from; lets the dashboard drive its write-path. */
+  sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+  /** Provider-side id: workdir `sbx_…` / MicroVM `microvmId` / daytona id / vercel name. */
+  externalId: v.string(),
+  name: v.string(),
+  status: v.union(
+    v.literal("running"),
+    v.literal("suspended"),
+    v.literal("terminating"),
+    v.literal("error"),
+  ),
+  /** Snapshot/image this instance launched from, when any. */
+  snapshotId: v.optional(v.string()),
+  /** Non-secret egress policy summary (config `network.mode`); powers the dashboard Networking view. */
+  egress: v.optional(
+    v.union(
+      v.literal("allow-all"),
+      v.literal("deny-all"),
+      v.literal("restricted"),
     ),
-    /** Snapshot/image this instance launched from, when any. */
-    snapshotId: v.optional(v.string()),
-    /** Non-secret egress policy summary (config `network.mode`); powers the dashboard Networking view. */
-    egress: v.optional(
-        v.union(v.literal("allow-all"), v.literal("deny-all"), v.literal("restricted")),
-    ),
-    /** Tool approval policy (`edit`/`ask`/`bypass`); powers the dashboard Security view. */
-    permissionMode: v.optional(
-        v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
-    ),
-    specs: v.object({ vcpu: v.number(), memoryMb: v.number(), storageGb: v.number() }),
-    createdAt: v.number(),
-    lastUsedAt: v.number(),
-    createdByTraceId: v.optional(v.string()),
-    createdByTaskId: v.optional(v.string()),
-    lastUsedTraceId: v.optional(v.string()),
-    lastUsedTaskId: v.optional(v.string()),
-    agentId: v.optional(v.string()),
-    conversationKey: v.optional(v.string()),
-    workspaceName: v.optional(v.string()),
-    workspaceId: v.optional(v.string()),
-    suspendedAt: v.optional(v.number()),
-    terminatedAt: v.optional(v.number()),
+  ),
+  /** Tool approval policy (`edit`/`ask`/`bypass`); powers the dashboard Security view. */
+  permissionMode: v.optional(
+    v.union(v.literal("edit"), v.literal("ask"), v.literal("bypass")),
+  ),
+  specs: v.object({
+    vcpu: v.number(),
+    memoryMb: v.number(),
+    storageGb: v.number(),
+  }),
+  createdAt: v.number(),
+  lastUsedAt: v.number(),
+  createdByTraceId: v.optional(v.string()),
+  createdByTaskId: v.optional(v.string()),
+  lastUsedTraceId: v.optional(v.string()),
+  lastUsedTaskId: v.optional(v.string()),
+  agentId: v.optional(v.string()),
+  conversationKey: v.optional(v.string()),
+  workspaceName: v.optional(v.string()),
+  workspaceId: v.optional(v.string()),
+  suspendedAt: v.optional(v.number()),
+  terminatedAt: v.optional(v.number()),
 };
 
 /**
@@ -425,36 +454,36 @@ export const sandboxInstancesFields = {
  * workdir images; broods owns the build pipeline and dual-writes status here.
  */
 export const sandboxSnapshotsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    provider: sandboxProviderValidator,
-    baseImage: v.string(),
-    status: v.union(
-        v.literal("pending"),
-        v.literal("building"),
-        v.literal("pulling"),
-        v.literal("active"),
-        v.literal("inactive"),
-        v.literal("error"),
-        v.literal("build_failed"),
-    ),
-    /** Provider-side image id: workdir image id / MicroVM image ARN. */
-    externalImageId: v.string(),
-    pulledCount: v.number(),
-    createdAt: v.number(),
-    lastUsedAt: v.number(),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  provider: sandboxProviderValidator,
+  baseImage: v.string(),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("building"),
+    v.literal("pulling"),
+    v.literal("active"),
+    v.literal("inactive"),
+    v.literal("error"),
+    v.literal("build_failed"),
+  ),
+  /** Provider-side image id: workdir image id / MicroVM image ARN. */
+  externalImageId: v.string(),
+  pulledCount: v.number(),
+  createdAt: v.number(),
+  lastUsedAt: v.number(),
 };
 
 /** Sandbox lifecycle action names recorded in the operator audit trail. */
 export const sandboxAuditActionValidator = v.union(
-    v.literal("reserve"),
-    v.literal("suspend"),
-    v.literal("resume"),
-    v.literal("terminate"),
-    v.literal("snapshot"),
-    v.literal("refresh"),
-    v.literal("exec"),
-    v.literal("terminal"),
+  v.literal("reserve"),
+  v.literal("suspend"),
+  v.literal("resume"),
+  v.literal("terminate"),
+  v.literal("snapshot"),
+  v.literal("refresh"),
+  v.literal("exec"),
+  v.literal("terminal"),
 );
 
 /**
@@ -462,31 +491,31 @@ export const sandboxAuditActionValidator = v.union(
  * never command text, provider secrets, or terminal credentials.
  */
 export const sandboxAuditEventsFields = {
-    accountId: v.id("accounts"),
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    sandboxConfigId: v.optional(v.id("sandboxConfigs")),
-    reservationKey: v.string(),
-    provider: sandboxProviderValidator,
-    action: sandboxAuditActionValidator,
-    result: v.union(v.literal("ok"), v.literal("error")),
-    status: v.optional(sandboxInstancesFields.status),
-    actorSource: v.union(
-        v.literal("dashboard"),
-        v.literal("agent"),
-        v.literal("service"),
-        v.literal("unknown"),
-    ),
-    actorId: v.optional(v.string()),
-    actorEmail: v.optional(v.string()),
-    actorName: v.optional(v.string()),
-    traceId: v.optional(v.string()),
-    taskId: v.optional(v.string()),
-    errorMessage: v.optional(v.string()),
-    exitCode: v.optional(v.number()),
-    durationMs: v.optional(v.number()),
-    truncated: v.optional(v.boolean()),
-    createdAt: v.number(),
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  sandboxConfigId: v.optional(v.id("sandboxConfigs")),
+  reservationKey: v.string(),
+  provider: sandboxProviderValidator,
+  action: sandboxAuditActionValidator,
+  result: v.union(v.literal("ok"), v.literal("error")),
+  status: v.optional(sandboxInstancesFields.status),
+  actorSource: v.union(
+    v.literal("dashboard"),
+    v.literal("agent"),
+    v.literal("service"),
+    v.literal("unknown"),
+  ),
+  actorId: v.optional(v.string()),
+  actorEmail: v.optional(v.string()),
+  actorName: v.optional(v.string()),
+  traceId: v.optional(v.string()),
+  taskId: v.optional(v.string()),
+  errorMessage: v.optional(v.string()),
+  exitCode: v.optional(v.number()),
+  durationMs: v.optional(v.number()),
+  truncated: v.optional(v.boolean()),
+  createdAt: v.number(),
 };
 
 /**
@@ -495,43 +524,45 @@ export const sandboxAuditEventsFields = {
  * object is stored in plaintext.
  */
 export const workspaceConfigsFields = {
-    accountId: v.id("accounts"),
-    /**
-     * Environment scope. Optional for backward compatibility (see
-     * `sandboxConfigsFields`). A per-environment row gives the workspace its own
-     * `_id`, and the runtime filesystem namespace keys off that `_id`
-     * (`accountId:workspaceId`), so two environments never share files.
-     */
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    config: v.any(),
-    /** Ownership marker; see `agentConfigsFields.managedBy`. */
-    managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  /**
+   * Environment scope. Optional for backward compatibility (see
+   * `sandboxConfigsFields`). A per-environment row gives the workspace its own
+   * `_id`, and the runtime filesystem namespace keys off that `_id`
+   * (`accountId:workspaceId`), so two environments never share files.
+   */
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  name: v.string(),
+  description: v.optional(v.string()),
+  config: v.any(),
+  /** Ownership marker; see `agentConfigsFields.managedBy`. */
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** CLI-managed runtime variables scoped to a project environment. */
 export const environmentVariablesFields = {
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    name: v.string(),
-    ciphertext: v.string(),
-    iv: v.string(),
-    tag: v.string(),
-    updatedAt: v.number(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  name: v.string(),
+  ciphertext: v.string(),
+  iv: v.string(),
+  tag: v.string(),
+  updatedAt: v.number(),
 };
 
 /** Account-scoped runtime variables for the public config plane; values are write-only through the API. */
 export const accountEnvVarsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    ciphertext: v.string(),
-    iv: v.string(),
-    tag: v.string(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  ciphertext: v.string(),
+  iv: v.string(),
+  tag: v.string(),
+  updatedAt: v.number(),
 };
 
 /**
@@ -540,51 +571,51 @@ export const accountEnvVarsFields = {
  * otherwise write-only secrets leave a trail of who read what and when.
  */
 export const environmentVariableRevealsFields = {
-    projectId: v.id("projects"),
-    environmentId: v.id("environments"),
-    environmentVariableId: v.id("environmentVariables"),
-    name: v.string(),
-    source: v.union(v.literal("dashboard"), v.literal("cli")),
-    /** WorkOS authId of the dashboard user who revealed it (when source is "dashboard"). */
-    revealedByAuthId: v.optional(v.string()),
-    /** Account that revealed it through a CLI deploy token (when source is "cli"). */
-    revealedByAccountId: v.optional(v.id("accounts")),
-    /** CLI token row used for the reveal, when authenticated by `broods login`. */
-    revealedByCliTokenId: v.optional(v.id("cliTokens")),
-    /** WorkOS authId attached to the CLI token used for the reveal. */
-    revealedByCliAuthId: v.optional(v.string()),
-    /** Project/environment deploy key used for the reveal, when authenticated by a deploy key. */
-    revealedByDeployKeyId: v.optional(v.id("deployKeys")),
-    revealedAt: v.number(),
+  projectId: v.id("projects"),
+  environmentId: v.id("environments"),
+  environmentVariableId: v.id("environmentVariables"),
+  name: v.string(),
+  source: v.union(v.literal("dashboard"), v.literal("cli")),
+  /** WorkOS authId of the dashboard user who revealed it (when source is "dashboard"). */
+  revealedByAuthId: v.optional(v.string()),
+  /** Account that revealed it through a CLI deploy token (when source is "cli"). */
+  revealedByAccountId: v.optional(v.id("accounts")),
+  /** CLI token row used for the reveal, when authenticated by `broods login`. */
+  revealedByCliTokenId: v.optional(v.id("cliTokens")),
+  /** WorkOS authId attached to the CLI token used for the reveal. */
+  revealedByCliAuthId: v.optional(v.string()),
+  /** Project/environment deploy key used for the reveal, when authenticated by a deploy key. */
+  revealedByDeployKeyId: v.optional(v.id("deployKeys")),
+  revealedAt: v.number(),
 };
 
 /** Actor metadata for account-visible configuration audit events. */
 export const configAuditActorKindValidator = v.union(
-    v.literal("dashboardUser"),
-    v.literal("apiAccountSecret"),
-    v.literal("admin"),
-    v.literal("service"),
-    v.literal("cli"),
-    v.literal("deployKey"),
+  v.literal("dashboardUser"),
+  v.literal("apiAccountSecret"),
+  v.literal("admin"),
+  v.literal("service"),
+  v.literal("cli"),
+  v.literal("deployKey"),
 );
 
 /** Resource types recorded in the account-visible configuration audit feed. */
 export const configAuditResourceKindValidator = v.union(
-    v.literal("account"),
-    v.literal("agent"),
-    v.literal("skill"),
-    v.literal("tool"),
-    v.literal("hook"),
-    v.literal("workspace"),
-    v.literal("workspaceFile"),
-    v.literal("cron"),
-    v.literal("sandbox"),
-    v.literal("policy"),
-    v.literal("environmentVariable"),
-    v.literal("deployment"),
-    v.literal("webhook"),
-    v.literal("manifest"),
-    v.literal("unknown"),
+  v.literal("account"),
+  v.literal("agent"),
+  v.literal("skill"),
+  v.literal("tool"),
+  v.literal("hook"),
+  v.literal("workspace"),
+  v.literal("workspaceFile"),
+  v.literal("cron"),
+  v.literal("sandbox"),
+  v.literal("policy"),
+  v.literal("environmentVariable"),
+  v.literal("deployment"),
+  v.literal("webhook"),
+  v.literal("manifest"),
+  v.literal("unknown"),
 );
 
 /**
@@ -592,62 +623,67 @@ export const configAuditResourceKindValidator = v.union(
  * before insert and must never carry plaintext secrets or config blobs.
  */
 export const configAuditEventsFields = {
-    accountId: v.id("accounts"),
-    projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
-    actor: v.object({
-        kind: configAuditActorKindValidator,
-        id: v.optional(v.string()),
-        email: v.optional(v.string()),
-        name: v.optional(v.string()),
-    }),
-    action: v.string(),
-    resource: v.object({
-        kind: configAuditResourceKindValidator,
-        id: v.optional(v.string()),
-        name: v.optional(v.string()),
-    }),
-    summary: v.string(),
-    detailsJson: v.optional(v.string()),
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  actor: v.object({
+    kind: configAuditActorKindValidator,
+    id: v.optional(v.string()),
+    email: v.optional(v.string()),
+    name: v.optional(v.string()),
+  }),
+  action: v.string(),
+  resource: v.object({
+    kind: configAuditResourceKindValidator,
+    id: v.optional(v.string()),
+    name: v.optional(v.string()),
+  }),
+  summary: v.string(),
+  detailsJson: v.optional(v.string()),
 };
 
 /** Failed-auth counters for config HTTP routes. */
 export const configHttpAuthFailuresFields = {
-    key: v.string(),
-    windowStart: v.number(),
-    count: v.number(),
-    blockedUntil: v.optional(v.number()),
-    updatedAt: v.number(),
+  key: v.string(),
+  windowStart: v.number(),
+  count: v.number(),
+  blockedUntil: v.optional(v.number()),
+  updatedAt: v.number(),
 };
 
 /** Conversation thread between an account's caller and one of its agents. */
 export const conversationsFields = {
-    accountId: v.id("accounts"),
-    agentId: v.id("agents"),
-    title: v.optional(v.string()),
-    createdAt: v.number(),
-    lastMessageAt: v.number(),
+  accountId: v.id("accounts"),
+  agentId: v.id("agents"),
+  title: v.optional(v.string()),
+  createdAt: v.number(),
+  lastMessageAt: v.number(),
 };
 
 /** Message in a conversation. Role + content + arbitrary metadata. */
 export const messagesFields = {
-    conversationId: v.id("conversations"),
-    accountId: v.id("accounts"),
-    role: v.union(v.literal("system"), v.literal("user"), v.literal("assistant"), v.literal("tool")),
-    content: v.string(),
-    metadata: v.optional(v.any()),
-    createdAt: v.number(),
+  conversationId: v.id("conversations"),
+  accountId: v.id("accounts"),
+  role: v.union(
+    v.literal("system"),
+    v.literal("user"),
+    v.literal("assistant"),
+    v.literal("tool"),
+  ),
+  content: v.string(),
+  metadata: v.optional(v.any()),
+  createdAt: v.number(),
 };
 
 /** Skill metadata; binary content lives in S3 under accountId-prefixed keys. */
 export const skillsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    description: v.optional(v.string()),
-    s3Key: v.string(),
-    sizeBytes: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  s3Key: v.string(),
+  sizeBytes: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /**
@@ -655,44 +691,115 @@ export const skillsFields = {
  * Binary content lives in Convex storage; this table tracks metadata and the tree.
  */
 export const workspaceFilesFields = {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    /** Full path from the workspace root, e.g. "src/components/Button.tsx". */
-    path: v.string(),
-    /** Filename or folder name, e.g. "Button.tsx". */
-    name: v.string(),
-    isFolder: v.boolean(),
-    storageId: v.optional(v.id("_storage")),
-    mimeType: v.optional(v.string()),
-    sizeBytes: v.optional(v.number()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  authId: v.string(),
+  projectId: v.id("projects"),
+  nodeId: v.string(),
+  /** Full path from the workspace root, e.g. "src/components/Button.tsx". */
+  path: v.string(),
+  /** Filename or folder name, e.g. "Button.tsx". */
+  name: v.string(),
+  isFolder: v.boolean(),
+  storageId: v.optional(v.id("_storage")),
+  mimeType: v.optional(v.string()),
+  sizeBytes: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Async job tracking for the harness-processing /async endpoint. */
 export const asyncResultsFields = {
-    accountId: v.id("accounts"),
-    eventId: v.string(),
-    status: v.union(v.literal("pending"), v.literal("running"), v.literal("completed"), v.literal("failed")),
-    result: v.optional(v.any()),
-    error: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  eventId: v.string(),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("running"),
+    v.literal("completed"),
+    v.literal("failed"),
+  ),
+  result: v.optional(v.any()),
+  error: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Ordered AI SDK events for one runtime conversation. */
-export const runtimeConversationEventsFields = { accountId: v.string(), conversationKey: v.string(), cursor: v.string(), event: v.any() };
+export const runtimeConversationEventsFields = {
+  accountId: v.string(),
+  conversationKey: v.string(),
+  cursor: v.string(),
+  event: v.any(),
+};
 /** Dedupe claims, conversation leases, and pending ingress buffers. */
-export const runtimeClaimsFields = { accountId: v.optional(v.string()), key: v.string(), kind: v.union(v.literal("event"), v.literal("lease"), v.literal("pendingIngress")), ownerEventId: v.optional(v.string()), conversationKey: v.optional(v.string()), queued: v.optional(v.array(v.any())), expiresAt: v.number() };
+export const runtimeClaimsFields = {
+  accountId: v.optional(v.string()),
+  key: v.string(),
+  kind: v.union(
+    v.literal("event"),
+    v.literal("lease"),
+    v.literal("pendingIngress"),
+  ),
+  ownerEventId: v.optional(v.string()),
+  conversationKey: v.optional(v.string()),
+  queued: v.optional(v.array(v.any())),
+  expiresAt: v.number(),
+};
 /** Public async-agent polling and approval state. */
-export const runtimeAsyncAgentResultsFields = { accountId: v.string(), eventId: v.string(), conversationKey: v.string(), status: v.union(v.literal("processing"), v.literal("awaiting_approval"), v.literal("completed"), v.literal("failed")), response: v.optional(v.any()), error: v.optional(v.string()), approvals: v.optional(v.array(v.any())), createdAt: v.string(), updatedAt: v.string(), expiresAt: v.number() };
+export const runtimeAsyncAgentResultsFields = {
+  accountId: v.string(),
+  eventId: v.string(),
+  conversationKey: v.string(),
+  status: v.union(
+    v.literal("processing"),
+    v.literal("awaiting_approval"),
+    v.literal("completed"),
+    v.literal("failed"),
+  ),
+  response: v.optional(v.any()),
+  error: v.optional(v.string()),
+  approvals: v.optional(v.array(v.any())),
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  expiresAt: v.number(),
+};
 /** Detached async tool state, including delivery and hashed callback authorization. */
-export const runtimeAsyncToolResultsFields = { accountId: v.string(), resultId: v.string(), parentEventId: v.string(), conversationKey: v.string(), toolName: v.string(), toolCallId: v.string(), input: v.any(), status: v.union(v.literal("processing"), v.literal("completed"), v.literal("failed")), response: v.optional(v.any()), error: v.optional(v.string()), delivery: v.optional(v.any()), completionTokenHash: v.optional(v.string()), observed: v.optional(v.boolean()), createdAt: v.string(), updatedAt: v.string(), expiresAt: v.number() };
+export const runtimeAsyncToolResultsFields = {
+  accountId: v.string(),
+  resultId: v.string(),
+  parentEventId: v.string(),
+  conversationKey: v.string(),
+  toolName: v.string(),
+  toolCallId: v.string(),
+  input: v.any(),
+  status: v.union(
+    v.literal("processing"),
+    v.literal("completed"),
+    v.literal("failed"),
+  ),
+  response: v.optional(v.any()),
+  error: v.optional(v.string()),
+  delivery: v.optional(v.any()),
+  completionTokenHash: v.optional(v.string()),
+  observed: v.optional(v.boolean()),
+  createdAt: v.string(),
+  updatedAt: v.string(),
+  expiresAt: v.number(),
+};
 /** Transactional fan-in group for detached tool siblings. */
-export const runtimeAsyncToolGroupsFields = { accountId: v.string(), parentEventId: v.string(), resultIds: v.array(v.string()), sealed: v.boolean(), expiresAt: v.number() };
+export const runtimeAsyncToolGroupsFields = {
+  accountId: v.string(),
+  parentEventId: v.string(),
+  resultIds: v.array(v.string()),
+  sealed: v.boolean(),
+  expiresAt: v.number(),
+};
 /** Authoritative persistent-sandbox reservation mapping. */
-export const sandboxReservationsFields = { accountId: v.string(), provider: sandboxProviderValidator, reservationKey: v.string(), externalId: v.string(), expiresAt: v.number() };
+export const sandboxReservationsFields = {
+  accountId: v.string(),
+  provider: sandboxProviderValidator,
+  reservationKey: v.string(),
+  externalId: v.string(),
+  expiresAt: v.number(),
+};
 
 /**
  * Per-account scheduled agent runs. Mirrors broods's CronRecord
@@ -702,34 +809,40 @@ export const sandboxReservationsFields = { accountId: v.string(), provider: sand
  * for visibility but broods Lambda is what actually invokes EBS.
  */
 export const cronsFields = {
-    accountId: v.id("accounts"),
-    name: v.string(),
-    description: v.optional(v.string()),
-    agentId: v.id("agents"),
-    events: v.array(v.any()),
-    conversationKey: v.optional(v.string()),
-    scheduleExpression: v.string(),
-    timezone: v.optional(v.string()),
-    status: v.union(v.literal("active"), v.literal("paused")),
-    schedulerName: v.string(),
-    schedulerGroupName: v.string(),
-    lastInvokedAt: v.optional(v.number()),
-    lastStatus: v.optional(v.union(v.literal("started"), v.literal("completed"), v.literal("failed"))),
-    lastError: v.optional(v.string()),
-    createdAt: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  agentId: v.id("agents"),
+  events: v.array(v.any()),
+  conversationKey: v.optional(v.string()),
+  scheduleExpression: v.string(),
+  timezone: v.optional(v.string()),
+  status: v.union(v.literal("active"), v.literal("paused")),
+  schedulerName: v.string(),
+  schedulerGroupName: v.string(),
+  lastInvokedAt: v.optional(v.number()),
+  lastStatus: v.optional(
+    v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
+  ),
+  lastError: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 export const cronRunsFields = {
-    accountId: v.id("accounts"),
-    cronId: v.id("crons"),
-    eventId: v.string(),
-    conversationKey: v.string(),
-    status: v.union(v.literal("started"), v.literal("completed"), v.literal("failed")),
-    result: v.optional(v.any()),
-    error: v.optional(v.string()),
-    startedAt: v.number(),
-    completedAt: v.optional(v.number()),
+  accountId: v.id("accounts"),
+  cronId: v.id("crons"),
+  eventId: v.string(),
+  conversationKey: v.string(),
+  status: v.union(
+    v.literal("started"),
+    v.literal("completed"),
+    v.literal("failed"),
+  ),
+  result: v.optional(v.any()),
+  error: v.optional(v.string()),
+  startedAt: v.number(),
+  completedAt: v.optional(v.number()),
 };
 
 /**
@@ -740,54 +853,54 @@ export const cronRunsFields = {
  * stored here.
  */
 export const taskUsageFields = {
-    accountId: v.id("accounts"),
-    /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
-    endpointId: v.string(),
-    agentId: v.string(),
-    conversationKey: v.string(),
-    /** Unique task id (= session.eventId) for idempotency. */
-    taskId: v.string(),
-    modelProvider: v.string(),
-    modelId: v.string(),
-    /** Epoch ms when the task finished. */
-    finishedAt: v.number(),
-    /** Wall-clock duration of the task in ms. */
-    durationMs: v.number(),
-    status: v.union(v.literal("completed"), v.literal("failed")),
-    // Token counts — raw only; price computed in the UI.
-    inputTokens: v.number(),
-    outputTokens: v.number(),
-    reasoningTokens: v.number(),
-    /** Cache-read tokens (cached input). */
-    cachedInputTokens: v.number(),
-    /** Cache-write tokens (cache creation). */
-    cacheWriteTokens: v.number(),
-    totalTokens: v.number(),
-    /** Harness runtime backend (currently always "lambda"). */
-    runtimeKind: v.string(),
-    /** Harness runtime wall-clock ms (GB-seconds proxy when multiplied by memory). */
-    runtimeWallMs: v.number(),
-    /** Harness runtime memory size in MB (from AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
-    runtimeMemoryMb: v.number(),
-    /**
-     * CPU consumed in sandboxes during the task, one entry per sandbox context:
-     * the agent's own sandbox (role "agent") and any per-tool sandbox (role
-     * "tool"), tagged by provider `type` ("sandbox", "lambda", …). cpuUsec is
-     * recorded for the self-hosted providers (sandbox via the workdir exec report,
-     * lambda via the MicroVM image's getrusage report); others store 0.
-     */
-    sandboxUsage: v.array(
-        v.object({
-            type: v.string(),
-            role: v.union(v.literal("agent"), v.literal("tool")),
-            toolName: v.optional(v.string()),
-            cpuUsec: v.number(),
-        }),
-    ),
-    /** Number of model steps (model.step.finished events). */
-    stepCount: v.number(),
-    /** Number of tool calls across all steps. */
-    toolCallCount: v.number(),
+  accountId: v.id("accounts"),
+  /** Per-deployment id (matches agentDeployments.endpointId); the dashboard join key. */
+  endpointId: v.string(),
+  agentId: v.string(),
+  conversationKey: v.string(),
+  /** Unique task id (= session.eventId) for idempotency. */
+  taskId: v.string(),
+  modelProvider: v.string(),
+  modelId: v.string(),
+  /** Epoch ms when the task finished. */
+  finishedAt: v.number(),
+  /** Wall-clock duration of the task in ms. */
+  durationMs: v.number(),
+  status: v.union(v.literal("completed"), v.literal("failed")),
+  // Token counts — raw only; price computed in the UI.
+  inputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningTokens: v.number(),
+  /** Cache-read tokens (cached input). */
+  cachedInputTokens: v.number(),
+  /** Cache-write tokens (cache creation). */
+  cacheWriteTokens: v.number(),
+  totalTokens: v.number(),
+  /** Harness runtime backend (currently always "lambda"). */
+  runtimeKind: v.string(),
+  /** Harness runtime wall-clock ms (GB-seconds proxy when multiplied by memory). */
+  runtimeWallMs: v.number(),
+  /** Harness runtime memory size in MB (from AWS_LAMBDA_FUNCTION_MEMORY_SIZE). */
+  runtimeMemoryMb: v.number(),
+  /**
+   * CPU consumed in sandboxes during the task, one entry per sandbox context:
+   * the agent's own sandbox (role "agent") and any per-tool sandbox (role
+   * "tool"), tagged by provider `type` ("sandbox", "lambda", …). cpuUsec is
+   * recorded for the self-hosted providers (sandbox via the workdir exec report,
+   * lambda via the MicroVM image's getrusage report); others store 0.
+   */
+  sandboxUsage: v.array(
+    v.object({
+      type: v.string(),
+      role: v.union(v.literal("agent"), v.literal("tool")),
+      toolName: v.optional(v.string()),
+      cpuUsec: v.number(),
+    }),
+  ),
+  /** Number of model steps (model.step.finished events). */
+  stepCount: v.number(),
+  /** Number of tool calls across all steps. */
+  toolCallCount: v.number(),
 };
 
 /**
@@ -798,176 +911,219 @@ export const taskUsageFields = {
  * real activity, not wall-clock time.
  */
 export const usageRollupsFields = {
-    accountId: v.id("accounts"),
-    endpointId: v.string(),
-    /** Epoch ms floored to the 5-minute base bin. */
-    bucketStart: v.number(),
-    modelProvider: v.string(),
-    modelId: v.string(),
-    inputTokens: v.number(),
-    outputTokens: v.number(),
-    reasoningTokens: v.number(),
-    cachedInputTokens: v.number(),
-    /** Cache-write tokens (cache creation) folded into this bucket. */
-    cacheWriteTokens: v.number(),
-    totalTokens: v.number(),
-    /** Count of model.invocation.finished (agent tasks) in this bucket. */
-    invocations: v.number(),
-    /** Count of model.step.finished (individual model calls) in this bucket. */
-    modelCalls: v.number(),
-    /** Harness runtime wall-clock ms folded into this bucket. */
-    runtimeWallMs: v.number(),
-    /** Sandbox CPU usage_usec folded into this bucket. */
-    agentSandboxCpuUsec: v.number(),
-    /** Tool-sandbox CPU usage_usec (user-uploaded tools) folded into this bucket. */
-    toolSandboxCpuUsec: v.number(),
-    updatedAt: v.number(),
+  accountId: v.id("accounts"),
+  endpointId: v.string(),
+  /** Epoch ms floored to the 5-minute base bin. */
+  bucketStart: v.number(),
+  modelProvider: v.string(),
+  modelId: v.string(),
+  inputTokens: v.number(),
+  outputTokens: v.number(),
+  reasoningTokens: v.number(),
+  cachedInputTokens: v.number(),
+  /** Cache-write tokens (cache creation) folded into this bucket. */
+  cacheWriteTokens: v.number(),
+  totalTokens: v.number(),
+  /** Count of model.invocation.finished (agent tasks) in this bucket. */
+  invocations: v.number(),
+  /** Count of model.step.finished (individual model calls) in this bucket. */
+  modelCalls: v.number(),
+  /** Harness runtime wall-clock ms folded into this bucket. */
+  runtimeWallMs: v.number(),
+  /** Sandbox CPU usage_usec folded into this bucket. */
+  agentSandboxCpuUsec: v.number(),
+  /** Tool-sandbox CPU usage_usec (user-uploaded tools) folded into this bucket. */
+  toolSandboxCpuUsec: v.number(),
+  updatedAt: v.number(),
 };
 
 export default defineSchema({
-    users: defineTable(usersFields)
-        .index("by_authId", ["authId"])
-        .index("by_accountHandle", ["accountHandle"])
-        .index("by_email", ["email"]),
-    projects: defineTable(projectsFields)
-        .index("by_authId", ["authId"])
-        .index("by_authId_and_slug", ["authId", "slug"])
-        .index("by_orgId", ["orgId"]),
-    environments: defineTable(environmentsFields)
-        .index("by_projectId", ["projectId"])
-        .index("by_authId_and_projectId", ["authId", "projectId"]),
-    agentConfigs: defineTable(agentConfigsFields)
-        .index("by_authId", ["authId"])
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-        .index("by_agentId", ["agentId"]),
-    agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index("by_agentConfigId", ["agentConfigId"]),
-    canvasLayouts: defineTable(canvasLayoutsFields).index("by_projectId_and_environmentId", [
-        "projectId",
-        "environmentId",
+  users: defineTable(usersFields)
+    .index("by_authId", ["authId"])
+    .index("by_accountHandle", ["accountHandle"])
+    .index("by_email", ["email"]),
+  projects: defineTable(projectsFields)
+    .index("by_authId", ["authId"])
+    .index("by_authId_and_slug", ["authId", "slug"])
+    .index("by_orgId", ["orgId"]),
+  environments: defineTable(environmentsFields)
+    .index("by_projectId", ["projectId"])
+    .index("by_authId_and_projectId", ["authId", "projectId"]),
+  agentConfigs: defineTable(agentConfigsFields)
+    .index("by_authId", ["authId"])
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_agentId", ["agentId"]),
+  agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index(
+    "by_agentConfigId",
+    ["agentConfigId"],
+  ),
+  canvasLayouts: defineTable(canvasLayoutsFields).index(
+    "by_projectId_and_environmentId",
+    ["projectId", "environmentId"],
+  ),
+  agentDeployments: defineTable(agentDeploymentsFields)
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_projectId_and_environmentId_and_status", [
+      "projectId",
+      "environmentId",
+      "status",
+    ])
+    .index("by_apiKeyHash", ["apiKeyHash"])
+    .index("by_authId", ["authId"]),
+  toolServices: defineTable(toolServicesFields).index(
+    "by_projectId_environmentId_and_nodeId",
+    ["projectId", "environmentId", "nodeId"],
+  ),
+  deployKeys: defineTable(deployKeysFields)
+    .index("by_keyHash", ["keyHash"])
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+  cliAuthCodes: defineTable(cliAuthCodesFields)
+    .index("by_codeHash", ["codeHash"])
+    .index("by_accountId", ["accountId"])
+    .index("by_authId", ["authId"]),
+  cliTokens: defineTable(cliTokensFields)
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_accountId", ["accountId"])
+    .index("by_authId", ["authId"]),
+  cliExternalResources: defineTable(cliExternalResourcesFields)
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_environmentId_kind_and_name", ["environmentId", "kind", "name"])
+    .index("by_accountId", ["accountId"]),
+  orgs: defineTable(orgsFields)
+    .index("by_slug", ["slug"])
+    .index("by_ownerAuthId", ["ownerAuthId"]),
+  orgMembers: defineTable(orgMembersFields)
+    .index("by_orgId", ["orgId"])
+    .index("by_userId", ["userId"])
+    .index("by_orgId_and_userId", ["orgId", "userId"]),
+  accounts: defineTable(accountsFields)
+    .index("by_orgId", ["orgId"])
+    .index("by_secretHash", ["secretHash"]),
+  agents: defineTable(agentsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_name", ["accountId", "name"]),
+  accountTools: defineTable(accountToolsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_status", ["accountId", "status"]),
+  accountHooks: defineTable(accountHooksFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_status", ["accountId", "status"]),
+  agentPolicies: defineTable(agentPoliciesFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_status", ["accountId", "status"])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
+  sandboxConfigs: defineTable(sandboxConfigsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_name", ["accountId", "name"])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
+  workspaceConfigs: defineTable(workspaceConfigsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_name", ["accountId", "name"])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
+  sandboxInstances: defineTable(sandboxInstancesFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_projectId_and_environmentId", [
+      "accountId",
+      "projectId",
+      "environmentId",
+    ])
+    .index("by_reservationKey", ["reservationKey"]),
+  sandboxSnapshots: defineTable(sandboxSnapshotsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_name", ["accountId", "name"]),
+  sandboxAuditEvents: defineTable(sandboxAuditEventsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_reservationKey_and_createdAt", [
+      "accountId",
+      "reservationKey",
+      "createdAt",
+    ])
+    .index("by_accountId_projectId_environmentId_and_createdAt", [
+      "accountId",
+      "projectId",
+      "environmentId",
+      "createdAt",
     ]),
-    agentDeployments: defineTable(agentDeploymentsFields)
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-        .index("by_projectId_and_environmentId_and_status", ["projectId", "environmentId", "status"])
-        .index("by_apiKeyHash", ["apiKeyHash"])
-        .index("by_authId", ["authId"]),
-    toolServices: defineTable(toolServicesFields).index("by_projectId_environmentId_and_nodeId", [
-        "projectId",
-        "environmentId",
-        "nodeId",
+  environmentVariables: defineTable(environmentVariablesFields)
+    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
+  accountEnvVars: defineTable(accountEnvVarsFields).index(
+    "by_accountId_and_name",
+    ["accountId", "name"],
+  ),
+  environmentVariableReveals: defineTable(environmentVariableRevealsFields)
+    .index("by_environmentId", ["environmentId"])
+    .index("by_environmentVariableId", ["environmentVariableId"])
+    .index("by_revealedByAuthId", ["revealedByAuthId"])
+    .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
+  configAuditEvents: defineTable(configAuditEventsFields)
+    .index("by_account", ["accountId"])
+    .index("by_account_project_environment", [
+      "accountId",
+      "projectId",
+      "environmentId",
     ]),
-    deployKeys: defineTable(deployKeysFields)
-        .index("by_keyHash", ["keyHash"])
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
-    cliAuthCodes: defineTable(cliAuthCodesFields)
-        .index("by_codeHash", ["codeHash"])
-        .index("by_accountId", ["accountId"])
-        .index("by_authId", ["authId"]),
-    cliTokens: defineTable(cliTokensFields)
-        .index("by_tokenHash", ["tokenHash"])
-        .index("by_accountId", ["accountId"])
-        .index("by_authId", ["authId"]),
-    cliExternalResources: defineTable(cliExternalResourcesFields)
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-        .index("by_environmentId_kind_and_name", ["environmentId", "kind", "name"])
-        .index("by_accountId", ["accountId"]),
-    orgs: defineTable(orgsFields).index("by_slug", ["slug"]).index("by_ownerAuthId", ["ownerAuthId"]),
-    orgMembers: defineTable(orgMembersFields)
-        .index("by_orgId", ["orgId"])
-        .index("by_userId", ["userId"])
-        .index("by_orgId_and_userId", ["orgId", "userId"]),
-    accounts: defineTable(accountsFields).index("by_orgId", ["orgId"]).index("by_secretHash", ["secretHash"]),
-    agents: defineTable(agentsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"]),
-    accountTools: defineTable(accountToolsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_status", ["accountId", "status"]),
-    accountHooks: defineTable(accountHooksFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_status", ["accountId", "status"]),
-    agentPolicies: defineTable(agentPoliciesFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_status", ["accountId", "status"])
-        .index("by_environmentId_and_name", ["environmentId", "name"]),
-    sandboxConfigs: defineTable(sandboxConfigsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"])
-        .index("by_environmentId_and_name", ["environmentId", "name"]),
-    workspaceConfigs: defineTable(workspaceConfigsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"])
-        .index("by_environmentId_and_name", ["environmentId", "name"]),
-    sandboxInstances: defineTable(sandboxInstancesFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_projectId_and_environmentId", ["accountId", "projectId", "environmentId"])
-        .index("by_reservationKey", ["reservationKey"]),
-    sandboxSnapshots: defineTable(sandboxSnapshotsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_name", ["accountId", "name"]),
-    sandboxAuditEvents: defineTable(sandboxAuditEventsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_reservationKey_and_createdAt", ["accountId", "reservationKey", "createdAt"])
-        .index("by_accountId_projectId_environmentId_and_createdAt", [
-            "accountId",
-            "projectId",
-            "environmentId",
-            "createdAt",
-        ]),
-    environmentVariables: defineTable(environmentVariablesFields)
-        .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-        .index("by_environmentId_and_name", ["environmentId", "name"]),
-    accountEnvVars: defineTable(accountEnvVarsFields)
-        .index("by_accountId_and_name", ["accountId", "name"]),
-    environmentVariableReveals: defineTable(environmentVariableRevealsFields)
-        .index("by_environmentId", ["environmentId"])
-        .index("by_environmentVariableId", ["environmentVariableId"])
-        .index("by_revealedByAuthId", ["revealedByAuthId"])
-        .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-    configAuditEvents: defineTable(configAuditEventsFields)
-        .index("by_account", ["accountId"])
-        .index("by_account_project_environment", ["accountId", "projectId", "environmentId"]),
-    configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
-        .index("by_key", ["key"])
-        .index("by_updatedAt", ["updatedAt"]),
-    conversations: defineTable(conversationsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_agentId", ["accountId", "agentId"]),
-    messages: defineTable(messagesFields)
-        .index("by_conversationId", ["conversationId"])
-        .index("by_accountId", ["accountId"]),
-    skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
-    workspaceFiles: defineTable(workspaceFilesFields)
-        .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
-        .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
-        .index("by_authId", ["authId"]),
-    asyncResults: defineTable(asyncResultsFields).index("by_accountId", ["accountId"]).index("by_eventId", ["eventId"]),
-    runtimeConversationEvents: defineTable(runtimeConversationEventsFields).index("by_conversationKey_and_cursor", ["conversationKey", "cursor"]).index("by_accountId", ["accountId"]),
-    runtimeClaims: defineTable(runtimeClaimsFields).index("by_key", ["key"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
-    runtimeAsyncAgentResults: defineTable(runtimeAsyncAgentResultsFields).index("by_eventId", ["eventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
-    runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields).index("by_resultId", ["resultId"]).index("by_parentEventId", ["parentEventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
-    runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields).index("by_parentEventId", ["parentEventId"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
-    sandboxReservations: defineTable(sandboxReservationsFields).index("by_provider_and_reservationKey", ["provider", "reservationKey"]).index("by_accountId", ["accountId"]).index("by_expiresAt", ["expiresAt"]),
-    crons: defineTable(cronsFields)
-        .index("by_accountId", ["accountId"])
-        .index("by_accountId_and_agentId", ["accountId", "agentId"])
-        .index("by_accountId_and_status", ["accountId", "status"])
-        .index("by_schedulerName", ["schedulerName"]),
-    cronRuns: defineTable(cronRunsFields).index("by_accountId_and_cronId_and_startedAt", [
-        "accountId",
-        "cronId",
-        "startedAt",
+  configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
+    .index("by_key", ["key"])
+    .index("by_updatedAt", ["updatedAt"]),
+  conversations: defineTable(conversationsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
+  messages: defineTable(messagesFields)
+    .index("by_conversationId", ["conversationId"])
+    .index("by_accountId", ["accountId"]),
+  skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
+  workspaceFiles: defineTable(workspaceFilesFields)
+    .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
+    .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
+    .index("by_authId", ["authId"]),
+  asyncResults: defineTable(asyncResultsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_eventId", ["eventId"]),
+  runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
+    .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
+    .index("by_accountId", ["accountId"]),
+  runtimeClaims: defineTable(runtimeClaimsFields)
+    .index("by_key", ["key"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  runtimeAsyncAgentResults: defineTable(runtimeAsyncAgentResultsFields)
+    .index("by_eventId", ["eventId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
+    .index("by_resultId", ["resultId"])
+    .index("by_parentEventId", ["parentEventId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields)
+    .index("by_parentEventId", ["parentEventId"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  sandboxReservations: defineTable(sandboxReservationsFields)
+    .index("by_provider_and_reservationKey", ["provider", "reservationKey"])
+    .index("by_accountId", ["accountId"])
+    .index("by_expiresAt", ["expiresAt"]),
+  crons: defineTable(cronsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_agentId", ["accountId", "agentId"])
+    .index("by_accountId_and_status", ["accountId", "status"])
+    .index("by_schedulerName", ["schedulerName"]),
+  cronRuns: defineTable(cronRunsFields).index(
+    "by_accountId_and_cronId_and_startedAt",
+    ["accountId", "cronId", "startedAt"],
+  ),
+  taskUsage: defineTable(taskUsageFields)
+    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
+    .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
+    .index("by_accountId_and_taskId", ["accountId", "taskId"]),
+  usageRollups: defineTable(usageRollupsFields)
+    .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
+    .index("by_accountId_endpointId_bucketStart_modelProvider_modelId", [
+      "accountId",
+      "endpointId",
+      "bucketStart",
+      "modelProvider",
+      "modelId",
     ]),
-    taskUsage: defineTable(taskUsageFields)
-        .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
-        .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
-        .index("by_accountId_and_taskId", ["accountId", "taskId"]),
-    usageRollups: defineTable(usageRollupsFields)
-        .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
-        .index("by_accountId_endpointId_bucketStart_modelProvider_modelId", [
-            "accountId",
-            "endpointId",
-            "bucketStart",
-            "modelProvider",
-            "modelId",
-        ]),
 });

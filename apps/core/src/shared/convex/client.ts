@@ -25,7 +25,9 @@ export function getConvexClient(): ConvexHttpClient {
   const deployKey = requireEnv("CONVEX_DEPLOY_KEY");
   const client = new ConvexHttpClient(url);
   // setAdminAuth is marked @internal and stripped from the public typings.
-  (client as unknown as { setAdminAuth(key: string): void }).setAdminAuth(deployKey);
+  (client as unknown as { setAdminAuth(key: string): void }).setAdminAuth(
+    deployKey,
+  );
   cached = client;
   return client;
 }

@@ -29,7 +29,10 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   return {
     type: "object",
     properties: {
-      file_path: { type: "string", description: "Path to write, relative to the workspace root." },
+      file_path: {
+        type: "string",
+        description: "Path to write, relative to the workspace root.",
+      },
       content: { type: "string", description: "Full file contents to write." },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
@@ -73,11 +76,16 @@ Usage notes:
             metadata: sandboxRunMetadata(context, ws),
           });
           if (!result.ok) {
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: write failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() ||
+                "Error: write failed",
+            );
           }
           return toolText(result.stdout.trim());
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

@@ -20,7 +20,7 @@ import { defineSandbox, defineAgent, env } from "broods";
 export const sandbox = defineSandbox({
   name: "starter",
   config: {
-    provider: "sandbox",        // self-hosted workdir (the default)
+    provider: "sandbox", // self-hosted workdir (the default)
     network: { mode: "deny-all" },
     permissionMode: "bypass",
     timeout: 60,
@@ -54,7 +54,8 @@ import { api } from "./broods/_generated/api";
 const client = new BroodsClient();
 
 for await (const chunk of client.stream(api.agents.myAgent, {
-  input: "Write fib.py that prints the first 10 Fibonacci numbers, then run python3 fib.py.",
+  input:
+    "Write fib.py that prints the first 10 Fibonacci numbers, then run python3 fib.py.",
 })) {
   if (chunk.type === "text-delta") process.stdout.write(chunk.text);
 }
@@ -74,7 +75,7 @@ import { defineWorkspace } from "broods";
 
 export const projectWorkspace = defineWorkspace({
   name: "project",
-  config: { storage: { provider: "s3" }, harness: { enabled: true } },
+  config: { storage: { provider: "s3" } },
 });
 
 // then on the agent: workspaces: [projectWorkspace]
@@ -82,13 +83,13 @@ export const projectWorkspace = defineWorkspace({
 
 ## Runnable examples
 
-| Demo | What it shows |
-| --- | --- |
-| [`sandbox`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox) | stateless bash-only `sandbox` (workdir) |
-| [`sandbox-workspace`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace) | workspace-backed file tools on `sandbox` |
+| Demo                                                                                                                        | What it shows                                   |
+| --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [`sandbox`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox)                                           | stateless bash-only `sandbox` (workdir)         |
+| [`sandbox-workspace`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace)                       | workspace-backed file tools on `sandbox`        |
 | [`sandbox-workspace-persistent`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace-persistent) | reserved (persistent) sandbox + background jobs |
-| [`sandbox-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-lambda) | stateless bash-only `lambda` (AWS MicroVM) |
-| [`sandbox-workspace-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace-lambda) | workspace-backed file tools on `lambda` |
+| [`sandbox-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-lambda)                             | stateless bash-only `lambda` (AWS MicroVM)      |
+| [`sandbox-workspace-lambda`](https://github.com/beeblastco/broods/tree/dev/packages/demos/sandbox-workspace-lambda)         | workspace-backed file tools on `lambda`         |
 
 ## Next steps
 

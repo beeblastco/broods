@@ -10,41 +10,55 @@ import type {
   ToolModelMessage,
   UserModelMessage,
 } from "ai";
-import {
-  systemModelMessageSchema,
-} from "ai";
-import type { AgentChannelWorkspaceScope, AgentConfig } from "../shared/domain/agent-config.ts";
-import { getStorage } from "../shared/storage.ts";
-import type { AsyncToolDelivery } from "./async-tool-result.ts";
-import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
-import { resolveS3ReadTarget, workspaceReadContext } from "./sandbox/s3-mount.ts";
+import { systemModelMessageSchema } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
+import type {
+  AgentChannelWorkspaceScope,
+  AgentConfig,
+} from "../shared/domain/agent-config.ts";
+import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import {
+  workspaceGuidanceEnabled,
+  workspaceMemoryHarnessEnabled,
+} from "../shared/domain/workspace-config.ts";
+import { logError, logInfo } from "../shared/log.ts";
+import { isPlainObject } from "../shared/object.ts";
 import {
   channelScopeKeyFromConversation,
   conversationLeaseKey,
 } from "../shared/runtime-keys.ts";
-import { logError, logInfo } from "../shared/log.ts";
-import { isPlainObject } from "../shared/object.ts";
+import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   resolveAgentRuntime,
   type ResolvedAgentRuntime,
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
+import type { AsyncToolDelivery } from "./async-tool-result.ts";
 import {
-  loadConfiguredSkillPrompt,
+  compactSessionContext,
+  isCompactionSummaryMessage,
+} from "./compaction.ts";
+import { pruneSessionMessages } from "./pruning.ts";
+import {
+  resolveS3ReadTarget,
+  workspaceReadContext,
+} from "./sandbox/s3-mount.ts";
+import type { SandboxExecutorConfig } from "./sandbox/types.ts";
+import {
   listConfiguredSkillMetadata,
+  loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
-import { compactSessionContext, isCompactionSummaryMessage } from "./compaction.ts";
-import { pruneSessionMessages } from "./pruning.ts";
-import type { SandboxExecutorConfig } from "./sandbox/types.ts";
-import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
+import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
 // Default conversation lease TTL of 15 minutes.
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
 
 export type ConversationIngressEvent =
-  | UserModelMessage
+  // `metadata` is opaque hook data persisted on the stored-event envelope,
+  // never inside the model message. See StoredEventBase.
+  | (UserModelMessage & { metadata?: unknown })
   | AssistantModelMessage
   | ToolModelMessage
   | (SystemModelMessage & { persist?: boolean });
@@ -95,15 +109,20 @@ interface SubagentMetadata {
  * `version` gives us a migration hook for future schema changes, and
  * `sourceEventId` ties projected rows back to the inbound request/webhook event
  * that created them for dedupe/debugging.
+ * `metadata` is opaque channel.message.received hook data; core never
+ * interprets it, only persists and re-exposes it on hook payloads.
  */
 interface StoredEventBase {
   version: 1;
   sourceEventId: string;
+  metadata?: unknown;
 }
 
 // Internal normalized shapes persisted in Convex. We use AI SDK-style roles
 // here as well so an event is effectively a stored model message plus metadata.
-interface StoredConversationEventBase<TMessage extends ModelMessage> extends StoredEventBase {
+interface StoredConversationEventBase<
+  TMessage extends ModelMessage,
+> extends StoredEventBase {
   message: TMessage;
 }
 
@@ -162,14 +181,18 @@ export class Session {
     // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
     public readonly projectSlug?: string,
     public readonly environmentSlug?: string,
-  ) { }
+  ) {}
 
   async claim(): Promise<boolean> {
     if (!this.accountId) {
       throw new Error("Account ID is required for runtime claims");
     }
 
-    return runtime.mutate("claimEvent", { accountId: this.accountId, key: this.eventId, ttlSeconds: 86400 });
+    return runtime.mutate("claimEvent", {
+      accountId: this.accountId,
+      key: this.eventId,
+      ttlSeconds: 86400,
+    });
   }
 
   async release(): Promise<void> {
@@ -177,15 +200,26 @@ export class Session {
       throw new Error("Account ID is required for runtime claims");
     }
 
-    await runtime.mutate("releaseClaim", { accountId: this.accountId, key: this.eventId });
+    await runtime.mutate("releaseClaim", {
+      accountId: this.accountId,
+      key: this.eventId,
+    });
   }
 
   async acquireConversationLease(): Promise<boolean> {
-    return runtime.mutate("acquireLease", { key: this.conversationLeaseKey(), conversationKey: this.conversationKey, ownerEventId: this.eventId, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
+    return runtime.mutate("acquireLease", {
+      key: this.conversationLeaseKey(),
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS,
+    });
   }
 
   async releaseConversationLease(): Promise<void> {
-    await runtime.mutate("releaseLease", { key: this.conversationLeaseKey(), ownerEventId: this.eventId });
+    await runtime.mutate("releaseLease", {
+      key: this.conversationLeaseKey(),
+      ownerEventId: this.eventId,
+    });
   }
 
   /**
@@ -193,11 +227,18 @@ export class Session {
    * the lease holder can answer them after its current reply. The Convex mutation
    * appends concurrent ingress transactionally without clobbering queued events.
    */
-  async enqueuePendingIngress(events: ConversationIngressEvent[]): Promise<void> {
+  async enqueuePendingIngress(
+    events: ConversationIngressEvent[],
+  ): Promise<void> {
     if (events.length === 0) {
       return;
     }
-    await runtime.mutate("enqueueIngress", { key: this.pendingIngressKey(), conversationKey: this.conversationKey, events, ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS });
+    await runtime.mutate("enqueueIngress", {
+      key: this.pendingIngressKey(),
+      conversationKey: this.conversationKey,
+      events,
+      ttlSeconds: CONVERSATION_LEASE_TTL_SECONDS,
+    });
   }
 
   /**
@@ -209,7 +250,9 @@ export class Session {
     return runtime.mutate("takeIngress", { key: this.pendingIngressKey() });
   }
 
-  async appendIngressEvents(events: ConversationIngressEvent[]): Promise<SystemModelMessage[]> {
+  async appendIngressEvents(
+    events: ConversationIngressEvent[],
+  ): Promise<SystemModelMessage[]> {
     const ephemeralSystem: SystemModelMessage[] = [];
     const persistedMessages: ModelMessage[] = [];
 
@@ -240,7 +283,10 @@ export class Session {
     const createdAtValues: string[] = [];
 
     for (const message of messages) {
-      const storedEvent = createStoredEventFromModelMessage(message, this.eventId);
+      const storedEvent = createStoredEventFromModelMessage(
+        message,
+        this.eventId,
+      );
       if (!storedEvent) {
         continue;
       }
@@ -251,36 +297,51 @@ export class Session {
     return createdAtValues;
   }
 
-  async createTurnContext(ephemeralSystem: SystemModelMessage[] = []): Promise<TurnContextSnapshot> {
+  async createTurnContext(
+    ephemeralSystem: SystemModelMessage[] = [],
+  ): Promise<TurnContextSnapshot> {
     const prepareStartedMs = Date.now();
-    await this.ensureResolvedRuntime();
-    const entries = await this.loadConversationEntries();
+    // Runtime resolution and history load hit Convex independently, so overlap
+    // them — the first token should not wait on two sequential round-trips.
+    const [, entries] = await Promise.all([
+      this.ensureResolvedRuntime(),
+      this.loadConversationEntries(),
+    ]);
     const activeEntries = projectActiveConversationEntries(entries);
     // Snapshot persisted system context separately from chat messages. The
     // harness passes this through prepareStep so long-running tool loops can
     // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(entries);
     let messages = projectEntriesToMessages(activeEntries);
-    const system = await this.buildSystemPromptParts(systemContextSnapshot.messages, ephemeralSystem);
+    const system = await this.buildSystemPromptParts(
+      systemContextSnapshot.messages,
+      ephemeralSystem,
+    );
 
     const compactionStartedMs = Date.now();
     const compactionSummary = await compactSessionContext({
       conversationKey: this.conversationKey,
       system,
-      messages,
+      // Compaction feeds these to a model, so envelope fields must not leak.
+      messages: stripEnvelopeFieldsFromMessages(messages),
       agentConfig: this.agentConfig,
     }).catch((error) => {
-      logError("Session context compaction failed; continuing without compaction", {
-        conversationKey: this.conversationKey,
-        eventId: this.eventId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logError(
+        "Session context compaction failed; continuing without compaction",
+        {
+          conversationKey: this.conversationKey,
+          eventId: this.eventId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
       return null;
     });
     const compactionEndedMs = Date.now();
 
     if (compactionSummary) {
-      const [summaryCursor] = await this.persistModelMessages([compactionSummary]);
+      const [summaryCursor] = await this.persistModelMessages([
+        compactionSummary,
+      ]);
       const compactedSystemContextSnapshot = {
         cursor: summaryCursor ?? systemContextSnapshot.cursor,
         messages: [compactionSummary],
@@ -291,13 +352,19 @@ export class Session {
 
       return {
         messages: pruneSessionMessages(messages, this.agentConfig),
-        system: await this.buildSystemPromptParts(compactedSystemContextSnapshot.messages, ephemeralSystem),
+        system: await this.buildSystemPromptParts(
+          compactedSystemContextSnapshot.messages,
+          ephemeralSystem,
+        ),
         ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: compactedSystemContextSnapshot,
         timings: {
           prepareStartedMs,
           prepareEndedMs: Date.now(),
-          compaction: { startedMs: compactionStartedMs, endedMs: compactionEndedMs },
+          compaction: {
+            startedMs: compactionStartedMs,
+            endedMs: compactionEndedMs,
+          },
         },
       };
     }
@@ -343,23 +410,34 @@ export class Session {
   async loadRefreshedSystemPromptParts(options: {
     systemContextSnapshot: SystemContextSnapshot;
     ephemeralSystem?: SystemModelMessage[];
-  }): Promise<{ systemContextSnapshot: SystemContextSnapshot; system: SystemModelMessage[] }> {
+  }): Promise<{
+    systemContextSnapshot: SystemContextSnapshot;
+    system: SystemModelMessage[];
+  }> {
     // Incremental refresh for prepareStep: load only conversation rows newer
     // than the cursor, then fold any system-role rows into the snapshot.
     const entries = await this.loadConversationEntries({
       afterCreatedAt: options.systemContextSnapshot.cursor,
     });
 
-    const systemContextSnapshot: SystemContextSnapshot = entries.length === 0
-      ? options.systemContextSnapshot
-      : {
-        cursor: entries.at(-1)?.createdAt ?? options.systemContextSnapshot.cursor,
-        messages: [...options.systemContextSnapshot.messages, ...projectSystemContextMessages(entries)],
-      };
+    const systemContextSnapshot: SystemContextSnapshot =
+      entries.length === 0
+        ? options.systemContextSnapshot
+        : {
+            cursor:
+              entries.at(-1)?.createdAt ?? options.systemContextSnapshot.cursor,
+            messages: [
+              ...options.systemContextSnapshot.messages,
+              ...projectSystemContextMessages(entries),
+            ],
+          };
 
     return {
       systemContextSnapshot: systemContextSnapshot,
-      system: await this.buildSystemPromptParts(systemContextSnapshot.messages, options.ephemeralSystem ?? []),
+      system: await this.buildSystemPromptParts(
+        systemContextSnapshot.messages,
+        options.ephemeralSystem ?? [],
+      ),
     };
   }
 
@@ -367,12 +445,20 @@ export class Session {
     allowedSkillPaths: string[],
     skillPath: string,
     resourcePaths?: string[],
-  ): Promise<{ path: string; loadedPaths: string[]; stagedPath?: string; stagedFiles: string[]; bytes: number }> {
+  ): Promise<{
+    path: string;
+    loadedPaths: string[];
+    stagedPath?: string;
+    stagedFiles: string[];
+    bytes: number;
+  }> {
     const loaded = await loadConfiguredSkillPrompt(
       allowedSkillPaths,
       skillPath,
       resourcePaths,
-      this.defaultWorkspaceHasSandbox() ? this.filesystemNamespace() : undefined,
+      this.defaultWorkspaceHasSandbox()
+        ? this.filesystemNamespace()
+        : undefined,
     );
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
@@ -383,14 +469,26 @@ export class Session {
    * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
    */
   private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
-    const channelScopeKey = channelScopeKeyFromConversation(this.conversationKey);
-    const conversationScopeKey = channelScopeKeyFromConversation(this.conversationKey, "conversation");
-    this.resolvedRuntimePromise ??= resolveAgentRuntime(this.agentConfig, this.accountId, {
-      channelName: this.delivery?.kind === "channel" ? this.delivery.channelName : undefined,
-      channelScopeKey,
-      conversationKey: conversationScopeKey,
-      workspaceScope: this.channelWorkspaceScope(),
-    }).then((resolved) => {
+    const channelScopeKey = channelScopeKeyFromConversation(
+      this.conversationKey,
+    );
+    const conversationScopeKey = channelScopeKeyFromConversation(
+      this.conversationKey,
+      "conversation",
+    );
+    this.resolvedRuntimePromise ??= resolveAgentRuntime(
+      this.agentConfig,
+      this.accountId,
+      {
+        channelName:
+          this.delivery?.kind === "channel"
+            ? this.delivery.channelName
+            : undefined,
+        channelScopeKey,
+        conversationKey: conversationScopeKey,
+        workspaceScope: this.channelWorkspaceScope(),
+      },
+    ).then((resolved) => {
       this.resolvedRuntime = resolved;
       return resolved;
     });
@@ -402,7 +500,9 @@ export class Session {
       return undefined;
     }
     const config = this.agentConfig.channels?.[this.delivery.channelName];
-    const workspaceScope = isPlainObject(config) ? config.workspaceScope : undefined;
+    const workspaceScope = isPlainObject(config)
+      ? config.workspaceScope
+      : undefined;
     return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
   }
 
@@ -415,35 +515,62 @@ export class Session {
       this.loadSkillMetadata(),
       this.loadSubagentMetadata(),
     ]);
-    const memorySystem: SystemModelMessage[] = memoryFiles.length === 0
-      ? []
-      : [{
-        role: "system",
-        content: formatMemorySystemPrompt(memoryFiles),
-      }];
-    const workspaceHarnessSystem: SystemModelMessage[] = this.isWorkspaceHarnessEnabled()
-      ? [{
-        role: "system",
-        content: formatWorkspaceHarnessSystemPrompt(this.resolvedWorkspaces()),
-      }]
+    const memorySystem: SystemModelMessage[] =
+      memoryFiles.length === 0
+        ? []
+        : [
+            {
+              role: "system",
+              content: formatMemorySystemPrompt(memoryFiles),
+            },
+          ];
+    const memoryToolEnabled = this.isMemoryToolEnabled();
+    const workspaceHarnessSystem: SystemModelMessage[] =
+      this.isWorkspaceHarnessEnabled()
+        ? [
+            {
+              role: "system",
+              content: formatWorkspaceHarnessSystemPrompt(
+                this.resolvedWorkspaces(),
+                memoryToolEnabled,
+              ),
+            },
+          ]
+        : [];
+    const memoryHarnessSystem: SystemModelMessage[] = memoryToolEnabled
+      ? [
+          {
+            role: "system",
+            content: formatMemoryHarnessSystemPrompt(
+              channelScopeKeyFromConversation(this.conversationKey),
+            ),
+          },
+        ]
       : [];
-    const skillsSystem: SystemModelMessage[] = skillMetadata.length > 0
-      ? [{
-        role: "system",
-        content: formatSkillsSystemPrompt(skillMetadata),
-      }]
-      : [];
-    const subagentSystem: SystemModelMessage[] = this.agentConfig.subagent?.enabled === true
-      ? [{
-        role: "system",
-        content: formatSubagentSystemPrompt(subagentMetadata),
-      }]
-      : [];
+    const skillsSystem: SystemModelMessage[] =
+      skillMetadata.length > 0
+        ? [
+            {
+              role: "system",
+              content: formatSkillsSystemPrompt(skillMetadata),
+            },
+          ]
+        : [];
+    const subagentSystem: SystemModelMessage[] =
+      this.agentConfig.subagent?.enabled === true
+        ? [
+            {
+              role: "system",
+              content: formatSubagentSystemPrompt(subagentMetadata),
+            },
+          ]
+        : [];
 
     return [
       ...agentSystemMessages(this.agentConfig.agent?.system),
       ...memorySystem,
       ...workspaceHarnessSystem,
+      ...memoryHarnessSystem,
       ...skillsSystem,
       ...subagentSystem,
       ...this.loadedSkillPrompts,
@@ -452,23 +579,39 @@ export class Session {
     ];
   }
 
-  private async persistStoredEvent(event: StoredConversationEvent): Promise<string> {
+  private async persistStoredEvent(
+    event: StoredConversationEvent,
+  ): Promise<string> {
     const createdAt = this.nextCreatedAt();
-    await runtime.mutate("appendConversationEvent", { conversationKey: this.conversationKey, cursor: createdAt, event });
+    await runtime.mutate("appendConversationEvent", {
+      conversationKey: this.conversationKey,
+      cursor: createdAt,
+      event,
+    });
     return createdAt;
   }
 
-  private async loadConversationEntries(options: {
-    afterCreatedAt?: string | null;
-  } = {}): Promise<StoredConversationEntry[]> {
+  private async loadConversationEntries(
+    options: {
+      afterCreatedAt?: string | null;
+    } = {},
+  ): Promise<StoredConversationEntry[]> {
     const entries: StoredConversationEntry[] = [];
     let afterCursor = options.afterCreatedAt ?? undefined;
     for (;;) {
-      const result = await runtime.query<StoredConversationEventPage>("listConversationEvents", {
-        conversationKey: this.conversationKey,
-        afterCursor: afterCursor,
-      });
-      entries.push(...result.page.map((row) => ({ createdAt: row.cursor, event: row.event })));
+      const result = await runtime.query<StoredConversationEventPage>(
+        "listConversationEvents",
+        {
+          conversationKey: this.conversationKey,
+          afterCursor: afterCursor,
+        },
+      );
+      entries.push(
+        ...result.page.map((row) => ({
+          createdAt: row.cursor,
+          event: row.event,
+        })),
+      );
       if (result.isDone) {
         return entries;
       }
@@ -485,13 +628,23 @@ export class Session {
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
-  private async loadMemoryFiles(): Promise<Array<{ workspace: ResolvedWorkspace; content: string }>> {
+  private async loadMemoryFiles(): Promise<
+    Array<{ workspace: ResolvedWorkspace; content: string }>
+  > {
     if (!this.isWorkspaceEnabled()) {
       return [];
     }
 
-    const memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }> = [];
+    const memoryFiles: Array<{
+      workspace: ResolvedWorkspace;
+      content: string;
+    }> = [];
     for (const workspace of this.resolvedWorkspaces()) {
+      // harness.memory.enabled: false is a full opt-out — the index is not
+      // loaded into the model context either.
+      if (!workspaceMemoryHarnessEnabled(workspace.config)) {
+        continue;
+      }
       const content = await this.loadMemoryFile(workspace);
       if (content != null) {
         memoryFiles.push({ workspace, content });
@@ -500,15 +653,19 @@ export class Session {
     return memoryFiles;
   }
 
-  private async loadMemoryFile(workspace: ResolvedWorkspace): Promise<string | null> {
-    // Reads MEMORY.md via the S3 API (not the sandbox mount). If the agent edited
-    // MEMORY.md through the mount less than ~1-2 min ago, S3 Files may not have synced
-    // it yet, so this can be briefly stale. Accepted: memory converges across turns and
-    // a per-turn sandbox round-trip is costly. Reading via S3 also lets a workspace
-    // serve memory without any sandbox attached. See docs/workspace/storage.md.
+  private async loadMemoryFile(
+    workspace: ResolvedWorkspace,
+  ): Promise<string | null> {
+    // Reads the memory/MEMORY.md index via the S3 API (not the sandbox mount). If the
+    // agent edited it through the mount less than ~1-2 min ago, S3 Files may not have
+    // synced it yet, so this can be briefly stale. Accepted: memory converges across
+    // turns and a per-turn sandbox round-trip is costly. Reading via S3 also lets a
+    // workspace serve memory without any sandbox attached. See docs/workspace/storage.md.
 
-    const target = await resolveS3ReadTarget(workspaceReadContext(workspace.config.storage, workspace.namespace));
-    const key = `${target.prefix}MEMORY.md`;
+    const target = await resolveS3ReadTarget(
+      workspaceReadContext(workspace.config.storage, workspace.namespace),
+    );
+    const key = `${target.prefix}${MEMORY_INDEX_PATH}`;
 
     try {
       return target.access
@@ -516,7 +673,7 @@ export class Session {
         : await readS3Text(target.bucket, key);
     } catch (error) {
       if (!isMissingS3Error(error)) {
-        logError("Failed to load MEMORY.md for session prompt", {
+        logError("Failed to load the memory index for session prompt", {
           conversationKey: this.conversationKey,
           workspace: workspace.name,
           key,
@@ -527,7 +684,7 @@ export class Session {
     }
 
     if (!this.hasLoggedMissingMemoryFile) {
-      logInfo("No MEMORY.md found for session prompt", {
+      logInfo("No memory index found for session prompt", {
         conversationKey: this.conversationKey,
         workspace: workspace.name,
         key,
@@ -580,7 +737,18 @@ export class Session {
   }
 
   private isWorkspaceHarnessEnabled(): boolean {
-    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) => workspace.config.harness?.enabled !== false);
+    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) =>
+      workspaceGuidanceEnabled(workspace.config),
+    );
+  }
+
+  // Mirrors the registry condition in tools/index.ts: memory_save exists when a
+  // sandbox-backed workspace has the memory harness enabled (default: on).
+  private isMemoryToolEnabled(): boolean {
+    return this.resolvedWorkspaces().some(
+      (workspace) =>
+        workspace.sandbox && workspaceMemoryHarnessEnabled(workspace.config),
+    );
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
@@ -594,7 +762,10 @@ export class Session {
     if (!this.subagentMetadataPromise) {
       this.subagentMetadataPromise = Promise.all(
         (this.agentConfig.subagent.allowed ?? []).map(async (agentId) => {
-          const agent = await getStorage().agents.getById(this.accountId!, agentId);
+          const agent = await getStorage().agents.getById(
+            this.accountId!,
+            agentId,
+          );
           if (!agent || agent.status !== "active") {
             return null;
           }
@@ -605,52 +776,110 @@ export class Session {
             ...(agent.description ? { description: agent.description } : {}),
           };
         }),
-      ).then((metadata) => metadata.filter((entry): entry is SubagentMetadata => entry !== null));
+      ).then((metadata) =>
+        metadata.filter((entry): entry is SubagentMetadata => entry !== null),
+      );
     }
 
     return this.subagentMetadataPromise;
   }
 }
 
-function formatMemorySystemPrompt(memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>): string {
-  if (memoryFiles.length === 1 && memoryFiles[0]?.workspace.name === "default") {
-    const normalizedContent = memoryFiles[0].content.trimEnd();
-    return normalizedContent.length > 0
-      ? `Current MEMORY.md content for this conversation:\n\n${normalizedContent}`
-      : "Current MEMORY.md content for this conversation:\n\n(MEMORY.md exists but is empty)";
-  }
-
-  const sections = memoryFiles.map(({ workspace, content }) => {
-    const normalizedContent = content.trimEnd();
-    return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(MEMORY.md exists but is empty)"}`;
-  }).join("\n\n");
-
-  return `Current workspace MEMORY.md content:\n\n${sections}`;
+// Projection attaches metadata/createdAt for hook payloads; model calls must
+// receive clean AI SDK message shapes, so they pass through this first.
+export function stripEnvelopeFieldsFromMessages(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  return messages.map((message) => {
+    if (!("metadata" in message) && !("createdAt" in message)) {
+      return message;
+    }
+    const {
+      metadata: _metadata,
+      createdAt: _createdAt,
+      ...rest
+    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+    return rest as ModelMessage;
+  });
 }
 
-function formatWorkspaceHarnessSystemPrompt(workspaces: ResolvedWorkspace[]): string {
+function formatMemorySystemPrompt(
+  memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>,
+): string {
+  if (
+    memoryFiles.length === 1 &&
+    memoryFiles[0]?.workspace.name === "default"
+  ) {
+    const normalizedContent = memoryFiles[0].content.trimEnd();
+    return normalizedContent.length > 0
+      ? `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n${normalizedContent}`
+      : `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n(the index exists but is empty)`;
+  }
+
+  const sections = memoryFiles
+    .map(({ workspace, content }) => {
+      const normalizedContent = content.trimEnd();
+      return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(the index exists but is empty)"}`;
+    })
+    .join("\n\n");
+
+  return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
+}
+
+function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
+  const now = new Date();
+  const weekday = now.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  });
+  const today = now.toISOString().slice(0, 10);
+
+  return `<memory>
+Today is ${weekday}, ${today} (UTC).
+You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
+- Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
+- Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
+- The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
+- Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
+</memory>`;
+}
+
+function formatWorkspaceHarnessSystemPrompt(
+  workspaces: ResolvedWorkspace[],
+  memoryToolEnabled = false,
+): string {
   const hasWritable = workspaces.some((ws) => ws.sandbox != null);
   const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
 
   const workspaceList = workspaces
     .map((workspace, index) => {
-      const readOnlyTag = workspace.sandbox == null ? " [read-only: read, glob]" : "";
+      const readOnlyTag =
+        workspace.sandbox == null ? " [read-only: read, glob]" : "";
       return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
     })
     .join("\n");
 
-  const toolsLine = hasWritable && hasReadOnly
-    ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
-    : hasWritable
-      ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
-      : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
+  const toolsLine =
+    hasWritable && hasReadOnly
+      ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
+      : hasWritable
+        ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
+        : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
 
+  const memoryIndexEnabled = workspaces.some((workspace) =>
+    workspaceMemoryHarnessEnabled(workspace.config),
+  );
+  const memoryGuidance = memoryToolEnabled
+    ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
+    : memoryIndexEnabled
+      ? `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`
+      : "3. Structured memory is disabled for this agent — do not create memory files unless explicitly asked.";
   const guidance = hasWritable
     ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
 2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
-3. Use MEMORY.md for durable project facts, decisions, conventions, and context that should survive long-running work.
+${memoryGuidance}
 4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-5. Treat MEMORY.md and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
+5. Treat memory and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
     : `1. Use read to inspect files and glob to find files by pattern.
 2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
 
@@ -687,11 +916,12 @@ function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
   const hasPredefinedSubagents = subagents.length > 0;
   const predefined = hasPredefinedSubagents
     ? subagents
-      .map((agent) => {
-        const description = agent.description?.trim() || "No description provided.";
-        return `- ${agent.agentId} (${agent.name}): ${description}`;
-      })
-      .join("\n")
+        .map((agent) => {
+          const description =
+            agent.description?.trim() || "No description provided.";
+          return `- ${agent.agentId} (${agent.name}): ${description}`;
+        })
+        .join("\n")
     : "- No predefined subagents are configured. Omit agentId to run a virtual one-shot subagent.";
 
   return `<subagent>
@@ -707,7 +937,9 @@ Tool guidance:
 </subagent>`;
 }
 
-function agentSystemMessages(system: string | SystemModelMessage | SystemModelMessage[] | undefined): SystemModelMessage[] {
+function agentSystemMessages(
+  system: string | SystemModelMessage | SystemModelMessage[] | undefined,
+): SystemModelMessage[] {
   if (system === undefined) {
     return [];
   }
@@ -718,8 +950,9 @@ function agentSystemMessages(system: string | SystemModelMessage | SystemModelMe
   return Array.isArray(system) ? system : [system];
 }
 
-// Message persistence sanitization.
-function createStoredEventFromModelMessage(
+// Message persistence sanitization. Exported so tests can verify the
+// metadata-envelope split without going through Convex.
+export function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
 ): StoredConversationEvent | null {
@@ -728,37 +961,75 @@ function createStoredEventFromModelMessage(
   }
 
   switch (message.role) {
-    case "user":
-      return toStoredConversationEvent(sanitizeUserMessage(message), sourceEventId);
+    case "user": {
+      // Opaque hook metadata rides the stored envelope; the persisted model
+      // message stays a clean AI SDK shape.
+      const { metadata, ...userMessage } = message as UserModelMessage & {
+        metadata?: unknown;
+      };
+      return toStoredConversationEvent(
+        sanitizeUserMessage(userMessage),
+        sourceEventId,
+        metadata,
+      );
+    }
     case "assistant":
-      return toStoredConversationEvent(sanitizeAssistantMessage(message), sourceEventId);
+      return toStoredConversationEvent(
+        sanitizeAssistantMessage(message),
+        sourceEventId,
+      );
     case "tool":
-      return toStoredConversationEvent(sanitizeToolMessage(message), sourceEventId);
+      return toStoredConversationEvent(
+        sanitizeToolMessage(message),
+        sourceEventId,
+      );
     case "system":
-      return toStoredConversationEvent(systemModelMessageSchema.parse(message), sourceEventId);
+      return toStoredConversationEvent(
+        systemModelMessageSchema.parse(message),
+        sourceEventId,
+      );
     default:
       return null;
   }
 }
 
-function toStoredConversationEvent<TMessage extends StoredConversationEvent["message"]>(
+function toStoredConversationEvent<
+  TMessage extends StoredConversationEvent["message"],
+>(
   message: TMessage | null,
   sourceEventId: string,
+  metadata?: unknown,
 ): StoredConversationEventBase<TMessage> | null {
-  return message ? {
-    version: 1,
-    sourceEventId,
-    message,
-  } : null;
+  return message
+    ? {
+        version: 1,
+        sourceEventId,
+        ...(metadata !== undefined ? { metadata } : {}),
+        message,
+      }
+    : null;
 }
 
-// Conversation projection.
-function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMessage[] {
-  return entries.flatMap(({ event }) => {
+// Conversation projection. User messages carry envelope metadata/createdAt for
+// hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
+function projectEntriesToMessages(
+  entries: StoredConversationEntry[],
+): ModelMessage[] {
+  return entries.flatMap(({ createdAt, event }): ModelMessage[] => {
     switch (event.message.role) {
       case "system":
         return [];
-      case "user":
+      case "user": {
+        const projected: UserModelMessage & {
+          metadata?: unknown;
+          createdAt: string;
+        } = {
+          ...event.message,
+          ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
+          createdAt,
+        };
+        return [projected];
+      }
       case "assistant":
       case "tool":
         return [event.message];
@@ -766,7 +1037,9 @@ function projectEntriesToMessages(entries: StoredConversationEntry[]): ModelMess
   });
 }
 
-function projectSystemContextMessages(entries: StoredConversationEntry[]): SystemModelMessage[] {
+function projectSystemContextMessages(
+  entries: StoredConversationEntry[],
+): SystemModelMessage[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
 
   return entries.flatMap(({ event }, index) => {
@@ -778,26 +1051,37 @@ function projectSystemContextMessages(entries: StoredConversationEntry[]): Syste
       return index === latestCompactionIndex ? [event.message] : [];
     }
 
-    return latestCompactionIndex === -1 || index > latestCompactionIndex ? [event.message] : [];
+    return latestCompactionIndex === -1 || index > latestCompactionIndex
+      ? [event.message]
+      : [];
   });
 }
 
-function createSystemContextSnapshot(entries: StoredConversationEntry[]): SystemContextSnapshot {
+function createSystemContextSnapshot(
+  entries: StoredConversationEntry[],
+): SystemContextSnapshot {
   const systemEntries = entriesSinceLatestCompactionSummary(entries);
 
   return {
-    cursor: systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
+    cursor:
+      systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
     messages: projectSystemContextMessages(systemEntries),
   };
 }
 
-function projectActiveConversationEntries(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+function projectActiveConversationEntries(
+  entries: StoredConversationEntry[],
+): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
-  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex + 1);
+  return latestCompactionIndex === -1
+    ? entries
+    : entries.slice(latestCompactionIndex + 1);
 }
 
 // Compaction resume support.
-export function selectPostCompactionPendingMessages(messages: ModelMessage[]): ModelMessage[] {
+export function selectPostCompactionPendingMessages(
+  messages: ModelMessage[],
+): ModelMessage[] {
   const lastMessage = messages.at(-1);
   if (lastMessage?.role === "user") {
     return [lastMessage];
@@ -814,10 +1098,15 @@ export function selectPostCompactionPendingMessages(messages: ModelMessage[]): M
   );
   // The approval response references only approvalId; the prior assistant message
   // carries the tool call details needed to execute or deny the tool on resume.
-  const approvalRequestMessages = messages.filter((message): message is AssistantModelMessage =>
-    message.role === "assistant" &&
-    typeof message.content !== "string" &&
-    message.content.some((part) => part.type === "tool-approval-request" && approvalIds.has(part.approvalId))
+  const approvalRequestMessages = messages.filter(
+    (message): message is AssistantModelMessage =>
+      message.role === "assistant" &&
+      typeof message.content !== "string" &&
+      message.content.some(
+        (part) =>
+          part.type === "tool-approval-request" &&
+          approvalIds.has(part.approvalId),
+      ),
   );
 
   return approvalRequestMessages.length > 0
@@ -825,12 +1114,18 @@ export function selectPostCompactionPendingMessages(messages: ModelMessage[]): M
     : [lastMessage];
 }
 
-function entriesSinceLatestCompactionSummary(entries: StoredConversationEntry[]): StoredConversationEntry[] {
+function entriesSinceLatestCompactionSummary(
+  entries: StoredConversationEntry[],
+): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
-  return latestCompactionIndex === -1 ? entries : entries.slice(latestCompactionIndex);
+  return latestCompactionIndex === -1
+    ? entries
+    : entries.slice(latestCompactionIndex);
 }
 
-function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): number {
+function findLatestCompactionSummaryIndex(
+  entries: StoredConversationEntry[],
+): number {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const message = entries[index]?.event.message;
     if (message?.role === "system" && isCompactionSummaryMessage(message)) {
@@ -844,7 +1139,9 @@ function findLatestCompactionSummaryIndex(entries: StoredConversationEntry[]): n
 /**
  * Filters user message to only text content parts.
  */
-function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null {
+function sanitizeUserMessage(
+  message: UserModelMessage,
+): UserModelMessage | null {
   if (typeof message.content === "string") {
     return message;
   }
@@ -856,7 +1153,9 @@ function sanitizeUserMessage(message: UserModelMessage): UserModelMessage | null
 /**
  * Filters assistant message to only persisted content parts.
  */
-function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantModelMessage | null {
+function sanitizeAssistantMessage(
+  message: AssistantModelMessage,
+): AssistantModelMessage | null {
   if (typeof message.content === "string") {
     return message;
   }
@@ -869,7 +1168,9 @@ function sanitizeAssistantMessage(message: AssistantModelMessage): AssistantMode
 /**
  * Filters tool message to only persisted content parts.
  */
-function sanitizeToolMessage(message: ToolModelMessage): ToolModelMessage | null {
+function sanitizeToolMessage(
+  message: ToolModelMessage,
+): ToolModelMessage | null {
   const content = message.content.filter(isPersistedToolContentPart);
 
   return content.length > 0 ? { ...message, content } : null;
@@ -881,10 +1182,12 @@ function sanitizeToolMessage(message: ToolModelMessage): ToolModelMessage | null
 function isPersistedAssistantContentPart(
   part: Exclude<AssistantModelMessage["content"], string>[number],
 ): boolean {
-  return part.type === "text" ||
+  return (
+    part.type === "text" ||
     part.type === "tool-call" ||
     part.type === "tool-approval-request" ||
-    part.type === "tool-result";
+    part.type === "tool-result"
+  );
 }
 
 /**
@@ -896,10 +1199,14 @@ function isPersistedToolContentPart(
   return part.type === "tool-approval-response" || part.type === "tool-result";
 }
 
-function isToolApprovalResponseMessage(message: ModelMessage | undefined): message is ToolModelMessage {
-  return message?.role === "tool" &&
+function isToolApprovalResponseMessage(
+  message: ModelMessage | undefined,
+): message is ToolModelMessage {
+  return (
+    message?.role === "tool" &&
     message.content.length > 0 &&
-    message.content.every((part) => part.type === "tool-approval-response");
+    message.content.every((part) => part.type === "tool-approval-response")
+  );
 }
 
 function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {

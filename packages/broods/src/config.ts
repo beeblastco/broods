@@ -52,7 +52,9 @@ export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
   }
 
   try {
-    const stored = JSON.parse(await readFile(USER_CONFIG_PATH, "utf8")) as StoredAuthConfig;
+    const stored = JSON.parse(
+      await readFile(USER_CONFIG_PATH, "utf8"),
+    ) as StoredAuthConfig;
     // Auth stored before the Convex-direct control plane has no baseUrl;
     // treat it as logged out so the user re-authenticates.
     if (typeof stored.baseUrl !== "string" || !stored.baseUrl) return null;
@@ -65,7 +67,11 @@ export async function readStoredAuth(): Promise<StoredAuthConfig | null> {
 
 export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   await mkdir(dirname(USER_CONFIG_PATH), { recursive: true });
-  await writeFile(USER_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeFile(
+    USER_CONFIG_PATH,
+    `${JSON.stringify(config, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 export function stripTrailingSlash(value: string): string {

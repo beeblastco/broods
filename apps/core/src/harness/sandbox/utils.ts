@@ -9,7 +9,9 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 export function configString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }
 
 export function assertSafeTenantProviderUrl(value: string, name: string): void {
@@ -34,7 +36,9 @@ export function assertSafeTenantProviderUrl(value: string, name: string): void {
     host.startsWith("169.254.") ||
     isPrivate172(host)
   ) {
-    throw new Error(`${name} must not target localhost, private, or link-local addresses`);
+    throw new Error(
+      `${name} must not target localhost, private, or link-local addresses`,
+    );
   }
 }
 
@@ -43,7 +47,9 @@ export function stringRecord(value: unknown): Record<string, string> {
     return {};
   }
   return Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
   );
 }
 
@@ -65,7 +71,10 @@ export function requiredWorkspacePath(
   return workspacePath(request, fallbackRoot)!;
 }
 
-export function sandboxReservationKey(request: { reservationKey?: string; namespace?: string }): string | undefined {
+export function sandboxReservationKey(request: {
+  reservationKey?: string;
+  namespace?: string;
+}): string | undefined {
   return request.reservationKey ?? request.namespace;
 }
 
@@ -84,8 +93,18 @@ export function persistentSandboxName(reservationKey: string): string {
   return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
 }
 
-export function slugFor(value: string | undefined, fallback = "sandbox"): string {
-  return (value ?? "").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || fallback;
+export function slugFor(
+  value: string | undefined,
+  fallback = "sandbox",
+): string {
+  return (
+    (value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40) || fallback
+  );
 }
 
 export function shortHash(value: string): string {
@@ -96,7 +115,10 @@ export function shortHash(value: string): string {
   return hash.toString(36).slice(0, 6);
 }
 
-export function truncateText(value: string, limit: number): { value: string; truncated: boolean } {
+export function truncateText(
+  value: string,
+  limit: number,
+): { value: string; truncated: boolean } {
   const bytes = textEncoder.encode(value);
   if (bytes.byteLength <= limit) {
     return { value, truncated: false };
@@ -119,14 +141,19 @@ export function shellQuote(value: string): string {
  */
 export function isSandboxGoneError(error: unknown): boolean {
   if (!isPlainObject(error)) {
-    return typeof error === "string" && /not ?found|does not exist|no such/i.test(error);
+    return (
+      typeof error === "string" &&
+      /not ?found|does not exist|no such/i.test(error)
+    );
   }
   const status = error.statusCode ?? error.status ?? error.code;
   if (status === 404 || status === 410) {
     return true;
   }
   const message = typeof error.message === "string" ? error.message : "";
-  return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(message);
+  return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(
+    message,
+  );
 }
 
 /**
@@ -135,8 +162,11 @@ export function isSandboxGoneError(error: unknown): boolean {
  * to resolve; the executor only surfaces a clearer message.
  */
 export function isNoRunnersError(error: unknown): boolean {
-  const message = isPlainObject(error) && typeof error.message === "string"
-    ? error.message
-    : typeof error === "string" ? error : "";
+  const message =
+    isPlainObject(error) && typeof error.message === "string"
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
   return /no (available )?runners?/i.test(message);
 }

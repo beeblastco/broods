@@ -3,9 +3,13 @@
  * Keep parent/child orchestration here; the model-facing schema stays in tools.
  */
 
-import type { ModelMessage, SystemModelMessage, UserModelMessage, JSONValue } from "ai";
+import type {
+  JSONValue,
+  ModelMessage,
+  SystemModelMessage,
+  UserModelMessage,
+} from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
-import { getStorage } from "../shared/storage.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
@@ -13,15 +17,23 @@ import {
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
-import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
-import { createAgentLifecycleEmitter, type AgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
-import { createAgentHookDispatcher, type HookDispatcher } from "./hook-dispatcher.ts";
-import { Session } from "./session.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
   createPendingAsyncAgentResult,
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
+import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
+import {
+  createAgentHookDispatcher,
+  type HookDispatcher,
+} from "./hook-dispatcher.ts";
+import {
+  createAgentLifecycleEmitter,
+  toLifecycleValue,
+  type AgentLifecycleEmitter,
+} from "./lifecycle.ts";
+import { Session } from "./session.ts";
 import type {
   RunSubagentDispatch,
   RunSubagentDispatchResult,
@@ -65,16 +77,23 @@ interface ResolvedSubagentTask {
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
-  private readonly pendingMetadata = new Map<string, Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">>();
+  private readonly pendingMetadata = new Map<
+    string,
+    Omit<SubagentCompletion, "status" | "response" | "error" | "visibleResult">
+  >();
   private readonly waiters = new Set<() => void>();
   private hooksPromise?: Promise<HookDispatcher>;
 
   constructor(
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
-    private readonly waitUntilMs: number = Date.now() + DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
-    private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(parentSession, parentAgentConfig),
-  ) { }
+    private readonly waitUntilMs: number = Date.now() +
+      DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
+    private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(
+      parentSession,
+      parentAgentConfig,
+    ),
+  ) {}
 
   private get isPersistentMode(): boolean {
     return this.parentAgentConfig.subagent?.mode === "persistent";
@@ -92,34 +111,43 @@ export class SubagentCoordinator {
     // children overwrite the module-global observability context.
     const parentObs = getObservabilityContext();
     const subagentParent: SubagentParentContext | undefined = parentObs?.traceId
-      ? { parentTraceId: parentObs.traceId, parentTaskId: this.parentSession.eventId }
+      ? {
+          parentTraceId: parentObs.traceId,
+          parentTaskId: this.parentSession.eventId,
+        }
       : undefined;
 
     // Resolve all inputs before launching anything. If one task is invalid,
     // the tool call fails without starting a partial batch of child runs.
     const resolvedTasks = await Promise.all(
-      tasks.map((task) => this.resolveTask(task, parentMessages, parentEphemeralSystem)),
+      tasks.map((task) =>
+        this.resolveTask(task, parentMessages, parentEphemeralSystem),
+      ),
     );
 
     // Create status rows before returning task ids so clients can poll the ids
     // as soon as the model sees the tool result.
-    await Promise.all(resolvedTasks.map((task) =>
-      createPendingAsyncAgentResult({
-        eventId: task.eventId,
-        conversationKey: task.conversationKey,
-      })
-    ));
+    await Promise.all(
+      resolvedTasks.map((task) =>
+        createPendingAsyncAgentResult({
+          eventId: task.eventId,
+          conversationKey: task.conversationKey,
+        }),
+      ),
+    );
 
-    await Promise.all(resolvedTasks.map((task) =>
-      this.lifecycle.emit("subagent.task.started", {
-        taskId: task.taskId,
-        agentId: task.agentId,
-        conversationKey: task.publicConversationKey,
-        inheritedContext: task.inheritedContext,
-        persistent: task.persistent,
-        resuming: task.resuming,
-      })
-    ));
+    await Promise.all(
+      resolvedTasks.map((task) =>
+        this.lifecycle.emit("subagent.task.started", {
+          taskId: task.taskId,
+          agentId: task.agentId,
+          conversationKey: task.publicConversationKey,
+          inheritedContext: task.inheritedContext,
+          persistent: task.persistent,
+          resuming: task.resuming,
+        }),
+      ),
+    );
 
     const dispatches = resolvedTasks.map((task) => {
       // Intentionally not awaited: child agents run concurrently while the
@@ -135,11 +163,16 @@ export class SubagentCoordinator {
     return this.pending.size;
   }
 
-  async waitForIdle(options: {
-    onHeartbeat?: (pendingCount: number) => void;
-  } = {}): Promise<"idle" | "timeout"> {
+  async waitForIdle(
+    options: {
+      onHeartbeat?: (pendingCount: number) => void;
+    } = {},
+  ): Promise<"idle" | "timeout"> {
     while (this.pending.size > 0 && Date.now() < this.waitUntilMs) {
-      const heartbeatAt = Math.min(Date.now() + HEARTBEAT_INTERVAL_MS, this.waitUntilMs);
+      const heartbeatAt = Math.min(
+        Date.now() + HEARTBEAT_INTERVAL_MS,
+        this.waitUntilMs,
+      );
       await Promise.race([
         this.nextStateChange(),
         sleep(Math.max(heartbeatAt - Date.now(), 0)),
@@ -159,7 +192,9 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    await this.parentSession.persistModelMessages(completions.map(completionToParentMessage));
+    await this.parentSession.persistModelMessages(
+      completions.map(completionToParentMessage),
+    );
     return completions.length;
   }
 
@@ -169,22 +204,29 @@ export class SubagentCoordinator {
     }
 
     const completions = this.completions.splice(0);
-    const timeouts = [...this.pending.keys()].map((taskId): SubagentCompletion => {
-      const metadata = this.pendingMetadata.get(taskId);
-      return {
-        taskId: metadata?.taskId ?? taskId,
-        agentId: metadata?.agentId ?? "unknown",
-        ...(metadata?.description ? { description: metadata.description } : {}),
-        conversationKey: metadata?.conversationKey ?? "unknown",
-        status: "failed",
-        error: "Subagent task is still pending near the parent request timeout.",
-      };
-    });
+    const timeouts = [...this.pending.keys()].map(
+      (taskId): SubagentCompletion => {
+        const metadata = this.pendingMetadata.get(taskId);
+        return {
+          taskId: metadata?.taskId ?? taskId,
+          agentId: metadata?.agentId ?? "unknown",
+          ...(metadata?.description
+            ? { description: metadata.description }
+            : {}),
+          conversationKey: metadata?.conversationKey ?? "unknown",
+          status: "failed",
+          error:
+            "Subagent task is still pending near the parent request timeout.",
+        };
+      },
+    );
 
     this.pending.clear();
     this.pendingMetadata.clear();
     const batch = [...completions, ...timeouts];
-    await this.parentSession.persistModelMessages(batch.map(completionToParentMessage));
+    await this.parentSession.persistModelMessages(
+      batch.map(completionToParentMessage),
+    );
     return batch.length;
   }
 
@@ -197,12 +239,18 @@ export class SubagentCoordinator {
     const taskId = `subagent_${crypto.randomUUID()}`;
     const persistent = this.isPersistentMode;
     if (!persistent && task.conversationKey !== undefined) {
-      throw new Error("Subagent conversationKey is only supported in persistent mode");
+      throw new Error(
+        "Subagent conversationKey is only supported in persistent mode",
+      );
     }
     const resuming = persistent && task.conversationKey !== undefined;
-    const publicConversationKey = task.conversationKey
-      ?? (persistent ? `subagent-persistent-${crypto.randomUUID()}` : `subagent-${taskId}`);
-    const inheritedContext = this.parentAgentConfig.subagent?.context === "inherited";
+    const publicConversationKey =
+      task.conversationKey ??
+      (persistent
+        ? `subagent-persistent-${crypto.randomUUID()}`
+        : `subagent-${taskId}`);
+    const inheritedContext =
+      this.parentAgentConfig.subagent?.context === "inherited";
     if (task.agentId) {
       const agent = await this.resolveAllowedAgent(accountId, task.agentId);
       return {
@@ -212,7 +260,11 @@ export class SubagentCoordinator {
         agentConfig: withoutNestedSubagents(agent.config),
         ...(agent.description ? { description: agent.description } : {}),
         publicConversationKey,
-        conversationKey: scopedDirectConversationKey(accountId, agent.agentId, publicConversationKey),
+        conversationKey: scopedDirectConversationKey(
+          accountId,
+          agent.agentId,
+          publicConversationKey,
+        ),
         prompt: task.prompt,
         inheritedContext,
         parentMessages,
@@ -229,7 +281,11 @@ export class SubagentCoordinator {
       agentId: virtualAgentId,
       agentConfig: withoutNestedSubagents(this.parentAgentConfig),
       publicConversationKey,
-      conversationKey: scopedDirectConversationKey(accountId, virtualAgentId, publicConversationKey),
+      conversationKey: scopedDirectConversationKey(
+        accountId,
+        virtualAgentId,
+        publicConversationKey,
+      ),
       prompt: task.prompt,
       inheritedContext,
       parentMessages,
@@ -239,7 +295,10 @@ export class SubagentCoordinator {
     };
   }
 
-  private async resolveAllowedAgent(accountId: string, agentId: string): Promise<AgentRecord> {
+  private async resolveAllowedAgent(
+    accountId: string,
+    agentId: string,
+  ): Promise<AgentRecord> {
     const allowed = this.parentAgentConfig.subagent?.allowed ?? [];
     if (!allowed.includes(agentId)) {
       throw new Error(`Subagent is not allowed: ${agentId}`);
@@ -261,16 +320,21 @@ export class SubagentCoordinator {
    * request or worker. Completion or failure is normalized into the coordinator
    * queue so the parent loop can inject it later.
    */
-  private startTask(task: ResolvedSubagentTask, subagentParent?: SubagentParentContext): void {
+  private startTask(
+    task: ResolvedSubagentTask,
+    subagentParent?: SubagentParentContext,
+  ): void {
     const promise = this.runTask(task, subagentParent)
-      .catch((error) => this.completeTask({
-        taskId: task.taskId,
-        agentId: task.agentId,
-        ...(task.description ? { description: task.description } : {}),
-        conversationKey: task.publicConversationKey,
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      }))
+      .catch((error) =>
+        this.completeTask({
+          taskId: task.taskId,
+          agentId: task.agentId,
+          ...(task.description ? { description: task.description } : {}),
+          conversationKey: task.publicConversationKey,
+          status: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
       .finally(() => {
         this.pending.delete(task.taskId);
         this.pendingMetadata.delete(task.taskId);
@@ -293,7 +357,10 @@ export class SubagentCoordinator {
    * turns write the task prompt and generated child messages to the child
    * conversation while keeping inherited parent context ephemeral.
    */
-  private async runTask(task: ResolvedSubagentTask, subagentParent?: SubagentParentContext): Promise<void> {
+  private async runTask(
+    task: ResolvedSubagentTask,
+    subagentParent?: SubagentParentContext,
+  ): Promise<void> {
     logInfo("Subagent task started", {
       parentEventId: this.parentSession.eventId,
       taskId: task.taskId,
@@ -326,24 +393,34 @@ export class SubagentCoordinator {
     // `persistent` controls whether the child uses a real persisted Session or
     // the in-memory wrapper. Persistent mode writes the task prompt first so
     // the child model response and any tool messages append to that conversation.
-    const turnContext = await this.createChildTurnContext(childSession, task, promptMessage);
+    const turnContext = await this.createChildTurnContext(
+      childSession,
+      task,
+      promptMessage,
+    );
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
 
     const session = task.persistent
       ? childSession
       : createEphemeralChildSession(childSession, turnContext.system);
-    const stream = await runAgentLoop(session, turnContext, task.agentConfig, {
-      onFinalText: async (response) => {
-        finalResponse = response;
+    const stream = await runAgentLoop(
+      session,
+      turnContext,
+      task.agentConfig,
+      {
+        onFinalText: async (response) => {
+          finalResponse = response;
+        },
+        onErrorText: async (error) => {
+          throw new Error(error);
+        },
+        onApprovalRequired: async () => {
+          approvalRequested = true;
+        },
       },
-      onErrorText: async (error) => {
-        throw new Error(error);
-      },
-      onApprovalRequired: async () => {
-        approvalRequested = true;
-      },
-    }, subagentParent ? { subagentParent } : {});
+      subagentParent ? { subagentParent } : {},
+    );
 
     await stream.consumeStream();
     if (approvalRequested) {
@@ -376,10 +453,10 @@ export class SubagentCoordinator {
     promptMessage: UserModelMessage,
   ) {
     if (!task.persistent) {
-      return childSession.createEphemeralTurnContext([
-        ...(task.inheritedContext ? task.parentMessages : []),
-        promptMessage,
-      ], task.parentEphemeralSystem);
+      return childSession.createEphemeralTurnContext(
+        [...(task.inheritedContext ? task.parentMessages : []), promptMessage],
+        task.parentEphemeralSystem,
+      );
     }
 
     await childSession.persistModelMessages([promptMessage]);
@@ -390,10 +467,10 @@ export class SubagentCoordinator {
       return childSession.createTurnContext(task.parentEphemeralSystem);
     }
 
-    return childSession.createEphemeralTurnContext([
-      ...task.parentMessages,
-      promptMessage,
-    ], task.parentEphemeralSystem);
+    return childSession.createEphemeralTurnContext(
+      [...task.parentMessages, promptMessage],
+      task.parentEphemeralSystem,
+    );
   }
 
   private async completeTask(completion: SubagentCompletion): Promise<void> {
@@ -426,7 +503,9 @@ export class SubagentCoordinator {
       const hookVisible = await this.runSubagentFinishHook(completion);
       if (hookVisible !== undefined) {
         completion.visibleResult = hookVisible;
-      } else if ((this.parentAgentConfig.subagent?.visibility ?? "result") === "none") {
+      } else if (
+        (this.parentAgentConfig.subagent?.visibility ?? "result") === "none"
+      ) {
         inject = false;
       }
     }
@@ -445,7 +524,9 @@ export class SubagentCoordinator {
       agentId: completion.agentId,
       conversationKey: completion.conversationKey,
       status: completion.status,
-      ...(completion.response !== undefined ? { response: toLifecycleValue(completion.response) } : {}),
+      ...(completion.response !== undefined
+        ? { response: toLifecycleValue(completion.response) }
+        : {}),
       ...(completion.error ? { error: completion.error } : {}),
     });
   }
@@ -457,19 +538,27 @@ export class SubagentCoordinator {
 
   private getHooks(): Promise<HookDispatcher> {
     if (!this.hooksPromise) {
-      this.hooksPromise = createAgentHookDispatcher(this.parentSession.accountId, this.parentAgentConfig);
+      this.hooksPromise = createAgentHookDispatcher(
+        this.parentSession.accountId,
+        this.parentAgentConfig,
+      );
     }
     return this.hooksPromise;
   }
 
   // Runs an onSubagentFinish (subagent.task.finished) hook and returns what it
   // wants the parent to see, or undefined when there is no such hook / no override.
-  private async runSubagentFinishHook(completion: SubagentCompletion): Promise<JSONValue | undefined> {
+  private async runSubagentFinishHook(
+    completion: SubagentCompletion,
+  ): Promise<JSONValue | undefined> {
     const hooks = await this.getHooks();
     const mutation = await hooks.runMutation("subagent.task.finished", {
       taskId: completion.taskId,
       agentId: completion.agentId,
-      result: completion.response === undefined ? null : toLifecycleValue(completion.response),
+      result:
+        completion.response === undefined
+          ? null
+          : toLifecycleValue(completion.response),
     });
     return mutation?.visibleResult as JSONValue | undefined;
   }
@@ -488,7 +577,10 @@ export class SubagentCoordinator {
   }
 }
 
-export function createEphemeralChildSession(childSession: Session, system: SystemModelMessage[]): Session {
+export function createEphemeralChildSession(
+  childSession: Session,
+  system: SystemModelMessage[],
+): Session {
   return {
     accountId: childSession.accountId,
     agentId: childSession.agentId,
@@ -509,13 +601,23 @@ export function createEphemeralChildSession(childSession: Session, system: Syste
     statelessSandbox: () => childSession.statelessSandbox(),
     statelessPermissionMode: () => childSession.statelessPermissionMode(),
     persistModelMessages: async () => [],
-    loadSkillPrompt: (allowedSkillPaths: string[], skillPath: string, resourcePaths?: string[]) =>
+    loadSkillPrompt: (
+      allowedSkillPaths: string[],
+      skillPath: string,
+      resourcePaths?: string[],
+    ) =>
       childSession.loadSkillPrompt(allowedSkillPaths, skillPath, resourcePaths),
     loadRefreshedSystemPromptParts: async (options: {
-      systemContextSnapshot: { cursor: string | null; messages: SystemModelMessage[] };
+      systemContextSnapshot: {
+        cursor: string | null;
+        messages: SystemModelMessage[];
+      };
       ephemeralSystem?: SystemModelMessage[];
     }) => {
-      const refreshed = await childSession.createEphemeralTurnContext([], options.ephemeralSystem ?? []);
+      const refreshed = await childSession.createEphemeralTurnContext(
+        [],
+        options.ephemeralSystem ?? [],
+      );
       return {
         systemContextSnapshot: options.systemContextSnapshot,
         system: refreshed.system.length > 0 ? refreshed.system : system,
@@ -535,25 +637,34 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
   };
 }
 
-function completionToParentMessage(completion: SubagentCompletion): UserModelMessage {
+function completionToParentMessage(
+  completion: SubagentCompletion,
+): UserModelMessage {
   const metadata = [
     `taskId: ${completion.taskId}`,
     `agentId: ${completion.agentId}`,
-    ...(completion.description ? [`agentDescription: ${completion.description}`] : []),
+    ...(completion.description
+      ? [`agentDescription: ${completion.description}`]
+      : []),
     `conversationKey: ${completion.conversationKey}`,
     `status: ${completion.status}`,
   ].join("\n");
   const visible = completion.visibleResult ?? completion.response;
-  const result = completion.status === "completed"
-    ? visible === undefined ? "(no result)" : formatModelValue(visible)
-    : completion.error;
+  const result =
+    completion.status === "completed"
+      ? visible === undefined
+        ? "(no result)"
+        : formatModelValue(visible)
+      : completion.error;
 
   return {
     role: "user",
-    content: [{
-      type: "text",
-      text: `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
-    }],
+    content: [
+      {
+        type: "text",
+        text: `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
+      },
+    ],
   };
 }
 

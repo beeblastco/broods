@@ -6,9 +6,9 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import { getConvexClient } from "./client.ts";
-import { logError } from "../log.ts";
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
+import { logError } from "../log.ts";
+import { getConvexClient } from "./client.ts";
 import type { SandboxInstanceStatus } from "./sandbox-instances.ts";
 
 /** Sandbox lifecycle actions represented in the audit stream. */
@@ -57,7 +57,9 @@ export async function recordSandboxAuditEvent(input: {
   try {
     await getConvexClient().mutation(internal.sandboxAuditEvents.insert, {
       accountId: input.accountId as any,
-      ...(input.sandboxConfigId ? { sandboxConfigId: input.sandboxConfigId as any } : {}),
+      ...(input.sandboxConfigId
+        ? { sandboxConfigId: input.sandboxConfigId as any }
+        : {}),
       reservationKey: input.reservationKey,
       provider: input.provider,
       action: input.action,
@@ -70,8 +72,12 @@ export async function recordSandboxAuditEvent(input: {
       ...(input.traceId ? { traceId: input.traceId } : {}),
       ...(input.taskId ? { taskId: input.taskId } : {}),
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
-      ...(typeof input.exitCode === "number" ? { exitCode: input.exitCode } : {}),
-      ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+      ...(typeof input.exitCode === "number"
+        ? { exitCode: input.exitCode }
+        : {}),
+      ...(input.durationMs !== undefined
+        ? { durationMs: input.durationMs }
+        : {}),
       ...(input.truncated !== undefined ? { truncated: input.truncated } : {}),
     });
   } catch (err) {

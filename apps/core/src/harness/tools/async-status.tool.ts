@@ -18,6 +18,7 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
+import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   getAsyncToolResult,
   markAsyncToolResultCompleted,
@@ -25,8 +26,11 @@ import {
   markAsyncToolResultObserved,
 } from "../async-tool-result.ts";
 import { createSandboxExecutor } from "../sandbox/index.ts";
-import type { SandboxExecutor, SandboxExecutorConfig, SandboxJobStatus } from "../sandbox/types.ts";
-import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
+import type {
+  SandboxExecutor,
+  SandboxExecutorConfig,
+  SandboxJobStatus,
+} from "../sandbox/types.ts";
 import { toolError, toolText } from "./filesystem-utils.ts";
 
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
@@ -74,15 +78,20 @@ The result is delivered back into the conversation automatically when it finishe
       inputSchema: jsonSchema({
         type: "object",
         properties: {
-          statusId: { type: "string", description: "The statusId returned when the background job/async tool started." },
+          statusId: {
+            type: "string",
+            description:
+              "The statusId returned when the background job/async tool started.",
+          },
           ...(context.supportsJobs
             ? {
-              action: {
-                type: "string",
-                enum: ["status", "logs", "stop"],
-                description: "status (default) | logs (background jobs only) | stop (background jobs only).",
-              },
-            }
+                action: {
+                  type: "string",
+                  enum: ["status", "logs", "stop"],
+                  description:
+                    "status (default) | logs (background jobs only) | stop (background jobs only).",
+                },
+              }
             : {}),
         },
         required: ["statusId"],
@@ -103,9 +112,12 @@ The result is delivered back into the conversation automatically when it finishe
           await markAsyncToolResultObserved(statusId);
           // For a settled background job, `logs` returns just the captured output
           // (mirroring the live tail) instead of the whole settled record.
-          const settledLogs = action === "logs" ? settledJobLogs(record.response) : undefined;
+          const settledLogs =
+            action === "logs" ? settledJobLogs(record.response) : undefined;
           if (settledLogs !== undefined) {
-            return toolText(settledLogs.length > 0 ? settledLogs : "(no output)");
+            return toolText(
+              settledLogs.length > 0 ? settledLogs : "(no output)",
+            );
           }
           return toolText(`completed\n${formatUnknown(record.response)}`);
         }
@@ -118,40 +130,70 @@ The result is delivered back into the conversation automatically when it finishe
         // tool is delivered automatically when its in-flight work completes.
         const job = sandboxJobRef(record.input);
         if (!job) {
-          return toolText("running — this result will be delivered automatically when it completes.");
+          return toolText(
+            "running — this result will be delivered automatically when it completes.",
+          );
         }
 
         const sandbox = sandboxForNamespace(context, job.namespace);
         if (!sandbox) {
-          return toolError(`Error: no sandbox available to inspect job ${job.jobId}`);
+          return toolError(
+            `Error: no sandbox available to inspect job ${job.jobId}`,
+          );
         }
         const executor = createSandboxExecutor(sandbox);
 
         try {
           if (action === "logs") {
-            if (!executor.jobLogs) return toolError("Error: this sandbox does not support job logs");
-            const logs = await executor.jobLogs({ jobId: job.jobId, namespace: job.namespace, outputLimitBytes: JOB_LOG_LIMIT_BYTES });
-            return toolText(logs.logs.length > 0 ? logs.logs : "(no output yet)");
+            if (!executor.jobLogs)
+              return toolError("Error: this sandbox does not support job logs");
+            const logs = await executor.jobLogs({
+              jobId: job.jobId,
+              namespace: job.namespace,
+              outputLimitBytes: JOB_LOG_LIMIT_BYTES,
+            });
+            return toolText(
+              logs.logs.length > 0 ? logs.logs : "(no output yet)",
+            );
           }
           if (action === "stop") {
-            if (!executor.stopJob) return toolError("Error: this sandbox does not support stopping jobs");
-            const stopped = await executor.stopJob({ jobId: job.jobId, namespace: job.namespace });
-            return toolText(await settleTerminalJob(statusId, executor, job, stopped));
+            if (!executor.stopJob)
+              return toolError(
+                "Error: this sandbox does not support stopping jobs",
+              );
+            const stopped = await executor.stopJob({
+              jobId: job.jobId,
+              namespace: job.namespace,
+            });
+            return toolText(
+              await settleTerminalJob(statusId, executor, job, stopped),
+            );
           }
 
           if (!executor.jobStatus) {
-            return toolText("running — this sandbox does not support live job status; the result will be delivered automatically when it completes.");
+            return toolText(
+              "running — this sandbox does not support live job status; the result will be delivered automatically when it completes.",
+            );
           }
-          const status = await executor.jobStatus({ jobId: job.jobId, namespace: job.namespace });
+          const status = await executor.jobStatus({
+            jobId: job.jobId,
+            namespace: job.namespace,
+          });
           if (status.state === "running") {
             return toolText(`running (job ${job.jobId})`);
           }
           if (status.state === "unknown") {
-            return toolText(`unknown — no record of job ${job.jobId} in the sandbox`);
+            return toolText(
+              `unknown — no record of job ${job.jobId} in the sandbox`,
+            );
           }
-          return toolText(await settleTerminalJob(statusId, executor, job, status));
+          return toolText(
+            await settleTerminalJob(statusId, executor, job, status),
+          );
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),
@@ -168,12 +210,28 @@ async function settleTerminalJob(
   status: SandboxJobStatus,
 ): Promise<string> {
   const logs = executor.jobLogs
-    ? (await executor.jobLogs({ jobId: job.jobId, namespace: job.namespace, outputLimitBytes: JOB_LOG_LIMIT_BYTES })).logs
+    ? (
+        await executor.jobLogs({
+          jobId: job.jobId,
+          namespace: job.namespace,
+          outputLimitBytes: JOB_LOG_LIMIT_BYTES,
+        })
+      ).logs
     : "";
   if (status.state === "completed") {
-    await markAsyncToolResultCompleted({ resultId, response: { state: status.state, exitCode: status.exitCode ?? null, logs } });
+    await markAsyncToolResultCompleted({
+      resultId,
+      response: {
+        state: status.state,
+        exitCode: status.exitCode ?? null,
+        logs,
+      },
+    });
   } else {
-    await markAsyncToolResultFailed({ resultId, error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}` });
+    await markAsyncToolResultFailed({
+      resultId,
+      error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
+    });
   }
   // The model is consuming this terminal result through the poll, so suppress the
   // auto-delivery resume from re-injecting the same result.
@@ -184,14 +242,23 @@ async function settleTerminalJob(
 function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
   if (!input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
-  if (record.kind !== "sandbox_job" || typeof record.namespace !== "string" || typeof record.jobId !== "string") {
+  if (
+    record.kind !== "sandbox_job" ||
+    typeof record.namespace !== "string" ||
+    typeof record.jobId !== "string"
+  ) {
     return undefined;
   }
   return { namespace: record.namespace, jobId: record.jobId };
 }
 
-function sandboxForNamespace(context: AsyncStatusContext, namespace: string): SandboxExecutorConfig | undefined {
-  return (context.workspaces ?? []).find((entry) => entry.namespace === namespace && entry.sandbox)?.sandbox;
+function sandboxForNamespace(
+  context: AsyncStatusContext,
+  namespace: string,
+): SandboxExecutorConfig | undefined {
+  return (context.workspaces ?? []).find(
+    (entry) => entry.namespace === namespace && entry.sandbox,
+  )?.sandbox;
 }
 
 function formatUnknown(value: unknown): string {

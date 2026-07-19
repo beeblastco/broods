@@ -44,12 +44,20 @@ export interface BroodsSandboxDriverSession {
     stdout: string;
     stderr: string;
   }>;
-  spawnCommand(options: BroodsSandboxCommandOptions): PromiseLike<Experimental_SandboxProcess>;
+  spawnCommand(
+    options: BroodsSandboxCommandOptions,
+  ): PromiseLike<Experimental_SandboxProcess>;
   readFile(options: BroodsSandboxFileOptions): PromiseLike<Uint8Array | null>;
   writeFile(options: BroodsSandboxWriteFileOptions): PromiseLike<void>;
-  getPortUrl?(options: { port: number; protocol?: "http" | "https" | "ws" }): PromiseLike<string>;
+  getPortUrl?(options: {
+    port: number;
+    protocol?: "http" | "https" | "ws";
+  }): PromiseLike<string>;
   setNetworkPolicy?(policy: HarnessV1NetworkPolicy): PromiseLike<void>;
-  setPorts?(ports: ReadonlyArray<number>, options?: { abortSignal?: AbortSignal }): PromiseLike<void>;
+  setPorts?(
+    ports: ReadonlyArray<number>,
+    options?: { abortSignal?: AbortSignal },
+  ): PromiseLike<void>;
   /** Stop compute while retaining any driver-owned resumable resource. */
   stop(): PromiseLike<void>;
   /**
@@ -89,8 +97,12 @@ export interface BroodsSandboxDriverCreateResult {
  */
 export interface BroodsSandboxDriver {
   /** Rejecting after allocation must clean up that partial resource internally. */
-  createSession(options: BroodsSandboxDriverCreateOptions): PromiseLike<BroodsSandboxDriverCreateResult>;
-  resumeSession?(options: BroodsSandboxDriverResumeOptions): PromiseLike<BroodsSandboxDriverSession>;
+  createSession(
+    options: BroodsSandboxDriverCreateOptions,
+  ): PromiseLike<BroodsSandboxDriverCreateResult>;
+  resumeSession?(
+    options: BroodsSandboxDriverResumeOptions,
+  ): PromiseLike<BroodsSandboxDriverSession>;
 }
 
 export interface BroodsSandboxProviderOptions {
@@ -111,7 +123,9 @@ type CreateSessionOptions = {
 };
 
 /** Create a stable Harness v1 provider backed by an injected Broods driver. */
-export function createBroodsSandbox(options: BroodsSandboxProviderOptions): BroodsSandboxProvider {
+export function createBroodsSandbox(
+  options: BroodsSandboxProviderOptions,
+): BroodsSandboxProvider {
   return new BroodsSandboxProvider(options);
 }
 
@@ -119,14 +133,17 @@ export class BroodsSandboxProvider implements HarnessV1SandboxProvider {
   readonly specificationVersion = "harness-sandbox-v1" as const;
   readonly providerId: string;
   readonly bridgePorts?: ReadonlyArray<number>;
-  readonly resumeSession?: (options: BroodsSandboxDriverResumeOptions) => Promise<HarnessV1NetworkSandboxSession>;
+  readonly resumeSession?: (
+    options: BroodsSandboxDriverResumeOptions,
+  ) => Promise<HarnessV1NetworkSandboxSession>;
 
   readonly #driver: BroodsSandboxDriver;
 
   constructor(options: BroodsSandboxProviderOptions) {
     this.#driver = options.driver;
     this.providerId = options.providerId ?? "broods-sandbox";
-    if (options.bridgePorts?.length) this.bridgePorts = [...options.bridgePorts];
+    if (options.bridgePorts?.length)
+      this.bridgePorts = [...options.bridgePorts];
 
     const resumeSession = options.driver.resumeSession?.bind(options.driver);
     if (resumeSession) {
@@ -138,19 +155,33 @@ export class BroodsSandboxProvider implements HarnessV1SandboxProvider {
     }
   }
 
-  readonly createSession = async (options: CreateSessionOptions = {}): Promise<HarnessV1NetworkSandboxSession> => {
+  readonly createSession = async (
+    options: CreateSessionOptions = {},
+  ): Promise<HarnessV1NetworkSandboxSession> => {
     options.abortSignal?.throwIfAborted();
-    const { session: driverSession, isFirstCreate } = await this.#driver.createSession({
-      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-      ...(options.identity !== undefined ? { identity: options.identity } : {}),
-      ...(options.abortSignal !== undefined ? { abortSignal: options.abortSignal } : {}),
-    });
-    const session = new BroodsNetworkSandboxSession(driverSession, this.providerId);
+    const { session: driverSession, isFirstCreate } =
+      await this.#driver.createSession({
+        ...(options.sessionId !== undefined
+          ? { sessionId: options.sessionId }
+          : {}),
+        ...(options.identity !== undefined
+          ? { identity: options.identity }
+          : {}),
+        ...(options.abortSignal !== undefined
+          ? { abortSignal: options.abortSignal }
+          : {}),
+      });
+    const session = new BroodsNetworkSandboxSession(
+      driverSession,
+      this.providerId,
+    );
 
     if (options.onFirstCreate && isFirstCreate) {
       try {
         await options.onFirstCreate(session.restricted(), {
-          ...(options.abortSignal !== undefined ? { abortSignal: options.abortSignal } : {}),
+          ...(options.abortSignal !== undefined
+            ? { abortSignal: options.abortSignal }
+            : {}),
         });
       } catch (setupError) {
         try {
@@ -181,43 +212,67 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     return this.#session.description;
   }
 
-  async run(options: BroodsSandboxCommandOptions): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  async run(
+    options: BroodsSandboxCommandOptions,
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     options.abortSignal?.throwIfAborted();
     return await this.#session.runCommand(options);
   }
 
-  async spawn(options: BroodsSandboxCommandOptions): Promise<Experimental_SandboxProcess> {
+  async spawn(
+    options: BroodsSandboxCommandOptions,
+  ): Promise<Experimental_SandboxProcess> {
     options.abortSignal?.throwIfAborted();
     return await this.#session.spawnCommand(options);
   }
 
-  async readFile(options: BroodsSandboxFileOptions): Promise<ReadableStream<Uint8Array> | null> {
+  async readFile(
+    options: BroodsSandboxFileOptions,
+  ): Promise<ReadableStream<Uint8Array> | null> {
     const bytes = await this.readBinaryFile(options);
     return bytes === null ? null : bytesToStream(bytes);
   }
 
-  async readBinaryFile(options: BroodsSandboxFileOptions): Promise<Uint8Array | null> {
+  async readBinaryFile(
+    options: BroodsSandboxFileOptions,
+  ): Promise<Uint8Array | null> {
     options.abortSignal?.throwIfAborted();
     return await this.#session.readFile({
       path: options.path,
-      ...(options.abortSignal !== undefined ? { abortSignal: options.abortSignal } : {}),
+      ...(options.abortSignal !== undefined
+        ? { abortSignal: options.abortSignal }
+        : {}),
     });
   }
 
   async readTextFile(
-    options: BroodsSandboxFileOptions & { encoding?: string; startLine?: number; endLine?: number },
+    options: BroodsSandboxFileOptions & {
+      encoding?: string;
+      startLine?: number;
+      endLine?: number;
+    },
   ): Promise<string | null> {
     const bytes = await this.readBinaryFile(options);
     if (bytes === null) return null;
-    const text = Buffer.from(bytes).toString((options.encoding ?? "utf-8") as BufferEncoding);
-    return extractLines({ text, startLine: options.startLine, endLine: options.endLine });
+    const text = Buffer.from(bytes).toString(
+      (options.encoding ?? "utf-8") as BufferEncoding,
+    );
+    return extractLines({
+      text,
+      startLine: options.startLine,
+      endLine: options.endLine,
+    });
   }
 
   async writeFile(
     options: BroodsSandboxFileOptions & { content: ReadableStream<Uint8Array> },
   ): Promise<void> {
     const content = await collectStream(options.content, options.abortSignal);
-    await this.writeBinaryFile({ path: options.path, content, abortSignal: options.abortSignal });
+    await this.writeBinaryFile({
+      path: options.path,
+      content,
+      abortSignal: options.abortSignal,
+    });
   }
 
   async writeBinaryFile(options: BroodsSandboxWriteFileOptions): Promise<void> {
@@ -229,23 +284,36 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options: BroodsSandboxFileOptions & { content: string; encoding?: string },
   ): Promise<void> {
     options.abortSignal?.throwIfAborted();
-    const buffer = Buffer.from(options.content, (options.encoding ?? "utf-8") as BufferEncoding);
+    const buffer = Buffer.from(
+      options.content,
+      (options.encoding ?? "utf-8") as BufferEncoding,
+    );
     await this.writeBinaryFile({
       path: options.path,
-      content: new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
+      content: new Uint8Array(
+        buffer.buffer,
+        buffer.byteOffset,
+        buffer.byteLength,
+      ),
       abortSignal: options.abortSignal,
     });
   }
 }
 
-class BroodsNetworkSandboxSession extends BroodsSandboxSession implements HarnessV1NetworkSandboxSession {
+class BroodsNetworkSandboxSession
+  extends BroodsSandboxSession
+  implements HarnessV1NetworkSandboxSession
+{
   readonly #driverSession: BroodsSandboxDriverSession;
   readonly #providerId: string;
   #stopPromise: Promise<void> | undefined;
   #destroyPromise: Promise<void> | undefined;
 
   readonly setNetworkPolicy?: (policy: HarnessV1NetworkPolicy) => Promise<void>;
-  readonly setPorts?: (ports: ReadonlyArray<number>, options?: { abortSignal?: AbortSignal }) => Promise<void>;
+  readonly setPorts?: (
+    ports: ReadonlyArray<number>,
+    options?: { abortSignal?: AbortSignal },
+  ) => Promise<void>;
 
   constructor(session: BroodsSandboxDriverSession, providerId: string) {
     super(session);
@@ -325,7 +393,10 @@ function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   });
 }
 
-async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: AbortSignal): Promise<Uint8Array> {
+async function collectStream(
+  stream: ReadableStream<Uint8Array>,
+  abortSignal?: AbortSignal,
+): Promise<Uint8Array> {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
@@ -337,7 +408,8 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
     abortPromise = new Promise((_, reject) => {
       onAbort = () => {
         aborted = true;
-        const reason = abortSignal.reason ?? new DOMException("Aborted", "AbortError");
+        const reason =
+          abortSignal.reason ?? new DOMException("Aborted", "AbortError");
         try {
           const cancellation = reader.cancel(reason);
           void cancellation.catch(() => undefined);
@@ -361,7 +433,9 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
     while (true) {
       abortSignal?.throwIfAborted();
       const read = reader.read();
-      const { value, done } = abortPromise ? await Promise.race([read, abortPromise]) : await read;
+      const { value, done } = abortPromise
+        ? await Promise.race([read, abortPromise])
+        : await read;
       if (done) break;
       if (value) {
         chunks.push(value);
@@ -369,7 +443,8 @@ async function collectStream(stream: ReadableStream<Uint8Array>, abortSignal?: A
       }
     }
   } finally {
-    if (abortSignal && onAbort) abortSignal.removeEventListener("abort", onAbort);
+    if (abortSignal && onAbort)
+      abortSignal.removeEventListener("abort", onAbort);
     if (!aborted) reader.releaseLock();
   }
 

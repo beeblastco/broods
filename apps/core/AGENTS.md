@@ -39,6 +39,7 @@ Key rules:
 - Google Search lives in `src/harness/tools/google-search.tool.ts` and is enabled through `config.tools.googleSearch`.
 - Account provider constructor settings live under `config.provider`. Account model configuration lives under `config.model`: `provider`, `modelId`, normal Vercel AI SDK `streamText` settings, and `providerOptions` for provider-specific AI SDK options.
 - Shared code goes in `src/shared/` only when it is actually shared by both handlers. Keep harness-only code in `src/harness/`.
+- File layout, function grouping and ordering, comment limits, and lint/typecheck rules are monorepo-wide — see `../../AGENTS.md`. The file-header docstring below is the one addition on top of them.
 - File header comments must use a block-docstring style:
 
   ```ts

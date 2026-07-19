@@ -73,7 +73,6 @@ export const notes = defineWorkspace({
   config: {
     storage: { provider: "s3" },
     isolation: true,
-    harness: { enabled: true },
   },
 });
 
@@ -99,8 +98,8 @@ export const myAgent = defineAgent({
     channels: [slack, github],
     sandbox: lambdaSandbox,
     workspaces: [
-      notes,                                    // inherit agent sandbox
-      { workspace: notes, sandbox: null },      // read-only, S3-direct
+      notes, // inherit agent sandbox
+      { workspace: notes, sandbox: null }, // read-only, S3-direct
     ],
   },
 });
@@ -110,22 +109,22 @@ The CLI compiles these into a manifest, resolves references, and syncs them. You
 
 ## Tool surface
 
-Tool availability is decided **per workspace**, from that workspace's *effective* sandbox
+Tool availability is decided **per workspace**, from that workspace's _effective_ sandbox
 (`workspaces[].sandbox` → else `config.sandbox` → else none). The agent's tool set is the
 union across its workspaces:
 
-| Workspace's effective sandbox | Tools for that workspace |
-| --- | --- |
-| present (mounted) | `read`, `write`, `edit`, `glob`, `grep`, `bash` (+ MEMORY/TASKS harness) |
-| **none** (read-only, default) | `read`, `glob` — via a read-only mount (fresh reads) |
-| **none**, `sandbox: null` | `read`, `glob` — straight from S3 (no mount/cold start, lagged) |
+| Workspace's effective sandbox | Tools for that workspace                                                                    |
+| ----------------------------- | ------------------------------------------------------------------------------------------- |
+| present (mounted)             | `read`, `write`, `edit`, `glob`, `grep`, `bash`, `memory_save` (+ workspace/memory harness) |
+| **none** (read-only, default) | `read`, `glob` — via a read-only mount (fresh reads)                                        |
+| **none**, `sandbox: null`     | `read`, `glob` — straight from S3 (no mount/cold start, lagged)                             |
 
 Plus the agent-level cases:
 
-| Agent references | Tools exposed |
-| --- | --- |
-| sandbox, **no** workspace | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
-| neither sandbox nor workspace | none |
+| Agent references              | Tools exposed                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------ |
+| sandbox, **no** workspace     | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
+| neither sandbox nor workspace | none                                                                           |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -144,11 +143,11 @@ implementation details for logs and debugging.
 
 `permissionMode` lives on the sandbox and replaces the old `needsApproval` boolean:
 
-| Mode | `read`/`glob`/`grep` | `write`/`edit` | `bash` |
-| --- | --- | --- | --- |
-| `ask` | auto | **ask** | **ask** |
-| `edit` | auto | auto | **ask** |
-| `bypass` | auto | auto | auto |
+| Mode     | `read`/`glob`/`grep` | `write`/`edit` | `bash`  |
+| -------- | -------------------- | -------------- | ------- |
+| `ask`    | auto                 | **ask**        | **ask** |
+| `edit`   | auto                 | auto           | **ask** |
+| `bypass` | auto                 | auto           | auto    |
 
 ## Runtime model
 
@@ -162,7 +161,7 @@ flowchart TD
   Tools --> Sandbox["sandbox executor (run)<br/>sandbox / lambda / e2b / daytona / vercel"]
   Tools -->|read/glob on read-only workspace| Files
   Sandbox --> Files["workspace working folder<br/>namespace = hash(accountId:workspaceId)<br/>+ optional alias folders"]
-  Session -->|MEMORY.md via S3 API| Files
+  Session -->|memory/MEMORY.md via S3 API| Files
 ```
 
 The workspace **base namespace** is derived from `accountId:workspaceId`. Isolation does
@@ -185,10 +184,10 @@ flowchart TD
   Child --> Private["MEMORY.md · TASKS.md · files for this conversation only"]
 ```
 
-| Workspace setting | Channel setting | What happens |
-| --- | --- | --- |
-| `isolation` omitted or `false` | `workspaceScope` is not allowed | every run mounts the same workspace root |
-| `isolation: true` | every attached channel must set `workspaceScope` | channel runs mount the workspace root; conversation runs mount a private child folder |
+| Workspace setting              | Channel setting                                  | What happens                                                                          |
+| ------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `isolation` omitted or `false` | `workspaceScope` is not allowed                  | every run mounts the same workspace root                                              |
+| `isolation: true`              | every attached channel must set `workspaceScope` | channel runs mount the workspace root; conversation runs mount a private child folder |
 
 If any channel defines `workspaceScope`, at least one attached workspace must use
 `isolation: true`. If a workspace uses `isolation: true`, every attached channel must
@@ -271,11 +270,11 @@ export const github = defineGitHubChannel({
 
 With that setup:
 
-| Incoming source | Folder behavior |
-| --- | --- |
+| Incoming source                | Folder behavior                                                             |
+| ------------------------------ | --------------------------------------------------------------------------- |
 | Slack `T123 / C456 / thread A` | shares the channel working folder with Slack `thread B` in the same channel |
-| GitHub `owner/repo#123` | gets a separate working folder from `owner/repo#456` |
-| Telegram chat `123` | scoped to chat `123`; `channel` and `conversation` are usually the same key |
+| GitHub `owner/repo#123`        | gets a separate working folder from `owner/repo#456`                        |
+| Telegram chat `123`            | scoped to chat `123`; `channel` and `conversation` are usually the same key |
 
 Use this mixed mode when providers should not all use the same granularity. For example:
 
@@ -301,10 +300,10 @@ The model-facing workspace name stays the same. If the agent has a workspace nam
 `support`, it still selects `support` from Slack and from GitHub. What changes is the
 folder mounted behind that same name:
 
-| Run | Agent sees | Mounted working folder |
-| --- | --- | --- |
-| Direct API or cron | workspace `support` | `<workspace>/` |
-| Slack in channel `C456` | workspace `support` | `<workspace>/` |
+| Run                           | Agent sees          | Mounted working folder                           |
+| ----------------------------- | ------------------- | ------------------------------------------------ |
+| Direct API or cron            | workspace `support` | `<workspace>/`                                   |
+| Slack in channel `C456`       | workspace `support` | `<workspace>/`                                   |
 | GitHub issue `owner/repo#123` | workspace `support` | `<workspace>/support/fs-<hash(owner/repo#123)>/` |
 | GitHub issue `owner/repo#456` | workspace `support` | `<workspace>/support/fs-<hash(owner/repo#456)>/` |
 
@@ -317,5 +316,7 @@ If the workspace root already contains `fileA`, `MEMORY.md`, and `TASKS.md`, Git
 GitHub issue `#456` sees another child folder under `support/`. All three runs use the same
 workspace name, but each scope is backed by a different folder.
 
-Set `workspace.harness.enabled: false` to suppress the MEMORY/TASKS guidance while still
-loading an existing `MEMORY.md`.
+The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
+suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`
+disables structured memory (the `memory_save` tool, index loading, and the `<memory>`
+prompt). See [Memory and Session](./memory-and-session.md).

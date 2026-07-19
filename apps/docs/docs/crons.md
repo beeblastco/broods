@@ -65,7 +65,10 @@ export const weeklyDigest = defineCron({
   config: {
     agent: maintainer,
     events: [
-      { role: "user", content: [{ type: "text", text: "Summarize this week." }] },
+      {
+        role: "user",
+        content: [{ type: "text", text: "Summarize this week." }],
+      },
     ],
     scheduleExpression: "cron(0 9 ? * MON *)",
     timezone: "Europe/Amsterdam",
@@ -93,13 +96,13 @@ curl -X POST "$BROODS_BASE_URL/v1/crons" \
 
 Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(...)`, `rate(...)`, and `at(...)`. The cron form is `cron(minutes hours day-of-month month day-of-week year)` — one of day-of-month / day-of-week must be `?`.
 
-| Cadence | Expression |
-| --- | --- |
-| Every hour | `rate(1 hour)` |
-| Every Monday 09:00 | `cron(0 9 ? * MON *)` |
-| 1st of each month 08:00 | `cron(0 8 1 * ? *)` |
-| Yearly, Jan 1 09:00 | `cron(0 9 1 1 ? *)` |
-| Once, at a fixed time | `at(2027-01-01T09:00:00)` |
+| Cadence                 | Expression                |
+| ----------------------- | ------------------------- |
+| Every hour              | `rate(1 hour)`            |
+| Every Monday 09:00      | `cron(0 9 ? * MON *)`     |
+| 1st of each month 08:00 | `cron(0 8 1 * ? *)`       |
+| Yearly, Jan 1 09:00     | `cron(0 9 1 1 ? *)`       |
+| Once, at a fixed time   | `at(2027-01-01T09:00:00)` |
 
 `timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. This only controls schedule evaluation; it is not injected into the agent prompt.
 

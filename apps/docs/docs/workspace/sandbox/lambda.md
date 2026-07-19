@@ -31,13 +31,13 @@ flowchart LR
 The image implements HTTP lifecycle hooks on port `9000` under
 `/aws/lambda-microvms/runtime/v1/<hook>`:
 
-| Hook | When | What the image does |
-| --- | --- | --- |
-| `/ready`, `/validate` | image build | health/validation (return 200) |
-| `/run` | per VM start | **mount-s3** the workspace from the `runHookPayload` (see below) |
-| `/resume` | on resume from suspend | reconnect / refresh |
-| `/suspend` | before snapshot | `sync(2)` flush |
-| `/terminate` | on teardown | unmount + final `sync` |
+| Hook                  | When                   | What the image does                                              |
+| --------------------- | ---------------------- | ---------------------------------------------------------------- |
+| `/ready`, `/validate` | image build            | health/validation (return 200)                                   |
+| `/run`                | per VM start           | **mount-s3** the workspace from the `runHookPayload` (see below) |
+| `/resume`             | on resume from suspend | reconnect / refresh                                              |
+| `/suspend`            | before snapshot        | `sync(2)` flush                                                  |
+| `/terminate`          | on teardown            | unmount + final `sync`                                           |
 
 ## Image & build
 
@@ -109,7 +109,7 @@ workspace: installed packages, code, and running jobs survive across calls.
   acquire.
 
 > **Suspend snapshot ≠ a new image.** The suspend/resume snapshot is a Firecracker
-> checkpoint of *that one instance*; AWS MicroVM has **no runtime API to promote a running
+> checkpoint of _that one instance_; AWS MicroVM has **no runtime API to promote a running
 > VM into a new reusable image**. So the dashboard **Create snapshot** action is not offered
 > for `lambda` (only the workdir `sandbox` provider supports it) — launch images are produced
 > as versioned MicroVM image builds instead. See [Snapshots & Sizes](snapshot.md#capturing-a-snapshot-provider-support).
@@ -120,8 +120,8 @@ workspace: installed packages, code, and running jobs survive across calls.
     "provider": "lambda",
     "network": { "mode": "allow-all" },
     "persistent": true,
-    "lifecycle": { "idleTimeoutSeconds": 1800, "maxLifetimeSeconds": 28800 }
-  }
+    "lifecycle": { "idleTimeoutSeconds": 1800, "maxLifetimeSeconds": 28800 },
+  },
 }
 ```
 
@@ -148,8 +148,8 @@ See [Best Practice → Background jobs](best-practice.md#background-jobs--async_
     "provider": "lambda",
     "network": { "mode": "allow-all" },
     "permissionMode": "ask",
-    "envVars": { "MY_API_BASE": "https://api.example.com" }
-  }
+    "envVars": { "MY_API_BASE": "https://api.example.com" },
+  },
 }
 ```
 
@@ -159,11 +159,11 @@ Image identifier, roles, and sizes are service-managed; account sandbox config c
 
 `config.envVars` is a flat object of string key/value pairs injected into every run:
 
-| Runtime | How the value is read |
-| --- | --- |
-| Shell | `echo $MY_API_BASE` |
-| Node | `process.env.MY_API_BASE` |
-| Python | `os.environ["MY_API_BASE"]` |
+| Runtime | How the value is read       |
+| ------- | --------------------------- |
+| Shell   | `echo $MY_API_BASE`         |
+| Node    | `process.env.MY_API_BASE`   |
+| Python  | `os.environ["MY_API_BASE"]` |
 
 - **The child env is `env_clear()`ed first** — the host's `process.env` (including AWS
   credentials) is never inherited. Only the keys you declare reach the run.
@@ -187,9 +187,9 @@ runtime invocations, but a general VM cannot make this a hard isolation boundary
 
 `network.mode` maps onto the MicroVM's egress:
 
-| Mode | MicroVM egress |
-| --- | --- |
-| `allow-all` | default `INTERNET_EGRESS` (no connector) |
+| Mode                      | MicroVM egress                                                                                                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `allow-all`               | default `INTERNET_EGRESS` (no connector)                                                                                                                                                                                                                                       |
 | `deny-all` / `restricted` | a customer-managed **VPC egress network connector** (provisioned in SST, ARN passed via `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`); domain allowlists are logged as unsupported. Without a connector the executor fails closed instead of launching with default internet egress. |
 
 ## Sizes & logging

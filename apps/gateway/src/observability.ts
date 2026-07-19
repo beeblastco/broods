@@ -267,7 +267,8 @@ export function tempoTraceRowsFromResponse(
         );
         const name = typeof raw.name === "string" ? raw.name : "agent.task";
         const status = raw.status as
-          { code?: unknown; message?: unknown } | undefined;
+          | { code?: unknown; message?: unknown }
+          | undefined;
         const isError =
           status?.code === 2 || status?.code === "STATUS_CODE_ERROR";
 

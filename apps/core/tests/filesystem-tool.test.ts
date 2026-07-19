@@ -16,7 +16,11 @@ const ORIGINAL_FETCH = globalThis.fetch;
 const microvmSendMock = mock(async (command: { _type?: string }) => {
   switch (command?._type) {
     case "RunMicrovm":
-      return { microvmId: "microvm-1", endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws", state: "PENDING" };
+      return {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "PENDING",
+      };
     case "CreateMicrovmAuthToken":
       return { authToken: { "X-aws-proxy-auth": "proxy-token" } };
     default:
@@ -25,15 +29,18 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
 });
 const microvmFetchMock = mock(async (_url: string, init: { body: string }) => {
   const payload = JSON.parse(init.body);
-  return new Response(JSON.stringify({
-    ok: true,
-    runtime: payload.runtime,
-    exit_code: 0,
-    timed_out: false,
-    duration_ms: 8,
-    stdout: `shell:${payload.code}`,
-    stderr: "",
-  }), { status: 200, headers: { "content-type": "application/json" } });
+  return new Response(
+    JSON.stringify({
+      ok: true,
+      runtime: payload.runtime,
+      exit_code: 0,
+      timed_out: false,
+      duration_ms: 8,
+      stdout: `shell:${payload.code}`,
+      stderr: "",
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
 });
 function microvmCommand(type: string) {
   return class {
@@ -51,7 +58,9 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   },
   RunMicrovmCommand: microvmCommand("RunMicrovm"),
   CreateMicrovmAuthTokenCommand: microvmCommand("CreateMicrovmAuthToken"),
-  CreateMicrovmShellAuthTokenCommand: microvmCommand("CreateMicrovmShellAuthToken"),
+  CreateMicrovmShellAuthTokenCommand: microvmCommand(
+    "CreateMicrovmShellAuthToken",
+  ),
   TerminateMicrovmCommand: microvmCommand("TerminateMicrovm"),
   GetMicrovmCommand: microvmCommand("GetMicrovm"),
   SuspendMicrovmCommand: microvmCommand("SuspendMicrovm"),
@@ -60,14 +69,20 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
 
 // Read-only (S3-direct) path stubs for sandbox-less workspaces.
 const readS3TextMock = mock(async (_bucket: string, _key: string) => "");
-const listS3PrefixMock = mock(async (_bucket: string, _prefix: string) =>
-  [] as Array<{ key: string; lastModified?: string }>);
+const listS3PrefixMock = mock(
+  async (_bucket: string, _prefix: string) =>
+    [] as Array<{ key: string; lastModified?: string }>,
+);
 
 mock.module("../src/shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
   listS3Prefix: listS3PrefixMock,
   isMissingS3Error: (error: unknown) =>
-    Boolean(error && typeof error === "object" && (error as { name?: string }).name === "NoSuchKey"),
+    Boolean(
+      error &&
+      typeof error === "object" &&
+      (error as { name?: string }).name === "NoSuchKey",
+    ),
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
   writeS3Object: mock(async () => 0),
@@ -82,8 +97,10 @@ mock.module("../src/shared/s3.ts", () => ({
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  process.env.MICROVM_IMAGE_IDENTIFIER = "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
-  process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN = "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
+  process.env.MICROVM_IMAGE_IDENTIFIER =
+    "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
+  process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN =
+    "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
   microvmSendMock.mockClear();
@@ -102,13 +119,19 @@ const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 // Sandbox-backed workspace context (file tools route through the mount).
 function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
-    workspaces: [{
-      name: "notes",
-      workspaceId: "ws_a",
-      namespace: NS,
-      config: { storage: { provider: "s3" } },
-      sandbox: { provider: "lambda", network: { mode: "allow-all" }, ...sandboxOverrides },
-    }],
+    workspaces: [
+      {
+        name: "notes",
+        workspaceId: "ws_a",
+        namespace: NS,
+        config: { storage: { provider: "s3" } },
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          ...sandboxOverrides,
+        },
+      },
+    ],
   } as never;
 }
 
@@ -116,7 +139,11 @@ function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
 function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [],
-    statelessSandbox: { provider: "lambda", network: { mode: "allow-all" }, ...sandboxOverrides },
+    statelessSandbox: {
+      provider: "lambda",
+      network: { mode: "allow-all" },
+      ...sandboxOverrides,
+    },
     statelessPermissionMode: "ask",
   } as never;
 }
@@ -124,7 +151,14 @@ function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
 // Read-only workspace, `sandbox: null` opt-out (no readMount => served directly from S3).
 function readonlyCtx() {
   return {
-    workspaces: [{ name: "ro", workspaceId: "ws_ro", namespace: NS, config: { storage: { provider: "s3" } } }],
+    workspaces: [
+      {
+        name: "ro",
+        workspaceId: "ws_ro",
+        namespace: NS,
+        config: { storage: { provider: "s3" } },
+      },
+    ],
   } as never;
 }
 
@@ -132,39 +166,59 @@ function readonlyCtx() {
 // read-only mount (readMount) so they see committed writes immediately.
 function readonlyMountCtx() {
   return {
-    workspaces: [{
-      name: "ro",
-      workspaceId: "ws_ro",
-      namespace: NS,
-      config: { storage: { provider: "s3" } },
-      readMount: { provider: "lambda", network: { mode: "deny-all" } },
-    }],
+    workspaces: [
+      {
+        name: "ro",
+        workspaceId: "ws_ro",
+        namespace: NS,
+        config: { storage: { provider: "s3" } },
+        readMount: { provider: "lambda", network: { mode: "deny-all" } },
+      },
+    ],
   } as never;
 }
 
-async function approvalStatus(toolName: string, input: Record<string, unknown>, ctx: {
-  workspaces?: unknown[];
-  statelessSandbox?: unknown;
-  statelessPermissionMode?: unknown;
-}) {
-  const { compatibilityApprovalStatus } = await import("../src/harness/policy.ts");
+async function approvalStatus(
+  toolName: string,
+  input: Record<string, unknown>,
+  ctx: {
+    workspaces?: unknown[];
+    statelessSandbox?: unknown;
+    statelessPermissionMode?: unknown;
+  },
+) {
+  const { compatibilityApprovalStatus } =
+    await import("../src/harness/policy.ts");
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.statelessSandbox ? { statelessSandbox: ctx.statelessSandbox as never } : {}),
-    ...(typeof ctx.statelessPermissionMode === "string" ? { statelessPermissionMode: ctx.statelessPermissionMode as never } : {}),
+    ...(ctx.statelessSandbox
+      ? { statelessSandbox: ctx.statelessSandbox as never }
+      : {}),
+    ...(typeof ctx.statelessPermissionMode === "string"
+      ? { statelessPermissionMode: ctx.statelessPermissionMode as never }
+      : {}),
   });
 }
 
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
-  const call = microvmFetchMock.mock.calls.at(-1) as [string, { body: string }] | undefined;
+  const call = microvmFetchMock.mock.calls.at(-1) as
+    | [string, { body: string }]
+    | undefined;
   return { payload: JSON.parse(call![1].body) };
 }
 
-async function tool(name: "bash" | "read" | "write" | "edit" | "glob" | "grep", ctx: never) {
+async function tool(
+  name: "bash" | "read" | "write" | "edit" | "glob" | "grep",
+  ctx: never,
+) {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
-  return mod.default(ctx)[name] as { execute(input: Record<string, unknown>): Promise<{ type: string; value: string }> };
+  return mod.default(ctx)[name] as {
+    execute(
+      input: Record<string, unknown>,
+    ): Promise<{ type: string; value: string }>;
+  };
 }
 
 describe("sandbox tool set", () => {
@@ -173,14 +227,21 @@ describe("sandbox tool set", () => {
     const result = await bash.execute({ command: "echo hi" });
     expect(result).toEqual({ type: "text", value: "shell:echo hi" });
     expect(lastSandboxExec()).toMatchObject({
-      payload: { runtime: "bash", namespace: NS, code: "echo hi", workspace_root: "/mnt/workspaces" },
+      payload: {
+        runtime: "bash",
+        namespace: NS,
+        code: "echo hi",
+        workspace_root: "/mnt/workspaces",
+      },
     });
   });
 
   it("bash pty:true attaches the command to a real guest pseudo-terminal", async () => {
     const bash = await tool("bash", workspaceCtx());
     await bash.execute({ command: "echo hi", pty: true });
-    expect(lastSandboxExec().payload.code).toBe("script -qec 'echo hi' /dev/null");
+    expect(lastSandboxExec().payload.code).toBe(
+      "script -qec 'echo hi' /dev/null",
+    );
   });
 
   it("runs a stateless MicroVM (no namespace) when no workspace is attached", async () => {
@@ -190,61 +251,99 @@ describe("sandbox tool set", () => {
   });
 
   it("bash treats sandbox setup failures as failed tool calls", async () => {
-    microvmFetchMock.mockImplementationOnce(async (_url: string, init: { body: string }) => {
-      const payload = JSON.parse(init.body);
-      return new Response(JSON.stringify({
-        ok: false,
-        runtime: payload.runtime,
-        exit_code: null,
-        timed_out: false,
-        duration_ms: 8,
-        stdout: "",
-        stderr: "invalid namespace: must match fs-[a-f0-9]{40}",
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    });
+    microvmFetchMock.mockImplementationOnce(
+      async (_url: string, init: { body: string }) => {
+        const payload = JSON.parse(init.body);
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            runtime: payload.runtime,
+            exit_code: null,
+            timed_out: false,
+            duration_ms: 8,
+            stdout: "",
+            stderr: "invalid namespace: must match fs-[a-f0-9]{40}",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
     const bash = await tool("bash", workspaceCtx());
 
-    await expect(bash.execute({ command: "pwd" }))
-      .rejects.toThrow("Sandbox setup failed: invalid namespace");
+    await expect(bash.execute({ command: "pwd" })).rejects.toThrow(
+      "Sandbox setup failed: invalid namespace",
+    );
   });
 
   it("mounts the workspace regardless of the deny-all network mode", async () => {
-    const bash = await tool("bash", workspaceCtx({ network: { mode: "deny-all" } }));
+    const bash = await tool(
+      "bash",
+      workspaceCtx({ network: { mode: "deny-all" } }),
+    );
     await bash.execute({ command: "pwd" });
     expect(lastSandboxExec().payload.namespace).toBe(NS);
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } = await import("../src/harness/tools/filesystem-utils.ts");
-    expect(sandboxSupportsBackgroundJobs({ provider: "lambda", persistent: true } as never)).toBe(true);
+    const { sandboxSupportsBackgroundJobs } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    expect(
+      sandboxSupportsBackgroundJobs({
+        provider: "lambda",
+        persistent: true,
+      } as never),
+    ).toBe(true);
   });
 
   it("bash rejects commands using runtimes outside the sandbox allow-list", async () => {
     const bash = await tool("bash", workspaceCtx({ runtimes: ["bash"] }));
     const result = await bash.execute({ command: "node script.js" });
-    expect(result).toEqual({ type: "error-text", value: "Error: this sandbox does not allow node commands" });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: this sandbox does not allow node commands",
+    });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("bash rejects obvious attempts to leave the workspace", async () => {
     const bash = await tool("bash", workspaceCtx());
-    await expect(bash.execute({ command: "cd .. && ls" }))
-      .resolves.toEqual({ type: "error-text", value: "Error: bash commands must stay in the workspace directory" });
-    await expect(bash.execute({ command: "cat /etc/passwd" }))
-      .resolves.toEqual({ type: "error-text", value: "Error: absolute paths are not allowed in workspace bash commands: /etc/passwd" });
-    await expect(bash.execute({ command: "find / -maxdepth 1" }))
-      .resolves.toEqual({ type: "error-text", value: "Error: bash commands must stay in the workspace directory" });
+    await expect(bash.execute({ command: "cd .. && ls" })).resolves.toEqual({
+      type: "error-text",
+      value: "Error: bash commands must stay in the workspace directory",
+    });
+    await expect(bash.execute({ command: "cat /etc/passwd" })).resolves.toEqual(
+      {
+        type: "error-text",
+        value:
+          "Error: absolute paths are not allowed in workspace bash commands: /etc/passwd",
+      },
+    );
+    await expect(
+      bash.execute({ command: "find / -maxdepth 1" }),
+    ).resolves.toEqual({
+      type: "error-text",
+      value: "Error: bash commands must stay in the workspace directory",
+    });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("bash allows URL scheme separators while still blocking absolute paths", async () => {
     const bash = await tool("bash", workspaceCtx());
-    const ok = await bash.execute({ command: "curl -sS https://api.github.com/zen -o out.txt" });
+    const ok = await bash.execute({
+      command: "curl -sS https://api.github.com/zen -o out.txt",
+    });
     expect(ok.type).toBe("text");
-    expect(lastSandboxExec().payload.code).toContain("https://api.github.com/zen");
+    expect(lastSandboxExec().payload.code).toContain(
+      "https://api.github.com/zen",
+    );
     // A bare absolute path stays rejected; only the scheme `://` is exempt.
-    await expect(bash.execute({ command: "curl https://x -o /tmp/out.txt" }))
-      .resolves.toEqual({ type: "error-text", value: "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt" });
+    await expect(
+      bash.execute({ command: "curl https://x -o /tmp/out.txt" }),
+    ).resolves.toEqual({
+      type: "error-text",
+      value:
+        "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt",
+    });
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {
@@ -281,7 +380,11 @@ describe("sandbox tool set", () => {
 
   it("edit builds a node heredoc replacement that fsyncs the rewrite", async () => {
     const edit = await tool("edit", workspaceCtx());
-    await edit.execute({ file_path: "a.txt", old_string: "x", new_string: "y" });
+    await edit.execute({
+      file_path: "a.txt",
+      old_string: "x",
+      new_string: "y",
+    });
     const { payload } = lastSandboxExec();
     expect(payload.code).toContain("node <<'NODEEOF'");
     expect(payload.code).toContain("const replaceAll = false");
@@ -307,12 +410,27 @@ describe("sandbox tool set", () => {
   it("rejects unknown named workspaces", async () => {
     const bash = await tool("bash", {
       workspaces: [
-        { name: "personal", workspaceId: "ws_a", namespace: "fs-personal", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", network: { mode: "allow-all" } } },
-        { name: "team", workspaceId: "ws_b", namespace: "fs-team", config: { storage: { provider: "s3" } }, sandbox: { provider: "lambda", network: { mode: "allow-all" } } },
+        {
+          name: "personal",
+          workspaceId: "ws_a",
+          namespace: "fs-personal",
+          config: { storage: { provider: "s3" } },
+          sandbox: { provider: "lambda", network: { mode: "allow-all" } },
+        },
+        {
+          name: "team",
+          workspaceId: "ws_b",
+          namespace: "fs-team",
+          config: { storage: { provider: "s3" } },
+          sandbox: { provider: "lambda", network: { mode: "allow-all" } },
+        },
       ],
     } as never);
     const result = await bash.execute({ command: "pwd", workspace: "unknown" });
-    expect(result).toEqual({ type: "error-text", value: "unknown workspace unknown" });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "unknown workspace unknown",
+    });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -326,7 +444,10 @@ describe("read-only S3-direct workspace", () => {
       type: "text",
       value: "     1\talpha\n     2\tbeta\n     3\tgamma\n",
     });
-    expect(readS3TextMock).toHaveBeenCalledWith("filesystem-bucket", `${NS}/notes/a.txt`);
+    expect(readS3TextMock).toHaveBeenCalledWith(
+      "filesystem-bucket",
+      `${NS}/notes/a.txt`,
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -336,7 +457,10 @@ describe("read-only S3-direct workspace", () => {
     });
     const read = await tool("read", readonlyCtx());
     const result = await read.execute({ file_path: "missing.txt" });
-    expect(result).toEqual({ type: "error-text", value: "Error: file not found: missing.txt" });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: file not found: missing.txt",
+    });
   });
 
   it("glob lists matching files from S3 sorted by mtime, newest first", async () => {
@@ -349,14 +473,20 @@ describe("read-only S3-direct workspace", () => {
     const glob = await tool("glob", readonlyCtx());
     const result = await glob.execute({ pattern: "**/*.ts" });
     expect(result).toEqual({ type: "text", value: "src/new.ts\nold.ts\n" });
-    expect(listS3PrefixMock).toHaveBeenCalledWith("filesystem-bucket", `${NS}/`);
+    expect(listS3PrefixMock).toHaveBeenCalledWith(
+      "filesystem-bucket",
+      `${NS}/`,
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("does not expose write/edit on a read-only workspace (errors if forced)", async () => {
     const write = await tool("write", readonlyCtx());
     const result = await write.execute({ file_path: "a.txt", content: "x" });
-    expect(result).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: workspace is read-only",
+    });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -383,7 +513,10 @@ describe("read-only mount workspace (default)", () => {
   it("still does not expose write/edit (the mount is read-only)", async () => {
     const write = await tool("write", readonlyMountCtx());
     const result = await write.execute({ file_path: "a.txt", content: "x" });
-    expect(result).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: workspace is read-only",
+    });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -392,19 +525,169 @@ describe("write/edit approval policy", () => {
   it("a read-only workspace never prompts — it falls through to the clean error", async () => {
     // No sandbox => nothing to approve. Without this, permissionMode defaults to
     // "ask" and the write would prompt for an approval it can never satisfy.
-    await expect(approvalStatus("write", { file_path: "a.txt", content: "x" }, readonlyCtx())).resolves.toBeUndefined();
-    await expect(approvalStatus("bash", { command: "ls" }, readonlyCtx())).resolves.toBeUndefined();
+    await expect(
+      approvalStatus(
+        "write",
+        { file_path: "a.txt", content: "x" },
+        readonlyCtx(),
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      approvalStatus("bash", { command: "ls" }, readonlyCtx()),
+    ).resolves.toBeUndefined();
   });
 
   it("a sandbox-backed workspace follows its permissionMode", async () => {
-    await expect(approvalStatus("edit", { file_path: "a.txt" }, workspaceCtx({ permissionMode: "ask" }))).resolves.toBe("user-approval");
-    await expect(approvalStatus("edit", { file_path: "a.txt" }, workspaceCtx({ permissionMode: "bypass" }))).resolves.toBeUndefined();
+    await expect(
+      approvalStatus(
+        "edit",
+        { file_path: "a.txt" },
+        workspaceCtx({ permissionMode: "ask" }),
+      ),
+    ).resolves.toBe("user-approval");
+    await expect(
+      approvalStatus(
+        "edit",
+        { file_path: "a.txt" },
+        workspaceCtx({ permissionMode: "bypass" }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe("memory tool", () => {
+  // Slack conversation: originSessionId must be the channel scope (thread ts dropped).
+  const conversationKey = "acct:a1:agent:ag1:slack:T123:C456:1784216136.381309";
+
+  async function memorySave(ctx: Record<string, unknown>) {
+    const mod = await import("../src/harness/tools/memory.tool.ts");
+    return mod.default({ ...ctx, conversationKey } as never)
+      .memory_save as unknown as {
+      execute(
+        input: Record<string, unknown>,
+      ): Promise<{ type: string; value: string }>;
+    };
+  }
+
+  it("saves an entry into memory/ with frontmatter metadata and indexes it in memory/MEMORY.md", async () => {
+    const memory_save = await memorySave(
+      workspaceCtx() as unknown as Record<string, unknown>,
+    );
+    const result = await memory_save.execute({
+      title: "Name in this channel",
+      description: "The assistant goes by Lily in #private-test-agent.",
+      content: "Here I go by Lily.",
+      type: "feedback",
+    });
+    const { payload } = lastSandboxExec();
+    expect(payload.namespace).toBe(NS);
+    expect(payload.code).toContain("memory/name-in-this-channel.md");
+    expect(payload.code).toContain("memory/MEMORY.md");
+    // Same durability discipline as write: base64-piped body, fsynced files, and
+    // the entry's index line replaced (not skipped), matched by its anchored
+    // defining shape so a cross-reference to this slug in another entry's
+    // description is never deleted.
+    expect(payload.code).toContain("base64 -d");
+    expect(payload.code).toContain("grep -v ");
+    expect(payload.code).toContain(
+      "^- \\[[^]]*](name-in-this-channel\\.md) — ",
+    );
+    expect(payload.code).toContain("sync ");
+    // The workspace is a mountpoint-s3 FUSE mount: O_APPEND and rename() fail
+    // with EPERM, so the index must be rebuilt in one `>` write — never `>>`,
+    // `mv`, or a temp file.
+    expect(payload.code).toContain("printf '%s\\n%s\\n' \"$index_body\"");
+    expect(payload.code).not.toContain(">>");
+    expect(payload.code).not.toContain("mv ");
+    expect(payload.code).not.toContain(".tmp");
+    expect(result.type).toBe("text");
+
+    const entryB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(
+      payload.code,
+    )?.[1];
+    const entry = Buffer.from(entryB64 ?? "", "base64").toString("utf8");
+    expect(entry).toContain("name: name-in-this-channel");
+    expect(entry).toContain(
+      'description: "The assistant goes by Lily in #private-test-agent."',
+    );
+    expect(entry).toContain("node_type: memory");
+    expect(entry).toContain("type: feedback");
+    expect(entry).toContain("originSessionId: slack:T123:C456");
+    expect(entry).toContain("Here I go by Lily.");
+  });
+
+  it("errors cleanly on a read-only workspace without invoking the sandbox", async () => {
+    const memory_save = await memorySave(
+      readonlyMountCtx() as unknown as Record<string, unknown>,
+    );
+    const result = await memory_save.execute({
+      title: "x",
+      description: "d",
+      content: "y",
+    });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: workspace is read-only",
+    });
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a workspace whose memory harness is disabled", async () => {
+    const ctx = workspaceCtx() as unknown as {
+      workspaces: Array<{ config: Record<string, unknown> }>;
+    };
+    ctx.workspaces[0]!.config = {
+      storage: { provider: "s3" },
+      harness: { memory: { enabled: false } },
+    };
+    const memory_save = await memorySave(
+      ctx as unknown as Record<string, unknown>,
+    );
+    const result = await memory_save.execute({
+      title: "x",
+      description: "d",
+      content: "y",
+    });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: the memory harness is disabled for workspace notes",
+    });
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("kebab-cases titles into collision-free slugs and rejects blank titles", async () => {
+    const { memorySlug } = await import("../src/harness/tools/memory.tool.ts");
+    expect(memorySlug("Owner's Slack handle!")).toBe("owner-s-slack-handle");
+    // Diacritics fold into readable ASCII instead of dashes.
+    expect(memorySlug("Phích prefers tiếng Việt")).toBe(
+      "phich-prefers-tieng-viet",
+    );
+    // Capped or empty slugs get a stable hash suffix so distinct titles never share a file.
+    expect(memorySlug("---")).toMatch(/^memory-[0-9a-f]{8}$/);
+    expect(memorySlug("---")).toBe(memorySlug("---"));
+    const longA = `${"very long shared prefix ".repeat(4)}variant alpha`;
+    const longB = `${"very long shared prefix ".repeat(4)}variant beta`;
+    expect(memorySlug(longA)).not.toBe(memorySlug(longB));
+    expect(memorySlug(longA).length).toBeLessThanOrEqual(69);
+    const memory_save = await memorySave(
+      workspaceCtx() as unknown as Record<string, unknown>,
+    );
+    const result = await memory_save.execute({
+      title: "   ",
+      description: "d",
+      content: "y",
+    });
+    expect(result).toEqual({
+      type: "error-text",
+      value: "Error: title must not be empty",
+    });
   });
 });
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } = await import("../src/harness/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -413,9 +696,18 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } = await import("../src/harness/tools/filesystem-utils.ts");
-    for (const path of ["../etc/passwd", "a/../../b", "..", "/a/b/..", "a/.."]) {
-      expect(() => toWorkspaceRelative(path)).toThrow("directory traversal not allowed");
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
+    for (const path of [
+      "../etc/passwd",
+      "a/../../b",
+      "..",
+      "/a/b/..",
+      "a/..",
+    ]) {
+      expect(() => toWorkspaceRelative(path)).toThrow(
+        "directory traversal not allowed",
+      );
     }
   });
 });

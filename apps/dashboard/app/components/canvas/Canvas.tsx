@@ -3,27 +3,21 @@
 /** Main canvas component that renders nodes and edges from the database. */
 import { CanvasControls } from "@/app/components/canvas/CanvasControl";
 import { DeletableEdge } from "@/app/components/canvas/DeletableEdge";
-import { isCodeManagedEdgeId } from "@/app/components/canvas/edgeOwnership";
+import {
+  isCodeManagedEdgeId,
+  isCodeManagedOwner,
+} from "@/app/components/canvas/edgeOwnership";
+import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
+import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
 import { MountEdge } from "@/app/components/canvas/MountEdge";
 import { SubagentEdge } from "@/app/components/canvas/SubagentEdge";
-import { EmptyCanvasGuide } from "@/app/components/canvas/EmptyCanvasGuide";
-import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { AgentNode } from "@/app/components/node/Agent";
+import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { DatabaseNode } from "@/app/components/node/Database";
 import { SandboxNode } from "@/app/components/node/Sandbox";
 import { SkillNode } from "@/app/components/node/Skill";
 import { ToolNode } from "@/app/components/node/Tool";
 import { WorkspaceNode } from "@/app/components/node/Workspace";
-import { InfraAnalysisProvider } from "@/app/components/canvas/InfraAnalysisContext";
-import {
-  analyzeCanvasInfra,
-  defaultRuntimeNodeData,
-  deriveAgentRuntimeRefs,
-  deriveSubagentRefs,
-  serializeRuntimeRefs,
-  serializeSubagentRefs,
-} from "@/app/lib/canvasRuntimeRefs";
-import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -32,8 +26,17 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
-import { api } from "@broods/convex/_generated/api";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
+import {
+  analyzeCanvasInfra,
+  defaultRuntimeNodeData,
+  deriveAgentRuntimeRefs,
+  deriveSubagentRefs,
+  serializeRuntimeRefs,
+  serializeSubagentRefs,
+} from "@/app/lib/canvasRuntimeRefs";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import {
   addEdge,
   Background,
@@ -186,15 +189,17 @@ function hydrateSubagentEdge(edge: Edge): Edge {
 
 /** Mark code-managed edges non-deletable; pass dashboard-owned edges through. */
 function lockCodeManagedEdge(edge: Edge, nodesById: Map<string, Node>): Edge {
-  const sourceManagedBy = (nodesById.get(edge.source)?.data as
-    | { managedBy?: string }
-    | undefined)?.managedBy;
-  const targetManagedBy = (nodesById.get(edge.target)?.data as
-    | { managedBy?: string }
-    | undefined)?.managedBy;
+  const sourceManagedBy = (
+    nodesById.get(edge.source)?.data as { managedBy?: string } | undefined
+  )?.managedBy;
+  const targetManagedBy = (
+    nodesById.get(edge.target)?.data as { managedBy?: string } | undefined
+  )?.managedBy;
   if (
     !isCodeManagedEdgeId(edge.id) &&
-    !(sourceManagedBy === "cli" && targetManagedBy === "cli")
+    !(
+      isCodeManagedOwner(sourceManagedBy) && isCodeManagedOwner(targetManagedBy)
+    )
   ) {
     return edge;
   }
@@ -437,12 +442,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
-            | "agent"
-            | "database"
-            | "sandbox"
-            | "workspace"
-            | "tool"
-            | "skill",
+            "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
           position: n.position,
           data: n.data as {
             label: string;
@@ -649,9 +649,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // edge would encode a null handle into its id and fail to hydrate after a reload.
     if (isSideConnection(connection)) {
       const sourceIsSide =
-        connection.sourceHandle === "left" || connection.sourceHandle === "right";
+        connection.sourceHandle === "left" ||
+        connection.sourceHandle === "right";
       const targetIsSide =
-        connection.targetHandle === "left" || connection.targetHandle === "right";
+        connection.targetHandle === "left" ||
+        connection.targetHandle === "right";
 
       return sourceIsSide && targetIsSide && (isMountPair || isAgentPair);
     }
@@ -898,7 +900,14 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       JSON.stringify({
         n: nodes.map((n) => {
           const d = n.data as BaseNodeData;
-          return [n.id, n.type, d?.resourceId, d?.label, d?.mountName, d?.readOnly === true];
+          return [
+            n.id,
+            n.type,
+            d?.resourceId,
+            d?.label,
+            d?.mountName,
+            d?.readOnly === true,
+          ];
         }),
         e: edges.map((e) => [e.source, e.target, e.type]),
       }),

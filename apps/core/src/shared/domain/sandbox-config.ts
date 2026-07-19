@@ -6,28 +6,51 @@
  * Stored encrypted at rest because `envVars`/`options` may hold secrets.
  */
 
+import { isPlainObject, isStringRecord } from "../object.ts";
+import { SANDBOX_SIZE_NAMES, type SandboxSize } from "../sandbox-sizes.ts";
 import {
   MAX_IDLE_TIMEOUT_SECONDS,
   MAX_LIFETIME_SECONDS,
   workspaceSandboxLimits,
 } from "../sandbox.ts";
-import { SANDBOX_SIZE_NAMES, type SandboxSize } from "../sandbox-sizes.ts";
-import { isPlainObject, isStringRecord } from "../object.ts";
 import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 
 // "sandbox" is the self-hosted workdir (Firecracker) provider — the vanilla,
 // most-featured backend and the default. Without config.options.workdirUrl/apiKey
 // it auto-wires to the platform workdir node (WORKDIR_URL/WORKDIR_API_KEY env),
 // billed to the platform (see workdirConnection in harness/sandbox).
-export type SandboxProvider = "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
+export type SandboxProvider =
+  | "sandbox"
+  | "lambda"
+  | "e2b"
+  | "daytona"
+  | "vercel";
 export type SandboxRuntimeName = "bash" | "python" | "node";
 export type SandboxPermissionMode = "edit" | "ask" | "bypass";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 
-const SANDBOX_PROVIDERS: readonly SandboxProvider[] = ["sandbox", "lambda", "e2b", "daytona", "vercel"];
-const SANDBOX_RUNTIMES: readonly SandboxRuntimeName[] = ["bash", "python", "node"];
-const SANDBOX_PERMISSION_MODES: readonly SandboxPermissionMode[] = ["edit", "ask", "bypass"];
-const SANDBOX_NETWORK_MODES: readonly SandboxNetworkMode[] = ["allow-all", "deny-all", "restricted"];
+const SANDBOX_PROVIDERS: readonly SandboxProvider[] = [
+  "sandbox",
+  "lambda",
+  "e2b",
+  "daytona",
+  "vercel",
+];
+const SANDBOX_RUNTIMES: readonly SandboxRuntimeName[] = [
+  "bash",
+  "python",
+  "node",
+];
+const SANDBOX_PERMISSION_MODES: readonly SandboxPermissionMode[] = [
+  "edit",
+  "ask",
+  "bypass",
+];
+const SANDBOX_NETWORK_MODES: readonly SandboxNetworkMode[] = [
+  "allow-all",
+  "deny-all",
+  "restricted",
+];
 const REDACTED_SECRET_VALUE = "********";
 
 export interface SandboxLifecycleConfig {
@@ -107,7 +130,11 @@ export interface UpdateSandboxConfigInput {
 
 export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   if (value == null) {
-    return { provider: "sandbox", permissionMode: "ask", network: { mode: "deny-all" } };
+    return {
+      provider: "sandbox",
+      permissionMode: "ask",
+      network: { mode: "deny-all" },
+    };
   }
   if (!isPlainObject(value)) {
     throw new Error("config must be an object");
@@ -115,48 +142,88 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
 
   const config = value;
   if ("internet" in config) {
-    throw new Error("config.internet is no longer supported; use config.network");
+    throw new Error(
+      "config.internet is no longer supported; use config.network",
+    );
   }
   assertOptionalEnum(config.provider, "config.provider", SANDBOX_PROVIDERS);
-  assertOptionalEnum(config.permissionMode, "config.permissionMode", SANDBOX_PERMISSION_MODES);
+  assertOptionalEnum(
+    config.permissionMode,
+    "config.permissionMode",
+    SANDBOX_PERMISSION_MODES,
+  );
   assertOptionalEnum(config.size, "config.size", SANDBOX_SIZE_NAMES);
   assertOptionalBoolean(config.persistent, "config.persistent");
   const snapshot = optionalString(config.snapshot, "config.snapshot");
 
-  const provider = (config.provider as SandboxProvider | undefined) ?? "sandbox";
+  const provider =
+    (config.provider as SandboxProvider | undefined) ?? "sandbox";
   const network = normalizeNetwork(config.network);
   if (provider === "e2b" && network.mode !== "allow-all") {
-    throw new Error("e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly");
+    throw new Error(
+      "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
+    );
   }
-  const lifecycle = config.lifecycle !== undefined ? normalizeLifecycle(config.lifecycle) : undefined;
+  const lifecycle =
+    config.lifecycle !== undefined
+      ? normalizeLifecycle(config.lifecycle)
+      : undefined;
   if (lifecycle && config.persistent !== true) {
     throw new Error("config.lifecycle requires config.persistent to be true");
   }
-  const onCreate = config.onCreate !== undefined ? normalizeHookList(config.onCreate, "config.onCreate") : undefined;
-  const onResume = config.onResume !== undefined ? normalizeHookList(config.onResume, "config.onResume") : undefined;
+  const onCreate =
+    config.onCreate !== undefined
+      ? normalizeHookList(config.onCreate, "config.onCreate")
+      : undefined;
+  const onResume =
+    config.onResume !== undefined
+      ? normalizeHookList(config.onResume, "config.onResume")
+      : undefined;
   if ((onCreate || onResume) && config.persistent !== true) {
-    throw new Error("config.onCreate and config.onResume require config.persistent to be true");
+    throw new Error(
+      "config.onCreate and config.onResume require config.persistent to be true",
+    );
   }
   if (provider === "e2b" && (onCreate || onResume)) {
-    throw new Error("config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly");
+    throw new Error(
+      "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
+    );
   }
 
   if (config.runtimes !== undefined) {
     if (
       !Array.isArray(config.runtimes) ||
       config.runtimes.length === 0 ||
-      !config.runtimes.every((entry) => typeof entry === "string" && SANDBOX_RUNTIMES.includes(entry as SandboxRuntimeName))
+      !config.runtimes.every(
+        (entry) =>
+          typeof entry === "string" &&
+          SANDBOX_RUNTIMES.includes(entry as SandboxRuntimeName),
+      )
     ) {
-      throw new Error(`config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`);
+      throw new Error(
+        `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
+      );
     }
   }
 
   // Provider-aware ceilings: lambda is bounded by its function; persistent
   // providers (sandbox/e2b/daytona) are operator-sized (no memory max here).
   const limits = workspaceSandboxLimits(provider);
-  assertOptionalPositiveInteger(config.timeout, "config.timeout", limits.maxTimeoutSeconds);
-  assertOptionalPositiveInteger(config.memoryLimit, "config.memoryLimit", limits.maxMemoryLimitMb);
-  assertOptionalPositiveInteger(config.outputLimitBytes, "config.outputLimitBytes", limits.maxOutputLimitBytes);
+  assertOptionalPositiveInteger(
+    config.timeout,
+    "config.timeout",
+    limits.maxTimeoutSeconds,
+  );
+  assertOptionalPositiveInteger(
+    config.memoryLimit,
+    "config.memoryLimit",
+    limits.maxMemoryLimitMb,
+  );
+  assertOptionalPositiveInteger(
+    config.outputLimitBytes,
+    "config.outputLimitBytes",
+    limits.maxOutputLimitBytes,
+  );
 
   if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
     throw new Error("config.envVars must be an object with string values");
@@ -171,19 +238,34 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   return {
     provider,
     network,
-    permissionMode: (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
+    permissionMode:
+      (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
     ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
     ...(snapshot ? { snapshot } : {}),
-    ...(config.persistent !== undefined ? { persistent: config.persistent as boolean } : {}),
+    ...(config.persistent !== undefined
+      ? { persistent: config.persistent as boolean }
+      : {}),
     ...(lifecycle ? { lifecycle } : {}),
     ...(onCreate ? { onCreate } : {}),
     ...(onResume ? { onResume } : {}),
-    ...(config.runtimes !== undefined ? { runtimes: [...(config.runtimes as SandboxRuntimeName[])] } : {}),
-    ...(config.timeout !== undefined ? { timeout: config.timeout as number } : {}),
-    ...(config.memoryLimit !== undefined ? { memoryLimit: config.memoryLimit as number } : {}),
-    ...(config.outputLimitBytes !== undefined ? { outputLimitBytes: config.outputLimitBytes as number } : {}),
-    ...(config.envVars !== undefined ? { envVars: { ...(config.envVars as Record<string, string>) } } : {}),
-    ...(config.options !== undefined ? { options: { ...(config.options as Record<string, unknown>) } } : {}),
+    ...(config.runtimes !== undefined
+      ? { runtimes: [...(config.runtimes as SandboxRuntimeName[])] }
+      : {}),
+    ...(config.timeout !== undefined
+      ? { timeout: config.timeout as number }
+      : {}),
+    ...(config.memoryLimit !== undefined
+      ? { memoryLimit: config.memoryLimit as number }
+      : {}),
+    ...(config.outputLimitBytes !== undefined
+      ? { outputLimitBytes: config.outputLimitBytes as number }
+      : {}),
+    ...(config.envVars !== undefined
+      ? { envVars: { ...(config.envVars as Record<string, string>) } }
+      : {}),
+    ...(config.options !== undefined
+      ? { options: { ...(config.options as Record<string, unknown>) } }
+      : {}),
   };
 }
 
@@ -203,20 +285,32 @@ export function normalizeUpdateSandboxConfigInput(
 ): UpdateSandboxConfigInput & { config: SandboxConfig } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
 
-  const config = "config" in value
-    ? normalizeSandboxConfig(mergeConfigObjects(existingConfig, asObject(value.config)))
-    : existingConfig;
+  const config =
+    "config" in value
+      ? normalizeSandboxConfig(
+          mergeConfigObjects(existingConfig, asObject(value.config)),
+        )
+      : existingConfig;
 
   return {
-    ...(value.name !== undefined ? { name: requireString(value.name, "name") } : {}),
+    ...(value.name !== undefined
+      ? { name: requireString(value.name, "name") }
+      : {}),
     ...(value.description !== undefined
-      ? { description: value.description === null ? null : optionalString(value.description, "description") }
+      ? {
+          description:
+            value.description === null
+              ? null
+              : optionalString(value.description, "description"),
+        }
       : {}),
     config,
   };
 }
 
-export function toPublicSandboxConfig(record: SandboxConfigRecord): SandboxConfigRecord {
+export function toPublicSandboxConfig(
+  record: SandboxConfigRecord,
+): SandboxConfigRecord {
   return { ...record, config: redactSandboxConfigSecrets(record.config) };
 }
 
@@ -252,10 +346,18 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
   }
   assertOptionalEnum(value.mode, "config.network.mode", SANDBOX_NETWORK_MODES);
   const mode = (value.mode as SandboxNetworkMode | undefined) ?? "deny-all";
-  const allowDomains = normalizeOptionalStringList(value.allowDomains, "config.network.allowDomains");
-  const allowCidrs = normalizeOptionalStringList(value.allowCidrs, "config.network.allowCidrs");
+  const allowDomains = normalizeOptionalStringList(
+    value.allowDomains,
+    "config.network.allowDomains",
+  );
+  const allowCidrs = normalizeOptionalStringList(
+    value.allowCidrs,
+    "config.network.allowCidrs",
+  );
   if (mode !== "restricted" && (allowDomains || allowCidrs)) {
-    throw new Error("config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted");
+    throw new Error(
+      "config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted",
+    );
   }
   return {
     mode,
@@ -268,32 +370,50 @@ function normalizeHookList(value: unknown, name: string): string[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error(`${name} must be a non-empty array of non-empty strings`);
   }
-  const commands = value.map((entry) => typeof entry === "string" ? entry.trim() : "");
+  const commands = value.map((entry) =>
+    typeof entry === "string" ? entry.trim() : "",
+  );
   if (commands.some((entry) => entry.length === 0)) {
     throw new Error(`${name} must be a non-empty array of non-empty strings`);
   }
   return commands;
 }
 
-function normalizeOptionalStringList(value: unknown, name: string): string[] | undefined {
+function normalizeOptionalStringList(
+  value: unknown,
+  name: string,
+): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) {
     throw new Error(`${name} must be an array of non-empty strings`);
   }
-  const entries = value.map((entry) => typeof entry === "string" ? entry.trim() : "");
+  const entries = value.map((entry) =>
+    typeof entry === "string" ? entry.trim() : "",
+  );
   if (entries.some((entry) => entry.length === 0)) {
     throw new Error(`${name} must be an array of non-empty strings`);
   }
   return entries;
 }
 
-function assertOptionalEnum<T extends string>(value: unknown, name: string, allowed: readonly T[]): void {
-  if (value !== undefined && (typeof value !== "string" || !allowed.includes(value as T))) {
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
     throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
   }
 }
 
-function assertOptionalPositiveInteger(value: unknown, name: string, max?: number): void {
+function assertOptionalPositiveInteger(
+  value: unknown,
+  name: string,
+  max?: number,
+): void {
   if (value === undefined) return;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new Error(`${name} must be a positive integer`);
@@ -321,22 +441,43 @@ function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
   if (!isPlainObject(value)) {
     throw new Error("config.lifecycle must be an object");
   }
-  assertOptionalPositiveInteger(value.idleTimeoutSeconds, "config.lifecycle.idleTimeoutSeconds", MAX_IDLE_TIMEOUT_SECONDS);
-  assertOptionalPositiveInteger(value.maxLifetimeSeconds, "config.lifecycle.maxLifetimeSeconds", MAX_LIFETIME_SECONDS);
+  assertOptionalPositiveInteger(
+    value.idleTimeoutSeconds,
+    "config.lifecycle.idleTimeoutSeconds",
+    MAX_IDLE_TIMEOUT_SECONDS,
+  );
+  assertOptionalPositiveInteger(
+    value.maxLifetimeSeconds,
+    "config.lifecycle.maxLifetimeSeconds",
+    MAX_LIFETIME_SECONDS,
+  );
   return {
-    ...(value.idleTimeoutSeconds !== undefined ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number } : {}),
-    ...(value.maxLifetimeSeconds !== undefined ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number } : {}),
+    ...(value.idleTimeoutSeconds !== undefined
+      ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }
+      : {}),
+    ...(value.maxLifetimeSeconds !== undefined
+      ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number }
+      : {}),
   };
 }
 
-function validateProviderOptions(provider: SandboxProvider, options: unknown): void {
+function validateProviderOptions(
+  provider: SandboxProvider,
+  options: unknown,
+): void {
   if (!isPlainObject(options)) {
     return;
   }
   if (provider === "lambda" && "functionNames" in options) {
-    throw new Error("config.options.functionNames is not supported in account sandbox config");
+    throw new Error(
+      "config.options.functionNames is not supported in account sandbox config",
+    );
   }
-  if (provider === "vercel" && "runtime" in options && typeof options.runtime !== "string") {
+  if (
+    provider === "vercel" &&
+    "runtime" in options &&
+    typeof options.runtime !== "string"
+  ) {
     throw new Error("config.options.runtime must be a string");
   }
 }

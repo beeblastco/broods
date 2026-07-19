@@ -5,8 +5,11 @@
  * that only surface cache creation there.
  */
 
+import {
+  canonicalModelProvider,
+  PROVIDER_CACHE_WRITE_FIELDS,
+} from "@broods/convex/modelPricing";
 import type { LanguageModelUsage } from "ai";
-import { canonicalModelProvider, PROVIDER_CACHE_WRITE_FIELDS } from "@broods/convex/modelPricing";
 import { isPlainObject } from "../shared/object.ts";
 
 export interface UsageTokenTotals {
@@ -19,7 +22,9 @@ export interface UsageTokenTotals {
 }
 
 // Absent counts read as 0 so span attributes and usage rows stay numeric.
-export function usageTokenTotals(usage: LanguageModelUsage | undefined): UsageTokenTotals {
+export function usageTokenTotals(
+  usage: LanguageModelUsage | undefined,
+): UsageTokenTotals {
   return {
     inputTokens: usage?.inputTokens ?? 0,
     outputTokens: usage?.outputTokens ?? 0,

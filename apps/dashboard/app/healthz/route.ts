@@ -3,6 +3,5 @@
  * @returns JSON health payload for Kubernetes probes
  */
 export async function GET() {
-
-    return Response.json({ ok: true });
+  return Response.json({ ok: true });
 }

@@ -7,11 +7,11 @@
  * actual isolate execution lives in isolate-executor.ts.
  */
 
+import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
+import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { readS3Bytes } from "../../shared/s3.ts";
-import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
-import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
 
 export interface ExecuteAccountToolOptions {
   accountId: string;
@@ -19,7 +19,9 @@ export interface ExecuteAccountToolOptions {
   input: unknown;
   config: AgentToolConfig;
   options?: unknown;
-  isolateExecutor?: (options: ExecuteAccountToolOptions) => AsyncGenerator<unknown, void, void>;
+  isolateExecutor?: (
+    options: ExecuteAccountToolOptions,
+  ) => AsyncGenerator<unknown, void, void>;
 }
 
 // Payload the isolate runner reads on stdin. The bundle is always inlined
@@ -52,15 +54,29 @@ interface DetachedAsyncToolMetadata {
  * wired off Lambda — reject them clearly (tracked in #82) rather than trying to
  * run node code in a V8 isolate.
  */
-export async function* streamAccountTool(options: ExecuteAccountToolOptions): AsyncGenerator<unknown, void, void> {
+export async function* streamAccountTool(
+  options: ExecuteAccountToolOptions,
+): AsyncGenerator<unknown, void, void> {
   if (options.tool.runtime === "sandbox") {
-    throw new Error(sandboxUnsupportedMessage(options.tool.name, "needs the sandbox runtime (node/npm or native modules)"));
+    throw new Error(
+      sandboxUnsupportedMessage(
+        options.tool.name,
+        "needs the sandbox runtime (node/npm or native modules)",
+      ),
+    );
   }
   if (isDetachedAsyncTool(extractAsyncToolMetadata(options.options))) {
-    throw new Error(sandboxUnsupportedMessage(options.tool.name, "runs as a detached-async job"));
+    throw new Error(
+      sandboxUnsupportedMessage(
+        options.tool.name,
+        "runs as a detached-async job",
+      ),
+    );
   }
 
-  const isolateExecutor = options.isolateExecutor ?? (await import("./isolate-executor.ts")).streamAccountToolInIsolate;
+  const isolateExecutor =
+    options.isolateExecutor ??
+    (await import("./isolate-executor.ts")).streamAccountToolInIsolate;
   yield* isolateExecutor(options);
 }
 
@@ -75,7 +91,10 @@ export async function createRunnerPayload(options: {
   input: unknown;
   config: AgentToolConfig;
 }): Promise<RunnerPayload> {
-  const bytes = await readS3Bytes(options.bucket, options.tool.bundleStorageKey);
+  const bytes = await readS3Bytes(
+    options.bucket,
+    options.tool.bundleStorageKey,
+  );
   return {
     bundleSourceB64: Buffer.from(bytes).toString("base64"),
     expectedSha256: options.tool.sha256,
@@ -104,7 +123,9 @@ function extractAsyncToolMetadata(options: unknown): unknown {
   return isPlainObject(options) ? options.asyncTool : undefined;
 }
 
-function isDetachedAsyncTool(value: unknown): value is DetachedAsyncToolMetadata {
+function isDetachedAsyncTool(
+  value: unknown,
+): value is DetachedAsyncToolMetadata {
   return (
     isPlainObject(value) &&
     value.detached === true &&
@@ -134,7 +155,13 @@ export function parseToolRunnerFrame(line: string): ToolRunnerFrame | null {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed) as ToolRunnerFrame;
-    if (parsed && (parsed.t === "chunk" || parsed.t === "final" || parsed.t === "end" || parsed.t === "error")) {
+    if (
+      parsed &&
+      (parsed.t === "chunk" ||
+        parsed.t === "final" ||
+        parsed.t === "end" ||
+        parsed.t === "error")
+    ) {
       return parsed;
     }
     return null;

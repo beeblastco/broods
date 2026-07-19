@@ -1,13 +1,13 @@
 /**
  * Human handoff tool.
  * Keep provider-specific handoff actions here; webhook parsing stays in _shared.
- * 
+ *
  * We don't want to reference too much from the zalo channel as this tool will be migrate away from the current code base, so its much better if we define all in here.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { logInfo, logWarn } from "../../shared/log.ts";
 import type { AgentChannelsConfig } from "../../shared/domain/agent-config.ts";
+import { logInfo, logWarn } from "../../shared/log.ts";
 import type { ToolContext } from "./index.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
@@ -79,11 +79,13 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
           },
           reason: {
             type: "string",
-            description: "Short reason for the handoff to include in the sale-team ping.",
+            description:
+              "Short reason for the handoff to include in the sale-team ping.",
           },
           phoneNumber: {
             type: "string",
-            description: "Customer phone number. Required when scenario is order.",
+            description:
+              "Customer phone number. Required when scenario is order.",
           },
         },
         additionalProperties: false,
@@ -95,7 +97,9 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
           throw new Error("phoneNumber is required for order handoffs");
         }
 
-        const conversation = parsePancakeConversationKey(context.conversationKey);
+        const conversation = parsePancakeConversationKey(
+          context.conversationKey,
+        );
         const pageAccessToken = resolvePageAccessToken(context);
         const config = resolveHandoffsConfig(context);
         const scenarioTagId = config.pancake.scenarioTagIds[handoff.scenario];
@@ -110,8 +114,15 @@ export default function handoffsTool(context: HandoffsToolContext): ToolSet {
           zaloNotifyUserCount: config.zalo.notifyUserIds.length,
         });
 
-        const scenarioTag = await addHandoffTag(conversation, pageAccessToken, scenarioTagId);
-        const unread = await markConversationUnread(conversation, pageAccessToken);
+        const scenarioTag = await addHandoffTag(
+          conversation,
+          pageAccessToken,
+          scenarioTagId,
+        );
+        const unread = await markConversationUnread(
+          conversation,
+          pageAccessToken,
+        );
         const zalo = await pingZaloSaleStaff(config, conversation, handoff);
 
         logInfo("Handoff tool completed", {
@@ -139,10 +150,16 @@ async function addHandoffTag(
     conversationId: conversation.conversationId,
     tagId,
   });
-  const response = await postPancakeConversationAction(conversation, pageAccessToken, "tags", "Pancake handoff failed", {
-    action: "add",
-    tag_id: tagId,
-  });
+  const response = await postPancakeConversationAction(
+    conversation,
+    pageAccessToken,
+    "tags",
+    "Pancake handoff failed",
+    {
+      action: "add",
+      tag_id: tagId,
+    },
+  );
   assertTagApplied(response, tagId);
   logInfo("Pancake handoff tag applied", {
     pageId: conversation.pageId,
@@ -161,7 +178,12 @@ async function markConversationUnread(
     pageId: conversation.pageId,
     conversationId: conversation.conversationId,
   });
-  const response = await postPancakeConversationAction(conversation, pageAccessToken, "unread", "Pancake unread failed");
+  const response = await postPancakeConversationAction(
+    conversation,
+    pageAccessToken,
+    "unread",
+    "Pancake unread failed",
+  );
   logInfo("Pancake mark unread succeeded", {
     pageId: conversation.pageId,
     conversationId: conversation.conversationId,
@@ -178,9 +200,9 @@ async function postPancakeConversationAction(
   body?: Record<string, unknown>,
 ): Promise<PancakeActionResponse | null> {
   const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${
-      encodeURIComponent(conversation.conversationId)
-    }/${actionPath}`,
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(conversation.pageId)}/conversations/${encodeURIComponent(
+      conversation.conversationId,
+    )}/${actionPath}`,
   );
   url.searchParams.set("page_access_token", pageAccessToken);
 
@@ -188,9 +210,9 @@ async function postPancakeConversationAction(
     method: "POST",
     ...(body
       ? {
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
       : {}),
   });
   const bodyText = await response.text();
@@ -204,19 +226,25 @@ async function postPancakeConversationAction(
       status: response.status,
       error: formatPancakeError(parsedBody, bodyText),
     });
-    throw new Error(`${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`);
+    throw new Error(
+      `${errorPrefix} (${response.status}): ${formatPancakeError(parsedBody, bodyText)}`,
+    );
   }
 
   return parsedBody;
 }
 
 function resolvePageAccessToken(context: HandoffsToolContext): string {
-  return firstNonEmptyString(
-    context.channels?.pancake?.pageAccessToken,
-  ) ?? missingConfig("config.channels.pancake.pageAccessToken");
+  return (
+    firstNonEmptyString(context.channels?.pancake?.pageAccessToken) ??
+    missingConfig("config.channels.pancake.pageAccessToken")
+  );
 }
 
-function parsePancakeConversationKey(conversationKey: string): { pageId: string; conversationId: string } {
+function parsePancakeConversationKey(conversationKey: string): {
+  pageId: string;
+  conversationId: string;
+} {
   const marker = "pancake:";
   const markerIndex = conversationKey.indexOf(marker);
   if (markerIndex === -1) {
@@ -226,7 +254,9 @@ function parsePancakeConversationKey(conversationKey: string): { pageId: string;
   const value = conversationKey.slice(markerIndex + marker.length);
   const separatorIndex = value.indexOf(":");
   if (separatorIndex <= 0 || separatorIndex === value.length - 1) {
-    throw new Error("Pancake page id or conversation id is missing from conversationKey");
+    throw new Error(
+      "Pancake page id or conversation id is missing from conversationKey",
+    );
   }
 
   return {
@@ -249,18 +279,28 @@ function normalizeHandoffInput(input: unknown): HandoffToolInput {
   return {
     scenario,
     reason: firstNonEmptyString(record.reason) ?? missingConfig("reason"),
-    ...(firstNonEmptyString(record.phoneNumber) ? { phoneNumber: firstNonEmptyString(record.phoneNumber) } : {}),
+    ...(firstNonEmptyString(record.phoneNumber)
+      ? { phoneNumber: firstNonEmptyString(record.phoneNumber) }
+      : {}),
   };
 }
 
-function resolveHandoffsConfig(context: HandoffsToolContext): HandoffsRuntimeConfig {
+function resolveHandoffsConfig(
+  context: HandoffsToolContext,
+): HandoffsRuntimeConfig {
   const toolConfig = context.config as Record<string, unknown>;
-  const pancake = requirePlainObject(toolConfig.pancake, "config.tools.handoffs.pancake");
+  const pancake = requirePlainObject(
+    toolConfig.pancake,
+    "config.tools.handoffs.pancake",
+  );
   const scenarioTagIds = requirePlainObject(
     pancake.scenarioTagIds,
     "config.tools.handoffs.pancake.scenarioTagIds",
   );
-  const zalo = requirePlainObject(toolConfig.zalo, "config.tools.handoffs.zalo");
+  const zalo = requirePlainObject(
+    toolConfig.zalo,
+    "config.tools.handoffs.zalo",
+  );
 
   return {
     pancake: {
@@ -276,7 +316,10 @@ function resolveHandoffsConfig(context: HandoffsToolContext): HandoffsRuntimeCon
       },
     },
     zalo: {
-      botToken: requireNonEmptyString(zalo.botToken, "config.tools.handoffs.zalo.botToken"),
+      botToken: requireNonEmptyString(
+        zalo.botToken,
+        "config.tools.handoffs.zalo.botToken",
+      ),
       notifyUserIds: requireNonEmptyStringArray(
         zalo.notifyUserIds,
         "config.tools.handoffs.zalo.notifyUserIds",
@@ -333,14 +376,23 @@ async function callZaloApi(
       status: response.status,
       error: formatZaloError(parsed, bodyText),
     });
-    throw new Error(`Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`);
+    throw new Error(
+      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
+    );
   }
 
   return parsed ?? { ok: true };
 }
 
-function formatZaloError(body: ZaloApiResponse | null, bodyText: string): string {
-  return body?.description ?? body?.error_code?.toString() ?? (bodyText || "unknown_error");
+function formatZaloError(
+  body: ZaloApiResponse | null,
+  bodyText: string,
+): string {
+  return (
+    body?.description ??
+    body?.error_code?.toString() ??
+    (bodyText || "unknown_error")
+  );
 }
 
 function formatZaloHandoffMessage(
@@ -374,7 +426,10 @@ function missingConfig(name: string): never {
   throw new Error(`${name} is required`);
 }
 
-function requirePlainObject(value: unknown, name: string): Record<string, unknown> {
+function requirePlainObject(
+  value: unknown,
+  name: string,
+): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name} is required`);
   }
@@ -397,20 +452,27 @@ function requireNonEmptyStringArray(value: unknown, name: string): string[] {
   return strings;
 }
 
-function parseJsonBody(text: string): PancakeActionResponse | ZaloApiResponse | null {
+function parseJsonBody(
+  text: string,
+): PancakeActionResponse | ZaloApiResponse | null {
   if (!text) {
     return null;
   }
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    return parsed && typeof parsed === "object" ? parsed as PancakeActionResponse : null;
+    return parsed && typeof parsed === "object"
+      ? (parsed as PancakeActionResponse)
+      : null;
   } catch {
     return null;
   }
 }
 
-function formatPancakeError(body: { message?: string } | null, bodyText: string): string {
+function formatPancakeError(
+  body: { message?: string } | null,
+  bodyText: string,
+): string {
   return body?.message ?? (bodyText || "unknown_error");
 }
 
@@ -421,7 +483,9 @@ function toHandoffToolResponse(
 ): HandoffToolResponse {
   return {
     success: true,
-    message: firstNonEmptyString(unread?.message, scenarioTag?.message) ?? "Conversation handed off to human staff.",
+    message:
+      firstNonEmptyString(unread?.message, scenarioTag?.message) ??
+      "Conversation handed off to human staff.",
     actions: {
       scenarioTag,
       unread,
@@ -430,13 +494,18 @@ function toHandoffToolResponse(
   };
 }
 
-function assertTagApplied(body: PancakeActionResponse | null, tagId: string): void {
+function assertTagApplied(
+  body: PancakeActionResponse | null,
+  tagId: string,
+): void {
   if (!Array.isArray(body?.data)) {
     return;
   }
 
   const tagIds = body.data.map((entry) => String(entry));
   if (!tagIds.includes(tagId)) {
-    throw new Error(`Pancake handoff failed: response did not include tag ${tagId}`);
+    throw new Error(
+      `Pancake handoff failed: response did not include tag ${tagId}`,
+    );
   }
 }

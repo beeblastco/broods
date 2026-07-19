@@ -5,10 +5,12 @@
 import type { AgentRunEventInput, AgentRunOverrides } from "./run-input.ts";
 import type { AgentStreamPart } from "./stream.ts";
 
-export type WebSocketStreamMessage = AgentStreamPart | {
-  type: string;
-  [key: string]: unknown;
-};
+export type WebSocketStreamMessage =
+  | AgentStreamPart
+  | {
+      type: string;
+      [key: string]: unknown;
+    };
 
 export type WebSocketServerMessage =
   | { type: "meta"; sessionId: string; taskId: string }
@@ -19,8 +21,11 @@ export type WebSocketClientExecuteMessage = {
   agentId: string;
   sessionId?: string;
   eventId?: string;
-} & AgentRunEventInput & AgentRunOverrides;
+} & AgentRunEventInput &
+  AgentRunOverrides;
 
 export type WebSocketClientCancelMessage = { type: "cancel" };
 
-export type WebSocketClientMessage = WebSocketClientExecuteMessage | WebSocketClientCancelMessage;
+export type WebSocketClientMessage =
+  | WebSocketClientExecuteMessage
+  | WebSocketClientCancelMessage;

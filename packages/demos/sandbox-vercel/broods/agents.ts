@@ -37,7 +37,8 @@ export const vercelAgent = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: "You are a helpful assistant that can call tools and provide information to the user.",
+      system:
+        "You are a helpful assistant that can call tools and provide information to the user.",
     },
     sandbox: vercelSandbox,
     publicAccess: true,

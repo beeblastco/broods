@@ -8,10 +8,13 @@
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
-import { getConvexClient } from "./client.ts";
-import { logError } from "../log.ts";
-import type { SandboxControlPlane, SandboxRunMetadata } from "../sandbox-sizes.ts";
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
+import { logError } from "../log.ts";
+import type {
+  SandboxControlPlane,
+  SandboxRunMetadata,
+} from "../sandbox-sizes.ts";
+import { getConvexClient } from "./client.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
 /** Convex mode is active only when both env vars are present (see CLAUDE.md). */
@@ -19,7 +22,11 @@ function convexEnabled(): boolean {
   return Boolean(process.env.CONVEX_URL && process.env.CONVEX_DEPLOY_KEY);
 }
 
-export type SandboxInstanceStatus = "running" | "suspended" | "terminating" | "error";
+export type SandboxInstanceStatus =
+  | "running"
+  | "suspended"
+  | "terminating"
+  | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
@@ -37,27 +44,50 @@ export async function upsertSandboxInstance(
   try {
     await getConvexClient().mutation(internal.sandboxInstances.upsert, {
       accountId: controlPlane.accountId as any,
-      ...(controlPlane.projectId ? { projectId: controlPlane.projectId as any } : {}),
-      ...(controlPlane.environmentId ? { environmentId: controlPlane.environmentId as any } : {}),
+      ...(controlPlane.projectId
+        ? { projectId: controlPlane.projectId as any }
+        : {}),
+      ...(controlPlane.environmentId
+        ? { environmentId: controlPlane.environmentId as any }
+        : {}),
       provider,
       reservationKey,
       externalId,
       name: controlPlane.name,
       specs: controlPlane.specs,
-      ...(controlPlane.sandboxConfigId ? { sandboxConfigId: controlPlane.sandboxConfigId as any } : {}),
-      ...(controlPlane.snapshotId ? { snapshotId: controlPlane.snapshotId } : {}),
+      ...(controlPlane.sandboxConfigId
+        ? { sandboxConfigId: controlPlane.sandboxConfigId as any }
+        : {}),
+      ...(controlPlane.snapshotId
+        ? { snapshotId: controlPlane.snapshotId }
+        : {}),
       ...(controlPlane.egress ? { egress: controlPlane.egress } : {}),
-      ...(controlPlane.permissionMode ? { permissionMode: controlPlane.permissionMode } : {}),
-      ...(metadata?.traceId ? { lastUsedTraceId: metadata.traceId, createdByTraceId: metadata.traceId } : {}),
-      ...(metadata?.taskId ? { lastUsedTaskId: metadata.taskId, createdByTaskId: metadata.taskId } : {}),
+      ...(controlPlane.permissionMode
+        ? { permissionMode: controlPlane.permissionMode }
+        : {}),
+      ...(metadata?.traceId
+        ? {
+            lastUsedTraceId: metadata.traceId,
+            createdByTraceId: metadata.traceId,
+          }
+        : {}),
+      ...(metadata?.taskId
+        ? { lastUsedTaskId: metadata.taskId, createdByTaskId: metadata.taskId }
+        : {}),
       ...(metadata?.agentId ? { agentId: metadata.agentId } : {}),
-      ...(metadata?.conversationKey ? { conversationKey: metadata.conversationKey } : {}),
-      ...(metadata?.workspaceName ? { workspaceName: metadata.workspaceName } : {}),
+      ...(metadata?.conversationKey
+        ? { conversationKey: metadata.conversationKey }
+        : {}),
+      ...(metadata?.workspaceName
+        ? { workspaceName: metadata.workspaceName }
+        : {}),
       ...(metadata?.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
     });
     await recordSandboxAuditEvent({
       accountId: controlPlane.accountId,
-      ...(controlPlane.sandboxConfigId ? { sandboxConfigId: controlPlane.sandboxConfigId } : {}),
+      ...(controlPlane.sandboxConfigId
+        ? { sandboxConfigId: controlPlane.sandboxConfigId }
+        : {}),
       reservationKey,
       provider,
       action: "reserve",
@@ -104,7 +134,10 @@ export async function setSandboxInstanceStatus(
  * Removes a terminated instance's row from Convex. No-op outside convex mode or
  * when no row matches the reservation key.
  */
-export async function removeSandboxInstance(accountId: string, reservationKey: string): Promise<void> {
+export async function removeSandboxInstance(
+  accountId: string,
+  reservationKey: string,
+): Promise<void> {
   if (!convexEnabled()) return;
   try {
     await getConvexClient().mutation(internal.sandboxInstances.remove, {

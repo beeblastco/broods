@@ -12,7 +12,10 @@ import {
   providerOptionsFromModelConfig,
   resolveConfiguredModel,
 } from "./provider.ts";
-import { hasPendingToolApprovalResponse, stripReasoningFromMessages } from "./pruning.ts";
+import {
+  hasPendingToolApprovalResponse,
+  stripReasoningFromMessages,
+} from "./pruning.ts";
 
 const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.
 const COMPACTION_MARKER = "<session-compaction-summary>";
@@ -25,8 +28,9 @@ export interface CompactionInput {
   agentConfig: AgentConfig;
 }
 
-
-export async function compactSessionContext(input: CompactionInput): Promise<SystemModelMessage | null> {
+export async function compactSessionContext(
+  input: CompactionInput,
+): Promise<SystemModelMessage | null> {
   const compactionConfig = input.agentConfig.session?.compaction;
   if (compactionConfig?.enabled !== true) {
     return null;
@@ -36,13 +40,16 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   }
 
   const messages = stripReasoningFromMessages(input.messages);
-  const maxContextLength = compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
+  const maxContextLength =
+    compactionConfig.maxContextLength ?? DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH;
   if (estimateContextLength(input.system, messages) <= maxContextLength) {
     return null;
   }
 
   const keepLastMessage = messages.at(-1)?.role === "user";
-  const compactableMessages = keepLastMessage ? messages.slice(0, -1) : messages;
+  const compactableMessages = keepLastMessage
+    ? messages.slice(0, -1)
+    : messages;
   const priorSummaries = input.system.filter(isCompactionSummaryMessage);
   const compactableContext = [...priorSummaries, ...compactableMessages];
   if (compactableContext.length === 0) {
@@ -56,11 +63,17 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
     ...modelSettingsFromModelConfig(input.agentConfig),
     model: configuredModel.model,
     instructions: DEFAULT_COMPACTION_PROMPT,
-    telemetry: { functionId: "harness.compaction", recordInputs: false, recordOutputs: false },
-    messages: [{
-      role: "user",
-      content: formatMessagesForCompaction(compactableContext),
-    }],
+    telemetry: {
+      functionId: "harness.compaction",
+      recordInputs: false,
+      recordOutputs: false,
+    },
+    messages: [
+      {
+        role: "user",
+        content: formatMessagesForCompaction(compactableContext),
+      },
+    ],
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
   });
 
@@ -76,11 +89,19 @@ export async function compactSessionContext(input: CompactionInput): Promise<Sys
   return summary;
 }
 
-export function isCompactionSummaryMessage(message: SystemModelMessage): boolean {
-  return typeof message.content === "string" && message.content.startsWith(COMPACTION_MARKER);
+export function isCompactionSummaryMessage(
+  message: SystemModelMessage,
+): boolean {
+  return (
+    typeof message.content === "string" &&
+    message.content.startsWith(COMPACTION_MARKER)
+  );
 }
 
-export function estimateContextLength(system: SystemModelMessage[], messages: ModelMessage[]): number {
+export function estimateContextLength(
+  system: SystemModelMessage[],
+  messages: ModelMessage[],
+): number {
   // This is a serialized character count, not a word/token count.
   // It is a cheap provider-independent threshold for the MVP compaction trigger.
   return JSON.stringify({ system, messages }).length;
@@ -94,9 +115,11 @@ function createCompactionSummaryMessage(summary: string): SystemModelMessage {
 }
 
 function formatMessagesForCompaction(messages: ModelMessage[]): string {
-  return messages.map((message, index) => {
-    return `Message ${index + 1} (${message.role}):\n${stringifyMessageContent(message.content)}`;
-  }).join("\n\n");
+  return messages
+    .map((message, index) => {
+      return `Message ${index + 1} (${message.role}):\n${stringifyMessageContent(message.content)}`;
+    })
+    .join("\n\n");
 }
 
 function stringifyMessageContent(content: ModelMessage["content"]): string {

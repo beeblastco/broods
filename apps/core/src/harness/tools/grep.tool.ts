@@ -34,16 +34,33 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
   return {
     type: "object",
     properties: {
-      pattern: { type: "string", description: "Regular expression to search for (ripgrep syntax)." },
-      path: { type: "string", description: "File or directory to search, relative to the workspace root. Defaults to the root." },
-      glob: { type: "string", description: "Glob to filter files, e.g. `*.ts` or `**/*.py`." },
+      pattern: {
+        type: "string",
+        description: "Regular expression to search for (ripgrep syntax).",
+      },
+      path: {
+        type: "string",
+        description:
+          "File or directory to search, relative to the workspace root. Defaults to the root.",
+      },
+      glob: {
+        type: "string",
+        description: "Glob to filter files, e.g. `*.ts` or `**/*.py`.",
+      },
       output_mode: {
         type: "string",
         enum: ["content", "files_with_matches", "count"],
-        description: "content: matching lines; files_with_matches: file paths (default); count: match counts.",
+        description:
+          "content: matching lines; files_with_matches: file paths (default); count: match counts.",
       },
-      case_insensitive: { type: "boolean", description: "Case-insensitive search." },
-      line_numbers: { type: "boolean", description: "Include line numbers (content mode)." },
+      case_insensitive: {
+        type: "boolean",
+        description: "Case-insensitive search.",
+      },
+      line_numbers: {
+        type: "boolean",
+        description: "Include line numbers (content mode).",
+      },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
     required: ["pattern"],
@@ -63,7 +80,15 @@ Usage notes:
 - Prefer this over \`bash grep\`/\`rg\` for searching file contents.`,
       inputSchema: jsonSchema(inputSchema(context)),
       async execute(input) {
-        const { pattern, path, glob, output_mode, case_insensitive, line_numbers, workspace } = input as GrepInput;
+        const {
+          pattern,
+          path,
+          glob,
+          output_mode,
+          case_insensitive,
+          line_numbers,
+          workspace,
+        } = input as GrepInput;
         try {
           if (typeof pattern !== "string" || pattern.length === 0) {
             return toolError("Error: pattern is required");
@@ -100,11 +125,15 @@ Usage notes:
                 "Error: ripgrep (rg) is not installed in this sandbox image, so content search is unavailable. Use the bash tool with `grep -r` instead.",
               );
             }
-            return toolError(`${result.stderr}${result.stdout}`.trim() || "Error: grep failed");
+            return toolError(
+              `${result.stderr}${result.stdout}`.trim() || "Error: grep failed",
+            );
           }
           return toolText(result.stdout.trim() || "No matches found");
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

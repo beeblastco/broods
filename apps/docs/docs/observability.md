@@ -33,7 +33,7 @@ flowchart LR
   tracer at init (`registerTelemetry(new OpenTelemetry({ tracer }))`); inputs/outputs
   are not recorded on those spans because the harness's own span rows already carry
   the redacted payloads.
-- **NATS** — INFO/WARN/ERROR only, and only when an *observability context* is set
+- **NATS** — INFO/WARN/ERROR only, and only when an _observability context_ is set
   (project + environment + endpoint id). This is the live path the dashboard tails.
 
 A failure in any one sink never blocks the others, and never throws into the agent path.
@@ -128,6 +128,6 @@ These complete paths 2 and 3 and live in the `infra` repo, not core:
 - The **workdir host OTel collector** config that ships sandbox + daemon logs into the
   same Loki/Tempo (set up once per workdir node).
 
-Until they land, MicroVM/workdir *infrastructure* logs are still available at their
+Until they land, MicroVM/workdir _infrastructure_ logs are still available at their
 source (CloudWatch, the workdir host); the **agent-visible** exec and lifecycle activity
 already reaches the dashboard via path 1.

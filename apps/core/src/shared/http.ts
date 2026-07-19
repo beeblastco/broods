@@ -89,7 +89,9 @@ export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
   try {
     return JSON.parse(request.body);
   } catch (err) {
-    throw new Error(`Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(
+      `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -121,23 +123,37 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
 
 function isPrivateHostname(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal")
+  ) {
     return true;
   }
 
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
     const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-    return a === 0 || a === 10 || a === 127 ||
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
       (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168);
+      (a === 192 && b === 168)
+    );
   }
 
   if (host.includes(":")) {
-    return host === "::" || host === "::1" || host.startsWith("::ffff:") ||
-      /^f[cd]/.test(host) || /^fe[89ab]/.test(host);
+    return (
+      host === "::" ||
+      host === "::1" ||
+      host.startsWith("::ffff:") ||
+      /^f[cd]/.test(host) ||
+      /^fe[89ab]/.test(host)
+    );
   }
 
   return false;

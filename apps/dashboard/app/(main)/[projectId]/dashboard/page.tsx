@@ -1,8 +1,8 @@
 "use client";
 
 /** Dashboard page with sidebar navigation and a titled content panel. */
-import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { Button } from "@/app/components/ui/button";
+import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -13,7 +13,10 @@ import { useCallback, useState } from "react";
 import { BillingPanel } from "./components/BillingPanel";
 import { MonitoringPanel } from "./components/MonitoringPanel";
 import { ObservabilityKeyPrompt } from "./components/ObservabilityKeyPrompt";
-import { RuntimeKeyDialog, RuntimeKeyView } from "./components/RuntimeKeyDialog";
+import {
+  RuntimeKeyDialog,
+  RuntimeKeyView,
+} from "./components/RuntimeKeyDialog";
 import { TokensUsagePanel } from "./components/TokensUsagePanel";
 import { TracingPanel } from "./components/TracingPanel";
 
@@ -66,11 +69,17 @@ export default function DashboardPage() {
   const rotateKey = useMutation(api.agentDeployments.rotate);
   // A key just minted in this view, scoped to its endpoint so switching
   // environments never serves the wrong environment's key.
-  const [generated, setGenerated] = useState<{ endpointId: string; key: string } | null>(null);
+  const [generated, setGenerated] = useState<{
+    endpointId: string;
+    key: string;
+  } | null>(null);
   const [generatingKey, setGeneratingKey] = useState(false);
   // Scoped to the env it occurred in so a stale error never leaks onto another
   // environment after switching.
-  const [keyError, setKeyError] = useState<{ envId: string; msg: string } | null>(null);
+  const [keyError, setKeyError] = useState<{
+    envId: string;
+    msg: string;
+  } | null>(null);
   // Reveal dialog (key + SDK usage). `justCreated` reframes it right after a mint.
   const [keyDialogOpen, setKeyDialogOpen] = useState(false);
   const [keyJustCreated, setKeyJustCreated] = useState(false);
@@ -83,51 +92,59 @@ export default function DashboardPage() {
     activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
   );
   const observabilityApiKey =
-    (generated && generated.endpointId === activeDeployment?.endpointId ? generated.key : undefined) ??
-    revealedKey;
-  const currentKeyError = keyError && keyError.envId === activeEnvId ? keyError.msg : null;
+    (generated && generated.endpointId === activeDeployment?.endpointId
+      ? generated.key
+      : undefined) ?? revealedKey;
+  const currentKeyError =
+    keyError && keyError.envId === activeEnvId ? keyError.msg : null;
 
   // Mint the environment's runtime key from the dashboard so a dashboard-first user
   // (project created here, never through the CLI) can stream logs/traces. `ensure`
   // creates one on first call and recovers it thereafter.
-  const generateViewingKey = useCallback(
-    async () => {
-      if (!activeEnvId) return;
-      setGeneratingKey(true);
-      setKeyError(null);
-      try {
-        const result = await ensureKey({ projectId: projectId, environmentId: activeEnvId });
-        if (result.rawApiKey) {
-          setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
-          // Surface the key + SDK usage immediately so a dashboard-first user knows
-          // how to wire it into their code, not just that streaming now works.
-          setKeyJustCreated(true);
-          setKeyDialogOpen(true);
-        } else {
-          setKeyError({ envId: activeEnvId, msg: "Couldn't load the key — try again." });
-        }
-      } catch (err) {
-        setKeyError({ envId: activeEnvId, msg: err instanceof Error ? err.message : "Failed to generate key" });
-      } finally {
-        setGeneratingKey(false);
+  const generateViewingKey = useCallback(async () => {
+    if (!activeEnvId) return;
+    setGeneratingKey(true);
+    setKeyError(null);
+    try {
+      const result = await ensureKey({
+        projectId: projectId,
+        environmentId: activeEnvId,
+      });
+      if (result.rawApiKey) {
+        setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
+        // Surface the key + SDK usage immediately so a dashboard-first user knows
+        // how to wire it into their code, not just that streaming now works.
+        setKeyJustCreated(true);
+        setKeyDialogOpen(true);
+      } else {
+        setKeyError({
+          envId: activeEnvId,
+          msg: "Couldn't load the key — try again.",
+        });
       }
-    },
-    [activeEnvId, projectId, ensureKey],
-  );
+    } catch (err) {
+      setKeyError({
+        envId: activeEnvId,
+        msg: err instanceof Error ? err.message : "Failed to generate key",
+      });
+    } finally {
+      setGeneratingKey(false);
+    }
+  }, [activeEnvId, projectId, ensureKey]);
 
   // Rotate the environment's runtime key, surfacing the new plaintext immediately
   // through the same `generated` channel the mint flow uses. Rethrows so the
   // Rotate control can show the failure inline.
-  const rotateViewingKey = useCallback(
-    async () => {
-      if (!activeEnvId) return;
-      const result = await rotateKey({ projectId: projectId, environmentId: activeEnvId });
-      if (result.rawApiKey) {
-        setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
-      }
-    },
-    [activeEnvId, projectId, rotateKey],
-  );
+  const rotateViewingKey = useCallback(async () => {
+    if (!activeEnvId) return;
+    const result = await rotateKey({
+      projectId: projectId,
+      environmentId: activeEnvId,
+    });
+    if (result.rawApiKey) {
+      setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
+    }
+  }, [activeEnvId, projectId, rotateKey]);
 
   const projectSlug = activeDeployment?.projectSlug;
   const environmentSlug = activeDeployment?.environmentSlug;
@@ -152,16 +169,19 @@ export default function DashboardPage() {
   const activeLabel = tab?.label ?? "";
   // Monitoring and tracing are dense, scroll-internally panels that should fill
   // the viewport width and height; billing stays narrow; usage keeps the chart width.
-  const isObservabilityTab = activeTab === "monitoring" || activeTab === "tracing";
-  const contentMaxWidth = activeTab === "billing" || activeTab === "api-key"
-    ? "max-w-2xl"
-    : isObservabilityTab
-      ? "max-w-none"
-      : "max-w-7xl";
+  const isObservabilityTab =
+    activeTab === "monitoring" || activeTab === "tracing";
+  const contentMaxWidth =
+    activeTab === "billing" || activeTab === "api-key"
+      ? "max-w-2xl"
+      : isObservabilityTab
+        ? "max-w-none"
+        : "max-w-7xl";
 
   // While the reveal query is still resolving, hold a quiet loader instead of
   // flashing the "generate a key" prompt — the prompt is only the true-absence state.
-  const keyResolving = Boolean(activeEnvId) && revealedKey === undefined && !observabilityApiKey;
+  const keyResolving =
+    Boolean(activeEnvId) && revealedKey === undefined && !observabilityApiKey;
   const observabilityFallback = keyResolving ? (
     <div className="flex h-full min-h-64 items-center justify-center">
       <p className="text-sm text-muted-foreground">Loading…</p>
@@ -210,7 +230,10 @@ export default function DashboardPage() {
         return <BillingPanel projectId={projectId} />;
       case "api-key":
         return observabilityApiKey ? (
-          <RuntimeKeyView apiKey={observabilityApiKey} onRotate={rotateViewingKey} />
+          <RuntimeKeyView
+            apiKey={observabilityApiKey}
+            onRotate={rotateViewingKey}
+          />
         ) : (
           observabilityFallback
         );

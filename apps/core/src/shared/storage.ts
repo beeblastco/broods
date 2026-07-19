@@ -3,17 +3,14 @@
  * domain records and configuration codecs live in `./domain/`.
  */
 
-import type {
-  AccountRecord,
-  CreateAccountInput,
-} from "./domain/accounts.ts";
+import type { AccountHookRecord } from "./domain/account-hooks.ts";
+import type { AccountToolRecord } from "./domain/account-tools.ts";
+import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
+import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { CronRecord, CronRunRecord } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
-import type { AccountToolRecord } from "./domain/account-tools.ts";
-import type { AccountHookRecord } from "./domain/account-hooks.ts";
-import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 
 /** Safe deployment scope returned by Convex without stored credentials. */
 export interface AgentDeploymentScope {
@@ -85,7 +82,9 @@ export interface SandboxUsageEntry {
 interface AccountStore {
   getById(accountId: string): Promise<AccountRecord | null>;
   getBySecretHash(secretHash: string): Promise<AccountRecord | null>;
-  create(input: CreateAccountInput): Promise<{ account: AccountRecord; secret: string }>;
+  create(
+    input: CreateAccountInput,
+  ): Promise<{ account: AccountRecord; secret: string }>;
   disable(accountId: string): Promise<AccountRecord | null>;
   remove(accountId: string): Promise<boolean>;
 }
@@ -104,7 +103,10 @@ interface AgentStore {
 interface AgentDeploymentStore {
   getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
   /** Resolve the environment deployment containing one linked runtime agent. */
-  getByAgentId?(accountId: string, agentId: string): Promise<AgentDeploymentScope | null>;
+  getByAgentId?(
+    accountId: string,
+    agentId: string,
+  ): Promise<AgentDeploymentScope | null>;
 }
 
 /** Account-scoped cron job schedules. */
@@ -115,21 +117,39 @@ interface CronStore {
   markStarted(accountId: string, cronId: string): Promise<void>;
   markCompleted(accountId: string, cronId: string): Promise<void>;
   markFailed(accountId: string, cronId: string, error: string): Promise<void>;
-  createRun(input: Omit<CronRunRecord, "runId" | "status" | "startedAt">): Promise<CronRunRecord>;
-  completeRun(accountId: string, cronId: string, runId: string, result: unknown): Promise<void>;
-  failRun(accountId: string, cronId: string, runId: string, error: string): Promise<void>;
+  createRun(
+    input: Omit<CronRunRecord, "runId" | "status" | "startedAt">,
+  ): Promise<CronRunRecord>;
+  completeRun(
+    accountId: string,
+    cronId: string,
+    runId: string,
+    result: unknown,
+  ): Promise<void>;
+  failRun(
+    accountId: string,
+    cronId: string,
+    runId: string,
+    error: string,
+  ): Promise<void>;
 }
 
 /** Account-scoped, reusable sandbox config records (encrypted at rest). */
 interface SandboxConfigStore {
-  getById(accountId: string, sandboxId: string): Promise<SandboxConfigRecord | null>;
+  getById(
+    accountId: string,
+    sandboxId: string,
+  ): Promise<SandboxConfigRecord | null>;
   list(accountId: string): Promise<SandboxConfigRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
 /** Account-scoped, reusable workspace config records (plaintext, no secrets). */
 interface WorkspaceConfigStore {
-  getById(accountId: string, workspaceId: string): Promise<WorkspaceConfigRecord | null>;
+  getById(
+    accountId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceConfigRecord | null>;
   list(accountId: string): Promise<WorkspaceConfigRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
@@ -148,7 +168,10 @@ interface AccountHookStore {
 
 /** Account-scoped reusable runtime authorization policies. */
 interface AgentPolicyStore {
-  getById(accountId: string, policyId: string): Promise<AgentPolicyRecord | null>;
+  getById(
+    accountId: string,
+    policyId: string,
+  ): Promise<AgentPolicyRecord | null>;
 }
 
 /**

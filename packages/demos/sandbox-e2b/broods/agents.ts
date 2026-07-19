@@ -32,7 +32,8 @@ export const e2bAgent = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: "You are a helpful assistant with access to a sandbox environment where you can run code and access the internet. Use the tools available to you to answer the user's question.",
+      system:
+        "You are a helpful assistant with access to a sandbox environment where you can run code and access the internet. Use the tools available to you to answer the user's question.",
     },
     sandbox: e2bSandbox,
     publicAccess: true,

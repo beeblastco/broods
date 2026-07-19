@@ -49,11 +49,11 @@ broods run my-agent "Hello"  # one-off run with pretty streaming
 
 ### Global Options
 
-| Flag | Description |
-| --- | --- |
-| `--dashboard-url <url>` | Override dashboard URL |
-| `--project <name>` | Override project name |
-| `--env <name>` | Override target environment |
+| Flag                    | Description                 |
+| ----------------------- | --------------------------- |
+| `--dashboard-url <url>` | Override dashboard URL      |
+| `--project <name>`      | Override project name       |
+| `--env <name>`          | Override target environment |
 
 ## Self-Hosted Configuration
 
@@ -127,7 +127,7 @@ Deploy outputs include:
 
 ## Container Runtime (Phase 9a)
 
-The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, Scheduler, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane.
+The core ships as a single container image, `ghcr.io/beeblastco/broods-core`, built from `apps/core/Dockerfile` by the `Build Core Image` workflow (`dev` and `main` tags). One Bun process serves both harness and account routes through the gateway. The container uses Convex plus S3, NATS, OPA, and sandbox providers; an IAM access key for the per-stage `core-runtime` user authorizes the remaining AWS data plane. Core does not talk to EventBridge Scheduler — the Convex config plane owns every schedule, including the account-deletion sweep.
 
 ```mermaid
 flowchart LR
@@ -135,7 +135,7 @@ flowchart LR
     Ingress --> Gateway[broods gateway]
     Gateway --> Pod[broods-core pod\nBun.serve]
     Pod --> Handlers[harness + account handlers]
-    Handlers --> Data[(Convex / S3 / NATS\nOPA / Scheduler / sandboxes)]
+    Handlers --> Data[(Convex / S3 / NATS\nOPA / sandboxes)]
 ```
 
 Runtime notes:
@@ -270,9 +270,9 @@ flowchart LR
   Deploy -->|failure| Alert["Step summary +<br/>uploaded artifacts"]
 ```
 
-| Stage | Auto-reconcile on drift? | Gate |
-| --- | --- | --- |
-| `dev` | yes | `development` environment (no approval) |
+| Stage          | Auto-reconcile on drift?                                   | Gate                                                                          |
+| -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `dev`          | yes                                                        | `development` environment (no approval)                                       |
 | `production-*` | yes (when the GitHub `production` environment is approved) | `production` environment (approval-gated — same gate as a normal prod deploy) |
 
 Each run uploads the full refresh + diff log as the artifact

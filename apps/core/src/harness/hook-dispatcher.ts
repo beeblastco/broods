@@ -8,18 +8,25 @@
  */
 
 import type { JSONValue, ToolSet } from "ai";
-import { isPlainObject } from "../shared/object.ts";
-import type { AgentCodeHookConfig, AgentConfig, AgentHookEventName } from "../shared/domain/agent-config.ts";
 import type { AccountHookRecord } from "../shared/domain/account-hooks.ts";
+import type {
+  AgentCodeHookConfig,
+  AgentConfig,
+  AgentHookEventName,
+} from "../shared/domain/agent-config.ts";
+import { isPlainObject } from "../shared/object.ts";
 import { getStorage } from "../shared/storage.ts";
+import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
-import { runCodeHook } from "./hook-runner.ts";
 
 export interface HookDispatcher {
   hasHooksFor(event: AgentHookEventName): boolean;
   /** Runs every hook registered for the event and returns the merged, field-scoped mutation. */
-  runMutation(event: AgentHookEventName, payload: AgentLifecycleEventPayload): Promise<Record<string, unknown> | undefined>;
+  runMutation(
+    event: AgentHookEventName,
+    payload: AgentLifecycleEventPayload,
+  ): Promise<Record<string, unknown> | undefined>;
 }
 
 const NO_HOOKS: HookDispatcher = {
@@ -34,7 +41,9 @@ export async function createAgentHookDispatcher(
   accountId: string | undefined,
   agentConfig: AgentConfig,
 ): Promise<HookDispatcher> {
-  const refs = (agentConfig.hooks?.code ?? []).filter((ref) => ref.enabled !== false);
+  const refs = (agentConfig.hooks?.code ?? []).filter(
+    (ref) => ref.enabled !== false,
+  );
   if (!accountId || refs.length === 0) {
     return NO_HOOKS;
   }
@@ -68,7 +77,13 @@ export function createHookDispatcher(
         // Hooks run in config order; later hooks' fields override earlier ones.
         let merged: Record<string, unknown> | undefined;
         for (const record of records) {
-          const { mutation, state } = await runCodeHook({ accountId, record, event, payload, state: runState });
+          const { mutation, state } = await runCodeHook({
+            accountId,
+            record,
+            event,
+            payload,
+            state: runState,
+          });
           runState = state;
           if (mutation) {
             merged = { ...(merged ?? {}), ...mutation };
@@ -95,7 +110,9 @@ function buildEventIndex(
     }
     // A ref may narrow the bundle's declared events; the effective set is the
     // intersection so a hook only fires for events it actually handles.
-    const events = ref.events ? record.events.filter((event) => ref.events!.includes(event)) : record.events;
+    const events = ref.events
+      ? record.events.filter((event) => ref.events!.includes(event))
+      : record.events;
     for (const event of events) {
       const list = index.get(event) ?? [];
       list.push(record);
@@ -110,7 +127,10 @@ function buildEventIndex(
  * args before it runs and a `tool.result` hook can transform its output after.
  * Returns the ToolSet unchanged when no tool-scoped hooks are registered.
  */
-export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolSet {
+export function wrapToolsWithHooks(
+  tools: ToolSet,
+  hooks: HookDispatcher,
+): ToolSet {
   const wantsStart = hooks.hasHooksFor("tool.call.started");
   const wantsResult = hooks.hasHooksFor("tool.result");
   if (!wantsStart && !wantsResult) {
@@ -123,7 +143,10 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
       wrapped[name] = tool;
       continue;
     }
-    const execute = async (input: unknown, execOptions: unknown): Promise<unknown> => {
+    const execute = async (
+      input: unknown,
+      execOptions: unknown,
+    ): Promise<unknown> => {
       let effectiveInput = input;
       if (wantsStart) {
         const mutation = await hooks.runMutation("tool.call.started", {
@@ -132,7 +155,10 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
         });
         if (mutation) {
           if (mutation.decision === "deny") {
-            const reason = typeof mutation.denyReason === "string" ? mutation.denyReason : "denied by hook";
+            const reason =
+              typeof mutation.denyReason === "string"
+                ? mutation.denyReason
+                : "denied by hook";
             throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
           }
           if (isPlainObject(mutation.args)) {
@@ -140,7 +166,9 @@ export function wrapToolsWithHooks(tools: ToolSet, hooks: HookDispatcher): ToolS
           }
         }
       }
-      let result = await (originalExecute as (input: unknown, options: unknown) => unknown)(effectiveInput, execOptions);
+      let result = await (
+        originalExecute as (input: unknown, options: unknown) => unknown
+      )(effectiveInput, execOptions);
       if (wantsResult) {
         const mutation = await hooks.runMutation("tool.result", {
           toolName: name,
@@ -167,7 +195,10 @@ export async function applyMessageSendingHook(
   channel: string,
   text: string,
 ): Promise<string | null> {
-  const mutation = await hooks.runMutation("channel.message.sending", { channel, text });
+  const mutation = await hooks.runMutation("channel.message.sending", {
+    channel,
+    text,
+  });
   if (mutation?.drop === true) {
     return null;
   }
@@ -176,9 +207,17 @@ export async function applyMessageSendingHook(
 }
 
 /** Resolve the active hook records referenced by the run's config.hooks.code. */
-async function loadAgentHooks(accountId: string, refs: AgentCodeHookConfig[]): Promise<AccountHookRecord[]> {
+async function loadAgentHooks(
+  accountId: string,
+  refs: AgentCodeHookConfig[],
+): Promise<AccountHookRecord[]> {
   const ids = [...new Set(refs.map((ref) => ref.hookId))];
   const store = getStorage().accountHooks;
-  const records = await Promise.all(ids.map((id) => store.getById(accountId, id)));
-  return records.filter((record): record is AccountHookRecord => record != null && record.status === "active");
+  const records = await Promise.all(
+    ids.map((id) => store.getById(accountId, id)),
+  );
+  return records.filter(
+    (record): record is AccountHookRecord =>
+      record != null && record.status === "active",
+  );
 }
