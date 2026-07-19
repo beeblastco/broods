@@ -34,7 +34,9 @@ const HOOK_MUTABLE_FIELDS = {
   "tool.call.started": ["decision", "args", "denyReason"],
   "tool.result": ["output"],
   "subagent.task.finished": ["visibleResult"],
-  "channel.message.received": ["drop", "text"],
+  // `metadata` is opaque per-message data (persisted on the stored-event
+  // envelope, projected back onto agent.started payload messages).
+  "channel.message.received": ["drop", "text", "metadata"],
   "channel.message.sending": ["drop", "text"],
 } as const satisfies Partial<Record<AgentHookEventName, readonly string[]>>;
 
@@ -80,8 +82,7 @@ export async function runCodeHook(
     // Hook mode always yields { result, state } — the runner reads ctx.state
     // back out so the host can thread it into the next fire-point.
     const raw = (await runForResult(accountId, payload)) as
-      | { result?: unknown; state?: unknown }
-      | undefined;
+      { result?: unknown; state?: unknown } | undefined;
     return {
       mutation: sanitizeHookResult(event, raw?.result),
       state: sanitizeHookState(raw?.state, incomingState),

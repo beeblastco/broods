@@ -73,13 +73,7 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  | "agent"
-  | "workspace"
-  | "sandbox"
-  | "cron"
-  | "skill"
-  | "tool"
-  | "policy";
+  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -134,12 +128,7 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  | "telegram"
-  | "github"
-  | "slack"
-  | "discord"
-  | "pancake"
-  | "zalo";
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -346,6 +335,13 @@ export type ChannelMessageReceived =
  * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
  */
 export interface AgentHooks {
+  /**
+   * Fires once per run before the model loop. Each history entry in
+   * `messages` is an AI SDK model message; user messages additionally carry
+   * `createdAt` (ISO cursor) and, when an `onMessageReceived` hook attached
+   * one, the opaque `metadata` it returned — so run-scoped code can read
+   * per-message identity/context without parsing text.
+   */
   onStart?: Handler<
     { system: string; messages: unknown[] },
     { system?: string; messages?: unknown[] }
@@ -376,9 +372,17 @@ export interface AgentHooks {
     { taskId: string; result: unknown },
     { visibleResult?: unknown }
   >;
+  /**
+   * Fires per inbound channel message, before any run. Return `metadata`
+   * (JSON-serializable, e.g. sender identity derived from `event.source`) to
+   * persist it with the stored message; core never interprets it and exposes
+   * it back on `onStart`'s corresponding history message. Note this hook's
+   * `ctx.state` is fresh — persisted `metadata` is the way to hand data to
+   * the run.
+   */
   onMessageReceived?: Handler<
     ChannelMessageReceived,
-    { drop?: boolean; text?: string }
+    { drop?: boolean; text?: string; metadata?: unknown }
   >;
   onMessageSending?: Handler<
     { channel: ChannelType; text: string },

@@ -74,7 +74,11 @@ import {
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
 import type { SandboxCpuSample } from "./sandbox/types.ts";
-import type { Session, TurnContextSnapshot } from "./session.ts";
+import {
+  stripEnvelopeFieldsFromMessages,
+  type Session,
+  type TurnContextSnapshot,
+} from "./session.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
@@ -767,7 +771,9 @@ export async function runAgentLoop(
     ...modelSettings,
     model: configuredModel.model,
     instructions: turnContext.system,
-    messages: turnContext.messages,
+    // History messages carry envelope fields (metadata/createdAt) for hook
+    // payloads; the model must see clean AI SDK shapes.
+    messages: stripEnvelopeFieldsFromMessages(turnContext.messages),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
     ...(toolApproval ? { toolApproval } : {}),
