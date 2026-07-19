@@ -98,9 +98,7 @@ export const commands: CommandHandler[] = [
           if (!result.hasMore) return "Context cleared. Starting fresh.";
         }
 
-        throw new Error(
-          `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
-        );
+        return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
       } finally {
         await runtime.mutate("releaseIngressOwner", {
           conversationKey: ctx.conversationKey,

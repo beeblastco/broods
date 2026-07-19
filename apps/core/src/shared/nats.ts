@@ -471,7 +471,29 @@ export async function conversationBufferedCount(options: {
   }
 }
 
-/** Snapshot the replay stream identity and sequence range for cursor validation. */
+// Bounds future-cursor rejection: a client can never hold a cursor beyond the
+// last sequence published for its subject; null when nothing is retained.
+export async function conversationLastSequence(options: {
+  connection: NatsConnection;
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+}): Promise<number | null> {
+  try {
+    const jsm = await options.connection.jetstreamManager();
+    const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+      last_by_subj: streamResponseSubject(
+        options.accountId,
+        options.agentId,
+        options.conversationKey,
+      ),
+    });
+    return message.seq;
+  } catch {
+    return null;
+  }
+}
+
 export async function conversationReplaySnapshot(options: {
   connection: NatsConnection;
   accountId: string;
@@ -506,37 +528,8 @@ export async function conversationReplaySnapshot(options: {
   };
 }
 
-/**
- * The last retained stream sequence for one conversation subject, or null when
- * nothing is retained. Bounds future-cursor rejection: a client can never hold
- * a cursor beyond the last message published for its subject.
- */
-export async function conversationLastSequence(options: {
-  connection: NatsConnection;
-  accountId: string;
-  agentId: string;
-  conversationKey: string;
-}): Promise<number | null> {
-  try {
-    const jsm = await options.connection.jetstreamManager();
-    const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
-      last_by_subj: streamResponseSubject(
-        options.accountId,
-        options.agentId,
-        options.conversationKey,
-      ),
-    });
-    return message.seq;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The subject of the retained message at one stream sequence, or null when it
- * was evicted. With head-only eviction, a retained cursor message proves every
- * later message for its subject is still replayable.
- */
+// With head-only eviction, a retained cursor message proves every later message
+// for its subject is still replayable; null when the sequence was evicted.
 export async function retainedMessageSubject(
   connection: NatsConnection,
   sequence: number,

@@ -382,7 +382,7 @@ describe("clearConversation via /new command", () => {
     );
   });
 
-  it("returns an error when conversation cleanup does not converge", async () => {
+  it("returns actionable guidance when conversation cleanup does not converge", async () => {
     const mutationMock = mock((name: string) =>
       Promise.resolve(
         name === "acquireIngressClear"
@@ -401,7 +401,7 @@ describe("clearConversation via /new command", () => {
     );
     expect(mutationMock).toHaveBeenCalledTimes(102);
     expect(channel.sendText).toHaveBeenCalledWith(
-      "Something went wrong. Please try again.",
+      "Conversation cleanup exceeded 100 Convex batches; run /clear again to continue",
     );
     expect(channel.sendText).not.toHaveBeenCalledWith(
       "Context cleared. Starting fresh.",

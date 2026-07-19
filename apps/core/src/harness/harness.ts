@@ -828,11 +828,15 @@ export async function runAgentLoop(
         turnContext.ephemeralSystem.push(...steeringSystem);
         stepMessages = [
           ...messages,
-          ...steeringEvents.filter(
-            (
-              event,
-            ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
-              event.role !== "system",
+          ...stripEnvelopeFieldsFromMessages(
+            steeringEvents.filter(
+              (
+                event,
+              ): event is Exclude<
+                ConversationIngressEvent,
+                SystemModelMessage
+              > => event.role !== "system",
+            ),
           ),
         ];
         logInfo("Steering ingress applied at AI SDK step boundary", {
