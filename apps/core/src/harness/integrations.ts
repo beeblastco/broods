@@ -924,6 +924,23 @@ function isChannelWorkspaceScope(
   return value.level === "conversation" && typeof value.alias === "string";
 }
 
+// Attaches an onMessageReceived hook's opaque metadata to the newest user
+// ingress event; the session persists it and re-exposes it on hook payloads.
+export function attachMetadataToLatestUserIngress(
+  events: ConversationIngressEvent[],
+  metadata: unknown,
+): ConversationIngressEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (event.role !== "user") continue;
+    const next = [...events];
+    next[i] = { ...event, metadata };
+    return next;
+  }
+
+  return events;
+}
+
 async function processChannelMessage(
   event: ChannelInboundEvent,
   handlers: IntegrationHandlers,
@@ -1052,28 +1069,6 @@ export function rewriteLatestUserIngressText(
     if (event.role !== "user") continue;
     const next = [...events];
     next[i] = { ...event, content: text };
-    return next;
-  }
-
-  return events;
-}
-
-/**
- * Attaches a channel.message.received hook's opaque `metadata` to the newest
- * user ingress event — the inbound message the hook saw. Core never interprets
- * the value: the session persists it on the stored-event envelope and projects
- * it back onto hook payload messages (agent.started), so agent code can read
- * per-message identity/context without parsing it out of the text.
- */
-export function attachMetadataToLatestUserIngress(
-  events: ConversationIngressEvent[],
-  metadata: unknown,
-): ConversationIngressEvent[] {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (event.role !== "user") continue;
-    const next = [...events];
-    next[i] = { ...event, metadata };
     return next;
   }
 

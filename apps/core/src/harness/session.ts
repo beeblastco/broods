@@ -56,9 +56,8 @@ import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 const CONVERSATION_LEASE_TTL_SECONDS = 15 * 60;
 
 export type ConversationIngressEvent =
-  // `metadata` is an opaque per-message payload (from an onMessageReceived
-  // hook) that persists on the stored-event envelope, never inside the model
-  // message. See StoredEventBase.
+  // `metadata` is opaque hook data persisted on the stored-event envelope,
+  // never inside the model message. See StoredEventBase.
   | (UserModelMessage & { metadata?: unknown })
   | AssistantModelMessage
   | ToolModelMessage
@@ -110,10 +109,8 @@ interface SubagentMetadata {
  * `version` gives us a migration hook for future schema changes, and
  * `sourceEventId` ties projected rows back to the inbound request/webhook event
  * that created them for dedupe/debugging.
- * `metadata` is opaque per-message data set by a `channel.message.received`
- * hook (e.g. sender identity, timestamps). Core never interprets it — it is
- * persisted on the envelope (not the model message) and projected back onto
- * hook payload messages so agent code can read it without parsing text.
+ * `metadata` is opaque channel.message.received hook data; core never
+ * interprets it, only persists and re-exposes it on hook payloads.
  */
 interface StoredEventBase {
   version: 1;
@@ -788,6 +785,24 @@ export class Session {
   }
 }
 
+// Projection attaches metadata/createdAt for hook payloads; model calls must
+// receive clean AI SDK message shapes, so they pass through this first.
+export function stripEnvelopeFieldsFromMessages(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  return messages.map((message) => {
+    if (!("metadata" in message) && !("createdAt" in message)) {
+      return message;
+    }
+    const {
+      metadata: _metadata,
+      createdAt: _createdAt,
+      ...rest
+    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+    return rest as ModelMessage;
+  });
+}
+
 function formatMemorySystemPrompt(
   memoryFiles: Array<{ workspace: ResolvedWorkspace; content: string }>,
 ): string {
@@ -995,10 +1010,8 @@ function toStoredConversationEvent<
     : null;
 }
 
-// Conversation projection. User messages carry their envelope `metadata` and
-// `createdAt` so hook payloads (agent.started) can read per-message identity
-// and timing without parsing text; stripEnvelopeFieldsFromMessages removes
-// both again before the messages reach a model call.
+// Conversation projection. User messages carry envelope metadata/createdAt for
+// hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
 function projectEntriesToMessages(
   entries: StoredConversationEntry[],
 ): ModelMessage[] {
@@ -1021,28 +1034,6 @@ function projectEntriesToMessages(
       case "tool":
         return [event.message];
     }
-  });
-}
-
-/**
- * Removes the envelope-only fields (`metadata`, `createdAt`) that projection
- * attaches for hook payloads. Model calls must receive clean AI SDK message
- * shapes, so every path that hands session messages to a model goes through
- * this first.
- */
-export function stripEnvelopeFieldsFromMessages(
-  messages: ModelMessage[],
-): ModelMessage[] {
-  return messages.map((message) => {
-    if (!("metadata" in message) && !("createdAt" in message)) {
-      return message;
-    }
-    const {
-      metadata: _metadata,
-      createdAt: _createdAt,
-      ...rest
-    } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
-    return rest as ModelMessage;
   });
 }
 

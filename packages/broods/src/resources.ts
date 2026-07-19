@@ -335,13 +335,8 @@ export type ChannelMessageReceived =
  * `ctx.state`. `onSubagentFinish` fires on the parent with the parent's state.
  */
 export interface AgentHooks {
-  /**
-   * Fires once per run before the model loop. Each history entry in
-   * `messages` is an AI SDK model message; user messages additionally carry
-   * `createdAt` (ISO cursor) and, when an `onMessageReceived` hook attached
-   * one, the opaque `metadata` it returned — so run-scoped code can read
-   * per-message identity/context without parsing text.
-   */
+  // User messages in `messages` carry `createdAt` plus any `metadata` an
+  // onMessageReceived hook returned, for reading identity without text parsing.
   onStart?: Handler<
     { system: string; messages: unknown[] },
     { system?: string; messages?: unknown[] }
@@ -372,14 +367,8 @@ export interface AgentHooks {
     { taskId: string; result: unknown },
     { visibleResult?: unknown }
   >;
-  /**
-   * Fires per inbound channel message, before any run. Return `metadata`
-   * (JSON-serializable, e.g. sender identity derived from `event.source`) to
-   * persist it with the stored message; core never interprets it and exposes
-   * it back on `onStart`'s corresponding history message. Note this hook's
-   * `ctx.state` is fresh — persisted `metadata` is the way to hand data to
-   * the run.
-   */
+  // Returned `metadata` (opaque JSON) persists with the stored message and
+  // resurfaces on onStart's messages — the receive→run channel ctx.state lacks.
   onMessageReceived?: Handler<
     ChannelMessageReceived,
     { drop?: boolean; text?: string; metadata?: unknown }
