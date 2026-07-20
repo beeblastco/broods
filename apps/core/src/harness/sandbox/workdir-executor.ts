@@ -89,7 +89,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const sandbox = await this.#acquire(request);
 
     try {
-      if (this.#s3MountStrategy() === "exec")
+      if (this.#s3MountStrategy(request) === "exec")
         await this.#ensureS3Mount(sandbox, request);
       if (persistent)
         await this.#runLifecycle(
@@ -132,7 +132,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const ns = this.#requirePersistent(request);
     const sandbox = await this.#acquire(request);
-    if (this.#s3MountStrategy() === "exec")
+    if (this.#s3MountStrategy(request) === "exec")
       await this.#ensureS3Mount(sandbox, request);
     await this.#runLifecycle(sandbox, this.#workDir(ns));
     const jobId = request.jobId ?? generateJobId();
@@ -305,7 +305,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 
   // S3 workspace mount strategy:
-  //  - `none`:        not a workspace run / mounting disabled.
+  //  - `none`:        not a workspace run (no namespace) and mounting not forced.
   //  - `exec`:        a role is configured (bring-your-own assumeRole, or the
   //                   platform SANDBOX_MOUNT_ROLE_ARN) -> mount via exec with the
   //                   short-lived credentials (#ensureS3Mount). Preferred —
@@ -313,11 +313,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   //                   per-namespace scoped creds, but a per-call exec env can.
   //  - `declarative`: no role -> declare a boot mount that reads static keys from
   //                   named org secrets (#s3Mounts), for stores without a role.
-  #s3MountStrategy(): "none" | "exec" | "declarative" {
-    if (
-      this.#config.storage === undefined &&
-      this.#options().mountAwsS3Buckets !== true
-    )
+  // Gated on the run's namespace, not `storage`: managed workspaces carry no
+  // storage block (their bucket is the managed fallback), same as microvm.
+  #s3MountStrategy(request: {
+    namespace?: string;
+  }): "none" | "exec" | "declarative" {
+    if (!request.namespace && this.#options().mountAwsS3Buckets !== true)
       return "none";
     return mountRoleArn(this.#config.storage) ? "exec" : "declarative";
   }
@@ -362,7 +363,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     namespace?: string;
     workspaceRoot?: string;
   }): CreateOptions["mounts"] | undefined {
-    if (this.#s3MountStrategy() !== "declarative") return undefined;
+    if (this.#s3MountStrategy(request) !== "declarative") return undefined;
     const { bucket, prefix, region, endpoint } = resolveS3MountIdentity(
       this.#s3Context(request),
     );
@@ -434,8 +435,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
   async #acquire(
     request:
-      | SandboxRunRequest
-      | { namespace?: string; reservationKey?: string },
+      SandboxRunRequest | { namespace?: string; reservationKey?: string },
   ): Promise<Sandbox> {
     if (!this.#persistent(request)) {
       return this.#client.sandboxes.create(this.#createOptions(request, false));

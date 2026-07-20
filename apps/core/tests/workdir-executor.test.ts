@@ -519,6 +519,76 @@ describe("WorkdirSandboxExecutor.run", () => {
     );
   });
 
+  it("mounts a managed workspace (no storage block) whenever the run has a namespace", async () => {
+    process.env.SANDBOX_MOUNT_ROLE_ARN =
+      "arn:aws:iam::123456789012:role/sandbox-mount";
+    // No `storage` and no `mountAwsS3Buckets`: the managed-workspace shape.
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
+    });
+
+    const result = await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "sandbox" });
+    const mount = execCalls().find((c) =>
+      String(c.body?.cmd).includes("mount-s3"),
+    );
+    expect(mount).toBeTruthy();
+    expect(String(mount!.body?.cmd)).toContain(`'--prefix' '${NS}/'`);
+  });
+
+  it("declares a managed-workspace mount without a role (no storage, no opt-in flag)", async () => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE, workspaceRoot: "/mnt/workspaces" },
+    });
+
+    await executor.run({
+      code: "ls",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(createBody().mounts).toEqual([
+      {
+        type: "s3",
+        bucket: "workspace-bucket",
+        mount_path: `/mnt/workspaces/${NS}`,
+        read_only: false,
+        prefix: `${NS}/`,
+        region: "us-east-1",
+      },
+    ]);
+  });
+
+  it("skips mounting for namespace-less runs when nothing opts in", async () => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      options: { workdirUrl: BASE },
+    });
+
+    const result = await executor.run({
+      code: "ls",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "sandbox" });
+    expect(createBody().mounts).toBeUndefined();
+    expect(
+      execCalls().some((c) => String(c.body?.cmd).includes("mount-s3")),
+    ).toBe(false);
+  });
+
   it("requires a namespace for the assume-role S3 mount", async () => {
     process.env.SANDBOX_MOUNT_ROLE_ARN =
       "arn:aws:iam::123456789012:role/sandbox-mount";
