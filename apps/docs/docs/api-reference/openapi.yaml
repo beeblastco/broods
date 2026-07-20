@@ -55,7 +55,7 @@ paths:
       description: Unauthenticated lightweight probe for the deployed harness-processing Function URL.
       security: []
       responses:
-        '200':
+        "200":
           description: Service is healthy
           content:
             application/json:
@@ -87,7 +87,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DirectApiRequest'
+              $ref: "#/components/schemas/DirectApiRequest"
             examples:
               basic:
                 summary: Basic request
@@ -133,7 +133,7 @@ paths:
                         - type: text
                           text: Summarize today's plan.
       responses:
-        '200':
+        "200":
           description: SSE stream of agent execution
           content:
             text/event-stream:
@@ -161,35 +161,35 @@ paths:
 
                     event: 0
                     data: {"type":"finish","finishReason":"stop"}
-        '202':
+        "202":
           description: Busy-conversation ingress durably accepted without a second SSE stream
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngressAccepted'
-        '409':
+                $ref: "#/components/schemas/IngressAccepted"
+        "409":
           description: Conversation busy in reject mode, or idempotency identity reused with a different payload
-        '429':
+        "429":
           description: Per-conversation FIFO capacity exceeded; no ingress was persisted
-        '403':
+        "403":
           description: Agent has not opted into public access (secure by default)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 publicAccessDisabled:
                   value:
                     error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
                     code: public_access_disabled
-        '404':
+        "404":
           description: Direct API disabled (ENABLE_DIRECT_API=false)
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 unauthorized:
                   value:
@@ -206,7 +206,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DirectApiRequest'
+              $ref: "#/components/schemas/DirectApiRequest"
             examples:
               basic:
                 summary: Basic async request
@@ -220,12 +220,12 @@ paths:
                         - type: text
                           text: Generate a summary of today's news
       responses:
-        '202':
+        "202":
           description: Async ingress durably accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngressAccepted'
+                $ref: "#/components/schemas/IngressAccepted"
               examples:
                 accepted:
                   value:
@@ -234,29 +234,29 @@ paths:
                     status: processing
                     requestedMode: reject
                     statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
-        '409':
+        "409":
           description: Conversation busy in reject mode, or idempotency conflict
-        '429':
+        "429":
           description: Per-conversation FIFO capacity exceeded
-        '403':
+        "403":
           description: Agent has not opted into public access (secure by default)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 publicAccessDisabled:
                   value:
                     error: "Agent agent_... is not publicly accessible. Enable public access (publicAccess: true) and redeploy, or reach it through an internal endpoint or channel webhook."
                     code: public_access_disabled
-        '404':
+        "404":
           description: Direct API disabled (ENABLE_DIRECT_API=false)
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 unauthorized:
                   value:
@@ -280,12 +280,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Current job status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IngressStatus'
+                $ref: "#/components/schemas/IngressStatus"
               examples:
                 processing:
                   summary: Job still running
@@ -313,6 +313,9 @@ paths:
                     status: completed
                     result:
                       answer: done
+                    response:
+                      role: assistant
+                      content: done
                 failed:
                   summary: Job failed
                   value:
@@ -320,7 +323,18 @@ paths:
                     conversationKey: conversation-identifier
                     status: failed
                     error: Model provider returned 503
-        '404':
+        "403":
+          description: Deployment-key caller polling an agent that has not opted into public access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                publicAccessDisabled:
+                  value:
+                    error: "Agent agent_... is not publicly accessible."
+                    code: public_access_disabled
+        "404":
           description: Unknown event ID
           content:
             application/json:
@@ -336,12 +350,12 @@ paths:
                   value:
                     eventId: unknown-id
                     status: not_found
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 unauthorized:
                   value:
@@ -365,8 +379,8 @@ paths:
           application/json:
             schema:
               oneOf:
-                - $ref: '#/components/schemas/ToolCompletionSuccess'
-                - $ref: '#/components/schemas/ToolCompletionFailure'
+                - $ref: "#/components/schemas/ToolCompletionSuccess"
+                - $ref: "#/components/schemas/ToolCompletionFailure"
             examples:
               success:
                 summary: Tool completed
@@ -384,7 +398,7 @@ paths:
                   status: failed
                   error: External service timeout after 30s
       responses:
-        '202':
+        "202":
           description: "Result accepted (`status: accepted` when settled, `status: waiting_for_async_tools` with `pendingCount` while siblings are outstanding)"
           content:
             application/json:
@@ -403,16 +417,16 @@ paths:
                   value:
                     status: waiting_for_async_tools
                     pendingCount: 2
-        '404':
+        "404":
           description: Unknown resultId
-        '409':
+        "409":
           description: Result already settled
-        '401':
+        "401":
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
               examples:
                 unauthorized:
                   value:
@@ -441,12 +455,12 @@ paths:
           application/json:
             schema:
               oneOf:
-                - $ref: '#/components/schemas/ToolCompletionSuccess'
-                - $ref: '#/components/schemas/ToolCompletionFailure'
+                - $ref: "#/components/schemas/ToolCompletionSuccess"
+                - $ref: "#/components/schemas/ToolCompletionFailure"
       responses:
-        '202':
+        "202":
           description: Result accepted
-        '404':
+        "404":
           description: Unknown resultId or invalid token
 
   /webhooks/{accountId}/{agentId}/{channelName}:
@@ -473,11 +487,11 @@ paths:
             type: string
             enum: [telegram, github, slack, discord, pancake, zalo]
       responses:
-        '200':
+        "200":
           description: Provider-specific acknowledgement
-        '401':
+        "401":
           description: Provider authentication failed
-        '404':
+        "404":
           description: Unknown account, agent, or channel
 
   /accounts:
@@ -512,7 +526,7 @@ paths:
                   username: company-a
                   description: Company A account
       responses:
-        '201':
+        "201":
           description: Account created
           content:
             application/json:
@@ -520,7 +534,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
                   secret:
                     type: string
               examples:
@@ -531,9 +545,9 @@ paths:
                       username: company-a
                       description: Company A account
                     secret: fp_acct_xyz789...
-        '401':
+        "401":
           description: Missing or invalid bearer token
-        '403':
+        "403":
           description: Bearer token is valid but is not the admin secret
 
     get:
@@ -544,7 +558,7 @@ paths:
       security:
         - AdminAuth: []
       responses:
-        '200':
+        "200":
           description: List of accounts
           content:
             application/json:
@@ -554,7 +568,7 @@ paths:
                   accounts:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Account'
+                      $ref: "#/components/schemas/Account"
               examples:
                 list:
                   value:
@@ -563,14 +577,14 @@ paths:
                         username: company-a
                         description: Company A account
                         status: active
-                        createdAt: '2026-05-01T00:00:00.000Z'
-                        updatedAt: '2026-05-01T00:00:00.000Z'
+                        createdAt: "2026-05-01T00:00:00.000Z"
+                        updatedAt: "2026-05-01T00:00:00.000Z"
                       - accountId: acct_def456
                         username: company-b
                         description: Company B account
                         status: active
-                        createdAt: '2026-05-01T00:00:00.000Z'
-                        updatedAt: '2026-05-01T00:00:00.000Z'
+                        createdAt: "2026-05-01T00:00:00.000Z"
+                        updatedAt: "2026-05-01T00:00:00.000Z"
 
   /accounts/{accountId}:
     get:
@@ -586,7 +600,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Account details
           content:
             application/json:
@@ -594,7 +608,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
 
     patch:
       tags:
@@ -620,7 +634,7 @@ paths:
                 description:
                   type: string
       responses:
-        '200':
+        "200":
           description: Account updated
           content:
             application/json:
@@ -628,7 +642,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
 
     delete:
       tags:
@@ -644,12 +658,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Account deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                $ref: "#/components/schemas/DeleteResponse"
               examples:
                 deleted:
                   value:
@@ -682,7 +696,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Secret rotated
           content:
             application/json:
@@ -690,7 +704,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
                   secret:
                     type: string
               examples:
@@ -700,8 +714,8 @@ paths:
                       accountId: acct_abc123
                       username: company-a
                       status: active
-                      createdAt: '2026-05-01T00:00:00.000Z'
-                      updatedAt: '2026-05-01T00:00:00.000Z'
+                      createdAt: "2026-05-01T00:00:00.000Z"
+                      updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
 
   /v1/account:
@@ -712,7 +726,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: Account details
           content:
             application/json:
@@ -720,7 +734,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
 
     patch:
       tags:
@@ -745,7 +759,7 @@ paths:
                 value:
                   description: Updated account purpose
       responses:
-        '200':
+        "200":
           description: Account updated
           content:
             application/json:
@@ -753,7 +767,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
               examples:
                 updated:
                   value:
@@ -762,8 +776,8 @@ paths:
                       username: company-a
                       description: Updated account purpose
                       status: active
-                      createdAt: '2026-05-01T00:00:00.000Z'
-                      updatedAt: '2026-05-02T00:00:00.000Z'
+                      createdAt: "2026-05-01T00:00:00.000Z"
+                      updatedAt: "2026-05-02T00:00:00.000Z"
 
     delete:
       tags:
@@ -773,12 +787,12 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: Account deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeleteResponse'
+                $ref: "#/components/schemas/DeleteResponse"
 
   /v1/account/rotate-secret:
     post:
@@ -788,7 +802,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: Secret rotated
           content:
             application/json:
@@ -796,7 +810,7 @@ paths:
                 type: object
                 properties:
                   account:
-                    $ref: '#/components/schemas/Account'
+                    $ref: "#/components/schemas/Account"
                   secret:
                     type: string
               examples:
@@ -806,8 +820,8 @@ paths:
                       accountId: acct_abc123
                       username: company-a
                       status: active
-                      createdAt: '2026-05-01T00:00:00.000Z'
-                      updatedAt: '2026-05-01T00:00:00.000Z'
+                      createdAt: "2026-05-01T00:00:00.000Z"
+                      updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
 
   /v1/env:
@@ -819,7 +833,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: Write-only account environment variable metadata
           content:
             application/json:
@@ -830,7 +844,7 @@ paths:
                   env:
                     type: array
                     items:
-                      $ref: '#/components/schemas/AccountEnvVar'
+                      $ref: "#/components/schemas/AccountEnvVar"
 
   /v1/env/{name}:
     put:
@@ -841,7 +855,7 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/AccountEnvVarName'
+        - $ref: "#/components/parameters/AccountEnvVarName"
       requestBody:
         required: true
         content:
@@ -855,7 +869,7 @@ paths:
                   minLength: 1
                   maxLength: 8192
       responses:
-        '200':
+        "200":
           description: Variable stored
           content:
             application/json:
@@ -873,9 +887,9 @@ paths:
       security:
         - BearerAuth: []
       parameters:
-        - $ref: '#/components/parameters/AccountEnvVarName'
+        - $ref: "#/components/parameters/AccountEnvVarName"
       responses:
-        '200':
+        "200":
           description: Deletion result
           content:
             application/json:
@@ -909,7 +923,7 @@ paths:
                   type: string
                   description: Visible to parent agents when allowed as subagent
                 config:
-                  $ref: '#/components/schemas/AgentConfig'
+                  $ref: "#/components/schemas/AgentConfig"
             examples:
               basic:
                 summary: Minimal agent
@@ -950,12 +964,12 @@ paths:
                         apiKey: your-tavily-key
                         searchDepth: advanced
       responses:
-        '201':
+        "201":
           description: Agent created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Agent'
+                $ref: "#/components/schemas/Agent"
               examples:
                 created:
                   value:
@@ -963,7 +977,7 @@ paths:
                     agentId: agent_xyz789
                     name: support-agent
                     description: Customer support agent
-        '409':
+        "409":
           description: An agent with this name already exists in the account. The response includes the existing agent's id so clients can adopt it instead of duplicating.
           content:
             application/json:
@@ -983,7 +997,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: List of agents
           content:
             application/json:
@@ -993,7 +1007,7 @@ paths:
                   agents:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Agent'
+                      $ref: "#/components/schemas/Agent"
 
   /v1/agents/{agentId}:
     get:
@@ -1010,12 +1024,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Agent details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Agent'
+                $ref: "#/components/schemas/Agent"
 
     patch:
       tags:
@@ -1042,22 +1056,22 @@ paths:
                 description:
                   type:
                     - string
-                    - 'null'
+                    - "null"
                 status:
                   type: string
                   enum:
                     - active
                     - disabled
                 config:
-                  $ref: '#/components/schemas/AgentConfig'
+                  $ref: "#/components/schemas/AgentConfig"
       responses:
-        '200':
+        "200":
           description: Agent updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Agent'
-        '409':
+                $ref: "#/components/schemas/Agent"
+        "409":
           description: Renaming to a name that already exists in the account. The response includes the existing agent's id.
           content:
             application/json:
@@ -1082,7 +1096,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Agent deleted
 
   /v1/sandboxes:
@@ -1106,12 +1120,22 @@ paths:
                 config:
                   type: object
                   properties:
-                    provider: { type: string, enum: [sandbox, lambda, e2b, daytona, vercel], default: sandbox, description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node." }
+                    provider:
+                      {
+                        type: string,
+                        enum: [sandbox, lambda, e2b, daytona, vercel],
+                        default: sandbox,
+                        description: "Compute backend. Defaults to sandbox (the workdir backend). On the hosted platform no per-sandbox options are needed; on a self-hosted deployment the workdir node must be reachable via options.workdirUrl (or the WORKDIR_URL env). Set options.workdirUrl + options.apiKey to target your own node.",
+                      }
                     network:
                       type: object
                       description: "Egress policy. Defaults to deny-all when omitted."
                       properties:
-                        mode: { type: string, enum: [allow-all, deny-all, restricted] }
+                        mode:
+                          {
+                            type: string,
+                            enum: [allow-all, deny-all, restricted],
+                          }
                         allowDomains:
                           type: array
                           description: "Allowed domains when mode is restricted and the provider supports domain rules."
@@ -1121,15 +1145,36 @@ paths:
                           description: "Allowed CIDR ranges when mode is restricted and the provider supports CIDR rules."
                           items: { type: string }
                     permissionMode: { type: string, enum: [edit, ask, bypass] }
-                    size: { type: string, enum: [tiny, xsmall, small, medium, large], description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall." }
-                    snapshot: { type: string, description: "Prebuilt image/snapshot to launch from: a workdir image id/name or a MicroVM image ARN. Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row." }
-                    persistent: { type: boolean, description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max)." }
+                    size:
+                      {
+                        type: string,
+                        enum: [tiny, xsmall, small, medium, large],
+                        description: "Predefined compute size (vcpu/memory/disk). Drives workdir create-time resources and the dashboard's instance specs; advisory on providers that size natively (MicroVM bakes size into the image; daytona/e2b/vercel size themselves). Defaults to the provider's own default when unset. Free tier: tiny + xsmall.",
+                      }
+                    snapshot:
+                      {
+                        type: string,
+                        description: "Prebuilt image/snapshot to launch from: a workdir image id/name or a MicroVM image ARN. Unset boots the provider's default base image. Consumed by the self-hosted backends (sandbox/lambda); advisory on daytona/e2b/vercel, which pick images via their own options. The launched-from id is mirrored onto the dashboard instance row.",
+                      }
+                    persistent:
+                      {
+                        type: boolean,
+                        description: "Reserve one long-lived sandbox per workspace (reconnect across calls, background jobs, packages persist). For lambda this reserves a snapshot-resumable MicroVM (suspend/resume on idle, 8h max).",
+                      }
                     lifecycle:
                       type: object
                       description: "Idle/expiry policy when persistent. Requires persistent: true."
                       properties:
-                        idleTimeoutSeconds: { type: integer, description: "scale down / stop after this idle (default 900)" }
-                        maxLifetimeSeconds: { type: integer, description: "hard-expiry backstop from creation (default 7 days)" }
+                        idleTimeoutSeconds:
+                          {
+                            type: integer,
+                            description: "scale down / stop after this idle (default 900)",
+                          }
+                        maxLifetimeSeconds:
+                          {
+                            type: integer,
+                            description: "hard-expiry backstop from creation (default 7 days)",
+                          }
                     onCreate:
                       type: array
                       description: "Persistent-only shell commands run once on first create."
@@ -1141,16 +1186,34 @@ paths:
                     runtimes:
                       type: array
                       items: { type: string, enum: [bash, python, node] }
-                    timeout: { type: integer, description: "per-call seconds (max 600 for every provider)" }
-                    memoryLimit: { type: integer, description: "MB; bounded for lambda MicroVM (max 8192), operator-sized for other providers" }
+                    timeout:
+                      {
+                        type: integer,
+                        description: "per-call seconds (max 600 for every provider)",
+                      }
+                    memoryLimit:
+                      {
+                        type: integer,
+                        description: "MB; bounded for lambda MicroVM (max 8192), operator-sized for other providers",
+                      }
                     outputLimitBytes: { type: integer }
-                    envVars: { type: object, additionalProperties: { type: string } }
-                    options: { type: object, description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot)." }
+                    envVars:
+                      { type: object, additionalProperties: { type: string } }
+                    options:
+                      {
+                        type: object,
+                        description: "Provider-specific knobs (e.g. mountAwsS3Buckets, workspaceRoot).",
+                      }
             examples:
               lambda:
                 value:
                   name: default
-                  config: { provider: lambda, network: { mode: allow-all }, permissionMode: ask }
+                  config:
+                    {
+                      provider: lambda,
+                      network: { mode: allow-all },
+                      permissionMode: ask,
+                    }
               persistentSandbox:
                 value:
                   name: reserved
@@ -1168,19 +1231,24 @@ paths:
                   name: vercel
                   config:
                     provider: vercel
-                    network: { mode: restricted, allowDomains: [api.example.com], allowCidrs: [10.0.0.0/8] }
+                    network:
+                      {
+                        mode: restricted,
+                        allowDomains: [api.example.com],
+                        allowCidrs: [10.0.0.0/8],
+                      }
                     persistent: true
                     permissionMode: bypass
                     onCreate: ["npm install"]
       responses:
-        '201': { description: Sandbox created }
+        "201": { description: Sandbox created }
     get:
       tags: [Sandboxes]
       summary: List sandboxes
       security:
         - BearerAuth: []
       responses:
-        '200': { description: List of sandboxes }
+        "200": { description: List of sandboxes }
 
   /v1/sandboxes/{sandboxId}:
     get:
@@ -1188,16 +1256,26 @@ paths:
       summary: Get sandbox
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
-        '200': { description: Sandbox }
-        '404': { description: Not found }
+        "200": { description: Sandbox }
+        "404": { description: Not found }
     patch:
       tags: [Sandboxes]
       summary: Update sandbox
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1211,15 +1289,20 @@ paths:
                   type: object
                   description: Full replacement sandbox config. Uses the same shape as create.
       responses:
-        '200': { description: Updated }
+        "200": { description: Updated }
     delete:
       tags: [Sandboxes]
       summary: Delete sandbox
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
-        '200': { description: Deleted }
+        "200": { description: Deleted }
 
   /v1/sandboxes/{sandboxId}/suspend:
     post:
@@ -1228,7 +1311,12 @@ paths:
       description: Suspends a persistent sandbox reservation. The `reservationKey` must belong to this account and sandbox config.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1239,9 +1327,12 @@ paths:
               properties:
                 reservationKey: { type: string }
       responses:
-        '200': { description: Suspended }
-        '403': { description: Reservation does not belong to this account or sandbox config }
-        '409': { description: Provider does not support suspend }
+        "200": { description: Suspended }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support suspend }
 
   /v1/sandboxes/{sandboxId}/resume:
     post:
@@ -1250,7 +1341,12 @@ paths:
       description: Resumes a persistent sandbox reservation. The `reservationKey` must belong to this account and sandbox config.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1261,9 +1357,12 @@ paths:
               properties:
                 reservationKey: { type: string }
       responses:
-        '200': { description: Running }
-        '403': { description: Reservation does not belong to this account or sandbox config }
-        '409': { description: Provider does not support resume }
+        "200": { description: Running }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support resume }
 
   /v1/sandboxes/{sandboxId}/terminate:
     post:
@@ -1272,7 +1371,12 @@ paths:
       description: Terminates a persistent sandbox reservation and removes its live-instance registry row. The `reservationKey` must belong to this account and sandbox config.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1283,9 +1387,12 @@ paths:
               properties:
                 reservationKey: { type: string }
       responses:
-        '200': { description: Terminated }
-        '403': { description: Reservation does not belong to this account or sandbox config }
-        '409': { description: Provider does not support terminate }
+        "200": { description: Terminated }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support terminate }
 
   /v1/sandboxes/{sandboxId}/snapshot:
     post:
@@ -1294,7 +1401,12 @@ paths:
       description: Creates a reusable image from a persistent sandbox reservation when the provider supports snapshots. Currently supported by the self-hosted workdir `sandbox` provider.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1306,9 +1418,12 @@ paths:
                 reservationKey: { type: string }
                 name: { type: string }
       responses:
-        '200': { description: Snapshot active }
-        '403': { description: Reservation does not belong to this account or sandbox config }
-        '409': { description: Provider does not support snapshot }
+        "200": { description: Snapshot active }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "409": { description: Provider does not support snapshot }
 
   /v1/sandboxes/{sandboxId}/terminal:
     post:
@@ -1324,7 +1439,12 @@ paths:
         answer 409 until terminated and re-reserved.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: sandboxId, in: path, required: true, schema: { type: string } }
+        - {
+            name: sandboxId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1335,7 +1455,7 @@ paths:
               properties:
                 reservationKey: { type: string }
       responses:
-        '200':
+        "200":
           description: Sealed terminal ticket
           content:
             application/json:
@@ -1345,9 +1465,16 @@ paths:
                   token: { type: string }
                   expiresAt: { type: number }
                   websocketPath: { type: string }
-        '403': { description: Reservation does not belong to this account or sandbox config }
-        '404': { description: No reserved instance for this reservation key }
-        '409': { description: Provider does not support a live terminal, or the MicroVM was launched without shell ingress }
+        "403":
+          {
+            description: Reservation does not belong to this account or sandbox config,
+          }
+        "404": { description: No reserved instance for this reservation key }
+        "409":
+          {
+            description: Provider does not support a live terminal,
+            or the MicroVM was launched without shell ingress,
+          }
 
   /v1/workspaces:
     post:
@@ -1397,14 +1524,14 @@ paths:
                   name: notes
                   config: { storage: { provider: s3 }, isolation: true }
       responses:
-        '201': { description: Workspace created }
+        "201": { description: Workspace created }
     get:
       tags: [Workspaces]
       summary: List workspaces
       security:
         - BearerAuth: []
       responses:
-        '200': { description: List of workspaces }
+        "200": { description: List of workspaces }
 
   /v1/workspaces/{workspaceId}:
     get:
@@ -1412,26 +1539,41 @@ paths:
       summary: Get workspace
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
-        '200': { description: Workspace }
-        '404': { description: Not found }
+        "200": { description: Workspace }
+        "404": { description: Not found }
     patch:
       tags: [Workspaces]
       summary: Update workspace
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
-        '200': { description: Updated }
+        "200": { description: Updated }
     delete:
       tags: [Workspaces]
       summary: Delete workspace
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
-        '200': { description: Deleted }
+        "200": { description: Deleted }
 
   /v1/workspaces/{workspaceId}/files:
     get:
@@ -1440,18 +1582,28 @@ paths:
       description: Lists the authoritative S3 namespace mounted by the workspace. When `path` is supplied, returns a short-lived download URL for that file.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
         - { name: path, in: query, required: false, schema: { type: string } }
       responses:
-        '200': { description: Workspace file list or download URL }
-        '404': { description: Workspace or file not found }
+        "200": { description: Workspace file list or download URL }
+        "404": { description: Workspace or file not found }
     post:
       tags: [Workspaces]
       summary: Upload a workspace file
       description: Uploads or replaces one file. Dashboard-proxied uploads are limited to 512 KiB so the base64 request remains within Convex action limits.
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1464,13 +1616,18 @@ paths:
                 contentBase64: { type: string, format: byte }
                 contentType: { type: string }
       responses:
-        '201': { description: File uploaded }
+        "201": { description: File uploaded }
     patch:
       tags: [Workspaces]
       summary: Rename a workspace file or folder
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1482,13 +1639,18 @@ paths:
                 path: { type: string }
                 newPath: { type: string }
       responses:
-        '200': { description: File or folder renamed }
+        "200": { description: File or folder renamed }
     delete:
       tags: [Workspaces]
       summary: Delete a workspace file or folder
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: workspaceId, in: path, required: true, schema: { type: string } }
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1499,7 +1661,7 @@ paths:
               properties:
                 path: { type: string }
       responses:
-        '200': { description: File or folder deleted }
+        "200": { description: File or folder deleted }
 
   /v1/tools:
     post:
@@ -1512,20 +1674,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccountToolCreate'
+              $ref: "#/components/schemas/AccountToolCreate"
       responses:
-        '201':
+        "201":
           description: Tool created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccountTool'
+                $ref: "#/components/schemas/AccountTool"
     get:
       tags: [Tools]
       summary: List uploaded custom tools
       security: [{ BearerAuth: [] }]
       responses:
-        '200':
+        "200":
           description: Tool list
           content:
             application/json:
@@ -1535,7 +1697,7 @@ paths:
                   tools:
                     type: array
                     items:
-                      $ref: '#/components/schemas/AccountTool'
+                      $ref: "#/components/schemas/AccountTool"
 
   /v1/tools/{toolId}:
     get:
@@ -1545,13 +1707,13 @@ paths:
       parameters:
         - { name: toolId, in: path, required: true, schema: { type: string } }
       responses:
-        '200':
+        "200":
           description: Tool
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccountTool'
-        '404': { description: Not found }
+                $ref: "#/components/schemas/AccountTool"
+        "404": { description: Not found }
     patch:
       tags: [Tools]
       summary: Update uploaded custom tool
@@ -1562,14 +1724,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AccountToolUpdate'
+              $ref: "#/components/schemas/AccountToolUpdate"
       responses:
-        '200':
+        "200":
           description: Updated tool
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AccountTool'
+                $ref: "#/components/schemas/AccountTool"
     delete:
       tags: [Tools]
       summary: Delete uploaded custom tool
@@ -1577,7 +1739,7 @@ paths:
       parameters:
         - { name: toolId, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: Deleted }
+        "200": { description: Deleted }
 
   /v1/policies:
     post:
@@ -1590,20 +1752,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AgentPolicyCreate'
+              $ref: "#/components/schemas/AgentPolicyCreate"
       responses:
-        '201':
+        "201":
           description: Policy created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentPolicy'
+                $ref: "#/components/schemas/AgentPolicy"
     get:
       tags: [Policies]
       summary: List agent policies
       security: [{ BearerAuth: [] }]
       responses:
-        '200':
+        "200":
           description: Policy list
           content:
             application/json:
@@ -1613,7 +1775,7 @@ paths:
                   policies:
                     type: array
                     items:
-                      $ref: '#/components/schemas/AgentPolicy'
+                      $ref: "#/components/schemas/AgentPolicy"
 
   /v1/policies/{policyId}:
     get:
@@ -1623,13 +1785,13 @@ paths:
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
       responses:
-        '200':
+        "200":
           description: Policy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentPolicy'
-        '404': { description: Not found }
+                $ref: "#/components/schemas/AgentPolicy"
+        "404": { description: Not found }
     patch:
       tags: [Policies]
       summary: Update agent policy
@@ -1640,14 +1802,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AgentPolicyUpdate'
+              $ref: "#/components/schemas/AgentPolicyUpdate"
       responses:
-        '200':
+        "200":
           description: Updated policy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AgentPolicy'
+                $ref: "#/components/schemas/AgentPolicy"
     delete:
       tags: [Policies]
       summary: Delete agent policy
@@ -1655,8 +1817,8 @@ paths:
       parameters:
         - { name: policyId, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: Deleted }
-        '404': { description: Not found }
+        "200": { description: Deleted }
+        "404": { description: Not found }
 
   /v1/skills:
     post:
@@ -1713,12 +1875,12 @@ paths:
                   description: Handles support triage
                   content: "# Support Flow\n\nClassify urgency, product area, and next action."
       responses:
-        '201':
+        "201":
           description: Skill created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: "#/components/schemas/Skill"
               examples:
                 created:
                   value:
@@ -1733,7 +1895,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: List of skills
           content:
             application/json:
@@ -1743,7 +1905,7 @@ paths:
                   skills:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Skill'
+                      $ref: "#/components/schemas/Skill"
 
   /v1/skills/{skillName}:
     get:
@@ -1759,12 +1921,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Skill details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: "#/components/schemas/Skill"
 
     put:
       tags:
@@ -1818,12 +1980,12 @@ paths:
                   type: string
                   description: GitHub tree URL for github source
       responses:
-        '200':
+        "200":
           description: Skill updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Skill'
+                $ref: "#/components/schemas/Skill"
 
     delete:
       tags:
@@ -1838,7 +2000,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Skill deleted
 
   /v1/crons:
@@ -1854,7 +2016,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CronCreate'
+              $ref: "#/components/schemas/CronCreate"
             examples:
               agentRun:
                 value:
@@ -1865,13 +2027,13 @@ paths:
                   scheduleExpression: cron(0 8 * * ? *)
                   timezone: Europe/Amsterdam
       responses:
-        '201':
+        "201":
           description: Cron job created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Cron'
-        '503':
+                $ref: "#/components/schemas/Cron"
+        "503":
           description: Cron jobs unavailable
 
     get:
@@ -1881,7 +2043,7 @@ paths:
       security:
         - BearerAuth: []
       responses:
-        '200':
+        "200":
           description: List of cron jobs
           content:
             application/json:
@@ -1891,7 +2053,7 @@ paths:
                   crons:
                     type: array
                     items:
-                      $ref: '#/components/schemas/Cron'
+                      $ref: "#/components/schemas/Cron"
 
   /v1/crons/{cronId}:
     get:
@@ -1907,12 +2069,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Cron job details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Cron'
+                $ref: "#/components/schemas/Cron"
 
     patch:
       tags:
@@ -1931,14 +2093,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CronPatch'
+              $ref: "#/components/schemas/CronPatch"
       responses:
-        '200':
+        "200":
           description: Cron job updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Cron'
+                $ref: "#/components/schemas/Cron"
 
     delete:
       tags:
@@ -1953,7 +2115,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Cron job deleted
 
   /v1/crons/{cronId}/runs:
@@ -1977,7 +2139,7 @@ paths:
           schema:
             type: integer
       responses:
-        '200':
+        "200":
           description: Cron run history
           content:
             application/json:
@@ -1987,7 +2149,7 @@ paths:
                   runs:
                     type: array
                     items:
-                      $ref: '#/components/schemas/CronRun'
+                      $ref: "#/components/schemas/CronRun"
 
 components:
   securitySchemes:
@@ -2007,7 +2169,7 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^[A-Z][A-Z0-9_]*$'
+        pattern: "^[A-Z][A-Z0-9_]*$"
         maxLength: 64
 
   schemas:
@@ -2049,19 +2211,19 @@ components:
           type: array
           description: Vercel AI SDK-style messages
           items:
-            $ref: '#/components/schemas/Message'
+            $ref: "#/components/schemas/Message"
         system:
           oneOf:
-            - $ref: '#/components/schemas/SystemRunEvent'
+            - $ref: "#/components/schemas/SystemRunEvent"
             - type: array
               items:
-                $ref: '#/components/schemas/SystemRunEvent'
+                $ref: "#/components/schemas/SystemRunEvent"
           description: >-
             One-turn Vercel AI SDK-style system message event(s), appended last
             with highest priority. Same lifetime as a direct `events` entry with
             `persist: false`.
         model:
-          $ref: '#/components/schemas/RunModelOverrides'
+          $ref: "#/components/schemas/RunModelOverrides"
 
     RunModelOverrides:
       type: object
@@ -2097,7 +2259,7 @@ components:
             - type: string
             - type: array
               items:
-                $ref: '#/components/schemas/ContentBlock'
+                $ref: "#/components/schemas/ContentBlock"
         persist:
           type: boolean
           description: Must be `false` for system events. Request-local, not stored in Convex.
@@ -2128,16 +2290,16 @@ components:
       discriminator:
         propertyName: type
       oneOf:
-        - $ref: '#/components/schemas/TextContent'
-        - $ref: '#/components/schemas/ImageContent'
-        - $ref: '#/components/schemas/FileContent'
-        - $ref: '#/components/schemas/ToolCallContent'
-        - $ref: '#/components/schemas/ToolResultContent'
-        - $ref: '#/components/schemas/ReasoningContent'
-        - $ref: '#/components/schemas/SourceUrlContent'
-        - $ref: '#/components/schemas/SourceDocumentContent'
-        - $ref: '#/components/schemas/ToolApprovalRequestContent'
-        - $ref: '#/components/schemas/ToolApprovalResponseContent'
+        - $ref: "#/components/schemas/TextContent"
+        - $ref: "#/components/schemas/ImageContent"
+        - $ref: "#/components/schemas/FileContent"
+        - $ref: "#/components/schemas/ToolCallContent"
+        - $ref: "#/components/schemas/ToolResultContent"
+        - $ref: "#/components/schemas/ReasoningContent"
+        - $ref: "#/components/schemas/SourceUrlContent"
+        - $ref: "#/components/schemas/SourceDocumentContent"
+        - $ref: "#/components/schemas/ToolApprovalRequestContent"
+        - $ref: "#/components/schemas/ToolApprovalResponseContent"
 
     TextContent:
       type: object
@@ -2342,7 +2504,7 @@ components:
 
     IngressStatus:
       type: object
-      required: [eventId, conversationKey, status, requestedMode]
+      required: [eventId, conversationKey, status]
       properties:
         eventId:
           type: string
@@ -2350,18 +2512,49 @@ components:
           type: string
         status:
           type: string
-          enum: [accepted, queued, applied, processing, completed, failed, expired]
+          enum:
+            [
+              accepted,
+              queued,
+              applied,
+              processing,
+              awaiting_approval,
+              completed,
+              failed,
+              expired,
+            ]
         requestedMode:
           type: string
           enum: [reject, followup, collect, steer]
+          description: Absent when the event predates durable ingress or only the async agent record exists.
         appliedMode:
           type: string
           enum: [reject, followup, collect, steer]
         appliedToEventId:
           type: string
         result: {}
+        response:
+          description: Final response payload from the async agent record, present once the run completes.
+        approvals:
+          type: array
+          description: Pending tool approvals while status is awaiting_approval.
+          items:
+            $ref: "#/components/schemas/PendingToolApproval"
         error:
           type: string
+
+    PendingToolApproval:
+      type: object
+      required: [approvalId, toolCallId, toolName]
+      properties:
+        approvalId:
+          type: string
+        toolCallId:
+          type: string
+        toolName:
+          type: string
+        input:
+          description: Tool input awaiting user approval
 
     ToolCompletionSuccess:
       type: object
@@ -2425,7 +2618,7 @@ components:
           type: string
           enum: [active, disabled]
         config:
-          $ref: '#/components/schemas/AgentConfig'
+          $ref: "#/components/schemas/AgentConfig"
           description: Redacted — secret-like fields are returned as `********`
         createdAt:
           type: string
@@ -2623,19 +2816,19 @@ components:
       description: Agent runtime configuration passed via agent create/update. Config patch is a deep merge.
       properties:
         provider:
-          $ref: '#/components/schemas/ProviderConfig'
+          $ref: "#/components/schemas/ProviderConfig"
         model:
-          $ref: '#/components/schemas/ModelConfig'
+          $ref: "#/components/schemas/ModelConfig"
         agent:
-          $ref: '#/components/schemas/AgentRuntimeConfig'
+          $ref: "#/components/schemas/AgentRuntimeConfig"
         hooks:
-          $ref: '#/components/schemas/HooksConfig'
+          $ref: "#/components/schemas/HooksConfig"
         skills:
-          $ref: '#/components/schemas/SkillsConfig'
+          $ref: "#/components/schemas/SkillsConfig"
         subagent:
-          $ref: '#/components/schemas/SubagentConfig'
+          $ref: "#/components/schemas/SubagentConfig"
         policy:
-          $ref: '#/components/schemas/AgentPolicyConfig'
+          $ref: "#/components/schemas/AgentPolicyConfig"
         publicAccess:
           type: boolean
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
@@ -2658,11 +2851,11 @@ components:
                 type: [string, "null"]
                 description: Optional per-workspace sandbox. A sandbox id overrides the agent-level `sandbox` for this workspace (and its permissionMode). `null` forces this workspace read-only even when an agent-level default exists. Omitted => inherit the agent-level `sandbox`; with no effective sandbox the workspace is read-only (read/glob served directly from S3).
         session:
-          $ref: '#/components/schemas/SessionConfig'
+          $ref: "#/components/schemas/SessionConfig"
         tools:
-          $ref: '#/components/schemas/ToolsConfig'
+          $ref: "#/components/schemas/ToolsConfig"
         channels:
-          $ref: '#/components/schemas/ChannelsConfig'
+          $ref: "#/components/schemas/ChannelsConfig"
 
     AgentPolicyConfig:
       type: object
@@ -2688,7 +2881,7 @@ components:
         rules:
           type: array
           items:
-            $ref: '#/components/schemas/AgentPolicyRule'
+            $ref: "#/components/schemas/AgentPolicyRule"
 
     AgentPolicyRule:
       type: object
@@ -2703,13 +2896,21 @@ components:
           type: array
           items:
             type: string
-            enum: [tool.call, workspace.read, workspace.write, workspace.exec, subagent.run, skill.load]
+            enum:
+              [
+                tool.call,
+                workspace.read,
+                workspace.write,
+                workspace.exec,
+                subagent.run,
+                skill.load,
+              ]
         resources:
-          $ref: '#/components/schemas/AgentPolicyResourceSelector'
+          $ref: "#/components/schemas/AgentPolicyResourceSelector"
         conditions:
           type: array
           items:
-            $ref: '#/components/schemas/AgentPolicyCondition'
+            $ref: "#/components/schemas/AgentPolicyCondition"
 
     AgentPolicyResourceSelector:
       type: object
@@ -2753,7 +2954,7 @@ components:
         description:
           type: string
         document:
-          $ref: '#/components/schemas/AgentPolicyDocument'
+          $ref: "#/components/schemas/AgentPolicyDocument"
 
     AgentPolicyUpdate:
       type: object
@@ -2763,14 +2964,14 @@ components:
         description:
           type: [string, "null"]
         document:
-          $ref: '#/components/schemas/AgentPolicyDocument'
+          $ref: "#/components/schemas/AgentPolicyDocument"
         status:
           type: string
           enum: [active, deleted]
 
     AgentPolicy:
       allOf:
-        - $ref: '#/components/schemas/AgentPolicyCreate'
+        - $ref: "#/components/schemas/AgentPolicyCreate"
         - type: object
           properties:
             accountId:
@@ -2891,7 +3092,7 @@ components:
                 totalMs:
                   type: integer
         output:
-          $ref: '#/components/schemas/OutputConfig'
+          $ref: "#/components/schemas/OutputConfig"
         providerOptions:
           type: object
           description: Vercel AI SDK provider-specific options
@@ -2929,10 +3130,10 @@ components:
         system:
           oneOf:
             - type: string
-            - $ref: '#/components/schemas/SystemRunEvent'
+            - $ref: "#/components/schemas/SystemRunEvent"
             - type: array
               items:
-                $ref: '#/components/schemas/SystemRunEvent'
+                $ref: "#/components/schemas/SystemRunEvent"
           description: Agent-level system prompt used on every run. Accepts a string shorthand or Vercel AI SDK-style system message event(s).
 
     HooksConfig:
@@ -3016,11 +3217,11 @@ components:
       description: "Enables built-in tools by static name and uploaded account tools by `toolId` key. Omitting or `enabled: false` disables the tool."
       properties:
         tavilySearch:
-          $ref: '#/components/schemas/TavilySearchConfig'
+          $ref: "#/components/schemas/TavilySearchConfig"
         tavilyExtract:
-          $ref: '#/components/schemas/TavilyExtractConfig'
+          $ref: "#/components/schemas/TavilyExtractConfig"
         googleSearch:
-          $ref: '#/components/schemas/GoogleSearchConfig'
+          $ref: "#/components/schemas/GoogleSearchConfig"
         handoffs:
           type: object
           description: "Human-handoff tool: Pancake scenario tags + Zalo staff ping. Both `pancake.scenarioTagIds.{order,pending}` and `zalo.{botToken,notifyUserIds}` are required unless `enabled: false`."
@@ -3047,7 +3248,7 @@ components:
                   items:
                     type: string
       additionalProperties:
-        $ref: '#/components/schemas/UploadedToolConfig'
+        $ref: "#/components/schemas/UploadedToolConfig"
 
     AccountToolCreate:
       type: object
