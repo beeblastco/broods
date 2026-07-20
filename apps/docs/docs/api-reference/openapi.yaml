@@ -200,7 +200,7 @@ paths:
       tags:
         - Direct API
       summary: Async direct API
-      description: Durably accept an async direct agent turn and return a status URL. Busy requests use the requested mode; omitted mode defaults to `reject` and returns 409 without persistence.
+      description: Durably accept an async direct agent turn and return a status URL. Busy requests use the requested mode; omitted mode defaults to `steer` and joins the active run at its next model boundary.
       requestBody:
         required: true
         content:
@@ -232,7 +232,7 @@ paths:
                     eventId: async-unique-id
                     conversationKey: conversation-identifier
                     status: processing
-                    requestedMode: reject
+                    requestedMode: steer
                     statusUrl: https://gateway.broods.app/status/async-unique-id?agentId=agent_abc123
         "409":
           description: Conversation busy in reject mode, or idempotency conflict
@@ -2202,8 +2202,8 @@ components:
         mode:
           type: string
           enum: [reject, followup, collect, steer]
-          default: reject
-          description: Busy-conversation behavior. Steer injects at the next AI SDK step boundary and falls back to followup if the active run has no boundary left.
+          default: steer
+          description: Busy-conversation behavior. When omitted, steer combines the contiguous FIFO steer prefix and injects it at the next AI SDK step boundary; it falls back to followup if the active run has no boundary left.
         idempotencyKey:
           type: string
           description: Stable retry identity scoped to account, agent, and conversation. Defaults to eventId and remains bound for the seven-day status window.
@@ -2526,7 +2526,7 @@ components:
         requestedMode:
           type: string
           enum: [reject, followup, collect, steer]
-          description: Absent when the event predates durable ingress or only the async agent record exists.
+          description: Resolved mode for durable ingress. Absent only for status records produced outside ingress coordination, such as an independently running subagent result.
         appliedMode:
           type: string
           enum: [reject, followup, collect, steer]

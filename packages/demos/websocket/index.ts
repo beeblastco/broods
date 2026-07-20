@@ -24,14 +24,12 @@ await new Promise<void>((resolve, reject) => {
         if (steerSent) return;
         steerSent = true;
 
-        // A control request is durably accepted before its ACK. If this run has
-        // another model boundary, the prompt steers story-1; otherwise it becomes
-        // a FIFO follow-up and the status frame reports appliedMode: "followup".
+        // Mode is omitted because steer is the default. The request is durable
+        // before ACK; without another boundary it becomes a FIFO follow-up.
         subscription.sendControl({
           requestId: "steer-1",
           eventId: "story-2",
           idempotencyKey: `${sessionId}-story-2`,
-          mode: "steer",
           input:
             "Make the second friend a maintenance robot, and keep the ending hopeful.",
         });

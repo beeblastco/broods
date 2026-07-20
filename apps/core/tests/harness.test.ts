@@ -528,7 +528,7 @@ describe("runAgentLoop", () => {
         statelessSandbox: () => undefined,
         statelessPermissionMode: () => "ask",
         persistModelMessages: async () => [],
-        renewConversationLease: async () => true,
+        renewConversationLease: async () => "renewed",
         applySteeringIngress,
         appendIngressEvents,
         loadRefreshedSystemPromptParts: async () => ({
@@ -585,6 +585,45 @@ describe("runAgentLoop", () => {
       { role: "user", content: "new direction" },
     ]);
     await stream.consumeStream();
+  });
+
+  it("stops before the next model call when the owner requests a boundary stop", async () => {
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const applySteeringIngress = mock(async () => null);
+    await runAgentLoop(
+      {
+        conversationKey: "acct:test:agent:test:api:conversation",
+        eventId: "owner",
+        filesystemNamespace: () => "fs-test",
+        resolvedWorkspaces: () => [],
+        statelessSandbox: () => undefined,
+        statelessPermissionMode: () => "ask",
+        persistModelMessages: async () => [],
+        renewConversationLease: async () => "stopped",
+        applySteeringIngress,
+        loadRefreshedSystemPromptParts: async () => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "original" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+    );
+
+    const prepareStep = streamTextMock.mock.calls.at(-1)?.[0].prepareStep;
+    await expect(
+      prepareStep!({ messages: [{ role: "user", content: "original" }] }),
+    ).rejects.toThrow("Stopped by user at the model boundary");
+    expect(applySteeringIngress).not.toHaveBeenCalled();
   });
 
   it("sends the error hook when the model finishes with empty text", async () => {

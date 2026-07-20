@@ -66,16 +66,18 @@ function createCommandContext(
 
 describe("command definitions", () => {
   it("defines command handlers with expected aliases", () => {
-    expect(commands).toHaveLength(4);
+    expect(commands).toHaveLength(5);
 
     const newCmd = commands.find((c) => c.aliases.includes("/new"));
     const helpCmd = commands.find((c) => c.aliases.includes("/help"));
     const steerCmd = commands.find((c) => c.aliases.includes("/steer"));
+    const stopCmd = commands.find((c) => c.aliases.includes("/stop"));
     const queueCmd = commands.find((c) => c.aliases.includes("/queue"));
 
     expect(newCmd).toBeDefined();
     expect(helpCmd).toBeDefined();
     expect(steerCmd).toBeDefined();
+    expect(stopCmd?.aliases).toEqual(["/stop", "/cancel"]);
     expect(queueCmd).toBeDefined();
   });
 
@@ -102,7 +104,9 @@ describe("parseCommand", () => {
     expect(parseCommand("/clear")).toBe("/clear");
     expect(parseCommand("/help")).toBe("/help");
     expect(parseCommand("/steer change direction")).toBe("/steer");
-    expect(parseCommand("/queue collect")).toBe("/queue");
+    expect(parseCommand("/queue run this next")).toBe("/queue");
+    expect(parseCommand("/stop")).toBe("/stop");
+    expect(parseCommand("/cancel")).toBe("/cancel");
   });
 
   it("normalizes case and trims whitespace", () => {
@@ -161,22 +165,32 @@ describe("executeCommand", () => {
     expect(helpText).not.toContain("/query");
   });
 
-  it("persists a conversation queue preference", async () => {
-    const mutationMock = mock(() => Promise.resolve("steer"));
+  it("requests a generation-scoped boundary stop", async () => {
+    const mutationMock = mock(() =>
+      Promise.resolve({ stopped: true, queuedCount: 2 }),
+    );
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
     await executeCommand(
-      "/queue",
-      createCommandContext({ channel, text: "/queue steer" }),
+      "/stop",
+      createCommandContext({ channel, text: "/stop" }),
     );
 
-    expect(mutationMock).toHaveBeenCalledWith("setIngressChannelMode", {
+    expect(mutationMock).toHaveBeenCalledWith("stopIngressOwner", {
       accountId: "account-1",
       agentId: "agent-1",
       conversationKey: "test-convo",
-      mode: "steer",
     });
-    expect(channel.sendText).toHaveBeenCalledWith("Queue mode set to steer.");
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Stopping at the next model boundary. 2 queued message(s) will continue afterward.",
+    );
+  });
+
+  it("shows queue message usage when no message reaches the handler", async () => {
+    const channel = createMockChannelActions();
+    await executeCommand("/queue", createCommandContext({ channel }));
+
+    expect(channel.sendText).toHaveBeenCalledWith("Usage: /queue <message>");
   });
 
   it("does nothing for unknown command tokens", async () => {
@@ -261,11 +275,12 @@ describe("getDiscordCommandRegistrations", () => {
   it("returns registrations for all commands with discord metadata", () => {
     const registrations = getDiscordCommandRegistrations();
 
-    expect(registrations).toHaveLength(5);
+    expect(registrations).toHaveLength(6);
     expect(registrations.map((r) => r.name)).toEqual([
       "new",
       "clear",
       "steer",
+      "stop",
       "queue",
       "help",
     ]);

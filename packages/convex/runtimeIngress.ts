@@ -20,6 +20,12 @@ import {
 const MAX_DRAIN_ENVELOPES = 100;
 const CLEAR_BATCH_SIZE = 100;
 
+const ownerRenewalResultValidator = v.union(
+  v.literal("renewed"),
+  v.literal("stopped"),
+  v.literal("stale"),
+);
+
 const appliedEnvelopeValidator = v.object({
   eventId: v.string(),
   events: v.array(v.any()),
@@ -230,8 +236,8 @@ async function expireStaleOwner(
 }
 
 /**
- * Promotes the oldest runnable queued group (one follow-up/steer, or a
- * contiguous collect prefix) to processing under the supplied owner generation.
+ * Promotes the oldest runnable queued group (one follow-up, or a contiguous
+ * collect/steer prefix) to processing under the supplied owner generation.
  */
 async function promoteQueuedGroup(
   ctx: MutationCtx,
@@ -266,15 +272,16 @@ async function promoteQueuedGroup(
   const active = rows.filter((row) => row.expiresAt > now);
   const first = active[0];
   if (!first) return null;
-  const selected =
-    first.requestedMode === "collect"
-      ? active.slice(
-          0,
-          active.findIndex((row) => row.requestedMode !== "collect") === -1
-            ? active.length
-            : active.findIndex((row) => row.requestedMode !== "collect"),
-        )
-      : [first];
+  // Collect batches by design; steer batches too — every queued steer aimed at
+  // the same dead run, so a contiguous prefix runs as one merged follow-up.
+  const batchable =
+    first.requestedMode === "collect" || first.requestedMode === "steer";
+  const prefixEnd = active.findIndex(
+    (row) => row.requestedMode !== first.requestedMode,
+  );
+  const selected = batchable
+    ? active.slice(0, prefixEnd === -1 ? active.length : prefixEnd)
+    : [first];
   const appliedMode: "collect" | "followup" =
     first.requestedMode === "collect" ? "collect" : "followup";
   const appliedToEventId = first.eventId;
@@ -308,6 +315,7 @@ async function promoteQueuedGroup(
   await ctx.db.patch(coordinator._id, {
     ownerEventId: appliedToEventId,
     ownerGeneration: options.ownerGeneration,
+    stopRequestedGeneration: undefined,
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
     queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
     leaseExpiresAt: now + options.leaseTtlMs,
@@ -538,6 +546,7 @@ export const accept = internalMutation({
       nextSequence: sequence + 1,
       ownerGeneration: ownerGeneration,
       ownerEventId: args.eventId,
+      stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
       updatedAt: now,
     });
@@ -552,7 +561,7 @@ export const accept = internalMutation({
   },
 });
 
-/** Renews the current owner's lease without changing its fencing generation. */
+/** Renews the current owner or reports its generation-scoped stop request. */
 export const renewOwner = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -560,21 +569,24 @@ export const renewOwner = internalMutation({
     ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
   },
-  returns: v.boolean(),
+  returns: ownerRenewalResultValidator,
   handler: async (ctx, args) => {
     const now = Date.now();
     let coordinator: Doc<"runtimeConversationCoordinators">;
     try {
       coordinator = await requireOwner(ctx, { ...args, now: now });
     } catch {
-      return false;
+      return "stale" as const;
+    }
+    if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
+      return "stopped" as const;
     }
     await ctx.db.patch(coordinator._id, {
       leaseExpiresAt: now + args.leaseTtlMs,
       updatedAt: now,
     });
 
-    return true;
+    return "renewed" as const;
   },
 });
 
@@ -597,6 +609,7 @@ export const releaseOwner = internalMutation({
     }
     await ctx.db.patch(coordinator._id, {
       ownerEventId: undefined,
+      stopRequestedGeneration: undefined,
       leaseExpiresAt: undefined,
       updatedAt: Date.now(),
     });
@@ -647,7 +660,7 @@ export const appendConversationEvent = internalMutation({
   },
 });
 
-/** Applies every waiting steer envelope to the current owner at one step boundary. */
+/** Applies the contiguous FIFO steer prefix at one step boundary. */
 export const applySteering = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -662,17 +675,17 @@ export const applySteering = internalMutation({
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
     const rows = await ctx.db
       .query("runtimeIngressEnvelopes")
-      .withIndex(
-        "by_conversationKey_and_status_and_requestedMode_and_sequence",
-        (q) =>
-          q
-            .eq("conversationKey", args.conversationKey)
-            .eq("status", "queued")
-            .eq("requestedMode", "steer"),
+      .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+        q.eq("conversationKey", args.conversationKey).eq("status", "queued"),
       )
       .take(MAX_DRAIN_ENVELOPES);
     const active = rows.filter((row) => row.expiresAt > now);
-    if (active.length === 0) {
+    const prefixEnd = active.findIndex((row) => row.requestedMode !== "steer");
+    const selected =
+      active[0]?.requestedMode === "steer"
+        ? active.slice(0, prefixEnd === -1 ? active.length : prefixEnd)
+        : [];
+    if (selected.length === 0) {
       if (
         queue.queuedCount !== coordinator.queuedCount ||
         queue.queuedBytes !== coordinator.queuedBytes
@@ -685,9 +698,9 @@ export const applySteering = internalMutation({
       }
       return null;
     }
-    const eventIds = active.map((row) => row.eventId);
-    const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${active[0]!.sequence}`;
-    for (const row of active) {
+    const eventIds = selected.map((row) => row.eventId);
+    const applicationId = `${args.ownerEventId}:steer:${args.ownerGeneration}:${selected[0]!.sequence}`;
+    for (const row of selected) {
       await ctx.db.patch(row._id, {
         status: "processing",
         appliedMode: "steer",
@@ -706,14 +719,14 @@ export const applySteering = internalMutation({
       contributingEventIds: eventIds,
       ownerGeneration: args.ownerGeneration,
       createdAt: now,
-      expiresAt: Math.max(...active.map((row) => row.statusExpiresAt)),
+      expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
     });
-    const removedBytes = active.reduce(
+    const removedBytes = selected.reduce(
       (total, row) => total + row.sizeBytes,
       0,
     );
     await ctx.db.patch(coordinator._id, {
-      queuedCount: Math.max(0, queue.queuedCount - active.length),
+      queuedCount: Math.max(0, queue.queuedCount - selected.length),
       queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
       leaseExpiresAt: now + args.leaseTtlMs,
       updatedAt: now,
@@ -721,8 +734,8 @@ export const applySteering = internalMutation({
 
     return {
       eventId: args.ownerEventId,
-      events: active.flatMap((row) => row.events),
-      delivery: active[0]!.delivery,
+      events: selected.flatMap((row) => row.events),
+      delivery: selected[0]!.delivery,
       requestedMode: "steer" as const,
       appliedMode: "steer" as const,
       appliedToEventId: args.ownerEventId,
@@ -732,7 +745,7 @@ export const applySteering = internalMutation({
   },
 });
 
-/** Applies the oldest runnable follow-up, collecting only its contiguous collect group. */
+/** Applies the oldest runnable follow-up or contiguous collect/steer group. */
 export const takeNext = internalMutation({
   args: {
     conversationKey: v.string(),
@@ -750,7 +763,7 @@ export const takeNext = internalMutation({
       queue: queue,
       now: now,
       leaseTtlMs: args.leaseTtlMs,
-      ownerGeneration: args.ownerGeneration,
+      ownerGeneration: args.ownerGeneration + 1,
     });
     if (!promoted) {
       await ctx.db.patch(coordinator._id, {
@@ -861,55 +874,28 @@ export const getStatus = internalQuery({
   },
 });
 
-/** Reads the channel queue preference and whether the conversation is busy. */
-export const getConversationState = internalQuery({
-  args: { conversationKey: v.string() },
-  returns: v.object({
-    mode: v.optional(ingressModeValidator),
-    busy: v.boolean(),
-    queuedCount: v.number(),
-  }),
-  handler: async (ctx, args) => {
-    const coordinator = await getCoordinator(ctx, args.conversationKey);
-    if (!coordinator) {
-      return { busy: false, queuedCount: 0 };
-    }
-
-    return {
-      ...(coordinator.channelMode ? { mode: coordinator.channelMode } : {}),
-      busy: hasActiveOwner(coordinator, Date.now()),
-      queuedCount: coordinator.queuedCount,
-    };
-  },
-});
-
-/** Sets one conversation's channel ingress preference. */
-export const setChannelMode = internalMutation({
+/** Requests a boundary stop for the current generation; queued work is untouched. */
+export const stopOwner = internalMutation({
   args: {
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
-    mode: ingressModeValidator,
   },
-  returns: ingressModeValidator,
+  returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
   handler: async (ctx, args) => {
     await requireActiveAccount(ctx, args.accountId);
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const now = Date.now();
-    const coordinator =
-      (await getCoordinator(ctx, args.conversationKey)) ??
-      (await createCoordinator(ctx, {
-        accountId: args.accountId,
-        agentId: args.agentId,
-        conversationKey: args.conversationKey,
-        now: now,
-      }));
+    const coordinator = await getCoordinator(ctx, args.conversationKey);
+    if (!coordinator || !hasActiveOwner(coordinator, now)) {
+      return { stopped: false, queuedCount: coordinator?.queuedCount ?? 0 };
+    }
     await ctx.db.patch(coordinator._id, {
-      channelMode: args.mode,
+      stopRequestedGeneration: coordinator.ownerGeneration,
       updatedAt: now,
     });
 
-    return args.mode;
+    return { stopped: true, queuedCount: coordinator.queuedCount };
   },
 });
 
@@ -941,6 +927,7 @@ export const acquireClear = internalMutation({
     await ctx.db.patch(coordinator._id, {
       ownerGeneration: generation,
       ownerEventId: args.ownerEventId,
+      stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
       queuedCount: queue.queuedCount,
       queuedBytes: queue.queuedBytes,

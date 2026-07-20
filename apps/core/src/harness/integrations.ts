@@ -1320,7 +1320,9 @@ async function parseDirectPayload(
     record.connectionId.trim().length > 0
       ? record.connectionId.trim()
       : undefined;
-  const requestedMode = parseIngressMode(record.mode) ?? "reject";
+  // Steer is the default: a busy conversation absorbs the request at the next
+  // step boundary (or FIFO-follows up); callers opt into reject explicitly.
+  const requestedMode = parseIngressMode(record.mode) ?? "steer";
   const idempotencyKey =
     record.idempotencyKey === undefined
       ? rawEventId

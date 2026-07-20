@@ -16,8 +16,8 @@ work—it does not abort the core run.
 
 The v1 goal is to make those concurrency choices explicit and consistent while
 the project is still under development. This decision intentionally replaces the
-current async accept-then-fail-on-busy behavior with the `reject` default below;
-there is no transition mode. It does not add distributed cancellation.
+old transport-specific defaults with `steer` everywhere; there is no transition
+mode. It does not add distributed cancellation.
 
 ## Decision
 
@@ -46,11 +46,10 @@ Every ingress surface uses the same four modes:
 | `collect`  | Persist FIFO, then combine all envelopes available at the atomic drain cutoff into one next turn.    |
 | `steer`    | Offer the envelope at the next AI SDK step boundary; fall back to `followup` if no boundary remains. |
 
-V1 defaults are:
-
-- direct sync HTTP, async HTTP, and WebSocket execute use `reject` when `mode` is
-  omitted;
-- channel messages use `collect` when no channel/conversation preference exists;
+Direct sync HTTP, async HTTP, WebSocket execute/control, and ordinary channel
+messages all resolve an omitted mode to `steer`. Callers opt into `reject`,
+`followup`, or `collect` explicitly. Channel `/queue <message>` is the explicit
+one-message `followup` form.
 
 `collect` is a real public mode, not an undocumented channel optimization.
 Collection preserves envelope and event order even though the model sees one
@@ -112,7 +111,7 @@ interface IngressApplication {
 ```
 
 `requestedMode` on the persisted envelope contains either the client's explicit
-selection or the resolved default shown above.
+selection or the resolved `steer` default.
 
 The stored record also carries server-derived `accountId` and `agentId`; clients
 cannot select or override them. One canonical idempotency identity is used on
@@ -150,6 +149,12 @@ coordinator creates one `IngressApplication` whose ordered
 to it. Every source status then transitions independently through
 `applied`/`processing` to the same terminal outcome, preserving per-request
 polling, replay, and audit provenance.
+
+Steering uses the same ordered grouping rule at a live model boundary: only the
+contiguous `steer` prefix at the head of the FIFO is combined and injected. A
+`followup` or `collect` ahead of a later steer is never skipped. If the active
+run has no next model call, that same contiguous steer prefix becomes one
+follow-up application while every contributor retains its own status.
 
 Initial limits are configurable, with conservative defaults of 100 queued
 envelopes and 1 MiB of serialized queued events per conversation. Acceptance is
@@ -195,15 +200,14 @@ leaving accepted work permanently `accepted`, `queued`, `applied`, or
 
 ```mermaid
 flowchart LR
-  Accepted["accepted"] --> Queued["queued"]
-  Accepted --> Applied["applied"]
-  Queued --> Applied
-  Applied --> Processing["processing"]
-  Processing --> Completed["completed"]
-  Processing --> Failed["failed"]
-  Accepted --> Expired["expired"]
-  Queued --> Expired
-  Applied --> Expired
+  Input["HTTP / async / WS / channel"] --> Resolve["Resolve mode<br/>default: steer"]
+  Resolve --> Convex["Convex coordinator<br/>durable FIFO + fencing"]
+  Convex -->|"contiguous steer prefix"| Boundary["AI SDK model boundary"]
+  Convex -->|"followup / collect / missed steer"| Next["Next fenced owner"]
+  Boundary --> Active["Continue active run"]
+  Next --> Worker["Dispatch queued run"]
+  Active --> Status["Per-event terminal status"]
+  Worker --> Status
 ```
 
 Every accepted async ingress therefore reaches `completed`, `failed`, or
@@ -219,10 +223,10 @@ steer; it starts a normal turn.
 ### AI SDK boundary
 
 The only v1 steering injection point is the AI SDK `prepareStep` boundary. The
-coordinator checks for steering envelopes after `onStepEnd` has observed all tool
-results from the current step and before the next model call is prepared. It
-appends the steered events durably, refreshes the next step's messages/system
-context, and records the active event ID in `appliedToEventId`.
+coordinator checks the contiguous FIFO steer prefix after `onStepEnd` has
+observed all tool results from the current step and before the next model call is
+prepared. It appends those steered events durably, refreshes the next step's
+messages/system context, and records the active event ID in `appliedToEventId`.
 
 No injection occurs inside a model stream or between tool calls in a parallel
 tool batch. If the current run has finished, reached its step limit, entered an
@@ -238,9 +242,9 @@ fires only after the step's text, tool calls, and tool results are available.
 ### HTTP and status
 
 An initial direct request may still own its `200 text/event-stream` response. A
-second request that explicitly uses `followup`, `collect`, or `steer` while that
-run is active does **not** receive a second SSE stream. Once durably accepted it
-returns `202 application/json`:
+second request using `followup`, `collect`, or `steer` (including omitted mode's
+`steer` default) while that run is active does **not** receive a second SSE
+stream. Once durably accepted it returns `202 application/json`:
 
 ```json
 {
@@ -254,15 +258,15 @@ returns `202 application/json`:
 
 Steered model output remains on the active SSE stream because it is part of that
 run. `followup` and `collect` work is observable through the status URL; it does
-not keep the accepting HTTP connection open. For direct sync HTTP, omitted or
-explicit `reject` retains the existing busy conflict behavior and creates no
-accepted status record.
+not keep the accepting HTTP connection open. For direct sync HTTP, omitted
+`mode` means `steer`; only explicit `reject` returns the busy conflict without
+creating an accepted status record.
 
-Async HTTP uses the same coordinator contract. When `mode` is omitted it resolves
-to `reject`, so a busy request receives a synchronous conflict and creates no
-envelope or status row. An idle async request, or busy ingress explicitly using
-`followup`, `collect`, or `steer`, returns `202` only after durable acceptance;
-`202` never means merely that an in-process worker was scheduled.
+Async HTTP uses the same coordinator contract. Omitted `mode` resolves to
+`steer`, so a busy request is durably queued for the next boundary rather than
+accepted and later failed as busy. Any accepted async request returns `202` only
+after durable acceptance; `202` never means merely that an in-process worker was
+scheduled.
 
 ### WebSocket control frames
 
@@ -270,15 +274,22 @@ While a run is active, the WebSocket protocol adds correlated control input and
 status output. The minimum frame shapes are:
 
 ```json
-{ "type": "control", "requestId": "r2", "eventId": "event-2", "idempotencyKey": "client-op-2", "mode": "steer", "events": [] }
+{ "type": "control", "requestId": "r2", "eventId": "event-2", "idempotencyKey": "client-op-2", "events": [] }
 { "type": "ack", "requestId": "r2", "eventId": "event-2", "status": "queued" }
 { "type": "status", "requestId": "r2", "eventId": "event-2", "status": "applied", "appliedMode": "steer", "appliedToEventId": "event-1" }
 ```
 
-`requestId` correlates frames on one socket only. `idempotencyKey` participates
+Omitted `mode` on `execute` or `control` means `steer`. `requestId` correlates
+frames on one socket only. `idempotencyKey` participates
 in the canonical identity defined above and defaults to `eventId`; `eventId`
 correlates the durable envelope/status. ACK is sent only after durable
 acceptance. Later status frames mirror the pollable record.
+
+Convex/core owns admission and status truth. The gateway owns only delivery of
+the correlated ACK/status frames: it emits ACK after core returns durable
+acceptance and obtains later transitions from the authenticated status route.
+JetStream output, an open socket, and gateway polling are never evidence of
+acceptance by themselves.
 
 #### Attach and output replay
 
@@ -326,28 +337,33 @@ A busy WebSocket `execute` that is durably queued (`followup`, `collect`, or
 event's output once it reaches a runnable boundary and polls its durable status,
 always closing the client stream with a terminal `done` or `error` frame. A bare
 ACK is never the final frame. On terminal status, the
-conversation stream may already be purged, so reconnect returns the terminal
+conversation output may already have expired, so reconnect returns the terminal
 status/result rather than recreating token-by-token output. An attached socket
 does not own the run, and status remains pollable for seven days independently
 of JetStream's short output-retention window.
 
-Because purge is conversation-scoped, the gateway/core lifecycle does not purge
-on individual event completion. A
-single event finishing must not erase another active event's replay range. After
-the last terminal status/result is durable, purge may remove the conversation's
-token output; the seven-day status and idempotency records remain.
+There is no manual event- or conversation-level purge in v1. The
+conversation-scoped `WS_RESPONSES` subject can contain output for overlapping or
+sequential FIFO work, so one terminal event must never erase another event's
+replay range. JetStream limits retention automatically by `max_age` (three
+minutes) and `max_msgs_per_subject` (2,000); Convex status and idempotency records
+remain for seven days and are the durable source of truth after output expires.
 
 True abort/cancel remains separate from these control frames. Closing a socket or
 aborting a gateway fetch only detaches that reader in v1.
 
 ### Channel commands
 
-Channels add two transport-neutral commands:
+Channels use the same coordinator and add transport-neutral commands:
 
 - `/steer <text>` submits one `steer` envelope. When the conversation is idle,
   the text is normal input and starts a normal turn.
-- `/queue <mode>` sets the conversation's channel ingress preference to one of
-  `reject`, `followup`, `collect`, or `steer`; the default remains `collect`.
+- `/queue <text>` submits one explicit `followup` envelope. It never changes a
+  sticky conversation mode.
+- `/stop` and `/cancel` request that the current owner stop at the next safe model
+  boundary. The in-flight model/tool batch completes; the request does not kill
+  a remote tool. The owner then settles `failed` with a stopped-by-user reason,
+  and queued work is promoted normally under a new fencing generation.
 
 `/clear` must participate in the same conversation coordinator. The v1 default
 is to reject `/clear` with a retry message while a turn or queued ingress exists,
@@ -369,6 +385,29 @@ cannot steer by presenting another tenant's raw conversation key, event ID,
 status URL, NATS subject, or connection ID. Status reads and idempotent retries
 repeat the same authorization checks.
 
+An environment runtime/deployment key is resolved server-side to its account,
+project, environment, endpoint, and agent. The HTTP path must match that scope;
+WebSocket control and attach inherit the already-authenticated socket scope.
+Neither payload can replace the derived account or redirect work to another
+deployment.
+
+### Subagents and public status
+
+Steering and boundary stop target exactly one conversation owner. They do not
+broadcast into child subagents already dispatched by the parent. Ephemeral and
+persistent subagent runs keep their own event/result lifecycle; a persistent
+child conversation can be steered only through ingress addressed and authorized
+for that child agent/conversation. Stopping the parent waits boundedly for
+already-running children to finalize their own status, but does not hard-cancel
+them or inject their late result into another parent model step.
+
+`IngressStatus` describes durable ingress (`accepted`, `queued`, `applied`,
+`processing`, `completed`, `failed`, or `expired`). The public status response
+may additionally report `awaiting_approval` from the async execution record and
+include `approvals`. `requestedMode` is present for coordinated ingress; it is
+optional only for independently owned records such as a subagent result that did
+not enter through the public ingress FIFO.
+
 ### Payload-free observability
 
 Metrics, logs, and traces may record account/agent IDs, event IDs, a hashed or
@@ -387,13 +426,14 @@ The implementation follows this dependency order:
 2. Core conversation coordinator and AI SDK step-boundary steering.
 3. Direct/async HTTP behavior, then SDK types/client and OpenAPI.
 4. Gateway attach/control plus WebSocket ACK/status frames.
-5. Channel `/steer`, `/queue`, and lease-safe `/clear` commands.
+5. Channel `/steer`, `/queue`, `/stop`/`/cancel`, and lease-safe `/clear`
+   commands.
 6. Cross-transport integration tests and user/operations documentation.
 
 Do not implement [issue #95](https://github.com/beeblastco/broods/issues/95) in
 parallel. Its per-subagent WebSocket attach and JetStream lifecycle must first be
 aligned with this decision's attach/control correlation, durable status,
-subject ownership, replay, and purge rules. Otherwise the two issues can encode
+subject ownership, replay, and retention rules. Otherwise the two issues can encode
 conflicting meanings for attach, completion, and stream retention.
 
 ## Consequences
@@ -401,10 +441,9 @@ conflicting meanings for attach, completion, and stream retention.
 - Accepted work becomes durable, bounded, observable, and idempotent across all
   transports.
 - Steering is predictable because it cannot split a model call or tool batch.
-- Direct sync, async, and WebSocket ingress share the `reject` default; channels
-  retain `collect`.
-- Busy async omission changes from accept-then-fail to a synchronous conflict;
-  the development contract has no transition mode.
+- Direct sync, async, WebSocket, and channel ingress share the `steer` default.
+- Busy async omission becomes durable boundary steering; the development
+  contract has no transition mode.
 - Hard cancellation remains visibly unsupported instead of being approximated by
   disconnecting a gateway reader.
 - Transport-specific behavior is layered on the durable coordinator and status

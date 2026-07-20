@@ -128,41 +128,48 @@ export const commands: CommandHandler[] = [
     },
   },
   {
+    aliases: ["/stop", "/cancel"],
+    description: "Stop the active run at the next model boundary",
+    discord: {
+      names: ["stop"],
+      description: "Stop the active run",
+    },
+    async execute(ctx) {
+      if (!ctx.accountId || !ctx.agentId) {
+        throw new Error("Stop requires account and agent scope");
+      }
+      const result = await runtime.mutate<{
+        stopped: boolean;
+        queuedCount: number;
+      }>("stopIngressOwner", {
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        conversationKey: ctx.conversationKey,
+      });
+      if (!result.stopped) return "Nothing is running right now.";
+
+      return result.queuedCount > 0
+        ? `Stopping at the next model boundary. ${result.queuedCount} queued message(s) will continue afterward.`
+        : "Stopping at the next model boundary.";
+    },
+  },
+  {
     aliases: ["/queue"],
-    description: "Set queue mode: reject, followup, collect, or steer",
+    description: "Queue one message as an explicit follow-up",
     discord: {
       names: ["queue"],
-      description: "Set the conversation queue mode",
+      description: "Queue a follow-up message",
       options: [
         {
           type: 3,
-          name: "mode",
-          description: "reject, followup, collect, or steer",
+          name: "text",
+          description: "Message to run after the active turn",
           required: true,
         },
       ],
     },
-    async execute(ctx) {
-      if (!ctx.accountId || !ctx.agentId) {
-        throw new Error("Queue mode requires account and agent scope");
-      }
-      const mode = ctx.text?.trim().split(/\s+/)[1]?.toLowerCase();
-      if (
-        mode !== "reject" &&
-        mode !== "followup" &&
-        mode !== "collect" &&
-        mode !== "steer"
-      ) {
-        return "Usage: /queue <reject|followup|collect|steer>";
-      }
-      await runtime.mutate("setIngressChannelMode", {
-        accountId: ctx.accountId,
-        agentId: ctx.agentId,
-        conversationKey: ctx.conversationKey,
-        mode: mode,
-      });
-
-      return `Queue mode set to ${mode}.`;
+    async execute() {
+      return "Usage: /queue <message>";
     },
   },
   {

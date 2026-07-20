@@ -845,6 +845,7 @@ function isIngressStatus(value: unknown): value is IngressStatus {
     value === "queued" ||
     value === "applied" ||
     value === "processing" ||
+    value === "awaiting_approval" ||
     value === "completed" ||
     value === "failed" ||
     value === "expired"
@@ -898,7 +899,7 @@ function isControlMessage(
     record.requestId.length > 0 &&
     typeof record.eventId === "string" &&
     record.eventId.length > 0 &&
-    isIngressMode(record.mode) &&
+    (record.mode === undefined || isIngressMode(record.mode)) &&
     hasEventInput(value)
   );
 }

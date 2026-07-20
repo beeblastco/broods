@@ -32,7 +32,7 @@ export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
-  /** Busy-conversation behavior. Direct calls default to `reject`. */
+  /** Busy-conversation behavior. Defaults to `steer`: join the live run at its next step boundary (falls back to a FIFO follow-up). */
   mode?: "reject" | "followup" | "collect" | "steer";
   /** Stable retry identity within the conversation; defaults to eventId. */
   idempotencyKey?: string;

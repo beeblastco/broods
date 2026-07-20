@@ -19,6 +19,11 @@ bun add broods
 
 Runtime calls use the **environment runtime API key** (not your dashboard login token). After your first `broods deploy`, the CLI writes `BROODS_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:
 
+The key is deployment-scoped: the gateway resolves its account, project,
+environment, endpoint, and agent, and rejects a generated agent reference whose
+path does not match that scope. A request body cannot redirect the key to a
+different deployment or tenant.
+
 ```ts
 import { BroodsClient } from "broods";
 
@@ -175,7 +180,6 @@ const incoming = await client.runAsync(api.agents.myAgent, {
   conversationKey,
   eventId: "turn-2",
   idempotencyKey: "support-ticket-42-turn-2",
-  mode: "steer",
   input: "New information: the database is healthy. Focus on the gateway.",
 });
 
@@ -194,10 +198,12 @@ await active.wait();
 When the active run reaches another model boundary, the second request reports
 `appliedMode: "steer"` and `appliedToEventId: "turn-1"`. If no boundary remains,
 Broods preserves the request as a FIFO follow-up and reports
-`appliedMode: "followup"`. Use `mode: "followup"` when every message should be a
+`appliedMode: "followup"`. Steer is the default for sync HTTP, async HTTP,
+WebSocket, and channels, so the example omits `mode`. Use `mode: "followup"`
+when every message should be a
 separate later turn, or `mode: "collect"` to combine compatible queued messages
-into one later turn. Omitting `mode` uses `reject` for HTTP, async, and WebSocket
-requests.
+into one later turn. Use `mode: "reject"` only when a busy conversation should
+reject the new request without persisting it.
 
 If a busy synchronous `stream()` call is accepted for later work, the iterator
 throws `IngressAcceptedError` because that second request does not own an SSE
@@ -464,7 +470,6 @@ subscription = wsClient.subscribe(
         requestId: "control-2",
         eventId: "turn-2",
         idempotencyKey: "support-ticket-42-turn-2",
-        mode: "steer",
         input: "The database is healthy. Check the gateway first.",
       });
     },
@@ -487,8 +492,27 @@ signal for this. See the runnable
 the raw envelope (`{ cursor, replay, data }`) alongside the unwrapped
 `onMessage` delivery.
 
-In supported channels, the equivalent commands are `/steer <message>` and
-`/queue reject|followup|collect|steer`. An idle `/steer` starts a normal turn.
+The gateway sends `ack` only after core/Convex durably accepts a control input;
+later `status` frames mirror the authenticated status endpoint. JetStream carries
+short-lived output for replay, but it does not own acceptance or terminal status.
+
+In supported channels, ordinary messages steer by default. Use:
+
+```text
+/steer Focus on the gateway logs.
+/queue After that, summarize the incident timeline.
+/stop
+```
+
+`/queue <message>` creates one explicit FIFO follow-up. `/stop` and `/cancel`
+stop the parent at its next safe model boundary, after the in-flight tool batch;
+they do not hard-cancel remote tools or already-running subagents. An idle
+`/steer` starts a normal turn.
+
+Durable ingress statuses include `requestedMode`, `appliedMode`, and
+`appliedToEventId`. Async status can additionally be `awaiting_approval` with an
+`approvals` array. `requestedMode` may be absent for independently running
+subagent result records that did not enter through the public ingress FIFO.
 
 See [Architecture](architecture.md) for the WebSocket protocol details.
 

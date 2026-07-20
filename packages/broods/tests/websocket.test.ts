@@ -286,14 +286,14 @@ test("websocket client sends correlated control and attach frames", async () => 
   subscription.sendControl({
     requestId: "request-2",
     eventId: "event-2",
-    mode: "steer",
     input: "change direction",
   });
-  expect(JSON.parse(FakeWebSocket.instances[0]!.sent[1]!)).toMatchObject({
+  const control = JSON.parse(FakeWebSocket.instances[0]!.sent[1]!);
+  expect(control).toMatchObject({
     type: "control",
     requestId: "request-2",
-    mode: "steer",
   });
+  expect(control.mode).toBeUndefined();
   subscription.close();
 
   const attached = client.attach({

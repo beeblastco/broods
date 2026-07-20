@@ -36,6 +36,7 @@ export type WebSocketRunInput = {
   projectSlug?: string;
   environmentSlug?: string;
   signal?: AbortSignal;
+  /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: "reject" | "followup" | "collect" | "steer";
   idempotencyKey?: string;
 } & AgentRunEventInput &

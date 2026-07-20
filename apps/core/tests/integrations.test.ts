@@ -740,7 +740,7 @@ describe("direct API ingress", () => {
       publicAccess: true,
     });
     expect(directEvent.publicEventId).toBe("one");
-    expect(directEvent.requestedMode).toBe("reject");
+    expect(directEvent.requestedMode).toBe("steer");
     expect(directEvent.idempotencyKey).toBe("one");
     expect(directEvent.conversationKey).toBe(
       "acct:acct_test:agent:agent_test:api:alpha",

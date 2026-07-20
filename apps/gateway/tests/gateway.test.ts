@@ -130,6 +130,21 @@ test("parses only valid gateway websocket messages", () => {
   expect(
     parseGatewayMessage(
       JSON.stringify({
+        type: "control",
+        requestId: "request-default",
+        eventId: "event-default",
+        input: "steer by default",
+      }),
+    ),
+  ).toEqual({
+    type: "control",
+    requestId: "request-default",
+    eventId: "event-default",
+    input: "steer by default",
+  });
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
         type: "attach",
         requestId: "attach-1",
         agentId: "agent_123",

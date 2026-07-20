@@ -1063,6 +1063,12 @@ async function handleChannelRequest(
   context?: RequestContext,
 ): Promise<void> {
   if (event.commandToken) {
+    const queueMessageText =
+      event.commandToken === "/queue"
+        ? extractText(event.content)
+            .replace(/^\/queue(?:\s+|$)/i, "")
+            .trim()
+        : "";
     if (event.commandToken === "/steer") {
       const text = extractText(event.content)
         .replace(/^\/steer(?:\s+|$)/i, "")
@@ -1075,6 +1081,12 @@ async function handleChannelRequest(
         ...event,
         content: text,
         events: rewriteLatestUserIngressText(event.events, text),
+      };
+    } else if (queueMessageText) {
+      event = {
+        ...event,
+        content: queueMessageText,
+        events: rewriteLatestUserIngressText(event.events, queueMessageText),
       };
     } else {
       logInfo("Channel command executing", {
@@ -1100,13 +1112,7 @@ async function handleChannelRequest(
   if (!event.accountId || !event.agentId) {
     throw new Error("Channel ingress requires account and agent scope");
   }
-  const state = await runtime.query<{
-    mode?: "reject" | "followup" | "collect" | "steer";
-    busy: boolean;
-    queuedCount: number;
-  }>("getIngressConversationState", { conversationKey: event.conversationKey });
-  const requestedMode =
-    event.commandToken === "/steer" ? "steer" : (state.mode ?? "collect");
+  const requestedMode = event.commandToken === "/queue" ? "followup" : "steer";
   const admission = await acceptIngress({
     accountId: event.accountId,
     agentId: event.agentId,

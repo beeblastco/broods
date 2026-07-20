@@ -267,11 +267,10 @@ landed after the original connection closed.
 ```mermaid
 flowchart TD
   Harness["harness-processing worker"] -->|"nc.publish (one publish)"| Subj["subject<br/>v1.acct.agent.ws.response.convToken"]
-  Subj -->|"live fan-out"| GWlive["core subscribe<br/>(connected client)"]
   Subj -->|"captured (stored once)"| NATS["WS_RESPONSES stream<br/>(durable buffer)"]
-  NATS -->|"JetStream consumer<br/>replay from seq / time"| GWreplay["reconnecting / late client"]
-  GWlive -->|"forward tokens"| Client["WebSocket Client"]
-  GWreplay -->|"replay missed, then resume live"| Client
+  NATS -->|"ordered consumer<br/>replay then live tail"| Gateway["WebSocket gateway"]
+  Gateway -->|"output cursor + status frames"| Client["WebSocket client"]
+  Convex["Convex ingress status<br/>7-day source of truth"] --> Gateway
 ```
 
 The gateway (the **caller's** service) owns client auth, the subscription, and
@@ -286,23 +285,12 @@ NATS subject patterns:
 
 `convToken = base64url(publicConversationKey)` — a single NATS-safe token.
 
-**One publish, two read paths — and not double storage.** A core publish is
-fanned out live to any core subscriber on the subject _and_ captured once by the
-stream. **Core publish stores nothing itself** — the stream is the only stored
-copy, so this is not duplicated storage. The platform exposes both read paths and
-lets the application choose how to switch:
-
-- **Connected →** `subscribeConversationLive` (core `subscribe`) — lowest latency.
-- **Dropped mid-stream → reconnect & resume:** `readConversationStream`
-  (JetStream consumer) from `startSequence` (last `JsMsg.seq`) or `startTime`,
-  catch up the missed events, then continue live. This is JetStream's **only**
-  job — resuming a turn that is _still streaming_.
-- **Reconnect after the turn finished →** there is nothing to resume: the buffer
-  was purged at persist time, so read the completed turn from the conversation DB.
-
-Switching policy is the consuming app's call — the platform only guarantees a
-monotonic cursor (`JsMsg.seq` for stream readers; the envelope `sequence`/`eventId`
-for core subscribers) so a core→stream switch dedupes with a trivial `seq` check.
+**One publish, one stored copy.** Core publishes each frame once; JetStream is
+the only token-output buffer. The gateway uses one ordered consumer for both
+replay and the live tail, so there is no replay-to-live gap. A reconnect attaches
+with its last fully processed opaque cursor and receives retained output after
+that cursor. When output is no longer retained, the client falls back to the
+durable Convex status/result rather than reconstructing token frames.
 
 Notes:
 
@@ -320,15 +308,10 @@ Notes:
   also carries a `Nats-Msg-Id` (`eventId:sequence`) so the stream's
   `duplicate_window` (~2 min) collapses any publish retry.
 - **Storage (kept minimal):** the stream is an **in-flight resume buffer**, not
-  the source of truth — the conversation history DB is. So it holds as little as
-  possible:
-  - **Purge on persist:** when a turn finishes and is saved to the DB, the server
-    (`LiveNatsPublisher.purge`, right after the terminal `done`) deletes that
-    conversation from the stream — a later reconnect reads the saved turn from the
-    DB, so keeping the buffer would be pointless. The detached async continuation
-    re-enters the same path, so it purges when _it_ finishes.
-  - **Short backstop `max_age` (~3 min):** only for turns that never persist
-    cleanly (e.g. an error/crash before the purge); they expire instead of piling up.
+  the source of truth. There is no manual per-event or per-conversation purge:
+  sequential FIFO events share one subject, so one completion must not erase
+  another event's replay range. Output expires through `max_age` (~3 min) and
+  `max_msgs_per_subject` (2,000); durable status/idempotency remains in Convex.
   - Other knobs in `nats.ts`: `RESPONSE_STREAM_STORAGE` (`File` default; `Memory`
     is faster/cheaper but lost on restart) and `max_msgs_per_subject`. The
     retention knobs are mutable, so `ensureResponseStream` syncs them onto the

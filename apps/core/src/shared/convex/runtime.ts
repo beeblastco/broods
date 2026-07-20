@@ -14,7 +14,6 @@ export const runtimeQueries = {
   getSandboxReservation: internal.runtime.getSandboxReservation,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
-  getIngressConversationState: internal.runtimeIngress.getConversationState,
   getIngressStatus: internal.runtimeIngress.getStatus,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
 } as const;
@@ -41,8 +40,8 @@ export const runtimeMutations = {
   clearFencedConversation: internal.runtimeIngress.clearConversation,
   releaseIngressOwner: internal.runtimeIngress.releaseOwner,
   renewIngressOwner: internal.runtimeIngress.renewOwner,
-  setIngressChannelMode: internal.runtimeIngress.setChannelMode,
   settleIngress: internal.runtimeIngress.settle,
+  stopIngressOwner: internal.runtimeIngress.stopOwner,
   takeNextIngress: internal.runtimeIngress.takeNext,
 } as const;
 

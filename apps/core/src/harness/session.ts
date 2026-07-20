@@ -220,8 +220,8 @@ export class Session {
   }
 
   /** Renews the current fenced owner before another model/tool boundary. */
-  async renewConversationLease(): Promise<boolean> {
-    if (this.ownerGeneration === undefined) return true;
+  async renewConversationLease(): Promise<"renewed" | "stopped" | "stale"> {
+    if (this.ownerGeneration === undefined) return "renewed";
 
     return runtime.mutate("renewIngressOwner", {
       conversationKey: this.conversationKey,

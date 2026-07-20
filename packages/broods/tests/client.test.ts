@@ -20,10 +20,12 @@ afterEach(() => {
 
 test("client streams directly from core with apiKey auth", async () => {
   const urls: string[] = [];
+  const bodies: Record<string, unknown>[] = [];
   const client = new BroodsClient({
     apiKey: "test-key",
     fetch: async (input, init) => {
       urls.push(String(input));
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       expect(init?.headers).toMatchObject({
         Accept: "text/event-stream",
         Authorization: "Bearer test-key",
@@ -47,6 +49,7 @@ test("client streams directly from core with apiKey auth", async () => {
   });
 
   expect(urls).toEqual([DEFAULT_CORE_BASE_URL]);
+  expect(bodies[0]?.mode).toBeUndefined();
   expect(result.text).toBe("hi");
 });
 

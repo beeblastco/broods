@@ -768,10 +768,10 @@ export const runtimeConversationCoordinatorsFields = {
   nextSequence: v.number(),
   ownerGeneration: v.number(),
   ownerEventId: v.optional(v.string()),
+  stopRequestedGeneration: v.optional(v.number()),
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
   queuedBytes: v.number(),
-  channelMode: v.optional(ingressModeValidator),
   updatedAt: v.number(),
 };
 /** One accepted transport-neutral ingress item in the conversation FIFO. */

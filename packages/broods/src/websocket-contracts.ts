@@ -11,6 +11,7 @@ export type IngressStatus =
   | "queued"
   | "applied"
   | "processing"
+  | "awaiting_approval"
   | "completed"
   | "failed"
   | "expired";
@@ -79,6 +80,7 @@ export type WebSocketClientExecuteMessage = {
   agentId: string;
   sessionId?: string;
   eventId?: string;
+  /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: IngressMode;
   idempotencyKey?: string;
 } & AgentRunEventInput &
@@ -89,7 +91,8 @@ export type WebSocketClientControlMessage = {
   requestId: string;
   eventId: string;
   idempotencyKey?: string;
-  mode: IngressMode;
+  /** Defaults to "steer": join the live run at its next step boundary. */
+  mode?: IngressMode;
 } & AgentRunEventInput;
 
 export type WebSocketClientAttachMessage = {

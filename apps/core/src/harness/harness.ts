@@ -814,7 +814,11 @@ export async function runAgentLoop(
     },
     stopWhen: isStepCount(agentConfig.agent?.maxTurn ?? MAX_AGENT_ITERATIONS),
     prepareStep: async ({ messages }) => {
-      if (!(await session.renewConversationLease())) {
+      const renewal = await session.renewConversationLease();
+      if (renewal === "stopped") {
+        throw new Error("Stopped by user at the model boundary");
+      }
+      if (renewal === "stale") {
         throw new Error(
           "Conversation ownership changed before the next model step",
         );
