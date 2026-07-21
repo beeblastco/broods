@@ -285,12 +285,17 @@ NATS subject patterns:
 
 `convToken = base64url(publicConversationKey)` — a single NATS-safe token.
 
-**One publish, one stored copy.** Core publishes each frame once; JetStream is
-the only token-output buffer. The gateway uses one ordered consumer for both
-replay and the live tail, so there is no replay-to-live gap. A reconnect attaches
-with its last fully processed opaque cursor and receives retained output after
-that cursor. When output is no longer retained, the client falls back to the
-durable Convex status/result rather than reconstructing token frames.
+**Best-effort token replay, durable status.** Core publishes each frame once to
+JetStream, the only token-output buffer, and the gateway uses one ordered
+consumer for both replay and the live tail — so replay hands off to the live tail
+without a seam _for frames that were stored_. Publishing is fire-and-forget (no
+per-token PubAck), so a transient NATS failure can drop a frame before JetStream
+retains it; token replay is therefore best-effort, not lossless. Retention is
+bounded by `max_age` and `max_msgs_per_subject`. A reconnect attaches with its
+last fully processed opaque cursor and receives retained output after it. When
+the needed output was never stored or has aged out, the client falls back to the
+durable Convex status/result — the source of truth — rather than reconstructing
+individual token frames.
 
 Notes:
 
