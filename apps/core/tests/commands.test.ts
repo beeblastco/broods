@@ -17,7 +17,15 @@ import {
 const originalMutation = runtime.mutate;
 
 beforeEach(() => {
-  runtime.mutate = mock(() => Promise.resolve(0)) as never;
+  runtime.mutate = mock((name: string) =>
+    Promise.resolve(
+      name === "acquireIngressClear"
+        ? 1
+        : name === "clearFencedConversation"
+          ? { deleted: 0, hasMore: false }
+          : null,
+    ),
+  ) as never;
 });
 
 afterEach(() => {
@@ -40,23 +48,37 @@ function createCommandContext(
   overrides: Partial<{
     conversationKey: string;
     channel: ChannelActions;
+    accountId: string;
+    agentId: string;
+    eventId: string;
+    text: string;
   }> = {},
 ) {
   return {
     conversationKey: overrides.conversationKey ?? "test-convo",
     channel: overrides.channel ?? createMockChannelActions(),
+    accountId: overrides.accountId ?? "account-1",
+    agentId: overrides.agentId ?? "agent-1",
+    eventId: overrides.eventId ?? "event-1",
+    text: overrides.text,
   };
 }
 
 describe("command definitions", () => {
   it("defines command handlers with expected aliases", () => {
-    expect(commands).toHaveLength(2);
+    expect(commands).toHaveLength(5);
 
     const newCmd = commands.find((c) => c.aliases.includes("/new"));
     const helpCmd = commands.find((c) => c.aliases.includes("/help"));
+    const steerCmd = commands.find((c) => c.aliases.includes("/steer"));
+    const stopCmd = commands.find((c) => c.aliases.includes("/stop"));
+    const queueCmd = commands.find((c) => c.aliases.includes("/queue"));
 
     expect(newCmd).toBeDefined();
     expect(helpCmd).toBeDefined();
+    expect(steerCmd).toBeDefined();
+    expect(stopCmd?.aliases).toEqual(["/stop", "/cancel"]);
+    expect(queueCmd).toBeDefined();
   });
 
   it("/new and /clear share the same handler", () => {
@@ -81,6 +103,10 @@ describe("parseCommand", () => {
     expect(parseCommand("/new")).toBe("/new");
     expect(parseCommand("/clear")).toBe("/clear");
     expect(parseCommand("/help")).toBe("/help");
+    expect(parseCommand("/steer change direction")).toBe("/steer");
+    expect(parseCommand("/queue run this next")).toBe("/queue");
+    expect(parseCommand("/stop")).toBe("/stop");
+    expect(parseCommand("/cancel")).toBe("/cancel");
   });
 
   it("normalizes case and trims whitespace", () => {
@@ -137,6 +163,34 @@ describe("executeCommand", () => {
     expect(helpText).toContain("/clear");
     expect(helpText).toContain("/help");
     expect(helpText).not.toContain("/query");
+  });
+
+  it("requests a generation-scoped boundary stop", async () => {
+    const mutationMock = mock(() =>
+      Promise.resolve({ stopped: true, queuedCount: 2 }),
+    );
+    runtime.mutate = mutationMock as never;
+    const channel = createMockChannelActions();
+    await executeCommand(
+      "/stop",
+      createCommandContext({ channel, text: "/stop" }),
+    );
+
+    expect(mutationMock).toHaveBeenCalledWith("stopIngressOwner", {
+      accountId: "account-1",
+      agentId: "agent-1",
+      conversationKey: "test-convo",
+    });
+    expect(channel.sendText).toHaveBeenCalledWith(
+      "Stopping at the next model boundary. 2 queued message(s) will continue afterward.",
+    );
+  });
+
+  it("shows queue message usage when no message reaches the handler", async () => {
+    const channel = createMockChannelActions();
+    await executeCommand("/queue", createCommandContext({ channel }));
+
+    expect(channel.sendText).toHaveBeenCalledWith("Usage: /queue <message>");
   });
 
   it("does nothing for unknown command tokens", async () => {
@@ -221,8 +275,15 @@ describe("getDiscordCommandRegistrations", () => {
   it("returns registrations for all commands with discord metadata", () => {
     const registrations = getDiscordCommandRegistrations();
 
-    expect(registrations).toHaveLength(3);
-    expect(registrations.map((r) => r.name)).toEqual(["new", "clear", "help"]);
+    expect(registrations).toHaveLength(6);
+    expect(registrations.map((r) => r.name)).toEqual([
+      "new",
+      "clear",
+      "steer",
+      "stop",
+      "queue",
+      "help",
+    ]);
   });
 
   it("includes integration_types and contexts for global scope", () => {
@@ -247,10 +308,18 @@ describe("getDiscordCommandRegistrations", () => {
     }
   });
 
-  it("omits options when commands do not define them", () => {
+  it("registers options only for commands that accept arguments", () => {
     const registrations = getDiscordCommandRegistrations();
 
-    expect(registrations.every((r) => r.options === undefined)).toBe(true);
+    expect(
+      registrations.find((r) => r.name === "new")?.options,
+    ).toBeUndefined();
+    expect(registrations.find((r) => r.name === "steer")?.options).toHaveLength(
+      1,
+    );
+    expect(registrations.find((r) => r.name === "queue")?.options).toHaveLength(
+      1,
+    );
   });
 
   it("uses default integration types and contexts when not specified", () => {
@@ -272,18 +341,30 @@ describe("getDiscordCommandRegistrations", () => {
 
 describe("clearConversation via /new command", () => {
   it("repeats bounded Convex deletes until the conversation is empty", async () => {
-    const mutationMock = mock()
-      .mockResolvedValueOnce({ deleted: 100, hasMore: true })
-      .mockResolvedValueOnce({ deleted: 2, hasMore: false });
+    let clearCalls = 0;
+    const mutationMock = mock((name: string) => {
+      if (name === "acquireIngressClear") return Promise.resolve(7);
+      if (name === "clearFencedConversation") {
+        clearCalls += 1;
+        return Promise.resolve(
+          clearCalls === 1
+            ? { deleted: 100, hasMore: true }
+            : { deleted: 2, hasMore: false },
+        );
+      }
+      return Promise.resolve(null);
+    });
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
     await executeCommand(
       "/new",
       createCommandContext({ conversationKey: "key-1", channel }),
     );
-    expect(mutationMock).toHaveBeenCalledTimes(2);
-    expect(mutationMock).toHaveBeenCalledWith("clearConversation", {
+    expect(mutationMock).toHaveBeenCalledTimes(4);
+    expect(mutationMock).toHaveBeenCalledWith("clearFencedConversation", {
       conversationKey: "key-1",
+      ownerEventId: "event-1",
+      ownerGeneration: 7,
     });
     expect(channel.sendText).toHaveBeenCalledWith(
       "Context cleared. Starting fresh.",
@@ -292,13 +373,13 @@ describe("clearConversation via /new command", () => {
 
   it("reports success when the final allowed batch completes cleanup", async () => {
     let calls = 0;
-    const mutationMock = mock(() => {
-      calls += 1;
-
-      return Promise.resolve({
-        deleted: 100,
-        hasMore: calls < 100,
-      });
+    const mutationMock = mock((name: string) => {
+      if (name === "acquireIngressClear") return Promise.resolve(1);
+      if (name === "clearFencedConversation") {
+        calls += 1;
+        return Promise.resolve({ deleted: 100, hasMore: calls < 100 });
+      }
+      return Promise.resolve(null);
     });
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
@@ -307,7 +388,7 @@ describe("clearConversation via /new command", () => {
       "/new",
       createCommandContext({ conversationKey: "key-1", channel }),
     );
-    expect(mutationMock).toHaveBeenCalledTimes(100);
+    expect(mutationMock).toHaveBeenCalledTimes(102);
     expect(channel.sendText).toHaveBeenCalledWith(
       "Context cleared. Starting fresh.",
     );
@@ -316,9 +397,15 @@ describe("clearConversation via /new command", () => {
     );
   });
 
-  it("returns an error when conversation cleanup does not converge", async () => {
-    const mutationMock = mock(() =>
-      Promise.resolve({ deleted: 100, hasMore: true }),
+  it("returns actionable guidance when conversation cleanup does not converge", async () => {
+    const mutationMock = mock((name: string) =>
+      Promise.resolve(
+        name === "acquireIngressClear"
+          ? 1
+          : name === "clearFencedConversation"
+            ? { deleted: 100, hasMore: true }
+            : null,
+      ),
     );
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
@@ -327,9 +414,9 @@ describe("clearConversation via /new command", () => {
       "/new",
       createCommandContext({ conversationKey: "key-1", channel }),
     );
-    expect(mutationMock).toHaveBeenCalledTimes(100);
+    expect(mutationMock).toHaveBeenCalledTimes(102);
     expect(channel.sendText).toHaveBeenCalledWith(
-      "Something went wrong. Please try again.",
+      "Conversation cleanup exceeded 100 Convex batches; run /clear again to continue",
     );
     expect(channel.sendText).not.toHaveBeenCalledWith(
       "Context cleared. Starting fresh.",

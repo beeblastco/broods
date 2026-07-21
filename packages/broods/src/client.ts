@@ -32,6 +32,10 @@ export const DEFAULT_CORE_BASE_URL = "https://gateway.broods.app";
 type AgentRunInputBase = {
   conversationKey?: string;
   eventId?: string;
+  /** Busy-conversation behavior. Defaults to `steer`: join the live run at its next step boundary (falls back to a FIFO follow-up). */
+  mode?: "reject" | "followup" | "collect" | "steer";
+  /** Stable retry identity within the conversation; defaults to eventId. */
+  idempotencyKey?: string;
 } & AgentRunOverrides;
 
 export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
@@ -39,6 +43,15 @@ export type AgentRunInput = AgentRunInputBase & AgentRunEventInput;
 export interface AgentRunResult {
   text: string;
   events: TextStreamPart<ToolSet>[];
+}
+
+export class IngressAcceptedError extends Error {
+  constructor(public readonly accepted: AsyncRequestAccepted) {
+    super(
+      `Ingress ${accepted.eventId} was accepted asynchronously with status ${accepted.status ?? "queued"}`,
+    );
+    this.name = "IngressAcceptedError";
+  }
 }
 
 export interface AsyncPollOptions {
@@ -240,6 +253,11 @@ export class BroodsClient {
       throw new Error(
         `Run failed: ${response.status} ${await response.text()}`,
       );
+    if (response.status === 202) {
+      throw new IngressAcceptedError(
+        normalizeAsyncAccepted(await response.json(), body),
+      );
+    }
     if (!response.body) throw new Error("Run response has no body");
 
     for await (const data of readSseStream(response.body)) {
@@ -342,6 +360,7 @@ export class BroodsClient {
         payload.status === "awaiting_approval" ||
         payload.status === "completed" ||
         payload.status === "failed" ||
+        payload.status === "expired" ||
         payload.status === "not_found"
       ) {
         return payload;
@@ -587,6 +606,10 @@ function directRunBody(
     eventId,
     conversationKey: input.conversationKey ?? eventId,
     events: resolveRunEvents(input),
+    ...(input.mode !== undefined ? { mode: input.mode } : {}),
+    ...(input.idempotencyKey !== undefined
+      ? { idempotencyKey: input.idempotencyKey }
+      : {}),
     ...(input.system !== undefined ? { system: input.system } : {}),
     ...(input.model !== undefined ? { model: input.model } : {}),
   };
@@ -607,11 +630,29 @@ function normalizeAsyncAccepted(
   if (!status.statusId)
     throw new Error("Async response statusUrl missing status id");
 
+  const eventId =
+    typeof (payload as { eventId?: unknown }).eventId === "string"
+      ? (payload as { eventId: string }).eventId
+      : status.statusId;
+  const acceptedStatus = (payload as { status?: unknown }).status;
+  const requestedMode = (payload as { requestedMode?: unknown }).requestedMode;
   return {
     statusUrl,
     statusId: status.statusId,
-    eventId: status.statusId,
+    eventId,
     agentId: status.agentId ?? requestBody.agentId,
+    ...(acceptedStatus === "accepted" ||
+    acceptedStatus === "queued" ||
+    acceptedStatus === "applied" ||
+    acceptedStatus === "processing"
+      ? { status: acceptedStatus }
+      : {}),
+    ...(requestedMode === "reject" ||
+    requestedMode === "followup" ||
+    requestedMode === "collect" ||
+    requestedMode === "steer"
+      ? { requestedMode }
+      : {}),
   };
 }
 

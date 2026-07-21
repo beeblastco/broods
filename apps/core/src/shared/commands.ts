@@ -10,6 +10,10 @@ import { logError } from "./log.ts";
 export interface CommandContext {
   conversationKey: string;
   channel: ChannelActions;
+  accountId?: string;
+  agentId?: string;
+  eventId?: string;
+  text?: string;
 }
 
 interface DiscordCommandOption {
@@ -61,23 +65,111 @@ export const commands: CommandHandler[] = [
       description: "Clear conversation context and start fresh",
     },
     async execute(ctx) {
-      for (
-        let batchNumber = 0;
-        batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
-        batchNumber += 1
-      ) {
-        const result = await runtime.mutate<{
-          deleted: number;
-          hasMore: boolean;
-        }>("clearConversation", {
-          conversationKey: ctx.conversationKey,
-        });
-        if (!result.hasMore) return "Context cleared. Starting fresh.";
+      if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
+        throw new Error("Clear requires account, agent, and event scope");
       }
-
-      throw new Error(
-        `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`,
+      const ownerGeneration = await runtime.mutate<number | null>(
+        "acquireIngressClear",
+        {
+          accountId: ctx.accountId,
+          agentId: ctx.agentId,
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          leaseTtlMs: 15 * 60 * 1000,
+        },
       );
+      if (ownerGeneration === null) {
+        return "Cannot clear while a turn or queued message is active. Try again after it finishes.";
+      }
+      try {
+        for (
+          let batchNumber = 0;
+          batchNumber < CLEAR_CONVERSATION_MAX_BATCHES;
+          batchNumber += 1
+        ) {
+          const result = await runtime.mutate<{
+            deleted: number;
+            hasMore: boolean;
+          }>("clearFencedConversation", {
+            conversationKey: ctx.conversationKey,
+            ownerEventId: ctx.eventId,
+            ownerGeneration: ownerGeneration,
+          });
+          if (!result.hasMore) return "Context cleared. Starting fresh.";
+        }
+
+        return `Conversation cleanup exceeded ${CLEAR_CONVERSATION_MAX_BATCHES} Convex batches; run /clear again to continue`;
+      } finally {
+        await runtime.mutate("releaseIngressOwner", {
+          conversationKey: ctx.conversationKey,
+          ownerEventId: ctx.eventId,
+          ownerGeneration: ownerGeneration,
+        });
+      }
+    },
+  },
+  {
+    aliases: ["/steer"],
+    description: "Steer the active turn at the next model boundary",
+    discord: {
+      names: ["steer"],
+      description: "Steer the active turn at the next model boundary",
+      options: [
+        {
+          type: 3,
+          name: "text",
+          description: "Guidance for the active turn",
+          required: true,
+        },
+      ],
+    },
+    async execute() {
+      return "Usage: /steer <message>";
+    },
+  },
+  {
+    aliases: ["/stop", "/cancel"],
+    description: "Stop the active run at the next model boundary",
+    discord: {
+      names: ["stop"],
+      description: "Stop the active run",
+    },
+    async execute(ctx) {
+      if (!ctx.accountId || !ctx.agentId) {
+        throw new Error("Stop requires account and agent scope");
+      }
+      const result = await runtime.mutate<{
+        stopped: boolean;
+        queuedCount: number;
+      }>("stopIngressOwner", {
+        accountId: ctx.accountId,
+        agentId: ctx.agentId,
+        conversationKey: ctx.conversationKey,
+      });
+      if (!result.stopped) return "Nothing is running right now.";
+
+      return result.queuedCount > 0
+        ? `Stopping at the next model boundary. ${result.queuedCount} queued message(s) will continue afterward.`
+        : "Stopping at the next model boundary.";
+    },
+  },
+  {
+    aliases: ["/queue"],
+    description: "Queue one message as an explicit follow-up",
+    discord: {
+      names: ["queue"],
+      description: "Queue a follow-up message",
+      options: [
+        {
+          type: 3,
+          name: "text",
+          description: "Message to run after the active turn",
+          required: true,
+        },
+      ],
+    },
+    async execute() {
+      return "Usage: /queue <message>";
     },
   },
   {

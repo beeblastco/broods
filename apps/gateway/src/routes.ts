@@ -41,10 +41,34 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
 }
 
 export function isWebSocketPath(pathname: string): boolean {
-  return (
-    /^\/v1\/agents\/[^/]+\/ws$/.test(pathname) ||
-    /^\/v1\/[^/]+\/agents\/[^/]+\/[^/]+\/ws$/.test(pathname)
+  return matchAgentWebSocketPath(pathname) !== null;
+}
+
+/**
+ * Parses the two agent WebSocket path shapes so the upgrade can bind the
+ * requested endpoint to the runtime key's scope before any stream access.
+ */
+export function matchAgentWebSocketPath(pathname: string): {
+  endpointId: string;
+  projectSlug?: string;
+  environmentSlug?: string;
+} | null {
+  const scoped = pathname.match(
+    /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)\/ws$/,
   );
+  if (scoped?.[1] && scoped[2] && scoped[3]) {
+    return {
+      projectSlug: decodeURIComponent(scoped[1]),
+      environmentSlug: decodeURIComponent(scoped[2]),
+      endpointId: decodeURIComponent(scoped[3]),
+    };
+  }
+  const unscoped = pathname.match(/^\/v1\/agents\/([^/]+)\/ws$/);
+  if (unscoped?.[1]) {
+    return { endpointId: decodeURIComponent(unscoped[1]) };
+  }
+
+  return null;
 }
 
 export function isCoreHttpRoute(pathname: string): boolean {

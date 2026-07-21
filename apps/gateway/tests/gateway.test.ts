@@ -7,7 +7,11 @@ import {
   websocketMessageForNatsData,
 } from "../src/agent.ts";
 import { RateLimiter } from "../src/rate-limiter.ts";
-import { isConfigHttpPath, isCoreHttpRoute } from "../src/routes.ts";
+import {
+  isConfigHttpPath,
+  isCoreHttpRoute,
+  matchAgentWebSocketPath,
+} from "../src/routes.ts";
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
   lokiLogEntry,
@@ -112,6 +116,47 @@ test("parses only valid gateway websocket messages", () => {
   expect(
     parseGatewayMessage(JSON.stringify({ type: "execute", agentId: "   " })),
   ).toBeNull();
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "control",
+        requestId: "request-2",
+        eventId: "event-2",
+        mode: "steer",
+        input: "change direction",
+      }),
+    ),
+  ).toMatchObject({ type: "control", mode: "steer" });
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "control",
+        requestId: "request-default",
+        eventId: "event-default",
+        input: "steer by default",
+      }),
+    ),
+  ).toEqual({
+    type: "control",
+    requestId: "request-default",
+    eventId: "event-default",
+    input: "steer by default",
+  });
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-1",
+        agentId: "agent_123",
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        afterCursor: "ws-responses:generation:42",
+      }),
+    ),
+  ).toMatchObject({
+    type: "attach",
+    afterCursor: "ws-responses:generation:42",
+  });
 });
 
 test("rejects invalid agent websocket messages and closes the socket", () => {
@@ -123,6 +168,7 @@ test("rejects invalid agent websocket messages and closes the socket", () => {
       corePath: "/v1/agents/agent_1",
       token: "runtime-key",
       coreBaseUrl: "https://core.example",
+      accountId: "account-1",
     },
     send: (value: string) => sent.push(JSON.parse(value)),
     close: (code: number, reason: string) => closes.push([code, reason]),
@@ -152,6 +198,7 @@ test("rejects a second active agent run on the same websocket", () => {
       corePath: "/v1/agents/agent_1",
       token: "runtime-key",
       coreBaseUrl: "https://core.example",
+      accountId: "account-1",
     },
     send: (value: string) => sent.push(JSON.parse(value)),
     close: () => {},
@@ -344,6 +391,29 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(
     isConfigHttpPath("/v1/demo/agents/development/env_123/ws", "GET"),
   ).toBe(false);
+});
+
+test("parses agent websocket paths so the upgrade can bind the key's endpoint scope", () => {
+  expect(matchAgentWebSocketPath("/v1/agents/env_123/ws")).toEqual({
+    endpointId: "env_123",
+  });
+  expect(
+    matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
+  ).toEqual({
+    projectSlug: "demo",
+    environmentSlug: "development",
+    endpointId: "env_123",
+  });
+  expect(
+    matchAgentWebSocketPath("/v1/demo/agents/dev%20env/env%20123/ws"),
+  ).toEqual({
+    projectSlug: "demo",
+    environmentSlug: "dev env",
+    endpointId: "env 123",
+  });
+  expect(matchAgentWebSocketPath("/v1/agents/env_123")).toBeNull();
+  expect(matchAgentWebSocketPath("/v1/demo/observability/ws")).toBeNull();
+  expect(matchAgentWebSocketPath("/v1/demo/agents/development/ws")).toBeNull();
 });
 
 test("routes a runtime key to the matching core upstream", async () => {

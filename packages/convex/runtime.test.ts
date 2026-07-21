@@ -33,10 +33,9 @@ function conversationKeyFor(accountId: string): string {
 }
 
 describe("runtime persistence", () => {
-  test("claims and leases are atomic and owner-safe", async () => {
+  test("event claims are atomic", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
-    const conversationKey = conversationKeyFor(accountId);
     expect(
       await t.mutation(internal.runtime.claimEvent, {
         accountId,
@@ -51,49 +50,9 @@ describe("runtime persistence", () => {
         ttlSeconds: 60,
       }),
     ).toBe(false);
-    expect(
-      await t.mutation(internal.runtime.acquireLease, {
-        key: "lease",
-        conversationKey,
-        ownerEventId: "owner-1",
-        ttlSeconds: 60,
-      }),
-    ).toBe(true);
-    expect(
-      await t.mutation(internal.runtime.acquireLease, {
-        key: "lease",
-        conversationKey,
-        ownerEventId: "owner-2",
-        ttlSeconds: 60,
-      }),
-    ).toBe(false);
-    await t.mutation(internal.runtime.releaseLease, {
-      key: "lease",
-      ownerEventId: "owner-2",
-    });
-    expect(
-      await t.mutation(internal.runtime.acquireLease, {
-        key: "lease",
-        conversationKey,
-        ownerEventId: "owner-2",
-        ttlSeconds: 60,
-      }),
-    ).toBe(false);
-    await t.mutation(internal.runtime.releaseLease, {
-      key: "lease",
-      ownerEventId: "owner-1",
-    });
-    expect(
-      await t.mutation(internal.runtime.acquireLease, {
-        key: "lease",
-        conversationKey,
-        ownerEventId: "owner-2",
-        ttlSeconds: 60,
-      }),
-    ).toBe(true);
   });
 
-  test("orders conversation events and atomically drains pending ingress", async () => {
+  test("orders conversation events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);
@@ -119,28 +78,6 @@ describe("runtime persistence", () => {
       isDone: true,
       continueCursor: null,
     });
-    await t.mutation(internal.runtime.enqueueIngress, {
-      key: "pending",
-      conversationKey,
-      events: [{ role: "user", content: "a" }],
-      ttlSeconds: 60,
-    });
-    await t.mutation(internal.runtime.enqueueIngress, {
-      key: "pending",
-      conversationKey,
-      events: [{ role: "user", content: "b" }],
-      ttlSeconds: 60,
-    });
-    expect(
-      await t.mutation(internal.runtime.takeIngress, {
-        key: "pending",
-      }),
-    ).toHaveLength(2);
-    expect(
-      await t.mutation(internal.runtime.takeIngress, {
-        key: "pending",
-      }),
-    ).toEqual([]);
   });
 
   test("pages across the conversation boundary without dropping later events", async () => {
@@ -411,18 +348,6 @@ describe("runtime persistence", () => {
       key: rawEventKey,
       ttlSeconds: 60,
     });
-    await t.mutation(internal.runtime.acquireLease, {
-      key: "existing-lease",
-      conversationKey: conversationKey,
-      ownerEventId: "owner",
-      ttlSeconds: 60,
-    });
-    await t.mutation(internal.runtime.enqueueIngress, {
-      key: "existing-pending",
-      conversationKey: conversationKey,
-      events: [{ role: "user", content: "queued" }],
-      ttlSeconds: 60,
-    });
     await t.mutation(internal.runtime.appendConversationEvent, {
       conversationKey: conversationKey,
       cursor: "001",
@@ -478,29 +403,6 @@ describe("runtime persistence", () => {
         t.mutation(internal.runtime.releaseClaim, {
           accountId: accountId,
           key: rawEventKey,
-        }),
-      () =>
-        t.mutation(internal.runtime.acquireLease, {
-          key: "new-lease",
-          conversationKey: conversationKey,
-          ownerEventId: "owner",
-          ttlSeconds: 60,
-        }),
-      () =>
-        t.mutation(internal.runtime.releaseLease, {
-          key: "existing-lease",
-          ownerEventId: "owner",
-        }),
-      () =>
-        t.mutation(internal.runtime.enqueueIngress, {
-          key: "new-pending",
-          conversationKey: conversationKey,
-          events: [{ role: "user", content: "late" }],
-          ttlSeconds: 60,
-        }),
-      () =>
-        t.mutation(internal.runtime.takeIngress, {
-          key: "existing-pending",
         }),
       () =>
         t.mutation(internal.runtime.appendConversationEvent, {
@@ -580,8 +482,6 @@ describe("runtime persistence", () => {
       claims: expect.arrayContaining([
         expect.objectContaining({ key: eventKey }),
         expect.objectContaining({ key: storedRawEventKey }),
-        expect.objectContaining({ key: "existing-lease" }),
-        expect.objectContaining({ key: "existing-pending" }),
       ]),
       events: [expect.objectContaining({ cursor: "001" })],
       agentResults: [expect.objectContaining({ status: "processing" })],

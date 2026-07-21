@@ -199,6 +199,120 @@ test("websocket client subscribes to the core service and forwards server messag
   expect(done).toBe(true);
 });
 
+test("websocket client unwraps output envelopes for handlers and stream consumers", async () => {
+  const messages: WebSocketServerMessage[] = [];
+  const outputs: unknown[] = [];
+  let done = false;
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+
+  client.subscribe(
+    {
+      endpointId: "agent_1",
+      agentId: "agent_1",
+      sessionId: "conversation-1",
+      input: "start",
+    },
+    {
+      onMessage(message) {
+        messages.push(message);
+      },
+      onOutput(output) {
+        outputs.push(output);
+      },
+      onDone() {
+        done = true;
+      },
+    },
+  );
+  await Promise.resolve();
+  const socket = FakeWebSocket.instances.at(-1)!;
+  socket.emit({
+    type: "output",
+    eventId: "event-1",
+    cursor: "ws-responses:generation:42:event-key",
+    replay: false,
+    data: { type: "text-delta", id: "text-1", text: "hello" },
+  });
+  socket.emit({
+    type: "output",
+    eventId: "event-1",
+    cursor: "ws-responses:generation:43:event-key",
+    replay: false,
+    data: { type: "done" },
+  });
+
+  // Handlers see the inner stream parts (message.type === "text-delta"), and
+  // onOutput receives the raw envelope so clients can persist resume cursors.
+  expect(messages).toEqual([
+    { type: "text-delta", id: "text-1", text: "hello" },
+    { type: "done" },
+  ]);
+  expect(outputs).toEqual([
+    {
+      type: "output",
+      eventId: "event-1",
+      cursor: "ws-responses:generation:42:event-key",
+      replay: false,
+      data: { type: "text-delta", id: "text-1", text: "hello" },
+    },
+    {
+      type: "output",
+      eventId: "event-1",
+      cursor: "ws-responses:generation:43:event-key",
+      replay: false,
+      data: { type: "done" },
+    },
+  ]);
+  expect(done).toBe(true);
+});
+
+test("websocket client sends correlated control and attach frames", async () => {
+  const client = new BroodsWebSocketClient({
+    baseUrl: "https://app.example",
+    apiKey: "test-key",
+    WebSocket: FakeWebSocket,
+  });
+  const subscription = client.subscribe({
+    endpointId: "agent_1",
+    agentId: "agent_1",
+    sessionId: "conversation-1",
+    input: "start",
+  });
+  await Promise.resolve();
+  subscription.sendControl({
+    requestId: "request-2",
+    eventId: "event-2",
+    input: "change direction",
+  });
+  const control = JSON.parse(FakeWebSocket.instances[0]!.sent[1]!);
+  expect(control).toMatchObject({
+    type: "control",
+    requestId: "request-2",
+  });
+  expect(control.mode).toBeUndefined();
+  subscription.close();
+
+  const attached = client.attach({
+    endpointId: "agent_1",
+    requestId: "attach-1",
+    agentId: "agent_1",
+    conversationKey: "conversation-1",
+    eventId: "event-1",
+    afterCursor: "ws-responses:generation:42",
+  });
+  await Promise.resolve();
+  expect(JSON.parse(FakeWebSocket.instances[1]!.sent[0]!)).toMatchObject({
+    type: "attach",
+    requestId: "attach-1",
+    afterCursor: "ws-responses:generation:42",
+  });
+  attached.close();
+});
+
 test("websocket client can build scoped URLs from generated agent references", async () => {
   const client = new BroodsWebSocketClient({
     baseUrl: "https://app.example",

@@ -14,8 +14,11 @@ import {
 } from "./run-input.ts";
 import type {
   WebSocketClientCancelMessage,
+  WebSocketClientAttachMessage,
+  WebSocketClientControlMessage,
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
+  WebSocketOutputMessage,
   WebSocketServerMessage,
   WebSocketStreamMessage,
 } from "./websocket-contracts.ts";
@@ -33,11 +36,32 @@ export type WebSocketRunInput = {
   projectSlug?: string;
   environmentSlug?: string;
   signal?: AbortSignal;
+  /** Defaults to "steer": join the live run at its next step boundary. */
+  mode?: "reject" | "followup" | "collect" | "steer";
+  idempotencyKey?: string;
 } & AgentRunEventInput &
   AgentRunOverrides;
 
+export type WebSocketAttachInput = Omit<
+  WebSocketClientAttachMessage,
+  "type"
+> & {
+  endpointId?: string;
+  agent?: AgentReference;
+  projectSlug?: string;
+  environmentSlug?: string;
+  signal?: AbortSignal;
+};
+
 export interface WebSocketHandlers {
+  /**
+   * Receives every server message with durable output envelopes unwrapped:
+   * stream parts arrive as themselves (`message.type === "text-delta"`), never
+   * nested under `data`. Use `onOutput` when the envelope cursor is needed.
+   */
   onMessage?(message: WebSocketServerMessage): void;
+  /** Receives the raw durable output envelope (cursor, replay flag, part). */
+  onOutput?(output: WebSocketOutputMessage): void;
   onMeta?(meta: Extract<WebSocketServerMessage, { type: "meta" }>): void;
   onDone?(): void;
   onError?(error: Error): void;
@@ -45,6 +69,7 @@ export interface WebSocketHandlers {
 
 export interface WebSocketSubscription {
   readonly url: string;
+  sendControl(message: Omit<WebSocketClientControlMessage, "type">): void;
   close(code?: number, reason?: string): void;
 }
 
@@ -160,6 +185,10 @@ export class BroodsWebSocketClient {
           events: resolveRunEvents(input),
           sessionId: input.sessionId,
           ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
+          ...(input.mode !== undefined ? { mode: input.mode } : {}),
+          ...(input.idempotencyKey !== undefined
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
           ...(input.system !== undefined ? { system: input.system } : {}),
           ...(input.model !== undefined ? { model: input.model } : {}),
         }),
@@ -171,19 +200,20 @@ export class BroodsWebSocketClient {
       const payload = parseServerMessage(event.data);
       if (!payload) return;
 
-      handlers.onMessage?.(payload);
+      const effective = unwrapServerMessage(payload, handlers);
+      handlers.onMessage?.(effective);
 
-      switch (payload.type) {
+      switch (effective.type) {
         case "meta":
           handlers.onMeta?.(
-            payload as Extract<WebSocketServerMessage, { type: "meta" }>,
+            effective as Extract<WebSocketServerMessage, { type: "meta" }>,
           );
           break;
         case "done":
           finish();
           break;
         case "error":
-          fail(new Error(formatWireError(payload.error)));
+          fail(new Error(formatWireError(effective.error)));
           break;
       }
     };
@@ -201,7 +231,65 @@ export class BroodsWebSocketClient {
 
     return {
       url: url,
+      sendControl(message) {
+        if (socket.readyState !== WS_OPEN)
+          throw new Error("WebSocket is not open");
+        socket.send(JSON.stringify({ type: "control", ...message }));
+      },
       close: close,
+    };
+  }
+
+  /** Attach to a previously started event and replay from an exclusive cursor. */
+  attach(
+    input: WebSocketAttachInput,
+    handlers: WebSocketHandlers = {},
+  ): WebSocketSubscription {
+    const WebSocketImpl = this.resolveWebSocket();
+    const url = this.buildUrl(input);
+    const socket = new WebSocketImpl(url);
+    let closed = false;
+    const close = (code = 1000, reason = "client closed") => {
+      if (closed) return;
+      closed = true;
+      if (socket.readyState === WS_OPEN || socket.readyState === WS_CONNECTING)
+        socket.close(code, reason);
+    };
+    socket.onopen = () =>
+      socket.send(
+        JSON.stringify({
+          type: "attach",
+          ...input,
+          signal: undefined,
+          agent: undefined,
+        }),
+      );
+    socket.onmessage = (event) => {
+      if (typeof event.data !== "string") return;
+      const payload = parseServerMessage(event.data);
+      if (!payload) return;
+      const effective = unwrapServerMessage(payload, handlers);
+      handlers.onMessage?.(effective);
+      if (effective.type === "done") handlers.onDone?.();
+      if (effective.type === "error")
+        handlers.onError?.(new Error(formatWireError(effective.error)));
+    };
+    socket.onerror = () =>
+      handlers.onError?.(webSocketAccessError(this.baseUrl));
+    socket.onclose = (event) => {
+      if (!closed && event.code !== 1000)
+        handlers.onError?.(
+          new Error(event.reason || "WebSocket connection closed."),
+        );
+    };
+    return {
+      url,
+      sendControl(message) {
+        if (socket.readyState !== WS_OPEN)
+          throw new Error("WebSocket is not open");
+        socket.send(JSON.stringify({ type: "control", ...message }));
+      },
+      close,
     };
   }
 
@@ -311,8 +399,11 @@ export { BroodsWebSocketClient as WebSocketClient };
 export { BroodsWebSocketClient as WebsocketClient };
 export type {
   WebSocketClientCancelMessage,
+  WebSocketClientAttachMessage,
+  WebSocketClientControlMessage,
   WebSocketClientExecuteMessage,
   WebSocketClientMessage,
+  WebSocketOutputMessage,
   WebSocketServerMessage,
   WebSocketStreamMessage,
 };
@@ -334,6 +425,18 @@ function normalizeWebSocketServiceUrl(value: string): string {
 
 function webSocketAccessError(baseUrl: string): Error {
   return new Error(`Cannot access the WebSocket service at ${baseUrl}.`);
+}
+
+/** Unwraps durable output envelopes and forwards them to onOutput. */
+function unwrapServerMessage(
+  payload: WebSocketServerMessage,
+  handlers: WebSocketHandlers,
+): WebSocketServerMessage {
+  if (payload.type !== "output") return payload;
+  const output = payload as WebSocketOutputMessage;
+  handlers.onOutput?.(output);
+
+  return output.data as WebSocketServerMessage;
 }
 
 function parseServerMessage(data: string): WebSocketServerMessage | null {

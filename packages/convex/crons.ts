@@ -20,5 +20,11 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+crons.interval(
+  "maintain runtime ingress",
+  { minutes: 1 },
+  internal.runtimeIngress.maintain,
+  {},
+);
 
 export default crons;

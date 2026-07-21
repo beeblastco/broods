@@ -82,6 +82,7 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
+import type { IngressMode } from "./ingress.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
@@ -118,6 +119,10 @@ export interface DirectInboundEvent {
   conversationKey: string;
   publicConversationKey: string;
   events: DirectIngressEvent[];
+  requestedMode: IngressMode;
+  idempotencyKey: string;
+  // Server-issued fencing token added only after durable admission.
+  ownerGeneration?: number;
   connectionId?: string;
   // One-turn system events from the direct request. Model overrides are already folded into agentConfig.
   ephemeralSystem?: SystemModelMessage[];
@@ -306,9 +311,29 @@ async function handleHttpRequest(
         return notFoundResponse();
       }
 
-      return handlers.handleStatusRequest(
-        parseStatusPath(request.path, request.search, account),
-      );
+      const parsed = parseStatusPath(request.path, request.search, account);
+      // A deployment key only reaches agents that opted into public access —
+      // the same gate as the run path, so retained status/output of private
+      // agents in the account is not readable through a public key.
+      if (auth?.kind === "deployment") {
+        const agent = await context.agentLoader(
+          account.accountId,
+          parsed.agentId,
+        );
+        if (
+          !agent ||
+          agent.status !== "active" ||
+          toRuntimeAgentConfig(agent.config).publicAccess !== true
+        ) {
+          return errorResponse(
+            403,
+            `Agent ${parsed.agentId} is not publicly accessible.`,
+            { code: "public_access_disabled", agentId: parsed.agentId },
+          );
+        }
+      }
+
+      return handlers.handleStatusRequest(parsed);
     } catch (err) {
       return badRequestResponse(err);
     }
@@ -1295,6 +1320,16 @@ async function parseDirectPayload(
     record.connectionId.trim().length > 0
       ? record.connectionId.trim()
       : undefined;
+  // Steer is the default: a busy conversation absorbs the request at the next
+  // step boundary (or FIFO-follows up); callers opt into reject explicitly.
+  const requestedMode = parseIngressMode(record.mode) ?? "steer";
+  const idempotencyKey =
+    record.idempotencyKey === undefined
+      ? rawEventId
+      : normalizeDirectIdentifier(
+          "idempotencyKey",
+          String(record.idempotencyKey),
+        );
 
   return {
     accountId: account.accountId,
@@ -1312,9 +1347,25 @@ async function parseDirectPayload(
     ),
     publicConversationKey: rawConversationKey,
     events,
+    requestedMode: requestedMode,
+    idempotencyKey: idempotencyKey,
     ...(connectionId ? { connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
   };
+}
+
+/** Validates the optional public ingress mode. */
+function parseIngressMode(value: unknown): IngressMode | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "reject" ||
+    value === "followup" ||
+    value === "collect" ||
+    value === "steer"
+  ) {
+    return value;
+  }
+  throw new Error("mode must be reject, followup, collect, or steer");
 }
 
 /**

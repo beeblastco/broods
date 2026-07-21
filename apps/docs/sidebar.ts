@@ -19,6 +19,11 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: "doc",
+      id: "architecture/queue-and-steer",
+      label: "Queue and Steer",
+    },
+    {
+      type: "doc",
       id: "data-security",
       label: "Data Security",
     },

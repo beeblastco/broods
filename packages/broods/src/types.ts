@@ -42,13 +42,23 @@ export interface ToolApprovalSummary {
 
 export interface AsyncStatus {
   status:
+    | "accepted"
+    | "queued"
+    | "applied"
     | "processing"
     | "awaiting_approval"
     | "completed"
     | "failed"
+    | "expired"
     | "not_found";
+  requestedMode?: "reject" | "followup" | "collect" | "steer";
+  appliedMode?: "reject" | "followup" | "collect" | "steer";
+  appliedToEventId?: string;
+  result?: unknown;
   response?: unknown;
   error?: string;
+  /** True when `failed` was a deliberate /stop, not a fault. */
+  stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
 }
 
@@ -57,6 +67,8 @@ export interface AsyncRequestAccepted {
   statusId: string;
   eventId: string;
   agentId: string;
+  status?: "accepted" | "queued" | "applied" | "processing";
+  requestedMode?: "reject" | "followup" | "collect" | "steer";
 }
 
 export interface Cron {
