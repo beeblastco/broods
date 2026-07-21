@@ -381,6 +381,34 @@ describe("account management HTTP handler", () => {
     expect(await responseJson(response)).toEqual(successfulDeletionResponse());
     expect(disableCalls).toBe(0);
   });
+
+  it("returns 400 rather than crashing on a non-object sandbox lifecycle body", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    setStorageForTests(
+      createFakeStorage({
+        sandboxConfigs: {
+          async getById() {
+            return { accountId: "acct_test", sandboxId: "sbx_1", config: {} };
+          },
+        },
+      }),
+    );
+    const headers = {
+      authorization: "Bearer service-secret",
+      "x-account-id": "acct_test",
+    };
+
+    // A JSON `null` body used to be cast to Record and crash on property access.
+    for (const body of [null, ["reservationKey"], "reservationKey"]) {
+      const response = await handler(
+        createEvent("POST", "/v1/sandboxes/sbx_1/suspend", headers, body),
+      );
+      expect(response.status).toBe(400);
+      expect(await responseJson(response)).toEqual({
+        error: "reservationKey is required",
+      });
+    }
+  });
 });
 
 async function responseJson(response: Response): Promise<unknown> {
