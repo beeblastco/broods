@@ -66,7 +66,7 @@ Workspaces are account-scoped records. Any agent or conversation that references
 
 ```mermaid
 flowchart LR
-  Define["defineWorkspace({ name: \"notes\" })"] --> A["Agent A config<br/>notes → ws_notes"]
+  Define["defineWorkspace notes"] --> A["Agent A config<br/>notes → ws_notes"]
   Define --> B["Agent B config<br/>notes → ws_notes"]
   A --> Files["shared files<br/>MEMORY.md / TASKS.md / project files"]
   B --> Files
