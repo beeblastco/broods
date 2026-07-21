@@ -96,6 +96,7 @@ export interface IngressStatusRecord {
   updatedAt: number;
   expiresAt: number;
   error?: string;
+  stoppedByUser?: boolean;
   result?: unknown;
 }
 

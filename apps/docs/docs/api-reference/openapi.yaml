@@ -2542,6 +2542,9 @@ components:
             $ref: "#/components/schemas/PendingToolApproval"
         error:
           type: string
+        stoppedByUser:
+          type: boolean
+          description: True when a `failed` status was a deliberate /stop rather than a fault.
 
     PendingToolApproval:
       type: object

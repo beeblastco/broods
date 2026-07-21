@@ -1444,6 +1444,7 @@ async function handleStatusRequest(
         }
       : {}),
     ...(result?.result !== undefined ? { result: result.result } : {}),
+    ...(result?.stoppedByUser ? { stoppedByUser: true } : {}),
     ...(asyncResult?.response !== undefined
       ? { response: asyncResult.response }
       : {}),

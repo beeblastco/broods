@@ -391,7 +391,47 @@ describe("runtime ingress", () => {
     ).toMatchObject({
       status: "failed",
       error: "Stopped by user at the model boundary",
+      stoppedByUser: true,
     });
+  });
+
+  test("a genuine failure is not flagged stoppedByUser", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const owner = await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId,
+        conversationKey,
+        eventId: "owner",
+        mode: "reject",
+      }),
+    );
+    // Fail without any /stop request for this generation.
+    await t.mutation(internal.runtimeIngress.settle, {
+      conversationKey,
+      ownerEventId: "owner",
+      ownerGeneration: owner.ownerGeneration!,
+      status: "failed",
+      error: "Model provider returned 503",
+    });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId,
+        agentId: "test-agent",
+        eventId: "owner",
+      }),
+    ).toMatchObject({ status: "failed" });
+    expect(
+      (
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId,
+          agentId: "test-agent",
+          eventId: "owner",
+        })
+      )?.stoppedByUser,
+    ).toBeUndefined();
   });
 
   test("rejects stale owner writes after a new generation acquires the conversation", async () => {

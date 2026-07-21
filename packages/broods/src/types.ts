@@ -57,6 +57,8 @@ export interface AsyncStatus {
   result?: unknown;
   response?: unknown;
   error?: string;
+  /** True when `failed` was a deliberate /stop, not a fault. */
+  stoppedByUser?: boolean;
   approvals?: ToolApprovalSummary[];
 }
 

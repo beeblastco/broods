@@ -802,6 +802,9 @@ export const runtimeIngressEnvelopesFields = {
   expiresAt: v.number(),
   statusExpiresAt: v.number(),
   error: v.optional(v.string()),
+  // Distinguishes a deliberate /stop from a genuine failure; both are terminal
+  // "failed" so pollers keep one terminal bucket, but this reads intent.
+  stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
 };
 /** Provenance for one steering, follow-up, or collected application. */

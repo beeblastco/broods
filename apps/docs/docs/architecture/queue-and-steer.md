@@ -5,6 +5,55 @@ Status: **Accepted and implemented** for [issue #71](https://github.com/beeblast
 This decision defines one concurrency contract for direct HTTP, async HTTP,
 WebSocket, and channel ingress.
 
+## How to use it
+
+If you only want to _use_ queue and steer, this section is enough; the rest of
+the page is the architecture record behind it.
+
+**The one thing to know:** when you send a message to an agent that is already
+working, it does not error and it does not silently wait — by default it
+**steers**. Your message joins the run in progress at its next natural pause (a
+"step boundary," between the model finishing one chunk of work and starting the
+next), so the agent keeps everything it has done so far and simply takes your new
+instruction into account. If the run has no pause left before it ends, your
+message automatically becomes the next turn instead. You never lose a message.
+
+**Send a normal message (steer by default).**
+
+- SDK / HTTP: just send it. On a busy conversation it steers; on an idle one it
+  runs immediately. You can be explicit with `mode: "steer"`.
+- WebSocket: send a `control` frame while a run is streaming. `mode` is optional
+  and defaults to `steer`.
+- Channels (Slack, Discord, …): just type. A message sent mid-run steers the run.
+
+**Pile up several messages while it is busy.** Fire off three quick corrections
+and they merge into _one_ coherent update rather than three separate turns —
+that is the built-in batching of steer (and of `collect`). Order is preserved.
+
+**Queue a message as its own separate turn** instead of joining the live run:
+
+- SDK / HTTP: `mode: "followup"`.
+- Channel: `/queue <message>`.
+
+**Stop the run.** Two flavors, pick by how urgent you are:
+
+- Graceful — `/stop` (or `/cancel`) in a channel, or `mode: "followup"`/status
+  polling patterns in code. The run halts at its next boundary, finishes the
+  in-flight step, settles as stopped, and anything queued behind it starts next.
+  A running remote tool is _not_ force-killed.
+- Immediate — over WebSocket, send a `cancel` frame (the SDK does this when your
+  `AbortSignal` fires, or when you close the socket). This drops the stream now;
+  the in-flight step's output is discarded.
+
+**Change the default for a conversation.** In a channel, `/queue reject`,
+`/queue followup`, `/queue collect`, or `/queue steer` sets a sticky mode so you
+do not have to repeat yourself. (A bare mode word sets the mode; `/queue` with
+any other text queues that text as a follow-up.)
+
+**Rule of thumb:** steer when the run is useful but heading the wrong way (you
+keep the work); stop when its current output is worthless to you; queue when you
+just have more to say and do not need it mid-run.
+
 ## Context
 
 Before this change, Broods serialized work with a per-conversation lease. A busy direct
@@ -363,7 +412,9 @@ Channels use the same coordinator and add transport-neutral commands:
 - `/stop` and `/cancel` request that the current owner stop at the next safe model
   boundary. The in-flight model/tool batch completes; the request does not kill
   a remote tool. The owner then settles `failed` with a stopped-by-user reason,
-  and queued work is promoted normally under a new fencing generation.
+  and queued work is promoted normally under a new fencing generation. The
+  settled status carries `stoppedByUser: true`, so a deliberate stop is
+  distinguishable from a genuine failure even though both are terminal `failed`.
 
 `/clear` must participate in the same conversation coordinator. The v1 default
 is to reject `/clear` with a retry message while a turn or queued ingress exists,
@@ -406,7 +457,9 @@ them or inject their late result into another parent model step.
 may additionally report `awaiting_approval` from the async execution record and
 include `approvals`. `requestedMode` is present for coordinated ingress; it is
 optional only for independently owned records such as a subagent result that did
-not enter through the public ingress FIFO.
+not enter through the public ingress FIFO. A `failed` status caused by `/stop`
+also carries `stoppedByUser: true`, letting callers tell a deliberate stop apart
+from a fault without adding a separate terminal state.
 
 ### Payload-free observability
 

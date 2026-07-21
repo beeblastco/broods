@@ -68,6 +68,7 @@ const ingressStatusResultValidator = v.object({
   updatedAt: v.number(),
   expiresAt: v.number(),
   error: v.optional(v.string()),
+  stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
 });
 
@@ -790,8 +791,13 @@ export const settle = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, args) => {
-    await requireOwner(ctx, args);
+    const coordinator = await requireOwner(ctx, args);
     const now = Date.now();
+    // A failed settle that was preceded by /stop for this generation is a
+    // deliberate stop, not a fault — mark it so pollers can tell them apart.
+    const stoppedByUser =
+      args.status === "failed" &&
+      coordinator.stopRequestedGeneration === args.ownerGeneration;
     const ids = new Set<Id<"runtimeIngressEnvelopes">>();
     // Page by sequence so more than one drain batch of contributors still
     // settles; a fixed take() would leave the tail stuck in processing.
@@ -824,6 +830,7 @@ export const settle = internalMutation({
       await ctx.db.patch(id, {
         status: args.status,
         updatedAt: now,
+        ...(stoppedByUser ? { stoppedByUser: true } : {}),
         ...(args.result !== undefined ? { result: args.result } : {}),
         ...(args.error !== undefined ? { error: args.error } : {}),
       });
@@ -869,6 +876,7 @@ export const getStatus = internalQuery({
       updatedAt: row.updatedAt,
       expiresAt: row.expiresAt,
       ...(row.error !== undefined ? { error: row.error } : {}),
+      ...(row.stoppedByUser ? { stoppedByUser: true } : {}),
       ...(row.result !== undefined ? { result: row.result } : {}),
     };
   },
