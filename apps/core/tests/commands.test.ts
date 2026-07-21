@@ -11,6 +11,7 @@ import {
   executeCommand,
   getDiscordCommandRegistrations,
   parseCommand,
+  resolveChannelCommand,
   resolveDiscordCommand,
 } from "../src/shared/commands.ts";
 
@@ -237,6 +238,71 @@ describe("executeCommand", () => {
     expect(channel.sendText).toHaveBeenCalledWith(
       "Something went wrong. Please try again.",
     );
+  });
+});
+
+describe("resolveChannelCommand", () => {
+  it("passes through when there is no command token", () => {
+    expect(resolveChannelCommand({ content: "hello world" })).toEqual({
+      kind: "passthrough",
+    });
+  });
+
+  it("rewrites /steer <message> to steer mode with the token stripped", () => {
+    expect(
+      resolveChannelCommand({
+        content: "/steer change direction",
+        commandToken: "/steer",
+      }),
+    ).toEqual({
+      kind: "rewrite",
+      text: "change direction",
+      requestedMode: "steer",
+    });
+  });
+
+  it("rewrites /queue <message> to followup mode with the token stripped", () => {
+    expect(
+      resolveChannelCommand({
+        content: "/queue run this next",
+        commandToken: "/queue",
+      }),
+    ).toEqual({
+      kind: "rewrite",
+      text: "run this next",
+      requestedMode: "followup",
+    });
+  });
+
+  it("replies for bare /steer and /queue with no message", () => {
+    expect(
+      resolveChannelCommand({ content: "/steer", commandToken: "/steer" }),
+    ).toEqual({ kind: "reply" });
+    expect(
+      resolveChannelCommand({ content: "/queue   ", commandToken: "/queue" }),
+    ).toEqual({ kind: "reply" });
+  });
+
+  it("replies for non-rewrite commands like /stop and /new", () => {
+    expect(
+      resolveChannelCommand({ content: "/stop", commandToken: "/stop" }),
+    ).toEqual({ kind: "reply" });
+    expect(
+      resolveChannelCommand({ content: "/new", commandToken: "/new" }),
+    ).toEqual({ kind: "reply" });
+  });
+
+  it("strips the token from structured user content parts", () => {
+    expect(
+      resolveChannelCommand({
+        content: [{ type: "text", text: "/queue do the thing" }],
+        commandToken: "/queue",
+      }),
+    ).toEqual({
+      kind: "rewrite",
+      text: "do the thing",
+      requestedMode: "followup",
+    });
   });
 });
 

@@ -7,7 +7,7 @@ import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
-import { executeCommand } from "../shared/commands.ts";
+import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import { getStorage } from "../shared/storage.ts";
 import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
@@ -1062,53 +1062,39 @@ async function handleChannelRequest(
   event: ChannelInboundEvent,
   context?: RequestContext,
 ): Promise<void> {
-  if (event.commandToken) {
-    const queueMessageText =
-      event.commandToken === "/queue"
-        ? stripCommandToken(extractText(event.content), "/queue")
-        : "";
-    if (event.commandToken === "/steer") {
-      const text = stripCommandToken(extractText(event.content), "/steer");
-      if (!text) {
-        await event.channel.sendText("Usage: /steer <message>");
-        return;
-      }
-      event = {
-        ...event,
-        content: text,
-        events: rewriteLatestUserIngressText(event.events, text),
-      };
-    } else if (queueMessageText) {
-      event = {
-        ...event,
-        content: queueMessageText,
-        events: rewriteLatestUserIngressText(event.events, queueMessageText),
-      };
-    } else {
-      logInfo("Channel command executing", {
-        channel: event.channelName,
-        accountId: event.accountId,
-        agentId: event.agentId,
-        eventId: event.eventId,
-        conversationKey: event.conversationKey,
-        commandToken: event.commandToken,
-      });
-      await executeCommand(event.commandToken, {
-        conversationKey: event.conversationKey,
-        channel: event.channel,
-        accountId: event.accountId,
-        agentId: event.agentId,
-        eventId: event.eventId,
-        text: commandText(event.commandToken, extractText(event.content)),
-      });
-      return;
-    }
+  const outcome = resolveChannelCommand(event);
+  if (outcome.kind === "reply" && event.commandToken) {
+    logInfo("Channel command executing", {
+      channel: event.channelName,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+      conversationKey: event.conversationKey,
+      commandToken: event.commandToken,
+    });
+    await executeCommand(event.commandToken, {
+      conversationKey: event.conversationKey,
+      channel: event.channel,
+      accountId: event.accountId,
+      agentId: event.agentId,
+      eventId: event.eventId,
+      text: commandText(event.commandToken, extractText(event.content)),
+    });
+    return;
+  }
+  if (outcome.kind === "rewrite") {
+    event = {
+      ...event,
+      content: outcome.text,
+      events: rewriteLatestUserIngressText(event.events, outcome.text),
+    };
   }
 
   if (!event.accountId || !event.agentId) {
     throw new Error("Channel ingress requires account and agent scope");
   }
-  const requestedMode = event.commandToken === "/queue" ? "followup" : "steer";
+  const requestedMode =
+    outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
   const admission = await acceptIngress({
     accountId: event.accountId,
     agentId: event.agentId,
@@ -1337,11 +1323,6 @@ function commandText(commandToken: string, content: string): string {
   return trimmed.toLowerCase().startsWith(commandToken.toLowerCase())
     ? trimmed
     : `${commandToken} ${trimmed}`.trim();
-}
-
-// Message text after a leading channel command token ("/steer", "/queue").
-function stripCommandToken(content: string, token: string): string {
-  return content.replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "").trim();
 }
 
 async function handleChannelContext(event: ChannelContextEvent): Promise<void> {

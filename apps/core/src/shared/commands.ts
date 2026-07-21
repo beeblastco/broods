@@ -3,7 +3,9 @@
  * Keep channel-agnostic command logic here.
  */
 
-import type { ChannelActions } from "./channels.ts";
+import type { UserContent } from "ai";
+import type { IngressMode } from "../harness/ingress.ts";
+import { extractText, type ChannelActions } from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
@@ -51,6 +53,15 @@ export interface DiscordCommandResolution {
   contentText: string;
   commandToken?: string;
 }
+
+/**
+ * How an inbound channel command routes: rewrite the ingress text and continue
+ * to admission with a mode, reply via executeCommand, or pass through untouched.
+ */
+export type ChannelCommandOutcome =
+  | { kind: "rewrite"; text: string; requestedMode: IngressMode }
+  | { kind: "reply" }
+  | { kind: "passthrough" };
 
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
@@ -199,6 +210,31 @@ export function parseCommand(text: string): string | null {
   return match ? token : null;
 }
 
+/**
+ * Decide how a channel command routes. `/steer <msg>` and `/queue <msg>` rewrite
+ * the ingress text (steer vs. followup mode); every other command, and bare
+ * `/steer` / `/queue`, reply through executeCommand; no token passes through.
+ */
+export function resolveChannelCommand(event: {
+  content: UserContent;
+  commandToken?: string;
+}): ChannelCommandOutcome {
+  if (!event.commandToken) return { kind: "passthrough" };
+  if (event.commandToken === "/steer") {
+    const text = stripCommandToken(extractText(event.content), "/steer");
+    return text
+      ? { kind: "rewrite", text, requestedMode: "steer" }
+      : { kind: "reply" };
+  }
+  if (event.commandToken === "/queue") {
+    const text = stripCommandToken(extractText(event.content), "/queue");
+    return text
+      ? { kind: "rewrite", text, requestedMode: "followup" }
+      : { kind: "reply" };
+  }
+  return { kind: "reply" };
+}
+
 export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
@@ -259,6 +295,11 @@ export function getDiscordCommandRegistrations(
         : {}),
     }));
   });
+}
+
+// Message text after a leading channel command token ("/steer", "/queue").
+function stripCommandToken(content: string, token: string): string {
+  return content.replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "").trim();
 }
 
 function getExecutableCommands(): Array<
