@@ -198,7 +198,8 @@ async function handleSandboxLifecycle(
     return errorResponse(404, "Sandbox not found");
   }
 
-  const body = parseJsonBody(request) as Record<string, unknown>;
+  const rawBody = parseJsonBody(request);
+  const body = isPlainObject(rawBody) ? rawBody : {};
   const reservationKey =
     typeof body.reservationKey === "string" ? body.reservationKey.trim() : "";
   if (!reservationKey) {

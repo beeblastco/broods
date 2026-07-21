@@ -1272,11 +1272,11 @@ async function parseDirectPayload(
     );
   }
 
-  if (typeof parsed !== "object" || parsed === null) {
+  if (!isPlainObject(parsed)) {
     throw new Error("Request body must be a JSON object");
   }
 
-  const record = parsed as Record<string, unknown>;
+  const record = parsed;
   if (
     typeof record.eventId !== "string" ||
     typeof record.conversationKey !== "string"
@@ -1477,11 +1477,11 @@ function parseAsyncToolCompletionPayload(
     );
   }
 
-  if (!parsed || typeof parsed !== "object") {
+  if (!isPlainObject(parsed)) {
     throw new Error("Async tool completion body must be an object");
   }
 
-  const record = parsed as Record<string, unknown>;
+  const record = parsed;
   if (record.status !== "completed" && record.status !== "failed") {
     throw new Error("Async tool completion status must be completed or failed");
   }
@@ -1522,11 +1522,11 @@ function parseSandboxJobCompletionPayload(
     );
   }
 
-  if (!parsed || typeof parsed !== "object") {
+  if (!isPlainObject(parsed)) {
     throw new Error("Background job completion body must be an object");
   }
 
-  const record = parsed as Record<string, unknown>;
+  const record = parsed;
   if (record.status !== "completed" && record.status !== "failed") {
     throw new Error(
       "Background job completion status must be completed or failed",
