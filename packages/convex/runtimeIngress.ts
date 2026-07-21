@@ -178,6 +178,17 @@ function hasActiveOwner(
   );
 }
 
+/** The leading run of rows that share the first row's requestedMode. */
+function contiguousModePrefix(
+  rows: Doc<"runtimeIngressEnvelopes">[],
+): Doc<"runtimeIngressEnvelopes">[] {
+  if (rows.length === 0) return [];
+  const end = rows.findIndex(
+    (row) => row.requestedMode !== rows[0]!.requestedMode,
+  );
+  return end === -1 ? rows : rows.slice(0, end);
+}
+
 /** Marks expired queued work terminal and returns adjusted queue counters. */
 async function expireQueuedEnvelopes(
   ctx: MutationCtx,
@@ -277,12 +288,7 @@ async function promoteQueuedGroup(
   // the same dead run, so a contiguous prefix runs as one merged follow-up.
   const batchable =
     first.requestedMode === "collect" || first.requestedMode === "steer";
-  const prefixEnd = active.findIndex(
-    (row) => row.requestedMode !== first.requestedMode,
-  );
-  const selected = batchable
-    ? active.slice(0, prefixEnd === -1 ? active.length : prefixEnd)
-    : [first];
+  const selected = batchable ? contiguousModePrefix(active) : [first];
   const appliedMode: "collect" | "followup" =
     first.requestedMode === "collect" ? "collect" : "followup";
   const appliedToEventId = first.eventId;
@@ -681,11 +687,8 @@ export const applySteering = internalMutation({
       )
       .take(MAX_DRAIN_ENVELOPES);
     const active = rows.filter((row) => row.expiresAt > now);
-    const prefixEnd = active.findIndex((row) => row.requestedMode !== "steer");
     const selected =
-      active[0]?.requestedMode === "steer"
-        ? active.slice(0, prefixEnd === -1 ? active.length : prefixEnd)
-        : [];
+      active[0]?.requestedMode === "steer" ? contiguousModePrefix(active) : [];
     if (selected.length === 0) {
       if (
         queue.queuedCount !== coordinator.queuedCount ||

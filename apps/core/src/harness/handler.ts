@@ -1065,14 +1065,10 @@ async function handleChannelRequest(
   if (event.commandToken) {
     const queueMessageText =
       event.commandToken === "/queue"
-        ? extractText(event.content)
-            .replace(/^\/queue(?:\s+|$)/i, "")
-            .trim()
+        ? stripCommandToken(extractText(event.content), "/queue")
         : "";
     if (event.commandToken === "/steer") {
-      const text = extractText(event.content)
-        .replace(/^\/steer(?:\s+|$)/i, "")
-        .trim();
+      const text = stripCommandToken(extractText(event.content), "/steer");
       if (!text) {
         await event.channel.sendText("Usage: /steer <message>");
         return;
@@ -1341,6 +1337,11 @@ function commandText(commandToken: string, content: string): string {
   return trimmed.toLowerCase().startsWith(commandToken.toLowerCase())
     ? trimmed
     : `${commandToken} ${trimmed}`.trim();
+}
+
+// Message text after a leading channel command token ("/steer", "/queue").
+function stripCommandToken(content: string, token: string): string {
+  return content.replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "").trim();
 }
 
 async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
