@@ -3,9 +3,12 @@
  * Keep channel-agnostic command logic here.
  */
 
-import type { ChannelActions } from "./channels.ts";
+import type { UserContent } from "ai";
+import { extractText, type ChannelActions } from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
+
+type ChannelCommandMode = "steer" | "followup";
 
 export interface CommandContext {
   conversationKey: string;
@@ -37,6 +40,9 @@ interface CommandHandler {
   execute?: (ctx: CommandContext) => Promise<string>;
   discord?: DiscordCommandMetadata;
   showInHelp?: boolean;
+  // Set when the command rewrites the ingress text instead of replying; the
+  // value is the mode it requests. `execute` then serves only the bare usage.
+  rewriteMode?: ChannelCommandMode;
 }
 
 export interface DiscordCommandRegistration {
@@ -51,6 +57,13 @@ export interface DiscordCommandResolution {
   contentText: string;
   commandToken?: string;
 }
+
+// How an inbound channel command routes: rewrite the ingress text and continue
+// to admission, reply via executeCommand, or pass through untouched.
+export type ChannelCommandOutcome =
+  | { kind: "rewrite"; text: string; requestedMode: ChannelCommandMode }
+  | { kind: "reply"; commandToken: string }
+  | { kind: "passthrough" };
 
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
@@ -111,6 +124,7 @@ export const commands: CommandHandler[] = [
   {
     aliases: ["/steer"],
     description: "Steer the active turn at the next model boundary",
+    rewriteMode: "steer",
     discord: {
       names: ["steer"],
       description: "Steer the active turn at the next model boundary",
@@ -156,6 +170,7 @@ export const commands: CommandHandler[] = [
   {
     aliases: ["/queue"],
     description: "Queue one message as an explicit follow-up",
+    rewriteMode: "followup",
     discord: {
       names: ["queue"],
       description: "Queue a follow-up message",
@@ -220,6 +235,26 @@ export async function executeCommand(
   }
 }
 
+export function resolveChannelCommand({
+  content,
+  commandToken,
+}: {
+  content: UserContent;
+  commandToken?: string;
+}): ChannelCommandOutcome {
+  if (!commandToken) return { kind: "passthrough" };
+  const requestedMode = commands.find((c) =>
+    c.aliases.includes(commandToken),
+  )?.rewriteMode;
+  if (!requestedMode) return { kind: "reply", commandToken };
+
+  // A bare rewrite command carries no message, so it falls back to its usage reply.
+  const text = stripCommandToken(extractText(content), commandToken);
+  return text
+    ? { kind: "rewrite", text, requestedMode }
+    : { kind: "reply", commandToken };
+}
+
 export function resolveDiscordCommand(
   name: string,
   optionText: string,
@@ -271,4 +306,10 @@ function getExecutableCommands(): Array<
       execute: NonNullable<CommandHandler["execute"]>;
     } => typeof command.execute === "function",
   );
+}
+
+// Message text after a leading channel command token ("/steer", "/queue").
+// Trim first: parseCommand ignores leading whitespace, so the token can be indented.
+function stripCommandToken(content: string, token: string): string {
+  return content.trim().replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "");
 }
