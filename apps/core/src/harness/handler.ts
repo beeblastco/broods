@@ -1063,22 +1063,22 @@ async function handleChannelRequest(
   context?: RequestContext,
 ): Promise<void> {
   const outcome = resolveChannelCommand(event);
-  if (outcome.kind === "reply" && event.commandToken) {
+  if (outcome.kind === "reply") {
     logInfo("Channel command executing", {
       channel: event.channelName,
       accountId: event.accountId,
       agentId: event.agentId,
       eventId: event.eventId,
       conversationKey: event.conversationKey,
-      commandToken: event.commandToken,
+      commandToken: outcome.commandToken,
     });
-    await executeCommand(event.commandToken, {
+    await executeCommand(outcome.commandToken, {
       conversationKey: event.conversationKey,
       channel: event.channel,
       accountId: event.accountId,
       agentId: event.agentId,
       eventId: event.eventId,
-      text: commandText(event.commandToken, extractText(event.content)),
+      text: commandText(outcome.commandToken, extractText(event.content)),
     });
     return;
   }

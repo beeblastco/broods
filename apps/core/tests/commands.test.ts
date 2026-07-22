@@ -274,22 +274,35 @@ describe("resolveChannelCommand", () => {
     });
   });
 
+  it("strips the token when the content is indented", () => {
+    expect(
+      resolveChannelCommand({
+        content: "  /steer change direction",
+        commandToken: "/steer",
+      }),
+    ).toEqual({
+      kind: "rewrite",
+      text: "change direction",
+      requestedMode: "steer",
+    });
+  });
+
   it("replies for bare /steer and /queue with no message", () => {
     expect(
       resolveChannelCommand({ content: "/steer", commandToken: "/steer" }),
-    ).toEqual({ kind: "reply" });
+    ).toEqual({ kind: "reply", commandToken: "/steer" });
     expect(
       resolveChannelCommand({ content: "/queue   ", commandToken: "/queue" }),
-    ).toEqual({ kind: "reply" });
+    ).toEqual({ kind: "reply", commandToken: "/queue" });
   });
 
   it("replies for non-rewrite commands like /stop and /new", () => {
     expect(
       resolveChannelCommand({ content: "/stop", commandToken: "/stop" }),
-    ).toEqual({ kind: "reply" });
+    ).toEqual({ kind: "reply", commandToken: "/stop" });
     expect(
       resolveChannelCommand({ content: "/new", commandToken: "/new" }),
-    ).toEqual({ kind: "reply" });
+    ).toEqual({ kind: "reply", commandToken: "/new" });
   });
 
   it("strips the token from structured user content parts", () => {

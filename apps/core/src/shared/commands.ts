@@ -4,7 +4,6 @@
  */
 
 import type { UserContent } from "ai";
-import type { IngressMode } from "../harness/ingress.ts";
 import { extractText, type ChannelActions } from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
@@ -54,18 +53,25 @@ export interface DiscordCommandResolution {
   commandToken?: string;
 }
 
-/**
- * How an inbound channel command routes: rewrite the ingress text and continue
- * to admission with a mode, reply via executeCommand, or pass through untouched.
- */
+type ChannelCommandMode = "steer" | "followup";
+
+// How an inbound channel command routes: rewrite the ingress text and continue
+// to admission, reply via executeCommand, or pass through untouched.
 export type ChannelCommandOutcome =
-  | { kind: "rewrite"; text: string; requestedMode: IngressMode }
-  | { kind: "reply" }
+  | { kind: "rewrite"; text: string; requestedMode: ChannelCommandMode }
+  | { kind: "reply"; commandToken: string }
   | { kind: "passthrough" };
 
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
 const CLEAR_CONVERSATION_MAX_BATCHES = 100;
+
+// Commands that rewrite the ingress text instead of replying, and the mode each
+// requests. Add a rewrite-style command here and nowhere else.
+const REWRITE_COMMAND_MODES: Record<string, ChannelCommandMode | undefined> = {
+  "/steer": "steer",
+  "/queue": "followup",
+};
 
 export const commands: CommandHandler[] = [
   {
@@ -210,31 +216,6 @@ export function parseCommand(text: string): string | null {
   return match ? token : null;
 }
 
-/**
- * Decide how a channel command routes. `/steer <msg>` and `/queue <msg>` rewrite
- * the ingress text (steer vs. followup mode); every other command, and bare
- * `/steer` / `/queue`, reply through executeCommand; no token passes through.
- */
-export function resolveChannelCommand(event: {
-  content: UserContent;
-  commandToken?: string;
-}): ChannelCommandOutcome {
-  if (!event.commandToken) return { kind: "passthrough" };
-  if (event.commandToken === "/steer") {
-    const text = stripCommandToken(extractText(event.content), "/steer");
-    return text
-      ? { kind: "rewrite", text, requestedMode: "steer" }
-      : { kind: "reply" };
-  }
-  if (event.commandToken === "/queue") {
-    const text = stripCommandToken(extractText(event.content), "/queue");
-    return text
-      ? { kind: "rewrite", text, requestedMode: "followup" }
-      : { kind: "reply" };
-  }
-  return { kind: "reply" };
-}
-
 export async function executeCommand(
   commandToken: string,
   ctx: CommandContext,
@@ -254,6 +235,24 @@ export async function executeCommand(
     });
     await ctx.channel.sendText("Something went wrong. Please try again.");
   }
+}
+
+export function resolveChannelCommand({
+  content,
+  commandToken,
+}: {
+  content: UserContent;
+  commandToken?: string;
+}): ChannelCommandOutcome {
+  if (!commandToken) return { kind: "passthrough" };
+  const requestedMode = REWRITE_COMMAND_MODES[commandToken];
+  if (!requestedMode) return { kind: "reply", commandToken };
+
+  // A bare rewrite command carries no message, so it falls back to its usage reply.
+  const text = stripCommandToken(extractText(content), commandToken);
+  return text
+    ? { kind: "rewrite", text, requestedMode }
+    : { kind: "reply", commandToken };
 }
 
 export function resolveDiscordCommand(
@@ -297,11 +296,6 @@ export function getDiscordCommandRegistrations(
   });
 }
 
-// Message text after a leading channel command token ("/steer", "/queue").
-function stripCommandToken(content: string, token: string): string {
-  return content.replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "").trim();
-}
-
 function getExecutableCommands(): Array<
   CommandHandler & { execute: NonNullable<CommandHandler["execute"]> }
 > {
@@ -312,4 +306,10 @@ function getExecutableCommands(): Array<
       execute: NonNullable<CommandHandler["execute"]>;
     } => typeof command.execute === "function",
   );
+}
+
+// Message text after a leading channel command token ("/steer", "/queue").
+// Trim first: parseCommand ignores leading whitespace, so the token can be indented.
+function stripCommandToken(content: string, token: string): string {
+  return content.trim().replace(new RegExp(`^${token}(?:\\s+|$)`, "i"), "");
 }
