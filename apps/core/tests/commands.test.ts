@@ -305,6 +305,12 @@ describe("resolveChannelCommand", () => {
     ).toEqual({ kind: "reply", commandToken: "/new" });
   });
 
+  it("resolves the rewrite mode through every alias of a command", () => {
+    expect(
+      resolveChannelCommand({ content: "/cancel", commandToken: "/cancel" }),
+    ).toEqual({ kind: "reply", commandToken: "/cancel" });
+  });
+
   it("strips the token from structured user content parts", () => {
     expect(
       resolveChannelCommand({

@@ -8,6 +8,8 @@ import { extractText, type ChannelActions } from "./channels.ts";
 import { runtime } from "./convex/runtime.ts";
 import { logError } from "./log.ts";
 
+type ChannelCommandMode = "steer" | "followup";
+
 export interface CommandContext {
   conversationKey: string;
   channel: ChannelActions;
@@ -38,6 +40,9 @@ interface CommandHandler {
   execute?: (ctx: CommandContext) => Promise<string>;
   discord?: DiscordCommandMetadata;
   showInHelp?: boolean;
+  // Set when the command rewrites the ingress text instead of replying; the
+  // value is the mode it requests. `execute` then serves only the bare usage.
+  rewriteMode?: ChannelCommandMode;
 }
 
 export interface DiscordCommandRegistration {
@@ -53,8 +58,6 @@ export interface DiscordCommandResolution {
   commandToken?: string;
 }
 
-type ChannelCommandMode = "steer" | "followup";
-
 // How an inbound channel command routes: rewrite the ingress text and continue
 // to admission, reply via executeCommand, or pass through untouched.
 export type ChannelCommandOutcome =
@@ -65,13 +68,6 @@ export type ChannelCommandOutcome =
 const DEFAULT_DISCORD_INTEGRATION_TYPES = [0];
 const DEFAULT_DISCORD_CONTEXTS = [0, 1];
 const CLEAR_CONVERSATION_MAX_BATCHES = 100;
-
-// Commands that rewrite the ingress text instead of replying, and the mode each
-// requests. Add a rewrite-style command here and nowhere else.
-const REWRITE_COMMAND_MODES: Record<string, ChannelCommandMode | undefined> = {
-  "/steer": "steer",
-  "/queue": "followup",
-};
 
 export const commands: CommandHandler[] = [
   {
@@ -128,6 +124,7 @@ export const commands: CommandHandler[] = [
   {
     aliases: ["/steer"],
     description: "Steer the active turn at the next model boundary",
+    rewriteMode: "steer",
     discord: {
       names: ["steer"],
       description: "Steer the active turn at the next model boundary",
@@ -173,6 +170,7 @@ export const commands: CommandHandler[] = [
   {
     aliases: ["/queue"],
     description: "Queue one message as an explicit follow-up",
+    rewriteMode: "followup",
     discord: {
       names: ["queue"],
       description: "Queue a follow-up message",
@@ -245,7 +243,9 @@ export function resolveChannelCommand({
   commandToken?: string;
 }): ChannelCommandOutcome {
   if (!commandToken) return { kind: "passthrough" };
-  const requestedMode = REWRITE_COMMAND_MODES[commandToken];
+  const requestedMode = commands.find((c) =>
+    c.aliases.includes(commandToken),
+  )?.rewriteMode;
   if (!requestedMode) return { kind: "reply", commandToken };
 
   // A bare rewrite command carries no message, so it falls back to its usage reply.
