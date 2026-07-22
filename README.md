@@ -113,6 +113,8 @@ bun run docs
 ## Contributing
 
 Contributions are welcome. Open an issue first to align on the approach, then send a PR.
+This checkout uses the Bun 1.4 Rust canary selected by `.bun-version`; run
+`bun upgrade --canary` before the commands below until Bun 1.4 is stable.
 
 ```bash
 bun install      # install all workspaces

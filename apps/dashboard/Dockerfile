@@ -1,5 +1,7 @@
 # Build from the monorepo root: docker build -f apps/dashboard/Dockerfile .
-FROM oven/bun:1.3.14-alpine AS deps
+# Bun 1.4 Rust canary; pin the digest because the canary tag is mutable.
+ARG BUN_IMAGE=oven/bun:canary-alpine@sha256:7de23ab3fb549a3945a2c85ae2d9b999e23f2fc72182b705777d2c254795d79f
+FROM ${BUN_IMAGE} AS deps
 WORKDIR /app
 # The lockfile spans every workspace, so each workspace package.json must be
 # present for --frozen-lockfile to resolve.
@@ -12,7 +14,7 @@ COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
 RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM oven/bun:1.3.14-alpine AS builder
+FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_BROODS_BASE_URL
@@ -33,7 +35,7 @@ COPY apps/dashboard/ ./apps/dashboard/
 # NEXT_PUBLIC_CONVEX_URL.
 RUN bun run --cwd apps/dashboard build
 
-FROM oven/bun:1.3.14-alpine AS runner
+FROM ${BUN_IMAGE} AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

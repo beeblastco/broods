@@ -3,6 +3,9 @@
   "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind Broods.",
   "type": "module",
   "private": true,
+  "engines": {
+    "bun": ">=1.4.0-canary.1"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
