@@ -46,3 +46,5 @@ Applies to every workspace. Follow it strictly when writing, editing, or deletin
 - React versions are aligned per app package. Do not add React to the root package.
 - When public API or config shape changes, sync `apps/docs/docs/api-reference/openapi.yaml`, relevant docs, demos, SDK types/client code, and focused tests.
 - `.github/workflows/drift-cleanup.yaml` runs `sst refresh` + `sst diff` nightly and reconciles drift (deleting Pulumi-tracked orphans) per active stage. Production reconciliation respects the GitHub `production` environment approval. Add new stages to its matrix when you stand them up.
+
+If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong - fix the code.
