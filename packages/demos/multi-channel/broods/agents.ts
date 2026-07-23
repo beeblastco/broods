@@ -117,20 +117,6 @@ export const agent = defineAgent({
       system: instructions,
       maxTurn: 100,
     },
-    tools: {
-      tavilySearch: {
-        enabled: true,
-        apiKey: env("TAVILY_API_KEY"),
-        searchDepth: "advanced",
-        includeAnswer: true,
-        maxResults: 5,
-        topic: "news",
-      },
-      tavilyExtract: {
-        enabled: true,
-        apiKey: env("TAVILY_API_KEY"),
-      },
-    },
     channels: [slack, telegram, github],
     sandbox: sandbox,
     workspaces: [workspace],

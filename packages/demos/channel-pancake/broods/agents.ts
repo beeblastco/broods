@@ -23,16 +23,6 @@ export const agent = defineAgent({
     agent: {
       system: "You are a helpful assistant.",
     },
-    tools: {
-      tavilySearch: {
-        enabled: true,
-        apiKey: env.TAVILY_API_KEY,
-        searchDepth: "advanced",
-        includeAnswer: true,
-        maxResults: 5,
-        topic: "news",
-      },
-    },
     // Human-handoff filter: drop inbound messages on conversations a staff member
     // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
     // the old baked-in `ignoreTagIds` channel option — the same behavior, now

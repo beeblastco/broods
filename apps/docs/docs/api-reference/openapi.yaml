@@ -959,10 +959,12 @@ paths:
                       - name: notes
                         workspaceId: ws_aaa
                     tools:
-                      tavilySearch:
-                        enabled: true
-                        apiKey: your-tavily-key
-                        searchDepth: advanced
+                      googleSearch:
+                        type: provider
+                        id: google.google_search
+                        args:
+                          searchTypes:
+                            webSearch: {}
       responses:
         "201":
           description: Agent created
@@ -3217,16 +3219,17 @@ components:
 
     ToolsConfig:
       type: object
-      description: "Enables built-in tools by static name and uploaded account tools by `toolId` key. Omitting or `enabled: false` disables the tool."
-      properties:
-        tavilySearch:
-          $ref: "#/components/schemas/TavilySearchConfig"
-        tavilyExtract:
-          $ref: "#/components/schemas/TavilyExtractConfig"
-        googleSearch:
-          $ref: "#/components/schemas/GoogleSearchConfig"
+      description: >-
+        Enables uploaded account tools by `toolId` key and provider-defined
+        tools by the name the configured AI SDK provider exposes on its `tools`
+        namespace (for example `googleSearch`, `urlContext`, or `codeExecution`
+        on `google`). Core ships no built-in external tools. A name the
+        configured provider does not expose is rejected when the agent runs.
+        Omitting a key or setting `enabled: false` disables the tool.
       additionalProperties:
-        $ref: "#/components/schemas/UploadedToolConfig"
+        oneOf:
+          - $ref: "#/components/schemas/UploadedToolConfig"
+          - $ref: "#/components/schemas/ProviderToolConfig"
 
     AccountToolCreate:
       type: object
@@ -3313,67 +3316,32 @@ components:
           type: object
           description: "Runtime config merged over the tool's upload-time `defaultConfig`."
 
-    TavilySearchConfig:
+    ProviderToolConfig:
       type: object
+      description: >-
+        A tool the configured AI SDK provider executes itself, keyed by the name
+        it exposes on its `tools` namespace. Accepts either the descriptor a
+        provider tool serializes to (`type`/`id`/`args`, as produced by
+        `google.tools.googleSearch({...})`) or a flat object whose keys other
+        than `enabled`, `needsApproval`, and `async` are the tool's arguments.
       properties:
         enabled:
+          type: boolean
+        needsApproval:
           type: boolean
         async:
           type: boolean
-        needsApproval:
-          type: boolean
-        apiKey:
+        type:
           type: string
-        searchDepth:
+          enum: [provider, provider-defined]
+          description: Present when the value came from an AI SDK provider tool factory.
+        id:
           type: string
-          enum: [basic, advanced]
-        includeAnswer:
-          type: boolean
-        maxResults:
-          type: integer
-          description: "1–20, default: 5"
-        topic:
-          type: string
-          enum: [general, news, finance]
-
-    TavilyExtractConfig:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        async:
-          type: boolean
-        needsApproval:
-          type: boolean
-        apiKey:
-          type: string
-        extractDepth:
-          type: string
-          enum: [basic, advanced]
-        format:
-          type: string
-          enum: [markdown, text]
-
-    GoogleSearchConfig:
-      type: object
-      description: Requires `config.model.provider` to be `google`. Provider-defined tools cannot use async wrapping.
-      properties:
-        enabled:
-          type: boolean
-        needsApproval:
-          type: boolean
-        searchTypes:
+          description: "Provider tool id, for example `google.google_search`."
+        args:
           type: object
-          description: "Keys: `webSearch`, `imageSearch`"
-        timeRangeFilter:
-          type: object
-          properties:
-            startTime:
-              type: string
-              description: ISO date string
-            endTime:
-              type: string
-              description: ISO date string
+          description: Arguments the provider tool was built with.
+      additionalProperties: true
 
     ChannelsConfig:
       type: object

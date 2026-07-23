@@ -131,9 +131,18 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ policy: { policyIds: [1] } })).toThrow(
       "config.policy.policyIds must be an array of non-empty strings",
     );
+    // Harness-owned names stay rejected; free-form provider tool names are
+    // resolved against the configured provider by core at run time.
     expect(() =>
-      normalizeAgentConfig({ tools: { handoffs: { enabled: true } } }),
-    ).toThrow("config.tools.handoffs is not a supported tool");
+      normalizeAgentConfig({ tools: { bash: { enabled: true } } }),
+    ).toThrow("config.tools.bash is not a supported tool");
+    expect(() =>
+      normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
+    ).toThrow("config.tools.tool_legacy is not a supported tool");
+    expect(
+      normalizeAgentConfig({ tools: { googleSearch: { enabled: true } } })
+        .tools,
+    ).toMatchObject({ googleSearch: { enabled: true } });
     expect(() =>
       normalizeAgentConfig({
         channels: {

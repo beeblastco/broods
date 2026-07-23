@@ -34,12 +34,23 @@ describe("agent config validation", () => {
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
     expect(() =>
-      normalizeAgentConfig({ tools: { handoffs: { enabled: true } } }),
-    ).toThrow("config.tools.handoffs is not a supported tool");
-    expect(() =>
       normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_legacy" }] } }),
     ).toThrow(
       "config.hooks.code[0].hookId must be a native Convex document id",
     );
+  });
+
+  it("rejects harness-reserved tool names but accepts free-form provider tool names", () => {
+    // Whether the configured provider actually ships a named tool is resolved
+    // at registry build (see tool-registry tests), not at config validation.
+    expect(() =>
+      normalizeAgentConfig({ tools: { bash: { enabled: true } } }),
+    ).toThrow("config.tools.bash is not a supported tool");
+    expect(() =>
+      normalizeAgentConfig({ tools: { run_subagent: { enabled: true } } }),
+    ).toThrow("config.tools.run_subagent is not a supported tool");
+    expect(
+      normalizeAgentConfig({ tools: { googleSearch: { enabled: true } } }),
+    ).toMatchObject({ tools: { googleSearch: { enabled: true } } });
   });
 });

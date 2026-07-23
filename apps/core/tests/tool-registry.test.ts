@@ -11,26 +11,15 @@ import {
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
-const tavilySearchMock = mock((options: unknown) => ({
-  provider: "tavilySearch",
+const urlContextMock = mock((options: unknown) => ({
+  provider: "urlContext",
   options,
-}));
-const tavilyExtractMock = mock((options: unknown) => ({
-  provider: "tavilyExtract",
-  options,
-}));
-
-mock.module("@tavily/ai-sdk", () => ({
-  tavilySearch: tavilySearchMock,
-  tavilyExtract: tavilyExtractMock,
 }));
 
 beforeEach(() => {
-  process.env.TAVILY_API_KEY = "tavily-key";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
-  tavilySearchMock.mockClear();
-  tavilyExtractMock.mockClear();
+  urlContextMock.mockClear();
   resetStorageForTests();
 });
 
@@ -43,8 +32,7 @@ describe("createTools", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
     expect(await createTools(createToolContext(), {})).toEqual({});
-    expect(tavilySearchMock).not.toHaveBeenCalled();
-    expect(tavilyExtractMock).not.toHaveBeenCalled();
+    expect(urlContextMock).not.toHaveBeenCalled();
   });
 
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
@@ -56,20 +44,55 @@ describe("createTools", () => {
 
     const tools = await createTools(context, {
       tools: {
-        tavilyExtract: { needsApproval: true },
+        urlContext: { needsApproval: true },
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["bash", "tavilyExtract"]);
+    expect(Object.keys(tools).sort()).toEqual(["bash", "urlContext"]);
     await expect(approvalStatus("bash", {}, context)).resolves.toBe(
       "user-approval",
     );
-    expect(approvalRequirements.has("tavilyExtract")).toBe(true);
+    expect(approvalRequirements.has("urlContext")).toBe(true);
     expect(
-      (tools.tavilyExtract as { needsApproval?: unknown })?.needsApproval,
+      (tools.urlContext as { needsApproval?: unknown })?.needsApproval,
     ).toBeUndefined();
-    expect(tavilySearchMock).not.toHaveBeenCalled();
-    expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
+    expect(urlContextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
+    const googleSearchMock = mock((options: unknown) => ({
+      provider: "googleSearch",
+      options,
+    }));
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    // Shape produced by JSON.stringify(google.tools.googleSearch({...})) — the
+    // lazy schemas drop out, so only `args` is meaningful.
+    const tools = await createTools(createToolContext(googleSearchMock), {
+      tools: {
+        googleSearch: {
+          type: "provider",
+          isProviderExecuted: true,
+          id: "google.google_search",
+          args: { searchTypes: { webSearch: {} } },
+        },
+      },
+    });
+
+    expect(Object.keys(tools)).toEqual(["googleSearch"]);
+    expect(googleSearchMock).toHaveBeenCalledWith({
+      searchTypes: { webSearch: {} },
+    });
+  });
+
+  it("rejects a config.tools key the configured provider does not ship", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    await expect(
+      createTools(createToolContext(), { tools: { notAProviderTool: {} } }),
+    ).rejects.toThrow(
+      /config\.tools\.notAProviderTool is not a provider-defined tool/,
+    );
   });
 
   it("exposes only bash when a sandbox has no workspace (stateless)", async () => {
@@ -480,7 +503,7 @@ describe("createTools", () => {
     );
   });
 
-  it("passes provider config into Tavily and Google Search tools", async () => {
+  it("passes agent config through to the provider tool factory", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
       options,
@@ -489,55 +512,49 @@ describe("createTools", () => {
 
     const tools = await createTools(createToolContext(googleSearchMock), {
       tools: {
-        tavilySearch: {
-          maxResults: 3,
-          includeAnswer: false,
-        },
         googleSearch: {
+          enabled: true,
           searchTypes: {
             imageSearch: {},
           },
         },
+        urlContext: {},
       },
     });
 
-    expect(Object.keys(tools).sort()).toEqual(["googleSearch", "tavilySearch"]);
-    expect(tavilySearchMock).toHaveBeenCalledWith({
-      apiKey: "tavily-key",
-      searchDepth: "advanced",
-      includeAnswer: false,
-      maxResults: 3,
-      topic: "general",
-    });
+    expect(Object.keys(tools).sort()).toEqual(["googleSearch", "urlContext"]);
+    // enabled/needsApproval/async are registry-level flags and never reach the
+    // provider factory; every other key is passed through as tool args.
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: {
         imageSearch: {},
       },
     });
+    expect(urlContextMock).toHaveBeenCalledWith({});
   });
 
-  it("passes async-enabled built-in tools through the async coordinator", async () => {
+  it("passes async-enabled provider tools through the async coordinator", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
     const dispatch = mock(
       (tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
         expect([...asyncToolModes.entries()]).toEqual([
-          ["tavilySearch", "built-in"],
+          ["googleSearch", "built-in"],
         ]);
         expect(
-          (tools.tavilySearch as { needsApproval?: unknown }).needsApproval,
+          (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
         ).toBeUndefined();
         return {
-          tavilySearch: {
-            ...(tools.tavilySearch as object),
+          googleSearch: {
+            ...(tools.googleSearch as object),
             wrapped: true,
           },
         };
       },
     );
 
-    tavilySearchMock.mockImplementationOnce((options: unknown) => ({
-      provider: "tavilySearch",
+    const googleSearchMock = mock((options: unknown) => ({
+      provider: "googleSearch",
       options,
       execute: mock(async () => ({ ok: true })),
     }));
@@ -545,29 +562,25 @@ describe("createTools", () => {
     const tools = await createTools(
       Object.assign(
         {},
-        createToolContext(undefined, "google", undefined, dispatch),
+        createToolContext(googleSearchMock, "google", undefined, dispatch),
         { approvalRequirements },
       ) as never,
       {
         tools: {
-          tavilySearch: {
+          googleSearch: {
             async: true,
             needsApproval: true,
-            maxResults: 2,
+            searchTypes: { webSearch: {} },
           },
         },
       },
     );
 
     expect(dispatch).toHaveBeenCalledTimes(1);
-    expect((tools.tavilySearch as { wrapped?: boolean }).wrapped).toBe(true);
-    expect(approvalRequirements.has("tavilySearch")).toBe(true);
-    expect(tavilySearchMock).toHaveBeenCalledWith({
-      apiKey: "tavily-key",
-      searchDepth: "advanced",
-      includeAnswer: true,
-      maxResults: 2,
-      topic: "general",
+    expect((tools.googleSearch as { wrapped?: boolean }).wrapped).toBe(true);
+    expect(approvalRequirements.has("googleSearch")).toBe(true);
+    expect(googleSearchMock).toHaveBeenCalledWith({
+      searchTypes: { webSearch: {} },
     });
   });
 
@@ -621,34 +634,39 @@ describe("createTools", () => {
             needsApproval: true,
             config: { fromAgent: true },
           },
-          tavilyExtract: { enabled: true },
+          urlContext: { enabled: true },
         },
       },
     );
 
     expect(Object.keys(tools).sort()).toEqual([
       "async_status",
-      "tavilyExtract",
       "test_async",
+      "urlContext",
     ]);
     expect(tools.test_async?.description).toBe("Uploaded async test tool.");
     expect(tools.test_async?.needsApproval).toBeUndefined();
     expect(approvalRequirements.has("test_async")).toBe(true);
     expect((tools.test_async as { wrapped?: boolean }).wrapped).toBe(true);
-    expect(tavilyExtractMock).toHaveBeenCalledTimes(1);
+    expect(urlContextMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects googleSearch for non-Google model providers", async () => {
+  it("rejects a provider tool the configured provider does not ship", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
 
     await expect(
-      createTools(createToolContext(undefined, "openai"), {
-        tools: {
-          googleSearch: { enabled: true },
+      createTools(
+        Object.assign({}, createToolContext(undefined, "openai"), {
+          modelProvider: { tools: { webSearch: mock(() => ({})) } },
+        }) as never,
+        {
+          tools: {
+            googleSearch: { enabled: true },
+          },
         },
-      }),
+      ),
     ).rejects.toThrow(
-      "config.tools.googleSearch requires config.model.provider to be google",
+      /config\.tools\.googleSearch is not a provider-defined tool on config\.model\.provider 'openai' \(available: webSearch\)/,
     );
   });
 
@@ -681,6 +699,7 @@ function createToolContext(
     modelProvider: {
       tools: {
         googleSearch,
+        urlContext: urlContextMock,
       },
     },
     ...(dispatchSubagents ? { dispatchSubagents } : {}),
@@ -741,7 +760,7 @@ function sandboxContext(
       sandbox: { provider: "lambda", permissionMode },
     })),
     modelProviderName: "google",
-    modelProvider: { tools: {} },
+    modelProvider: { tools: { urlContext: urlContextMock } },
   } as never;
 }
 

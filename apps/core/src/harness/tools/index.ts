@@ -5,12 +5,15 @@
  * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
  * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
  * toolApproval in the harness.
- * config.tools-driven search and research tools remain opt-in.
+ * Core ships no built-in external tools: a config.tools key is either an
+ * uploaded account tool id or a provider-defined tool resolved off the
+ * configured AI SDK provider (see provider-tool.ts).
  */
 
 import type { ToolSet } from "ai";
 import { isAccountToolId } from "../../shared/domain/account-tools.ts";
 import {
+  isProviderToolName,
   type AccountModelProviderName,
   type AgentConfig,
   type AgentToolConfig,
@@ -40,15 +43,14 @@ import {
   sandboxSupportsJobControls,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
-import googleSearchTool from "./google-search.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
+import { providerDefinedTool } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import { tavilyExtractTool, tavilySearchTool } from "./tavily.tool.ts";
 import writeTool from "./write.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
@@ -77,22 +79,11 @@ export interface ToolContext {
   policyToolIdsByName?: Map<string, string>;
 }
 
-type ToolFactory = (context: ToolContext) => ToolSet;
-
-// config.tools-driven tools. Sandbox and subagent tools are registered below
-// because their enablement is controlled outside config.tools.
-const toolFactories = {
-  tavilySearch: tavilySearchTool,
-  tavilyExtract: tavilyExtractTool,
-  googleSearch: googleSearchTool,
-} satisfies Record<string, ToolFactory>;
-
 export async function createTools(
   context: Omit<ToolContext, "config">,
   agentConfig: AgentConfig,
 ): Promise<ToolSet> {
   const tools: ToolSet = {};
-  assertSupportedConfiguredTools(agentConfig.tools);
 
   // Sandbox tool surface. Tool availability is derived per workspace:
   //  - bash: stateless (no workspace) on the agent-level sandbox, or in any
@@ -234,8 +225,14 @@ export async function createTools(
     );
   }
 
-  for (const [toolName, toolFactory] of Object.entries(toolFactories)) {
-    const toolConfig = agentConfig.tools?.[toolName];
+  // Provider-defined tools: every non-account-tool key names a tool the
+  // configured provider executes itself, resolved off its `tools` namespace.
+  for (const [toolName, toolConfig] of Object.entries(
+    agentConfig.tools ?? {},
+  ).filter(([key]) => !isAccountToolId(key))) {
+    if (!isProviderToolName(toolName)) {
+      throw new Error(`config.tools.${toolName} is not a supported tool`);
+    }
     if (!isToolEnabled(toolConfig)) {
       continue;
     }
@@ -244,7 +241,7 @@ export async function createTools(
       context.approvalRequirements?.set(toolName, true);
     Object.assign(
       tools,
-      toolFactory({
+      providerDefinedTool(toolName, {
         ...context,
         config: externalToolRuntimeConfig(toolConfig),
       }),
@@ -308,14 +305,6 @@ export async function createTools(
   return context.dispatchAsyncTools
     ? context.dispatchAsyncTools(tools, asyncModes)
     : tools;
-}
-
-function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
-  for (const toolName of Object.keys(tools ?? {})) {
-    if (!(toolName in toolFactories) && !isAccountToolId(toolName)) {
-      throw new Error(`config.tools.${toolName} is not a supported tool`);
-    }
-  }
 }
 
 function isToolEnabled(

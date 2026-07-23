@@ -46,6 +46,25 @@ const REDACTED_SECRET_VALUE = "********";
 const AGENT_MAX_TURN_LIMIT = 100;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
+const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+// Deprecated public account-tool id prefix. It is neither a native Convex id
+// nor a provider tool name, so it must not fall through as one.
+const DEPRECATED_TOOL_ID_PREFIX = "tool_";
+
+// Tool names the harness registers itself (sandbox, skills, subagents, async
+// status). config.tools cannot claim them for a provider-defined tool.
+const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "async_status",
+  "bash",
+  "edit",
+  "glob",
+  "grep",
+  "load_skill",
+  "memory_save",
+  "read",
+  "run_subagent",
+  "write",
+]);
 
 const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
@@ -295,13 +314,11 @@ export type AgentLifecycleEventName =
 
 // Channel points a code hook can intercept (inbound message / before-send).
 export type AgentChannelHookEventName =
-  | "channel.message.received"
-  | "channel.message.sending";
+  "channel.message.received" | "channel.message.sending";
 
 // The full set of events a user code hook can subscribe to.
 export type AgentHookEventName =
-  | AgentLifecycleEventName
-  | AgentChannelHookEventName;
+  AgentLifecycleEventName | AgentChannelHookEventName;
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
@@ -460,6 +477,16 @@ export function toChannelRuntimeAgentConfig(
     ...runtimeConfig,
     channels: config.channels,
   };
+}
+
+// Provider-defined tool names are validated for shape only; whether the
+// configured provider actually ships the tool is resolved at registry build.
+export function isProviderToolName(toolName: string): boolean {
+  return (
+    PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
+    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
+    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
+  );
 }
 
 export function normalizeAgentConfig(value: unknown): AgentConfig {
@@ -1010,7 +1037,7 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     throw new Error(`config.tools.${toolName} must be an object`);
   }
 
-  if (!isSupportedConfigToolName(toolName) && !isAccountToolId(toolName)) {
+  if (!isAccountToolId(toolName) && !isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
 
@@ -1023,116 +1050,6 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   if (config.config !== undefined && !isPlainObject(config.config)) {
     throw new Error(`config.tools.${toolName}.config must be an object`);
-  }
-
-  if (isAccountToolId(toolName)) {
-    return;
-  }
-
-  switch (toolName) {
-    case "tavilySearch":
-      normalizeTavilySearchToolConfig(config);
-      return;
-    case "tavilyExtract":
-      normalizeTavilyExtractToolConfig(config);
-      return;
-    case "googleSearch":
-      normalizeGoogleSearchToolConfig(config);
-      return;
-  }
-}
-
-function isSupportedConfigToolName(
-  toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" {
-  return (
-    toolName === "tavilySearch" ||
-    toolName === "tavilyExtract" ||
-    toolName === "googleSearch"
-  );
-}
-
-function normalizeTavilySearchToolConfig(
-  config: Record<string, unknown>,
-): void {
-  assertOptionalEnum(
-    config.searchDepth,
-    "config.tools.tavilySearch.searchDepth",
-    ["basic", "advanced"],
-  );
-  assertOptionalBoolean(
-    config.includeAnswer,
-    "config.tools.tavilySearch.includeAnswer",
-  );
-  assertOptionalPositiveInteger(
-    config.maxResults,
-    "config.tools.tavilySearch.maxResults",
-    20,
-  );
-  assertOptionalEnum(config.topic, "config.tools.tavilySearch.topic", [
-    "general",
-    "news",
-    "finance",
-  ]);
-}
-
-function normalizeTavilyExtractToolConfig(
-  config: Record<string, unknown>,
-): void {
-  assertOptionalEnum(
-    config.extractDepth,
-    "config.tools.tavilyExtract.extractDepth",
-    ["basic", "advanced"],
-  );
-  assertOptionalEnum(config.format, "config.tools.tavilyExtract.format", [
-    "markdown",
-    "text",
-  ]);
-}
-
-function normalizeGoogleSearchToolConfig(
-  config: Record<string, unknown>,
-): void {
-  if (config.searchTypes !== undefined) {
-    if (!isPlainObject(config.searchTypes)) {
-      throw new Error(
-        "config.tools.googleSearch.searchTypes must be an object",
-      );
-    }
-    const searchTypes = config.searchTypes as Record<string, unknown>;
-    if (
-      searchTypes.webSearch !== undefined &&
-      !isPlainObject(searchTypes.webSearch)
-    ) {
-      throw new Error(
-        "config.tools.googleSearch.searchTypes.webSearch must be an object",
-      );
-    }
-    if (
-      searchTypes.imageSearch !== undefined &&
-      !isPlainObject(searchTypes.imageSearch)
-    ) {
-      throw new Error(
-        "config.tools.googleSearch.searchTypes.imageSearch must be an object",
-      );
-    }
-  }
-
-  if (config.timeRangeFilter !== undefined) {
-    if (!isPlainObject(config.timeRangeFilter)) {
-      throw new Error(
-        "config.tools.googleSearch.timeRangeFilter must be an object",
-      );
-    }
-    const timeRangeFilter = config.timeRangeFilter as Record<string, unknown>;
-    assertOptionalString(
-      timeRangeFilter.startTime,
-      "config.tools.googleSearch.timeRangeFilter.startTime",
-    );
-    assertOptionalString(
-      timeRangeFilter.endTime,
-      "config.tools.googleSearch.timeRangeFilter.endTime",
-    );
   }
 }
 
