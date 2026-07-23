@@ -929,6 +929,9 @@ async function handleNatsWorkerRequest(
   try {
     const turn = await prepareDirectTurn(event);
     if (!turn) {
+      // Both early returns skip the inner finally, so close the request-scoped
+      // publisher here instead of leaking it.
+      await publisher.close();
       return;
     }
 
@@ -947,6 +950,7 @@ async function handleNatsWorkerRequest(
         "Request did not produce pending model input",
         () => dispatchNextIngress(session!, event),
       );
+      await publisher.close();
       return;
     }
 
@@ -2200,14 +2204,12 @@ function createDirectContinuationSseBody(
           }
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          transferred = await settleFailedIngressAndDrain(session, error, () =>
-            dispatchNextIngress(session, event),
-          );
-          terminalFailureDrained = true;
           logError("Direct continuation stream failed", {
             eventId: event.eventId,
             error,
           });
+          // Emit before draining: promoting queued work moves the owner
+          // generation, so a later assertCurrentOwner() would drop this frame.
           await session
             .assertCurrentOwner()
             .then(() => {
@@ -2218,6 +2220,10 @@ function createDirectContinuationSseBody(
               );
             })
             .catch(() => {});
+          transferred = await settleFailedIngressAndDrain(session, error, () =>
+            dispatchNextIngress(session, event),
+          );
+          terminalFailureDrained = true;
         } finally {
           if (!terminalFailureDrained && !transferred) {
             await session.releaseConversationLease().catch(() => {});
