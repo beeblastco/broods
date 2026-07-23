@@ -1525,6 +1525,8 @@ async function failOwnedIngress(
     event.environmentSlug,
     event.ownerGeneration,
   );
+  // A scheduling failure recurses back through dispatchAppliedIngress; each
+  // level consumes one envelope, so the queue bound terminates it.
   await settleFailedIngressAndDrain(session, error, () =>
     dispatchNextIngress(session, event),
   );
