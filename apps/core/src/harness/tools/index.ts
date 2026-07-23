@@ -5,7 +5,7 @@
  * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
  * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
  * toolApproval in the harness.
- * config.tools-driven tools (search/research/handoffs) remain opt-in.
+ * config.tools-driven search and research tools remain opt-in.
  */
 
 import type { ToolSet } from "ai";
@@ -42,7 +42,6 @@ import {
 import globTool from "./glob.tool.ts";
 import googleSearchTool from "./google-search.tool.ts";
 import grepTool from "./grep.tool.ts";
-import handoffsTool from "./handoffs.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
 import readTool from "./read.tool.ts";
@@ -253,26 +252,6 @@ export async function createTools(
     addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
   }
 
-  const handoffsConfig = agentConfig.tools?.handoffs;
-  if (isToolEnabled(handoffsConfig)) {
-    if (handoffsConfig.needsApproval === true)
-      context.approvalRequirements?.set("handoffs", true);
-    Object.assign(
-      tools,
-      handoffsTool({
-        ...context,
-        channels: agentConfig.channels,
-        config: externalToolRuntimeConfig(handoffsConfig),
-      }),
-    );
-    addAsyncModeIfConfigured(
-      asyncModes,
-      "handoffs",
-      handoffsConfig,
-      "built-in",
-    );
-  }
-
   for (const [toolId, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
   ).filter(([key]) => isAccountToolId(key))) {
@@ -333,11 +312,7 @@ export async function createTools(
 
 function assertSupportedConfiguredTools(tools: AgentConfig["tools"]): void {
   for (const toolName of Object.keys(tools ?? {})) {
-    if (
-      !(toolName in toolFactories) &&
-      toolName !== "handoffs" &&
-      !isAccountToolId(toolName)
-    ) {
+    if (!(toolName in toolFactories) && !isAccountToolId(toolName)) {
       throw new Error(`config.tools.${toolName} is not a supported tool`);
     }
   }

@@ -3225,31 +3225,6 @@ components:
           $ref: "#/components/schemas/TavilyExtractConfig"
         googleSearch:
           $ref: "#/components/schemas/GoogleSearchConfig"
-        handoffs:
-          type: object
-          description: "Human-handoff tool: Pancake scenario tags + Zalo staff ping. Both `pancake.scenarioTagIds.{order,pending}` and `zalo.{botToken,notifyUserIds}` are required unless `enabled: false`."
-          properties:
-            enabled:
-              type: boolean
-            pancake:
-              type: object
-              properties:
-                scenarioTagIds:
-                  type: object
-                  properties:
-                    order:
-                      type: string
-                    pending:
-                      type: string
-            zalo:
-              type: object
-              properties:
-                botToken:
-                  type: string
-                notifyUserIds:
-                  type: array
-                  items:
-                    type: string
       additionalProperties:
         $ref: "#/components/schemas/UploadedToolConfig"
 

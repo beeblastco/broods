@@ -34,6 +34,9 @@ describe("agent config validation", () => {
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),
     ).toThrow("config.tools.tool_legacy is not a supported tool");
     expect(() =>
+      normalizeAgentConfig({ tools: { handoffs: { enabled: true } } }),
+    ).toThrow("config.tools.handoffs is not a supported tool");
+    expect(() =>
       normalizeAgentConfig({ hooks: { code: [{ hookId: "hook_legacy" }] } }),
     ).toThrow(
       "config.hooks.code[0].hookId must be a native Convex document id",

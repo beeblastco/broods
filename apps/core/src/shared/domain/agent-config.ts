@@ -1039,68 +1039,16 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
     case "googleSearch":
       normalizeGoogleSearchToolConfig(config);
       return;
-    case "handoffs":
-      normalizeHandoffsToolConfig(config);
-      return;
   }
-}
-
-function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
-  if (config.enabled === false) {
-    return;
-  }
-
-  if (!isPlainObject(config.pancake)) {
-    throw new Error("config.tools.handoffs.pancake is required");
-  }
-  const pancake = config.pancake;
-  if (!isPlainObject(pancake.scenarioTagIds)) {
-    throw new Error("config.tools.handoffs.pancake.scenarioTagIds is required");
-  }
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.order,
-    "config.tools.handoffs.pancake.scenarioTagIds.order",
-  );
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.pending,
-    "config.tools.handoffs.pancake.scenarioTagIds.pending",
-  );
-  if (!pancake.scenarioTagIds.order) {
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.order is required",
-    );
-  }
-  if (!pancake.scenarioTagIds.pending) {
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.pending is required",
-    );
-  }
-
-  if (!isPlainObject(config.zalo)) {
-    throw new Error("config.tools.handoffs.zalo is required");
-  }
-  const zalo = config.zalo;
-  assertOptionalNonEmptyString(
-    zalo.botToken,
-    "config.tools.handoffs.zalo.botToken",
-  );
-  if (!zalo.botToken) {
-    throw new Error("config.tools.handoffs.zalo.botToken is required");
-  }
-  assertRequiredNonEmptyStringArray(
-    zalo.notifyUserIds,
-    "config.tools.handoffs.zalo.notifyUserIds",
-  );
 }
 
 function isSupportedConfigToolName(
   toolName: string,
-): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" | "handoffs" {
+): toolName is "tavilySearch" | "tavilyExtract" | "googleSearch" {
   return (
     toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
-    toolName === "googleSearch" ||
-    toolName === "handoffs"
+    toolName === "googleSearch"
   );
 }
 
@@ -1486,19 +1434,6 @@ function assertOptionalPositiveInteger(
     value > max
   ) {
     throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => typeof entry === "string")
-  ) {
-    throw new Error(`${name} must be an array of strings`);
-  }
-
-  if (value.length === 0 || value.some((entry) => entry.trim().length === 0)) {
-    throw new Error(`${name} must contain at least one non-empty string`);
   }
 }
 

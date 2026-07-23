@@ -631,45 +631,6 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   if (toolName === "tavilySearch") normalizeTavilySearchToolConfig(config);
   if (toolName === "tavilyExtract") normalizeTavilyExtractToolConfig(config);
   if (toolName === "googleSearch") normalizeGoogleSearchToolConfig(config);
-  if (toolName === "handoffs") normalizeHandoffsToolConfig(config);
-}
-
-function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
-  if (config.enabled === false) return;
-  if (!isPlainObject(config.pancake))
-    throw new Error("config.tools.handoffs.pancake is required");
-  const pancake = config.pancake;
-  if (!isPlainObject(pancake.scenarioTagIds))
-    throw new Error("config.tools.handoffs.pancake.scenarioTagIds is required");
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.order,
-    "config.tools.handoffs.pancake.scenarioTagIds.order",
-  );
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.pending,
-    "config.tools.handoffs.pancake.scenarioTagIds.pending",
-  );
-  if (!pancake.scenarioTagIds.order)
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.order is required",
-    );
-  if (!pancake.scenarioTagIds.pending)
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.pending is required",
-    );
-  if (!isPlainObject(config.zalo))
-    throw new Error("config.tools.handoffs.zalo is required");
-  const zalo = config.zalo;
-  assertOptionalNonEmptyString(
-    zalo.botToken,
-    "config.tools.handoffs.zalo.botToken",
-  );
-  if (!zalo.botToken)
-    throw new Error("config.tools.handoffs.zalo.botToken is required");
-  assertRequiredNonEmptyStringArray(
-    zalo.notifyUserIds,
-    "config.tools.handoffs.zalo.notifyUserIds",
-  );
 }
 
 function normalizeTavilySearchToolConfig(
@@ -1150,17 +1111,6 @@ function assertOptionalStringArray(value: unknown, name: string): void {
   }
 }
 
-function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => typeof entry === "string")
-  )
-    throw new Error(`${name} must be an array of strings`);
-  if (value.length === 0 || value.some((entry) => entry.trim().length === 0)) {
-    throw new Error(`${name} must contain at least one non-empty string`);
-  }
-}
-
 function assertOptionalNumberArray(value: unknown, name: string): void {
   if (value === undefined) return;
   if (
@@ -1183,8 +1133,7 @@ function isSupportedConfigToolName(toolName: string): boolean {
   return (
     toolName === "tavilySearch" ||
     toolName === "tavilyExtract" ||
-    toolName === "googleSearch" ||
-    toolName === "handoffs"
+    toolName === "googleSearch"
   );
 }
 

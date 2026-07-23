@@ -118,7 +118,7 @@ describe("agent rules", () => {
     ).toThrow('config.workspaces[1].name "repo" is used more than once');
   });
 
-  it("validates skills, subagents, policies, handoffs, and channels", () => {
+  it("validates skills, subagents, policies, tools, and channels", () => {
     expect(() => normalizeAgentConfig({ skills: { allowed: [1] } })).toThrow(
       "config.skills.allowed must be an array of non-empty strings",
     );
@@ -131,9 +131,9 @@ describe("agent rules", () => {
     expect(() => normalizeAgentConfig({ policy: { policyIds: [1] } })).toThrow(
       "config.policy.policyIds must be an array of non-empty strings",
     );
-    expect(() => normalizeAgentConfig({ tools: { handoffs: {} } })).toThrow(
-      "config.tools.handoffs.pancake is required",
-    );
+    expect(() =>
+      normalizeAgentConfig({ tools: { handoffs: { enabled: true } } }),
+    ).toThrow("config.tools.handoffs is not a supported tool");
     expect(() =>
       normalizeAgentConfig({
         channels: {

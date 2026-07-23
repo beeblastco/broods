@@ -516,30 +516,6 @@ describe("createTools", () => {
     });
   });
 
-  it("registers the handoff tool from config.tools", async () => {
-    const { createTools } = await import("../src/harness/tools/index.ts");
-
-    const tools = await createTools(createToolContext(), {
-      tools: {
-        handoffs: {
-          enabled: true,
-          pancake: {
-            scenarioTagIds: {
-              order: "order-tag",
-              pending: "pending-tag",
-            },
-          },
-          zalo: {
-            botToken: "zalo-token",
-            notifyUserIds: ["sale-1"],
-          },
-        },
-      },
-    });
-
-    expect(Object.keys(tools)).toEqual(["handoffs"]);
-  });
-
   it("passes async-enabled built-in tools through the async coordinator", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();

@@ -186,7 +186,6 @@ config: {
       searchDepth: "advanced",
     },
     googleSearch: { enabled: true },
-    handoffs: { enabled: true },
   },
 },
 ```
