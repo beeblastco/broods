@@ -162,6 +162,20 @@ export async function handler(
   return runWithObservabilityScope(() => handleRequest(event, context));
 }
 
+export async function settleFailedIngressAndDrain(
+  session: Pick<Session, "releaseConversationLease" | "settleIngress">,
+  error: string,
+  dispatchNext: () => Promise<boolean>,
+): Promise<boolean> {
+  await session.settleIngress("failed", { error: error }).catch(() => {});
+  const transferred = await dispatchNext().catch(() => false);
+  if (!transferred) {
+    await session.releaseConversationLease().catch(() => {});
+  }
+
+  return transferred;
+}
+
 async function handleRequest(
   event:
     | CoreRequest
@@ -604,12 +618,11 @@ async function handleDirectRequest(
 
     const { session, turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await session
-        .settleIngress("failed", {
-          error: "Request did not produce pending model input",
-        })
-        .catch(() => {});
-      await session.releaseConversationLease().catch(() => {});
+      await settleFailedIngressAndDrain(
+        session,
+        "Request did not produce pending model input",
+        () => dispatchNextIngress(session, ownedEvent),
+      );
       return emptySseResponse();
     }
 
@@ -929,12 +942,11 @@ async function handleNatsWorkerRequest(
       close: () => publisher.close(),
     };
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
-      await session
-        .settleIngress("failed", {
-          error: "Request did not produce pending model input",
-        })
-        .catch(() => {});
-      await session.releaseConversationLease().catch(() => {});
+      transferred = await settleFailedIngressAndDrain(
+        session,
+        "Request did not produce pending model input",
+        () => dispatchNextIngress(session!, event),
+      );
       return;
     }
 
@@ -1476,13 +1488,11 @@ async function prepareDirectTurn(
     const turnContext = await session.createTurnContext(ephemeralSystem);
     return { session, turnContext };
   } catch (err) {
-    await session
-      .settleIngress("failed", {
-        error:
-          err instanceof Error ? err.message : "Direct turn preparation failed",
-      })
-      .catch(() => {});
-    await session.releaseConversationLease().catch(() => {});
+    await settleFailedIngressAndDrain(
+      session,
+      err instanceof Error ? err.message : "Direct turn preparation failed",
+      () => dispatchNextIngress(session, event),
+    );
     throw err;
   }
 }
@@ -1511,8 +1521,9 @@ async function failOwnedIngress(
     event.environmentSlug,
     event.ownerGeneration,
   );
-  await session.settleIngress("failed", { error }).catch(() => {});
-  await session.releaseConversationLease().catch(() => {});
+  await settleFailedIngressAndDrain(session, error, () =>
+    dispatchNextIngress(session, event),
+  );
 }
 
 async function claimSession(session: Session): Promise<boolean> {
@@ -2137,6 +2148,7 @@ function createDirectContinuationSseBody(
           waitUntilMs(context),
         );
         let transferred = false;
+        let terminalFailureDrained = false;
 
         try {
           const result = await runParentContinuationLoop({
@@ -2188,9 +2200,10 @@ function createDirectContinuationSseBody(
           }
         } catch (err) {
           const error = err instanceof Error ? err.message : String(err);
-          await session
-            .settleIngress("failed", { error: error })
-            .catch(() => {});
+          transferred = await settleFailedIngressAndDrain(session, error, () =>
+            dispatchNextIngress(session, event),
+          );
+          terminalFailureDrained = true;
           logError("Direct continuation stream failed", {
             eventId: event.eventId,
             error,
@@ -2206,7 +2219,7 @@ function createDirectContinuationSseBody(
             })
             .catch(() => {});
         } finally {
-          if (!transferred) {
+          if (!terminalFailureDrained && !transferred) {
             await session.releaseConversationLease().catch(() => {});
           }
           controller.close();
