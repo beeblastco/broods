@@ -86,11 +86,9 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// `process` used as a bare global, which only works under Node. Access through
-// a namespace object (`globalThis.process`, `g?.process`) is the standard
-// runtime feature probe — it is guarded and falls through in an isolate, so it
-// must not force a bundle onto the sandbox tier.
-const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\s*\./;
+// Bare `process` access throws ReferenceError in an isolate even through `?.`,
+// while namespaced probes (`globalThis.process?.x`) are guarded and fall through.
+const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\s*\??\./;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */

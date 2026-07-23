@@ -1,7 +1,6 @@
 /**
  * Upload-time execution-tier classification for account tool bundles.
- * Guards the boundary between the in-core V8 isolate tier and the deferred
- * sandbox tier, including the guarded-`process`-probe carve-out.
+ * Covers the isolate/sandbox split and the guarded-`process`-probe carve-out.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -31,6 +30,10 @@ describe("inferAccountToolRuntime", () => {
       "sandbox",
     );
     expect(inferAccountToolRuntime("process.exit(1);")).toBe("sandbox");
+    // `?.` does not guard an unbound identifier — this still throws in an isolate.
+    expect(inferAccountToolRuntime("const k = process?.env?.API_KEY;")).toBe(
+      "sandbox",
+    );
     expect(inferAccountToolRuntime("import fs from 'node:fs';")).toBe(
       "sandbox",
     );
@@ -43,9 +46,8 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("const here = __dirname;")).toBe("sandbox");
   });
 
-  // Bundlers inline libraries (zod, the AI SDK) that feature-detect Node through
-  // a namespace object. That access is guarded and falls through in an isolate,
-  // so it must not push an otherwise pure bundle onto the sandbox tier.
+  // Bundlers inline libraries (zod, the AI SDK) that probe Node through a
+  // namespace object; that access is guarded, so it must not force sandbox.
   it("keeps guarded process probes on the isolate tier", () => {
     expect(
       inferAccountToolRuntime(
