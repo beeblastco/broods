@@ -52,7 +52,7 @@ Tool registry path:
 
 Built-in local tools execute during the current `harness-processing` request. Uploaded custom tools are classified at upload time by a static scan:
 
-- `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or `process`.
+- `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or use of `process` as a bare global. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. Bundlers inline that pattern from common libraries, so an otherwise pure bundle stays on the isolate tier.
 - `runtime: "sandbox"` for code that needs Node, npm, native modules, or other off-core execution.
 
 Only `runtime: "isolate"` executes today. The isolate executor runs the uploaded bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core because Bun cannot load `isolated-vm`. The isolate exposes timers, `queueMicrotask`, `console`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
