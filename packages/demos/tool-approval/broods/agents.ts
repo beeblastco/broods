@@ -1,3 +1,4 @@
+import { google } from "@ai-sdk/google";
 import { defineAgent, env } from "broods";
 
 export const approvalAgent = defineAgent({
@@ -11,16 +12,15 @@ export const approvalAgent = defineAgent({
       modelId: "gemma-4-31b-it",
     },
     agent: {
-      system: "Use Tavily search when current web information is needed.",
+      system: "Use web search when current web information is needed.",
     },
     tools: {
-      tavilySearch: {
-        enabled: true,
+      // Import the tool from the AI SDK provider and pass it straight in. It
+      // serializes to a provider-defined descriptor; core rebuilds it off the
+      // configured google provider. `needsApproval` is a Broods-side flag.
+      googleSearch: {
+        ...google.tools.googleSearch({}),
         needsApproval: true,
-        apiKey: env.TAVILY_API_KEY,
-        searchDepth: "advanced",
-        includeAnswer: true,
-        maxResults: 3,
       },
     },
     publicAccess: true,

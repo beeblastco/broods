@@ -31,7 +31,6 @@ The deploy step hard-fails without these repository secrets:
 - `SST_SECRET_ADMINACCOUNTSECRET`
 - `SST_SECRET_ACCOUNTCONFIGENCRYPTIONSECRET`
 - `SST_SECRET_GOOGLEAPIKEY`
-- `SST_SECRET_TAVILYAPIKEY`
 - `DAYTONA_API_KEY` (mapped to the `DaytonaApiKey` SST secret)
 
 And these repository variables: `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `PROJECT_NAME`, `PROJECT_OWNER_EMAIL`.

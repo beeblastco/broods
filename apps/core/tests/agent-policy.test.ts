@@ -118,9 +118,9 @@ describe("agent policy input", () => {
   });
 
   it("defaults unknown tools to generic tool calls", () => {
-    expect(policyInputForTool("tavilySearch", { query: "opa" }, [])).toEqual({
+    expect(policyInputForTool("googleSearch", { query: "opa" }, [])).toEqual({
       action: "tool.call",
-      toolName: "tavilySearch",
+      toolName: "googleSearch",
       tool: {
         input: { query: "opa" },
         inputKeys: ["query"],

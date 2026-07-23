@@ -175,18 +175,19 @@ model: {
 
 ### Tools
 
-Enable built-in and custom tools:
+Import provider-defined tools from their AI SDK provider package, and reference
+uploaded custom tools by name:
 
 ```ts
+import { google } from "@ai-sdk/google";
+
 config: {
   tools: {
-    tavilySearch: {
-      enabled: true,
-      apiKey: env.TAVILY_API_KEY,
-      searchDepth: "advanced",
-    },
-    googleSearch: { enabled: true },
-    handoffs: { enabled: true },
+    // executed by the provider — any tool on its AI SDK `tools` namespace
+    googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
+    urlContext: google.tools.urlContext({}),
+    // uploaded custom tool
+    [researchTool.name]: { enabled: true },
   },
 },
 ```
@@ -248,9 +249,7 @@ export const myAgent = defineAgent({
 ```ts
 export const research = defineAgent({
   name: "research",
-  config: {
-    /* ... */
-  },
+  config: {/* ... */},
 });
 
 export const myAgent = defineAgent({
@@ -347,7 +346,7 @@ Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `
 
 Policy rules can scope by resource selectors like `toolNames`, `toolIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `environment`, `agentId`, `channel`, `toolName`, `toolId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
-- `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `tavilySearch`, or an uploaded tool's model name.
+- `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an uploaded tool's model name.
 - `toolId`: stable uploaded account tool id when the call is for a custom tool.
 - `tool.input.<field>`: sanitized tool input parameter, for example `tool.input.command`, `tool.input.file_path`, `tool.input.query`, or `tool.input.tasks`.
 - `tool.inputKeys`: sorted list of supplied input parameter names.

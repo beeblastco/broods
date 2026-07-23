@@ -64,6 +64,25 @@ interface AgentDocLike {
 
 const AGENT_MAX_TURN_LIMIT = 100;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+// Deprecated public account-tool id prefix. It is neither a native Convex id
+// nor a provider tool name, so it must not fall through as one.
+const DEPRECATED_TOOL_ID_PREFIX = "tool_";
+
+// Tool names the harness registers itself (sandbox, skills, subagents, async
+// status). config.tools cannot claim them for a provider-defined tool.
+const RESERVED_HARNESS_TOOL_NAMES = new Set([
+  "async_status",
+  "bash",
+  "edit",
+  "glob",
+  "grep",
+  "load_skill",
+  "memory_save",
+  "read",
+  "run_subagent",
+  "write",
+]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
 const ACCOUNT_MODEL_PROVIDER_NAMES = [
   "google",
@@ -615,7 +634,7 @@ function normalizeToolsConfig(value: unknown): void {
 function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value))
     throw new Error(`config.tools.${toolName} must be an object`);
-  if (!isSupportedConfigToolName(toolName) && !isAccountToolId(toolName)) {
+  if (!isAccountToolId(toolName) && !isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
   const config = value as Record<string, unknown>;
@@ -627,130 +646,6 @@ function normalizeToolConfig(toolName: string, value: unknown): void {
   assertOptionalBoolean(config.async, `config.tools.${toolName}.async`);
   if (config.config !== undefined && !isPlainObject(config.config))
     throw new Error(`config.tools.${toolName}.config must be an object`);
-  if (isAccountToolId(toolName)) return;
-  if (toolName === "tavilySearch") normalizeTavilySearchToolConfig(config);
-  if (toolName === "tavilyExtract") normalizeTavilyExtractToolConfig(config);
-  if (toolName === "googleSearch") normalizeGoogleSearchToolConfig(config);
-  if (toolName === "handoffs") normalizeHandoffsToolConfig(config);
-}
-
-function normalizeHandoffsToolConfig(config: Record<string, unknown>): void {
-  if (config.enabled === false) return;
-  if (!isPlainObject(config.pancake))
-    throw new Error("config.tools.handoffs.pancake is required");
-  const pancake = config.pancake;
-  if (!isPlainObject(pancake.scenarioTagIds))
-    throw new Error("config.tools.handoffs.pancake.scenarioTagIds is required");
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.order,
-    "config.tools.handoffs.pancake.scenarioTagIds.order",
-  );
-  assertOptionalNonEmptyString(
-    pancake.scenarioTagIds.pending,
-    "config.tools.handoffs.pancake.scenarioTagIds.pending",
-  );
-  if (!pancake.scenarioTagIds.order)
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.order is required",
-    );
-  if (!pancake.scenarioTagIds.pending)
-    throw new Error(
-      "config.tools.handoffs.pancake.scenarioTagIds.pending is required",
-    );
-  if (!isPlainObject(config.zalo))
-    throw new Error("config.tools.handoffs.zalo is required");
-  const zalo = config.zalo;
-  assertOptionalNonEmptyString(
-    zalo.botToken,
-    "config.tools.handoffs.zalo.botToken",
-  );
-  if (!zalo.botToken)
-    throw new Error("config.tools.handoffs.zalo.botToken is required");
-  assertRequiredNonEmptyStringArray(
-    zalo.notifyUserIds,
-    "config.tools.handoffs.zalo.notifyUserIds",
-  );
-}
-
-function normalizeTavilySearchToolConfig(
-  config: Record<string, unknown>,
-): void {
-  assertOptionalEnum(
-    config.searchDepth,
-    "config.tools.tavilySearch.searchDepth",
-    ["basic", "advanced"],
-  );
-  assertOptionalBoolean(
-    config.includeAnswer,
-    "config.tools.tavilySearch.includeAnswer",
-  );
-  assertOptionalPositiveInteger(
-    config.maxResults,
-    "config.tools.tavilySearch.maxResults",
-    20,
-  );
-  assertOptionalEnum(config.topic, "config.tools.tavilySearch.topic", [
-    "general",
-    "news",
-    "finance",
-  ]);
-}
-
-function normalizeTavilyExtractToolConfig(
-  config: Record<string, unknown>,
-): void {
-  assertOptionalEnum(
-    config.extractDepth,
-    "config.tools.tavilyExtract.extractDepth",
-    ["basic", "advanced"],
-  );
-  assertOptionalEnum(config.format, "config.tools.tavilyExtract.format", [
-    "markdown",
-    "text",
-  ]);
-}
-
-function normalizeGoogleSearchToolConfig(
-  config: Record<string, unknown>,
-): void {
-  if (config.searchTypes !== undefined) {
-    if (!isPlainObject(config.searchTypes))
-      throw new Error(
-        "config.tools.googleSearch.searchTypes must be an object",
-      );
-    const searchTypes = config.searchTypes as Record<string, unknown>;
-    if (
-      searchTypes.webSearch !== undefined &&
-      !isPlainObject(searchTypes.webSearch)
-    ) {
-      throw new Error(
-        "config.tools.googleSearch.searchTypes.webSearch must be an object",
-      );
-    }
-    if (
-      searchTypes.imageSearch !== undefined &&
-      !isPlainObject(searchTypes.imageSearch)
-    ) {
-      throw new Error(
-        "config.tools.googleSearch.searchTypes.imageSearch must be an object",
-      );
-    }
-  }
-  if (config.timeRangeFilter !== undefined) {
-    if (!isPlainObject(config.timeRangeFilter))
-      throw new Error(
-        "config.tools.googleSearch.timeRangeFilter must be an object",
-      );
-    const timeRangeFilter = config.timeRangeFilter as Record<string, unknown>;
-    assertOptionalString(
-      timeRangeFilter.startTime,
-      "config.tools.googleSearch.timeRangeFilter.startTime",
-    );
-    assertOptionalString(
-      timeRangeFilter.endTime,
-      "config.tools.googleSearch.timeRangeFilter.endTime",
-    );
-  }
 }
 
 function normalizeSkillsConfig(value: unknown): void {
@@ -1150,17 +1045,6 @@ function assertOptionalStringArray(value: unknown, name: string): void {
   }
 }
 
-function assertRequiredNonEmptyStringArray(value: unknown, name: string): void {
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => typeof entry === "string")
-  )
-    throw new Error(`${name} must be an array of strings`);
-  if (value.length === 0 || value.some((entry) => entry.trim().length === 0)) {
-    throw new Error(`${name} must contain at least one non-empty string`);
-  }
-}
-
 function assertOptionalNumberArray(value: unknown, name: string): void {
   if (value === undefined) return;
   if (
@@ -1179,12 +1063,13 @@ function isAccountModelProviderName(
   );
 }
 
-function isSupportedConfigToolName(toolName: string): boolean {
+// Provider-defined tool names are validated for shape only; whether the
+// configured provider actually ships the tool is resolved by core at run time.
+function isProviderToolName(toolName: string): boolean {
   return (
-    toolName === "tavilySearch" ||
-    toolName === "tavilyExtract" ||
-    toolName === "googleSearch" ||
-    toolName === "handoffs"
+    PROVIDER_TOOL_NAME_PATTERN.test(toolName) &&
+    !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
+    !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
   );
 }
 

@@ -17,16 +17,6 @@ export const webhookAgent = defineAgent({
       system:
         "You are a helpful assistant. You can call tools and provide information to the user.",
     },
-    tools: {
-      tavilySearch: {
-        enabled: true,
-        apiKey: env.TAVILY_API_KEY,
-        searchDepth: "advanced",
-        includeAnswer: true,
-        maxResults: 5,
-        topic: "news",
-      },
-    },
     hooks: {
       // An agent can register several outbound webhooks — add more entries to fan
       // events out to multiple of your services.
