@@ -15,7 +15,17 @@ export const subagent = defineAgent({
       modelId: "Qwen3.6-27B",
     },
     agent: {
-      system: `Knowledge cutoff: January 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nOnly answer the question, don't put additional information.`,
+      system: `Knowledge cutoff: January 2025.\n\nYou are a helpful personal assistant that can use tools to get information and perform tasks for the user.\n\nYou also have access to web search and web fetch tools. Always use these tools to research and get up-to-date information or when you are asked for. Your knowledge was limited by cutoff training data date so do not rely on it for up-to-date information or fact checks. Only research and answer the question, don't put additional information.`,
+    },
+    tools: {
+      tavilySearch: {
+        enabled: true,
+        apiKey: env.TAVILY_API_KEY,
+        searchDepth: "advanced",
+        topic: "news",
+        includeAnswer: true,
+        maxResults: 3,
+      },
     },
     publicAccess: true,
   },

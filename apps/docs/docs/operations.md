@@ -85,7 +85,7 @@ bunx sst secret set DaytonaApiKey <daytona-api-key>
 
 Treat `AdminAccountSecret` and `AccountConfigEncryptionSecret` as stable production secrets; rotating the encryption secret requires a re-encryption migration for existing agent configs.
 
-Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, per-tool credentials are configured per agent under `config.tools.<tool>`, or supplied to an uploaded custom tool through its `config`. This allows different users to use their own API keys.
+Provider API keys are account-specific, not global SST secrets. Each account-owned agent configures its provider API key in `config.provider.<provider>.apiKey`. Similarly, tool API keys like Tavily are configured per agent in `config.tools.<tool>.apiKey`, with a service-wide env fallback (`TAVILY_API_KEY`) for vendored packages. This allows different users to use their own API keys.
 
 Manual account creation through `POST /accounts` requires `AdminAccountSecret` and creates a standalone Convex account with an admin-owned synthetic org id. Normal hosted onboarding continues to use the dashboard-authenticated Convex config plane and a real WorkOS organization.
 
@@ -215,6 +215,7 @@ Example scripts use these environment variables:
 ```bash
 export BROODS_BASE_URL=<gatewayUrl>
 export ACCOUNT_GOOGLE_API_KEY=<googleApiKey>
+export ACCOUNT_TAVILY_API_KEY=<tavilyApiKey>
 ```
 
 Each script creates a temporary account through `BROODS_BASE_URL/accounts` using `ADMIN_ACCOUNT_SECRET`, runs the probe with the returned account secret, then deletes the test account through `DELETE /v1/account` in a cleanup step.

@@ -25,6 +25,16 @@ export const agent = defineAgent({
     agent: {
       system: "You are a helpful assistant.",
     },
+    tools: {
+      tavilySearch: {
+        enabled: true,
+        apiKey: env.TAVILY_API_KEY,
+        searchDepth: "advanced",
+        includeAnswer: true,
+        maxResults: 5,
+        topic: "news",
+      },
+    },
     channels: [zalo],
   },
 });

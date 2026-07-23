@@ -5,9 +5,9 @@
  * Sandbox tools (bash/read/write/edit/glob/grep) are enabled by the presence of
  * a referenced sandbox + workspaces. Approval is produced as AI SDK v7
  * toolApproval in the harness.
- * Core ships no built-in external tools: a config.tools key is either an
- * uploaded account tool id or a provider-defined tool resolved off the
- * configured AI SDK provider (see provider-tool.ts).
+ * A config.tools key is one of three things: an uploaded account tool id, a
+ * vendored AI SDK tool package core runs in-process (vendor-tool.ts), or a
+ * provider-defined tool resolved off the configured provider (provider-tool.ts).
  */
 
 import type { ToolSet } from "ai";
@@ -51,6 +51,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import { isVendoredToolName, vendoredTool } from "./vendor-tool.ts";
 import writeTool from "./write.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
@@ -225,8 +226,8 @@ export async function createTools(
     );
   }
 
-  // Provider-defined tools: every non-account-tool key names a tool the
-  // configured provider executes itself, resolved off its `tools` namespace.
+  // Non-account-tool keys name either a vendored AI SDK tool package that core
+  // runs in-process, or a tool the configured provider executes itself.
   for (const [toolName, toolConfig] of Object.entries(
     agentConfig.tools ?? {},
   ).filter(([key]) => !isAccountToolId(key))) {
@@ -239,12 +240,15 @@ export async function createTools(
 
     if (toolConfig.needsApproval === true)
       context.approvalRequirements?.set(toolName, true);
+    const toolContext = {
+      ...context,
+      config: externalToolRuntimeConfig(toolConfig),
+    };
     Object.assign(
       tools,
-      providerDefinedTool(toolName, {
-        ...context,
-        config: externalToolRuntimeConfig(toolConfig),
-      }),
+      isVendoredToolName(toolName)
+        ? await vendoredTool(toolName, toolContext)
+        : providerDefinedTool(toolName, toolContext),
     );
     addAsyncModeIfConfigured(asyncModes, toolName, toolConfig, "built-in");
   }

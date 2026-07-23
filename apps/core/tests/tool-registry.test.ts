@@ -16,10 +16,39 @@ const urlContextMock = mock((options: unknown) => ({
   options,
 }));
 
+const tavilySearchMock = mock((options: unknown) => ({
+  vendor: "tavilySearch",
+  options,
+}));
+const tavilyExtractMock = mock((options: unknown) => ({
+  vendor: "tavilyExtract",
+  options,
+}));
+const tavilyCrawlMock = mock((options: unknown) => ({
+  vendor: "tavilyCrawl",
+  options,
+}));
+const tavilyMapMock = mock((options: unknown) => ({
+  vendor: "tavilyMap",
+  options,
+}));
+
+mock.module("@tavily/ai-sdk", () => ({
+  tavilySearch: tavilySearchMock,
+  tavilyExtract: tavilyExtractMock,
+  tavilyCrawl: tavilyCrawlMock,
+  tavilyMap: tavilyMapMock,
+}));
+
 beforeEach(() => {
+  process.env.TAVILY_API_KEY = "tavily-key";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   urlContextMock.mockClear();
+  tavilySearchMock.mockClear();
+  tavilyExtractMock.mockClear();
+  tavilyCrawlMock.mockClear();
+  tavilyMapMock.mockClear();
   resetStorageForTests();
 });
 
@@ -83,6 +112,55 @@ describe("createTools", () => {
     expect(googleSearchMock).toHaveBeenCalledWith({
       searchTypes: { webSearch: {} },
     });
+  });
+
+  it("registers all four vendored Tavily tools with defaults and the env key", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(createToolContext(), {
+      tools: {
+        tavilySearch: { enabled: true, maxResults: 3, topic: "news" },
+        tavilyExtract: { enabled: true },
+        tavilyCrawl: { enabled: true },
+        tavilyMap: { enabled: true },
+      },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "tavilyCrawl",
+      "tavilyExtract",
+      "tavilyMap",
+      "tavilySearch",
+    ]);
+    // Agent config overrides the vendored defaults; the key falls back to env.
+    expect(tavilySearchMock).toHaveBeenCalledWith({
+      apiKey: "tavily-key",
+      searchDepth: "advanced",
+      includeAnswer: true,
+      maxResults: 3,
+      topic: "news",
+    });
+    expect(tavilyMapMock).toHaveBeenCalledWith({ apiKey: "tavily-key" });
+  });
+
+  it("prefers an explicit apiKey and fails clearly when none is available", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    await createTools(createToolContext(), {
+      tools: { tavilyExtract: { enabled: true, apiKey: "from-config" } },
+    });
+    expect(tavilyExtractMock).toHaveBeenCalledWith({
+      apiKey: "from-config",
+      extractDepth: "advanced",
+      format: "markdown",
+    });
+
+    delete process.env.TAVILY_API_KEY;
+    await expect(
+      createTools(createToolContext(), { tools: { tavilySearch: {} } }),
+    ).rejects.toThrow(
+      "config.tools.tavilySearch.apiKey or TAVILY_API_KEY is required.",
+    );
   });
 
   it("rejects a config.tools key the configured provider does not ship", async () => {
@@ -666,7 +744,7 @@ describe("createTools", () => {
         },
       ),
     ).rejects.toThrow(
-      /config\.tools\.googleSearch is not a provider-defined tool on config\.model\.provider 'openai' \(available: webSearch\)/,
+      /config\.tools\.googleSearch is not a provider-defined tool on config\.model\.provider 'openai' \(available: webSearch; vendored: tavilyCrawl, tavilyExtract, tavilyMap, tavilySearch\)/,
     );
   });
 
