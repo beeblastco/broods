@@ -1,16 +1,13 @@
 # External Tools
 
-This guide covers agent-configured external tools. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
+This guide covers agent-configured external tools: provider-defined tools and account-uploaded custom tools. It does not cover the sandbox tools (`bash`, `read`, `write`, `edit`, `glob`, `grep` — see [Workspace & Sandbox](workspace/index.md)), `load_skill`, or `run_subagent`.
 
-Core keeps no per-tool allow-list. Every `config.tools` key is one of three kinds, distinguished by **where the code runs**:
+Core ships **no built-in external tools**. Every `config.tools` key is one of two things:
 
-| Kind                 | Who wrote the code                               | Where it runs                    | Config key                    |
-| -------------------- | ------------------------------------------------ | -------------------------------- | ----------------------------- |
-| **Provider-defined** | nobody — it is a `{ type, id, args }` descriptor | the model provider's servers     | the name the provider exposes |
-| **Vendored package** | a third-party AI SDK tool package core installs  | core's own process, full Node    | the package's tool name       |
-| **Uploaded custom**  | the account holder                               | V8 isolate, sandboxed per tenant | the account-scoped `toolId`   |
+- **A provider-defined tool** — a tool the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
+- **An uploaded custom tool** — keyed by its account-scoped `toolId`, with the uploaded manifest supplying the model-facing name, description, and input schema. Uploaded pure-compute tool code executes in the in-core V8 isolate tier. Uploaded tools that need Node, npm, native modules, or detached async execution are deferred to the external sandbox tier tracked in #82.
 
-Provider-defined tools are resolved against the live provider, so any provider-executed tool the AI SDK ships works with no core change. Vendored packages exist for tools whose code needs Node — Tavily pulls `axios` and `https-proxy-agent`, which no V8 isolate can host. Uploaded custom tools are tenant code, so they stay confined to the isolate.
+Anything the provider does not execute itself belongs in an uploaded custom tool that calls the service through the isolate's SSRF-guarded `ctx.fetch`.
 
 ```mermaid
 flowchart LR
@@ -23,7 +20,6 @@ flowchart LR
   Wrap --> Model["streamText tools"]
   Model --> Call["model calls tool"]
   Call --> Provider["provider-defined<br/>executed by the provider"]
-  Call --> Vendored["vendored package<br/>core process, full Node"]
   Call --> Uploaded["uploaded isolate<br/>Node child + V8 isolate"]
   Uploaded --> Frames["NDJSON chunk/final frames"]
   Call -.-> Deferred["sandbox runtime or detached async<br/>unsupported off Lambda (#82)"]
@@ -34,11 +30,8 @@ flowchart LR
 | Tool                  | File                                                                                                                                       | External dependency                                                 | Config key                    |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------- |
 | Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace              | `config.tools.<providerTool>` |
-| Vendored package tool | [`src/harness/tools/vendor-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/vendor-tool.ts)             | The vendored npm package, loaded on first use                       | `config.tools.<vendoredTool>` |
 | `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                      | —                             |
 | Uploaded custom tool  | S3 bundle + account tool metadata                                                                                                          | V8 isolate for `runtime: "isolate"`; sandbox runtime deferred (#82) | `config.tools.<toolId>`       |
-
-Vendored today: `tavilySearch`, `tavilyExtract`, `tavilyCrawl`, `tavilyMap`. Each takes its options straight from `config.tools.<name>`, and its credential from `config.tools.<name>.apiKey` or the `TAVILY_API_KEY` service fallback. Adding another package from the [AI SDK tool registry](https://ai-sdk.dev/resources/tools) (Exa, Perplexity, Firecrawl, Browserbase, …) is one dependency plus one entry in `VENDORED_PACKAGES` — no other core change.
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
@@ -56,7 +49,7 @@ Tool registry path:
 2. The sandbox tools come from a referenced `sandbox`: `bash` (stateless) when there is no workspace; per workspace, the full `read`/`write`/`edit`/`glob`/`grep`/`bash` set when it has an effective sandbox, or read-only `read`/`glob` when it has none (via a read-only mount by default, or direct S3 with the `sandbox: null` opt-out). Approvals follow that workspace's `permissionMode`.
 3. `run_subagent` comes only from `config.subagent`.
 4. `load_skill` comes from `config.skills`.
-5. Every remaining non-`toolId` key resolves to a vendored package tool if one claims that name, otherwise against the configured provider's `tools` namespace. The config keys other than `enabled`/`needsApproval`/`async` are passed through as that tool's arguments.
+5. Every remaining non-`toolId` key is resolved against the configured provider's `tools` namespace; the config keys other than `enabled`/`needsApproval`/`async` are passed through as that tool's arguments.
 6. Convex-id config keys load account-owned uploaded tool metadata and expose the uploaded model-facing tool name.
 7. `needsApproval` is applied before tools are passed to `streamText()`.
 8. Local `execute` tools with `async: true` are wrapped by `AsyncToolCoordinator`.
@@ -188,21 +181,10 @@ Switching `config.model.provider` changes which tool names are available —
 exposes `computerUse`, `bash`, `textEditor`, and `webSearch`. Core does not
 maintain that list; it reads the provider's own `tools` namespace.
 
-Vendored package tools are configured the same way, by their package tool name.
-They are not imported in your project — core holds the dependency and runs the
-code — so pass plain options:
-
-```ts
-tools: {
-  tavilySearch: { enabled: true, maxResults: 5, topic: "news" },
-  tavilyExtract: { enabled: true, apiKey: env.TAVILY_API_KEY },
-}
-```
-
-A tool package that is neither vendored by core nor executed by the provider has
-to be uploaded as a custom tool. Note that a client-executed AI SDK `Tool`
-cannot travel through config: its `execute` is a function, and functions do not
-serialize.
+Tools the provider does not execute itself — an HTTP-backed API such as Tavily,
+whose AI SDK package returns a client-executed `Tool` with a JavaScript
+`execute` — cannot travel through config at all, because a function does not
+serialize. Upload those as custom tools instead.
 
 For uploaded custom tools, use `defineTool` and reference it by name in the agent config:
 

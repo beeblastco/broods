@@ -175,15 +175,17 @@ model: {
 
 ### Tools
 
+Import provider-defined tools from their AI SDK provider package, and reference
+uploaded custom tools by name:
+
 ```ts
 import { google } from "@ai-sdk/google";
 
 config: {
   tools: {
-    // provider-defined — import it from the provider package and pass it in
+    // executed by the provider — any tool on its AI SDK `tools` namespace
     googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
-    // vendored package — core holds the dependency, so pass plain options
-    tavilySearch: { enabled: true, apiKey: env.TAVILY_API_KEY, maxResults: 5 },
+    urlContext: google.tools.urlContext({}),
     // uploaded custom tool
     [researchTool.name]: { enabled: true },
   },

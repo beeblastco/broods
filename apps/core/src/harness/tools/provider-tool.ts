@@ -8,7 +8,6 @@
 import type { ToolSet } from "ai";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ToolContext } from "./index.ts";
-import { vendoredToolNames } from "./vendor-tool.ts";
 
 // A provider tool built by the AI SDK and serialized into config by the SDK
 // (`google.tools.googleSearch({...})`) arrives as this descriptor. Its lazy
@@ -30,8 +29,8 @@ export function providerDefinedTool(
   if (typeof factory !== "function") {
     throw new Error(
       `config.tools.${toolName} is not a provider-defined tool on config.model.provider '${context.modelProviderName}' ` +
-        `(available: ${availableToolNames(factories)}; vendored: ${vendoredToolNames().join(", ")}). ` +
-        `Upload a custom tool for anything neither the provider nor a vendored package provides.`,
+        `(available: ${availableToolNames(factories)}). ` +
+        `Upload a custom tool for anything the provider does not execute itself.`,
     );
   }
 

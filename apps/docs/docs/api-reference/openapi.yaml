@@ -3220,18 +3220,15 @@ components:
     ToolsConfig:
       type: object
       description: >-
-        Enables tools by key. A key is an uploaded account tool `toolId`, a
-        vendored package tool name (`tavilySearch`, `tavilyExtract`,
-        `tavilyCrawl`, `tavilyMap`), or a tool the configured AI SDK provider
-        exposes on its `tools` namespace (for example `googleSearch`,
-        `urlContext`, or `codeExecution` on `google`). Core keeps no per-tool
-        allow-list; a name that matches neither a vendored package nor the
-        configured provider is rejected when the agent runs. Omitting a key or
-        setting `enabled: false` disables the tool.
+        Enables uploaded account tools by `toolId` key and provider-defined
+        tools by the name the configured AI SDK provider exposes on its `tools`
+        namespace (for example `googleSearch`, `urlContext`, or `codeExecution`
+        on `google`). Core ships no built-in external tools. A name the
+        configured provider does not expose is rejected when the agent runs.
+        Omitting a key or setting `enabled: false` disables the tool.
       additionalProperties:
         oneOf:
           - $ref: "#/components/schemas/UploadedToolConfig"
-          - $ref: "#/components/schemas/VendoredToolConfig"
           - $ref: "#/components/schemas/ProviderToolConfig"
 
     AccountToolCreate:
@@ -3318,25 +3315,6 @@ components:
         config:
           type: object
           description: "Runtime config merged over the tool's upload-time `defaultConfig`."
-
-    VendoredToolConfig:
-      type: object
-      description: >-
-        A tool from an AI SDK package core vendors and runs in its own process.
-        Every key other than `enabled`, `needsApproval`, and `async` is passed
-        through verbatim as the package tool's options, so the accepted shape is
-        the package's own.
-      properties:
-        enabled:
-          type: boolean
-        needsApproval:
-          type: boolean
-        async:
-          type: boolean
-        apiKey:
-          type: string
-          description: Service credential; falls back to the package's service-wide env var.
-      additionalProperties: true
 
     ProviderToolConfig:
       type: object
