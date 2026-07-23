@@ -86,6 +86,9 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
+// Bare `process` access throws ReferenceError in an isolate even through `?.`,
+// while namespaced probes (`globalThis.process?.x`) are guarded and fall through.
+const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\s*\??\./;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */
@@ -223,7 +226,7 @@ export function inferAccountToolRuntime(
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    /\bprocess\./.test(bundleSource) ||
+    NODE_PROCESS_GLOBAL_PATTERN.test(bundleSource) ||
     /\b__dirname\b/.test(bundleSource) ||
     BARE_IMPORT_PATTERN.test(bundleSource)
   ) {
