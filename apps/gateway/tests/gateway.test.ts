@@ -38,6 +38,12 @@ import {
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
+  createSubagentTaskId,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../../core/src/shared/runtime-keys.ts";
+import { streamResponseSubject } from "../../core/src/shared/nats.ts";
+import {
   isObservabilityClientMessage,
   MAX_OBSERVABILITY_BACKFILL,
 } from "../../../packages/broods/src/observability-contracts.ts";
@@ -101,6 +107,163 @@ test("forwards stream errors directly", () => {
     type: "error",
     error: "bad key",
   });
+});
+
+test("reuses attach and stream contracts for subagent task identities", () => {
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-subagent",
+        agentId: "agent_child",
+        conversationKey: "subagent-persistent-abc",
+        eventId: "subagent_task_123",
+      }),
+    ),
+  ).toEqual({
+    type: "attach",
+    requestId: "attach-subagent",
+    agentId: "agent_child",
+    conversationKey: "subagent-persistent-abc",
+    eventId: "subagent_task_123",
+  });
+  expect(
+    [
+      { type: "reasoning-delta", text: "thinking" },
+      { type: "text-delta", text: "answer" },
+      { type: "tool-call", toolName: "search" },
+    ].map(websocketMessageForNatsData),
+  ).toEqual([
+    { type: "reasoning-delta", text: "thinking" },
+    { type: "text-delta", text: "answer" },
+    { type: "tool-call", toolName: "search" },
+  ]);
+});
+
+test("attaches virtual and private child streams through durable parent deployment authorization", async () => {
+  for (const childKind of ["virtual", "private"] as const) {
+    const fixture = gatewaySubagentFixture(childKind);
+    const originalFetch = globalThis.fetch;
+    const sent: Array<Record<string, unknown>> = [];
+    const socket = gatewaySocket(sent);
+    const connection = replayThenLiveConnection(fixture);
+    // Core authorizes the child status read (covered by core's status-access
+    // tests); the gateway only proceeds when the returned conversationKey matches.
+    globalThis.fetch = (async (input, init) => {
+      if (
+        new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
+      ) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+        });
+      }
+      const taskId = decodeURIComponent(
+        new URL(String(input)).pathname.slice("/status/".length),
+      );
+      return new Response(
+        JSON.stringify({
+          eventId: taskId,
+          conversationKey: fixture.publicConversationKey,
+          status: "processing",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    try {
+      handleAgentMessage(
+        socket,
+        JSON.stringify({
+          type: "attach",
+          requestId: `attach-${childKind}`,
+          agentId: fixture.childAgentId,
+          conversationKey: fixture.publicConversationKey,
+          eventId: fixture.taskId,
+        }),
+        gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+        async () => connection as never,
+      );
+
+      await waitForGatewayMessage(
+        sent,
+        (message) =>
+          message.type === "output" &&
+          (message.data as { type?: unknown } | undefined)?.type === "done",
+      );
+
+      expect(sent[0]).toMatchObject({
+        type: "attached",
+        eventId: fixture.taskId,
+        status: "processing",
+      });
+      expect(
+        sent
+          .filter((message) => message.type === "output")
+          .map((message) => message.replay),
+      ).toEqual([true, false]);
+      expect(
+        sent
+          .filter((message) => message.type === "output")
+          .map((message) => (message.data as { type: string }).type),
+      ).toEqual(["reasoning-delta", "done"]);
+    } finally {
+      stopActiveRun(socket);
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test("rejects an attach whose durable status conversation does not own the requested subject", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let natsRequested = false;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "subagent-task",
+        conversationKey: "different-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-wrong-subject",
+        agentId: "agent_private",
+        conversationKey: "requested-conversation",
+        eventId: "subagent-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => {
+        natsRequested = true;
+        throw new Error("NATS must not be reached");
+      },
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "replay_unavailable",
+    );
+    expect(natsRequested).toBe(false);
+    expect(sent).toContainEqual({
+      type: "replay_unavailable",
+      requestId: "attach-wrong-subject",
+      eventId: "subagent-task",
+      status: "processing",
+      statusUrl: "/status/subagent-task?agentId=agent_private",
+    });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("parses only valid gateway websocket messages", () => {
@@ -1063,3 +1226,126 @@ test("observability relay sheds droppable frames when the socket buffer is backe
   await relayNatsMessages(socket, messages(), "logs", { logsMinLevel: "INFO" });
   expect(sent).toEqual([]);
 });
+
+function gatewaySocket(sent: Array<Record<string, unknown>>) {
+  return {
+    data: {
+      kind: "agent-test",
+      corePath: "/v1/demo/agents/development/env-endpoint",
+      token: "runtime-key",
+      coreBaseUrl: "https://core.example",
+      accountId: "acct_test",
+    },
+    send: (value: string) =>
+      sent.push(JSON.parse(value) as Record<string, unknown>),
+    close: () => {},
+  } as unknown as Bun.ServerWebSocket<
+    import("../src/agent.ts").AgentTestGatewayData
+  >;
+}
+
+function gatewaySubagentFixture(childKind: "private" | "virtual") {
+  const account = { accountId: "acct_test" };
+  const parentEventId = scopedDirectEventId(
+    account.accountId,
+    "agent_parent",
+    "parent-event",
+  );
+  const taskId = createSubagentTaskId(
+    parentEventId,
+    "019833ce-7f5d-7000-8000-000000000001",
+  );
+  const childAgentId =
+    childKind === "virtual" ? `virtual_subagent_${taskId}` : "agent_private";
+
+  return {
+    account,
+    taskId,
+    childAgentId,
+    publicConversationKey: "subagent-child",
+  };
+}
+
+function replayThenLiveConnection(
+  fixture: ReturnType<typeof gatewaySubagentFixture>,
+) {
+  const encoder = new TextEncoder();
+  const subject = streamResponseSubject(
+    fixture.account.accountId,
+    fixture.childAgentId,
+    fixture.publicConversationKey,
+  );
+  const streamMessage = (sequence: number, data: Record<string, unknown>) => ({
+    seq: sequence,
+    data: encoder.encode(
+      JSON.stringify({
+        type: "stream",
+        headers: {
+          accountId: fixture.account.accountId,
+          agentId: fixture.childAgentId,
+          conversationKey: fixture.publicConversationKey,
+          eventId: fixture.taskId,
+          connectionId: fixture.taskId,
+        },
+        data,
+        sequence,
+      }),
+    ),
+    ack: () => {},
+  });
+  const messages = [
+    streamMessage(10, { type: "reasoning-delta", text: "thinking" }),
+    streamMessage(11, { type: "done" }),
+  ];
+
+  return {
+    jetstreamManager: async () => ({
+      streams: {
+        add: async () => {},
+        getMessage: async () => ({ seq: 11, subject }),
+        info: async (
+          _name: string,
+          options?: { subjects_filter?: string },
+        ) => ({
+          created: "2026-07-24T00:00:00.000Z",
+          state: {
+            first_seq: 10,
+            last_seq: 10,
+            subjects: options?.subjects_filter ? { [subject]: 1 } : {},
+          },
+        }),
+        update: async () => {},
+      },
+    }),
+    jetstream: () => ({
+      consumers: {
+        get: async () => ({
+          consume: async () => ({
+            async *[Symbol.asyncIterator]() {
+              for (const message of messages) {
+                yield message;
+              }
+            },
+            close: async () => {},
+          }),
+        }),
+      },
+    }),
+  };
+}
+
+async function waitForGatewayMessage(
+  sent: Array<Record<string, unknown>>,
+  predicate: (message: Record<string, unknown>) => boolean,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (sent.some(predicate)) {
+      return;
+    }
+    await Bun.sleep(5);
+  }
+
+  throw new Error(
+    `Timed out waiting for gateway message: ${JSON.stringify(sent)}`,
+  );
+}

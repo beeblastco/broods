@@ -8,6 +8,7 @@ export type AsyncAgentStatus =
   | "completed"
   | "failed";
 export interface AsyncAgentResultRecord {
+  accountId: string;
   eventId: string;
   conversationKey: string;
   status: AsyncAgentStatus;

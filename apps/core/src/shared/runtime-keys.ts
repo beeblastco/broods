@@ -7,6 +7,15 @@ import { createHash } from "node:crypto";
 
 const FILESYSTEM_NAMESPACE_PREFIX = "fs-";
 const HASH_HEX_LENGTH = 40;
+const SUBAGENT_TASK_ID_PREFIX = "subagent~";
+const UUID_PATTERN =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
+export interface AccountAgentScopedKey {
+  accountId: string;
+  agentId: string;
+  key: string;
+}
 
 export const INTERNAL_EVENT_ID_PREFIX = "conversation-lease:";
 export const DIRECT_API_EVENT_ID_PREFIX = "api:";
@@ -30,6 +39,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   TELEGRAM_INTEGRATION_PREFIX,
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
+  SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
 ] as const;
 
@@ -108,6 +118,17 @@ export function assertValidPublicEventId(value: string): string {
   return normalized;
 }
 
+export function assertValidPublicStatusEventId(value: string): string {
+  const normalized = normalizeDirectIdentifier("eventId", value);
+  if (
+    hasReservedEventIdPrefix(normalized) &&
+    !subagentParentEventId(normalized)
+  ) {
+    throw new Error("eventId uses a reserved internal prefix");
+  }
+  return normalized;
+}
+
 export function assertValidPublicConversationKey(value: string): string {
   const normalized = normalizeDirectIdentifier("conversationKey", value);
   if (hasReservedConversationPrefix(normalized)) {
@@ -171,6 +192,56 @@ export function accountAgentScopedKey(
 
 export function accountScopedPrefix(accountId: string): string {
   return `${ACCOUNT_NAMESPACE_PREFIX}${accountId}:`;
+}
+
+export function createSubagentTaskId(
+  parentEventId: string,
+  taskNonce: string = crypto.randomUUID(),
+): string {
+  const parentScope = parseAccountAgentScopedKey(parentEventId);
+  if (!parentScope) {
+    throw new Error("Subagent parent event must be account and agent scoped");
+  }
+  if (!new RegExp(`^${UUID_PATTERN}$`).test(taskNonce)) {
+    throw new Error("Subagent task nonce must be a UUID");
+  }
+
+  return `${SUBAGENT_TASK_ID_PREFIX}${Buffer.from(parentEventId, "utf8").toString("base64url")}~${taskNonce}`;
+}
+
+export function parseAccountAgentScopedKey(
+  value: string,
+): AccountAgentScopedKey | null {
+  const match = /^acct:([^:]+):agent:([^:]+):(.+)$/.exec(value);
+  if (!match?.[1] || !match[2] || !match[3]) {
+    return null;
+  }
+
+  return {
+    accountId: match[1],
+    agentId: match[2],
+    key: match[3],
+  };
+}
+
+export function subagentParentEventId(taskId: string): string | null {
+  const match = new RegExp(
+    `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
+  ).exec(taskId);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    const decoded = Buffer.from(match[1], "base64url").toString("utf8");
+    if (Buffer.from(decoded, "utf8").toString("base64url") !== match[1]) {
+      return null;
+    }
+    const scope = parseAccountAgentScopedKey(decoded);
+    return scope ? decoded : null;
+  } catch {
+    return null;
+  }
 }
 
 function hasReservedConversationPrefix(value: string): boolean {

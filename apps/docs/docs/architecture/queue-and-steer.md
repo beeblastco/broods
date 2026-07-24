@@ -452,6 +452,26 @@ for that child agent/conversation. Stopping the parent waits boundedly for
 already-running children to finalize their own status, but does not hard-cancel
 them or inject their late result into another parent model step.
 
+With `subagent.stream: true`, a child also publishes model/tool stream
+parts on the existing `WS_RESPONSES` subject derived from its authenticated
+account, child `agentId`, and returned public `conversationKey`. The
+`run_subagent` result's `taskId` is the attach `eventId`, so attach/control
+correlation and the event-hash cursor binding remain unchanged. One ordered
+consumer replays retained child frames and then tails live output without a
+handoff gap. A publisher `done` part is only a delivery marker: the existing
+subagent runtime status/result is still the durable terminal truth, including
+after the short JetStream retention window expires.
+
+Deployment-key attach authorization is parent-bound. The server-issued child
+`taskId` correlates to the parent ingress event, while the exact child
+async-result row proves the task was created by the runtime. Core authorizes the
+status read only after the child event/conversation scope, durable parent ingress
+status, active public parent, and authenticated account/project/environment/
+endpoint deployment all match. The gateway then checks the returned conversation
+key before selecting the NATS subject. Virtual and predefined private children
+therefore remain non-runnable through the public endpoint, and no client-asserted
+parent field is trusted.
+
 `IngressStatus` describes durable ingress (`accepted`, `queued`, `applied`,
 `processing`, `completed`, `failed`, or `expired`). The public status response
 may additionally report `awaiting_approval` from the async execution record and
@@ -483,11 +503,10 @@ The implementation follows this dependency order:
    commands.
 6. Cross-transport integration tests and user/operations documentation.
 
-Do not implement [issue #95](https://github.com/beeblastco/broods/issues/95) in
-parallel. Its per-subagent WebSocket attach and JetStream lifecycle must first be
-aligned with this decision's attach/control correlation, durable status,
-subject ownership, replay, and retention rules. Otherwise the two issues can encode
-conflicting meanings for attach, completion, and stream retention.
+[Issue #95](https://github.com/beeblastco/broods/issues/95) builds per-subagent
+streaming on the same attach/control correlation, durable status, subject
+ownership, replay, and retention rules; it does not introduce a second gateway
+protocol or terminal-state source.
 
 ## Consequences
 

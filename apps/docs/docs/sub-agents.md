@@ -27,6 +27,7 @@ export const myAgent = defineAgent({
       allowed: [research],
       context: "new",
       mode: "persistent",
+      stream: true,
     },
   },
 });
@@ -38,6 +39,8 @@ Defaults:
 - omit `context` to use `"new"`
 - omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
 - set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
+- omit `stream` or set `false` to keep child model/tool events private to the runtime
+- set `stream: true` to make each child's short-lived event replay attachable over WebSocket
 - use `allowed: []` to allow only virtual one-shot subagents
 - add predefined agent ids to `allowed` when the parent should be able to choose specific account-owned agents
 
@@ -128,6 +131,63 @@ When `mode: "persistent"` is configured:
 - inherited parent context remains request-local model context and is not copied into the child conversation
 
 Ephemeral mode is the default. It keeps child model context in memory only and continues to use runtime-generated keys.
+
+## Live Child Event Streaming
+
+When `subagent.stream` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
+
+- `taskId` becomes the attach `eventId` and the durable status id
+- `agentId` identifies the child agent
+- `conversationKey` is the returned child conversation key
+
+```json
+{
+  "type": "attach",
+  "requestId": "attach-child-1",
+  "agentId": "agent_child",
+  "conversationKey": "subagent-persistent-abc123",
+  "eventId": "subagent~base64url-parent-event~task-uuid"
+}
+```
+
+```mermaid
+flowchart LR
+  Child["Subagent harness stream"] -->|"stream=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
+  Subject --> Buffer["WS_RESPONSES<br/>short JetStream retention"]
+  Buffer -->|"one ordered consumer"| Gateway["Gateway attach<br/>retained replay → live tail"]
+  Child --> ChildStatus["Existing Convex<br/>subagent runtime status"]
+  ParentStatus["Durable parent<br/>ingress status"] --> Auth["Core parent/deployment<br/>authorization"]
+  ChildStatus --> Auth
+  Auth --> Gateway
+  Gateway --> Client["WebSocket client"]
+```
+
+The gateway protocol does not change. Treat `taskId` as server-issued: core
+includes a base64url-encoded parent correlation in it and persists that exact
+child event before `run_subagent` returns. The correlation is reversible
+encoding, not encryption, and must not contain or be treated as confidential
+data. Public direct requests cannot choose the reserved `subagent~` event
+namespace. A deployment-key status/attach request succeeds only when the child
+status row, its child agent/conversation scope, the durable parent ingress row,
+the active public parent, and the key's account/project/environment/endpoint
+deployment scope all agree. The client does not provide parent scope. This
+permits a virtual or predefined private child to be observed through its
+already-authorized parent without making the child publicly runnable or exposing
+another deployment's tasks.
+
+The gateway also requires the status response's conversation key to equal the
+requested attach conversation before opening the NATS consumer. Its event-bound
+`ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child
+cursor from resuming a different task, and the subject includes the authenticated
+account and child agent so conversations cannot cross those scopes. Because the
+durable child row is created before dispatch and JetStream retains the earliest
+frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
+immediately even if the child began publishing before the tool result arrived.
+A `done` stream part only closes the best-effort token tail. The existing
+`/status/{taskId}?agentId={agentId}` result remains the durable terminal truth
+after completion, failure, or JetStream expiry.
+
+Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure; connection, publish, or flush failures cannot change that durable outcome. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
 
 ## SSE Continuation
 
