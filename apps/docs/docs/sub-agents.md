@@ -27,7 +27,7 @@ export const myAgent = defineAgent({
       allowed: [research],
       context: "new",
       mode: "persistent",
-      streamEvents: true,
+      stream: true,
     },
   },
 });
@@ -39,8 +39,8 @@ Defaults:
 - omit `context` to use `"new"`
 - omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
 - set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
-- omit `streamEvents` or set `false` to keep child model/tool events private to the runtime
-- set `streamEvents: true` to make each child's short-lived event replay attachable over WebSocket
+- omit `stream` or set `false` to keep child model/tool events private to the runtime
+- set `stream: true` to make each child's short-lived event replay attachable over WebSocket
 - use `allowed: []` to allow only virtual one-shot subagents
 - add predefined agent ids to `allowed` when the parent should be able to choose specific account-owned agents
 
@@ -134,7 +134,7 @@ Ephemeral mode is the default. It keeps child model context in memory only and c
 
 ## Live Child Event Streaming
 
-When `subagent.streamEvents` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
+When `subagent.stream` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
 
 - `taskId` becomes the attach `eventId` and the durable status id
 - `agentId` identifies the child agent
@@ -152,7 +152,7 @@ When `subagent.streamEvents` is `true`, every child publishes its reasoning, tex
 
 ```mermaid
 flowchart LR
-  Child["Subagent harness stream"] -->|"streamEvents=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
+  Child["Subagent harness stream"] -->|"stream=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
   Subject --> Buffer["WS_RESPONSES<br/>short JetStream retention"]
   Buffer -->|"one ordered consumer"| Gateway["Gateway attach<br/>retained replay → live tail"]
   Child --> ChildStatus["Existing Convex<br/>subagent runtime status"]

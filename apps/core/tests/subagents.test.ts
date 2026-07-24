@@ -160,7 +160,7 @@ describe("SubagentCoordinator", () => {
     const publisher = recordingPublisher();
     const coordinator = new SubagentCoordinator(
       parentSession(),
-      { subagent: { enabled: true, streamEvents: true } },
+      { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
       undefined,
       (() => publisher) as never,
@@ -203,7 +203,7 @@ describe("SubagentCoordinator", () => {
     const publisher = recordingPublisher();
     const coordinator = new SubagentCoordinator(
       parentSession(),
-      { subagent: { enabled: true, streamEvents: true } },
+      { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
       undefined,
       (() => publisher) as never,
@@ -236,7 +236,7 @@ describe("SubagentCoordinator", () => {
     const publisher = recordingPublisher();
     const coordinator = new SubagentCoordinator(
       parentSession(),
-      { subagent: { enabled: true, streamEvents: true } },
+      { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
       undefined,
       (() => publisher) as never,
@@ -272,7 +272,7 @@ describe("SubagentCoordinator", () => {
     };
     const coordinator = new SubagentCoordinator(
       parentSession(),
-      { subagent: { enabled: true, streamEvents: true } },
+      { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
       undefined,
       (() => publisher) as never,
