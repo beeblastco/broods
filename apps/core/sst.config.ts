@@ -526,12 +526,8 @@ export default $config({
       }),
     });
 
-    // Sandbox-tier custom-tool runner: a plain Node.js Lambda that runs an
-    // uploaded tool bundle (passed inline in the invoke event) in a scrubbed-env
-    // child process. No VPC => default internet egress (allow-all), which is what
-    // AI-SDK tools need. The bundle arrives in the payload, so the function needs
-    // no S3/data-plane access beyond the default logging role. The core container
-    // invokes it by name via TOOL_RUNNER_FUNCTION_NAME (surfaced as an output).
+    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
+    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
     const toolRunnerFn = new sst.aws.Function("ToolRunner", {
       handler: "src/harness/sandbox/tool-runner/handler.handler",
       runtime: "nodejs22.x",

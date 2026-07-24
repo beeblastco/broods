@@ -18,8 +18,10 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
 // Stray timers/promises in user code must not crash the runner after the
-// terminal frame is already on stdout.
-process.on("unhandledRejection", () => {});
+// terminal frame is on stdout; still log to stderr so real bugs stay visible.
+process.on("unhandledRejection", (reason) => {
+  console.error("[tool-runner] unhandled rejection:", reason);
+});
 
 await runToolRequest();
 

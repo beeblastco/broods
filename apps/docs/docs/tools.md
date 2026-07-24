@@ -122,12 +122,12 @@ sequenceDiagram
   participant P as Parent agent
   participant C as AsyncToolCoordinator
   participant D as Convex AsyncToolResult
-  participant I as V8 isolate
+  participant I as isolate / tool-runner Lambda
 
-  alt non-detached uploaded isolate async
+  alt non-detached uploaded async (isolate or sandbox)
     P->>C: tool call
     C->>D: processing row
-    C->>I: wait for isolate result
+    C->>I: wait for tool result
     C->>D: completed/failed
     C->>P: inject result and continue
   else uploaded detached async

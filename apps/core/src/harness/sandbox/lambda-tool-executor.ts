@@ -9,6 +9,7 @@
 
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { requireEnv } from "../../shared/env.ts";
+import { isPlainObject } from "../../shared/object.ts";
 import {
   FrameQueue,
   abortSignalFromOptions,
@@ -61,7 +62,12 @@ export async function* streamAccountToolInLambda(
 }
 
 function defaultClient(): LambdaClient {
-  sharedClient ??= new LambdaClient({});
+  // Bound every invoke: the SDK's default connection/request timeouts are 0
+  // (off). requestTimeout sits above the Lambda's own 35s so the function's
+  // graceful error wins normally; connectionTimeout fails a stalled dial fast.
+  sharedClient ??= new LambdaClient({
+    requestHandler: { connectionTimeout: 5_000, requestTimeout: 45_000 },
+  });
   return sharedClient;
 }
 
@@ -110,9 +116,7 @@ function parseResponse(body: string): ToolRunnerResponse {
   if (!body) return {};
   try {
     const parsed = JSON.parse(body) as unknown;
-    return parsed && typeof parsed === "object"
-      ? (parsed as ToolRunnerResponse)
-      : {};
+    return isPlainObject(parsed) ? (parsed as ToolRunnerResponse) : {};
   } catch {
     throw new Error("tool runner Lambda returned a non-JSON response");
   }

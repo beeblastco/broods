@@ -20,7 +20,9 @@ import { fileURLToPath } from "node:url";
 // the handler always wins and returns a clean error frame.
 const RUN_TIMEOUT_MS = 30_000;
 const CHILD_GRACE_MS = 2_000;
-const OUTPUT_LIMIT_BYTES = 6 * 1024 * 1024;
+// Well under Lambda's 6 MB sync-response cap: the NDJSON is re-embedded as a JSON
+// string in { stdout }, and escaping (quotes/backslashes) inflates it.
+const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 
 export const handler = async (event) => {
   if (!event || typeof event !== "object" || typeof event.toolName !== "string") {
@@ -50,6 +52,7 @@ async function runChild(event, home) {
       env: scrubbedEnv(home),
     });
     let stdout = "";
+    let stdoutBytes = 0;
     let stderr = "";
     let overflow = false;
     const timeout = setTimeout(() => {
@@ -60,7 +63,8 @@ async function runChild(event, home) {
 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      if (stdout.length + chunk.length > OUTPUT_LIMIT_BYTES) {
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > OUTPUT_LIMIT_BYTES) {
         overflow = true;
         try {
           child.kill("SIGKILL");
@@ -95,6 +99,9 @@ async function runChild(event, home) {
       resolve({ stdout });
     });
 
+    // A child that exits before reading stdin makes end() emit EPIPE; an
+    // unhandled stream error would crash the handler instead of returning { error }.
+    child.stdin.on("error", () => {});
     child.stdin.end(`${JSON.stringify(event)}\n`);
   });
 }
