@@ -38,10 +38,6 @@ import {
 } from "../src/utils.ts";
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
-  deploymentStatusAccessDenial,
-  type DeploymentStatusAccessContext,
-} from "../../core/src/harness/deployment-status-access.ts";
-import {
   createSubagentTaskId,
   scopedDirectConversationKey,
   scopedDirectEventId,
@@ -151,31 +147,9 @@ test("attaches virtual and private child streams through durable parent deployme
     const sent: Array<Record<string, unknown>> = [];
     const socket = gatewaySocket(sent);
     const connection = replayThenLiveConnection(fixture);
-    const auth = {
-      account: fixture.account,
-      endpointId: "env-endpoint",
-      projectSlug: "demo",
-      environmentSlug: "development",
-    };
-    const statusContext: DeploymentStatusAccessContext = {
-      agentLoader: async (_accountId, agentId) =>
-        agentId === fixture.parentAgent.agentId ? fixture.parentAgent : null,
-      deploymentLoader: async (_accountId, agentId) =>
-        agentId === fixture.parentAgent.agentId
-          ? {
-              accountId: fixture.account.accountId,
-              endpointId: "env-endpoint",
-              projectSlug: "demo",
-              environmentSlug: "development",
-            }
-          : null,
-      asyncAgentResultLoader: async (eventId) =>
-        eventId === fixture.childResult.eventId ? fixture.childResult : null,
-      ingressStatusLoader: async ({ eventId }) =>
-        eventId === fixture.parentEventId ? fixture.parentStatus : null,
-    };
+    // Core authorizes the child status read (covered by core's status-access
+    // tests); the gateway only proceeds when the returned conversationKey matches.
     globalThis.fetch = (async (input, init) => {
-      const url = new URL(String(input));
       if (
         new Headers(init?.headers).get("authorization") !== "Bearer runtime-key"
       ) {
@@ -183,36 +157,16 @@ test("attaches virtual and private child streams through durable parent deployme
           status: 401,
         });
       }
-      const taskId = decodeURIComponent(url.pathname.slice("/status/".length));
-      const childAgentId = url.searchParams.get("agentId") ?? "";
-      const denial = await deploymentStatusAccessDenial(
-        auth,
-        {
-          accountId: fixture.account.accountId,
-          agentId: childAgentId,
-          eventId: scopedDirectEventId(
-            fixture.account.accountId,
-            childAgentId,
-            taskId,
-          ),
-          publicEventId: taskId,
-        },
-        statusContext,
+      const taskId = decodeURIComponent(
+        new URL(String(input)).pathname.slice("/status/".length),
       );
       return new Response(
-        JSON.stringify(
-          denial
-            ? { error: denial.message, code: denial.code }
-            : {
-                eventId: taskId,
-                conversationKey: fixture.publicConversationKey,
-                status: "processing",
-              },
-        ),
-        {
-          status: denial ? 403 : 200,
-          headers: { "Content-Type": "application/json" },
-        },
+        JSON.stringify({
+          eventId: taskId,
+          conversationKey: fixture.publicConversationKey,
+          status: "processing",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }) as typeof fetch;
 
@@ -1291,26 +1245,10 @@ function gatewaySocket(sent: Array<Record<string, unknown>>) {
 }
 
 function gatewaySubagentFixture(childKind: "private" | "virtual") {
-  const account = {
-    accountId: "acct_test",
-    username: "test",
-    secretHash: "hash",
-    status: "active" as const,
-    createdAt: "2026-07-24T00:00:00.000Z",
-    updatedAt: "2026-07-24T00:00:00.000Z",
-  };
-  const parentAgent = {
-    accountId: account.accountId,
-    agentId: "agent_parent",
-    name: "Parent",
-    status: "active" as const,
-    config: { publicAccess: true },
-    createdAt: "2026-07-24T00:00:00.000Z",
-    updatedAt: "2026-07-24T00:00:00.000Z",
-  };
+  const account = { accountId: "acct_test" };
   const parentEventId = scopedDirectEventId(
     account.accountId,
-    parentAgent.agentId,
+    "agent_parent",
     "parent-event",
   );
   const taskId = createSubagentTaskId(
@@ -1319,42 +1257,12 @@ function gatewaySubagentFixture(childKind: "private" | "virtual") {
   );
   const childAgentId =
     childKind === "virtual" ? `virtual_subagent_${taskId}` : "agent_private";
-  const publicConversationKey = "subagent-child";
-  const conversationKey = scopedDirectConversationKey(
-    account.accountId,
-    childAgentId,
-    publicConversationKey,
-  );
 
   return {
     account,
-    parentAgent,
-    parentEventId,
     taskId,
     childAgentId,
-    publicConversationKey,
-    childResult: {
-      accountId: account.accountId,
-      eventId: scopedDirectEventId(account.accountId, childAgentId, taskId),
-      conversationKey,
-      status: "processing" as const,
-      createdAt: "2026-07-24T00:00:00.000Z",
-      updatedAt: "2026-07-24T00:00:00.000Z",
-      expiresAt: 1,
-    },
-    parentStatus: {
-      eventId: parentEventId,
-      conversationKey: scopedDirectConversationKey(
-        account.accountId,
-        parentAgent.agentId,
-        "parent-conversation",
-      ),
-      requestedMode: "reject" as const,
-      status: "processing" as const,
-      createdAt: 1,
-      updatedAt: 1,
-      expiresAt: 2,
-    },
+    publicConversationKey: "subagent-child",
   };
 }
 
