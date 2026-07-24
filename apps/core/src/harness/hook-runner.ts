@@ -14,8 +14,8 @@ import type { AgentHookEventName } from "../shared/domain/agent-config.ts";
 import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
-import { toolBundlesBucket } from "./tools/custom-tool-executor.ts";
-import { streamIsolatePayload } from "./tools/isolate-executor.ts";
+import { streamIsolatePayload } from "./isolate/executor.ts";
+import { toolBundlesBucket } from "./isolate/payload.ts";
 
 // A hook's return is capped before it re-enters the harness so a runaway hook
 // cannot balloon the conversation or a channel payload.
@@ -82,7 +82,8 @@ export async function runCodeHook(
     // Hook mode always yields { result, state } — the runner reads ctx.state
     // back out so the host can thread it into the next fire-point.
     const raw = (await runForResult(accountId, payload)) as
-      { result?: unknown; state?: unknown } | undefined;
+      | { result?: unknown; state?: unknown }
+      | undefined;
     return {
       mutation: sanitizeHookResult(event, raw?.result),
       state: sanitizeHookState(raw?.state, incomingState),

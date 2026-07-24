@@ -5,7 +5,7 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isDeniedAddress } from "../src/harness/tools/isolate-runner/pinned-fetch.mjs";
+import { isDeniedAddress } from "../src/harness/isolate/runner/pinned-fetch.mjs";
 
 describe("isDeniedAddress", () => {
   it("denies private, metadata, carrier-grade NAT, and IPv4-mapped metadata ranges", () => {
@@ -74,10 +74,7 @@ describe("guardedFetch", () => {
 
 function runNodeScenario(scenario: string): any {
   const modulePath = fileURLToPath(
-    new URL(
-      "../src/harness/tools/isolate-runner/pinned-fetch.mjs",
-      import.meta.url,
-    ),
+    new URL("../src/harness/isolate/runner/pinned-fetch.mjs", import.meta.url),
   );
   const script = `
     import { Duplex } from "node:stream";
