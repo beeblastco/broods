@@ -1,9 +1,10 @@
 /**
- * Custom (account-uploaded) tool dispatch. Routes an uploaded tool to the in-core
- * V8 isolate tier (../isolate/executor.ts). Bundles that need node/npm/native
- * (runtime "sandbox") or detached-async execution are not yet supported off
- * Lambda — that external/Firecracker path is deferred to #82. The runner payload
- * shape, frame protocol, and isolate spawning all live under ../isolate/.
+ * Custom (account-uploaded) tool dispatch. Routes by runtime tier: pure-compute /
+ * fetch-only bundles run in the in-core V8 isolate (../isolate/executor.ts);
+ * node/npm/native bundles (runtime "sandbox") run in the platform tool-runner
+ * Lambda (../sandbox/lambda-tool-executor.ts). Detached-async execution still
+ * needs a persistent reservation and is rejected here (tracked in #82). The
+ * runner payload shape and frame protocol are shared from ../isolate/payload.ts.
  */
 
 import type { ExecuteAccountToolOptions } from "../isolate/payload.ts";
@@ -24,22 +25,13 @@ interface DetachedAsyncToolMetadata {
  * bundle yields exactly once (its result). A sync-returning async generator lets
  * the SDK detect the async-iterable and stream it.
  *
- * Tools classified `runtime: "sandbox"` (node/npm/native) or launched as
- * detached-async need the external Firecracker execution plane, which is not yet
- * wired off Lambda — reject them clearly (tracked in #82) rather than trying to
- * run node code in a V8 isolate.
+ * Tools classified `runtime: "sandbox"` (node/npm/native) run in the tool-runner
+ * Lambda. Detached-async tools still need a persistent reservation and are
+ * rejected here (tracked in #82) rather than run inline.
  */
 export async function* streamAccountTool(
   options: ExecuteAccountToolOptions,
 ): AsyncGenerator<unknown, void, void> {
-  if (options.tool.runtime === "sandbox") {
-    throw new Error(
-      sandboxUnsupportedMessage(
-        options.tool.name,
-        "needs the sandbox runtime (node/npm or native modules)",
-      ),
-    );
-  }
   if (isDetachedAsyncTool(extractAsyncToolMetadata(options.options))) {
     throw new Error(
       sandboxUnsupportedMessage(
@@ -47,6 +39,15 @@ export async function* streamAccountTool(
         "runs as a detached-async job",
       ),
     );
+  }
+
+  if (options.tool.runtime === "sandbox") {
+    const sandboxExecutor =
+      options.sandboxExecutor ??
+      (await import("../sandbox/lambda-tool-executor.ts"))
+        .streamAccountToolInLambda;
+    yield* sandboxExecutor(options);
+    return;
   }
 
   const isolateExecutor =
@@ -72,5 +73,5 @@ function isDetachedAsyncTool(
 }
 
 function sandboxUnsupportedMessage(toolName: string, reason: string): string {
-  return `Custom tool "${toolName}" ${reason}, which is not yet supported off Lambda (tracked in #82). Rewrite it as a pure-compute (isolate) tool, or wait for the sandbox execution tier.`;
+  return `Custom tool "${toolName}" ${reason}, which is not yet supported off Lambda (tracked in #82). Run it as a synchronous tool instead.`;
 }

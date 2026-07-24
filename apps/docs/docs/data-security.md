@@ -64,6 +64,15 @@ Normal account responses redact secret-like fields:
 
 If a client sends `********` back in a patch, the existing real secret is preserved.
 
+## Untrusted Custom Tool Execution
+
+Account-uploaded tool bundles are untrusted code and never run in the core process. They execute by runtime tier:
+
+- **Isolate tier** (pure-compute / fetch-only bundles): a V8 `isolated-vm` isolate in a Node child of the core. No filesystem, no npm/native imports, and network only through an SSRF-guarded `fetch` (private and metadata ranges blocked, resolved addresses pinned against DNS rebinding).
+- **Sandbox tier** (node/npm/native bundles): the platform tool-runner Lambda — a plain Node.js function that runs each bundle in a per-invocation child process with a scrubbed environment (no `AWS_*`/execution-role credentials) and a fresh `TMPDIR`. The child boundary prevents user code from reading the function's credentials or leaking state into the next (cross-tenant) warm invocation. The function runs outside a VPC, so tool egress is open internet; the bundle arrives inline in the invoke payload, so the function holds no S3 or data-plane access.
+
+Bundles are size-capped (1 MB) and time-bounded, and both tiers surface results over the same NDJSON frame protocol.
+
 ## Why Keep It This Way
 
 This keeps the product easy to run and change:

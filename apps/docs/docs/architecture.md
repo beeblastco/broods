@@ -199,7 +199,7 @@ flowchart TD
   Status --> AsyncTable
 ```
 
-The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. Uploaded custom tools always execute in the `sandbox` provider; uploaded async tools are waited on for SSE, but `/async`, channel, and NATS turns launch them as detached sandbox work that completes through `/sandbox-jobs/{resultId}/complete`.
+The async path starts inside `harness-processing`: `POST /async` creates `AsyncAgentResult`, returns a status URL, and dispatches an in-process worker. Subagents and built-in async tools run inside that worker. Uploaded custom tools execute by runtime tier — pure-compute / fetch-only bundles in the in-core V8 isolate, node/npm/native bundles in the tool-runner Lambda — and both are synchronous request/response; async ones are waited on for SSE and non-detached paths. Detached-async uploaded tools have no background path yet (deferred to #82).
 
 ```mermaid
 flowchart TD
@@ -430,4 +430,4 @@ Agents control model selection, channel credentials, optional skills, subagents,
 
 Every stage stores config domains and runtime state in Convex. S3 remains the byte store for workspace files, skills, and tool bundles.
 
-Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute in the `sandbox` (workdir) provider. `async: true` only changes the lifecycle: built-in async stays in the current request or worker, uploaded async waits on SSE, and uploaded async detaches automatically on `/async`, channel, and NATS turns. Subagents are in-process child agent loops; they do not require child workers.
+Built-in tool execution is inline in `harness-processing`. Uploaded custom tools execute by runtime tier: pure-compute / fetch-only bundles run in the in-core V8 isolate (a Node child of the core), while node/npm/native bundles run in the platform tool-runner Lambda (`src/harness/sandbox/tool-runner/`). `async: true` only changes the lifecycle: built-in async stays in the current request or worker, and uploaded async waits on SSE and non-detached paths. Detached-async uploaded tools have no background path yet (deferred to #82). Subagents are in-process child agent loops; they do not require child workers.
