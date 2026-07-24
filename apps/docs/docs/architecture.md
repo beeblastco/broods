@@ -206,8 +206,9 @@ flowchart TD
   Parent["parent model pass"] --> Kind{"child work type"}
   Kind -->|"subagent"| InMemory["in-memory pending work"]
   Kind -->|"built-in async tool"| InMemory
-  Kind -->|"uploaded async tool on SSE"| InMemory
-  Kind -->|"uploaded async tool on detached path"| External["sandbox background runner"]
+  Kind -->|"uploaded async tool on SSE (isolate or sandbox)"| InMemory
+  Kind -->|"bash background job (sandbox)"| External["sandbox background runner"]
+  Kind -.->|"uploaded detached async"| Deferred["deferred #82<br/>no background path"]
   InMemory -->|"wait only while pendingCount > 0"| Inject["inject result into conversation"]
   External -->|"sandbox-jobs complete endpoint"| Group["sealed detached group<br/>all siblings settled"]
   Group --> Inject
