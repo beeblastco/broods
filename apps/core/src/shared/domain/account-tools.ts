@@ -81,7 +81,9 @@ export interface PublicAccountToolRecord {
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-const MAX_BUNDLE_BYTES = 512 * 1024;
+// Matches the CLI's MAX_BUNDLE_FILE_BYTES so a bundle that passes CLI validation
+// is not rejected here — large enough to host AI-SDK-derived fetch-only tools.
+const MAX_BUNDLE_BYTES = 1_000_000;
 const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =

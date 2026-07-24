@@ -4,12 +4,15 @@
  * at a runner.mjs whose directory has node_modules/isolated-vm installed.
  */
 
-import { describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const bundle =
-  "export default { name: 'test_tool', async execute(ctx, input) { return { echo: input, config: ctx.config }; } };";
+  "export default { name: 'test_tool', async execute(input, options) { return { echo: input, config: options.context.config }; } };";
 
 describe("custom tool runtime defaulting", () => {
   it("defaults pure bundles to isolate and Node-shaped bundles to sandbox", async () => {
@@ -164,7 +167,7 @@ describe("isolate runner", () => {
     "runs a trivial bundle and returns the final result",
     async () => {
       const result = await runRealRunner(
-        "export default { name: 'echo', execute(ctx, input) { return { echo: input }; } };",
+        "export default { name: 'echo', execute(input, options) { return { echo: input }; } };",
         {
           toolName: "echo",
           input: { message: "hi" },
@@ -245,7 +248,7 @@ describe("isolate runner", () => {
     "provides timers, console, and a global fetch to the bundle",
     async () => {
       const result = await runRealRunner(
-        `export default { name: "runtime_surface", async *execute(ctx, input) {
+        `export default { name: "runtime_surface", async *execute(input, options) {
         console.log("hello from the isolate");
         const started = Date.now();
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -256,7 +259,7 @@ describe("isolate runner", () => {
         yield {
           waited: true,
           hasFetch: typeof fetch === "function",
-          fetchIsCtxFetch: fetch === ctx.fetch,
+          fetchIsCtxFetch: fetch === options.context.fetch,
           hasMicrotask: typeof queueMicrotask === "function",
         };
       } };`,
@@ -305,6 +308,59 @@ describe("isolate runner", () => {
 
     expect(result.frames).toEqual([{ t: "final", result: { ticks: 3 } }]);
   });
+
+  realRunnerIt(
+    "passes SDK execution options (context, toolCallId, abortSignal) to the tool",
+    async () => {
+      const result = await runRealRunner(
+        `export default { name: "opts", execute(input, options) {
+          return {
+            echo: input,
+            cfg: options.context.config,
+            callId: options.toolCallId,
+            signalOk: options.abortSignal != null && options.abortSignal.aborted === false,
+          };
+        } };`,
+        {
+          toolName: "opts",
+          input: { q: "hi" },
+          config: { k: "v" },
+          toolCallId: "call_123",
+        },
+      );
+
+      expect(result.frames).toEqual([
+        {
+          t: "final",
+          result: {
+            echo: { q: "hi" },
+            cfg: { k: "v" },
+            callId: "call_123",
+            signalOk: true,
+          },
+        },
+      ]);
+    },
+  );
+
+  realRunnerIt(
+    "trips the in-isolate abortSignal when the host sends SIGUSR2",
+    async () => {
+      const result = await runRealRunner(
+        `export default { name: "abortable", async execute(input, options) {
+          return await new Promise((resolve) => {
+            options.abortSignal.addEventListener("abort", () => resolve({ aborted: true }));
+          });
+        } };`,
+        { toolName: "abortable", input: {}, abortAfterMs: 300 },
+      );
+
+      expect(result.frames.at(-1)).toEqual({
+        t: "final",
+        result: { aborted: true },
+      });
+    },
+  );
 });
 
 describe("isolate pooled worker (--pool)", () => {
@@ -415,6 +471,66 @@ describe("isolate pooled worker (--pool)", () => {
   );
 });
 
+// Runs against a stub runner (no isolated-vm), so it exercises the core-side
+// forwarding of the AI SDK abortSignal into the runner process on every CI run.
+describe("streamIsolatePayload cross-process abort", () => {
+  const created: string[] = [];
+  const savedRunnerPath = process.env.ISOLATE_RUNNER_PATH;
+  const savedPool = process.env.ISOLATE_POOL;
+
+  afterEach(async () => {
+    if (savedRunnerPath === undefined) delete process.env.ISOLATE_RUNNER_PATH;
+    else process.env.ISOLATE_RUNNER_PATH = savedRunnerPath;
+    if (savedPool === undefined) delete process.env.ISOLATE_POOL;
+    else process.env.ISOLATE_POOL = savedPool;
+    for (const dir of created.splice(0))
+      await rm(dir, { recursive: true, force: true });
+  });
+
+  it("forwards the AI SDK abortSignal to the runner as SIGUSR2", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "broods-runner-stub-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        "process.stdin.resume();",
+        "process.stdin.on('data', () => {});",
+        "process.on('SIGUSR2', () => {",
+        "  process.stdout.write(JSON.stringify({ t: 'final', result: { aborted: true } }) + '\\n');",
+        "  process.exit(0);",
+        "});",
+        "setTimeout(() => process.exit(3), 5000);",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL; // exercise the one-shot path
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/tools/isolate-executor.ts");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 150);
+
+    const outputs: unknown[] = [];
+    for await (const output of streamIsolatePayload(
+      "acct_test",
+      {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      },
+      { abortSignal: controller.signal },
+    )) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ aborted: true }]);
+  });
+});
+
 async function runPoolRunner(
   requests: Array<{
     callId: string;
@@ -508,6 +624,9 @@ async function runRealRunner(
     input?: unknown;
     expectedSha256?: string;
     env?: Record<string, string>;
+    config?: Record<string, unknown>;
+    toolCallId?: string;
+    abortAfterMs?: number;
   },
 ): Promise<{ frames: unknown[]; exitCode: number | null; stderr: string }> {
   const expectedSha256 = options.expectedSha256 ?? sha256(source);
@@ -534,9 +653,19 @@ async function runRealRunner(
       expectedSha256,
       toolName: options.toolName,
       input: options.input ?? {},
-      config: {},
+      config: options.config ?? {},
+      ...(options.toolCallId !== undefined
+        ? { toolCallId: options.toolCallId }
+        : {}),
     }) + "\n",
   );
+  if (options.abortAfterMs !== undefined) {
+    setTimeout(() => {
+      try {
+        child.kill("SIGUSR2");
+      } catch {}
+    }, options.abortAfterMs);
+  }
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code));

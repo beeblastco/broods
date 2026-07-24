@@ -25,13 +25,15 @@ export interface ExecuteAccountToolOptions {
 }
 
 // Payload the isolate runner reads on stdin. The bundle is always inlined
-// (base64) — the isolate runner does not fetch from S3 itself.
+// (base64) — the isolate runner does not fetch from S3 itself. toolCallId is the
+// AI SDK call id surfaced to the tool via options.toolCallId.
 export interface RunnerPayload {
   bundleSourceB64: string;
   expectedSha256: string;
   toolName: string;
   input: unknown;
   config: Record<string, unknown>;
+  toolCallId?: string;
 }
 
 interface DetachedAsyncToolMetadata {
@@ -90,6 +92,7 @@ export async function createRunnerPayload(options: {
   tool: AccountToolRecord;
   input: unknown;
   config: AgentToolConfig;
+  toolCallId?: string;
 }): Promise<RunnerPayload> {
   const bytes = await readS3Bytes(
     options.bucket,
@@ -101,7 +104,29 @@ export async function createRunnerPayload(options: {
     toolName: options.tool.name,
     input: options.input,
     config: mergeToolConfig(options.tool.defaultConfig, options.config.config),
+    ...(options.toolCallId !== undefined
+      ? { toolCallId: options.toolCallId }
+      : {}),
   };
+}
+
+/** Reads the AI SDK ToolExecutionOptions.toolCallId when present. */
+export function toolCallIdFromOptions(options: unknown): string | undefined {
+  if (!isPlainObject(options)) return undefined;
+
+  return typeof options.toolCallId === "string"
+    ? options.toolCallId
+    : undefined;
+}
+
+/** Reads the AI SDK ToolExecutionOptions.abortSignal when present. */
+export function abortSignalFromOptions(
+  options: unknown,
+): AbortSignal | undefined {
+  if (!isPlainObject(options)) return undefined;
+  const signal = options.abortSignal;
+
+  return signal instanceof AbortSignal ? signal : undefined;
 }
 
 /** Convenience for callers that only need the bundle bucket name. */

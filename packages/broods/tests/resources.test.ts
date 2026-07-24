@@ -1704,6 +1704,49 @@ test("runtime config loads .env.local without manual client wiring", async () =>
   });
 });
 
+test("compileProject emits the SDK calling-convention adapter for defineTool bundles", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-test-"));
+  tempDirs.push(cwd);
+  const projectDir = join(cwd, "broods");
+  await mkdir(join(projectDir, "tools"), { recursive: true });
+  await writeFile(
+    join(projectDir, "broods.config.ts"),
+    `import { defineBroods } from "${RESOURCES_MODULE}";\nexport default defineBroods({ project: "tool-app" });\n`,
+  );
+  // Authoring stays broods-native: execute(ctx, input).
+  await writeFile(
+    join(projectDir, "tools", "echo.ts"),
+    `export default { name: "echo_tool", async execute(ctx, input) { return { echo: input, cfgSeen: ctx.config }; } };\n`,
+  );
+  await writeFile(
+    join(projectDir, "tools.ts"),
+    `import { defineTool } from "${RESOURCES_MODULE}";
+export const echoTool = defineTool({
+  name: "echo_tool",
+  config: { path: "tools/echo.ts", description: "Echo", inputSchema: { type: "object" } },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const tool = manifest.resources.find((resource) => resource.kind === "tool");
+  const bundle = (tool?.config as { bundle?: string } | undefined)?.bundle;
+  expect(typeof bundle).toBe("string");
+
+  // The runtime calls execute(input, options) with ctx at options.context; the
+  // emitted adapter must map that back to the author's execute(ctx, input).
+  const builtDir = await mkdtemp(join(tmpdir(), "broods-built-"));
+  tempDirs.push(builtDir);
+  const builtPath = join(builtDir, "tool.mjs");
+  await writeFile(builtPath, bundle!, "utf8");
+  const mod = await import(builtPath);
+  const result = await mod.default.execute(
+    { q: "hi" },
+    { context: { config: { a: 1 } }, toolCallId: "call_1" },
+  );
+  expect(result).toEqual({ echo: { q: "hi" }, cfgSeen: { a: 1 } });
+});
+
 async function fixtureProject(
   configSource?: string,
   resourcesSource?: string,
