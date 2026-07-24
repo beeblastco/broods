@@ -83,7 +83,7 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
-import { deploymentStatusAccessDenial } from "./deployment-status-access.ts";
+import { statusAccessDenial } from "./status-access.ts";
 import {
   getAsyncAgentResult,
   type AsyncAgentResultRecord,
@@ -344,11 +344,7 @@ async function handleHttpRequest(
 
       const parsed = parseStatusPath(request.path, request.search, account);
       if (auth?.kind === "deployment") {
-        const denial = await deploymentStatusAccessDenial(
-          auth,
-          parsed,
-          context,
-        );
+        const denial = await statusAccessDenial(auth, parsed, context);
         if (denial) {
           return errorResponse(403, denial.message, {
             code: denial.code,
