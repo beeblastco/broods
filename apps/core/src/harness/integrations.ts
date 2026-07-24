@@ -82,7 +82,16 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
-import type { IngressMode } from "./ingress.ts";
+import { deploymentStatusAccessDenial } from "./deployment-status-access.ts";
+import {
+  getAsyncAgentResult,
+  type AsyncAgentResultRecord,
+} from "./async-agent-result.ts";
+import {
+  getIngressStatus,
+  type IngressMode,
+  type IngressStatusRecord,
+} from "./ingress.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
@@ -226,6 +235,14 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentDeploymentScope | null>;
+  asyncAgentResultLoader?: (
+    eventId: string,
+  ) => Promise<AsyncAgentResultRecord | null>;
+  ingressStatusLoader?: (options: {
+    accountId: string;
+    agentId: string;
+    eventId: string;
+  }) => Promise<IngressStatusRecord | null>;
   directApiEnabled?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -239,6 +256,14 @@ interface HttpRoutingContext {
     accountId: string,
     agentId: string,
   ): Promise<AgentDeploymentScope | null>;
+  asyncAgentResultLoader(
+    eventId: string,
+  ): Promise<AsyncAgentResultRecord | null>;
+  ingressStatusLoader(options: {
+    accountId: string;
+    agentId: string;
+    eventId: string;
+  }): Promise<IngressStatusRecord | null>;
   directApiEnabled: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -271,6 +296,9 @@ export function createIncomingEventRouter(
     ((accountId: string, agentId: string) =>
       getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ??
       Promise.resolve(null));
+  const asyncAgentResultLoader =
+    options.asyncAgentResultLoader ?? getAsyncAgentResult;
+  const ingressStatusLoader = options.ingressStatusLoader ?? getIngressStatus;
   const directApiEnabled = options.directApiEnabled ?? true;
   const waitUntil = options.waitUntil ?? (() => {});
 
@@ -283,6 +311,8 @@ export function createIncomingEventRouter(
       accountLoader,
       agentLoader,
       deploymentLoader,
+      asyncAgentResultLoader,
+      ingressStatusLoader,
       directApiEnabled,
       waitUntil,
     });
@@ -312,24 +342,17 @@ async function handleHttpRequest(
       }
 
       const parsed = parseStatusPath(request.path, request.search, account);
-      // A deployment key only reaches agents that opted into public access —
-      // the same gate as the run path, so retained status/output of private
-      // agents in the account is not readable through a public key.
       if (auth?.kind === "deployment") {
-        const agent = await context.agentLoader(
-          account.accountId,
-          parsed.agentId,
+        const denial = await deploymentStatusAccessDenial(
+          auth,
+          parsed,
+          context,
         );
-        if (
-          !agent ||
-          agent.status !== "active" ||
-          toRuntimeAgentConfig(agent.config).publicAccess !== true
-        ) {
-          return errorResponse(
-            403,
-            `Agent ${parsed.agentId} is not publicly accessible.`,
-            { code: "public_access_disabled", agentId: parsed.agentId },
-          );
+        if (denial) {
+          return errorResponse(403, denial.message, {
+            code: denial.code,
+            agentId: parsed.agentId,
+          });
         }
       }
 

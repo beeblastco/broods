@@ -3,7 +3,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { channelScopeKeyFromConversation } from "../src/shared/runtime-keys.ts";
+import {
+  channelScopeKeyFromConversation,
+  createSubagentTaskId,
+  parseAccountAgentScopedKey,
+  subagentParentEventId,
+} from "../src/shared/runtime-keys.ts";
 
 describe("channelScopeKeyFromConversation", () => {
   it("keeps Slack channel isolation at team+channel and conversation isolation at full thread key", () => {
@@ -55,5 +60,47 @@ describe("channelScopeKeyFromConversation", () => {
     expect(channelScopeKeyFromConversation("api:thread-1")).toBe(
       "api:thread-1",
     );
+  });
+});
+
+describe("subagent task correlation", () => {
+  it("round-trips a server-scoped parent event through an opaque task id", () => {
+    const parentEventId = "acct:acct_1:agent:agent_parent:api:parent-event";
+    const taskId = createSubagentTaskId(
+      parentEventId,
+      "019833ce-7f5d-7000-8000-000000000001",
+    );
+
+    expect(taskId.startsWith("subagent~")).toBe(true);
+    expect(subagentParentEventId(taskId)).toBe(parentEventId);
+    expect(parseAccountAgentScopedKey(parentEventId)).toEqual({
+      accountId: "acct_1",
+      agentId: "agent_parent",
+      key: "api:parent-event",
+    });
+  });
+
+  it("supports channel parents and rejects malformed or unscoped correlations", () => {
+    expect(subagentParentEventId("subagent_task_1")).toBeNull();
+    expect(
+      subagentParentEventId(
+        "subagent~bm90LXNjb3BlZA~019833ce-7f5d-7000-8000-000000000001",
+      ),
+    ).toBeNull();
+    const channelParent = "acct:acct_1:agent:agent_parent:slack:thread";
+    expect(
+      subagentParentEventId(
+        createSubagentTaskId(
+          channelParent,
+          "019833ce-7f5d-7000-8000-000000000001",
+        ),
+      ),
+    ).toBe(channelParent);
+    expect(() =>
+      createSubagentTaskId(
+        "unscoped-parent",
+        "019833ce-7f5d-7000-8000-000000000001",
+      ),
+    ).toThrow("account and agent scoped");
   });
 });

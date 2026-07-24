@@ -462,6 +462,16 @@ handoff gap. A publisher `done` part is only a delivery marker: the existing
 subagent runtime status/result is still the durable terminal truth, including
 after the short JetStream retention window expires.
 
+Deployment-key attach authorization is parent-bound. The opaque server-issued
+child `taskId` correlates to the parent ingress event, while the exact child
+async-result row proves the task was created by the runtime. Core authorizes the
+status read only after the child event/conversation scope, durable parent ingress
+status, active public parent, and authenticated account/project/environment/
+endpoint deployment all match. The gateway then checks the returned conversation
+key before selecting the NATS subject. Virtual and predefined private children
+therefore remain non-runnable through the public endpoint, and no client-asserted
+parent field is trusted.
+
 `IngressStatus` describes durable ingress (`accepted`, `queued`, `applied`,
 `processing`, `completed`, `failed`, or `expired`). The public status response
 may additionally report `awaiting_approval` from the async execution record and
