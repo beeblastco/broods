@@ -20,6 +20,9 @@ export interface ExecuteAccountToolOptions {
   isolateExecutor?: (
     options: ExecuteAccountToolOptions,
   ) => AsyncGenerator<unknown, void, void>;
+  sandboxExecutor?: (
+    options: ExecuteAccountToolOptions,
+  ) => AsyncGenerator<unknown, void, void>;
 }
 
 // Payload the isolate runner reads on stdin. The bundle is always inlined

@@ -526,9 +526,32 @@ export default $config({
       }),
     });
 
+    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
+    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
+    const toolRunnerFn = new sst.aws.Function("ToolRunner", {
+      handler: "src/harness/sandbox/tool-runner/handler.handler",
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      timeout: "35 seconds",
+      memory: "512 MB",
+      copyFiles: [
+        {
+          from: "src/harness/sandbox/tool-runner/child-runner.mjs",
+          to: "child-runner.mjs",
+        },
+      ],
+      transform: {
+        function: { name: resourceName("tool-runner", stage, region) },
+      },
+    });
+
     // Harness-side permissions for the container runtime user (CoreRuntimeUser
     // below); the account-manage set follows further down.
     const harnessPermissions = [
+      {
+        actions: ["lambda:InvokeFunction"],
+        resources: [toolRunnerFn.arn],
+      },
       {
         actions: ["sts:AssumeRole"],
         resources: [sandboxS3MountRole.arn],
@@ -924,6 +947,7 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
+      toolRunnerFunctionName: toolRunnerFn.name,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

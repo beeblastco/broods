@@ -5,9 +5,9 @@ This guide covers agent-configured external tools: provider-defined tools and ac
 Core ships **no built-in external tools**. Every `config.tools` key is one of two things:
 
 - **A provider-defined tool** — a tool the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
-- **An uploaded custom tool** — keyed by its account-scoped `toolId`, with the uploaded manifest supplying the model-facing name, description, and input schema. Uploaded pure-compute tool code executes in the in-core V8 isolate tier. Uploaded tools that need Node, npm, native modules, or detached async execution are deferred to the external sandbox tier tracked in #82.
+- **An uploaded custom tool** — keyed by its account-scoped `toolId`, with the uploaded manifest supplying the model-facing name, description, and input schema. Pure-compute / fetch-only bundles execute in the in-core V8 isolate tier; bundles that need Node, npm, or native modules execute in the platform tool-runner Lambda (the sandbox tier). Only detached-async execution is still deferred (#82).
 
-Anything the provider does not execute itself belongs in an uploaded custom tool that calls the service through the isolate's SSRF-guarded `ctx.fetch`.
+Anything the provider does not execute itself belongs in an uploaded custom tool that calls the service through the isolate's SSRF-guarded `ctx.fetch` (isolate tier) or native `fetch` (sandbox tier).
 
 ```mermaid
 flowchart LR
@@ -21,8 +21,10 @@ flowchart LR
   Model --> Call["model calls tool"]
   Call --> Provider["provider-defined<br/>executed by the provider"]
   Call --> Uploaded["uploaded isolate<br/>Node child + V8 isolate"]
+  Call --> Sandbox["uploaded sandbox<br/>tool-runner Lambda"]
   Uploaded --> Frames["NDJSON chunk/final frames"]
-  Call -.-> Deferred["sandbox runtime or detached async<br/>unsupported off Lambda (#82)"]
+  Sandbox --> Frames
+  Call -.-> Deferred["detached async<br/>unsupported off Lambda (#82)"]
 ```
 
 ## Current Tools
@@ -31,7 +33,7 @@ flowchart LR
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------- |
 | Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace              | `config.tools.<providerTool>` |
 | `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                      | —                             |
-| Uploaded custom tool  | S3 bundle + account tool metadata                                                                                                          | V8 isolate for `runtime: "isolate"`; sandbox runtime deferred (#82) | `config.tools.<toolId>`       |
+| Uploaded custom tool  | S3 bundle + account tool metadata                                                                                                          | V8 isolate for `runtime: "isolate"`; tool-runner Lambda for `runtime: "sandbox"` | `config.tools.<toolId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
@@ -57,13 +59,13 @@ Tool registry path:
 Provider-defined tools are executed by the provider during the model call, not by core. Uploaded custom tools are classified at upload time by a static scan:
 
 - `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or use of `process` as a bare global. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. Bundlers inline that pattern from common libraries, so an otherwise pure bundle stays on the isolate tier.
-- `runtime: "sandbox"` for code that needs Node, npm, native modules, or other off-core execution.
+- `runtime: "sandbox"` for code that needs Node, npm, or native modules.
 
-Only `runtime: "isolate"` executes today. The isolate executor runs the uploaded bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core because Bun cannot load `isolated-vm`. The isolate exposes timers, `queueMicrotask`, `console`, `AbortController`/`AbortSignal`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
+Both tiers execute today. The **isolate** executor runs the bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core (Bun cannot load `isolated-vm`). The isolate exposes timers, `queueMicrotask`, `console`, `AbortController`/`AbortSignal`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
 
-**Calling convention.** At runtime the isolate invokes the AI SDK signature `execute(input, options)`: `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` is a real `AbortSignal` that trips when the request is cancelled (forwarded from core into the runner). Authoring is unchanged — you write `execute(ctx, input)` and the CLI emits a one-line build-time adapter (`execute(input, options) => impl.execute(options.context, input)`). Because the runtime now matches the SDK convention, a fetch-only tool shaped like the AI SDK `tool({ execute })` is compatible too. Bundle-size caps agree across the CLI, core, and the config plane at 1 MB.
+The **sandbox** executor invokes the platform tool-runner Lambda — a plain Node.js function that runs the bundle in a per-invocation child process with a scrubbed env (no AWS credentials) and a fresh `TMPDIR`. It has the full Node surface: native `fetch`, timers, `AbortController`, `node:` builtins, and any npm deps the bundler inlined. Egress is open (the function runs outside a VPC), which is what AI-SDK ecosystem tools (Tavily, Exa, Firecrawl) need. Invocation is request/response, so a streaming tool's `yield`s are buffered and replayed once the run completes rather than surfaced live.
 
-Tools classified as `runtime: "sandbox"` return a clear unsupported error off Lambda: sandbox custom tools are deferred to #82.
+**Calling convention.** Both tiers invoke the AI SDK signature `execute(input, options)`: `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` is a real `AbortSignal`. Authoring is unchanged — you write `execute(ctx, input)` and the CLI emits a one-line build-time adapter (`execute(input, options) => impl.execute(options.context, input)`). A fetch-only tool shaped like the AI SDK `tool({ execute })` is compatible too. Bundle-size caps agree across the CLI, core, and the config plane at 1 MB; the sandbox result is bounded by the ~6 MB Lambda response.
 
 ```mermaid
 sequenceDiagram
@@ -108,10 +110,11 @@ When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle f
 | Provider-defined         | all paths                        | the model provider       | Yes                   | provider returns tool output | same active agent loop                |
 | Uploaded isolate sync    | all paths                        | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop                |
 | Uploaded isolate async   | SSE and other non-detached paths | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop injects result |
-| Uploaded sandbox runtime | all paths                        | deferred external tier   | —                     | unsupported off Lambda (#82) | clear dispatcher error                |
+| Uploaded sandbox sync    | all paths                        | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop                |
+| Uploaded sandbox async   | SSE and other non-detached paths | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop injects result |
 | Uploaded detached async  | `/async`, channel, NATS          | deferred external tier   | —                     | unsupported off Lambda (#82) | clear dispatcher error                |
 
-The async coordination subsystem still exists. It creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results for non-detached uploaded isolate tools. Uploaded detached async execution has no background execution path today; the dispatcher returns a clear error that detached uploaded tools are not yet supported off Lambda and are tracked in #82.
+The async coordination subsystem still exists. It creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results for non-detached uploaded tools (isolate and sandbox). Uploaded detached async execution has no background execution path today; the dispatcher returns a clear error that detached uploaded tools are not yet supported off Lambda and are tracked in #82.
 
 ```mermaid
 sequenceDiagram
@@ -119,12 +122,12 @@ sequenceDiagram
   participant P as Parent agent
   participant C as AsyncToolCoordinator
   participant D as Convex AsyncToolResult
-  participant I as V8 isolate
+  participant I as isolate / tool-runner Lambda
 
-  alt non-detached uploaded isolate async
+  alt non-detached uploaded async (isolate or sandbox)
     P->>C: tool call
     C->>D: processing row
-    C->>I: wait for isolate result
+    C->>I: wait for tool result
     C->>D: completed/failed
     C->>P: inject result and continue
   else uploaded detached async
@@ -224,7 +227,7 @@ The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Age
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
-For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Uploaded pure-compute tool code runs in the V8 isolate tier; sandbox-runtime and detached-async uploaded tools are deferred to #82.
+For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
 
 See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant.
 
@@ -294,7 +297,7 @@ Tool management endpoints (raw API):
 5. Import the factory in [`src/harness/tools/index.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/index.ts).
 6. Add the factory to the static `toolFactories` map with the exact model-facing tool name.
 7. Add config validation in [`src/shared/domain/agent-config.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/domain/agent-config.ts) only for options the account can set.
-8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Uploaded isolate async tools are waited on for SSE and other non-detached paths. Uploaded detached async tools are deferred to #82.
+8. Optionally set `config.tools.<name>.async: true` for slow local `execute` tools. Uploaded isolate and sandbox async tools are waited on for SSE and other non-detached paths. Uploaded detached async tools are deferred to #82.
 9. Update the [API Reference](/api-reference) `AgentConfig.tools` schema, and focused tests/examples when the public config shape changes.
 
 Keep the factory small. It should read `context.config`, resolve any API key, return a `ToolSet`, and leave unrelated orchestration to `harness.ts`.

@@ -108,9 +108,35 @@ describe("streamAccountTool dispatcher", () => {
     expect(isolateExecutor).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects sandbox-runtime tools with a deferred (#82) error", async () => {
+  it("routes sandbox tools to the sandbox (lambda) path", async () => {
     const isolateExecutor = mock(async function* () {
       yield { isolate: true };
+    });
+    const sandboxExecutor = mock(async function* () {
+      yield { sandbox: true };
+    });
+    const { streamAccountTool } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
+    const outputs: unknown[] = [];
+    for await (const output of streamAccountTool({
+      accountId: "acct_test",
+      tool: accountToolRecord("sandbox"),
+      input: {},
+      config: {},
+      isolateExecutor,
+      sandboxExecutor,
+    })) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ sandbox: true }]);
+    expect(sandboxExecutor).toHaveBeenCalledTimes(1);
+    expect(isolateExecutor).not.toHaveBeenCalled();
+  });
+
+  it("still rejects detached-async sandbox tools before dispatch", async () => {
+    const sandboxExecutor = mock(async function* () {
+      yield { sandbox: true };
     });
     const { streamAccountTool } =
       await import("../src/harness/tools/custom-tool-executor.ts");
@@ -122,11 +148,19 @@ describe("streamAccountTool dispatcher", () => {
           tool: accountToolRecord("sandbox"),
           input: {},
           config: {},
-          isolateExecutor,
+          options: {
+            asyncTool: {
+              resultId: "async_tool_1",
+              detached: true,
+              completePath: "/async-tools/async_tool_1/complete",
+              completionToken: "tok_123",
+            },
+          },
+          sandboxExecutor,
         }),
       ),
     ).rejects.toThrow(/not yet supported off Lambda/);
-    expect(isolateExecutor).not.toHaveBeenCalled();
+    expect(sandboxExecutor).not.toHaveBeenCalled();
   });
 
   it("rejects detached-async tools with a deferred (#82) error", async () => {
