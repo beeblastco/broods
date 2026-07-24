@@ -48,9 +48,9 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// Bare `process` access throws ReferenceError in an isolate even through `?.`,
-// while namespaced probes (`globalThis.process?.x`) are guarded and fall through.
-const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\s*\??\./;
+// A bare `process` reference (member, bracket, call, or plain) throws in an isolate
+// even through `?.`; namespaced probes (`globalThis.process?.x`) stay isolate.
+const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
 
 /**
  * Normalize and validate a CLI-supplied custom tool upload.

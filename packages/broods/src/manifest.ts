@@ -1133,7 +1133,7 @@ async function normalizeToolConfig(
     shimPath,
     `import __toolModule from ${JSON.stringify(bundlePath)};\n` +
       `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
-      `export default { execute: (input, options) => __impl.execute(options.context, input) };\n`,
+      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`,
     "utf8",
   );
   let bundle: string;

@@ -1740,6 +1740,9 @@ export const echoTool = defineTool({
   const builtPath = join(builtDir, "tool.mjs");
   await writeFile(builtPath, bundle!, "utf8");
   const mod = await import(builtPath);
+  // The shim forwards the author's name so the isolate runner's manifest-name
+  // integrity check still fires for adapter-built tools.
+  expect(mod.default.name).toBe("echo_tool");
   const result = await mod.default.execute(
     { q: "hi" },
     { context: { config: { a: 1 } }, toolCallId: "call_1" },
