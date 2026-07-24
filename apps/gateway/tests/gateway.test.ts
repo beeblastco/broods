@@ -103,6 +103,37 @@ test("forwards stream errors directly", () => {
   });
 });
 
+test("reuses attach and stream contracts for subagent task identities", () => {
+  expect(
+    parseGatewayMessage(
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-subagent",
+        agentId: "agent_child",
+        conversationKey: "subagent-persistent-abc",
+        eventId: "subagent_task_123",
+      }),
+    ),
+  ).toEqual({
+    type: "attach",
+    requestId: "attach-subagent",
+    agentId: "agent_child",
+    conversationKey: "subagent-persistent-abc",
+    eventId: "subagent_task_123",
+  });
+  expect(
+    [
+      { type: "reasoning-delta", text: "thinking" },
+      { type: "text-delta", text: "answer" },
+      { type: "tool-call", toolName: "search" },
+    ].map(websocketMessageForNatsData),
+  ).toEqual([
+    { type: "reasoning-delta", text: "thinking" },
+    { type: "text-delta", text: "answer" },
+    { type: "tool-call", toolName: "search" },
+  ]);
+});
+
 test("parses only valid gateway websocket messages", () => {
   expect(parseGatewayMessage("{not json")).toBeNull();
   expect(parseGatewayMessage(JSON.stringify({ type: "cancel" }))).toEqual({

@@ -36,6 +36,24 @@ describe("nats subject scheme", () => {
     expect(first.startsWith("v1.acct1.agent1.ws.response.")).toBe(true);
   });
 
+  it("isolates subagent subjects by account, agent, and conversation", () => {
+    const base = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "subagent-persistent-1",
+    );
+
+    expect(
+      streamResponseSubject("acct2", "agent-child", "subagent-persistent-1"),
+    ).not.toBe(base);
+    expect(
+      streamResponseSubject("acct1", "agent-other", "subagent-persistent-1"),
+    ).not.toBe(base);
+    expect(
+      streamResponseSubject("acct1", "agent-child", "subagent-persistent-2"),
+    ).not.toBe(base);
+  });
+
   it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
     const subject = streamResponseSubject(
       "acct1",
