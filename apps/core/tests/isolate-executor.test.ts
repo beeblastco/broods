@@ -508,7 +508,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
     const { streamIsolatePayload } =
-      await import("../src/harness/tools/isolate-executor.ts");
+      await import("../src/harness/isolate/executor.ts");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 150);
 

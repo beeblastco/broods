@@ -1,7 +1,7 @@
 /**
- * Node-hosted V8 isolate execution for pure account-uploaded tool bundles.
- * Bun cannot load isolated-vm, so core spawns a Node runner and speaks the same
- * NDJSON frame protocol as the resident sandbox worker.
+ * Node-hosted V8 isolate execution for account-uploaded user code (custom tools
+ * and hooks). Bun cannot load isolated-vm, so core spawns a Node runner
+ * (./runner/runner.mjs) and speaks the NDJSON frame protocol from payload.ts.
  *
  * Two paths share this file: the legacy one-shot spawner (a fresh runner per
  * call) and, behind ISOLATE_POOL, a pool of long-lived hardened workers that
@@ -21,7 +21,7 @@ import {
   toolBundlesBucket,
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
-} from "./custom-tool-executor.ts";
+} from "./payload.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
@@ -492,6 +492,6 @@ function isolateRunnerNode(): string {
 function isolateRunnerPath(): string {
   return (
     optionalEnv("ISOLATE_RUNNER_PATH") ??
-    fileURLToPath(new URL("./isolate-runner/runner.mjs", import.meta.url))
+    fileURLToPath(new URL("./runner/runner.mjs", import.meta.url))
   );
 }
