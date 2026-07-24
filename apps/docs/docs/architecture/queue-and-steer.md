@@ -462,8 +462,8 @@ handoff gap. A publisher `done` part is only a delivery marker: the existing
 subagent runtime status/result is still the durable terminal truth, including
 after the short JetStream retention window expires.
 
-Deployment-key attach authorization is parent-bound. The opaque server-issued
-child `taskId` correlates to the parent ingress event, while the exact child
+Deployment-key attach authorization is parent-bound. The server-issued child
+`taskId` correlates to the parent ingress event, while the exact child
 async-result row proves the task was created by the runtime. Core authorizes the
 status read only after the child event/conversation scope, durable parent ingress
 status, active public parent, and authenticated account/project/environment/

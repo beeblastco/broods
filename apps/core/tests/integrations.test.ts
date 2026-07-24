@@ -539,6 +539,52 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("rejects server-issued subagent task ids as direct ingress event ids", async () => {
+    const taskId = createSubagentTaskId(
+      scopedDirectEventId(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT.agentId,
+        "parent-one",
+      ),
+      "019833ce-7f5d-7000-8000-000000000001",
+    );
+    const response = await routeIncomingEvent(
+      createEvent(
+        {
+          eventId: taskId,
+          conversationKey: "alpha",
+          events: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "hello" }],
+            },
+          ],
+        },
+        {
+          authorization: "Bearer fp_agent_test",
+        },
+      ),
+      createHandlers(),
+      {
+        authResolver: async (headers) =>
+          headers.authorization === "Bearer fp_agent_test"
+            ? {
+                kind: "deployment",
+                account: TEST_ACCOUNT,
+                endpointId: "env-endpoint",
+                projectSlug: "demo",
+                environmentSlug: "development",
+              }
+            : null,
+      },
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(responseJson(response)).toEqual({
+      error: "eventId uses a reserved internal prefix",
+    });
+  });
+
   it("rejects reserved direct conversation prefixes", async () => {
     const response = await routeIncomingEvent(
       createEvent(
@@ -1202,6 +1248,57 @@ describe("direct API ingress", () => {
         agentId: "agent_test",
         eventId: "acct:acct_test:agent:agent_test:api:one",
         publicEventId: "one",
+      },
+    ]);
+  });
+
+  it("keeps canonical server-issued task ids valid for internal status parsing", async () => {
+    const parentEventId = scopedDirectEventId(
+      TEST_ACCOUNT.accountId,
+      TEST_AGENT.agentId,
+      "parent-one",
+    );
+    const taskId = createSubagentTaskId(
+      parentEventId,
+      "019833ce-7f5d-7000-8000-000000000001",
+    );
+    const childAgentId = `virtual_subagent_${taskId}`;
+    const handledEvents: StatusInboundEvent[] = [];
+    const response = await routeIncomingEvent(
+      createEvent(
+        undefined,
+        {
+          authorization: "Bearer secret",
+        },
+        {
+          method: "GET",
+          rawPath: `/status/${encodeURIComponent(taskId)}`,
+          rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
+        },
+      ),
+      createHandlers({
+        handleStatusRequest: async (event) => {
+          handledEvents.push(event);
+          return {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "processing" }),
+          };
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(handledEvents).toEqual([
+      {
+        accountId: TEST_ACCOUNT.accountId,
+        agentId: childAgentId,
+        eventId: scopedDirectEventId(
+          TEST_ACCOUNT.accountId,
+          childAgentId,
+          taskId,
+        ),
+        publicEventId: taskId,
       },
     ]);
   });

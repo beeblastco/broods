@@ -62,6 +62,7 @@ import {
   accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
+  assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
   scopedDirectConversationKey,
@@ -1467,7 +1468,7 @@ function parseStatusPath(
 ): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
-  const publicEventId = assertValidPublicEventId(rawEventId);
+  const publicEventId = assertValidPublicStatusEventId(rawEventId);
 
   const params = new URLSearchParams(rawQueryString);
   const rawAgentId = params.get("agentId");
