@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "bun run --filter @broods/core build",
-    "check": "bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter broods check",
+    "check": "bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check",
     "test": "bun run --filter @broods/core test",
     "deploy": "bun run --filter @broods/core deploy",
     "dashboard": "bun run --filter @broods/dashboard dev",

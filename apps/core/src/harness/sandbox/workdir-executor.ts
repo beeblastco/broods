@@ -74,6 +74,11 @@ import {
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
 
+export interface WorkdirHarnessReservation {
+  readonly sandbox: Sandbox;
+  readonly isFirstCreate: boolean;
+}
+
 export class WorkdirSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #client: Client;
@@ -81,6 +86,47 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   constructor(config: SandboxExecutorConfig) {
     this.#config = config;
     this.#client = workdirClient(config);
+  }
+
+  async acquireHarnessReservation(request: {
+    reservationKey: string;
+    abortSignal?: AbortSignal;
+  }): Promise<WorkdirHarnessReservation> {
+    request.abortSignal?.throwIfAborted();
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "Harness sessions require a persistent workdir sandbox reservation key",
+      );
+    }
+    return await this.#acquireWithState(request);
+  }
+
+  async resumeHarnessReservation(request: {
+    reservationKey: string;
+    abortSignal?: AbortSignal;
+  }): Promise<Sandbox> {
+    request.abortSignal?.throwIfAborted();
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "Harness sessions require a persistent workdir sandbox reservation key",
+      );
+    }
+    const externalId = await getSandboxExternalId(
+      "sandbox",
+      request.reservationKey,
+    );
+    if (!externalId) {
+      throw new Error("no reserved workdir sandbox for this Harness session");
+    }
+    const sandbox = await this.#reconnect(externalId);
+    await saveSandboxInstance(
+      "sandbox",
+      request.reservationKey,
+      externalId,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
+    request.abortSignal?.throwIfAborted();
+    return sandbox;
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -437,8 +483,20 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     request:
       SandboxRunRequest | { namespace?: string; reservationKey?: string },
   ): Promise<Sandbox> {
+    return (await this.#acquireWithState(request)).sandbox;
+  }
+
+  async #acquireWithState(
+    request:
+      SandboxRunRequest | { namespace?: string; reservationKey?: string },
+  ): Promise<WorkdirHarnessReservation> {
     if (!this.#persistent(request)) {
-      return this.#client.sandboxes.create(this.#createOptions(request, false));
+      return {
+        sandbox: await this.#client.sandboxes.create(
+          this.#createOptions(request, false),
+        ),
+        isFirstCreate: true,
+      };
     }
     const ns = sandboxReservationKey(request)!;
     const externalId = await getSandboxExternalId("sandbox", ns);
@@ -458,7 +516,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           externalId,
           "metadata" in request ? request.metadata : undefined,
         );
-        return sandbox;
+        return { sandbox, isFirstCreate: false };
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
@@ -475,22 +533,38 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const created = await this.#client.sandboxes.create(
       this.#createOptions(request, true),
     );
-    if (
-      await claimSandboxInstance(
-        "sandbox",
-        ns,
-        created.id,
-        this.#config.controlPlane?.accountId,
-      )
-    ) {
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        "sandbox",
-        ns,
-        created.id,
-        "metadata" in request ? request.metadata : undefined,
-      );
-      return created;
+    try {
+      if (
+        await claimSandboxInstance(
+          "sandbox",
+          ns,
+          created.id,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          "sandbox",
+          ns,
+          created.id,
+          "metadata" in request ? request.metadata : undefined,
+        );
+        return { sandbox: created, isFirstCreate: true };
+      }
+    } catch (error) {
+      // The claim may already have committed even when its caller rejects. Tear
+      // down both sides conditionally so a failed acquisition cannot leak the
+      // newly created sandbox or erase a concurrent winner's reservation.
+      await Promise.allSettled([
+        created.delete(),
+        deleteSandboxInstance(
+          "sandbox",
+          ns,
+          this.#config.controlPlane?.accountId,
+          created.id,
+        ),
+      ]);
+      throw error;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
     // sandbox the winner recorded.
@@ -498,7 +572,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     await created.delete().catch(() => {});
     if (!winner)
       throw new Error("failed to reserve workdir sandbox (lost create race)");
-    return this.#reconnect(winner);
+    return { sandbox: await this.#reconnect(winner), isFirstCreate: false };
   }
 
   // A reserved sandbox idles into `stopped`/`standby`; resume it before use.
