@@ -526,9 +526,36 @@ export default $config({
       }),
     });
 
+    // Sandbox-tier custom-tool runner: a plain Node.js Lambda that runs an
+    // uploaded tool bundle (passed inline in the invoke event) in a scrubbed-env
+    // child process. No VPC => default internet egress (allow-all), which is what
+    // AI-SDK tools need. The bundle arrives in the payload, so the function needs
+    // no S3/data-plane access beyond the default logging role. The core container
+    // invokes it by name via TOOL_RUNNER_FUNCTION_NAME (surfaced as an output).
+    const toolRunnerFn = new sst.aws.Function("ToolRunner", {
+      handler: "src/harness/sandbox/tool-runner/handler.handler",
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      timeout: "35 seconds",
+      memory: "512 MB",
+      copyFiles: [
+        {
+          from: "src/harness/sandbox/tool-runner/child-runner.mjs",
+          to: "child-runner.mjs",
+        },
+      ],
+      transform: {
+        function: { name: resourceName("tool-runner", stage, region) },
+      },
+    });
+
     // Harness-side permissions for the container runtime user (CoreRuntimeUser
     // below); the account-manage set follows further down.
     const harnessPermissions = [
+      {
+        actions: ["lambda:InvokeFunction"],
+        resources: [toolRunnerFn.arn],
+      },
       {
         actions: ["sts:AssumeRole"],
         resources: [sandboxS3MountRole.arn],
@@ -924,6 +951,7 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
+      toolRunnerFunctionName: toolRunnerFn.name,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
