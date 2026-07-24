@@ -27,6 +27,7 @@ export const myAgent = defineAgent({
       allowed: [research],
       context: "new",
       mode: "persistent",
+      streamEvents: true,
     },
   },
 });
@@ -38,6 +39,8 @@ Defaults:
 - omit `context` to use `"new"`
 - omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
 - set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
+- omit `streamEvents` or set `false` to keep child model/tool events private to the runtime
+- set `streamEvents: true` to make each child's short-lived event replay attachable over WebSocket
 - use `allowed: []` to allow only virtual one-shot subagents
 - add predefined agent ids to `allowed` when the parent should be able to choose specific account-owned agents
 
@@ -128,6 +131,38 @@ When `mode: "persistent"` is configured:
 - inherited parent context remains request-local model context and is not copied into the child conversation
 
 Ephemeral mode is the default. It keeps child model context in memory only and continues to use runtime-generated keys.
+
+## Live Child Event Streaming
+
+When `subagent.streamEvents` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
+
+- `taskId` becomes the attach `eventId` and the durable status id
+- `agentId` identifies the child agent
+- `conversationKey` is the returned child conversation key
+
+```json
+{
+  "type": "attach",
+  "requestId": "attach-child-1",
+  "agentId": "agent_child",
+  "conversationKey": "subagent-persistent-abc123",
+  "eventId": "subagent_task_123"
+}
+```
+
+```mermaid
+flowchart LR
+  Child["Subagent harness stream"] -->|"streamEvents=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
+  Subject --> Buffer["WS_RESPONSES<br/>short JetStream retention"]
+  Buffer -->|"one ordered consumer"| Gateway["Gateway attach<br/>retained replay → live tail"]
+  Child --> Status["Existing Convex<br/>subagent runtime status"]
+  Status --> Gateway
+  Gateway --> Client["WebSocket client"]
+```
+
+The gateway protocol does not change. Its event-bound `ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child cursor from resuming a different task, and the subject includes the authenticated account and child agent so conversations cannot cross those scopes. A `done` stream part only closes the best-effort token tail. The existing `/status/{taskId}?agentId={agentId}` result remains the durable terminal truth after completion, failure, or JetStream expiry.
+
+Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
 
 ## SSE Continuation
 

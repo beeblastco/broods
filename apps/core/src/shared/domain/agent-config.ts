@@ -175,6 +175,11 @@ export interface AgentSubagentConfig {
   context?: "new" | "inherited";
   mode?: "ephemeral" | "persistent";
   /**
+   * Publishes child reasoning, text, and tool stream parts to the existing
+   * WebSocket/JetStream response path. Off by default.
+   */
+  streamEvents?: boolean;
+  /**
    * Controls what the parent agent sees from a finished subagent (AI SDK
    * "controlling what the model sees"): `full` = the child's whole transcript,
    * `result` = only its final result (default), `none` = nothing. A
@@ -1025,6 +1030,7 @@ function normalizeSubagentConfig(value: unknown): void {
     "ephemeral",
     "persistent",
   ]);
+  assertOptionalBoolean(config.streamEvents, "config.subagent.streamEvents");
   assertOptionalEnum(config.visibility, "config.subagent.visibility", [
     "full",
     "result",
