@@ -11,28 +11,28 @@ describe("agent config validation", () => {
     });
     expect(
       normalizeAgentConfig({
-        subagent: { enabled: true, streamEvents: true },
+        subagent: { enabled: true, stream: true },
       }),
     ).toEqual({
-      subagent: { enabled: true, streamEvents: true },
+      subagent: { enabled: true, stream: true },
     });
     expect(
       normalizeAgentConfigPatch({
-        subagent: { streamEvents: true },
+        subagent: { stream: true },
       }),
     ).toEqual({
-      subagent: { streamEvents: true },
+      subagent: { stream: true },
     });
     expect(() =>
       normalizeAgentConfig({
-        subagent: { streamEvents: "yes" },
+        subagent: { stream: "yes" },
       }),
-    ).toThrow("config.subagent.streamEvents must be a boolean");
+    ).toThrow("config.subagent.stream must be a boolean");
     expect(() =>
       normalizeAgentConfigPatch({
-        subagent: { streamEvents: "yes" },
+        subagent: { stream: "yes" },
       }),
-    ).toThrow("config.subagent.streamEvents must be a boolean");
+    ).toThrow("config.subagent.stream must be a boolean");
   });
 
   it("uses one non-empty string-array policy for config and patches", () => {

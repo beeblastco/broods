@@ -3196,7 +3196,7 @@ components:
           type: string
           enum: [ephemeral, persistent]
           description: Child conversation persistence mode; omitted means `ephemeral`
-        streamEvents:
+        stream:
           type: boolean
           default: false
           description: Publish child reasoning, text, and tool stream parts to the existing WebSocket/JetStream attach path

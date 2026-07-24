@@ -384,7 +384,7 @@ export class SubagentCoordinator {
   private createPublisher(
     task: ResolvedSubagentTask,
   ): NatsPublisher | undefined {
-    if (this.parentAgentConfig.subagent?.streamEvents !== true) {
+    if (this.parentAgentConfig.subagent?.stream !== true) {
       return undefined;
     }
 

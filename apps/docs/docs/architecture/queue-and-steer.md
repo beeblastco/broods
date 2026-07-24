@@ -452,7 +452,7 @@ for that child agent/conversation. Stopping the parent waits boundedly for
 already-running children to finalize their own status, but does not hard-cancel
 them or inject their late result into another parent model step.
 
-With `subagent.streamEvents: true`, a child also publishes model/tool stream
+With `subagent.stream: true`, a child also publishes model/tool stream
 parts on the existing `WS_RESPONSES` subject derived from its authenticated
 account, child `agentId`, and returned public `conversationKey`. The
 `run_subagent` result's `taskId` is the attach `eventId`, so attach/control
