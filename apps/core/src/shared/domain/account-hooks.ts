@@ -76,7 +76,9 @@ export interface PublicAccountHookRecord {
 }
 
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-const MAX_BUNDLE_BYTES = 512 * 1024;
+// Matches the CLI's MAX_BUNDLE_FILE_BYTES (see account-tools.ts) so CLI-built
+// hook bundles are never rejected here on size.
+const MAX_BUNDLE_BYTES = 1_000_000;
 
 export function normalizeAccountHookUpload(
   input: unknown,

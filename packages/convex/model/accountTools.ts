@@ -41,11 +41,16 @@ export interface RequiredAccountToolUpload {
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-const MAX_BUNDLE_BYTES = 512 * 1024;
+// Matches the CLI's MAX_BUNDLE_FILE_BYTES so a bundle that passes CLI validation
+// is not rejected at this upload gate — large enough for AI-SDK-derived tools.
+const MAX_BUNDLE_BYTES = 1_000_000;
 const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
+// A bare `process` reference (member, bracket, call, or plain) throws in an isolate
+// even through `?.`; namespaced probes (`globalThis.process?.x`) stay isolate.
+const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
 
 /**
  * Normalize and validate a CLI-supplied custom tool upload.
@@ -138,7 +143,7 @@ export function inferAccountToolRuntime(
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    /\bprocess\./.test(bundleSource) ||
+    NODE_PROCESS_GLOBAL_PATTERN.test(bundleSource) ||
     /\b__dirname\b/.test(bundleSource) ||
     BARE_IMPORT_PATTERN.test(bundleSource)
   ) {

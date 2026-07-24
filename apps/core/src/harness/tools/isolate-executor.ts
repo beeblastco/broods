@@ -16,8 +16,10 @@ import { optionalEnv, positiveIntegerEnv } from "../../shared/env.ts";
 import { logInfo } from "../../shared/log.ts";
 import {
   FrameQueue,
+  abortSignalFromOptions,
   createRunnerPayload,
   toolBundlesBucket,
+  toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
 } from "./custom-tool-executor.ts";
 
@@ -28,7 +30,9 @@ export async function* streamAccountToolInIsolate(
   options: ExecuteAccountToolOptions,
 ): AsyncGenerator<unknown, void, void> {
   const runPayload = await buildRunPayload(options);
-  yield* streamIsolatePayload(options.accountId, runPayload);
+  yield* streamIsolatePayload(options.accountId, runPayload, {
+    abortSignal: abortSignalFromOptions(options.options),
+  });
 }
 
 /**
@@ -40,12 +44,13 @@ export async function* streamAccountToolInIsolate(
 export async function* streamIsolatePayload(
   accountId: string | undefined,
   runPayload: Record<string, unknown>,
+  options: { abortSignal?: AbortSignal } = {},
 ): AsyncGenerator<unknown, void, void> {
   if (isolatePoolEnabled()) {
-    yield* streamViaPool(accountId, runPayload);
+    yield* streamViaPool(accountId, runPayload, options.abortSignal);
     return;
   }
-  yield* streamViaOneShot(runPayload);
+  yield* streamViaOneShot(runPayload, options.abortSignal);
 }
 
 function isolatePoolEnabled(): boolean {
@@ -65,14 +70,38 @@ async function buildRunPayload({
   tool,
   input,
   config,
+  options,
 }: ExecuteAccountToolOptions): Promise<Record<string, unknown>> {
   const payload = await createRunnerPayload({
     bucket: toolBundlesBucket(),
     tool,
     input,
     config,
+    toolCallId: toolCallIdFromOptions(options),
   });
   return { ...payload };
+}
+
+// Bridges the AI SDK abortSignal into the runner process: SIGUSR2 trips the
+// run's in-isolate AbortController without killing the (possibly shared) worker.
+// Returns a detach function, or undefined when there is nothing to forward.
+function forwardAbortSignal(
+  child: ChildProcessWithoutNullStreams,
+  abortSignal: AbortSignal | undefined,
+): (() => void) | undefined {
+  if (!abortSignal) return undefined;
+  const onAbort = () => {
+    try {
+      child.kill("SIGUSR2");
+    } catch {}
+  };
+  if (abortSignal.aborted) {
+    onAbort();
+    return undefined;
+  }
+  abortSignal.addEventListener("abort", onAbort, { once: true });
+
+  return () => abortSignal.removeEventListener("abort", onAbort);
 }
 
 // --- Legacy one-shot path (default until ISOLATE_POOL flips on) ----------------
@@ -82,14 +111,17 @@ const isolateWaiters: Array<() => void> = [];
 
 async function* streamViaOneShot(
   runPayload: Record<string, unknown>,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<unknown, void, void> {
   const release = await acquireIsolateSlot();
   let child: ChildProcessWithoutNullStreams | undefined;
+  let detachAbort: (() => void) | undefined;
   try {
     child = spawn(isolateRunnerNode(), [isolateRunnerPath()], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
+    detachAbort = forwardAbortSignal(child, abortSignal);
 
     const queue = new FrameQueue();
     let stderr = "";
@@ -182,6 +214,7 @@ async function* streamViaOneShot(
       );
     }
   } finally {
+    detachAbort?.();
     child?.kill();
     release();
   }
@@ -402,11 +435,13 @@ let callCounter = 0;
 async function* streamViaPool(
   accountId: string | undefined,
   runPayload: Record<string, unknown>,
+  abortSignal?: AbortSignal,
 ): AsyncGenerator<unknown, void, void> {
   const tenantId = accountId ?? "anonymous";
   const worker = await acquireWorker(tenantId);
   const callId = String((callCounter += 1));
   const request = { t: "run", callId, tenantId, payload: runPayload };
+  const detachAbort = forwardAbortSignal(worker.child, abortSignal);
 
   // Guard against a wedged worker: if no terminal frame lands within the run
   // deadline plus grace, kill it (its exit fails the call) and let the pool
@@ -444,6 +479,7 @@ async function* streamViaPool(
       }
     }
   } finally {
+    detachAbort?.();
     clearTimeout(guard);
     releaseWorker(worker, tenantId);
   }

@@ -4,7 +4,8 @@
 
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   AgentHookEventName,
@@ -1123,23 +1124,39 @@ async function normalizeToolConfig(
       `Tool source ${manifestPath} is too large (${sourceSize} bytes, max ${MAX_BUNDLE_FILE_BYTES})`,
     );
   }
-  const build = await Bun.build({
-    entrypoints: [bundlePath],
-    root: projectRoot,
-    target: "node",
-    format: "esm",
-    minify: false,
-  });
-  if (!build.success || build.outputs.length !== 1) {
-    const details = build.logs
-      .map((entry) => entry.message)
-      .filter(Boolean)
-      .join("; ");
-    throw new Error(
-      `Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
-    );
+  // Emit the AI SDK calling convention at build time: authors write
+  // execute(ctx, input); the runtime calls execute(input, options) with ctx at
+  // options.context. A shim entrypoint keeps that one generated line in one place.
+  const shimDir = await mkdtemp(join(tmpdir(), "broods-tool-"));
+  const shimPath = join(shimDir, "tool-adapter.mjs");
+  await writeFile(
+    shimPath,
+    `import __toolModule from ${JSON.stringify(bundlePath)};\n` +
+      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
+      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`,
+    "utf8",
+  );
+  let bundle: string;
+  try {
+    const build = await Bun.build({
+      entrypoints: [shimPath],
+      target: "node",
+      format: "esm",
+      minify: false,
+    });
+    if (!build.success || build.outputs.length !== 1) {
+      const details = build.logs
+        .map((entry) => entry.message)
+        .filter(Boolean)
+        .join("; ");
+      throw new Error(
+        `Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
+      );
+    }
+    bundle = await build.outputs[0]!.text();
+  } finally {
+    await rm(shimDir, { recursive: true, force: true });
   }
-  const bundle = await build.outputs[0]!.text();
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
     throw new Error(

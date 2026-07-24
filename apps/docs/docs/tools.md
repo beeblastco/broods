@@ -59,7 +59,9 @@ Provider-defined tools are executed by the provider during the model call, not b
 - `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or use of `process` as a bare global. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. Bundlers inline that pattern from common libraries, so an otherwise pure bundle stays on the isolate tier.
 - `runtime: "sandbox"` for code that needs Node, npm, native modules, or other off-core execution.
 
-Only `runtime: "isolate"` executes today. The isolate executor runs the uploaded bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core because Bun cannot load `isolated-vm`. The isolate exposes timers, `queueMicrotask`, `console`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
+Only `runtime: "isolate"` executes today. The isolate executor runs the uploaded bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core because Bun cannot load `isolated-vm`. The isolate exposes timers, `queueMicrotask`, `console`, `AbortController`/`AbortSignal`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
+
+**Calling convention.** At runtime the isolate invokes the AI SDK signature `execute(input, options)`: `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` is a real `AbortSignal` that trips when the request is cancelled (forwarded from core into the runner). Authoring is unchanged — you write `execute(ctx, input)` and the CLI emits a one-line build-time adapter (`execute(input, options) => impl.execute(options.context, input)`). Because the runtime now matches the SDK convention, a fetch-only tool shaped like the AI SDK `tool({ execute })` is compatible too. Bundle-size caps agree across the CLI, core, and the config plane at 1 MB.
 
 Tools classified as `runtime: "sandbox"` return a clear unsupported error off Lambda: sandbox custom tools are deferred to #82.
 
@@ -73,9 +75,9 @@ sequenceDiagram
 
   H->>E: invoke uploaded tool
   E->>S: load bundle by metadata
-  E->>N: send bundle, ctx, and input
+  E->>N: send bundle, config, input, toolCallId
   N->>V: evaluate bundle
-  V->>V: execute(ctx, input)
+  V->>V: execute(input, options) — ctx at options.context
   V-->>N: NDJSON chunk/final/error frames
   N-->>H: stream frames
 ```
@@ -230,7 +232,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 ## Upload a Custom Tool
 
-With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `broods/`. The CLI bundles it as self-contained ESM, rejects source or output over 1 MB, hashes the compiled bundle, classifies it as `runtime: "isolate"` or `runtime: "sandbox"`, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
+With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `broods/`. The CLI bundles it as self-contained ESM (wrapping your `execute(ctx, input)` in the runtime `execute(input, options)` adapter), rejects source or output over 1 MB — the same cap core and the config plane enforce — hashes the compiled bundle, classifies it as `runtime: "isolate"` or `runtime: "sandbox"`, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
 
 ```ts title="broods/tools/my-tool.ts"
 export default {

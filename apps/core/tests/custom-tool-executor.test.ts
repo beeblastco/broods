@@ -10,7 +10,7 @@ import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
 const bundleSource =
-  "export default { name: 'echo', execute(ctx, input) { return input; } };";
+  "export default { name: 'echo', execute(input, options) { return input; } };";
 const readS3BytesMock = mock(
   async () => new TextEncoder().encode(bundleSource) as Uint8Array,
 );
@@ -55,6 +55,51 @@ describe("createRunnerPayload", () => {
     });
 
     expect(payload.config).toEqual({ fromDefault: "overridden" });
+  });
+
+  it("includes toolCallId only when the AI SDK options carry one", async () => {
+    const { createRunnerPayload } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
+
+    const withId = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+      toolCallId: "call_abc",
+    });
+    expect(withId.toolCallId).toBe("call_abc");
+
+    const withoutId = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+    });
+    expect("toolCallId" in withoutId).toBe(false);
+  });
+});
+
+describe("AI SDK options extraction", () => {
+  it("reads toolCallId and abortSignal, ignoring wrong shapes", async () => {
+    const { toolCallIdFromOptions, abortSignalFromOptions } =
+      await import("../src/harness/tools/custom-tool-executor.ts");
+    const controller = new AbortController();
+
+    expect(
+      toolCallIdFromOptions({
+        toolCallId: "c1",
+        abortSignal: controller.signal,
+      }),
+    ).toBe("c1");
+    expect(toolCallIdFromOptions({})).toBeUndefined();
+    expect(toolCallIdFromOptions(undefined)).toBeUndefined();
+
+    expect(abortSignalFromOptions({ abortSignal: controller.signal })).toBe(
+      controller.signal,
+    );
+    expect(abortSignalFromOptions({ abortSignal: "nope" })).toBeUndefined();
+    expect(abortSignalFromOptions(undefined)).toBeUndefined();
   });
 });
 

@@ -19,6 +19,16 @@ let runDeadlineAt = 0;
 // stdout as frames by then — never let that teardown noise crash the runner.
 process.on("unhandledRejection", () => {});
 
+// Cross-process tool cancellation: the core host forwards the AI SDK abortSignal
+// as SIGUSR2, which fires the in-isolate AbortController of the run in flight.
+// Only the active run sets this; it is cleared when the run settles.
+let activeAbort = null;
+process.on("SIGUSR2", () => {
+  try {
+    activeAbort?.();
+  } catch {}
+});
+
 if (process.argv[2] === "--fetch-bridge") {
   await runFetchBridgeHelper();
 } else if (process.argv[2] === "--pool") {
@@ -59,12 +69,16 @@ async function runToolRequest() {
     const result = await runIsolateJob(isolate, payload, {
       timeoutMs,
       emitChunk: (output) => writeFrame({ t: "chunk", output }),
+      registerAbort: (fire) => {
+        activeAbort = fire;
+      },
     });
     if (!timedOut) writeFrame({ t: "final", result });
   } catch (error) {
     if (!timedOut) writeFrame({ t: "error", error: errorMessage(error) });
     process.exitCode = 1;
   } finally {
+    activeAbort = null;
     clearTimeout(timeout);
     try {
       isolate?.dispose();
@@ -133,6 +147,9 @@ async function handlePoolRun(request, cache, cacheCap) {
     const result = await runIsolateJob(isolate, payload, {
       timeoutMs,
       emitChunk: (output) => writeFrame({ t: "chunk", callId, output }),
+      registerAbort: (fire) => {
+        activeAbort = fire;
+      },
     });
     clearTimeout(watchdog);
     watchdog = undefined;
@@ -148,6 +165,7 @@ async function handlePoolRun(request, cache, cacheCap) {
     poisoned = true;
     writeFrame({ t: "error", callId, error: errorMessage(error) });
   } finally {
+    activeAbort = null;
     if (watchdog) clearTimeout(watchdog);
     if (poisoned) {
       try {
@@ -161,7 +179,7 @@ async function handlePoolRun(request, cache, cacheCap) {
 // Runs one tool bundle on the given isolate in a FRESH context and returns its
 // result; the caller owns isolate lifetime and terminal frames. Shared by the
 // one-shot and pooled paths so the security-critical setup lives in one place.
-async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
+async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerAbort }) {
   const bundleSource = decodeBundle(payload);
   const actualSha = createHash("sha256").update(bundleSource).digest("hex");
   if (actualSha !== payload.expectedSha256) {
@@ -189,6 +207,7 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         state: $5,
       };
       globalThis.__input = $1;
+      globalThis.__toolCallId = $6;
       globalThis.fetch = __fetch;
       let __nextTimer = 1;
       const __timers = new Map();
@@ -227,7 +246,30 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         warn: __log("warn"),
         error: __log("error"),
         debug: () => {},
-      };`,
+      };
+      // Minimal AbortController/AbortSignal (absent in a bare V8 isolate). The run's
+      // signal is exposed as options.abortSignal; the host fires __abort on cancel.
+      class AbortSignalPoly {
+        constructor() { this.aborted = false; this.reason = undefined; this.onabort = null; this.__listeners = []; }
+        addEventListener(type, cb) { if (type === "abort" && typeof cb === "function") this.__listeners.push(cb); }
+        removeEventListener(type, cb) { if (type === "abort") this.__listeners = this.__listeners.filter((fn) => fn !== cb); }
+        dispatchEvent() { return true; }
+        throwIfAborted() { if (this.aborted) throw this.reason; }
+        __abortWith(reason) {
+          if (this.aborted) return;
+          this.aborted = true;
+          this.reason = reason;
+          const event = { type: "abort" };
+          if (typeof this.onabort === "function") { try { this.onabort(event); } catch {} }
+          for (const cb of this.__listeners.slice()) { try { cb.call(this, event); } catch {} }
+        }
+      }
+      const __makeAbortError = () => { const error = new Error("The operation was aborted"); error.name = "AbortError"; return error; };
+      globalThis.AbortSignal = AbortSignalPoly;
+      globalThis.AbortController = class { constructor() { this.signal = new AbortSignalPoly(); } abort(reason) { this.signal.__abortWith(reason ?? __makeAbortError()); } };
+      const __abortController = new globalThis.AbortController();
+      globalThis.__abortSignal = __abortController.signal;
+      globalThis.__abort = (reason) => __abortController.abort(reason);`,
       [
         new ivm.ExternalCopy(asPlainRecord(payload.config, "config")).copyInto(),
         new ivm.ExternalCopy(payload.input).copyInto(),
@@ -248,10 +290,17 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
         // hook runs so the host can thread it into the next fire-point. Empty for
         // tools, which are stateless single calls.
         new ivm.ExternalCopy(asPlainRecord(payload.state, "state")).copyInto(),
+        new ivm.ExternalCopy(payload.toolCallId ?? null).copyInto(),
       ],
       { timeout: 1_000 },
     );
     fireTimer = await context.global.get("__fireTimer", { reference: true });
+    // Expose the run's cancel hook to the SIGUSR2 handler so the core host can
+    // trip the in-isolate AbortController when the AI SDK abortSignal fires.
+    const abortRun = await context.global.get("__abort", { reference: true });
+    registerAbort?.(() => {
+      void abortRun.apply(undefined, [], { timeout: 1_000 }).catch(() => {});
+    });
 
     const module = await isolate.compileModule(bundleSource.toString("utf8"), { filename: "tool.mjs" });
     await module.instantiate(context, (specifier) => {
@@ -267,7 +316,7 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
       });
     }
     // Hook bundles export handlers keyed by event name (default[event](ctx, event));
-    // tool bundles export execute(ctx, input). Resolve the entry accordingly.
+    // tool bundles export the AI SDK execute(input, options). Resolve accordingly.
     let entry;
     if (typeof payload.hookEvent === "string") {
       entry = await definition.get(payload.hookEvent, { reference: true });
@@ -279,7 +328,7 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
     } else {
       entry = await definition.get("execute", { reference: true });
       if (!entry || entry.typeof !== "function") {
-        throw new Error("custom tool bundle default export must expose execute(ctx, input)");
+        throw new Error("custom tool bundle default export must expose execute(input, options)");
       }
       const definitionName = await definition.get("name", { copy: true });
       if (definitionName && definitionName !== payload.toolName) {
@@ -306,7 +355,12 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk }) {
     }
     return await context.eval(
       `(async () => {
-        const value = globalThis.__execute(globalThis.__ctx, globalThis.__input);
+        const options = {
+          toolCallId: globalThis.__toolCallId,
+          context: globalThis.__ctx,
+          abortSignal: globalThis.__abortSignal,
+        };
+        const value = globalThis.__execute(globalThis.__input, options);
         if (value != null && typeof value[Symbol.asyncIterator] === "function") {
           let last;
           for await (const output of value) {
