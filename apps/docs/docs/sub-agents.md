@@ -146,7 +146,7 @@ When `subagent.streamEvents` is `true`, every child publishes its reasoning, tex
   "requestId": "attach-child-1",
   "agentId": "agent_child",
   "conversationKey": "subagent-persistent-abc123",
-  "eventId": "subagent_task_123"
+  "eventId": "subagent~opaque-parent-correlation~task-uuid"
 }
 ```
 
@@ -155,14 +155,36 @@ flowchart LR
   Child["Subagent harness stream"] -->|"streamEvents=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
   Subject --> Buffer["WS_RESPONSES<br/>short JetStream retention"]
   Buffer -->|"one ordered consumer"| Gateway["Gateway attach<br/>retained replay → live tail"]
-  Child --> Status["Existing Convex<br/>subagent runtime status"]
-  Status --> Gateway
+  Child --> ChildStatus["Existing Convex<br/>subagent runtime status"]
+  ParentStatus["Durable parent<br/>ingress status"] --> Auth["Core parent/deployment<br/>authorization"]
+  ChildStatus --> Auth
+  Auth --> Gateway
   Gateway --> Client["WebSocket client"]
 ```
 
-The gateway protocol does not change. Its event-bound `ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child cursor from resuming a different task, and the subject includes the authenticated account and child agent so conversations cannot cross those scopes. A `done` stream part only closes the best-effort token tail. The existing `/status/{taskId}?agentId={agentId}` result remains the durable terminal truth after completion, failure, or JetStream expiry.
+The gateway protocol does not change. Treat `taskId` as opaque: core includes a
+server-issued parent correlation in it and persists that exact child event before
+`run_subagent` returns. A deployment-key status/attach request succeeds only
+when the child status row, its child agent/conversation scope, the durable parent
+ingress row, the active public parent, and the key's account/project/environment/
+endpoint deployment scope all agree. The client does not provide parent scope.
+This permits a virtual or predefined private child to be observed through its
+already-authorized parent without making the child publicly runnable or exposing
+another deployment's tasks.
 
-Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
+The gateway also requires the status response's conversation key to equal the
+requested attach conversation before opening the NATS consumer. Its event-bound
+`ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child
+cursor from resuming a different task, and the subject includes the authenticated
+account and child agent so conversations cannot cross those scopes. Because the
+durable child row is created before dispatch and JetStream retains the earliest
+frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
+immediately even if the child began publishing before the tool result arrived.
+A `done` stream part only closes the best-effort token tail. The existing
+`/status/{taskId}?agentId={agentId}` result remains the durable terminal truth
+after completion, failure, or JetStream expiry.
+
+Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure; connection, publish, or flush failures cannot change that durable outcome. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
 
 ## SSE Continuation
 

@@ -51,6 +51,7 @@ type NatsStartResponse = {
 };
 type IngressHttpResponse = {
   eventId?: string;
+  conversationKey?: string;
   status?: IngressStatus | "not_found";
   requestedMode?: "reject" | "followup" | "collect" | "steer";
   appliedMode?: "reject" | "followup" | "collect" | "steer";
@@ -569,6 +570,16 @@ async function attachCoreStream(
         requestId: message.requestId,
         eventId: message.eventId,
         status: "not_found",
+        statusUrl,
+      });
+      return;
+    }
+    if (status.conversationKey !== message.conversationKey) {
+      sendAgentTest(socket, {
+        type: "replay_unavailable",
+        requestId: message.requestId,
+        eventId: message.eventId,
+        status: status.status,
         statusUrl,
       });
       return;

@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import type { AuthContext } from "../src/shared/auth.ts";
 import {
   createIncomingEventRouter,
   type AsyncDirectInboundEvent,
   type AsyncToolCompletionInboundEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
+  type IntegrationRoutingOptions,
   type StatusInboundEvent,
 } from "../src/harness/integrations.ts";
+import {
+  createSubagentTaskId,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
+} from "../src/shared/runtime-keys.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 const TEST_ACCOUNT = {
@@ -1295,6 +1300,161 @@ describe("direct API ingress", () => {
     expect(handledEvents).toEqual([]);
   });
 
+  for (const childKind of ["virtual", "private"] as const) {
+    it(`authorizes ${childKind === "private" ? "private predefined" : "virtual"} child status through its durable public parent scope`, async () => {
+      const parentEventId = scopedDirectEventId(
+        TEST_ACCOUNT.accountId,
+        TEST_AGENT.agentId,
+        "parent-one",
+      );
+      const taskId = createSubagentTaskId(
+        parentEventId,
+        "019833ce-7f5d-7000-8000-000000000001",
+      );
+      const childAgentId =
+        childKind === "virtual"
+          ? `virtual_subagent_${taskId}`
+          : TEST_AGENT_PRIVATE.agentId;
+      const childEventId = scopedDirectEventId(
+        TEST_ACCOUNT.accountId,
+        childAgentId,
+        taskId,
+      );
+      const childConversationKey = scopedDirectConversationKey(
+        TEST_ACCOUNT.accountId,
+        childAgentId,
+        "subagent-child",
+      );
+      const handledEvents: StatusInboundEvent[] = [];
+
+      const response = await deploymentStatusRequest(
+        taskId,
+        childAgentId,
+        createHandlers({
+          handleStatusRequest: async (event) => {
+            handledEvents.push(event);
+            return {
+              statusCode: 200,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                status: "processing",
+                conversationKey: "subagent-child",
+              }),
+            };
+          },
+        }),
+        {
+          asyncAgentResultLoader: async () => ({
+            accountId: TEST_ACCOUNT.accountId,
+            eventId: childEventId,
+            conversationKey: childConversationKey,
+            status: "processing",
+            createdAt: "2026-07-24T00:00:00.000Z",
+            updatedAt: "2026-07-24T00:00:00.000Z",
+            expiresAt: 1,
+          }),
+          ingressStatusLoader: async () =>
+            ingressStatus(parentEventId, "parent-conversation"),
+        },
+      );
+
+      expect(response.statusCode).toBe(200);
+      expect(handledEvents).toEqual([
+        {
+          accountId: TEST_ACCOUNT.accountId,
+          agentId: childAgentId,
+          eventId: childEventId,
+          publicEventId: taskId,
+        },
+      ]);
+    });
+  }
+
+  it("rejects subagent status when the parent belongs to another endpoint", async () => {
+    const fixture = subagentStatusFixture();
+    const response = await deploymentStatusRequest(
+      fixture.taskId,
+      fixture.childAgentId,
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("unauthorized status must not reach the handler");
+        },
+      }),
+      {
+        asyncAgentResultLoader: async () => fixture.childResult,
+        deploymentLoader: async () => ({
+          accountId: TEST_ACCOUNT.accountId,
+          endpointId: "other-endpoint",
+          projectSlug: "demo",
+          environmentSlug: "development",
+        }),
+        ingressStatusLoader: async () =>
+          ingressStatus(fixture.parentEventId, "parent-conversation"),
+      },
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      code: "status_access_denied",
+    });
+  });
+
+  it("rejects subagent status with cross-account parent correlation", async () => {
+    const fixture = subagentStatusFixture({
+      parentEventId: scopedDirectEventId(
+        "acct_other",
+        TEST_AGENT.agentId,
+        "parent-one",
+      ),
+    });
+    const response = await deploymentStatusRequest(
+      fixture.taskId,
+      fixture.childAgentId,
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("unauthorized status must not reach the handler");
+        },
+      }),
+      {
+        asyncAgentResultLoader: async () => fixture.childResult,
+        ingressStatusLoader: async () => {
+          throw new Error(
+            "cross-account parent must be rejected before lookup",
+          );
+        },
+      },
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      code: "status_access_denied",
+    });
+  });
+
+  it("rejects a fabricated subagent task without its exact durable child row", async () => {
+    const fixture = subagentStatusFixture();
+    const response = await deploymentStatusRequest(
+      fixture.taskId,
+      fixture.childAgentId,
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("unauthorized status must not reach the handler");
+        },
+      }),
+      {
+        asyncAgentResultLoader: async () => null,
+        ingressStatusLoader: async () => {
+          throw new Error("missing child row must be rejected before lookup");
+        },
+      },
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      code: "status_access_denied",
+    });
+  });
+
   it("routes async tool completion requests through account auth", async () => {
     const handledEvents: AsyncToolCompletionInboundEvent[] = [];
     const response = await routeIncomingEvent(
@@ -1408,31 +1568,121 @@ async function defaultDirectHandler(): Promise<ResponseShape> {
 async function routeIncomingEvent(
   event: ReturnType<typeof coreRequest>,
   handlers: ReturnType<typeof createHandlers>,
-  options: {
-    directApiEnabled?: boolean;
-    authResolver?: (
-      headers: Record<string, string>,
-    ) => Promise<AuthContext | null>;
-  } = {},
+  options: IntegrationRoutingOptions = {},
 ): Promise<ResponseShape> {
   const router = createIncomingEventRouter({
+    ...options,
     authResolver:
       options.authResolver ??
       (async (headers) =>
         headers.authorization === "Bearer secret"
           ? { kind: "account", account: TEST_ACCOUNT }
           : null),
-    agentLoader: async (_accountId, agentId) =>
-      agentId === TEST_AGENT.agentId
-        ? TEST_AGENT
-        : agentId === TEST_AGENT_PRIVATE.agentId
-          ? TEST_AGENT_PRIVATE
-          : null,
-    directApiEnabled: options.directApiEnabled,
+    agentLoader:
+      options.agentLoader ??
+      (async (_accountId, agentId) =>
+        agentId === TEST_AGENT.agentId
+          ? TEST_AGENT
+          : agentId === TEST_AGENT_PRIVATE.agentId
+            ? TEST_AGENT_PRIVATE
+            : null),
+    deploymentLoader:
+      options.deploymentLoader ??
+      (async () => ({
+        accountId: TEST_ACCOUNT.accountId,
+        endpointId: "env-endpoint",
+        projectSlug: "demo",
+        environmentSlug: "development",
+      })),
   });
 
   const response = await router(event, handlers);
   return responseToShape(response);
+}
+
+async function deploymentStatusRequest(
+  taskId: string,
+  childAgentId: string,
+  handlers: ReturnType<typeof createHandlers>,
+  options: IntegrationRoutingOptions,
+): Promise<ResponseShape> {
+  return routeIncomingEvent(
+    createEvent(
+      undefined,
+      { authorization: "Bearer fp_agent_test" },
+      {
+        method: "GET",
+        rawPath: `/status/${encodeURIComponent(taskId)}`,
+        rawQueryString: `agentId=${encodeURIComponent(childAgentId)}`,
+      },
+    ),
+    handlers,
+    {
+      ...options,
+      authResolver: async () => ({
+        kind: "deployment",
+        account: TEST_ACCOUNT,
+        endpointId: "env-endpoint",
+        projectSlug: "demo",
+        environmentSlug: "development",
+      }),
+    },
+  );
+}
+
+function ingressStatus(eventId: string, conversationKey: string) {
+  return {
+    eventId,
+    conversationKey: scopedDirectConversationKey(
+      TEST_ACCOUNT.accountId,
+      TEST_AGENT.agentId,
+      conversationKey,
+    ),
+    requestedMode: "reject" as const,
+    status: "processing" as const,
+    createdAt: 1,
+    updatedAt: 1,
+    expiresAt: 2,
+  };
+}
+
+function subagentStatusFixture(overrides: { parentEventId?: string } = {}) {
+  const parentEventId =
+    overrides.parentEventId ??
+    scopedDirectEventId(
+      TEST_ACCOUNT.accountId,
+      TEST_AGENT.agentId,
+      "parent-one",
+    );
+  const taskId = createSubagentTaskId(
+    parentEventId,
+    "019833ce-7f5d-7000-8000-000000000001",
+  );
+  const childAgentId = `virtual_subagent_${taskId}`;
+  const eventId = scopedDirectEventId(
+    TEST_ACCOUNT.accountId,
+    childAgentId,
+    taskId,
+  );
+
+  return {
+    parentEventId,
+    taskId,
+    childAgentId,
+    childResult: {
+      accountId: TEST_ACCOUNT.accountId,
+      eventId,
+      conversationKey: scopedDirectConversationKey(
+        TEST_ACCOUNT.accountId,
+        childAgentId,
+        "subagent-child",
+      ),
+      status: "processing" as const,
+      createdAt: "2026-07-24T00:00:00.000Z",
+      updatedAt: "2026-07-24T00:00:00.000Z",
+      expiresAt: 1,
+    },
+  };
 }
 
 function createEvent(

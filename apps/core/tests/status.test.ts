@@ -71,6 +71,7 @@ describe("async agent result persistence", () => {
 
   it("returns the public polling record unchanged", async () => {
     const record = {
+      accountId: "acct-1",
       eventId: "event-1",
       conversationKey: "conversation-1",
       status: "completed" as const,

@@ -15,6 +15,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {
+  createSubagentTaskId,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -248,13 +249,13 @@ export class SubagentCoordinator {
     parentEphemeralSystem: SystemModelMessage[],
   ): Promise<ResolvedSubagentTask> {
     const accountId = requireParentAccountId(this.parentSession);
-    const taskId = `subagent_${crypto.randomUUID()}`;
     const persistent = this.isPersistentMode;
     if (!persistent && task.conversationKey !== undefined) {
       throw new Error(
         "Subagent conversationKey is only supported in persistent mode",
       );
     }
+    const taskId = createSubagentTaskId(this.parentSession.eventId);
     const resuming = persistent && task.conversationKey !== undefined;
     const publicConversationKey =
       task.conversationKey ??
@@ -336,13 +337,10 @@ export class SubagentCoordinator {
     task: ResolvedSubagentTask,
     subagentParent?: SubagentParentContext,
   ): void {
-    const publisher =
-      this.parentAgentConfig.subagent?.streamEvents === true
-        ? this.publisherFactory(task)
-        : undefined;
+    const publisher = this.createPublisher(task);
     const streamState: SubagentStreamState = { emittedError: false };
     const trackedPublisher = publisher
-      ? trackSubagentStreamErrors(publisher, streamState)
+      ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
       : undefined;
     const promise = this.runTask(task, subagentParent, trackedPublisher)
       .then(async () => {
@@ -381,6 +379,24 @@ export class SubagentCoordinator {
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
     });
+  }
+
+  private createPublisher(
+    task: ResolvedSubagentTask,
+  ): NatsPublisher | undefined {
+    if (this.parentAgentConfig.subagent?.streamEvents !== true) {
+      return undefined;
+    }
+
+    try {
+      return this.publisherFactory(task);
+    } catch (error) {
+      logError("Failed to create best-effort subagent stream publisher", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   /**
@@ -766,18 +782,31 @@ function formatModelValue(value: unknown): string {
   }
 }
 
-function trackSubagentStreamErrors(
+function bestEffortSubagentPublisher(
   publisher: NatsPublisher,
   state: SubagentStreamState,
+  taskId: string,
 ): NatsPublisher {
   return {
     publish: async (data) => {
       if (data.type === "error") {
         state.emittedError = true;
       }
-      await publisher.publish(data);
+      await publisher.publish(data).catch((error) => {
+        logError("Best-effort subagent stream publish failed", {
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     },
-    close: () => publisher.close(),
+    close: async () => {
+      await publisher.close().catch((error) => {
+        logError("Best-effort subagent stream flush failed", {
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
   };
 }
 

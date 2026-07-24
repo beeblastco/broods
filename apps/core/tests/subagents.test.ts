@@ -5,6 +5,7 @@
 
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
+import { runtime } from "../src/shared/convex/runtime.ts";
 import type { NatsPublisher } from "../src/shared/nats.ts";
 
 beforeEach(() => {
@@ -42,6 +43,9 @@ interface CoordinatorInternals {
     parentMessages: ModelMessage[],
     parentEphemeralSystem: SystemModelMessage[],
   ): Promise<{
+    taskId: string;
+    eventId: string;
+    agentId: string;
     publicConversationKey: string;
     conversationKey: string;
     persistent: boolean;
@@ -51,6 +55,54 @@ interface CoordinatorInternals {
 }
 
 describe("SubagentCoordinator", () => {
+  it("persists attach identities before returning the early dispatch result", async () => {
+    const originalMutation = runtime.mutate;
+    const timeline: string[] = [];
+    runtime.mutate = mock(async (name: string) => {
+      timeline.push(`persist:${name}`);
+      return true;
+    }) as never;
+    const lifecycle = {
+      emit: mock(async (event: string) => {
+        timeline.push(`lifecycle:${event}`);
+      }),
+    };
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true } },
+      Date.now() + 1_000,
+      lifecycle as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.runTask = mock(async () => {
+      timeline.push("run:child");
+    });
+
+    try {
+      const result = await coordinator.dispatch([{ prompt: "research" }], []);
+      const task = result.tasks[0];
+      if (!task) {
+        throw new Error("Expected one subagent dispatch");
+      }
+
+      expect(task.taskId.startsWith("subagent~")).toBe(true);
+      expect(task.agentId).toBe(`virtual_subagent_${task.taskId}`);
+      expect(task.conversationKey.startsWith("subagent-")).toBe(true);
+      expect(task.statusPath).toBe(
+        `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
+      );
+      expect(timeline.slice(0, 3)).toEqual([
+        "persist:createAsyncAgentResult",
+        "lifecycle:subagent.task.started",
+        "run:child",
+      ]);
+      await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
   it("pipes reasoning, text, tool, and structured output parts unchanged", async () => {
     const { pipeSubagentNatsStream } =
       await import("../src/harness/subagents.ts");
@@ -208,6 +260,37 @@ describe("SubagentCoordinator", () => {
     ]);
   });
 
+  it("keeps publisher and flush failures best-effort after child success", async () => {
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const publisher = {
+      publish: mock(async () => {
+        throw new Error("NATS unavailable");
+      }),
+      close: mock(async () => {
+        throw new Error("flush unavailable");
+      }),
+    };
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, streamEvents: true } },
+      Date.now() + 1_000,
+      undefined,
+      (() => publisher) as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.runTask = mock(async (_task, _parentContext, streamPublisher) => {
+      await streamPublisher?.publish({ type: "text-delta", text: "answer" });
+    });
+    internals.completeTask = mock(async () => {});
+
+    internals.startTask(resolvedTask());
+
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    expect(internals.completeTask).not.toHaveBeenCalled();
+    expect(publisher.publish).toHaveBeenCalledTimes(2);
+    expect(publisher.close).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for all pending subagents before draining parent messages", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const persistModelMessages = mock(
@@ -217,7 +300,7 @@ describe("SubagentCoordinator", () => {
       {
         accountId: "account_1",
         agentId: "agent_parent",
-        eventId: "event_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages,
       } as never,
       {},
@@ -328,7 +411,7 @@ describe("SubagentCoordinator", () => {
       {
         accountId: "account_1",
         agentId: "agent_parent",
-        eventId: "event_parent",
+        eventId: "acct:account_1:agent:agent_parent:api:event_parent",
         persistModelMessages: mock(async () => []),
       } as never,
       {
@@ -342,6 +425,9 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     const created = await internals.resolveTask({ prompt: "start" }, [], []);
+    expect(created.taskId.startsWith("subagent~")).toBe(true);
+    expect(created.eventId).toContain(`:api:${created.taskId}`);
+    expect(created.agentId).toContain(created.taskId);
     expect(
       created.publicConversationKey.startsWith("subagent-persistent-"),
     ).toBe(true);
@@ -445,7 +531,7 @@ function parentSession() {
   return {
     accountId: "account_1",
     agentId: "agent_parent",
-    eventId: "event_parent",
+    eventId: "acct:account_1:agent:agent_parent:api:event_parent",
     persistModelMessages: mock(async () => []),
   } as never;
 }
