@@ -46,7 +46,7 @@ RUN apk add --no-cache ca-certificates libgcc libstdc++ nodejs \
     && adduser --system --uid 1001 core
 COPY --from=builder --chown=1001:1001 /out/core-server ./core-server
 COPY --from=isolate-deps --chown=1001:1001 /app/isolate-runner/node_modules ./isolate-runner/node_modules
-COPY --chown=1001:1001 apps/core/src/harness/tools/isolate-runner/ ./isolate-runner/
+COPY --chown=1001:1001 apps/core/src/harness/isolate/runner/ ./isolate-runner/
 USER 1001
 EXPOSE 3000
 CMD ["./core-server"]
