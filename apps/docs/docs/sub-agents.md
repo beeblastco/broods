@@ -146,7 +146,7 @@ When `subagent.streamEvents` is `true`, every child publishes its reasoning, tex
   "requestId": "attach-child-1",
   "agentId": "agent_child",
   "conversationKey": "subagent-persistent-abc123",
-  "eventId": "subagent~opaque-parent-correlation~task-uuid"
+  "eventId": "subagent~base64url-parent-event~task-uuid"
 }
 ```
 
@@ -162,13 +162,16 @@ flowchart LR
   Gateway --> Client["WebSocket client"]
 ```
 
-The gateway protocol does not change. Treat `taskId` as opaque: core includes a
-server-issued parent correlation in it and persists that exact child event before
-`run_subagent` returns. A deployment-key status/attach request succeeds only
-when the child status row, its child agent/conversation scope, the durable parent
-ingress row, the active public parent, and the key's account/project/environment/
-endpoint deployment scope all agree. The client does not provide parent scope.
-This permits a virtual or predefined private child to be observed through its
+The gateway protocol does not change. Treat `taskId` as server-issued: core
+includes a base64url-encoded parent correlation in it and persists that exact
+child event before `run_subagent` returns. The correlation is reversible
+encoding, not encryption, and must not contain or be treated as confidential
+data. Public direct requests cannot choose the reserved `subagent~` event
+namespace. A deployment-key status/attach request succeeds only when the child
+status row, its child agent/conversation scope, the durable parent ingress row,
+the active public parent, and the key's account/project/environment/endpoint
+deployment scope all agree. The client does not provide parent scope. This
+permits a virtual or predefined private child to be observed through its
 already-authorized parent without making the child publicly runnable or exposing
 another deployment's tasks.
 

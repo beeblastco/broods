@@ -39,6 +39,7 @@ const RESERVED_EVENT_ID_PREFIXES = [
   TELEGRAM_INTEGRATION_PREFIX,
   DISCORD_INTEGRATION_PREFIX,
   PANCAKE_INTEGRATION_PREFIX,
+  SUBAGENT_TASK_ID_PREFIX,
   ZALO_INTEGRATION_PREFIX,
 ] as const;
 
@@ -112,6 +113,17 @@ export function normalizeDirectIdentifier(name: string, value: string): string {
 export function assertValidPublicEventId(value: string): string {
   const normalized = normalizeDirectIdentifier("eventId", value);
   if (hasReservedEventIdPrefix(normalized)) {
+    throw new Error("eventId uses a reserved internal prefix");
+  }
+  return normalized;
+}
+
+export function assertValidPublicStatusEventId(value: string): string {
+  const normalized = normalizeDirectIdentifier("eventId", value);
+  if (
+    hasReservedEventIdPrefix(normalized) &&
+    !subagentParentEventId(normalized)
+  ) {
     throw new Error("eventId uses a reserved internal prefix");
   }
   return normalized;

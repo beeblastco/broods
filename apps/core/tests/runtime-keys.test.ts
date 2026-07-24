@@ -4,6 +4,8 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  assertValidPublicEventId,
+  assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
   createSubagentTaskId,
   parseAccountAgentScopedKey,
@@ -64,7 +66,7 @@ describe("channelScopeKeyFromConversation", () => {
 });
 
 describe("subagent task correlation", () => {
-  it("round-trips a server-scoped parent event through an opaque task id", () => {
+  it("round-trips a server-scoped parent event through a server-correlated task id", () => {
     const parentEventId = "acct:acct_1:agent:agent_parent:api:parent-event";
     const taskId = createSubagentTaskId(
       parentEventId,
@@ -72,6 +74,15 @@ describe("subagent task correlation", () => {
     );
 
     expect(taskId.startsWith("subagent~")).toBe(true);
+    expect(() => assertValidPublicEventId(taskId)).toThrow(
+      "reserved internal prefix",
+    );
+    expect(assertValidPublicStatusEventId(taskId)).toBe(taskId);
+    expect(() =>
+      assertValidPublicStatusEventId(
+        "subagent~not-a-canonical-task-correlation",
+      ),
+    ).toThrow("reserved internal prefix");
     expect(subagentParentEventId(taskId)).toBe(parentEventId);
     expect(parseAccountAgentScopedKey(parentEventId)).toEqual({
       accountId: "acct_1",
