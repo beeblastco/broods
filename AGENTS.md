@@ -5,13 +5,14 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 ## Workspaces
 
 - `apps/core` (`@broods/core`) — agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
+- `apps/gateway` (`@broods/gateway`) — the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
 - `apps/dashboard` (`@broods/dashboard`) — Next.js UI. drives core through Convex.
 - `packages/convex` (`@broods/convex`) — shared Convex backend for both dashboard and core + config plane.
 - `apps/docs` (`@broods/docs`) — Docusaurus docs. core, public API, whole architecture.
 - `packages/broods` (`broods`) — published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
 - `packages/demos` — runnable demos on SDK against deployed core. not a workspace package.
 
-they are one product, not six islands. core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
+they are one product, not seven islands. gateway is the door, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
 
 outside repo, sibling of checkout:
 
