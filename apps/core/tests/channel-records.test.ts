@@ -446,6 +446,27 @@ describe("channel record layering", () => {
     });
   });
 
+  it("still sets the scope when the bound agent has no config for the channel", () => {
+    // On an account-scoped webhook the credentials sit on the receiving agent,
+    // so the agent that runs may carry no slack block at all. Dropping the scope
+    // here would make an isolated workspace throw at mount time.
+    const merged = applyChannelRecord(
+      { workspaces: [{ name: "docs", workspaceId: "ws_docs" }] },
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          workspaceScope: { level: "conversation", alias: "support" },
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.channels?.slack).toEqual({
+      workspaceScope: { level: "conversation", alias: "support" },
+    });
+  });
+
   it("leaves the config untouched when the record adds nothing", () => {
     expect(
       applyChannelRecord(base, channelRecord({ platform: "slack" }), "slack"),

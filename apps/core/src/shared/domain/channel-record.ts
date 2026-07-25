@@ -159,12 +159,15 @@ export function applyChannelRecord(
         }
       : {}),
     ...(denyTools ? { denyTools } : {}),
-    ...(channelConfig.workspaceScope && isPlainObject(channelSettings)
+    // The scope entry is written even when the bound agent carries no config for
+    // this channel — with an account-scoped webhook the credentials live on the
+    // receiving agent, and an isolated workspace throws without a scope.
+    ...(channelConfig.workspaceScope
       ? {
           channels: {
             ...config.channels,
             [channelName]: {
-              ...channelSettings,
+              ...(isPlainObject(channelSettings) ? channelSettings : {}),
               workspaceScope: channelConfig.workspaceScope,
             },
           },

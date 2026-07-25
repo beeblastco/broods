@@ -7,6 +7,8 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { channelRecordsFields } from "./schema";
 
@@ -52,7 +54,11 @@ export const getByExternalId = internalQuery({
   },
   returns: v.union(channelRecordDoc, v.null()),
   handler: async (ctx, args) => {
-    const doc = await ctx.db
+    // Deleting a record leaves the row in place, and creating a replacement is
+    // then allowed — so this place can hold a deleted row *and* an active one.
+    // `.first()` would hand back whichever the index reaches first and resolve
+    // to null; pick the active row explicitly.
+    const docs = await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId_platform_external", (q) =>
         q
@@ -60,9 +66,9 @@ export const getByExternalId = internalQuery({
           .eq("platform", args.platform)
           .eq("externalId", args.externalId),
       )
-      .first();
-    if (!doc || doc.status !== "active") return null;
-    return doc;
+      .collect();
+
+    return docs.find((doc) => doc.status === "active") ?? null;
   },
 });
 
@@ -94,16 +100,18 @@ export const create = internalMutation({
       throw new Error(`Account not found: ${args.accountId}`);
     }
     // One active record per place, so the webhook lookup stays unambiguous.
-    const existing = await ctx.db
-      .query("channelRecords")
-      .withIndex("by_accountId_platform_external", (q) =>
-        q
-          .eq("accountId", args.accountId)
-          .eq("platform", args.platform)
-          .eq("externalId", args.externalId),
-      )
-      .first();
-    if (existing && existing.status === "active") {
+    const existing = (
+      await ctx.db
+        .query("channelRecords")
+        .withIndex("by_accountId_platform_external", (q) =>
+          q
+            .eq("accountId", args.accountId)
+            .eq("platform", args.platform)
+            .eq("externalId", args.externalId),
+        )
+        .collect()
+    ).find((doc) => doc.status === "active");
+    if (existing) {
       throw new Error(
         `A channel record already exists for ${args.platform}:${args.externalId}`,
       );
@@ -176,10 +184,10 @@ export const remove = internalMutation({
 });
 
 async function loadOwnedRecord(
-  ctx: { db: any },
-  accountId: string,
+  ctx: MutationCtx,
+  accountId: Id<"accounts">,
   channelRecordId: string,
-) {
+): Promise<Doc<"channelRecords">> {
   const normalized = ctx.db.normalizeId("channelRecords", channelRecordId);
   if (!normalized) {
     throw new Error("Channel record does not belong to the supplied accountId");

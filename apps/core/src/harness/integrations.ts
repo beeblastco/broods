@@ -1019,6 +1019,10 @@ async function handleChannelWebhook(
               account.accountId,
               target.agent.agentId,
             );
+      const contextIdentity = identityWithChannelRoles(
+        message.identity,
+        target.record,
+      );
       logInfo("Channel webhook accepted as context", {
         channel: adapter.name,
         accountId: account.accountId,
@@ -1047,14 +1051,7 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
-            ...(identityWithChannelRoles(message.identity, target.record)
-              ? {
-                  identity: identityWithChannelRoles(
-                    message.identity,
-                    target.record,
-                  ),
-                }
-              : {}),
+            ...(contextIdentity ? { identity: contextIdentity } : {}),
             source: message.source,
             accountId: account.accountId,
             agentId: target.agent.agentId,
