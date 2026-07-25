@@ -1,11 +1,10 @@
 /**
- * Core-owned Workdir port for the runtime-unwired AI SDK Harness adapter.
- * Provider selection and reservations stay in the existing sandbox executor;
- * live HarnessAgent selection belongs in the later run-loop integration.
+ * Core-owned AWS Lambda MicroVM driver for the AI SDK Harness sandbox adapter.
+ * Reservation ownership stays in MicrovmSandboxExecutor; bridge WebSockets pass
+ * through a loopback proxy so AWS authentication never enters a URL or log.
  */
 
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
 import { dirname } from "node:path/posix";
 import type {
   BroodsSandboxCommandOptions,
@@ -17,72 +16,79 @@ import type {
   BroodsSandboxFileOptions,
   BroodsSandboxWriteFileOptions,
 } from "@broods/ai-sdk-sandbox";
-import type { Sandbox } from "@mv37/workdir";
 import { createSandboxExecutor } from "./index.ts";
-import { optionalEnv } from "../../shared/env.ts";
 import {
   HarnessShellProcess,
   type HarnessShellExecutor,
   readHarnessStream,
 } from "./harness-shell-process.ts";
+import type { MicrovmHarnessReservation } from "./microvm-executor.ts";
+import { MicrovmWebSocketProxy } from "./microvm-websocket-proxy.ts";
 import type { SandboxExecutorConfig, SandboxReservationRef } from "./types.ts";
-import { configString, shellQuote, stringRecord } from "./utils.ts";
-import type { WorkdirHarnessReservation } from "./workdir-executor.ts";
+import { shellQuote, stringRecord } from "./utils.ts";
 
 const DEFAULT_WORKING_DIRECTORY = "/workspace";
 
-export interface WorkdirHarnessDriverOptions {
+export interface MicrovmHarnessDriverOptions {
   /** Existing core reservation identity, already scoped to its account/agent. */
   reservationKey: string;
   /** Optional exact bootstrap identity for callers that precompute one. */
   bootstrapIdentity?: string;
-  config: SandboxExecutorConfig & { provider: "sandbox"; persistent: true };
+  config: SandboxExecutorConfig & { provider: "lambda"; persistent: true };
   defaultWorkingDirectory?: string;
   ports?: ReadonlyArray<number>;
 }
 
-interface WorkdirHarnessExecutor {
+interface MicrovmHarnessExecutor {
   acquireHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
-  }): Promise<WorkdirHarnessReservation>;
+  }): Promise<MicrovmHarnessReservation>;
   resumeHarnessReservation(request: {
     reservationKey: string;
     abortSignal?: AbortSignal;
-  }): Promise<Sandbox>;
+  }): Promise<Omit<MicrovmHarnessReservation, "isFirstCreate">>;
+  runHarnessCommand(request: {
+    microvmId: string;
+    endpoint: string;
+    code: string;
+    env?: Record<string, string>;
+    abortSignal?: AbortSignal;
+  }): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  createHarnessAuthToken(microvmId: string, port: number): Promise<string>;
   suspend?(request: SandboxReservationRef): Promise<void>;
   release?(request: SandboxReservationRef): Promise<void>;
 }
 
-export function createWorkdirHarnessDriver(
-  options: WorkdirHarnessDriverOptions,
+export function createMicrovmHarnessDriver(
+  options: MicrovmHarnessDriverOptions,
 ): BroodsSandboxDriver {
   const executor = createSandboxExecutor(options.config);
-  if (!isWorkdirHarnessExecutor(executor)) {
+  if (!isMicrovmHarnessExecutor(executor)) {
     throw new Error(
-      "Workdir Harness driver requires the core sandbox executor",
+      "MicroVM Harness driver requires the core MicroVM executor",
     );
   }
-  return new WorkdirHarnessDriver(options, executor);
+  return new MicrovmHarnessDriver(options, executor);
 }
 
-export class WorkdirHarnessDriver implements BroodsSandboxDriver {
-  readonly #options: WorkdirHarnessDriverOptions;
-  readonly #executor: WorkdirHarnessExecutor;
+export class MicrovmHarnessDriver implements BroodsSandboxDriver {
+  readonly #options: MicrovmHarnessDriverOptions;
+  readonly #executor: MicrovmHarnessExecutor;
 
   constructor(
-    options: WorkdirHarnessDriverOptions,
-    executor: WorkdirHarnessExecutor,
+    options: MicrovmHarnessDriverOptions,
+    executor: MicrovmHarnessExecutor,
   ) {
     if (!options.reservationKey.trim()) {
-      throw new Error("Workdir Harness driver requires a reservationKey");
+      throw new Error("MicroVM Harness driver requires a reservationKey");
     }
     if (
-      options.config.provider !== "sandbox" ||
+      options.config.provider !== "lambda" ||
       options.config.persistent !== true
     ) {
       throw new Error(
-        "Workdir Harness driver requires a persistent sandbox provider config",
+        "MicroVM Harness driver requires a persistent lambda provider config",
       );
     }
     this.#options = options;
@@ -95,16 +101,15 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
     this.#assertBootstrapIdentity(options.identity);
     options.abortSignal?.throwIfAborted();
 
-    let reservation: WorkdirHarnessReservation | undefined;
+    let reservation: MicrovmHarnessReservation | undefined;
     try {
       reservation = await this.#executor.acquireHarnessReservation({
         reservationKey: this.#options.reservationKey,
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       });
       options.abortSignal?.throwIfAborted();
-
       return {
-        session: this.#session(reservation.sandbox),
+        session: this.#session(reservation),
         isFirstCreate: reservation.isFirstCreate,
       };
     } catch (error) {
@@ -121,12 +126,12 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
     options: BroodsSandboxDriverResumeOptions,
   ): Promise<BroodsSandboxDriverSession> {
     options.abortSignal?.throwIfAborted();
-    const sandbox = await this.#executor.resumeHarnessReservation({
+    const reservation = await this.#executor.resumeHarnessReservation({
       reservationKey: this.#options.reservationKey,
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
     options.abortSignal?.throwIfAborted();
-    return this.#session(sandbox);
+    return this.#session(reservation);
   }
 
   #assertBootstrapIdentity(identity: string | undefined): void {
@@ -134,73 +139,75 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       return;
     if (identity !== this.#options.bootstrapIdentity) {
       throw new Error(
-        "Workdir Harness bootstrap identity does not match this reservation",
+        "MicroVM Harness bootstrap identity does not match this reservation",
       );
     }
   }
 
-  #session(sandbox: Sandbox): BroodsSandboxDriverSession {
-    return new WorkdirHarnessSession({
-      sandbox,
+  #session(
+    reservation: Omit<MicrovmHarnessReservation, "isFirstCreate">,
+  ): BroodsSandboxDriverSession {
+    return new MicrovmHarnessSession({
+      reservation,
       executor: this.#executor,
       reservationKey: this.#options.reservationKey,
-      description: `Broods Workdir sandbox ${sandbox.id}`,
       defaultWorkingDirectory:
         this.#options.defaultWorkingDirectory ?? DEFAULT_WORKING_DIRECTORY,
       env: stringRecord(this.#options.config.envVars),
       ports: this.#options.ports ?? [],
-      previewKey: workdirPreviewKey(this.#options.config),
     });
   }
 }
 
-interface WorkdirHarnessSessionOptions {
-  sandbox: Sandbox;
-  executor: WorkdirHarnessExecutor;
+interface MicrovmHarnessSessionOptions {
+  reservation: Omit<MicrovmHarnessReservation, "isFirstCreate">;
+  executor: MicrovmHarnessExecutor;
   reservationKey: string;
-  description: string;
   defaultWorkingDirectory: string;
   env: Record<string, string>;
   ports: ReadonlyArray<number>;
-  previewKey?: string;
 }
 
-class WorkdirHarnessSession implements BroodsSandboxDriverSession {
-  readonly #sandbox: Sandbox;
-  readonly #executor: WorkdirHarnessExecutor;
+class MicrovmHarnessSession implements BroodsSandboxDriverSession {
+  readonly #executor: MicrovmHarnessExecutor;
+  readonly #reservation: Omit<MicrovmHarnessReservation, "isFirstCreate">;
   readonly #reservationKey: string;
   readonly #defaultWorkingDirectory: string;
   readonly #env: Record<string, string>;
-  readonly #previewKey: string | undefined;
+  readonly #proxy: MicrovmWebSocketProxy;
   readonly #shell: HarnessShellExecutor;
 
   readonly id: string;
   readonly description: string;
   readonly ports: ReadonlyArray<number>;
 
-  constructor(options: WorkdirHarnessSessionOptions) {
-    this.#sandbox = options.sandbox;
+  constructor(options: MicrovmHarnessSessionOptions) {
     this.#executor = options.executor;
+    this.#reservation = options.reservation;
     this.#reservationKey = options.reservationKey;
     this.#defaultWorkingDirectory = options.defaultWorkingDirectory;
     this.#env = options.env;
-    this.#previewKey = options.previewKey;
-    this.id = options.sandbox.id;
-    this.description = options.description;
+    this.id = options.reservation.microvmId;
+    this.description = `Broods Lambda MicroVM ${options.reservation.microvmId}`;
     this.ports = [...options.ports];
+    this.#proxy = new MicrovmWebSocketProxy({
+      endpoint: options.reservation.endpoint,
+      microvmId: options.reservation.microvmId,
+      allowedPorts: this.ports,
+      createAuthToken: (microvmId, port) =>
+        this.#executor.createHarnessAuthToken(microvmId, port),
+    });
     this.#shell = {
-      exec: async (command, shellOptions) => {
-        shellOptions?.abortSignal?.throwIfAborted();
-        const result = await this.#sandbox.exec(command, {
+      exec: (command, shellOptions) =>
+        this.#executor.runHarnessCommand({
+          microvmId: this.#reservation.microvmId,
+          endpoint: this.#reservation.endpoint,
+          code: command,
           ...(shellOptions?.env ? { env: shellOptions.env } : {}),
-        });
-        shellOptions?.abortSignal?.throwIfAborted();
-        return {
-          exitCode: result.exit_code,
-          stdout: result.stdout,
-          stderr: result.stderr,
-        };
-      },
+          ...(shellOptions?.abortSignal
+            ? { abortSignal: shellOptions.abortSignal }
+            : {}),
+        }),
     };
   }
 
@@ -241,96 +248,79 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
   ): Promise<Uint8Array | null> {
     options.abortSignal?.throwIfAborted();
     const path = shellQuote(options.path);
-    const result = await this.#sandbox.exec(
+    const result = await this.#shell.exec(
       `if [ -f ${path} ]; then base64 < ${path} | tr -d '\\n'; elif [ ! -e ${path} ]; then exit 44; else exit 45; fi`,
+      options.abortSignal ? { abortSignal: options.abortSignal } : undefined,
     );
-    options.abortSignal?.throwIfAborted();
-    if (result.exit_code === 44) return null;
-    if (result.exit_code !== 0) throw workdirError("read file", result);
+    if (result.exitCode === 44) return null;
+    if (result.exitCode !== 0) throw microvmError("read file", result);
     return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
   }
 
   async writeFile(options: BroodsSandboxWriteFileOptions): Promise<void> {
     options.abortSignal?.throwIfAborted();
-    const temporaryName = `.broods-harness-upload-${randomUUID()}`;
-    const temporaryPath = `${DEFAULT_WORKING_DIRECTORY}/${temporaryName}`;
-    try {
-      await this.#sandbox.writeFile(
-        temporaryName,
-        Buffer.from(options.content).toString("base64"),
-      );
-      options.abortSignal?.throwIfAborted();
-      const result = await this.#sandbox.exec(
-        [
-          `mkdir -p ${shellQuote(dirname(options.path))}`,
-          `base64 -d ${shellQuote(temporaryPath)} > ${shellQuote(options.path)}`,
-        ].join(" && "),
-      );
-      options.abortSignal?.throwIfAborted();
-      if (result.exit_code !== 0) throw workdirError("write file", result);
-    } finally {
-      await this.#sandbox
-        .exec(`rm -f ${shellQuote(temporaryPath)}`)
-        .catch(() => {});
-    }
+    const content = Buffer.from(options.content).toString("base64");
+    const result = await this.#shell.exec(
+      [
+        `mkdir -p ${shellQuote(dirname(options.path))}`,
+        `printf %s ${shellQuote(content)} | base64 -d > ${shellQuote(options.path)}`,
+      ].join(" && "),
+      options.abortSignal ? { abortSignal: options.abortSignal } : undefined,
+    );
+    if (result.exitCode !== 0) throw microvmError("write file", result);
   }
 
   async getPortUrl(options: {
     port: number;
     protocol?: "http" | "https" | "ws";
   }): Promise<string> {
-    if (!this.#previewKey) {
-      throw new Error("Workdir Harness port exposure requires an API key");
+    if (options.protocol !== undefined && options.protocol !== "ws") {
+      throw new Error("MicroVM Harness proxy supports WebSocket ports only");
     }
-    const exposed = new URL(await this.#sandbox.exposePort(options.port));
-    exposed.searchParams.set("key", this.#previewKey);
-    if (options.protocol === "ws") {
-      exposed.protocol = exposed.protocol === "https:" ? "wss:" : "ws:";
-    } else if (options.protocol) {
-      exposed.protocol = `${options.protocol}:`;
-    }
-    return exposed.toString();
+    return this.#proxy.getPortUrl(options.port);
   }
 
   async stop(): Promise<void> {
+    await this.#proxy.close();
     if (!this.#executor.suspend) {
-      throw new Error("Workdir Harness reservation cannot be suspended");
+      throw new Error("MicroVM Harness reservation cannot be suspended");
     }
     await this.#executor.suspend({ reservationKey: this.#reservationKey });
   }
 
   async destroy(): Promise<void> {
+    await this.#proxy.close();
     if (!this.#executor.release) {
-      throw new Error("Workdir Harness reservation cannot be released");
+      throw new Error("MicroVM Harness reservation cannot be released");
     }
     await this.#executor.release({ reservationKey: this.#reservationKey });
   }
 }
 
-function isWorkdirHarnessExecutor(
+function isMicrovmHarnessExecutor(
   value: unknown,
-): value is WorkdirHarnessExecutor {
+): value is MicrovmHarnessExecutor {
   return (
     !!value &&
     typeof value === "object" &&
     "acquireHarnessReservation" in value &&
     typeof value.acquireHarnessReservation === "function" &&
     "resumeHarnessReservation" in value &&
-    typeof value.resumeHarnessReservation === "function"
+    typeof value.resumeHarnessReservation === "function" &&
+    "runHarnessCommand" in value &&
+    typeof value.runHarnessCommand === "function" &&
+    "createHarnessAuthToken" in value &&
+    typeof value.createHarnessAuthToken === "function"
   );
 }
 
-function workdirError(
+function microvmError(
   operation: string,
-  result: { stdout?: string; stderr?: string; exit_code: number },
+  result: { stdout: string; stderr: string; exitCode: number },
 ): Error {
   return new Error(
     result.stderr ||
       result.stdout ||
-      `Workdir failed to ${operation} (exit ${result.exit_code})`,
+      `MicroVM failed to ${operation} (exit ${result.exitCode})`,
   );
-}
-
-function workdirPreviewKey(config: SandboxExecutorConfig): string | undefined {
-  return configString(config.options?.apiKey) ?? optionalEnv("WORKDIR_API_KEY");
 }

@@ -111,6 +111,12 @@ interface SandboxResponse {
   cpu_usec?: number;
 }
 
+export interface MicrovmHarnessReservation {
+  readonly microvmId: string;
+  readonly endpoint: string;
+  readonly isFirstCreate: boolean;
+}
+
 export class MicrovmSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #client: LambdaMicrovms;
@@ -121,6 +127,99 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   ) {
     this.#config = config;
     this.#client = client;
+  }
+
+  async acquireHarnessReservation(request: {
+    reservationKey: string;
+    abortSignal?: AbortSignal;
+  }): Promise<MicrovmHarnessReservation> {
+    request.abortSignal?.throwIfAborted();
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "Harness sessions require a persistent lambda (MicroVM) reservation key",
+      );
+    }
+    const reservation = await this.#acquireWithState(
+      this.#harnessRequest(request.reservationKey),
+    );
+    try {
+      await this.#runLifecycle(
+        reservation.microvmId,
+        reservation.endpoint,
+        this.#workDir(request.reservationKey),
+      );
+      request.abortSignal?.throwIfAborted();
+      return reservation;
+    } catch (error) {
+      if (reservation.isFirstCreate) {
+        await this.release(request).catch(() => {});
+      }
+      throw error;
+    }
+  }
+
+  async resumeHarnessReservation(request: {
+    reservationKey: string;
+    abortSignal?: AbortSignal;
+  }): Promise<Omit<MicrovmHarnessReservation, "isFirstCreate">> {
+    request.abortSignal?.throwIfAborted();
+    if (!this.#persistent(request)) {
+      throw new Error(
+        "Harness sessions require a persistent lambda (MicroVM) reservation key",
+      );
+    }
+    const microvmId = await getSandboxExternalId(
+      PROVIDER,
+      request.reservationKey,
+    );
+    if (!microvmId) {
+      throw new Error("no reserved MicroVM for this Harness session");
+    }
+    const reservation = await this.#reconnect(microvmId);
+    await this.#runLifecycle(
+      reservation.microvmId,
+      reservation.endpoint,
+      this.#workDir(request.reservationKey),
+    );
+    await saveSandboxInstance(
+      PROVIDER,
+      request.reservationKey,
+      reservation.microvmId,
+      this.#config.controlPlane?.accountId,
+    ).catch(() => {});
+    request.abortSignal?.throwIfAborted();
+    return reservation;
+  }
+
+  async runHarnessCommand(request: {
+    microvmId: string;
+    endpoint: string;
+    code: string;
+    env?: Record<string, string>;
+    timeoutSeconds?: number;
+    abortSignal?: AbortSignal;
+  }): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    request.abortSignal?.throwIfAborted();
+    const response = await this.#exec(request.microvmId, request.endpoint, {
+      runtime: "bash",
+      code: request.code,
+      timeout_ms:
+        (request.timeoutSeconds ?? this.#config.timeout ?? 120) * 1000,
+      env: this.#sandboxEnvVars(request.env),
+    });
+    request.abortSignal?.throwIfAborted();
+    return {
+      stdout: response.stdout,
+      stderr: response.stderr,
+      exitCode: response.exit_code ?? (response.ok ? 0 : 1),
+    };
+  }
+
+  async createHarnessAuthToken(
+    microvmId: string,
+    port: number,
+  ): Promise<string> {
+    return this.#authToken(microvmId, port);
   }
 
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
@@ -329,6 +428,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/${key}`;
   }
 
+  #harnessRequest(reservationKey: string): SandboxRunRequest {
+    return {
+      code: "true",
+      reservationKey,
+      timeoutSeconds: this.#config.timeout ?? 120,
+      outputLimitBytes: this.#config.outputLimitBytes ?? 64 * 1024,
+    };
+  }
+
   #workspaceKey(request: SandboxReservationRef): string {
     const key = request.namespace
       ? microvmLocalNamespace(request.namespace)
@@ -352,8 +460,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async #acquire(
     request: SandboxRunRequest,
   ): Promise<{ microvmId: string; endpoint: string }> {
+    const { microvmId, endpoint } = await this.#acquireWithState(request);
+    return { microvmId, endpoint };
+  }
+
+  async #acquireWithState(
+    request: SandboxRunRequest,
+  ): Promise<MicrovmHarnessReservation> {
     if (!this.#persistent(request)) {
-      return this.#runMicrovm(request);
+      return { ...(await this.#runMicrovm(request)), isFirstCreate: true };
     }
     const key = sandboxReservationKey(request)!;
     const existing = await getSandboxExternalId(PROVIDER, key);
@@ -373,7 +488,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           existing,
           request.metadata,
         );
-        return reconnected;
+        return { ...reconnected, isFirstCreate: false };
       } catch (error) {
         // Recreate only when the provider says the VM no longer exists. A slow
         // resume or transient control-plane error must propagate instead: replacing
@@ -389,22 +504,35 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       }
     }
     const created = await this.#runMicrovm(request);
-    if (
-      await claimSandboxInstance(
-        PROVIDER,
-        key,
-        created.microvmId,
-        this.#config.controlPlane?.accountId,
-      )
-    ) {
-      await upsertSandboxInstance(
-        this.#config.controlPlane,
-        PROVIDER,
-        key,
-        created.microvmId,
-        request.metadata,
-      );
-      return created;
+    try {
+      if (
+        await claimSandboxInstance(
+          PROVIDER,
+          key,
+          created.microvmId,
+          this.#config.controlPlane?.accountId,
+        )
+      ) {
+        await upsertSandboxInstance(
+          this.#config.controlPlane,
+          PROVIDER,
+          key,
+          created.microvmId,
+          request.metadata,
+        );
+        return { ...created, isFirstCreate: true };
+      }
+    } catch (error) {
+      await Promise.allSettled([
+        this.#terminate(created.microvmId),
+        deleteSandboxInstance(
+          PROVIDER,
+          key,
+          this.#config.controlPlane?.accountId,
+          created.microvmId,
+        ),
+      ]);
+      throw error;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the winner.
     const winner = await getSandboxExternalId(PROVIDER, key);
@@ -414,7 +542,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       : null;
     if (!reconnected)
       throw new Error("failed to reserve MicroVM (lost create race)");
-    return reconnected;
+    return { ...reconnected, isFirstCreate: false };
   }
 
   // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
@@ -657,12 +785,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return { retry: false, response: parsed as SandboxResponse };
   }
 
-  async #authToken(microvmId: string): Promise<string> {
+  async #authToken(
+    microvmId: string,
+    port = MICROVM_PROXY_PORT,
+  ): Promise<string> {
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`MicroVM auth token port is invalid: ${port}`);
+    }
     const result = await this.#client.send(
       new CreateMicrovmAuthTokenCommand({
         microvmIdentifier: microvmId,
         expirationInMinutes: AUTH_TOKEN_TTL_MINUTES,
-        allowedPorts: [{ port: MICROVM_PROXY_PORT }],
+        allowedPorts: [{ port }],
       }),
     );
     const token = result.authToken?.["X-aws-proxy-auth"];

@@ -1,5 +1,5 @@
 /**
- * Workdir HarnessAgent construction tests.
+ * Broods persistent HarnessAgent construction tests.
  * Each probe runs in a child process so importing the real driver cannot prime
  * Bun's module cache ahead of executor tests that install module-level fakes.
  * Live bridge bootstrap and connectivity are covered by the opt-in integration test.
@@ -17,6 +17,13 @@ const COMPUTE = {
     workdirUrl: "https://workdir.example.test",
     apiKey: "test-key",
   },
+} as const;
+
+const MICROVM_COMPUTE = {
+  provider: "lambda",
+  persistent: true,
+  network: { mode: "allow-all" },
+  snapshot: "arn:aws:lambda:us-east-1:123456789012:microvm-image:harness-test",
 } as const;
 
 const MODULE_URL = pathToFileURL(
@@ -73,6 +80,41 @@ describe("createWorkdirHarnessAgent", () => {
 
     expect(result).toBe("Codex Harness requires permissionMode allow-all");
   });
+});
+
+describe("createMicrovmHarnessAgent", () => {
+  it.each(["claude-code", "codex"] as const)(
+    "constructs the %s bridge on a version-scoped MicroVM reservation",
+    async (harness) => {
+      const result = await runProbe(`
+        const runtime = module.createMicrovmHarnessAgent({
+          harness: ${JSON.stringify(harness)},
+          reservationKey: "acct:agent:conversation",
+          compute: ${JSON.stringify(MICROVM_COMPUTE)},
+          bridgePort: 4567,
+        });
+        console.log(JSON.stringify({
+          harnessId: runtime.agent.harnessId,
+          bridgePort: runtime.bridgePort,
+          reservationKey: runtime.reservationKey,
+          expectedReservationKey:
+            "acct:agent:conversation:" +
+            ${JSON.stringify(harness)} +
+            ":" +
+            module.microvmHarnessVersion(${JSON.stringify(harness)}),
+          bridgePorts: runtime.sandbox.bridgePorts,
+        }));
+      `);
+
+      const parsed = JSON.parse(result);
+      expect(parsed).toMatchObject({
+        harnessId: harness,
+        bridgePort: 4_567,
+        bridgePorts: [4_567],
+      });
+      expect(parsed.reservationKey).toBe(parsed.expectedReservationKey);
+    },
+  );
 });
 
 async function runProbe(body: string): Promise<string> {

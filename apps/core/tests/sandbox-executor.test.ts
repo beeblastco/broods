@@ -472,6 +472,82 @@ describe("createSandboxExecutor", () => {
     });
   });
 
+  it("exposes persistent MicroVM reservations and port-scoped auth to the Harness driver", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+      envVars: { CONFIGURED: "base" },
+      onCreate: ["mkdir -p /workspace"],
+    });
+
+    const created = await executor.acquireHarnessReservation({
+      reservationKey: "acct:agent:harness",
+    });
+    expect(created).toEqual({
+      microvmId: "microvm-1",
+      endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+      isFirstCreate: true,
+    });
+    expect(claimSandboxInstanceMock).toHaveBeenCalledWith(
+      "lambda",
+      "acct:agent:harness",
+      "microvm-1",
+      undefined,
+    );
+
+    microvmExecPayload = {
+      ...microvmExecPayload,
+      stdout: "harness command\n",
+    };
+    expect(
+      await executor.runHarnessCommand({
+        microvmId: created.microvmId,
+        endpoint: created.endpoint,
+        code: "echo harness command",
+        env: { COMMAND_ONLY: "value" },
+        timeoutSeconds: 45,
+      }),
+    ).toEqual({
+      exitCode: 0,
+      stdout: "harness command\n",
+      stderr: "",
+    });
+    const commandRequest = JSON.parse(
+      (microvmFetchMock.mock.calls.at(-1)?.[1] as { body: string }).body,
+    );
+    expect(commandRequest).toMatchObject({
+      runtime: "bash",
+      code: "echo harness command",
+      timeout_ms: 45_000,
+      env: { CONFIGURED: "base", COMMAND_ONLY: "value" },
+    });
+
+    expect(await executor.createHarnessAuthToken("microvm-1", 4_321)).toBe(
+      "proxy-token",
+    );
+    const authInput = (
+      microvmSendMock.mock.calls.findLast(
+        (call) =>
+          (call[0] as { _type?: string })._type === "CreateMicrovmAuthToken",
+      )?.[0] as { input: Record<string, unknown> }
+    ).input;
+    expect(authInput).toMatchObject({
+      microvmIdentifier: "microvm-1",
+      allowedPorts: [{ port: 4_321 }],
+    });
+
+    const resumed = await executor.resumeHarnessReservation({
+      reservationKey: "acct:agent:harness",
+    });
+    expect(resumed).toEqual({
+      microvmId: "microvm-1",
+      endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+    });
+  });
+
   it("reconnects to a reserved MicroVM for a persistent run and never terminates it", async () => {
     storedSandboxExternalId = "microvm-1";
     const {
