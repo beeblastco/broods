@@ -1071,6 +1071,10 @@ test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpRoute("/accounts")).toBe(true);
   expect(isCoreHttpRoute("/async")).toBe(true);
   expect(isCoreHttpRoute("/status/request-1")).toBe(true);
+  // Both webhook shapes reach core: the agent-scoped one and the account-scoped
+  // one whose agent a channel record picks.
+  expect(isCoreHttpRoute("/webhooks/acct_1/agent_1/slack")).toBe(true);
+  expect(isCoreHttpRoute("/webhooks/acct_1/slack")).toBe(true);
   expect(isCoreHttpRoute("/v1/crons")).toBe(true);
   expect(isCoreHttpRoute("/v1/demo/agents/development/env_123/async")).toBe(
     true,
@@ -1079,7 +1083,7 @@ test("proxies runtime HTTP paths used by the SDK", () => {
 });
 
 test("routes config-plane CRUD to Convex, not core", () => {
-  // Account metadata/rotation plus agents, skills, tools, hooks, workspace files, crons, workspaces, sandboxes, and policies are Convex config-plane routes.
+  // Account metadata/rotation plus agents, skills, tools, hooks, workspace files, crons, workspaces, sandboxes, policies, and channels are Convex config-plane routes.
   for (const method of ["GET", "POST", "PUT"]) {
     expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
     expect(
@@ -1129,6 +1133,8 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
   expect(isConfigHttpPath("/v1/policies")).toBe(true);
   expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
+  expect(isConfigHttpPath("/v1/channels")).toBe(true);
+  expect(isConfigHttpPath("/v1/channels/chan_1")).toBe(true);
   expect(isConfigHttpPath("/v1/crons")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123")).toBe(true);
   expect(isConfigHttpPath("/v1/crons/cron_123/runs")).toBe(true);
@@ -1152,6 +1158,9 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/exec")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1/terminal")).toBe(false);
   expect(isConfigHttpPath("/v1/policies/agents/development/env_123")).toBe(
+    false,
+  );
+  expect(isConfigHttpPath("/v1/channels/agents/development/env_123")).toBe(
     false,
   );
   expect(isConfigHttpPath("/v1/agents/agent_1", "POST")).toBe(false);
