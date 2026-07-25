@@ -249,7 +249,9 @@ export const myAgent = defineAgent({
 ```ts
 export const research = defineAgent({
   name: "research",
-  config: {/* ... */},
+  config: {
+    /* ... */
+  },
 });
 
 export const myAgent = defineAgent({
@@ -537,6 +539,8 @@ export default defineBroods({
 These values can be overridden by CLI flags (`--project`, `--env`) or `.env.local`.
 
 `dashboardUrl` is only where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the broods API base URL discovered during login (`baseUrl` in stored auth), overridable via `baseUrl` here, `BROODS_BASE_URL`, or `--base-url`. The same `BROODS_BASE_URL` also drives runtime SDK clients -- one public endpoint serves both planes.
+
+`login` and `dev` record that base URL in `.env.local` as `BROODS_BASE_URL`, so runtime clients (`broods run`, `broods logs`, and any SDK code in the project) reach the same deployment the CLI is signed in to rather than the packaged default. A runtime API key is only valid on the deployment that issued it, so pointing a client at a different one fails with a 401.
 
 Breaking change: `BROODS_CONTROL_URL`, `--control-url`, and the dashboard `/api/cli/*` proxy are gone, and the control-plane routes moved from `/api/cli/*` to `/v1/account/*`. Environment-based auth now requires both `BROODS_TOKEN` and `BROODS_BASE_URL`; `BROODS_DASHBOARD_URL` no longer works for auth. Existing logins must run `broods login` again.
 

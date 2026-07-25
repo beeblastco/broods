@@ -12,7 +12,12 @@ import { tmpdir } from "node:os";
 import { performance } from "node:perf_hooks";
 import { collectEnvRefNames, compileProject } from "../manifest.ts";
 import type { CliManifest } from "../contracts.ts";
-import { GENERATED_DIR, PROJECT_DIR, USER_CONFIG_PATH } from "../config.ts";
+import {
+  GENERATED_DIR,
+  PROJECT_DIR,
+  USER_CONFIG_PATH,
+  gatewayUrlForDashboard,
+} from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
 import {
   type CliOnboardingContext,
@@ -155,8 +160,11 @@ async function init(args: string[]): Promise<void> {
     "_generated\n.cache\n",
     force,
   );
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL;
   await writeLocalEnvDefaults({
-    dashboardUrl: optionValue(args, "--dashboard-url") ?? DEFAULT_DASHBOARD_URL,
+    dashboardUrl: dashboardUrl,
+    baseUrl: gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
     environment: optionValue(args, "--env") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
@@ -186,6 +194,7 @@ async function login(args: string[]): Promise<void> {
     "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
+    baseUrl: auth.baseUrl,
     project: project,
     environment: environment,
     region:
@@ -472,6 +481,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const values = parseEnv(current);
   const missing = [
     "BROODS_DASHBOARD_URL",
+    "BROODS_BASE_URL",
     "BROODS_PROJECT",
     "BROODS_ENVIRONMENT",
     "BROODS_REGION",
@@ -526,6 +536,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
 
   await writeLocalEnvDefaults({
     dashboardUrl: dashboardUrl,
+    baseUrl: runtime.baseUrl ?? gatewayUrlForDashboard(dashboardUrl),
     project: project,
     environment: environment,
     region: region,
@@ -1394,9 +1405,17 @@ async function run(args: string[]): Promise<void> {
     );
   }
 
-  const client = new BroodsClient(
-    runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {},
-  );
+  // Runtime traffic has to reach the same deployment the control plane resolved.
+  // Without an explicit base URL the SDK falls back to prod, which rejects a
+  // dev-issued runtime key with a 401.
+  const client = new BroodsClient({
+    baseUrl:
+      optionValue(args, "--base-url") ??
+      process.env.BROODS_BASE_URL ??
+      process.env.BROODS_HOST ??
+      auth.baseUrl,
+    ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
+  });
   const state = createRenderState();
   try {
     for await (const part of client.stream(
@@ -1463,6 +1482,7 @@ async function ensureGitIgnore(): Promise<void> {
 
 async function writeLocalEnvDefaults(options: {
   dashboardUrl: string;
+  baseUrl?: string;
   project: string;
   environment: string;
   region: string;
@@ -1471,8 +1491,11 @@ async function writeLocalEnvDefaults(options: {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
   const values = parseEnv(current);
-  const nextValues = {
+  // Only pin the API base URL when it is known. Guessing one for a deployment
+  // we do not host would write an address that never resolves.
+  const nextValues: Record<string, string> = {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
+    ...(options.baseUrl ? { BROODS_BASE_URL: options.baseUrl } : {}),
     BROODS_PROJECT: options.project,
     BROODS_ENVIRONMENT: options.environment,
     BROODS_REGION: options.region,
