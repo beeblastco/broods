@@ -7,11 +7,7 @@
  * protocol (chunk/final/error) the core invoker already parses.
  */
 
-import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
 
 // Wall-clock deadline for the whole run; the handler also hard-kills the child,
 // this is the cooperative in-process bound that trips ctx.abortSignal first.
@@ -53,10 +49,11 @@ async function runBundle(payload, abortSignal) {
     throw new Error("custom tool bundle hash mismatch inside sandbox runner");
   }
 
-  const dir = mkdtempSync(join(tmpdir(), "broods-bundle-"));
-  const file = join(dir, `${randomUUID()}.mjs`);
-  writeFileSync(file, bundleSource);
-  const module = await import(pathToFileURL(file).href);
+  // Imported from memory, never written to disk: /tmp survives in a warm Lambda
+  // sandbox, so a bundle on disk is readable by any process that outlives its run.
+  const module = await import(
+    `data:text/javascript;base64,${payload.bundleSourceB64}`
+  );
 
   let definition = module.default;
   if (typeof definition === "function") {

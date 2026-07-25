@@ -2,10 +2,10 @@
  * AWS Lambda entry for the sandbox-tier tool runner. It runs an uploaded account
  * tool bundle (passed inline in the invoke event) in a per-invocation child Node
  * process with a scrubbed env and a fresh TMPDIR, then returns the child's raw
- * NDJSON frame stream to the core invoker. The child boundary is the untrusted-
- * code isolation: user code cannot read this function's AWS credentials or leak
- * state into the next (cross-tenant) warm invocation. Execution logic lives in
- * child-runner.mjs; keep this file to spawn + collect + clean up.
+ * NDJSON frame stream to the core invoker. The child is a containment layer, not
+ * a trust boundary — it runs same-UID, so keep this function's execution role
+ * empty and assume anything it can reach is reachable by tenant code. Execution
+ * logic lives in child-runner.mjs; keep this file to spawn + collect + clean up.
  */
 
 import { spawn } from "node:child_process";
@@ -47,18 +47,19 @@ function childRunnerPath() {
 
 async function runChild(event, home) {
   return await new Promise((resolve) => {
+    // detached puts the child in its own process group so killGroup can reap the
+    // grandchildren too; a survivor outlives the invocation in a warm sandbox.
     const child = spawn(process.execPath, [childRunnerPath()], {
       stdio: ["pipe", "pipe", "pipe"],
       env: scrubbedEnv(home),
+      detached: true,
     });
     let stdout = "";
     let stdoutBytes = 0;
     let stderr = "";
     let overflow = false;
     const timeout = setTimeout(() => {
-      try {
-        child.kill("SIGKILL");
-      } catch {}
+      killGroup(child);
     }, RUN_TIMEOUT_MS);
 
     child.stdout.setEncoding("utf8");
@@ -66,9 +67,7 @@ async function runChild(event, home) {
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes > OUTPUT_LIMIT_BYTES) {
         overflow = true;
-        try {
-          child.kill("SIGKILL");
-        } catch {}
+        killGroup(child);
         return;
       }
       stdout += chunk;
@@ -84,6 +83,9 @@ async function runChild(event, home) {
     });
     child.once("exit", (code, signal) => {
       clearTimeout(timeout);
+      // The child is gone, but anything it spawned is not. Reap the group before
+      // returning so nothing survives into the next tenant's invocation.
+      killGroup(child);
       if (overflow) {
         resolve({ error: "custom tool sandbox output exceeded limit" });
         return;
@@ -116,6 +118,18 @@ function childTimeoutSeconds() {
       ? Math.min(graceBound, override)
       : graceBound;
   return String(Math.max(1, seconds));
+}
+
+// SIGKILL the child's whole process group, not just the child. Falls back to the
+// child alone if the group is already gone (ESRCH) or was never detached.
+function killGroup(child) {
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+  }
 }
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code
