@@ -35,6 +35,7 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 - Open an issue first to align on the approach.
 - Read the root `AGENTS.md` for the repo-wide rules, then the `AGENTS.md` of the workspace you edit:
   - `apps/core/AGENTS.md` — Bun container runtime, request flow, tools, channels, sandboxes, SST
+  - `apps/gateway/AGENTS.md` — front-door routing, config/core split, WebSocket surfaces
   - `apps/dashboard/AGENTS.md` — Next.js dashboard, routes and components, WorkOS auth
   - `packages/convex/AGENTS.md` — Convex schema, config plane, secrets, auth
 
