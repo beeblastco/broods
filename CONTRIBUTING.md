@@ -33,11 +33,11 @@ bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
 ## Before You Change Something
 
 - Open an issue first to align on the approach.
-- Read the workspace-specific `AGENTS.md` before editing files in that workspace:
-  - `apps/core/AGENTS.md` — Bun container runtime, tools, channels, SST
-  - `apps/dashboard/AGENTS.md` — Next.js dashboard, WorkOS auth
-  - `packages/convex/AGENTS.md` — Convex schema, functions, auth
-  - `AGENTS.md` (root) — monorepo-wide rules
+- Read the root `AGENTS.md` for the repo-wide rules, then the workspace's own `AGENTS.md` if it has one. Only workspaces with their own gotchas carry a guide; the rest are covered by the root file. Today that is:
+  - `apps/core/AGENTS.md` — Bun container runtime, request flow, tools, channels, sandboxes, SST
+  - `apps/gateway/AGENTS.md` — front-door routing, config/core split, WebSocket surfaces
+  - `apps/dashboard/AGENTS.md` — Next.js dashboard, routes and components, WorkOS auth
+  - `packages/convex/AGENTS.md` — Convex schema, config plane, secrets, auth
 
 ## Code Conventions
 

@@ -1,50 +1,45 @@
-# broods Monorepo Guide
+# Guide
 
-This is a Bun workspaces monorepo for Broods / broods.
+Bun workspaces monorepo. this file = rules for whole repo. each workspace have own `AGENTS.md` with its own gotcha. read that one when you touch that folder, ignore rest.
 
-## Workspace Map
+## Workspaces
 
-- `apps/core` (`@broods/core`): SST app for the serverless agent harness on AWS Lambda. It owns account management, agent execution, channel webhooks, tools, skills, sandboxes, workspaces, async/status flows, SSE, and deployment. Read `apps/core/AGENTS.md` before changing it.
-- `apps/dashboard` (`@broods/dashboard`): Next.js 16 dashboard UI for operating the core application through the shared Convex backend. Read `apps/dashboard/AGENTS.md` before changing it.
-- `apps/docs` (`@broods/docs`): Docusaurus docs for the core, public API, and whole application architecture. Update it when core behavior, public config, API shape, diagrams, or workflows change.
-- `packages/convex` (`@broods/convex`): shared Convex backend used by the dashboard and read by core in production. Read `packages/convex/AGENTS.md` before changing Convex schema, functions, auth, or generated files.
-- `packages/broods` (`broods`): CLI + TypeScript client SDK package. This is not finished yet; the CLI is currently a scaffold and the SDK is a thin HTTP/SSE client.
-- `packages/demos`: runnable demo folders using the SDK against a deployed core API. This is not a workspace package; keep demos aligned with public API/config changes.
+- `apps/core` (`@broods/core`) — agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
+- `apps/gateway` (`@broods/gateway`) — the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
+- `apps/dashboard` (`@broods/dashboard`) — Next.js UI. drives core through Convex.
+- `packages/convex` (`@broods/convex`) — shared Convex backend for both dashboard and core + config plane.
+- `apps/docs` (`@broods/docs`) — Docusaurus docs. core, public API, whole architecture.
+- `packages/broods` (`broods`) — published CLI + TS SDK. `broods dev` / `deploy` sync a local `broods/` project to a stage, like `convex dev`. also login, env, logs, stream, agent, run.
+- `packages/demos` — runnable demos on SDK against deployed core. not a workspace package.
+
+they are one product, not seven islands. gateway is the door, core own runtime truth, convex own config + persistence, dashboard and CLI are two faces on the same config plane, docs and demos describe it. touch a public contract in one, walk the others.
+
+outside repo, sibling of checkout:
+
+- `../infra` — k8s cluster + VM provision. keep `apps/core/sst.config.ts` constants, naming, tags aligned with it.
+- `../lambda-sanbdox` — Rust HTTP server baked into an AWS Lambda **MicroVM** image (Firecracker), runs bash/python/node in the sandbox. not a Lambda custom runtime anymore, that model is dead. backs `apps/core` `microvm-executor.ts`, where provider string is still `"lambda"`.
 
 ## How To Work Here
 
-- Install dependencies only from the repo root with `bun install`.
-- Use Bun, not npm/yarn/pnpm.
-- Declare dependencies in the package that imports them; the workspace uses Bun's isolated linker.
-- Keep env files package-local. Do not commit real secrets.
-- For breaking storage or backend cutovers, do not add compatibility shims for deprecated record formats or identifiers unless the user explicitly requests them. Prefer a clean reset and account/resource recreation. Never delete live/shared data or deploy without explicit user authorization.
-- For unknown JSON/config/webhook payloads, prefer a clearly named `isPlainObject` guard at the nearest package boundary. Do not add new `isRecord` helpers; consolidate repeated object guards into the package's existing utility/helper module instead of copying them into each file. Use schema validators for complex external payloads.
-- Run focused checks from the root when possible:
-  - `bun run check` for core + Convex + SDK type checks.
-  - `bun run test` for core tests.
-  - `bun run build` for core Lambda builds.
-  - `bun run dashboard` / `bun run dashboard:build` for the dashboard.
-  - `bun run docs` / `bun run docs:build` for docs.
-- Do not deploy unless explicitly asked to do it locally. `bun run deploy` targets `apps/core`; use `dev` only when a stage is needed. Always push to the `dev` branch and let CI/CD handle deployment. `main` is branch-protected and only receives fast-forward merges from `dev` via the "Promote dev to main" workflow (Actions tab, one click), which triggers the production deploys.
-- Keep changes scoped to the workspace you are touching, but update linked docs, examples, generated Convex files, and tests when behavior or public contracts change.
+- repo using workspace feature from [bun](https://bun.com/docs/pm/workspaces).
+- read `package.json` for scripts command to run in workspace.
+- prefer strict type. do not reach for `isPlainObject` or `isRecord` on new code. find the real type first, or the library that already ship it. write your own type or interface when none fit. runtime guard only when the typing get too complex or too long to be worth it — when you hit that, say so to user and let them decide.
+- breaking storage or backend cutover: no compat shim for dead record format or old id unless user ask. clean reset and recreate account/resource instead. never delete live data, never deploy, without user say so.
+- do not deploy unless user ask. push to `dev`, let CI/CD do it. `main` is protected, only fast-forward from `dev` by "Promote dev to main" workflow (Actions tab, one click), that triggers prod deploy.
+- `.github/workflows/drift-cleanup.yaml` run `sst refresh` + `sst diff` nightly and delete Pulumi-tracked orphan per stage. stand up a new stage = add it to that matrix or drift eat it.
+- keep change inside workspace you touch. but public contract move = also move `apps/docs/docs/api-reference/openapi.yaml`, the docs, `packages/demos`, SDK types/client in `packages/broods`, and the focused tests.
+- Convex schema or function change = `bun run --filter @broods/convex codegen`, commit the generated diff. it is committed on purpose so core and dashboard typecheck with no local codegen.
+- React version pinned per app package. never add React to root package.
 
 ## Code Style
 
-Applies to every workspace. Follow it strictly when writing, editing, or deleting code.
+every workspace. follow strict. workspace guide add to this, never replace.
 
-- Lay each file out in this order: constants, types, and interfaces first; then the exports and main logic; then the private, internal-only functions used inside that file.
-- Keep functions of the same kind next to each other — all async functions in one run, then all plain functions, and so on. Order each group alphabetically so they are quick to find.
-- Comment only key sections. Keep each comment to two lines at most, with a clear explanation. Do not add per-function docstrings by default.
-- Before treating work as done, run each package's own scripts: `bun run check` for lint and TypeScript validation, and `bun run format` for Prettier formatting. Never run `tsc` or `bunx tsc --noEmit` raw, which resolves the wrong config.
-
-## Cross-Workspace Notes
-
-- Core is the source of truth for runtime behavior.
-- Dashboard is the user interface for configuring and operating the core application. It imports Convex via `@broods/convex/...`, not a local `convex/` folder.
-- Docs explain both the core and the full application architecture. Prefer focused updates in the right doc, and update Mermaid diagrams when architecture changes.
-- Convex `_generated/` is committed on purpose. After schema/function changes, run `bun run --filter @broods/convex codegen` and commit generated diffs.
-- React versions are aligned per app package. Do not add React to the root package.
-- When public API or config shape changes, sync `apps/docs/docs/api-reference/openapi.yaml`, relevant docs, demos, SDK types/client code, and focused tests.
-- `.github/workflows/drift-cleanup.yaml` runs `sst refresh` + `sst diff` nightly and reconciles drift (deleting Pulumi-tracked orphans) per active stage. Production reconciliation respects the GitHub `production` environment approval. Add new stages to its matrix when you stand them up.
-
-If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong - fix the code.
+- file order: constants, types, interfaces first. then exports and main logic. then private helpers used only in that file.
+- same kind of function sit together — all async in one run, then all plain. alphabetical inside group so eye find fast.
+- comment only key section. two lines max. no per-function docstring by default. if you need paragraph-long comment to say why workaround ok, code is wrong. fix code.
+- `key: value` object syntax. no shorthand.
+- one blank line before every `return`.
+- no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
+- look for existing interface first. many come straight from Vercel AI SDK or other library. do not make new type when library type fit. but do not force reuse either.
+- before say done: run package own `bun run check` (lint + types) and `bun run format` (prettier). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
