@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { readStoredAuth } from "../src/config.ts";
+import { gatewayUrlForDashboard, readStoredAuth } from "../src/config.ts";
 
 const savedEnv = {
   BROODS_TOKEN: process.env.BROODS_TOKEN,
@@ -38,4 +38,25 @@ test("BROODS_DASHBOARD_URL without BROODS_BASE_URL does not authenticate from en
   // A dev machine may hold real stored-file auth, so assert the env pair
   // alone never authenticates rather than expecting null outright.
   expect(auth?.token ?? null).not.toBe("env-only-token-sentinel");
+});
+
+test("gatewayUrlForDashboard pairs a dashboard host with its API host", () => {
+  expect(gatewayUrlForDashboard("https://dashboard.broods.app/")).toBe(
+    "https://gateway.broods.app",
+  );
+  expect(gatewayUrlForDashboard("https://dashboard.dev.broods.app")).toBe(
+    "https://gateway.dev.broods.app",
+  );
+});
+
+test("gatewayUrlForDashboard never guesses a host we do not own", () => {
+  // A self-hosted or custom domain must fall through to the URL that login
+  // advertises rather than a fabricated one.
+  expect(gatewayUrlForDashboard("https://dashboard.acme.com")).toBeUndefined();
+  expect(
+    gatewayUrlForDashboard("https://dashboard.broods.app.evil.com"),
+  ).toBeUndefined();
+  expect(gatewayUrlForDashboard("http://localhost:3000")).toBeUndefined();
+  expect(gatewayUrlForDashboard("https://broods.app")).toBeUndefined();
+  expect(gatewayUrlForDashboard("not a url")).toBeUndefined();
 });

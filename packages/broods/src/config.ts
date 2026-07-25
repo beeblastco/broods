@@ -10,6 +10,12 @@ export const PROJECT_DIR = "broods";
 export const GENERATED_DIR = "_generated";
 export const USER_CONFIG_PATH = join(homedir(), ".broods", "config.json");
 
+// Host naming we control, used only to pair a dashboard with its API origin
+// before login has advertised one. Not part of the public config surface.
+const BROODS_APEX_DOMAIN = "broods.app";
+const DASHBOARD_HOST_PREFIX = "dashboard";
+const GATEWAY_HOST_PREFIX = "gateway";
+
 export interface StoredAuthConfig {
   /**
    * Base URL of the Convex control plane serving the /v1/account/* routes
@@ -76,4 +82,27 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
 
 export function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+/**
+ * Guesses the API origin for a dashboard origin, but only for hosts we own and
+ * therefore know the naming convention of. Any other host — a self-hosted or
+ * custom domain — returns undefined so the caller waits for the base URL that
+ * login advertises instead of inventing one that would not resolve.
+ */
+export function gatewayUrlForDashboard(
+  dashboardUrl: string,
+): string | undefined {
+  try {
+    const url = new URL(dashboardUrl);
+    if (!url.hostname.startsWith(`${DASHBOARD_HOST_PREFIX}.`)) return undefined;
+    const rest = url.hostname.slice(DASHBOARD_HOST_PREFIX.length + 1);
+    if (rest !== BROODS_APEX_DOMAIN && !rest.endsWith(`.${BROODS_APEX_DOMAIN}`))
+      return undefined;
+    url.hostname = `${GATEWAY_HOST_PREFIX}.${rest}`;
+
+    return stripTrailingSlash(url.origin);
+  } catch {
+    return undefined;
+  }
 }
