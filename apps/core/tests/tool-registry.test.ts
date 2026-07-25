@@ -292,6 +292,7 @@ describe("createTools", () => {
       {
         subagent: {
           enabled: true,
+          mode: "ephemeral",
         },
       },
     );

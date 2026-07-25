@@ -484,7 +484,7 @@ describe("SubagentCoordinator", () => {
     expect(ephemeral.accountId).toBe("account_1");
   });
 
-  it("rejects coordinator-level conversation keys outside persistent mode", async () => {
+  it("rejects coordinator-level conversation keys in ephemeral mode", async () => {
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       {
@@ -496,6 +496,7 @@ describe("SubagentCoordinator", () => {
       {
         subagent: {
           enabled: true,
+          mode: "ephemeral",
         },
       },
       Date.now() + 1_000,

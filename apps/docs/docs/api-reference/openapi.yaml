@@ -3195,7 +3195,7 @@ components:
         mode:
           type: string
           enum: [ephemeral, persistent]
-          description: Child conversation persistence mode; omitted means `ephemeral`
+          description: Child conversation persistence mode; omitted means `persistent`
         stream:
           type: boolean
           default: false

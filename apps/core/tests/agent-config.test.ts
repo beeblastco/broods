@@ -2,9 +2,23 @@ import { describe, expect, it } from "bun:test";
 import {
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
+  resolveSubagentMode,
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
+  it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
+    expect(resolveSubagentMode({})).toBe("persistent");
+    expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(
+      "persistent",
+    );
+    expect(resolveSubagentMode({ subagent: { mode: "persistent" } })).toBe(
+      "persistent",
+    );
+    expect(resolveSubagentMode({ subagent: { mode: "ephemeral" } })).toBe(
+      "ephemeral",
+    );
+  });
+
   it("keeps subagent event streaming opt-in and validates the flag", () => {
     expect(normalizeAgentConfig({ subagent: { enabled: true } })).toEqual({
       subagent: { enabled: true },

@@ -14,6 +14,7 @@ import type { ToolSet } from "ai";
 import { isAccountToolId } from "../../shared/domain/account-tools.ts";
 import {
   isProviderToolName,
+  resolveSubagentMode,
   type AccountModelProviderName,
   type AgentConfig,
   type AgentToolConfig,
@@ -202,7 +203,7 @@ export async function createTools(
       tools,
       runSubagentTool({
         dispatchSubagents: context.dispatchSubagents,
-        mode: agentConfig.subagent.mode,
+        mode: resolveSubagentMode(agentConfig),
       }),
     );
   }

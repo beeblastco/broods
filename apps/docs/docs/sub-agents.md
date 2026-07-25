@@ -37,8 +37,8 @@ Defaults:
 
 - omit `subagent` or set `enabled: false` to disable `run_subagent`
 - omit `context` to use `"new"`
-- omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
-- set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
+- omit `mode` or set `"persistent"` to save subagent conversations to Convex and enable resuming
+- set `mode: "ephemeral"` for in-memory-only subagent conversations
 - omit `stream` or set `false` to keep child model/tool events private to the runtime
 - set `stream: true` to make each child's short-lived event replay attachable over WebSocket
 - use `allowed: []` to allow only virtual one-shot subagents
@@ -121,7 +121,7 @@ flowchart LR
   style CVX fill:#f9f,stroke:#333
 ```
 
-When `mode: "persistent"` is configured:
+Persistent is the default mode. When it is active:
 
 - subagent task prompts and generated subagent messages are persisted under the child `conversationKey`
 - the system generates a key with the `subagent-persistent-{uuid}` format for new conversations
@@ -130,7 +130,7 @@ When `mode: "persistent"` is configured:
 - resumed conversations load the existing child history from Convex and append the new prompt
 - inherited parent context remains request-local model context and is not copied into the child conversation
 
-Ephemeral mode is the default. It keeps child model context in memory only and continues to use runtime-generated keys.
+Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memory only, uses runtime-generated keys, and does not accept a `conversationKey`.
 
 ## Live Child Event Streaming
 

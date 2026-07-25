@@ -9,7 +9,10 @@ import type {
   SystemModelMessage,
   UserModelMessage,
 } from "ai";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  resolveSubagentMode,
+  type AgentConfig,
+} from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
@@ -109,7 +112,7 @@ export class SubagentCoordinator {
   ) {}
 
   private get isPersistentMode(): boolean {
-    return this.parentAgentConfig.subagent?.mode === "persistent";
+    return resolveSubagentMode(this.parentAgentConfig) === "persistent";
   }
 
   dispatch: RunSubagentDispatch = async (

@@ -494,6 +494,14 @@ export function isProviderToolName(toolName: string): boolean {
   );
 }
 
+// Persistent is the default so a child owns a durable conversation that can be
+// resumed and controlled; only an explicit "ephemeral" opts out.
+export function resolveSubagentMode(
+  config: AgentConfig,
+): "ephemeral" | "persistent" {
+  return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
+}
+
 export function normalizeAgentConfig(value: unknown): AgentConfig {
   if (value == null) {
     return {};
