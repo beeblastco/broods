@@ -231,6 +231,28 @@ describe("channel record resolution", () => {
     expect(response.statusCode).toBe(404);
   });
 
+  it("reaches an agent that configures the channel behind many that do not", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    // 30 agents with no telegram block, then the one that owns the bot token.
+    const noise: AgentRecord[] = Array.from(
+      { length: 30 },
+      (_unused, index) => ({
+        ...SUPPORT_AGENT,
+        agentId: `agent_noise_${index}`,
+        config: {},
+      }),
+    );
+    const response = await route({
+      records: {},
+      runs,
+      path: "/webhooks/acct_test/telegram",
+      agents: [...noise, SUPPORT_AGENT],
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
   it("layers the record's instructions, workspaces and policies onto the run", async () => {
     const runs: ChannelInboundEvent[] = [];
     await route({
@@ -581,6 +603,7 @@ async function route(options: {
   policyDenies?: boolean;
   policyMode?: "enforce" | "audit";
   replies?: string[];
+  agents?: AgentRecord[];
   channelRecordLoader?: (
     accountId: string,
     platform: string,
@@ -625,7 +648,7 @@ async function route(options: {
     }
     return originalFetch(input, init);
   }) as typeof fetch;
-  const agents = [SUPPORT_AGENT, SALES_AGENT];
+  const agents = options.agents ?? [SUPPORT_AGENT, SALES_AGENT];
   const router = createIncomingEventRouter({
     accountLoader: async () => ACCOUNT,
     agentLoader: async (_accountId, agentId) =>

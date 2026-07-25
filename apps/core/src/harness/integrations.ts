@@ -758,19 +758,35 @@ async function findChannelCredentialHolder(
     });
     return null;
   }
-  const agents = listed
-    .filter((candidate) => candidate.status === "active")
-    .slice(0, CHANNEL_CREDENTIAL_CANDIDATE_LIMIT);
-
-  for (const candidate of agents) {
+  // Cap the agents that actually configure this channel, not the raw list — an
+  // account whose 30th agent owns the Slack app must still be reachable.
+  const candidates: Array<{ agent: AgentRecord; adapter: ChannelAdapter }> = [];
+  let truncated = false;
+  for (const candidate of listed) {
+    if (candidate.status !== "active") continue;
     const adapter = createChannelRegistry(
       candidate.config,
     ).webhookChannels.find(
       (channel) => channel.name === channelName && channel.canHandle(request),
     );
     if (!adapter) continue;
-    if (await adapter.authenticate(request)) {
-      return candidate;
+    if (candidates.length >= CHANNEL_CREDENTIAL_CANDIDATE_LIMIT) {
+      truncated = true;
+      break;
+    }
+    candidates.push({ agent: candidate, adapter });
+  }
+  if (truncated) {
+    logWarn("Channel credential candidates truncated", {
+      accountId,
+      channel: channelName,
+      limit: CHANNEL_CREDENTIAL_CANDIDATE_LIMIT,
+    });
+  }
+
+  for (const candidate of candidates) {
+    if (await candidate.adapter.authenticate(request)) {
+      return candidate.agent;
     }
   }
 
