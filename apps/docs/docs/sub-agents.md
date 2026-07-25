@@ -129,8 +129,25 @@ Persistent is the default mode. When it is active:
 - the parent agent can pass that key in future `run_subagent` calls to resume the child conversation
 - resumed conversations load the existing child history from Convex and append the new prompt
 - inherited parent context remains request-local model context and is not copied into the child conversation
+- the child run is admitted through the conversation coordinator, so it can be cancelled and steered like any other run
 
 Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memory only, uses runtime-generated keys, and does not accept a `conversationKey`.
+
+## Controlling A Running Child
+
+Persistent children are admitted through the same conversation coordinator as top-level runs, so they are addressed by the ordinary ingress endpoints — there is no subagent-specific control API. Send stop or steer to the **child's** `conversationKey`, which `run_subagent` returns alongside the `taskId`.
+
+- **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set
+- **steer** — queued events are merged into the child's next step, exactly as for a top-level run
+- **continue** — send a new `run_subagent` call with the child's `conversationKey` once the child has settled; the run resumes the stored history
+
+The parent's own dispatch of a child uses `reject`, so dispatching into a conversation that is still busy surfaces the conflict instead of stalling.
+
+:::caution
+Follow-ups queued against a **busy** child (ingress mode `followup` or `collect`) are durably accepted but are not auto-dispatched when the child settles — only top-level runs drain their queue today. Resume explicitly, as above, or steer instead of queueing.
+:::
+
+Ephemeral children cannot be controlled. They hold no durable conversation and take no owner generation, so there is nothing to fence a stop or steer against — this is the main reason persistent is the default.
 
 ## Live Child Event Streaming
 

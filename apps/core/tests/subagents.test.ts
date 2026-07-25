@@ -52,6 +52,10 @@ interface CoordinatorInternals {
     resuming: boolean;
   }>;
   startTask(task: unknown, parentContext?: unknown): void;
+  admitChildConversation(
+    task: unknown,
+    promptMessage: UserModelMessage,
+  ): Promise<number>;
 }
 
 describe("SubagentCoordinator", () => {
@@ -453,6 +457,74 @@ describe("SubagentCoordinator", () => {
     expect(resumed.resuming).toBe(true);
   });
 
+  it("admits a persistent child conversation to own a fencing generation", async () => {
+    const originalMutation = runtime.mutate;
+    const candidates: Record<string, unknown>[] = [];
+    runtime.mutate = mock(async (name: string, args: Record<string, unknown>) => {
+      candidates.push({ name: name, ...args });
+      return { outcome: "owner", ownerGeneration: 7 };
+    }) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 1_000,
+      { emit: mock(async () => {}) } as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    try {
+      const generation = await internals.admitChildConversation(
+        persistentChildTask(),
+        { role: "user", content: [{ type: "text", text: "research" }] },
+      );
+
+      expect(generation).toBe(7);
+      const candidate = candidates[0];
+      expect(candidate?.name).toBe("acceptIngress");
+      expect(candidate?.accountId).toBe("account_1");
+      expect(candidate?.agentId).toBe("agent_child");
+      expect(candidate?.conversationKey).toBe(
+        "acct:account_1:agent:agent_child:api:subagent-persistent-1",
+      );
+      // A busy child conversation must surface to the parent, never queue.
+      expect(candidate?.requestedMode).toBe("reject");
+      expect(candidate?.delivery).toMatchObject({
+        kind: "async",
+        publicEventId: "subagent~task_1",
+        publicConversationKey: "subagent-persistent-1",
+        statusUrl:
+          "/status/subagent~task_1?agentId=agent_child",
+      });
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
+  it("refuses to run a persistent child whose conversation is busy", async () => {
+    const originalMutation = runtime.mutate;
+    runtime.mutate = mock(async () => ({ outcome: "rejected" })) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 1_000,
+      { emit: mock(async () => {}) } as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    try {
+      await expect(
+        internals.admitChildConversation(persistentChildTask(), {
+          role: "user",
+          content: [{ type: "text", text: "research" }],
+        }),
+      ).rejects.toThrow("Subagent conversation is not available: rejected");
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
   it("carries the parent deployment scope into the ephemeral child session", async () => {
     const { createEphemeralChildSession } =
       await import("../src/harness/subagents.ts");
@@ -525,6 +597,23 @@ function completion(taskId: string, response: unknown): TestCompletion {
     conversationKey: `conversation_${taskId}`,
     status: "completed",
     response,
+  };
+}
+
+function persistentChildTask() {
+  return {
+    taskId: "subagent~task_1",
+    eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
+    agentId: "agent_child",
+    agentConfig: {},
+    publicConversationKey: "subagent-persistent-1",
+    conversationKey: "acct:account_1:agent:agent_child:api:subagent-persistent-1",
+    prompt: "research",
+    inheritedContext: false,
+    parentMessages: [],
+    parentEphemeralSystem: [],
+    persistent: true,
+    resuming: false,
   };
 }
 

@@ -33,6 +33,7 @@ import {
   createAgentHookDispatcher,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
+import { acceptIngress } from "./ingress.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -424,6 +425,16 @@ export class SubagentCoordinator {
       resuming: task.resuming,
     });
 
+    const promptMessage: UserModelMessage = {
+      role: "user",
+      content: [{ type: "text", text: task.prompt }],
+    };
+    // Persistent children run through the same conversation coordinator as
+    // top-level runs. Without an owner generation every steer and stop the
+    // session exposes is a silent no-op.
+    const ownerGeneration = task.persistent
+      ? await this.admitChildConversation(task, promptMessage)
+      : undefined;
     // Initialize an isolated child session using the generated conversation key.
     // Inherit the parent's deployment scope (endpoint/project/environment) so the
     // child's spans and logs publish to the same live dashboard subscription and
@@ -438,11 +449,8 @@ export class SubagentCoordinator {
       this.parentSession.endpointId,
       this.parentSession.projectSlug,
       this.parentSession.environmentSlug,
+      ownerGeneration,
     );
-    const promptMessage: UserModelMessage = {
-      role: "user",
-      content: [{ type: "text", text: task.prompt }],
-    };
     // `persistent` controls whether the child uses a real persisted Session or
     // the in-memory wrapper. Persistent mode writes the task prompt first so
     // the child model response and any tool messages append to that conversation.
@@ -457,37 +465,46 @@ export class SubagentCoordinator {
     const session = task.persistent
       ? childSession
       : createEphemeralChildSession(childSession, turnContext.system);
-    const stream = await runAgentLoop(
-      session,
-      turnContext,
-      task.agentConfig,
-      {
-        onFinalText: async (response) => {
-          finalResponse = response;
+    try {
+      const stream = await runAgentLoop(
+        session,
+        turnContext,
+        task.agentConfig,
+        {
+          onFinalText: async (response) => {
+            finalResponse = response;
+          },
+          onErrorText: async (error) => {
+            throw new Error(error);
+          },
+          onApprovalRequired: async () => {
+            approvalRequested = true;
+          },
         },
-        onErrorText: async (error) => {
-          throw new Error(error);
-        },
-        onApprovalRequired: async () => {
-          approvalRequested = true;
-        },
-      },
-      subagentParent ? { subagentParent } : {},
-    );
+        subagentParent ? { subagentParent } : {},
+      );
 
-    if (publisher) {
-      await pipeSubagentNatsStream(stream, publisher);
-    } else {
-      await stream.consumeStream();
-    }
-    if (approvalRequested) {
-      throw new Error("Subagent task stopped for tool approval");
-    }
-    if (stream.didFail()) {
-      throw new Error(stream.failureText() ?? "Subagent task failed");
-    }
-    if (finalResponse === undefined) {
-      throw new Error("Subagent task returned an empty response");
+      if (publisher) {
+        await pipeSubagentNatsStream(stream, publisher);
+      } else {
+        await stream.consumeStream();
+      }
+      if (approvalRequested) {
+        throw new Error("Subagent task stopped for tool approval");
+      }
+      if (stream.didFail()) {
+        throw new Error(stream.failureText() ?? "Subagent task failed");
+      }
+      if (finalResponse === undefined) {
+        throw new Error("Subagent task returned an empty response");
+      }
+    } catch (error) {
+      // Release ownership so the conversation is steerable again, and so a
+      // stopped child does not hold its lease until expiry.
+      await childSession.settleIngress("failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
 
     await markAsyncAgentResultCompleted({
@@ -502,6 +519,46 @@ export class SubagentCoordinator {
       status: "completed",
       response: finalResponse,
     });
+    // Settling hands the conversation to whoever queued behind this run, so it
+    // must come after the result is durably recorded above.
+    await childSession.settleIngress("completed", { result: finalResponse });
+  }
+
+  /**
+   * Admits one persistent child conversation into the durable coordinator and
+   * returns its fencing token. A busy conversation is refused rather than
+   * queued so the parent sees the conflict instead of stalling on a dispatch.
+   */
+  private async admitChildConversation(
+    task: ResolvedSubagentTask,
+    promptMessage: UserModelMessage,
+  ): Promise<number> {
+    const admission = await acceptIngress({
+      accountId: requireParentAccountId(this.parentSession),
+      agentId: task.agentId,
+      eventId: task.eventId,
+      conversationKey: task.conversationKey,
+      events: [promptMessage],
+      requestedMode: "reject",
+      idempotencyKey: task.eventId,
+      delivery: {
+        kind: "async",
+        publicEventId: task.taskId,
+        publicConversationKey: task.publicConversationKey,
+        statusUrl: subagentStatusPath(task),
+      },
+      agentConfig: task.agentConfig,
+    });
+    if (
+      admission.outcome !== "owner" ||
+      admission.ownerGeneration === undefined
+    ) {
+      throw new Error(
+        `Subagent conversation is not available: ${admission.outcome}`,
+      );
+    }
+
+    return admission.ownerGeneration;
   }
 
   private async createChildTurnContext(
@@ -716,9 +773,13 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
     agentId: task.agentId,
     ...(task.description ? { description: task.description } : {}),
     conversationKey: task.publicConversationKey,
-    statusPath: `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
+    statusPath: subagentStatusPath(task),
     status: "running",
   };
+}
+
+function subagentStatusPath(task: ResolvedSubagentTask): string {
+  return `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
 }
 
 function completionToParentMessage(
