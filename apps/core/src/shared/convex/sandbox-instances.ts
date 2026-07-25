@@ -1,9 +1,10 @@
 /**
- * Storage mirror writes for sandbox instance lifecycle. The account-manage
- * suspend/resume/terminate endpoints call these after the provider lifecycle
- * call succeeds so the dashboard's live sandboxInstances query reflects the new
- * state. Fire-and-forget safe — gated on convex mode and wrapped so a mirror
- * failure never fails the lifecycle request. See usage.ts for the same pattern.
+ * Storage mirror writes for sandbox instance lifecycle, plus the ownership read
+ * those endpoints authorize against. The account-manage suspend/resume/terminate
+ * endpoints call the writes after the provider lifecycle call succeeds so the
+ * dashboard's live sandboxInstances query reflects the new state. Fire-and-forget
+ * safe — gated on convex mode and wrapped so a mirror failure never fails the
+ * lifecycle request. See usage.ts for the same pattern.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -128,6 +129,29 @@ export async function setSandboxInstanceStatus(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * Whether the registry row core wrote when it reserved this instance still binds the
+ * reservation key to this account and sandbox config — the only source of truth the
+ * lifecycle endpoints authorize against. Unlike the mirror writes this read is not
+ * fire-and-forget: a failure must surface, never read as a denied reservation.
+ */
+export async function sandboxInstanceIsControllable(
+  accountId: string,
+  sandboxConfigId: string,
+  reservationKey: string,
+): Promise<boolean> {
+  const controllable = await getConvexClient().query(
+    internal.sandboxInstances.isControllable,
+    {
+      accountId: accountId as any,
+      sandboxConfigId: sandboxConfigId as any,
+      reservationKey,
+    },
+  );
+
+  return controllable === true;
 }
 
 /**

@@ -408,8 +408,14 @@ export const sandboxInstancesFields = {
   /** Provider-side id: workdir `sbx_…` / MicroVM `microvmId` / daytona id / vercel name. */
   externalId: v.string(),
   name: v.string(),
+  /**
+   * `suspending` is the dashboard-owned transition: the suspend action parks the row
+   * there while broods frees the provider compute, so the UI can lock the toggle until
+   * a terminal state lands. broods only ever writes the terminal states.
+   */
   status: v.union(
     v.literal("running"),
+    v.literal("suspending"),
     v.literal("suspended"),
     v.literal("terminating"),
     v.literal("error"),

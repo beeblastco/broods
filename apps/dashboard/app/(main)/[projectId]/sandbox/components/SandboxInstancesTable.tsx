@@ -5,9 +5,18 @@
  * status toolbar filters the list, results paginate client-side, and each row
  * shows the instance's provider/status/size/image and a suspend↔resume toggle;
  * clicking a row opens the detail sheet (snapshot + terminate live there).
+ * Suspending is confirmed first and locks the toggle until the instance settles.
  */
 
 import { Button } from "@/app/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import {
   Select,
@@ -49,6 +58,7 @@ interface Props {
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
   { value: "all", label: "All statuses" },
   { value: "running", label: "Running" },
+  { value: "suspending", label: "Suspending" },
   { value: "suspended", label: "Suspended" },
   { value: "terminating", label: "Terminating" },
   { value: "error", label: "Error" },
@@ -63,6 +73,9 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
   const searchParams = useSearchParams();
 
   const [selected, setSelected] = useState<Doc<"sandboxInstances"> | null>(
+    null,
+  );
+  const [confirming, setConfirming] = useState<Doc<"sandboxInstances"> | null>(
     null,
   );
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -104,6 +117,8 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
 
+  // Resuming is cheap and reversible, so it runs straight from the toggle; suspending
+  // discards the instance's live state and goes through `confirming` first.
   async function toggle(
     instance: Doc<"sandboxInstances">,
     nextRunning: boolean,
@@ -117,6 +132,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
         reservationKey: instance.reservationKey,
       };
       await (nextRunning ? resume(args) : suspend(args));
+      setConfirming(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Lifecycle action failed");
     } finally {
@@ -342,7 +358,9 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
                     <Switch
                       checked={running}
                       disabled={!toggleable}
-                      onCheckedChange={(next) => toggle(instance, next)}
+                      onCheckedChange={(next) =>
+                        next ? toggle(instance, true) : setConfirming(instance)
+                      }
                       aria-label={running ? "Suspend" : "Resume"}
                     />
                   </td>
@@ -408,6 +426,44 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
           viewed but not controlled here.
         </p>
       )}
+
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(open) => {
+          if (!open && pendingId === null) setConfirming(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Suspend {confirming?.name}?</DialogTitle>
+            <DialogDescription>
+              Suspending frees the sandbox&apos;s compute. Running processes are
+              stopped and any in-flight agent turn or background job on this
+              instance is dropped — it comes back reset. Files on the workspace
+              disk are kept, and you can resume once it has fully suspended.
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={pendingId !== null}
+              onClick={() => setConfirming(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={pendingId !== null}
+              onClick={() => confirming && toggle(confirming, false)}
+            >
+              {pendingId === confirming?._id ? "Suspending…" : "Suspend"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {selected && (
         <SandboxInstanceSheet

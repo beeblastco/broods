@@ -43,10 +43,10 @@ export function instanceStatusBadge(status: Doc<"sandboxInstances">["status"]) {
         suspended
       </Badge>
     );
-  if (status === "terminating")
+  if (status === "suspending" || status === "terminating")
     return (
       <Badge variant="warning" className="text-xs">
-        terminating
+        {status}
       </Badge>
     );
 

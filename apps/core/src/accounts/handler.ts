@@ -20,6 +20,7 @@ import {
 } from "../shared/convex/sandbox-audit-events.ts";
 import {
   removeSandboxInstance,
+  sandboxInstanceIsControllable,
   setSandboxInstanceStatus,
 } from "../shared/convex/sandbox-instances.ts";
 import { upsertSandboxSnapshot } from "../shared/convex/sandbox-snapshots.ts";
@@ -46,10 +47,6 @@ import {
   TERMINAL_TICKET_TTL_MS,
   TERMINAL_WEBSOCKET_PATH,
 } from "../shared/terminal-ticket.ts";
-import {
-  workspaceNamespace,
-  workspaceNamespaceOwnsReservationKey,
-} from "../shared/workspaces.ts";
 import {
   deleteAccountRuntimeData,
   deleteAccountSkills,
@@ -205,12 +202,11 @@ async function handleSandboxLifecycle(
   if (!reservationKey) {
     return errorResponse(400, "reservationKey is required");
   }
+  // The registry row core wrote when it reserved the instance is the ownership record.
+  // Deriving it from the config instead would strand a live sandbox the moment that
+  // config changes (a CLI sync dropping `persistent`, a new `options.reservationKey`).
   if (
-    !(await sandboxReservationBelongsToAccount(
-      accountId,
-      record.config,
-      reservationKey,
-    ))
+    !(await sandboxInstanceIsControllable(accountId, sandboxId, reservationKey))
   ) {
     return errorResponse(
       403,
@@ -512,29 +508,6 @@ async function handleSandboxLifecycle(
   await audit("ok", { status: "terminating" });
 
   return jsonResponse(200, { status: "terminated" });
-}
-
-async function sandboxReservationBelongsToAccount(
-  accountId: string,
-  config: { persistent?: boolean; options?: Record<string, unknown> },
-  reservationKey: string,
-): Promise<boolean> {
-  if (config.persistent !== true) return false;
-  const options = isPlainObject(config.options) ? config.options : {};
-  if (
-    typeof options.reservationKey === "string" &&
-    options.reservationKey.trim() === reservationKey
-  ) {
-    return true;
-  }
-
-  const workspaces = await getStorage().workspaceConfigs.list(accountId);
-  return workspaces.some((workspace) =>
-    workspaceNamespaceOwnsReservationKey(
-      workspaceNamespace(accountId, workspace.workspaceId),
-      reservationKey,
-    ),
-  );
 }
 
 async function deleteAccountResponse(
