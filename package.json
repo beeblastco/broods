@@ -11,7 +11,8 @@
     "packages/*"
   ],
   "overrides": {
-    "webpack": "5.105.0"
+    "webpack": "5.105.0",
+    "@types/node": "26.1.1"
   },
   "scripts": {
     "build": "bun run --filter @broods/core build",
