@@ -21,33 +21,31 @@ import { defineAgent, env } from "broods";
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    hooks: {
-      webhooks: [
-        {
-          enabled: true,
-          url: "https://example.com/agent-events",
-          secret: env.WEBHOOK_SECRET,
-          events: [
-            "agent.started",
-            "tool.call.started",
-            "tool.call.finished",
-            "tool.result",
-            "subagent.task.finished",
-            "agent.finished",
-            "agent.failed",
-          ],
-        },
-        {
-          enabled: true,
-          url: "https://audit.example.com/agent-events",
-          secret: env.AUDIT_WEBHOOK_SECRET,
-          events: ["agent.failed"],
-        },
-      ],
-    },
+  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  hooks: {
+    webhooks: [
+      {
+        enabled: true,
+        url: "https://example.com/agent-events",
+        secret: env.WEBHOOK_SECRET,
+        events: [
+          "agent.started",
+          "tool.call.started",
+          "tool.call.finished",
+          "tool.result",
+          "subagent.task.finished",
+          "agent.finished",
+          "agent.failed",
+        ],
+      },
+      {
+        enabled: true,
+        url: "https://audit.example.com/agent-events",
+        secret: env.AUDIT_WEBHOOK_SECRET,
+        events: ["agent.failed"],
+      },
+    ],
   },
 });
 ```

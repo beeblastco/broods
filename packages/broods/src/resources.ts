@@ -253,7 +253,7 @@ export type AnyChannelDefinition =
 
 /**
  * Per-agent workspace mount with an optional sandbox override. A bare
- * `Workspace(...)` inherits the agent-level sandbox; the object form lets
+ * `defineWorkspace(...)` inherits the agent-level sandbox; the object form lets
  * a single workspace pin its own sandbox, or set `sandbox: null` to force the
  * workspace read-only (no compute attached).
  */
@@ -265,7 +265,7 @@ export interface AgentWorkspaceRefInput {
 export type AgentWorkspaceInput = WorkspaceResource | AgentWorkspaceRefInput;
 
 /**
- * `subagent` block where `allowed` may reference other `Agent(...)`
+ * `subagent` block where `allowed` may reference other `defineAgent(...)`
  * resources directly; the compiler rewrites them to agent names and the backend
  * resolves those to deploy-time agent ids.
  */
@@ -534,12 +534,12 @@ export const env: EnvAccessor = new Proxy(
 );
 
 /**
- * Shared builder behind every resource helper below. The public helpers are thin,
- * per-kind typed front doors: each pins its `kind` (the discriminant the
+ * Shared builder behind every `define*` helper below. The public helpers are
+ * thin, per-kind typed front doors: each pins its `kind` (the discriminant the
  * sync/codegen pipeline switches on) and splits the flat authoring input back
  * into the `{ name, description?, config }` shape the manifest wire format uses.
  */
-function resource<
+function defineResource<
   const Kind extends ResourceKind,
   const Name extends string,
   Config,
@@ -558,7 +558,7 @@ function resource<
   };
 }
 
-function channel<const Type extends ChannelType, Config>(
+function defineChannel<const Type extends ChannelType, Config>(
   type: Type,
   config: Config & ChannelIdentityInput,
 ): ChannelDefinition<Type, Config> {
@@ -575,66 +575,80 @@ function channel<const Type extends ChannelType, Config>(
   };
 }
 
-export function TelegramChannel(
+export function defineTelegramChannel(
   config: TelegramChannelInput,
 ): TelegramChannelDefinition {
-  return channel("telegram", config);
+  return defineChannel("telegram", config);
 }
 
-export function GitHubChannel(
+export function defineGitHubChannel(
   config: GitHubChannelInput,
 ): GitHubChannelDefinition {
-  return channel("github", config);
+  return defineChannel("github", config);
 }
 
-export function SlackChannel(
+export function defineSlackChannel(
   config: SlackChannelInput,
 ): SlackChannelDefinition {
-  return channel("slack", config);
+  return defineChannel("slack", config);
 }
 
-export function DiscordChannel(
+export function defineDiscordChannel(
   config: DiscordChannelInput,
 ): DiscordChannelDefinition {
-  return channel("discord", config);
+  return defineChannel("discord", config);
 }
 
-export function PancakeChannel(
+export function definePancakeChannel(
   config: PancakeChannelInput,
 ): PancakeChannelDefinition {
-  return channel("pancake", config);
+  return defineChannel("pancake", config);
 }
 
-export function ZaloChannel(config: ZaloChannelInput): ZaloChannelDefinition {
-  return channel("zalo", config);
+export function defineZaloChannel(
+  config: ZaloChannelInput,
+): ZaloChannelDefinition {
+  return defineChannel("zalo", config);
 }
 
-export function Project(config: BroodsProjectConfig): BroodsConfigDefinition {
+export function defineBroods(
+  config: BroodsProjectConfig,
+): BroodsConfigDefinition {
   return { [CONFIG_MARKER]: true, config: config };
 }
 
-export function Agent<const Name extends string>(
+export function defineAgent<const Name extends string>(
   input: ResourceInput<Name, AgentDefinitionConfig>,
 ): AgentResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource("agent", name, description, config as AgentDefinitionConfig);
+  return defineResource(
+    "agent",
+    name,
+    description,
+    config as AgentDefinitionConfig,
+  );
 }
 
-export function Workspace<const Name extends string>(
+export function defineWorkspace<const Name extends string>(
   input: ResourceInput<Name, WorkspaceConfig>,
 ): WorkspaceResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource("workspace", name, description, config as WorkspaceConfig);
+  return defineResource(
+    "workspace",
+    name,
+    description,
+    config as WorkspaceConfig,
+  );
 }
 
-export function Sandbox<const Name extends string>(
+export function defineSandbox<const Name extends string>(
   input: ResourceInput<Name, SandboxDefinitionConfig>,
 ): SandboxResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource(
+  return defineResource(
     "sandbox",
     name,
     description,
@@ -642,38 +656,58 @@ export function Sandbox<const Name extends string>(
   );
 }
 
-export function Skill<const Name extends string>(
+export function defineSkill<const Name extends string>(
   input: ResourceInput<Name, SkillDefinitionConfig>,
 ): SkillResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource("skill", name, description, config as SkillDefinitionConfig);
+  return defineResource(
+    "skill",
+    name,
+    description,
+    config as SkillDefinitionConfig,
+  );
 }
 
 // `description` is the model-facing text, so it stays inside the tool config
 // rather than becoming the resource-level human description.
-export function Tool<const Name extends string>(
+export function defineTool<const Name extends string>(
   input: { name: Name } & ToolDefinitionConfig,
 ): ToolResource<Name> {
   const { name, ...config } = input;
 
-  return resource("tool", name, undefined, config as ToolDefinitionConfig);
+  return defineResource(
+    "tool",
+    name,
+    undefined,
+    config as ToolDefinitionConfig,
+  );
 }
 
-export function Policy<const Name extends string>(
+export function definePolicy<const Name extends string>(
   input: ResourceInput<Name, PolicyDefinitionConfig>,
 ): PolicyResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource("policy", name, description, config as PolicyDefinitionConfig);
+  return defineResource(
+    "policy",
+    name,
+    description,
+    config as PolicyDefinitionConfig,
+  );
 }
 
-export function Cron<const Name extends string>(
+export function defineCron<const Name extends string>(
   input: ResourceInput<Name, CronDefinitionConfig>,
 ): CronResource<Name> {
   const { name, description, ...config } = input;
 
-  return resource("cron", name, description, config as CronDefinitionConfig);
+  return defineResource(
+    "cron",
+    name,
+    description,
+    config as CronDefinitionConfig,
+  );
 }
 
 export function isResource(value: unknown): value is AnyResource {

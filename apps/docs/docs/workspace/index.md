@@ -61,19 +61,15 @@ import {
 
 export const lambdaSandbox = defineSandbox({
   name: "default",
-  config: {
-    provider: "lambda",
-    network: { mode: "allow-all" },
-    permissionMode: "ask",
-  },
+  provider: "lambda",
+  network: { mode: "allow-all" },
+  permissionMode: "ask",
 });
 
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    isolation: true,
-  },
+  storage: { provider: "s3" },
+  isolation: true,
 });
 
 export const slack = defineSlackChannel({
@@ -91,17 +87,15 @@ export const github = defineGitHubChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    agent: { system: "You are a helpful assistant." },
-    channels: [slack, github],
-    sandbox: lambdaSandbox,
-    workspaces: [
-      notes, // inherit agent sandbox
-      { workspace: notes, sandbox: null }, // read-only, S3-direct
-    ],
-  },
+  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  agent: { system: "You are a helpful assistant." },
+  channels: [slack, github],
+  sandbox: lambdaSandbox,
+  workspaces: [
+    notes, // inherit agent sandbox
+    { workspace: notes, sandbox: null }, // read-only, S3-direct
+  ],
 });
 ```
 
@@ -225,9 +219,7 @@ Use no isolation for a deliberately global workspace:
 ```ts
 export const companyKnowledge = defineWorkspace({
   name: "company-knowledge",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 ```
 
@@ -248,10 +240,8 @@ boundaries:
 ```ts
 export const supportWorkspace = defineWorkspace({
   name: "support",
-  config: {
-    storage: { provider: "s3" },
-    isolation: true,
-  },
+  storage: { provider: "s3" },
+  isolation: true,
 });
 
 export const slack = defineSlackChannel({

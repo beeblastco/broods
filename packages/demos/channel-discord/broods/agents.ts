@@ -10,20 +10,18 @@ export const discord = defineDiscordChannel({
 
 export const agent = defineAgent({
   name: "discord-channel-agent",
-  config: {
-    provider: {
-      custom: {
-        apiKey: env.AI_API_KEY,
-        base_url: env.AI_BASE_URL,
-      },
+  provider: {
+    custom: {
+      apiKey: env.AI_API_KEY,
+      base_url: env.AI_BASE_URL,
     },
-    model: {
-      provider: "custom",
-      modelId: "Qwen3.6-27B",
-    },
-    agent: {
-      system: "You are a concise Discord assistant.",
-    },
-    channels: [discord],
   },
+  model: {
+    provider: "custom",
+    modelId: "Qwen3.6-27B",
+  },
+  agent: {
+    system: "You are a concise Discord assistant.",
+  },
+  channels: [discord],
 });

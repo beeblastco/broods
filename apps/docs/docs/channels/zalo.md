@@ -16,9 +16,7 @@ export const zalo = defineZaloChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [zalo],
-  },
+  channels: [zalo],
 });
 ```
 

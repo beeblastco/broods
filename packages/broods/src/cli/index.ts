@@ -1618,16 +1618,16 @@ function isGeneratedPath(path: string): boolean {
 
 function starterAgent(): string {
   return (
-    `import { Agent, Sandbox, env } from "broods";\n\n` +
+    `import { defineAgent, defineSandbox, env } from "broods";\n\n` +
     `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
-    `export const lambdaSandbox = Sandbox({\n` +
+    `export const lambdaSandbox = defineSandbox({\n` +
     `  name: "lambda-sandbox",\n` +
     `  provider: "lambda",\n` +
     `  network: { mode: "deny-all" },\n` +
     `  permissionMode: "bypass",\n` +
     `  timeout: 60,\n` +
     `});\n\n` +
-    `export const myAgent = Agent({\n` +
+    `export const myAgent = defineAgent({\n` +
     `  name: "my-agent",\n` +
     `  provider: {\n` +
     `    openai: { apiKey: env.OPENAI_API_KEY },\n` +

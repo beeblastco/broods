@@ -1059,7 +1059,7 @@ function normalizeAgentPolicyConfig(
               return (entry as PolicyResource).name;
             if (typeof entry === "string") return entry;
             throw new Error(
-              `Agent "${agentName}" config.policy.policies must contain Policy(...) resources or strings`,
+              `Agent "${agentName}" config.policy.policies must contain definePolicy(...) resources or strings`,
             );
           }),
         }
@@ -1180,7 +1180,7 @@ async function normalizeToolConfig(
 
 /**
  * Normalizes one agent `workspaces` entry into the manifest wire shape
- * `{ name, workspaceId, sandbox? }`. Accepts a bare `Workspace(...)`
+ * `{ name, workspaceId, sandbox? }`. Accepts a bare `defineWorkspace(...)`
  * resource or the `{ workspace, sandbox? }` override form; the workspace name
  * doubles as the `workspaceId` placeholder that the backend resolves to a real
  * id, and a per-workspace `sandbox` (resource, name, or `null`) is preserved.
@@ -1197,7 +1197,7 @@ function normalizeWorkspaceRef(
     const name = isResource(ref) ? ref.name : ref;
     if (typeof name !== "string") {
       throw new Error(
-        `Agent ${agentName} workspace ref must be a Workspace(...) resource or its name`,
+        `Agent ${agentName} workspace ref must be a defineWorkspace(...) resource or its name`,
       );
     }
     const normalized: Record<string, unknown> = {
@@ -1212,7 +1212,7 @@ function normalizeWorkspaceRef(
     return normalized;
   }
   throw new Error(
-    `Agent ${agentName} workspaces must be Workspace(...) resources or { workspace, sandbox } refs`,
+    `Agent ${agentName} workspaces must be defineWorkspace(...) resources or { workspace, sandbox } refs`,
   );
 }
 

@@ -19,32 +19,26 @@ import { defineSandbox, defineAgent, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "ask",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "ask",
+  timeout: 60,
 });
 
 export const persistentSandbox = defineSandbox({
   name: "persistent",
-  config: {
-    provider: "sandbox",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    persistent: true,
-    lifecycle: { idleTimeoutSeconds: 1800 },
-    options: { mountAwsS3Buckets: true },
-  },
+  provider: "sandbox",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  persistent: true,
+  lifecycle: { idleTimeoutSeconds: 1800 },
+  options: { mountAwsS3Buckets: true },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    sandbox: lambdaSandbox,
-    // ...
-  },
+  sandbox: lambdaSandbox,
+  // ...,
 });
 ```
 

@@ -87,7 +87,7 @@ export const slack = defineSlackChannel({
 
 export const support = defineAgent({
   name: "support",
-  config: { channels: [github, slack] },
+  channels: [github, slack],
 });
 ```
 
