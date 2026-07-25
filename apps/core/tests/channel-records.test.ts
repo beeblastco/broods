@@ -392,22 +392,40 @@ describe("channel record layering", () => {
     ]);
   });
 
-  it("withholds a tool here without granting one the agent lacks", () => {
+  it("withholds tools through denyTools, not by editing config.tools", () => {
     const merged = applyChannelRecord(
       base,
       channelRecord({
         platform: "slack",
         config: {
           agentBindings: [{ agentId: "a" }],
-          denyTools: ["tavilySearch", "googleSearch"],
+          denyTools: ["bash", "tavilySearch"],
         },
       }),
       "slack",
     );
 
-    expect(merged.tools?.tavilySearch?.enabled).toBe(false);
-    // Naming a tool the agent never had only ever disables it.
-    expect(merged.tools?.googleSearch?.enabled).toBe(false);
+    // config.tools only ever names provider or account tools — writing "bash"
+    // into it throws "not a supported tool" and kills the whole run, so the
+    // deny list stays separate and is applied to the built tool set instead.
+    expect(merged.denyTools).toEqual(["bash", "tavilySearch"]);
+    expect(merged.tools).toEqual(base.tools);
+  });
+
+  it("unions the deny list with one already on the agent", () => {
+    const merged = applyChannelRecord(
+      { ...base, denyTools: ["bash"] },
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          denyTools: ["bash", "grep"],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.denyTools).toEqual(["bash", "grep"]);
   });
 
   it("applies the record's workspace scope to the active channel", () => {

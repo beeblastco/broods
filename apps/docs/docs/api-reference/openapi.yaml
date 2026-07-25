@@ -3085,7 +3085,10 @@ components:
         denyTools:
           type: array
           items: { type: string }
-          description: Tools withheld in this channel. Narrowing only.
+          description: >-
+            Tool names withheld in this channel, applied after the tool set is
+            built — so it also covers sandbox tools (bash, read, …) that
+            config.tools cannot name. Narrowing only; unknown names are ignored.
         threadPolicy:
           type: string
           enum: [always-thread, inline]

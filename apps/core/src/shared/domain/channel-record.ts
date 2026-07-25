@@ -12,7 +12,6 @@ import type {
   AgentBehaviorConfig,
   AgentChannelWorkspaceScope,
   AgentConfig,
-  AgentToolsConfig,
   AgentWorkspaceRef,
 } from "./agent-config.ts";
 import type { AgentPolicyMode } from "./agent-policy.ts";
@@ -132,7 +131,9 @@ export function applyChannelRecord(
     ]),
   ];
   const policyMode = channelConfig.policyMode ?? config.policy?.mode;
-  const tools = withheldTools(config.tools, channelConfig.denyTools);
+  const denyTools = channelConfig.denyTools?.length
+    ? [...new Set([...(config.denyTools ?? []), ...channelConfig.denyTools])]
+    : undefined;
 
   return {
     ...config,
@@ -157,7 +158,7 @@ export function applyChannelRecord(
           },
         }
       : {}),
-    ...(tools ? { tools } : {}),
+    ...(denyTools ? { denyTools } : {}),
     ...(channelConfig.workspaceScope && isPlainObject(channelSettings)
       ? {
           channels: {
@@ -296,19 +297,6 @@ function mergeWorkspaceRefs(
     ...(agentRefs ?? []),
     ...channelRefs.filter((ref) => !taken.has(ref.name)),
   ];
-}
-
-function withheldTools(
-  tools: AgentToolsConfig | undefined,
-  denyTools: string[] | undefined,
-): AgentToolsConfig | undefined {
-  if (!denyTools?.length) return undefined;
-  const withheld: AgentToolsConfig = { ...tools };
-  for (const toolName of denyTools) {
-    withheld[toolName] = { ...withheld[toolName], enabled: false };
-  }
-
-  return withheld;
 }
 
 const CHANNEL_CONFIG_KEYS = [

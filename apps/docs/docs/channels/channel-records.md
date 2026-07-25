@@ -54,13 +54,18 @@ reading an agent still tells you its ceiling.
 | `workspaces`     | Unioned; the agent's own ref wins on a mount-name clash           |
 | `policyIds`      | Unioned with the agent's                                          |
 | `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
-| `denyTools`      | Withholds a tool here; naming an unknown tool only disables it    |
+| `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
 | `workspaceScope` | Overrides the channel's scope (`channel` or `conversation`)       |
 | `threadPolicy`   | `always-thread` or `inline`                                       |
 | `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
 | `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
 
 Provider, model and credentials stay on the agent and are never touched.
+
+`denyTools` is applied to the finished tool set rather than to `config.tools`,
+so it can withhold sandbox tools such as `bash` and `read` — which are derived
+from the attached workspaces and never appear in `config.tools`. Naming a tool
+the agent does not have is ignored.
 
 ## Creating a record
 

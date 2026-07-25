@@ -169,7 +169,11 @@ export interface ChannelRecordConfig {
   policyIds?: string[];
   /** Enforcement stage here. `audit` watches a rule before it refuses anyone. */
   policyMode?: "enforce" | "audit";
-  /** Tools to withhold here. Narrowing only. */
+  /**
+   * Tool names withheld in this channel, applied after the tool set is built —
+   * so it also covers sandbox tools (`bash`, `read`, …) that `config.tools`
+   * cannot name. Narrowing only; unknown names are ignored.
+   */
   denyTools?: string[];
   threadPolicy?: "always-thread" | "inline";
   workspaceScope?: AgentChannelWorkspaceScope;

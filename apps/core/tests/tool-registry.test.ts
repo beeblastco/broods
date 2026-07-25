@@ -59,6 +59,20 @@ describe("createTools", () => {
     expect(urlContextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("withholds denied tools including sandbox ones config.tools cannot name", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const context = sandboxContext() as never;
+
+    const tools = await createTools(context, {
+      tools: { urlContext: {} },
+      denyTools: ["bash", "neverRegistered"],
+    });
+
+    // bash comes from the sandbox, not config.tools — naming it there throws
+    // "not a supported tool", so the deny list has to apply to the built set.
+    expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
+  });
+
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
