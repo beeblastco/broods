@@ -8,6 +8,9 @@ import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 export const AGENT_POLICY_ACTIONS = [
+  // Gates the turn itself, before any tool runs: "may this person address the
+  // agent here?". Everything below gates one action inside an admitted turn.
+  "agent.invoke",
   "tool.call",
   "workspace.read",
   "workspace.write",
@@ -19,7 +22,12 @@ export const AGENT_POLICY_ACTIONS = [
 export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
 export type AgentPolicyEffect = "allow" | "deny";
 export type AgentPolicyConditionOperator =
-  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
+  | "equals"
+  | "notEquals"
+  | "in"
+  | "notIn"
+  | "prefix"
+  | "contains";
 
 /**
  * One optional predicate on a policy rule.

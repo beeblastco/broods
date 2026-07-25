@@ -204,7 +204,8 @@ async function approvalStatus(
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
-    [string, { body: string }] | undefined;
+    | [string, { body: string }]
+    | undefined;
   return { payload: JSON.parse(call![1].body) };
 }
 
