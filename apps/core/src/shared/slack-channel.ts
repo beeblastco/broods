@@ -432,7 +432,7 @@ function createSlackActions(
                 taskDisplayMode: "plan",
               },
             );
-            return result.id;
+            return result?.id ?? null;
           },
         }
       : {}),
