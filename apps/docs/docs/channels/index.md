@@ -11,11 +11,17 @@ Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
 
 Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
 
-Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
+Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL includes the account and channel, and may pin an agent:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}
+{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}   # agent pinned in the URL
+{BROODS_BASE_URL}/webhooks/{accountId}/{channel}             # channel record chooses the agent
 ```
+
+A [channel record](channel-records.md) binds one real place — a Slack channel, a
+Discord channel, a repository — to an agent, so one provider app can drive a
+different agent per channel. Both URL shapes honour records; without one, the
+agent named in the URL runs, exactly as before.
 
 ## Runtime Flow
 
@@ -29,8 +35,10 @@ flowchart TD
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
+  Parse --> Record["channel record lookup<br/>(platform, externalId)"]
+  Record --> Gate["agent.invoke policy gate"]
   Parse -->|"response / ignore"| ProviderAck["provider response"]
-  Parse -->|"message"| Ack["provider ACK"]
+  Gate -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
   After --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
@@ -107,6 +115,8 @@ Every channel gets these behaviors from the shared pipeline, not from the adapte
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
 - **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
 - **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
+- **Channel records** — a run may be re-targeted to the agent a [channel record](channel-records.md) binds, with that record's instructions, workspaces and policies layered on.
+- **Tag gating** — when a policy denies `agent.invoke`, the refusal is posted in-channel and the turn never starts.
 
 ---
 
@@ -153,7 +163,8 @@ The normalized `InboundMessage` contains:
 - `conversationKey`: provider thread/chat/channel key used for persisted conversation state
 - `channelName`: adapter name
 - `content`: Vercel AI SDK `UserContent`
-- `source`: provider metadata needed for commands, replies, or diagnostics
+- `identity`: provider-neutral `ChannelIdentity` — `workspaceRef`, `channelId`, `threadId`, `actorId`, `actorName`. This is the part channel lookup and policy read.
+- `source`: provider metadata needed for commands, replies, or diagnostics. Stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 

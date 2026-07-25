@@ -20,6 +20,7 @@
  */
 
 import type {
+  AgentChannelWorkspaceScope,
   AgentConfig,
   AgentPolicyDocument,
   CreateCronInput,
@@ -138,6 +139,44 @@ export interface AccountPolicy {
   status: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * One real place a team talks — a Slack channel, a Discord channel, a repo —
+ * bound to an agent. The runtime reads it on the inbound webhook to decide who
+ * answers there and with what instructions, workspaces and policies.
+ */
+export interface AccountChannel {
+  accountId: string;
+  channelId: string;
+  platform: string;
+  externalId: string;
+  workspaceRef?: string;
+  name: string;
+  description?: string;
+  config: ChannelRecordConfig;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A channel record narrows and adds; it never grants capability the agent lacks. */
+export interface ChannelRecordConfig {
+  /** Appended after the agent's own system prompt. */
+  instructions?: string;
+  agentBindings: Array<{ agentId: string; isDefault?: boolean }>;
+  workspaces?: Array<{ name: string; workspaceId: string }>;
+  policyIds?: string[];
+  /** Enforcement stage here. `audit` watches a rule before it refuses anyone. */
+  policyMode?: "enforce" | "audit";
+  /** Tools to withhold here. Narrowing only. */
+  denyTools?: string[];
+  threadPolicy?: "always-thread" | "inline";
+  workspaceScope?: AgentChannelWorkspaceScope;
+  /** Images the agent may stand a sandbox up from for a thread here. */
+  sandboxImages?: string[];
+  /** Named groups of people, readable from policy conditions as `actorRoles`. */
+  tagRoles?: Array<{ roleId: string; actorIds: string[] }>;
 }
 
 /** Public uploaded-tool record returned by the tools routes. */
@@ -789,6 +828,66 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/policies/${encodeURIComponent(policyId)}`,
+    );
+    return result?.deleted ?? false;
+  }
+
+  async listChannels(): Promise<AccountChannel[]> {
+    const result = await this.request<{ channels: AccountChannel[] }>(
+      "GET",
+      "/v1/channels",
+    );
+    return result?.channels ?? [];
+  }
+
+  /** Bind one real chat channel to an agent. One active record per place. */
+  async createChannel(input: {
+    platform: string;
+    externalId: string;
+    workspaceRef?: string;
+    name: string;
+    description?: string;
+    config: ChannelRecordConfig;
+  }): Promise<AccountChannel> {
+    const result = await this.request<AccountChannel>(
+      "POST",
+      "/v1/channels",
+      input,
+    );
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/channels", 404, "Not found");
+    return result;
+  }
+
+  async getChannel(channelId: string): Promise<AccountChannel | null> {
+    return await this.request<AccountChannel>(
+      "GET",
+      `/v1/channels/${encodeURIComponent(channelId)}`,
+    );
+  }
+
+  /** PATCH a channel. `description: null` clears it. Returns null when it is gone. */
+  async updateChannel(
+    channelId: string,
+    patch: {
+      name?: string;
+      description?: string | null;
+      workspaceRef?: string | null;
+      config?: ChannelRecordConfig;
+      status?: string;
+    },
+  ): Promise<AccountChannel | null> {
+    return await this.request<AccountChannel>(
+      "PATCH",
+      `/v1/channels/${encodeURIComponent(channelId)}`,
+      patch,
+    );
+  }
+
+  async deleteChannel(channelId: string): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/channels/${encodeURIComponent(channelId)}`,
     );
     return result?.deleted ?? false;
   }
