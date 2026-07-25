@@ -99,6 +99,17 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       );
     }
     const reservation = await this.#acquireWithState(request);
+    try {
+      await this.#runLifecycle(
+        reservation.sandbox,
+        this.#workDir(request.reservationKey),
+      );
+    } catch (error) {
+      if (reservation.isFirstCreate) {
+        await this.release(request).catch(() => {});
+      }
+      throw error;
+    }
     request.abortSignal?.throwIfAborted();
     return reservation;
   }
@@ -121,6 +132,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       throw new Error("no reserved workdir sandbox for this Harness session");
     }
     const sandbox = await this.#reconnect(externalId);
+    await this.#runLifecycle(sandbox, this.#workDir(request.reservationKey));
     await saveSandboxInstance(
       "sandbox",
       request.reservationKey,

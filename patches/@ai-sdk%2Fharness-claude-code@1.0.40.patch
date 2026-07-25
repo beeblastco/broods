@@ -1,0 +1,70 @@
+diff --git a/dist/index.js b/dist/index.js
+index 2c7d0f52d7a6077de2978158f1ddd8ec5baa1fa2..0d758f2cf943396202367612a9ede06d35415668 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -501,10 +501,11 @@ function createClaudeCode(settings = {}) {
+       };
+       if (coords) {
+         try {
+-          const attachUrl = await sandboxSession.getPortUrl({
++          const attachBaseUrl = await sandboxSession.getPortUrl({
+             port: coords.port,
+             protocol: "ws"
+-          }) + `?agent_bridge_token=${encodeURIComponent(coords.token)}`;
++          });
++          const attachUrl = `${attachBaseUrl}${attachBaseUrl.includes("?") ? "&" : "?"}agent_bridge_token=${encodeURIComponent(coords.token)}`;
+           const attachChannel = new SandboxChannel({
+             connect: buildConnect(attachUrl),
+             outboundSchema: outboundMessageSchema,
+@@ -628,10 +629,11 @@ function createClaudeCode(settings = {}) {
+         })
+       });
+       void drainBridgeProcessStream(proc.stdout);
+-      const wsUrl = await sandboxSession.getPortUrl({
++      const bridgeBaseUrl = await sandboxSession.getPortUrl({
+         port: boundPort,
+         protocol: "ws"
+-      }) + `?agent_bridge_token=${encodeURIComponent(token)}`;
++      });
++      const wsUrl = `${bridgeBaseUrl}${bridgeBaseUrl.includes("?") ? "&" : "?"}agent_bridge_token=${encodeURIComponent(token)}`;
+       const channel = new SandboxChannel({
+         connect: buildConnect(wsUrl),
+         outboundSchema: outboundMessageSchema,
+diff --git a/src/claude-code-harness.ts b/src/claude-code-harness.ts
+index d8a74a6195755fd0cef9b910a38655ab155d4af0..575445f227a9a4c92fc48ec0758e2eac75bb228a 100644
+--- a/src/claude-code-harness.ts
++++ b/src/claude-code-harness.ts
+@@ -522,11 +522,11 @@ export function createClaudeCode(
+        */
+       if (coords) {
+         try {
+-          const attachUrl =
+-            (await sandboxSession.getPortUrl({
+-              port: coords.port,
+-              protocol: 'ws',
+-            })) + `?agent_bridge_token=${encodeURIComponent(coords.token)}`;
++          const attachBaseUrl = await sandboxSession.getPortUrl({
++            port: coords.port,
++            protocol: 'ws',
++          });
++          const attachUrl = `${attachBaseUrl}${attachBaseUrl.includes('?') ? '&' : '?'}agent_bridge_token=${encodeURIComponent(coords.token)}`;
+           const attachChannel: ClaudeCodeChannel = new SandboxChannel({
+             connect: buildConnect(attachUrl),
+             outboundSchema: outboundMessageSchema,
+@@ -683,11 +683,11 @@ export function createClaudeCode(
+       });
+       void drainBridgeProcessStream(proc.stdout);
+ 
+-      const wsUrl =
+-        (await sandboxSession.getPortUrl({
+-          port: boundPort,
+-          protocol: 'ws',
+-        })) + `?agent_bridge_token=${encodeURIComponent(token)}`;
++      const bridgeBaseUrl = await sandboxSession.getPortUrl({
++        port: boundPort,
++        protocol: 'ws',
++      });
++      const wsUrl = `${bridgeBaseUrl}${bridgeBaseUrl.includes('?') ? '&' : '?'}agent_bridge_token=${encodeURIComponent(token)}`;
+ 
+       const channel: ClaudeCodeChannel = new SandboxChannel({
+         connect: buildConnect(wsUrl),

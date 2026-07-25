@@ -1,10 +1,11 @@
 # `@broods/ai-sdk-sandbox`
 
 This package adapts an injected Broods sandbox driver to the experimental
-`HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.14`. It is a phase-1
-boundary package: the bounded Workdir driver in
-`apps/core/src/harness/sandbox/workdir-harness-driver.ts` now imports it, but the
-Broods core run loop still does not.
+`HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.39`. The bounded
+Workdir driver in `apps/core/src/harness/sandbox/workdir-harness-driver.ts`
+imports it, and `apps/core/src/harness/harness-agent-runtime.ts` constructs real
+Claude Code and Codex `HarnessAgent` instances with that driver. The Broods core
+run loop does not select those instances yet.
 
 ## Boundary
 
@@ -23,7 +24,7 @@ import { createBroodsSandbox, type BroodsSandboxDriver } from "@broods/ai-sdk-sa
 const driver: BroodsSandboxDriver = createCoreHarnessDriver(/* runtime context */);
 const sandbox = createBroodsSandbox({ driver });
 
-// A later runtime phase can pass `sandbox` to HarnessAgent settings.
+// Core passes `sandbox` to the selected Claude Code or Codex HarnessAgent.
 ```
 
 The driver creates or resumes a `BroodsSandboxDriverSession`. A create result
@@ -57,8 +58,13 @@ alone.
   them. `getPortUrl` reports a Harness capability error when port exposure is not
   supported.
 
+The live Workdir integration test creates real Firecracker guests, exercises the
+driver lifecycle, and bootstraps both upstream Claude Code and Codex bridges
+through Workdir's authenticated WebSocket proxy. The current upstream adapters
+append their bridge token with a literal `?`; Broods carries a narrow patch for
+the latest adapter versions so provider URLs that already contain Workdir's
+authentication query parameter are merged with `&`.
+
 This package deliberately does not define queueing, steering, cancellation,
-streaming, WebSocket control, or the live agent run loop. Those remain runtime
-integration concerns for later phases. The Workdir driver is likewise not wired
-into `HarnessAgent`; that live selection remains blocked on the queue/steer
-contract tracked in #71.
+streaming, or the live agent run loop. Those remain runtime integration concerns
+for later phases, including the queue/steer contract tracked in #71.

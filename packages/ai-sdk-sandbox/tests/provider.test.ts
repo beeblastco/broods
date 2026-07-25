@@ -77,6 +77,20 @@ describe("BroodsSandboxProvider", () => {
     expect(networkSession.description).toBe("Fake Broods sandbox");
     expect(networkSession.defaultWorkingDirectory).toBe("/workspace");
     expect(networkSession.ports).toEqual([4_321]);
+
+    const leasedSession = Object.create(networkSession, {
+      ports: { value: [4_322], enumerable: true },
+    }) as typeof networkSession;
+    expect(leasedSession.defaultWorkingDirectory).toBe("/workspace");
+    expect(leasedSession.ports).toEqual([4_322]);
+    await expect(
+      leasedSession.restricted().run({ command: "pwd" }),
+    ).resolves.toEqual({
+      exitCode: 0,
+      stdout: "/workspace\n",
+      stderr: "",
+    });
+
     expect(calls[0]).toEqual({
       operation: "createSession",
       input: { sessionId: "session-1", identity: "bootstrap-v1", abortSignal: signal },

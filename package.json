@@ -26,5 +26,9 @@
   },
   "devDependencies": {
     "typescript": "^7.0.2"
+  },
+  "patchedDependencies": {
+    "@ai-sdk/harness-claude-code@1.0.40": "patches/@ai-sdk%2Fharness-claude-code@1.0.40.patch",
+    "@ai-sdk/harness-codex@1.0.41": "patches/@ai-sdk%2Fharness-codex@1.0.41.patch"
   }
 }

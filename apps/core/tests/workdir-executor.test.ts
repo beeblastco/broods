@@ -23,6 +23,7 @@ interface FetchCall {
 let fetchCalls: FetchCall[] = [];
 // GET /v1/sandboxes/:id returns this state (drives reconnect/resume).
 let reconnectState = "running";
+let execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
 
 // The documented sandbox object shape (docs/API.md:124-152), trimmed.
 function sandboxObject(id: string, state: string): Record<string, unknown> {
@@ -71,7 +72,7 @@ const fetchMock = mock(
       );
     }
     if (method === "POST" && path.endsWith("/exec"))
-      return jsonResponse({ exit_code: 0, stdout: "workdir ok\n", stderr: "" });
+      return jsonResponse(execResult);
     if (method === "POST" && path.endsWith("/snapshot"))
       return jsonResponse({ id: "snap_1", image_id: "img_1" });
     if (method === "POST" && path.endsWith("/pause"))
@@ -169,6 +170,7 @@ beforeEach(() => {
   globalThis.fetch = fetchMock as unknown as typeof fetch;
   fetchCalls = [];
   reconnectState = "running";
+  execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
   storedSandboxExternalId = null;
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
@@ -758,6 +760,35 @@ describe("WorkdirSandboxExecutor background jobs", () => {
 });
 
 describe("WorkdirSandboxExecutor lifecycle", () => {
+  it("runs lifecycle hooks when Harness acquires or resumes a reservation", async () => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      onCreate: ["echo create > hook.txt"],
+      onResume: ["echo resume >> hook.txt"],
+      options: { workdirUrl: BASE },
+    });
+
+    await executor.acquireHarnessReservation({
+      reservationKey: "harness:session-1",
+    });
+    expect(
+      execCalls().some((call) =>
+        String(call.body?.cmd).includes("echo create > hook.txt"),
+      ),
+    ).toBe(true);
+
+    fetchCalls = [];
+    await executor.resumeHarnessReservation({
+      reservationKey: "harness:session-1",
+    });
+    expect(
+      execCalls().some((call) =>
+        String(call.body?.cmd).includes("echo resume >> hook.txt"),
+      ),
+    ).toBe(true);
+  });
+
   it("reports whether a Harness reservation won the existing atomic create claim", async () => {
     const executor = await newExecutor({ provider: "sandbox", persistent: true, options: { workdirUrl: BASE } });
 
@@ -783,6 +814,34 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
 
     expect(fetchCalls.some((call) => call.method === "DELETE" && call.path === "/v1/sandboxes/sbx_new")).toBe(true);
     expect(deleteSandboxInstanceMock).toHaveBeenCalledWith("sandbox", "harness:session-1", "sbx_new");
+    expect(storedSandboxExternalId).toBeNull();
+  });
+
+  it("cleans up a newly claimed reservation when its lifecycle fails", async () => {
+    execResult = {
+      exit_code: 1,
+      stdout: "",
+      stderr: "pnpm setup failed",
+    };
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      onCreate: ["npm install --global pnpm@10.34.5"],
+      options: { workdirUrl: BASE },
+    });
+
+    await expect(
+      executor.acquireHarnessReservation({
+        reservationKey: "harness:session-1",
+      }),
+    ).rejects.toThrow("pnpm setup failed");
+
+    expect(
+      fetchCalls.some(
+        (call) =>
+          call.method === "DELETE" && call.path === "/v1/sandboxes/sbx_new",
+      ),
+    ).toBe(true);
     expect(storedSandboxExternalId).toBeNull();
   });
 
