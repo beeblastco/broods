@@ -27,7 +27,7 @@ import type {
   UpdateCronInput,
   WorkspaceConfig,
 } from "./contracts.ts";
-import type { Cron, CronRun, Skill } from "./types.ts";
+import type { CronRecord, CronRun, SkillRecord } from "./types.ts";
 
 /**
  * Managed gateway host, matching the OpenAPI `servers` entry and
@@ -407,20 +407,20 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
-  async listCrons(): Promise<Cron[]> {
-    const result = await this.request<{ crons: Cron[] }>("GET", "/v1/crons");
+  async listCrons(): Promise<CronRecord[]> {
+    const result = await this.request<{ crons: CronRecord[] }>("GET", "/v1/crons");
     return result?.crons ?? [];
   }
 
-  async createCron(input: CreateCronInput): Promise<Cron> {
-    const result = await this.request<Cron>("POST", "/v1/crons", input);
+  async createCron(input: CreateCronInput): Promise<CronRecord> {
+    const result = await this.request<CronRecord>("POST", "/v1/crons", input);
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/crons", 404, "Not found");
     return result;
   }
 
-  async getCron(cronId: string): Promise<Cron | null> {
-    return await this.request<Cron>(
+  async getCron(cronId: string): Promise<CronRecord | null> {
+    return await this.request<CronRecord>(
       "GET",
       `/v1/crons/${encodeURIComponent(cronId)}`,
     );
@@ -429,8 +429,8 @@ export class BroodsAccountClient {
   async updateCron(
     cronId: string,
     patch: UpdateCronInput,
-  ): Promise<Cron | null> {
-    return await this.request<Cron>(
+  ): Promise<CronRecord | null> {
+    return await this.request<CronRecord>(
       "PATCH",
       `/v1/crons/${encodeURIComponent(cronId)}`,
       patch,
@@ -546,7 +546,7 @@ export class BroodsAccountClient {
       input,
     );
     if (!result)
-      throw new BroodsAccountApiError("POST", path, 404, "Workspace not found");
+      throw new BroodsAccountApiError("POST", path, 404, "WorkspaceRecord not found");
     return result.file;
   }
 
@@ -791,21 +791,21 @@ export class BroodsAccountClient {
   }
 
   /** All skills for the account, each with its `<accountId>/<name>` path. */
-  async listSkills(): Promise<Skill[]> {
-    const result = await this.request<{ skills: Skill[] }>("GET", "/v1/skills");
+  async listSkills(): Promise<SkillRecord[]> {
+    const result = await this.request<{ skills: SkillRecord[] }>("GET", "/v1/skills");
     return result?.skills ?? [];
   }
 
   /** Upload a new skill from JSON content, a base64 file bundle, or a GitHub tree URL. Every bundle must include a root `SKILL.md`. */
-  async createSkill(input: SkillUploadInput): Promise<Skill> {
-    const result = await this.request<Skill>("POST", "/v1/skills", input);
+  async createSkill(input: SkillUploadInput): Promise<SkillRecord> {
+    const result = await this.request<SkillRecord>("POST", "/v1/skills", input);
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/skills", 404, "Not found");
     return result;
   }
 
-  async getSkill(skillName: string): Promise<Skill | null> {
-    return await this.request<Skill>(
+  async getSkill(skillName: string): Promise<SkillRecord | null> {
+    return await this.request<SkillRecord>(
       "GET",
       `/v1/skills/${encodeURIComponent(skillName)}`,
     );
@@ -815,11 +815,11 @@ export class BroodsAccountClient {
   async uploadSkill(
     skillName: string,
     input: SkillUploadInput,
-  ): Promise<Skill> {
+  ): Promise<SkillRecord> {
     const path = `/v1/skills/${encodeURIComponent(skillName)}`;
-    const result = await this.request<Skill>("PUT", path, input);
+    const result = await this.request<SkillRecord>("PUT", path, input);
     if (!result)
-      throw new BroodsAccountApiError("PUT", path, 404, "Skill not found");
+      throw new BroodsAccountApiError("PUT", path, 404, "SkillRecord not found");
     return result;
   }
 
@@ -840,7 +840,7 @@ export class BroodsAccountClient {
     const path = `/v1/sandboxes/${encodeURIComponent(sandboxId)}/${action}`;
     const result = await this.request<T>("POST", path, body);
     if (!result)
-      throw new BroodsAccountApiError("POST", path, 404, "Sandbox not found");
+      throw new BroodsAccountApiError("POST", path, 404, "SandboxRecord not found");
     return result;
   }
 

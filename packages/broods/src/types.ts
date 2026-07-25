@@ -16,18 +16,18 @@ export interface Account {
   secret: string;
 }
 
-export interface Agent {
+export interface AgentRecord {
   accountId: string;
   agentId: string;
   name: string;
 }
 
-export interface Sandbox {
+export interface SandboxRecord {
   sandboxId: string;
   name: string;
 }
 
-export interface Workspace {
+export interface WorkspaceRecord {
   workspaceId: string;
   name: string;
 }
@@ -71,7 +71,7 @@ export interface AsyncRequestAccepted {
   requestedMode?: "reject" | "followup" | "collect" | "steer";
 }
 
-export interface Cron {
+export interface CronRecord {
   accountId: string;
   cronId: string;
   name: string;
@@ -102,7 +102,7 @@ export interface CronRun {
   completedAt?: string;
 }
 
-export interface Skill {
+export interface SkillRecord {
   path: string;
   name: string;
   description: string;

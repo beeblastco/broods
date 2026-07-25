@@ -15,7 +15,7 @@ import { readSseStream } from "./stream.ts";
 import type {
   AsyncRequestAccepted,
   AsyncStatus,
-  Cron,
+  CronRecord,
   CronRun,
 } from "./types.ts";
 import type { CreateCronInput, UpdateCronInput } from "./contracts.ts";
@@ -166,7 +166,7 @@ export class BroodsClient {
       const id = agentId ?? "";
       if (!id)
         throw new Error(
-          `Agent ${name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`,
+          `AgentRecord ${name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`,
         );
 
       return {
@@ -183,7 +183,7 @@ export class BroodsClient {
     const ref = refOrName;
     if (!ref.id)
       throw new Error(
-        `Agent ${ref.name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`,
+        `AgentRecord ${ref.name} is missing a generated id. Run broods dev --once or broods deploy to sync it first.`,
       );
 
     return {
@@ -272,7 +272,7 @@ export class BroodsClient {
       // failure). Surface it instead of yielding it, so callers that only read
       // `text-delta` parts can never silently swallow a failed run.
       if (part.type === "error")
-        throw new Error(`Agent run failed: ${formatStreamError(part.error)}`);
+        throw new Error(`AgentRecord run failed: ${formatStreamError(part.error)}`);
       yield part;
     }
   }
@@ -371,7 +371,7 @@ export class BroodsClient {
     throw new Error("Polling timeout");
   }
 
-  async createCron(input: CreateClientCronInput): Promise<Cron> {
+  async createCron(input: CreateClientCronInput): Promise<CronRecord> {
     const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
       method: "POST",
       headers: this.apiKeyHeaders(),
@@ -383,10 +383,10 @@ export class BroodsClient {
         `Create cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
       );
 
-    return (await response.json()) as Cron;
+    return (await response.json()) as CronRecord;
   }
 
-  async listCrons(): Promise<Cron[]> {
+  async listCrons(): Promise<CronRecord[]> {
     const response = await this.fetchJson(`${this.baseUrl}/v1/crons`, {
       method: "GET",
       headers: this.apiKeyHeaders(),
@@ -397,12 +397,12 @@ export class BroodsClient {
         `List cron jobs failed: ${response.status} ${await cronErrorDetails(response)}`,
       );
 
-    const payload = (await response.json()) as { crons: Cron[] };
+    const payload = (await response.json()) as { crons: CronRecord[] };
 
     return payload.crons;
   }
 
-  async getCron(cronId: string): Promise<Cron | null> {
+  async getCron(cronId: string): Promise<CronRecord | null> {
     const response = await this.fetchJson(
       `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`,
       {
@@ -417,7 +417,7 @@ export class BroodsClient {
         `Get cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
       );
 
-    return (await response.json()) as Cron;
+    return (await response.json()) as CronRecord;
   }
 
   async listCronRuns(
@@ -445,7 +445,7 @@ export class BroodsClient {
     return payload.runs;
   }
 
-  async updateCron(cronId: string, patch: UpdateCronInput): Promise<Cron> {
+  async updateCron(cronId: string, patch: UpdateCronInput): Promise<CronRecord> {
     const response = await this.fetchJson(
       `${this.baseUrl}/v1/crons/${encodeURIComponent(cronId)}`,
       {
@@ -460,7 +460,7 @@ export class BroodsClient {
         `Update cron job failed: ${response.status} ${await cronErrorDetails(response)}`,
       );
 
-    return (await response.json()) as Cron;
+    return (await response.json()) as CronRecord;
   }
 
   async deleteCron(cronId: string): Promise<boolean> {
@@ -697,8 +697,8 @@ async function cronErrorDetails(response: Response): Promise<string> {
   const text = await response.text();
   if (text.includes("Request body must include eventId and conversationKey")) {
     return (
-      `${text}. Cron job APIs must be served by the configured baseUrl. ` +
-      "Prefer defining stable cron jobs with defineCron(...) in broods/ and syncing with `broods dev` or `broods deploy`."
+      `${text}. CronRecord job APIs must be served by the configured baseUrl. ` +
+      "Prefer defining stable cron jobs with Cron(...) in broods/ and syncing with `broods dev` or `broods deploy`."
     );
   }
 
