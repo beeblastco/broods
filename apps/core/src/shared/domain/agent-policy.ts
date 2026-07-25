@@ -7,6 +7,9 @@ import { randomBytes } from "node:crypto";
 import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 
 export const AGENT_POLICY_ACTIONS = [
+  // Gates the turn itself, before any tool runs: "may this person address the
+  // agent here?". Everything below gates one action inside an admitted turn.
+  "agent.invoke",
   "tool.call",
   "workspace.read",
   "workspace.write",

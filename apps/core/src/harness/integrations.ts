@@ -39,6 +39,12 @@ import {
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
+import {
+  applyChannelRecord,
+  channelActorRoles,
+  resolveChannelAgentId,
+  type ChannelRecord,
+} from "../shared/domain/channel-record.ts";
 import { getHarnessPublicUrl } from "../shared/env.ts";
 import { createGitHubChannel } from "../shared/github-channel.ts";
 import {
@@ -100,6 +106,7 @@ import {
   resolveS3ReadTarget,
   workspaceReadContext,
 } from "./sandbox/s3-mount.ts";
+import { channelPolicyIdentity, evaluateChannelInvoke } from "./policy.ts";
 import type { ConversationIngressEvent } from "./session.ts";
 
 type DirectIngressEvent =
@@ -252,6 +259,12 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentRecord | null>;
+  agentLister?: (accountId: string) => Promise<AgentRecord[]>;
+  channelRecordLoader?: (
+    accountId: string,
+    platform: string,
+    externalId: string,
+  ) => Promise<ChannelRecord | null>;
   deploymentLoader?: (
     accountId: string,
     agentId: string,
@@ -273,6 +286,12 @@ interface HttpRoutingContext {
   authResolver(headers: Record<string, string>): Promise<AuthContext | null>;
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  agentLister(accountId: string): Promise<AgentRecord[]>;
+  channelRecordLoader(
+    accountId: string,
+    platform: string,
+    externalId: string,
+  ): Promise<ChannelRecord | null>;
   deploymentLoader(
     accountId: string,
     agentId: string,
@@ -312,6 +331,17 @@ export function createIncomingEventRouter(
     options.agentLoader ??
     ((accountId: string, agentId: string) =>
       getStorage().agents.getById(accountId, agentId));
+  const agentLister =
+    options.agentLister ??
+    ((accountId: string) => getStorage().agents.list(accountId));
+  const channelRecordLoader =
+    options.channelRecordLoader ??
+    ((accountId: string, platform: string, externalId: string) =>
+      getStorage().channelRecords.getByExternalId(
+        accountId,
+        platform,
+        externalId,
+      ));
   const deploymentLoader =
     options.deploymentLoader ??
     ((accountId: string, agentId: string) =>
@@ -331,6 +361,8 @@ export function createIncomingEventRouter(
       authResolver,
       accountLoader,
       agentLoader,
+      agentLister,
+      channelRecordLoader,
       deploymentLoader,
       asyncAgentResultLoader,
       ingressStatusLoader,
@@ -450,18 +482,22 @@ async function handleHttpRequest(
     }
   }
 
-  // Check for the webhook channel integration
+  // Check for the webhook channel integration. Two shapes:
+  //   /webhooks/{account}/{agent}/{channel} pins the agent in the URL
+  //   /webhooks/{account}/{channel}         lets the channel record choose it
+  // so one provider app can serve a whole account.
   const accountWebhookMatch = request.path.match(
-    /^\/webhooks\/([^/]+)\/([^/]+)\/([^/]+)$/,
+    /^\/webhooks\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/,
   );
-  if (
-    accountWebhookMatch?.[1] &&
-    accountWebhookMatch[2] &&
-    accountWebhookMatch[3]
-  ) {
+  if (accountWebhookMatch?.[1] && accountWebhookMatch[2]) {
     const accountId = decodeURIComponent(accountWebhookMatch[1]);
-    const agentId = decodeURIComponent(accountWebhookMatch[2]);
-    const channelName = decodeURIComponent(accountWebhookMatch[3]);
+    const pinnedAgentId = accountWebhookMatch[3]
+      ? decodeURIComponent(accountWebhookMatch[2])
+      : undefined;
+    const channelName = decodeURIComponent(
+      accountWebhookMatch[3] ?? accountWebhookMatch[2],
+    );
+    const agentId = pinnedAgentId ?? "(by channel)";
     logInfo("Webhook request matched account route", {
       accountId,
       agentId,
@@ -490,9 +526,21 @@ async function handleHttpRequest(
       });
       return notFoundResponse();
     }
+    // The credential holder owns the provider app the request came from: the
+    // agent named in the URL, or — on the account-scoped path — whichever of the
+    // account's agents holds credentials that verify this request. Its adapter
+    // parses the request and sends the reply, because the reply must come from
+    // the app that received it; the channel record only chooses who runs.
     let agent: AgentRecord | null;
     try {
-      agent = await context.agentLoader(account.accountId, agentId);
+      agent = pinnedAgentId
+        ? await context.agentLoader(account.accountId, pinnedAgentId)
+        : await findChannelCredentialHolder(
+            context,
+            account.accountId,
+            channelName,
+            channelRequest,
+          );
     } catch (err) {
       logError("Webhook agent load failed", {
         accountId: account.accountId,
@@ -550,7 +598,7 @@ async function handleHttpRequest(
       account,
       agent,
       deployment,
-      context.waitUntil,
+      context,
     );
   }
 
@@ -688,6 +736,145 @@ async function handleHttpRequest(
 /**
  * This is to handle the response to the external integration webhook
  */
+/**
+ * Find the agent whose channel credentials verify this request. Only agents
+ * that configure the channel are tried, signature checks are cheap, and the
+ * scan is capped so a large account cannot turn one webhook into unbounded work.
+ */
+async function findChannelCredentialHolder(
+  context: HttpRoutingContext,
+  accountId: string,
+  channelName: string,
+  request: ChannelRequest,
+): Promise<AgentRecord | null> {
+  const agents = (await context.agentLister(accountId))
+    .filter((candidate) => candidate.status === "active")
+    .slice(0, CHANNEL_CREDENTIAL_CANDIDATE_LIMIT);
+
+  for (const candidate of agents) {
+    const adapter = createChannelRegistry(
+      candidate.config,
+    ).webhookChannels.find(
+      (channel) => channel.name === channelName && channel.canHandle(request),
+    );
+    if (!adapter) continue;
+    if (await adapter.authenticate(request)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Hand the turn to the agent this channel is bound to, with the record's
+ * instructions, workspaces and policies layered on. Falls back to the agent
+ * that received the webhook when no record claims the place, so an
+ * unregistered channel behaves exactly as it did before.
+ */
+async function resolveChannelTarget(
+  context: HttpRoutingContext,
+  account: AccountRecord,
+  agent: AgentRecord,
+  channelName: string,
+  identity: ChannelIdentity | undefined,
+): Promise<{ agent: AgentRecord; record?: ChannelRecord }> {
+  if (!identity?.channelId) return { agent };
+
+  const record = await context
+    .channelRecordLoader(account.accountId, channelName, identity.channelId)
+    .catch((err: unknown) => {
+      logWarn("Channel record lookup failed", {
+        accountId: account.accountId,
+        channel: channelName,
+        channelId: identity.channelId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    });
+  if (!record) return { agent };
+
+  const boundAgentId = resolveChannelAgentId(record);
+  if (!boundAgentId || boundAgentId === agent.agentId) {
+    return { agent, record };
+  }
+
+  const bound = await context.agentLoader(account.accountId, boundAgentId);
+  if (!bound || bound.status !== "active") {
+    logWarn("Channel record binds an agent that is missing or inactive", {
+      accountId: account.accountId,
+      channel: channelName,
+      channelRecordId: record.channelRecordId,
+      boundAgentId,
+    });
+    return { agent, record };
+  }
+
+  return { agent: bound, record };
+}
+
+/** Attach the roles this actor holds in the channel so policies can read them. */
+function identityWithChannelRoles(
+  identity: ChannelIdentity | undefined,
+  record: ChannelRecord | undefined,
+): ChannelIdentity | undefined {
+  if (!identity || !record) return identity;
+  const roles = channelActorRoles(record, identity.actorId);
+
+  return roles.length > 0 ? { ...identity, actorRoles: roles } : identity;
+}
+
+/**
+ * Refuse the tag before the turn starts when a policy says this person may not
+ * address the agent here. Audit mode only records it, so a rule can be watched
+ * on a live channel before it starts blocking anyone.
+ */
+async function refuseChannelInvoke(
+  agentConfig: AgentConfig,
+  account: AccountRecord,
+  agentId: string,
+  channelName: string,
+  identity: ChannelIdentity | undefined,
+): Promise<string | null> {
+  const decision = await evaluateChannelInvoke(agentConfig, {
+    accountId: account.accountId,
+    agentId,
+    channel: channelName,
+    ...channelPolicyIdentity(identity),
+  });
+  if (!decision || decision.allowed) return null;
+
+  logWarn(
+    `Agent policy ${decision.mode === "enforce" ? "denied" : "would deny"} agent.invoke (${decision.mode})`,
+    {
+      accountId: account.accountId,
+      agentId,
+      channel: channelName,
+      channelId: identity?.channelId,
+      actorId: identity?.actorId,
+      reason: decision.reason,
+      matchedRuleIds: decision.matchedRuleIds,
+    },
+  );
+
+  return decision.mode === "enforce" ? decision.reason : null;
+}
+
+/** Scope the run to this channel's own config, then layer the record over it. */
+function channelRuntimeAgentConfig(
+  target: { agent: AgentRecord; record?: ChannelRecord },
+  channelName: string,
+): AgentConfig {
+  const config = toChannelRuntimeAgentConfig(target.agent.config, channelName);
+
+  return target.record
+    ? applyChannelRecord(config, target.record, channelName)
+    : config;
+}
+
+// Bound so one inbound webhook cannot fan out into an unbounded credential scan.
+const CHANNEL_CREDENTIAL_CANDIDATE_LIMIT = 25;
+
 async function handleChannelWebhook(
   adapter: ChannelAdapter,
   request: ChannelRequest,
@@ -695,8 +882,9 @@ async function handleChannelWebhook(
   account: AccountRecord,
   agent: AgentRecord,
   deployment: AgentDeploymentScope | null,
-  waitUntil: (promise: Promise<unknown>) => void,
+  context: HttpRoutingContext,
 ): Promise<Response> {
+  const waitUntil = context.waitUntil;
   const previousObservabilityContext = getObservabilityContext();
   if (deployment) {
     setObservabilityContext({
@@ -799,10 +987,25 @@ async function handleChannelWebhook(
     if (parsed.kind === "context") {
       const { message, ack } = parsed;
       const response = ack ?? { statusCode: 200 };
+      const target = await resolveChannelTarget(
+        context,
+        account,
+        agent,
+        message.channelName,
+        message.identity,
+      );
+      const targetDeployment =
+        target.agent.agentId === agent.agentId
+          ? deployment
+          : await context.deploymentLoader(
+              account.accountId,
+              target.agent.agentId,
+            );
       logInfo("Channel webhook accepted as context", {
         channel: adapter.name,
         accountId: account.accountId,
-        agentId: agent.agentId,
+        agentId: target.agent.agentId,
+        channelRecordId: target.record?.channelRecordId,
         eventId: message.eventId,
         conversationKey: message.conversationKey,
         statusCode: response.statusCode,
@@ -813,12 +1016,12 @@ async function handleChannelWebhook(
           handlers.handleChannelContext?.({
             eventId: accountAgentScopedKey(
               account.accountId,
-              agent.agentId,
+              target.agent.agentId,
               message.eventId,
             ),
             conversationKey: accountAgentScopedKey(
               account.accountId,
-              agent.agentId,
+              target.agent.agentId,
               message.conversationKey,
             ),
             content: message.content,
@@ -826,19 +1029,23 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
-            ...(message.identity ? { identity: message.identity } : {}),
+            ...(identityWithChannelRoles(message.identity, target.record)
+              ? {
+                  identity: identityWithChannelRoles(
+                    message.identity,
+                    target.record,
+                  ),
+                }
+              : {}),
             source: message.source,
             accountId: account.accountId,
-            agentId: agent.agentId,
-            agentConfig: toChannelRuntimeAgentConfig(
-              agent.config,
-              message.channelName,
-            ),
-            ...(deployment
+            agentId: target.agent.agentId,
+            agentConfig: channelRuntimeAgentConfig(target, message.channelName),
+            ...(targetDeployment
               ? {
-                  endpointId: deployment.endpointId,
-                  projectSlug: deployment.projectSlug,
-                  environmentSlug: deployment.environmentSlug,
+                  endpointId: targetDeployment.endpointId,
+                  projectSlug: targetDeployment.projectSlug,
+                  environmentSlug: targetDeployment.environmentSlug,
                 }
               : {}),
           }),
@@ -851,16 +1058,56 @@ async function handleChannelWebhook(
     // is restored in finally before background channel processing establishes
     // its own context.
     const { message, ack } = parsed;
+    // Replies go out through the adapter that received the webhook — the same
+    // provider app — even when the channel record hands the run to another agent.
     const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
+    const target = await resolveChannelTarget(
+      context,
+      account,
+      agent,
+      message.channelName,
+      message.identity,
+    );
+    const targetDeployment =
+      target.agent.agentId === agent.agentId
+        ? deployment
+        : await context.deploymentLoader(
+            account.accountId,
+            target.agent.agentId,
+          );
     logInfo("Channel webhook accepted for async processing", {
       channel: adapter.name,
       accountId: account.accountId,
-      agentId: agent.agentId,
+      agentId: target.agent.agentId,
+      channelRecordId: target.record?.channelRecordId,
       eventId: message.eventId,
       conversationKey: message.conversationKey,
       statusCode: response.statusCode,
     });
+
+    const identity = identityWithChannelRoles(message.identity, target.record);
+    const targetConfig = channelRuntimeAgentConfig(target, message.channelName);
+    const refusal = await refuseChannelInvoke(
+      targetConfig,
+      account,
+      target.agent.agentId,
+      message.channelName,
+      identity,
+    );
+    if (refusal) {
+      waitUntil(
+        channel
+          .sendText(formatChannelErrorText(refusal))
+          .catch((err: unknown) => {
+            logError("Failed to send channel policy refusal", {
+              channel: adapter.name,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }),
+      );
+      return toResponse(response);
+    }
 
     waitUntil(
       Promise.resolve().then(() =>
@@ -868,12 +1115,12 @@ async function handleChannelWebhook(
           {
             eventId: accountAgentScopedKey(
               account.accountId,
-              agent.agentId,
+              target.agent.agentId,
               message.eventId,
             ),
             conversationKey: accountAgentScopedKey(
               account.accountId,
-              agent.agentId,
+              target.agent.agentId,
               message.conversationKey,
             ),
             content: message.content,
@@ -881,20 +1128,17 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
-            ...(message.identity ? { identity: message.identity } : {}),
+            ...(identity ? { identity } : {}),
             source: message.source,
             channel: channel,
             accountId: account.accountId,
-            agentId: agent.agentId,
-            agentConfig: toChannelRuntimeAgentConfig(
-              agent.config,
-              message.channelName,
-            ),
-            ...(deployment
+            agentId: target.agent.agentId,
+            agentConfig: targetConfig,
+            ...(targetDeployment
               ? {
-                  endpointId: deployment.endpointId,
-                  projectSlug: deployment.projectSlug,
-                  environmentSlug: deployment.environmentSlug,
+                  endpointId: targetDeployment.endpointId,
+                  projectSlug: targetDeployment.projectSlug,
+                  environmentSlug: targetDeployment.environmentSlug,
                 }
               : {}),
           },

@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import {
   channelPolicyIdentity,
   createPolicyToolApproval,
+  evaluateChannelInvoke,
   policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
@@ -237,5 +238,81 @@ describe("agent policy enforce mode", () => {
     expect(channelPolicyIdentity({ channelId: "C1" })).toEqual({
       channelId: "C1",
     });
+    expect(
+      channelPolicyIdentity({ actorId: "U1", actorRoles: ["oncall"] }),
+    ).toEqual({ actorId: "U1", actorRoles: ["oncall"] });
+    // An empty role list is noise on the policy input, not a value to match on.
+    expect(channelPolicyIdentity({ actorId: "U1", actorRoles: [] })).toEqual({
+      actorId: "U1",
+    });
+  });
+});
+
+describe("agent.invoke gate", () => {
+  it("refuses the tag in enforce mode and reports the rule that denied it", async () => {
+    const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      channel: "slack",
+      channelId: "C042GENERAL",
+      actorId: "U777",
+    });
+
+    expect(decision).toEqual({
+      allowed: false,
+      mode: "enforce",
+      reason: "Denied by policy rule deny-bash",
+      matchedRuleIds: ["deny-bash"],
+    });
+  });
+
+  it("records the same denial without blocking in audit mode", async () => {
+    const decision = await evaluateChannelInvoke(agentConfig("audit"), {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      channel: "slack",
+    });
+
+    expect(decision?.mode).toBe("audit");
+    expect(decision?.allowed).toBe(false);
+  });
+
+  it("stays out of the way when the agent has no policies assigned", async () => {
+    expect(
+      await evaluateChannelInvoke(
+        {},
+        { accountId: "acct_1", agentId: "agent_1" },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("sends the actor and channel to OPA as agent.invoke", () => {
+    expect(seenPolicyInputs).toContainEqual(
+      expect.objectContaining({
+        action: "agent.invoke",
+        channel: "slack",
+        channelId: "C042GENERAL",
+        actorId: "U777",
+      }),
+    );
+  });
+
+  it("fails closed when OPA is unreachable", async () => {
+    const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const closedPort = closed.port;
+    closed.stop(true);
+    const previous = process.env.OPA_BASE_URL;
+    process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
+    try {
+      const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+        accountId: "acct_1",
+        agentId: "agent_1",
+      });
+
+      expect(decision?.allowed).toBe(false);
+      expect(decision?.reason).toBe("Policy evaluation failed");
+    } finally {
+      process.env.OPA_BASE_URL = previous;
+    }
   });
 });

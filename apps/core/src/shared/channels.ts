@@ -51,6 +51,8 @@ export interface ChannelIdentity {
   actorId?: string;
   /** Display name for that person, when the provider gives one cheaply. */
   actorName?: string;
+  /** Roles that person holds in this channel. Filled from the channel record. */
+  actorRoles?: string[];
 }
 
 export interface InboundMessage {

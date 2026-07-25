@@ -2352,90 +2352,76 @@ async function resourcesForEnvironment(
   const sandboxResources: CliResource[] = await Promise.all(
     sandboxes
       .filter((sandbox) => sandbox.managedBy === "cli")
-      .map(
-        async (sandbox): Promise<CliResource> => ({
-          kind: "sandbox",
-          name: sandbox.name,
-          description: sandbox.description,
-          config: await decryptSandboxManifestConfig(sandbox, secret),
-        }),
-      ),
+      .map(async (sandbox): Promise<CliResource> => ({
+        kind: "sandbox",
+        name: sandbox.name,
+        description: sandbox.description,
+        config: await decryptSandboxManifestConfig(sandbox, secret),
+      })),
   );
 
   return [
     ...agents
       .filter((agent) => agent.managedBy === "cli")
-      .map(
-        (agent): CliResource => ({
-          kind: "agent",
-          name: agent.name,
-          description: agent.description,
-          config: rewriteIdsToNames(
-            toNestedAgentConfig({
-              name: agent.name,
-              description: agent.description,
-              provider: agent.provider,
-              modelId: agent.modelId,
-              systemPrompt: agent.systemPrompt,
-              maxTurns: agent.maxTurns,
-              outputFormat: agent.outputFormat as
-                | Record<string, unknown>
-                | undefined,
-              providerOptions: agent.providerOptions as
-                | Record<string, unknown>
-                | undefined,
-              temperature: agent.temperature,
-              maxTokens: agent.maxTokens,
-              memoryToolEnabled: agent.memoryToolEnabled,
-              searchToolEnabled: agent.searchToolEnabled,
-              searchToolConfig: agent.searchToolConfig as
-                | Record<string, unknown>
-                | undefined,
-              extraConfig: agent.extraConfig as
-                | Record<string, unknown>
-                | undefined,
-            }),
-            workspaceNames,
-            sandboxNames,
-            agentNames,
-            skillNames,
-            toolNames,
-            hookNames,
-            policyNames,
-          ),
-        }),
-      ),
+      .map((agent): CliResource => ({
+        kind: "agent",
+        name: agent.name,
+        description: agent.description,
+        config: rewriteIdsToNames(
+          toNestedAgentConfig({
+            name: agent.name,
+            description: agent.description,
+            provider: agent.provider,
+            modelId: agent.modelId,
+            systemPrompt: agent.systemPrompt,
+            maxTurns: agent.maxTurns,
+            outputFormat: agent.outputFormat as
+              Record<string, unknown> | undefined,
+            providerOptions: agent.providerOptions as
+              Record<string, unknown> | undefined,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            memoryToolEnabled: agent.memoryToolEnabled,
+            searchToolEnabled: agent.searchToolEnabled,
+            searchToolConfig: agent.searchToolConfig as
+              Record<string, unknown> | undefined,
+            extraConfig: agent.extraConfig as
+              Record<string, unknown> | undefined,
+          }),
+          workspaceNames,
+          sandboxNames,
+          agentNames,
+          skillNames,
+          toolNames,
+          hookNames,
+          policyNames,
+        ),
+      })),
     ...policies
       .filter(
         (policy) => policy.managedBy === "cli" && policy.status === "active",
       )
-      .map(
-        (policy): CliResource => ({
-          kind: "policy",
-          name: policy.name,
-          description: policy.description,
-          config: policy.document,
-        }),
-      ),
-    ...externalResources.map(
-      (resource): CliResource => ({
-        kind: resource.kind,
-        name: resource.name,
-        description: resource.description,
-        config: resource.config,
-      }),
-    ),
+      .map((policy): CliResource => ({
+        kind: "policy",
+        name: policy.name,
+        description: policy.description,
+        config: policy.document,
+      })),
+    ...externalResources.map((resource): CliResource => ({
+      kind: resource.kind,
+      name: resource.name,
+      description: resource.description,
+      config: resource.config,
+    })),
     ...sandboxResources,
     ...workspaces
       .filter((workspace) => workspace.managedBy === "cli")
-      .map(
-        (workspace): CliResource => ({
-          kind: "workspace",
-          name: workspace.name,
-          description: workspace.description,
-          config: workspace.config,
-        }),
-      ),
+      .map((workspace): CliResource => ({
+        kind: "workspace",
+        name: workspace.name,
+        description: workspace.description,
+        config: workspace.config,
+      })),
     ...crons.flatMap((cron): CliResource[] => {
       const agentName = agentNames[cron.agentId];
       if (!agentName) return [];
@@ -2645,15 +2631,13 @@ function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
       maxTurns: agent.maxTurns,
       outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
       providerOptions: agent.providerOptions as
-        | Record<string, unknown>
-        | undefined,
+        Record<string, unknown> | undefined,
       temperature: agent.temperature,
       maxTokens: agent.maxTokens,
       memoryToolEnabled: agent.memoryToolEnabled,
       searchToolEnabled: agent.searchToolEnabled,
       searchToolConfig: agent.searchToolConfig as
-        | Record<string, unknown>
-        | undefined,
+        Record<string, unknown> | undefined,
       extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
     }),
   );

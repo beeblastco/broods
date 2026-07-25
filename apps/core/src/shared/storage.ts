@@ -8,6 +8,7 @@ import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
+import type { ChannelRecord } from "./domain/channel-record.ts";
 import type { CronRecord, CronRunRecord } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
@@ -92,6 +93,25 @@ interface AccountStore {
 /** Agent reads plus the explicit deletion cleanup used by core. */
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
+  list(accountId: string): Promise<AgentRecord[]>;
+  removeAllForAccount(accountId: string): Promise<number>;
+}
+
+/**
+ * Account-scoped records binding a real chat channel to an agent. Read on the
+ * inbound webhook, so `getByExternalId` is the hot path.
+ */
+interface ChannelRecordStore {
+  getById(
+    accountId: string,
+    channelRecordId: string,
+  ): Promise<ChannelRecord | null>;
+  getByExternalId(
+    accountId: string,
+    platform: string,
+    externalId: string,
+  ): Promise<ChannelRecord | null>;
+  list(accountId: string): Promise<ChannelRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
@@ -187,6 +207,7 @@ export interface Storage {
   accounts: AccountStore;
   agents: AgentStore;
   agentDeployments: AgentDeploymentStore;
+  channelRecords: ChannelRecordStore;
   crons: CronStore;
   sandboxConfigs: SandboxConfigStore;
   workspaceConfigs: WorkspaceConfigStore;

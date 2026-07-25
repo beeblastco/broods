@@ -733,6 +733,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
   return {
     accounts: {} as never,
     agents: {} as never,
+    channelRecords: {} as never,
     agentDeployments: {
       async getByApiKeyHash() {
         return null;

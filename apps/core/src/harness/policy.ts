@@ -19,6 +19,7 @@ import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import type {
   AgentPolicyMode,
+  PolicyDecision,
   PolicyDecisionInput,
 } from "../shared/domain/agent-policy.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
@@ -62,6 +63,7 @@ export function channelPolicyIdentity(
     ...(identity.threadId ? { threadId: identity.threadId } : {}),
     ...(identity.actorId ? { actorId: identity.actorId } : {}),
     ...(identity.actorName ? { actorName: identity.actorName } : {}),
+    ...(identity.actorRoles?.length ? { actorRoles: identity.actorRoles } : {}),
   };
 }
 
@@ -73,28 +75,16 @@ export async function createPolicyToolApproval(
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
   const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
-  const policyIds = [...new Set(agentConfig.policy?.policyIds ?? [])];
-  const records = await Promise.all(
-    policyIds.map((policyId) =>
-      getStorage().agentPolicies.getById(baseInput.accountId!, policyId),
-    ),
+  const documents = await loadPolicyDocuments(
+    baseInput.accountId,
+    agentConfig.policy?.policyIds ?? [],
   );
-  const documents = records
-    .filter((record): record is NonNullable<typeof record> => Boolean(record))
-    .map((record) => record.document);
 
-  const opaToken = optionalEnv("OPA_API_TOKEN");
-  const client = withEvaluationDeadline(
-    httpPolicyClient({
-      url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181",
-      ...(opaToken ? { headers: { authorization: `Bearer ${opaToken}` } } : {}),
-    }),
-    OPA_EVALUATE_TIMEOUT_MS,
-  );
+  const client = policyClient();
   const approval = shadow(
     opaPolicy({
       client,
-      path: "broods/authz/decision",
+      path: POLICY_DECISION_PATH,
       toInput: ({ toolCall }) => ({
         ...baseInput,
         ...policyInputForTool(
@@ -157,6 +147,62 @@ export async function createPolicyToolApproval(
   return typeof approval === "function"
     ? (approval as RuntimeToolApproval)
     : undefined;
+}
+
+/**
+ * Ask the policies whether this person may address the agent here, before the
+ * turn starts. Audit mode records the decision and lets the turn through, which
+ * is how a rule is rolled out on a live channel. An unreachable OPA denies in
+ * enforce mode, matching the tool-approval path.
+ */
+export async function evaluateChannelInvoke(
+  agentConfig: AgentConfig,
+  input: Omit<PolicyDecisionInput, "action">,
+): Promise<PolicyDecision | undefined> {
+  if (!isPolicyEnabled(agentConfig) || !input.accountId) return undefined;
+  const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
+
+  try {
+    // Loading the documents sits inside the try on purpose: a control-plane
+    // blip must fail closed like an unreachable OPA, not throw past the caller.
+    const policies = await loadPolicyDocuments(
+      input.accountId,
+      agentConfig.policy?.policyIds ?? [],
+    );
+    if (policies.length === 0) return undefined;
+
+    const decision = await policyClient().evaluate<
+      PolicyDecisionInput & { mode: AgentPolicyMode; policies: unknown[] },
+      { allowed?: boolean; reason?: string; matchedRuleIds?: string[] }
+    >(POLICY_DECISION_PATH, {
+      ...input,
+      action: "agent.invoke",
+      mode,
+      policies,
+    });
+
+    return {
+      allowed: decision?.allowed !== false,
+      mode,
+      reason: decision?.reason ?? "No allow policy rule matched",
+      matchedRuleIds: decision?.matchedRuleIds ?? [],
+    };
+  } catch (error) {
+    logWarn("Channel invoke policy evaluation failed", {
+      accountId: input.accountId,
+      agentId: input.agentId,
+      channelId: input.channelId,
+      mode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    return {
+      allowed: false,
+      mode,
+      reason: "Policy evaluation failed",
+      matchedRuleIds: [],
+    };
+  }
 }
 
 export function policyDecisionLogMessage(input: {
@@ -451,6 +497,36 @@ function resolveWorkspaceForPolicy(
     });
     return undefined;
   }
+}
+
+/** Rego entrypoint. Both the per-tool approval and the invoke gate use it. */
+const POLICY_DECISION_PATH = "broods/authz/decision";
+
+async function loadPolicyDocuments(
+  accountId: string,
+  policyIds: string[],
+): Promise<unknown[]> {
+  const records = await Promise.all(
+    [...new Set(policyIds)].map((policyId) =>
+      getStorage().agentPolicies.getById(accountId, policyId),
+    ),
+  );
+
+  return records
+    .filter((record): record is NonNullable<typeof record> => Boolean(record))
+    .map((record) => record.document);
+}
+
+function policyClient(): PolicyClient {
+  const opaToken = optionalEnv("OPA_API_TOKEN");
+
+  return withEvaluationDeadline(
+    httpPolicyClient({
+      url: optionalEnv("OPA_BASE_URL") ?? "http://127.0.0.1:8181",
+      ...(opaToken ? { headers: { authorization: `Bearer ${opaToken}` } } : {}),
+    }),
+    OPA_EVALUATE_TIMEOUT_MS,
+  );
 }
 
 // httpPolicyClient exposes no timeout/AbortSignal, and the OPA round-trip sits

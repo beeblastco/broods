@@ -108,16 +108,38 @@ condition_match(condition) if {
 condition_match(condition) if {
   actual := condition_attribute_value(condition.attribute)
   condition.operator == "in"
+  not is_array(actual)
   is_array(condition.value)
   value_in_collection(condition.value, actual)
+}
+
+# Array-valued attributes (actorRoles) match `in` on any overlap, so a rule can
+# be scoped to people holding one of several roles.
+condition_match(condition) if {
+  actual := condition_attribute_value(condition.attribute)
+  condition.operator == "in"
+  is_array(actual)
+  is_array(condition.value)
+  actual[_] == condition.value[_]
 }
 
 condition_match(condition) if {
   condition.operator == "notIn"
   actual := condition_attribute_value(condition.attribute)
   actual != null
+  not is_array(actual)
   is_array(condition.value)
   not value_in_collection(condition.value, actual)
+}
+
+# An array attribute is "not in" the set only when nothing overlaps; without
+# this an actor who does hold the named role would still satisfy notIn.
+condition_match(condition) if {
+  condition.operator == "notIn"
+  actual := condition_attribute_value(condition.attribute)
+  is_array(actual)
+  is_array(condition.value)
+  not arrays_overlap(condition.value, actual)
 }
 
 condition_match(condition) if {
@@ -134,8 +156,20 @@ condition_match(condition) if {
   contains(actual, condition.value)
 }
 
+# On an array attribute, `contains` means membership: "the actor holds this role".
+condition_match(condition) if {
+  actual := condition_attribute_value(condition.attribute)
+  condition.operator == "contains"
+  is_array(actual)
+  actual[_] == condition.value
+}
+
 value_in_collection(values, actual) if {
   values[_] == actual
+}
+
+arrays_overlap(values, actual) if {
+  values[_] == actual[_]
 }
 
 condition_attribute_value(attribute) := value if {

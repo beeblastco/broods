@@ -19,12 +19,7 @@ export const AGENT_POLICY_ACTIONS = [
 export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
 export type AgentPolicyEffect = "allow" | "deny";
 export type AgentPolicyConditionOperator =
-  | "equals"
-  | "notEquals"
-  | "in"
-  | "notIn"
-  | "prefix"
-  | "contains";
+  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
 
 /**
  * One optional predicate on a policy rule.

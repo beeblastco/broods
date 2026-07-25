@@ -1,0 +1,584 @@
+/**
+ * Channel record routing and layering.
+ * Covers the account-scoped webhook picking an agent from the record, the
+ * fallback when no record claims the place, and the narrow-and-add contract.
+ */
+
+import { describe, expect, it } from "bun:test";
+import {
+  createIncomingEventRouter,
+  type ChannelInboundEvent,
+} from "../src/harness/integrations.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
+import type { AgentRecord } from "../src/shared/domain/agents.ts";
+import {
+  applyChannelRecord,
+  channelActorRoles,
+  normalizeChannelRecordConfig,
+  resolveChannelAgentId,
+  type ChannelRecord,
+} from "../src/shared/domain/channel-record.ts";
+import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
+import { coreRequest } from "./helpers/http.ts";
+
+// The invoke gate reads assigned policy documents; without a stub the routing
+// tests would reach the real Convex client.
+setStorageForTests({
+  agentPolicies: {
+    getById: async (_accountId: string, policyId: string) => ({
+      accountId: "acct_test",
+      policyId,
+      name: policyId,
+      document: { version: 1 as const, rules: [] },
+      status: "active" as const,
+      createdAt: "2026-07-20T00:00:00.000Z",
+      updatedAt: "2026-07-20T00:00:00.000Z",
+    }),
+  },
+} as unknown as Storage);
+
+const ACCOUNT = {
+  accountId: "acct_test",
+  username: "test-account",
+  description: "Test account",
+  secretHash: "hash",
+  status: "active" as const,
+  config: {},
+  createdAt: "2026-07-20T00:00:00.000Z",
+  updatedAt: "2026-07-20T00:00:00.000Z",
+};
+
+const TELEGRAM_CONFIG: AgentConfig = {
+  channels: {
+    telegram: {
+      botToken: "bot-token",
+      webhookSecret: "telegram-secret",
+      allowedChatIds: [123],
+    },
+  },
+};
+
+const SUPPORT_AGENT: AgentRecord = {
+  accountId: "acct_test",
+  agentId: "agent_support",
+  name: "Support",
+  status: "active",
+  config: TELEGRAM_CONFIG,
+  createdAt: "2026-07-20T00:00:00.000Z",
+  updatedAt: "2026-07-20T00:00:00.000Z",
+};
+
+const SALES_AGENT: AgentRecord = {
+  ...SUPPORT_AGENT,
+  agentId: "agent_sales",
+  name: "Sales",
+};
+
+function channelRecord(overrides: Partial<ChannelRecord> = {}): ChannelRecord {
+  return {
+    accountId: "acct_test",
+    channelRecordId: "chan_1",
+    platform: "telegram",
+    externalId: "123",
+    name: "#sales",
+    config: { agentBindings: [{ agentId: "agent_sales" }] },
+    status: "active",
+    createdAt: "2026-07-20T00:00:00.000Z",
+    updatedAt: "2026-07-20T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("channel record resolution", () => {
+  it("routes an account-scoped webhook to the agent the record binds", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    const response = await route({
+      records: { "telegram:123": channelRecord() },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.agentId).toBe("agent_sales");
+    // Keys are scoped by the agent that actually runs, so two agents in one
+    // channel never share a conversation.
+    expect(runs[0]!.conversationKey).toContain("agent:agent_sales:");
+  });
+
+  it("falls back to the receiving agent when no record claims the channel", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    const response = await route({
+      records: {},
+      runs,
+      path: "/webhooks/acct_test/telegram",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
+  it("lets a record retarget the agent-scoped path too", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await route({
+      records: { "telegram:123": channelRecord() },
+      runs,
+      path: "/webhooks/acct_test/agent_support/telegram",
+    });
+
+    expect(runs[0]!.agentId).toBe("agent_sales");
+  });
+
+  it("keeps the receiving agent when the bound agent is gone", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await route({
+      records: {
+        "telegram:123": channelRecord({
+          config: { agentBindings: [{ agentId: "agent_missing" }] },
+        }),
+      },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+    });
+
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
+  it("keeps serving the channel when the record lookup fails", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    const response = await route({
+      records: {},
+      runs,
+      path: "/webhooks/acct_test/telegram",
+      channelRecordLoader: async () => {
+        throw new Error("convex unreachable");
+      },
+    });
+
+    // A control-plane outage must not take the channel down with it.
+    expect(response.statusCode).toBe(200);
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
+  it("rejects an account-scoped webhook no agent's credentials verify", async () => {
+    const response = await route({
+      records: {},
+      runs: [],
+      path: "/webhooks/acct_test/telegram",
+      headers: { "x-telegram-bot-api-secret-token": "wrong-secret" },
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("layers the record's instructions, workspaces and policies onto the run", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await route({
+      records: {
+        "telegram:123": channelRecord({
+          config: {
+            agentBindings: [{ agentId: "agent_support" }],
+            instructions: "Answer as the sales desk.",
+            workspaces: [{ name: "crm", workspaceId: "ws_crm" }],
+            policyIds: ["policy_sales"],
+          },
+        }),
+      },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+    });
+
+    const config = runs[0]!.agentConfig!;
+    expect(config.agent?.system).toEqual([
+      { role: "system", content: "Answer as the sales desk." },
+    ]);
+    expect(config.workspaces).toEqual([{ name: "crm", workspaceId: "ws_crm" }]);
+    expect(config.policy?.policyIds).toEqual(["policy_sales"]);
+  });
+
+  it("attaches the roles the actor holds so policies can read them", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await route({
+      records: {
+        "telegram:123": channelRecord({
+          config: {
+            agentBindings: [{ agentId: "agent_support" }],
+            tagRoles: [
+              { roleId: "oncall", actorIds: ["456"] },
+              { roleId: "admin", actorIds: ["999"] },
+            ],
+          },
+        }),
+      },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+    });
+
+    expect(runs[0]!.identity?.actorId).toBe("456");
+    expect(runs[0]!.identity?.actorRoles).toEqual(["oncall"]);
+  });
+
+  it("refuses the tag and answers in-channel when a policy denies the invoke", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    const replies: string[] = [];
+    const response = await route({
+      records: {
+        "telegram:123": channelRecord({
+          config: {
+            agentBindings: [{ agentId: "agent_support" }],
+            policyIds: ["policy_ops_only"],
+            policyMode: "enforce",
+          },
+        }),
+      },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+      policyDenies: true,
+      replies,
+    });
+
+    // Slow provider retries are worse than a refusal, so the webhook still ACKs.
+    expect(response.statusCode).toBe(200);
+    expect(runs).toHaveLength(0);
+    expect(replies[0]).toContain("Denied by policy rule ops-only");
+  });
+
+  it("lets the turn through when the denial is only audited", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await route({
+      records: {
+        "telegram:123": channelRecord({
+          config: {
+            agentBindings: [{ agentId: "agent_support" }],
+            policyIds: ["policy_ops_only"],
+            policyMode: "audit",
+          },
+        }),
+      },
+      runs,
+      path: "/webhooks/acct_test/telegram",
+      policyDenies: true,
+      policyMode: "audit",
+    });
+
+    expect(runs).toHaveLength(1);
+  });
+});
+
+describe("channel record layering", () => {
+  const base: AgentConfig = {
+    agent: { system: "You are the support agent." },
+    workspaces: [{ name: "docs", workspaceId: "ws_docs" }],
+    policy: { policyIds: ["policy_base"] },
+    tools: { tavilySearch: { enabled: true } },
+    channels: { slack: { botToken: "t", signingSecret: "s" } },
+  };
+
+  it("appends instructions after the agent's own system prompt", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          instructions: "Escalate billing questions to #finance.",
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.agent?.system).toEqual([
+      { role: "system", content: "You are the support agent." },
+      { role: "system", content: "Escalate billing questions to #finance." },
+    ]);
+  });
+
+  it("unions workspaces and policies without dropping the agent's own", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          workspaces: [{ name: "incidents", workspaceId: "ws_inc" }],
+          policyIds: ["policy_base", "policy_channel"],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.workspaces).toEqual([
+      { name: "docs", workspaceId: "ws_docs" },
+      { name: "incidents", workspaceId: "ws_inc" },
+    ]);
+    expect(merged.policy?.policyIds).toEqual(["policy_base", "policy_channel"]);
+  });
+
+  it("keeps the agent's workspace when the record reuses its mount name", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          workspaces: [{ name: "docs", workspaceId: "ws_other" }],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.workspaces).toEqual([
+      { name: "docs", workspaceId: "ws_docs" },
+    ]);
+  });
+
+  it("withholds a tool here without granting one the agent lacks", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          denyTools: ["tavilySearch", "googleSearch"],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.tools?.tavilySearch?.enabled).toBe(false);
+    // Naming a tool the agent never had only ever disables it.
+    expect(merged.tools?.googleSearch?.enabled).toBe(false);
+  });
+
+  it("applies the record's workspace scope to the active channel", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          workspaceScope: { level: "conversation", alias: "support" },
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.channels?.slack).toMatchObject({
+      workspaceScope: { level: "conversation", alias: "support" },
+    });
+  });
+
+  it("leaves the config untouched when the record adds nothing", () => {
+    expect(
+      applyChannelRecord(base, channelRecord({ platform: "slack" }), "slack"),
+    ).toEqual(base);
+  });
+});
+
+describe("channel record helpers", () => {
+  it("prefers the binding marked default", () => {
+    expect(
+      resolveChannelAgentId(
+        channelRecord({
+          config: {
+            agentBindings: [
+              { agentId: "a" },
+              { agentId: "b", isDefault: true },
+            ],
+          },
+        }),
+      ),
+    ).toBe("b");
+  });
+
+  it("falls back to the first binding when none is marked default", () => {
+    expect(
+      resolveChannelAgentId(
+        channelRecord({
+          config: { agentBindings: [{ agentId: "a" }, { agentId: "b" }] },
+        }),
+      ),
+    ).toBe("a");
+  });
+
+  it("lists only the roles the actor actually holds", () => {
+    const record = channelRecord({
+      config: {
+        agentBindings: [{ agentId: "a" }],
+        tagRoles: [
+          { roleId: "oncall", actorIds: ["U1", "U2"] },
+          { roleId: "admin", actorIds: ["U9"] },
+        ],
+      },
+    });
+
+    expect(channelActorRoles(record, "U1")).toEqual(["oncall"]);
+    expect(channelActorRoles(record, "U9")).toEqual(["admin"]);
+    expect(channelActorRoles(record, "U5")).toEqual([]);
+    expect(channelActorRoles(record, undefined)).toEqual([]);
+  });
+});
+
+describe("channel record validation", () => {
+  it("requires at least one agent binding", () => {
+    expect(() => normalizeChannelRecordConfig({})).toThrow(
+      "config.agentBindings must be a non-empty array",
+    );
+  });
+
+  it("rejects two default bindings", () => {
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: [
+          { agentId: "a", isDefault: true },
+          { agentId: "b", isDefault: true },
+        ],
+      }),
+    ).toThrow("only one binding as default");
+  });
+
+  it("rejects unknown config keys", () => {
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: [{ agentId: "a" }],
+        secretToken: "nope",
+      }),
+    ).toThrow("config.secretToken is not supported");
+  });
+
+  it("requires an alias for a conversation-level workspace scope", () => {
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: [{ agentId: "a" }],
+        workspaceScope: { level: "conversation" },
+      }),
+    ).toThrow("config.workspaceScope.alias must be a non-empty string");
+  });
+
+  it("rejects an alias on a channel-level workspace scope", () => {
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: [{ agentId: "a" }],
+        workspaceScope: { level: "channel", alias: "support" },
+      }),
+    ).toThrow("only supported when level is conversation");
+  });
+
+  it("rejects an unknown thread policy", () => {
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: [{ agentId: "a" }],
+        threadPolicy: "sometimes",
+      }),
+    ).toThrow("config.threadPolicy must be one of: always-thread, inline");
+  });
+});
+
+async function route(options: {
+  records: Record<string, ChannelRecord>;
+  runs: ChannelInboundEvent[];
+  path: string;
+  headers?: Record<string, string>;
+  policyDenies?: boolean;
+  policyMode?: "enforce" | "audit";
+  replies?: string[];
+  channelRecordLoader?: (
+    accountId: string,
+    platform: string,
+    externalId: string,
+  ) => Promise<ChannelRecord | null>;
+}) {
+  const waited: Promise<unknown>[] = [];
+  const opa = Bun.serve({
+    port: 0,
+    fetch: () =>
+      Response.json({
+        result: {
+          allowed: !options.policyDenies,
+          mode: options.policyMode ?? "enforce",
+          reason: options.policyDenies
+            ? "Denied by policy rule ops-only"
+            : "Allowed by policy rule default",
+          matchedRuleIds: options.policyDenies ? ["ops-only"] : [],
+        },
+      }),
+  });
+  const previousOpaUrl = process.env.OPA_BASE_URL;
+  process.env.OPA_BASE_URL = `http://127.0.0.1:${opa.port}`;
+  // The refusal goes out through the real Telegram adapter, so capture the
+  // outbound call rather than asserting on a mocked ChannelActions.
+  const sentTexts: string[] = [];
+  const originalFetch = globalThis.fetch;
+  type FetchInput = Parameters<typeof fetch>[0];
+  globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("api.telegram.org")) {
+      const body = init?.body;
+      if (typeof body === "string") {
+        const parsed = JSON.parse(body) as {
+          text?: string;
+          rich_message?: { markdown?: string };
+        };
+        const text = parsed.text ?? parsed.rich_message?.markdown;
+        if (text) sentTexts.push(text);
+      }
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+  const agents = [SUPPORT_AGENT, SALES_AGENT];
+  const router = createIncomingEventRouter({
+    accountLoader: async () => ACCOUNT,
+    agentLoader: async (_accountId, agentId) =>
+      agents.find((agent) => agent.agentId === agentId) ?? null,
+    agentLister: async () => agents,
+    channelRecordLoader:
+      options.channelRecordLoader ??
+      (async (_accountId, platform, externalId) =>
+        options.records[`${platform}:${externalId}`] ?? null),
+    deploymentLoader: async () => null,
+    waitUntil: (promise) => {
+      waited.push(Promise.resolve(promise).catch(() => undefined));
+    },
+  });
+
+  const captureReplies = options.replies;
+  const response = await router(
+    coreRequest(
+      "POST",
+      options.path,
+      options.headers ?? {
+        "x-telegram-bot-api-secret-token": "telegram-secret",
+      },
+      {
+        update_id: 7,
+        message: {
+          message_id: 9,
+          date: 1713916800,
+          text: "hello",
+          chat: { id: 123, type: "private" },
+          from: { id: 456, is_bot: false, username: "alice" },
+        },
+      },
+    ),
+    {
+      handleDirectRequest: async () => new Response("ok"),
+      handleChannelRequest: async (event: ChannelInboundEvent) => {
+        options.runs.push(event);
+      },
+    },
+  );
+  await Promise.all(waited);
+  globalThis.fetch = originalFetch;
+  opa.stop(true);
+  if (previousOpaUrl === undefined) {
+    delete process.env.OPA_BASE_URL;
+  } else {
+    process.env.OPA_BASE_URL = previousOpaUrl;
+  }
+  if (captureReplies) {
+    captureReplies.push(...sentTexts);
+  }
+
+  return { statusCode: response.status };
+}

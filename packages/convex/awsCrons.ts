@@ -226,12 +226,10 @@ export const remove = internalAction({
         }),
       );
     } catch (err) {
-      if (
-        !(
-          err instanceof ResourceNotFoundException ||
-          (err instanceof Error && err.name === "ResourceNotFoundException")
-        )
-      ) {
+      if (!(
+        err instanceof ResourceNotFoundException ||
+        (err instanceof Error && err.name === "ResourceNotFoundException")
+      )) {
         throw err;
       }
     }
