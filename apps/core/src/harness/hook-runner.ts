@@ -82,7 +82,8 @@ export async function runCodeHook(
     // Hook mode always yields { result, state } — the runner reads ctx.state
     // back out so the host can thread it into the next fire-point.
     const raw = (await runForResult(accountId, payload)) as
-      { result?: unknown; state?: unknown } | undefined;
+      | { result?: unknown; state?: unknown }
+      | undefined;
     return {
       mutation: sanitizeHookResult(event, raw?.result),
       state: sanitizeHookState(raw?.state, incomingState),

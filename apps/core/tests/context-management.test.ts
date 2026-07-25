@@ -537,7 +537,8 @@ describe("session compaction", () => {
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
-      { messages: Array<{ content: string }> } | undefined;
+      | { messages: Array<{ content: string }> }
+      | undefined;
     const compactionPrompt = options?.messages[0]?.content;
     expect(compactionPrompt).toContain("Earlier summary.");
     expect(compactionPrompt).toContain("new assistant content");
@@ -566,7 +567,8 @@ describe("session compaction", () => {
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
-      { messages: Array<{ content: string }> } | undefined;
+      | { messages: Array<{ content: string }> }
+      | undefined;
     const compactionPrompt = options?.messages[0]?.content;
     expect(compactionPrompt).not.toContain("private scratch work");
     expect(compactionPrompt).toContain("visible assistant answer");

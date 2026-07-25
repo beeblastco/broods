@@ -80,7 +80,12 @@ export interface AppliedIngress {
 
 export type IngressAdmission = {
   outcome:
-    "owner" | "queued" | "duplicate" | "rejected" | "capacity" | "conflict";
+    | "owner"
+    | "queued"
+    | "duplicate"
+    | "rejected"
+    | "capacity"
+    | "conflict";
   eventId?: string;
   status?: IngressStatus;
   ownerGeneration?: number;

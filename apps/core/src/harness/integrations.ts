@@ -747,7 +747,18 @@ async function findChannelCredentialHolder(
   channelName: string,
   request: ChannelRequest,
 ): Promise<AgentRecord | null> {
-  const agents = (await context.agentLister(accountId))
+  let listed: AgentRecord[];
+  try {
+    listed = await context.agentLister(accountId);
+  } catch (err) {
+    logWarn("Channel credential holder lookup failed", {
+      accountId,
+      channel: channelName,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+  const agents = listed
     .filter((candidate) => candidate.status === "active")
     .slice(0, CHANNEL_CREDENTIAL_CANDIDATE_LIMIT);
 
@@ -781,17 +792,24 @@ async function resolveChannelTarget(
 ): Promise<{ agent: AgentRecord; record?: ChannelRecord }> {
   if (!identity?.channelId) return { agent };
 
-  const record = await context
-    .channelRecordLoader(account.accountId, channelName, identity.channelId)
-    .catch((err: unknown) => {
-      logWarn("Channel record lookup failed", {
-        accountId: account.accountId,
-        channel: channelName,
-        channelId: identity.channelId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return null;
+  // try/catch, not .catch(): a loader can throw synchronously (a partial storage
+  // stub, a missing binding) and that must degrade to the receiving agent rather
+  // than 500 the webhook.
+  let record: ChannelRecord | null = null;
+  try {
+    record = await context.channelRecordLoader(
+      account.accountId,
+      channelName,
+      identity.channelId,
+    );
+  } catch (err) {
+    logWarn("Channel record lookup failed", {
+      accountId: account.accountId,
+      channel: channelName,
+      channelId: identity.channelId,
+      error: err instanceof Error ? err.message : String(err),
     });
+  }
   if (!record) return { agent };
 
   const boundAgentId = resolveChannelAgentId(record);

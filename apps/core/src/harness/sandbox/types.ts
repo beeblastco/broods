@@ -17,7 +17,11 @@ import type {
 } from "../../shared/sandbox-sizes.ts";
 
 export type SandboxProvider =
-  "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
+  | "sandbox"
+  | "lambda"
+  | "e2b"
+  | "daytona"
+  | "vercel";
 export type SandboxRuntime = "bash" | "python" | "node";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";
 

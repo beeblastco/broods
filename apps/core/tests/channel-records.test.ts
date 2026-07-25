@@ -160,6 +160,66 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_support");
   });
 
+  it("keeps serving the channel when the record loader throws synchronously", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    const response = await route({
+      records: {},
+      runs,
+      path: "/webhooks/acct_test/telegram",
+      // A partial storage stub makes `storage.channelRecords` undefined, so the
+      // default loader throws before a promise exists — `.catch` would miss it.
+      channelRecordLoader: (() => {
+        throw new TypeError("undefined is not an object");
+      }) as never,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
+  it("keeps serving the channel when storage has no channelRecords at all", async () => {
+    // The module-scope stub above provides only `agentPolicies`, so the default
+    // loader reads `undefined.getByExternalId` — the shape that broke CI.
+    const runs: ChannelInboundEvent[] = [];
+    const waited: Promise<unknown>[] = [];
+    const router = createIncomingEventRouter({
+      accountLoader: async () => ACCOUNT,
+      agentLoader: async () => SUPPORT_AGENT,
+      deploymentLoader: async () => null,
+      waitUntil: (promise) => {
+        waited.push(Promise.resolve(promise).catch(() => undefined));
+      },
+    });
+
+    const response = await router(
+      coreRequest(
+        "POST",
+        "/webhooks/acct_test/agent_support/telegram",
+        { "x-telegram-bot-api-secret-token": "telegram-secret" },
+        {
+          update_id: 7,
+          message: {
+            message_id: 9,
+            date: 1713916800,
+            text: "hello",
+            chat: { id: 123, type: "private" },
+            from: { id: 456, is_bot: false, username: "alice" },
+          },
+        },
+      ),
+      {
+        handleDirectRequest: async () => new Response("ok"),
+        handleChannelRequest: async (event: ChannelInboundEvent) => {
+          runs.push(event);
+        },
+      },
+    );
+    await Promise.all(waited);
+
+    expect(response.status).toBe(200);
+    expect(runs[0]!.agentId).toBe("agent_support");
+  });
+
   it("rejects an account-scoped webhook no agent's credentials verify", async () => {
     const response = await route({
       records: {},
