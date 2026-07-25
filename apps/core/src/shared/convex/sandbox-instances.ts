@@ -1,9 +1,10 @@
 /**
- * Storage mirror writes for sandbox instance lifecycle. The account-manage
- * suspend/resume/terminate endpoints call these after the provider lifecycle
- * call succeeds so the dashboard's live sandboxInstances query reflects the new
- * state. Fire-and-forget safe — gated on convex mode and wrapped so a mirror
- * failure never fails the lifecycle request. See usage.ts for the same pattern.
+ * Storage mirror writes for sandbox instance lifecycle, plus the ownership read
+ * those endpoints authorize against. The account-manage suspend/resume/terminate
+ * endpoints call the writes after the provider lifecycle call succeeds so the
+ * dashboard's live sandboxInstances query reflects the new state. Fire-and-forget
+ * safe — gated on convex mode and wrapped so a mirror failure never fails the
+ * lifecycle request. See usage.ts for the same pattern.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -23,10 +24,7 @@ function convexEnabled(): boolean {
 }
 
 export type SandboxInstanceStatus =
-  | "running"
-  | "suspended"
-  | "terminating"
-  | "error";
+  "running" | "suspended" | "terminating" | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
@@ -128,6 +126,27 @@ export async function setSandboxInstanceStatus(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * The reservation's ownership record: does it still bind to this account + sandbox config.
+ * Not fire-and-forget like the writes — a failure must surface, never deny the request.
+ */
+export async function sandboxInstanceIsControllable(
+  accountId: string,
+  sandboxConfigId: string,
+  reservationKey: string,
+): Promise<boolean> {
+  const controllable = await getConvexClient().query(
+    internal.sandboxInstances.isControllable,
+    {
+      accountId: accountId as any,
+      sandboxConfigId: sandboxConfigId as any,
+      reservationKey,
+    },
+  );
+
+  return controllable === true;
 }
 
 /**

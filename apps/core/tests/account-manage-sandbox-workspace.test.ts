@@ -82,6 +82,16 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
+// The Convex instance registry is what authorizes every lifecycle request: on means the
+// account + config own a reserved instance under that key, off means no such row exists.
+let registryOwnsReservation = true;
+mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  sandboxInstanceIsControllable: mock(async () => registryOwnsReservation),
+  setSandboxInstanceStatus: mock(async () => {}),
+  removeSandboxInstance: mock(async () => {}),
+  upsertSandboxInstance: mock(async () => {}),
+}));
+
 // The MicroVM terminal mint goes through the AWS SDK (GetMicrovm →
 // CreateMicrovmShellAuthToken); answer that sequence and let a test force the
 // shell-token failure seen on VMs launched without SHELL_INGRESS.
@@ -151,6 +161,7 @@ afterEach(() => {
   deleteSandboxInstanceMock.mockClear();
   microvmSendMock.mockClear();
   microvmShellTokenError = null;
+  registryOwnsReservation = true;
   setStorageForTests(null);
   resetStorageForTests();
 });
@@ -189,8 +200,9 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.status).toBe(401);
   });
 
-  it("rejects lifecycle actions for reservation keys not owned by the account/config", async () => {
+  it("rejects lifecycle actions for reservation keys with no instance registered to the account/config", async () => {
     process.env.SERVICE_AUTH_SECRET = "service-secret";
+    registryOwnsReservation = false;
     const created = await seedSandbox({
       provider: "sandbox",
       persistent: true,
@@ -212,6 +224,37 @@ describe("account-manage sandbox endpoints", () => {
     expect(response.status).toBe(403);
     expect(await responseJson(response)).toEqual({
       error: "reservationKey does not belong to this account or sandbox config",
+    });
+  });
+
+  it("keeps a registered instance controllable after its config stops being persistent", async () => {
+    process.env.SERVICE_AUTH_SECRET = "service-secret";
+    process.env.WORKDIR_URL = "https://workdir.example.com";
+    process.env.WORKDIR_API_KEY = "tenant-key";
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    // The config no longer carries `persistent` (e.g. rewritten by a CLI sync), which
+    // must not strand the live instance the registry still binds to this account.
+    const created = await seedSandbox({
+      provider: "sandbox",
+      options: {
+        workdirUrl: "https://workdir.example.com",
+        apiKey: "tenant-key",
+      },
+    });
+
+    const response = await handler(
+      createEvent(
+        "POST",
+        `/v1/sandboxes/${created.sandboxId}/refresh`,
+        { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
+        { reservationKey: "fs-0123456789abcdef0123456789abcdef01234567" },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toEqual({
+      status: "running",
+      externalId: "sbx_handler",
     });
   });
 

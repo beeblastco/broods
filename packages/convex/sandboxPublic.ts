@@ -62,6 +62,28 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
   };
 }
 
+// Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
+// Never throws: `callLifecycle` is what enforces access and reports failures, so a
+// marker write must not fail a request nor mask the error it is rolling back from.
+async function markInstance(
+  ctx: ActionCtx,
+  reservationKey: string,
+  status: "running" | "suspending",
+): Promise<void> {
+  try {
+    const account = await ctx.runQuery(api.org.getActiveAccount, {});
+    if (!account) return;
+
+    await ctx.runMutation(internal.sandboxInstances.setStatus, {
+      accountId: account.accountId as never,
+      reservationKey: reservationKey,
+      status: status,
+    });
+  } catch (err) {
+    console.warn("sandbox instance status marker failed", err);
+  }
+}
+
 /**
  * Resolves the caller's active account and POSTs a sandbox lifecycle action to
  * broods. broods runs the provider call then writes the new status into Convex.
@@ -137,13 +159,20 @@ async function callLifecycle(
 
 /**
  * Suspends a reserved sandbox instance, preserving disk+memory while freeing
- * compute.
+ * compute. The row parks in `suspending` for the duration so the dashboard can lock
+ * the toggle; broods writes `suspended`, and a failed suspend rolls back to running.
  */
 export const suspendSandbox = action({
   args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
+    await markInstance(ctx, args.reservationKey, "suspending");
+    try {
+      await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
+    } catch (error) {
+      await markInstance(ctx, args.reservationKey, "running");
+      throw error;
+    }
 
     return null;
   },

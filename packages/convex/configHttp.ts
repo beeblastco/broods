@@ -2707,7 +2707,8 @@ async function terminateReservedInstances(
       .filter(
         (instance) =>
           instance.sandboxConfigId !== undefined &&
-          (instance.status === "running" || instance.status === "suspended") &&
+          instance.status !== "terminating" &&
+          instance.status !== "error" &&
           matches(instance),
       )
       .map(async (instance) => {
