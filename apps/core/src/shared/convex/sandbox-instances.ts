@@ -24,10 +24,7 @@ function convexEnabled(): boolean {
 }
 
 export type SandboxInstanceStatus =
-  | "running"
-  | "suspended"
-  | "terminating"
-  | "error";
+  "running" | "suspended" | "terminating" | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
@@ -132,10 +129,8 @@ export async function setSandboxInstanceStatus(
 }
 
 /**
- * Whether the registry row core wrote when it reserved this instance still binds the
- * reservation key to this account and sandbox config — the only source of truth the
- * lifecycle endpoints authorize against. Unlike the mirror writes this read is not
- * fire-and-forget: a failure must surface, never read as a denied reservation.
+ * The reservation's ownership record: does it still bind to this account + sandbox config.
+ * Not fire-and-forget like the writes — a failure must surface, never deny the request.
  */
 export async function sandboxInstanceIsControllable(
   accountId: string,

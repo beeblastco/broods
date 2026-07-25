@@ -62,27 +62,26 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
   };
 }
 
-/**
- * Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
- * Silent no-op when no account resolves — the lifecycle call itself is what enforces
- * access, so a marker write must never be the thing that fails a request.
- * @param ctx the action context.
- * @param reservationKey the broods reconnection key identifying the instance.
- * @param status the status to park the mirrored row at.
- */
+// Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
+// Never throws: `callLifecycle` is what enforces access and reports failures, so a
+// marker write must not fail a request nor mask the error it is rolling back from.
 async function markInstance(
   ctx: ActionCtx,
   reservationKey: string,
   status: "running" | "suspending",
 ): Promise<void> {
-  const account = await ctx.runQuery(api.org.getActiveAccount, {});
-  if (!account) return;
+  try {
+    const account = await ctx.runQuery(api.org.getActiveAccount, {});
+    if (!account) return;
 
-  await ctx.runMutation(internal.sandboxInstances.setStatus, {
-    accountId: account.accountId as never,
-    reservationKey: reservationKey,
-    status: status,
-  });
+    await ctx.runMutation(internal.sandboxInstances.setStatus, {
+      accountId: account.accountId as never,
+      reservationKey: reservationKey,
+      status: status,
+    });
+  } catch (err) {
+    console.warn("sandbox instance status marker failed", err);
+  }
 }
 
 /**
