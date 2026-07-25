@@ -529,6 +529,7 @@ async function deleteAccountResponse(
     cronsDeleted,
     accountToolsDeleted,
     accountHooksDeleted,
+    channelRecordsDeleted,
   ] = await Promise.all([
     deleteAccountRuntimeData(disabled),
     getStorage().agents.removeAllForAccount(account.accountId),
@@ -537,6 +538,7 @@ async function deleteAccountResponse(
     deleteAccountCrons(account.accountId),
     getStorage().accountTools.removeAllForAccount(account.accountId),
     getStorage().accountHooks.removeAllForAccount(account.accountId),
+    getStorage().channelRecords.removeAllForAccount(account.accountId),
   ]);
   await getStorage().accounts.remove(account.accountId);
   return jsonResponse(200, {
@@ -549,6 +551,7 @@ async function deleteAccountResponse(
       cronsDeleted,
       accountToolsDeleted,
       accountHooksDeleted,
+      channelRecordsDeleted,
     },
   });
 }
