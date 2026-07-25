@@ -20,11 +20,7 @@ import { mergeConfigObjects, redactConfigSecrets } from "./agent-config.ts";
 // it auto-wires to the platform workdir node (WORKDIR_URL/WORKDIR_API_KEY env),
 // billed to the platform (see workdirConnection in harness/sandbox).
 export type SandboxProvider =
-  | "sandbox"
-  | "lambda"
-  | "e2b"
-  | "daytona"
-  | "vercel";
+  "sandbox" | "lambda" | "e2b" | "daytona" | "vercel";
 export type SandboxRuntimeName = "bash" | "python" | "node";
 export type SandboxPermissionMode = "edit" | "ask" | "bypass";
 export type SandboxNetworkMode = "allow-all" | "deny-all" | "restricted";

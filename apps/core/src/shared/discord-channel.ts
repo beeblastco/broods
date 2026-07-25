@@ -10,9 +10,13 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
-import { resolveDiscordCommand } from "./commands.ts";
+import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
+
+// Discord channel types that are threads. A message inside one of these keys its
+// conversation to the thread, with the parent channel as its channel scope.
+const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
 interface DiscordInteractionOption {
   name?: string;
@@ -27,6 +31,11 @@ interface DiscordInteractionPayload {
   application_id?: string;
   guild_id?: string;
   channel_id?: string;
+  channel?: {
+    id?: string;
+    type?: number;
+    parent_id?: string | null;
+  };
   data?: {
     name?: string;
     options?: DiscordInteractionOption[];
@@ -83,6 +92,16 @@ export interface DiscordSource {
   userId?: string;
 }
 
+/**
+ * Identity used to decide whether a guild message is addressed to the agent.
+ * Without `botUserId` Discord messages cannot be attributed to a mention, so the
+ * adapter keeps answering every message rather than going silent.
+ */
+export interface DiscordChannelOptions {
+  botUserId?: string;
+  mentionRoleIds?: string[];
+}
+
 interface DiscordSlashCommandContext {
   channelId: string;
   initialResponseSent: boolean;
@@ -133,6 +152,7 @@ export function createDiscordChannel(
   publicKey: string,
   allowedGuildIds: Set<string> | null,
   apiUrl?: string,
+  options: DiscordChannelOptions = {},
 ): ChannelAdapter {
   const discord = new BroodsDiscordAdapter({
     apiUrl,
@@ -170,6 +190,7 @@ export function createDiscordChannel(
         discord,
         payload as DiscordForwardedEventPayload,
         allowedGuildIds,
+        options,
       );
       if (gatewayEvent) {
         return gatewayEvent;
@@ -257,6 +278,12 @@ export function createDiscordChannel(
         return unsupportedInteractionResponse();
       }
 
+      // Discord sends the interaction's channel object, so a command typed inside
+      // a thread resolves to the same parent+thread key the gateway path builds.
+      // Without this the two paths disagree and /new clears the wrong conversation.
+      const thread = toDiscordInteractionThread(payload);
+      const threadId = discord.encodeThreadId(thread);
+
       return {
         kind: "message",
         ack: {
@@ -266,17 +293,26 @@ export function createDiscordChannel(
         },
         message: {
           eventId: `${DISCORD_INTEGRATION_PREFIX}${payload.id}`,
-          conversationKey: `${DISCORD_INTEGRATION_PREFIX}${payload.guild_id}:${payload.channel_id}`,
+          conversationKey: threadId,
           channelName: "discord",
           content: resolvedCommand.contentText
             ? [{ type: "text", text: resolvedCommand.contentText }]
             : [],
+          identity: {
+            ...(payload.guild_id ? { workspaceRef: payload.guild_id } : {}),
+            channelId: thread.channelId,
+            ...(thread.threadId ? { threadId: thread.threadId } : {}),
+            ...((payload.member?.user?.id ?? payload.user?.id)
+              ? { actorId: payload.member?.user?.id ?? payload.user?.id }
+              : {}),
+          },
           source: {
             applicationId: payload.application_id,
             interactionToken: payload.token,
             interactionId: payload.id,
             guildId: payload.guild_id,
-            channelId: payload.channel_id,
+            channelId: thread.channelId,
+            ...(thread.threadId ? { threadId } : {}),
             ...(resolvedCommand.commandToken
               ? { commandToken: resolvedCommand.commandToken }
               : {}),
@@ -364,6 +400,7 @@ function parseForwardedGatewayEvent(
   discord: BroodsDiscordAdapter,
   event: DiscordForwardedEventPayload,
   allowedGuildIds: Set<string> | null,
+  options: DiscordChannelOptions,
 ): ChannelParseResult | null {
   if (typeof event.type !== "string" || !event.type.startsWith("GATEWAY_")) {
     return null;
@@ -417,14 +454,39 @@ function parseForwardedGatewayEvent(
     };
   }
 
+  // Only a message addressed to the agent runs it; the rest is stored so a later
+  // mention still sees what the channel said. Without a configured botUserId a
+  // mention cannot be recognised, so every message keeps running the agent.
+  const runAgent = !options.botUserId || mentionsDiscordBot(data, options);
+  const omittedUserIds = new Set(
+    options.botUserId && runAgent ? [options.botUserId] : [],
+  );
+  const text = formatDiscordMessageText(content, data, omittedUserIds);
+  if (!text) {
+    return {
+      kind: "ignore",
+      reason: "empty_message",
+      response: gatewayAck().response,
+    };
+  }
+
   return {
-    kind: "message",
+    kind: runAgent ? "message" : "context",
     ack: gatewayAck().response,
     message: {
       eventId: `${DISCORD_INTEGRATION_PREFIX}${data.id}`,
       conversationKey: threadId,
       channelName: "discord",
-      content: [{ type: "text", text: content }],
+      content: [{ type: "text", text }],
+      identity: {
+        workspaceRef: data.guild_id,
+        channelId: thread.channelId,
+        ...(thread.threadId ? { threadId: thread.threadId } : {}),
+        actorId: data.author.id,
+        ...(data.author.global_name || data.author.username
+          ? { actorName: data.author.global_name || data.author.username }
+          : {}),
+      },
       source: {
         applicationId: "broods-discord-gateway",
         guildId: data.guild_id,
@@ -435,6 +497,61 @@ function parseForwardedGatewayEvent(
       } satisfies DiscordSource,
     },
   };
+}
+
+function mentionsDiscordBot(
+  data: DiscordGatewayMessageData,
+  options: DiscordChannelOptions,
+): boolean {
+  if (
+    options.botUserId &&
+    (data.mentions ?? []).some((mention) => mention.id === options.botUserId)
+  ) {
+    return true;
+  }
+
+  const roleIds = options.mentionRoleIds ?? [];
+
+  return (
+    roleIds.length > 0 &&
+    (data.mention_roles ?? []).some((roleId) => roleIds.includes(roleId))
+  );
+}
+
+/**
+ * Prefix the sender so the agent knows who is talking in a multi-person guild
+ * channel, and turn `<@id>` mentions into readable names. Mentions that only
+ * target the bot are dropped, and a command keeps its bare text so the leading
+ * token still parses.
+ */
+function formatDiscordMessageText(
+  content: string,
+  data: DiscordGatewayMessageData,
+  omittedUserIds: Set<string>,
+): string {
+  const names = new Map<string, string>();
+  for (const mention of data.mentions ?? []) {
+    const name = mention.username;
+    if (mention.id && name) {
+      names.set(mention.id, name);
+    }
+  }
+  const normalized = content
+    .replace(/<@!?([^>\s]+)>/g, (match, userId: string) => {
+      if (omittedUserIds.has(userId)) return "";
+      const name = names.get(userId);
+      return name ? `@${name}` : match;
+    })
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  const author = data.author?.global_name || data.author?.username;
+  if (!normalized || !author || parseCommand(normalized)) {
+    return normalized;
+  }
+
+  return `${author}: ${normalized}`;
 }
 
 function isGatewayMessage(
@@ -457,6 +574,28 @@ function isGatewayMessage(
     typeof data.author.username === "string" &&
     typeof data.author.bot === "boolean",
   );
+}
+
+function toDiscordInteractionThread(
+  payload: DiscordInteractionPayload,
+): DiscordThreadId {
+  const channelId = payload.channel_id ?? "@me";
+  const parentId = payload.channel?.parent_id;
+  if (
+    parentId &&
+    DISCORD_THREAD_CHANNEL_TYPES.has(payload.channel?.type ?? 0)
+  ) {
+    return {
+      guildId: payload.guild_id ?? "@me",
+      channelId: parentId,
+      threadId: channelId,
+    };
+  }
+
+  return {
+    guildId: payload.guild_id ?? "@me",
+    channelId,
+  };
 }
 
 function toDiscordGatewayThread(

@@ -19,6 +19,7 @@ import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelIdentity,
   ChannelRequest,
   ChannelResponse,
   InboundMessage,
@@ -202,6 +203,7 @@ export interface ChannelInboundEvent {
   content: UserContent;
   events: ConversationIngressEvent[];
   channelName: string;
+  identity?: ChannelIdentity;
   source: Record<string, unknown>;
   channel: ChannelActions;
   commandToken?: string;
@@ -219,6 +221,7 @@ export interface ChannelContextEvent {
   content: UserContent;
   events: ConversationIngressEvent[];
   channelName: string;
+  identity?: ChannelIdentity;
   source: Record<string, unknown>;
 }
 
@@ -823,6 +826,7 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
+            ...(message.identity ? { identity: message.identity } : {}),
             source: message.source,
             accountId: account.accountId,
             agentId: agent.agentId,
@@ -877,6 +881,7 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
+            ...(message.identity ? { identity: message.identity } : {}),
             source: message.source,
             channel: channel,
             accountId: account.accountId,
@@ -1789,6 +1794,12 @@ function createDiscordChannelFromConfig(
     channel.publicKey,
     channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
     channel.apiUrl,
+    {
+      ...(channel.botUserId ? { botUserId: channel.botUserId } : {}),
+      ...(channel.mentionRoleIds
+        ? { mentionRoleIds: channel.mentionRoleIds }
+        : {}),
+    },
   );
 }
 

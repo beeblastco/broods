@@ -435,6 +435,10 @@ export interface AgentDiscordChannelConfig {
   botToken?: string;
   publicKey?: string;
   allowedGuildIds?: string[];
+  /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
+  botUserId?: string;
+  /** Role ids that count as mentioning the agent, e.g. an on-call role. */
+  mentionRoleIds?: string[];
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -1211,6 +1215,11 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalStringArray(
     config.allowedGuildIds,
     "config.channels.discord.allowedGuildIds",
+  );
+  assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
+  assertOptionalStringArray(
+    config.mentionRoleIds,
+    "config.channels.discord.mentionRoleIds",
   );
 }
 

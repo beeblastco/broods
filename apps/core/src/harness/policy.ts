@@ -15,6 +15,7 @@ import type {
   ToolApprovalStatus,
   ToolSet,
 } from "ai";
+import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import type {
   AgentPolicyMode,
@@ -40,6 +41,28 @@ type RuntimeToolApproval = Extract<
 
 export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
   return (agentConfig.policy?.policyIds?.length ?? 0) > 0;
+}
+
+/**
+ * Lift a channel's place and person onto the policy input. The rego resolves any
+ * dotted path on the input, so these become usable in rule conditions as soon as
+ * they are present — "deny bash in C042 unless the actor is on-call" needs no
+ * policy-engine change.
+ */
+export function channelPolicyIdentity(
+  identity: ChannelIdentity | undefined,
+): Pick<
+  PolicyDecisionInput,
+  "channelId" | "threadId" | "actorId" | "actorName" | "actorRoles"
+> {
+  if (!identity) return {};
+
+  return {
+    ...(identity.channelId ? { channelId: identity.channelId } : {}),
+    ...(identity.threadId ? { threadId: identity.threadId } : {}),
+    ...(identity.actorId ? { actorId: identity.actorId } : {}),
+    ...(identity.actorName ? { actorName: identity.actorName } : {}),
+  };
 }
 
 export async function createPolicyToolApproval(

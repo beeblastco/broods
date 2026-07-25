@@ -27,6 +27,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { parseCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import {
   SLACK_COMMAND_INTEGRATION_PREFIX,
@@ -217,6 +218,9 @@ async function parseEventCallback(
   );
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
+  const actorName = payload.event.user
+    ? await resolveSlackUserName(payload.event.user, resolveUserName)
+    : undefined;
 
   return {
     kind: runAgent ? "message" : "context",
@@ -234,6 +238,13 @@ async function parseEventCallback(
       ),
       channelName: "slack",
       content: [{ type: "text", text }],
+      identity: {
+        workspaceRef: payload.team_id,
+        channelId,
+        ...(isGroupChannel ? { threadId: threadTs } : {}),
+        ...(payload.event.user ? { actorId: payload.event.user } : {}),
+        ...(actorName ? { actorName } : {}),
+      },
       source: {
         teamId: payload.team_id,
         channelId,
@@ -340,9 +351,17 @@ function parseSlashCommand(
     ack: { statusCode: 200 },
     message: {
       eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${payload.triggerId ?? `${teamId}:${channelId}:${command}:${text}`}`,
+      // Slack does not send thread context on a slash command, so it can only
+      // ever address the channel conversation. `@bot /new` inside a thread is
+      // the threaded equivalent, and that arrives as an app_mention.
       conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
       content: [{ type: "text", text }],
+      identity: {
+        workspaceRef: teamId,
+        channelId,
+        ...(payload.userId ? { actorId: payload.userId } : {}),
+      },
       source: {
         teamId,
         channelId,
@@ -546,6 +565,7 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
  * Prefix a group-channel message with the sender's user identifier so the
  * agent knows who is talking when multiple users are in the conversation.
  * DMs and app_home messages are not prefixed because there is only one user.
+ * A command keeps its bare text so its leading token still parses.
  */
 async function formatSlackMessageText(
   text: string,
@@ -559,7 +579,7 @@ async function formatSlackMessageText(
     omittedUserIds,
     resolveUserName,
   );
-  if (!isGroupChannel || !userId || !normalized) {
+  if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
     return normalized;
   }
   return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;

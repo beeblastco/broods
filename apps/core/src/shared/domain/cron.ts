@@ -51,8 +51,7 @@ export interface CronRunRecord {
  * single `input` string (wrapped into one user message) or a full `events` list.
  */
 export type CronRunInput =
-  | { input: string; events?: never }
-  | { events: ModelMessage[]; input?: never };
+  { input: string; events?: never } | { events: ModelMessage[]; input?: never };
 
 export type CreateCronInput = {
   name: string;

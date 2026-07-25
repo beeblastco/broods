@@ -7,8 +7,7 @@ import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { StreamOptions } from "chat";
 
 export type ChannelIngressEvent =
-  | UserModelMessage
-  | (SystemModelMessage & { persist?: false });
+  UserModelMessage | (SystemModelMessage & { persist?: false });
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
@@ -36,12 +35,31 @@ export interface ChannelResponse {
   body?: string;
 }
 
+/**
+ * Where a message came from and who sent it, in provider-neutral terms.
+ * `source` stays opaque because it carries reply-routing secrets (interaction
+ * tokens, response URLs); this is the part policy and channel lookup may read.
+ */
+export interface ChannelIdentity {
+  /** Team, guild, or repository owner the channel belongs to. */
+  workspaceRef?: string;
+  /** Channel, chat, or repository the message arrived in. */
+  channelId?: string;
+  /** Thread inside the channel, when the message is threaded. */
+  threadId?: string;
+  /** Provider id of the person who sent it. */
+  actorId?: string;
+  /** Display name for that person, when the provider gives one cheaply. */
+  actorName?: string;
+}
+
 export interface InboundMessage {
   eventId: string;
   conversationKey: string;
   channelName: string;
   content: UserContent;
   events?: ChannelIngressEvent[];
+  identity?: ChannelIdentity;
   source: Record<string, unknown>;
 }
 

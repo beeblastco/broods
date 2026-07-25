@@ -58,6 +58,11 @@ describe("zalo channel adapter", () => {
       conversationKey: "zalo:chat-1",
       channelName: "zalo",
       content: "hello zalo",
+      identity: {
+        channelId: "chat-1",
+        actorId: "user-1",
+        actorName: "Ada",
+      },
       source: {
         chatId: "chat-1",
         chatType: "PRIVATE",

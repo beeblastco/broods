@@ -151,10 +151,7 @@ let activeInProcessWorkers = 0;
 
 export async function handler(
   event:
-    | CoreRequest
-    | AsyncWorkerInvocation
-    | NatsWorkerInvocation
-    | CronInvocation,
+    CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // Each HTTP request or in-process worker gets a request-private observability
@@ -179,10 +176,7 @@ export async function settleFailedIngressAndDrain(
 
 async function handleRequest(
   event:
-    | CoreRequest
-    | AsyncWorkerInvocation
-    | NatsWorkerInvocation
-    | CronInvocation,
+    CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // First entry in this execution environment marks the end of the cold-start
@@ -1190,7 +1184,12 @@ async function handleChannelRequest(
     event.accountId,
     event.agentId,
     event.agentConfig ?? {},
-    { kind: "channel", channelName: event.channelName, source: event.source },
+    {
+      kind: "channel",
+      channelName: event.channelName,
+      ...(event.identity ? { identity: event.identity } : {}),
+      source: event.source,
+    },
     event.endpointId,
     event.projectSlug,
     event.environmentSlug,
@@ -1329,7 +1328,12 @@ async function handleChannelRequest(
         event.accountId,
         event.agentId,
         activeConfig,
-        { kind: "channel", channelName: event.channelName, source: source },
+        {
+          kind: "channel",
+          channelName: event.channelName,
+          ...(event.identity ? { identity: event.identity } : {}),
+          source: source,
+        },
         event.endpointId,
         event.projectSlug,
         event.environmentSlug,

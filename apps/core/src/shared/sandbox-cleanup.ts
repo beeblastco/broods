@@ -17,11 +17,7 @@ import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
 type ReleasableSandboxProvider =
-  | "sandbox"
-  | "lambda"
-  | "daytona"
-  | "e2b"
-  | "vercel";
+  "sandbox" | "lambda" | "daytona" | "e2b" | "vercel";
 
 /**
  * Clean delete of reserved sandboxes for the given workspace namespaces.

@@ -6,6 +6,7 @@
 
 import { afterAll, describe, expect, it } from "bun:test";
 import {
+  channelPolicyIdentity,
   createPolicyToolApproval,
   policyDecisionLogMessage,
 } from "../src/harness/policy.ts";
@@ -197,5 +198,44 @@ describe("agent policy enforce mode", () => {
         }),
       }),
     );
+  });
+
+  it("carries the channel place and person onto the policy input", async () => {
+    const approval = await createPolicyToolApproval(
+      agentConfig("audit"),
+      {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        channel: "slack",
+        ...channelPolicyIdentity({
+          workspaceRef: "T09BEEB",
+          channelId: "C042PRODENG",
+          threadId: "1753264860.4471",
+          actorId: "U777",
+          actorName: "Ana",
+        }),
+      },
+      [],
+    );
+    await approval!(toolCallEvent);
+
+    // The rego resolves any dotted path on input, so a rule can already say
+    // "deny unless input.channelId is C042OPS" with no policy-engine change.
+    expect(seenPolicyInputs).toContainEqual(
+      expect.objectContaining({
+        channel: "slack",
+        channelId: "C042PRODENG",
+        threadId: "1753264860.4471",
+        actorId: "U777",
+        actorName: "Ana",
+      }),
+    );
+  });
+
+  it("omits channel identity fields that the provider did not supply", () => {
+    expect(channelPolicyIdentity(undefined)).toEqual({});
+    expect(channelPolicyIdentity({ channelId: "C1" })).toEqual({
+      channelId: "C1",
+    });
   });
 });
