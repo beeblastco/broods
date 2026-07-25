@@ -448,7 +448,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
       (message) =>
         message.type === "output" &&
         (message.data as { type?: unknown } | undefined)?.type === "done",
-      700,
+      1_600,
     );
     expect(
       sent

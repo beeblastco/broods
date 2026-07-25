@@ -88,18 +88,18 @@ describe("runtime ingress", () => {
     });
 
     expect(
-      await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
-        agentId: "test-agent",
-        eventId: "public-owner",
-      }),
-    ).toMatchObject({
-      publicDeploymentIngress: {
-        accountId,
-        endpointId: "endpoint-one",
-        environmentSlug: "development",
-        projectSlug: "demo",
-      },
+      (
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId,
+          agentId: "test-agent",
+          eventId: "public-owner",
+        })
+      )?.publicDeploymentIngress,
+    ).toEqual({
+      accountId,
+      endpointId: "endpoint-one",
+      environmentSlug: "development",
+      projectSlug: "demo",
     });
   });
 

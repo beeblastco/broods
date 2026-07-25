@@ -72,6 +72,7 @@ const TERMINAL_STATUSES = new Set<IngressStatus>([
 const CURSOR_PREFIX = "ws-responses";
 const STATUS_POLL_INTERVAL_MS = 500;
 const NATS_TAIL_GRACE_POLLS = 4;
+const NATS_TAIL_MAX_WAIT_MS = 10_000;
 
 export function handleAgentMessage(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
@@ -895,11 +896,15 @@ async function waitForNatsTail(options: {
 }): Promise<void> {
   let boundary = options.initialBoundary;
   let stablePolls = 0;
+  // The run is already terminal here, so this drain is bounded: a consumer that
+  // stalls below the boundary would otherwise hold the socket open forever.
+  const deadline = Date.now() + NATS_TAIL_MAX_WAIT_MS;
   while (
     !options.signal.aborted &&
     !options.sawDone() &&
     !options.streamSettled() &&
-    stablePolls < NATS_TAIL_GRACE_POLLS
+    stablePolls < NATS_TAIL_GRACE_POLLS &&
+    Date.now() < deadline
   ) {
     if (options.lastConsumedSequence() < boundary) {
       await Bun.sleep(STATUS_POLL_INTERVAL_MS);
