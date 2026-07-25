@@ -6,47 +6,65 @@ Before any Next.js work, find and read the relevant doc in `node_modules/next/di
 
 <!-- END:nextjs-agent-rules -->
 
-## Monorepo context
+# apps/dashboard
 
-This app is `apps/dashboard` in the broods Bun-workspaces monorepo. If you started directly in this folder, also read `../../AGENTS.md` for the monorepo-wide rules.
+`@broods/dashboard` — Next.js 16 UI. operate core through shared Convex backend. paths here relative to `apps/dashboard/`.
 
-The Convex backend lives at `../../packages/convex` (`@broods/convex`) and is imported here as `@broods/convex/...` (for example `@broods/convex/_generated/api`), never via a local `convex/` directory.
+no local `convex/` folder here. backend is `@broods/convex` (`../../packages/convex`), imported as `@broods/convex/_generated/api` and friends.
 
-Before changing any Convex backend file under `../../packages/convex`, read `../../packages/convex/AGENTS.md`. That file owns Convex schema, function, auth, codegen, and backend style rules.
+## Map
+
+routes, `app/`, App Router:
+
+- `app/layout.tsx`, `app/globals.css` — root shell, Tailwind entry.
+- `app/(main)/projects/` — project list. `app/(main)/[projectId]/` — per-project workspace, split `dashboard/`, `sandbox/`, `scheduler/`, `settings/`.
+- `app/(main)/settings/account/`, `app/(main)/settings/org/` — account and org settings.
+- `app/auth/sign-in/`, `app/auth/callback/` — WorkOS AuthKit routes.
+- `app/cli-auth/start/` — device-code handoff for `broods login`.
+- `app/healthz/` — container liveness probe.
+- `proxy.ts` — session middleware. Next.js use `proxy.ts`, **not** `middleware.ts` ([docs](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)).
+
+components, `app/components/`:
+
+- `canvas/` agent canvas, `node/` canvas nodes, `side-panel/` inspector, `header/`, `icons/`.
+- `app/components/ui/` — shadcn primitives (`button.tsx`, `dialog.tsx`, `sheet.tsx`, `command.tsx`, …). **skip these, do not edit.** shadcn config in `components.json`.
+
+hooks, `app/hooks/`:
+
+- `useAgentChat.ts` — chat/stream surface against core.
+- `useObservabilityStream.ts` — live run telemetry.
+- `useAgentHealth.ts`, `useConnectedAgentConfig.ts`, `useEnvironment.ts`.
+
+client logic, `app/lib/`:
+
+- `coreEndpoint.ts` — how browser reach core through gateway.
+- `agentConfigCodec.ts`, `agentConfigOptimistic.ts` — agent config encode/decode, optimistic update. Convex-side codec is the boss. keep these two aligned with it.
+- `toolServiceOptimistic.ts`, `skillRefs.ts`, `skillsCredentials.ts`, `runtimeVariables.ts`, `canvasRuntimeRefs.ts`, `onboardingSecret.ts`, `pricing.ts`, `prefetch.ts`, `errors.ts`, `utils.ts`.
+
+rest: `tests/`, `Dockerfile` (image build re-run `convex deploy`), `next.config.ts`, `eslint.config.mjs`, `skills-lock.json`.
 
 ## Commands
 
-- Package manager: `bun` (not npm/yarn)
-- Format/lint: `bun run format`, do not run `tsc` raw or `bunx tsc --noEmit 2>&1`.
+- `bun`, not npm/yarn.
+- `bun run format` for prettier. never raw `tsc` or `bunx tsc --noEmit`.
+- from repo root: `bun run dashboard`, `bun run dashboard:build`.
 
-## Key Conventions
+## Rules
 
-- Use `key: value` format when passing parameters (no shorthand)
-- Next.js uses `proxy.ts` instead of `middleware.ts` ([docs](https://nextjs.org/docs/app/api-reference/file-conventions/proxy))
+- component file name is CamelCase.
+- no sonner, no toast, no transient popup library. feedback and state must show in the main component, where user can touch it.
+- no custom `gap`, `margin`, `padding`. shadcn/ui already ship theme and spacing. use default. custom spacing only when user ask.
+- every interactive thing need explicit cursor class:
+  - clickable button, link, trigger → `cursor-pointer`
+  - disabled → `cursor-not-allowed`
+  - plain `<button>` and `<a>` fall back to `cursor-default` in some resets, so always set it.
+  - same for custom component and for any shadcn/ui override in `app/components/ui/`.
 
-## Authentication
+## Auth
 
-WorkOS AuthKit handles SSO with Google OAuth. Dashboard-owned auth code lives in:
+WorkOS AuthKit do SSO with Google OAuth. dashboard side:
 
-- `proxy.ts` — Next.js session middleware
-- `app/auth/` — sign-in/callback routes using `@workos-inc/authkit-nextjs`
+- `proxy.ts` — session middleware.
+- `app/auth/` — sign-in and callback routes on `@workos-inc/authkit-nextjs`.
 
-Convex user sync, JWT config, and authenticated Convex functions are backend concerns. Read `../../packages/convex/AGENTS.md` before changing them.
-
-- Ignore or skip `components/ui/` (Shadcn components)
-- Component files use CamelCase naming
-
-Do not create new function unless it is completely different from and cannot reusable code in any way. Try to figure it out a way to write less code but still maintainable. Remember the larger the code base and more complex -> the more technical debt.
-
-- Each return clause have to seperate 1 line before the return statement.
-
-Do not use sonner, toast, or any transient popup notification library. Feedback and state must be visible and interactive through the main components themselves.
-
-Do not add custom `gap`, `margin`, or `padding`. shadcn/ui already ships its own theme and spacing — use the defaults, and only reach for custom spacing when explicitly asked.
-
-UI/UX cursor rules — every interactive element must have an explicit cursor class:
-
-- Clickable buttons, links, triggers → `cursor-pointer`
-- Disabled elements → `cursor-not-allowed`
-- Plain `<button>` and `<a>` elements default to `cursor-default` in some resets, so always set it explicitly.
-- Apply this to all custom components and any shadcn/ui component overrides in `components/ui/`.
+Convex user sync, JWT provider config, access control inside Convex functions = backend, live in `../../packages/convex`.
