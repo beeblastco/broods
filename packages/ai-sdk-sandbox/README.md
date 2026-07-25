@@ -19,9 +19,13 @@ persistence, and cleanup paths. It must not add another provider registry or
 session-persistence layer:
 
 ```ts
-import { createBroodsSandbox, type BroodsSandboxDriver } from "@broods/ai-sdk-sandbox";
+import {
+  createBroodsSandbox,
+  type BroodsSandboxDriver,
+} from "@broods/ai-sdk-sandbox";
 
-const driver: BroodsSandboxDriver = createCoreHarnessDriver(/* runtime context */);
+const driver: BroodsSandboxDriver =
+  createCoreHarnessDriver(/* runtime context */);
 const sandbox = createBroodsSandbox({ driver });
 
 // Core passes `sandbox` to the selected Claude Code or Codex HarnessAgent.

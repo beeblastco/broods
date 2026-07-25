@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 99eca92075fed634678059855b7c8990fcdf0cc6..1a8359def91e12fcc92021a150d07d41e86eeb1b 100644
+index 15552da..ea3560a 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -228,10 +228,11 @@ function createCodex(settings = {}) {
@@ -31,7 +31,7 @@ index 99eca92075fed634678059855b7c8990fcdf0cc6..1a8359def91e12fcc92021a150d07d41
          connect: () => openWebSocket(wsUrl),
          outboundSchema: outboundMessageSchema,
 diff --git a/src/codex-harness.ts b/src/codex-harness.ts
-index ae51a7b3106de24ae72a4cfb5e6bbaf5c0ce68fe..56b5bdf5aa746ac5ad0792907120f846cba624aa 100644
+index cda867e..e11ba33 100644
 --- a/src/codex-harness.ts
 +++ b/src/codex-harness.ts
 @@ -272,11 +272,11 @@ export function createCodex(

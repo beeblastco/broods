@@ -34,7 +34,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@ai-sdk/harness": "1.0.39",
+    "@ai-sdk/harness": "1.0.43",
     "@ai-sdk/provider-utils": "5.0.12"
   },
   "devDependencies": {

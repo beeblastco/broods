@@ -1,5 +1,5 @@
 diff --git a/dist/index.js b/dist/index.js
-index 2c7d0f52d7a6077de2978158f1ddd8ec5baa1fa2..0d758f2cf943396202367612a9ede06d35415668 100644
+index ac7a379..2ec6ae5 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -501,10 +501,11 @@ function createClaudeCode(settings = {}) {
@@ -31,7 +31,7 @@ index 2c7d0f52d7a6077de2978158f1ddd8ec5baa1fa2..0d758f2cf943396202367612a9ede06d
          connect: buildConnect(wsUrl),
          outboundSchema: outboundMessageSchema,
 diff --git a/src/claude-code-harness.ts b/src/claude-code-harness.ts
-index d8a74a6195755fd0cef9b910a38655ab155d4af0..575445f227a9a4c92fc48ec0758e2eac75bb228a 100644
+index 2d79619..60479a0 100644
 --- a/src/claude-code-harness.ts
 +++ b/src/claude-code-harness.ts
 @@ -522,11 +522,11 @@ export function createClaudeCode(

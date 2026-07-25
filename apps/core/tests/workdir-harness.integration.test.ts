@@ -133,7 +133,7 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
     }
 
     expect(reservations.has(reservationKey)).toBe(false);
-  });
+  }, 120_000);
 
   it.each(["claude-code", "codex"] as const)(
     "bootstraps and connects the real %s Harness bridge",
