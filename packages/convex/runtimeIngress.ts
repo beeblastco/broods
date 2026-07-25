@@ -11,6 +11,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import { isPlainObject } from "./model/objects";
 import {
   appliedIngressModeValidator,
   ingressModeValidator,
@@ -70,7 +71,22 @@ const ingressStatusResultValidator = v.object({
   error: v.optional(v.string()),
   stoppedByUser: v.optional(v.boolean()),
   result: v.optional(v.any()),
+  publicDeploymentIngress: v.optional(
+    v.object({
+      accountId: v.string(),
+      endpointId: v.string(),
+      environmentSlug: v.string(),
+      projectSlug: v.string(),
+    }),
+  ),
 });
+
+type PublicDeploymentIngress = {
+  accountId: string;
+  endpointId: string;
+  environmentSlug: string;
+  projectSlug: string;
+};
 
 /** Extracts the account ID from an account-scoped runtime key. */
 function accountIdFromKey(value: string): string {
@@ -78,6 +94,38 @@ function accountIdFromKey(value: string): string {
   if (!match?.[1]) throw new Error("Runtime key is not account scoped");
 
   return match[1];
+}
+
+function publicDeploymentIngressFromDelivery(
+  delivery: unknown,
+): PublicDeploymentIngress | undefined {
+  if (!isPlainObject(delivery)) return undefined;
+  const record = delivery;
+  if (
+    record.kind !== "http" &&
+    record.kind !== "async" &&
+    record.kind !== "websocket"
+  ) {
+    return undefined;
+  }
+  const marker = record.publicDeploymentIngress;
+  if (!isPlainObject(marker)) return undefined;
+  const value = marker;
+  if (
+    typeof value.accountId !== "string" ||
+    typeof value.endpointId !== "string" ||
+    typeof value.environmentSlug !== "string" ||
+    typeof value.projectSlug !== "string"
+  ) {
+    return undefined;
+  }
+
+  return {
+    accountId: value.accountId,
+    endpointId: value.endpointId,
+    environmentSlug: value.environmentSlug,
+    projectSlug: value.projectSlug,
+  };
 }
 
 /** Requires the account to exist and remain active in the write transaction. */
@@ -863,6 +911,9 @@ export const getStatus = internalQuery({
     ) {
       return null;
     }
+    const publicDeploymentIngress = publicDeploymentIngressFromDelivery(
+      row.delivery,
+    );
 
     return {
       eventId: row.eventId,
@@ -881,6 +932,9 @@ export const getStatus = internalQuery({
       ...(row.error !== undefined ? { error: row.error } : {}),
       ...(row.stoppedByUser ? { stoppedByUser: true } : {}),
       ...(row.result !== undefined ? { result: row.result } : {}),
+      ...(publicDeploymentIngress
+        ? { publicDeploymentIngress: publicDeploymentIngress }
+        : {}),
     };
   },
 });

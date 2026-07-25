@@ -175,6 +175,13 @@ permits a virtual or predefined private child to be observed through its
 already-authorized parent without making the child publicly runnable or exposing
 another deployment's tasks.
 
+The parent ingress row carries a dedicated server-derived public-deployment
+marker only when it entered through deployment-authenticated direct HTTP, async,
+or WebSocket ingress. Core compares every marker field with the authenticated
+deployment. Account-authenticated direct runs, channels, cron runs, and internal
+continuations do not gain attach access merely because they also carry generic
+endpoint metadata.
+
 The gateway also requires the status response's conversation key to equal the
 requested attach conversation before opening the NATS consumer. Its event-bound
 `ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child
@@ -186,6 +193,13 @@ immediately even if the child began publishing before the tool result arrived.
 A `done` stream part only closes the best-effort token tail. The existing
 `/status/{taskId}?agentId={agentId}` result remains the durable terminal truth
 after completion, failure, or JetStream expiry.
+
+An attach made before the first child frame remains open even when the replay
+buffer is empty. The gateway starts at the next subject sequence and tails
+future frames while polling durable status concurrently. If durable completion
+or failure arrives without a stream `done`, it allows a short NATS-tail grace,
+closes the ordered consumer, and emits one synthetic terminal frame; an error or
+done already received from the stream is never duplicated.
 
 Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure; connection, publish, or flush failures cannot change that durable outcome. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
 

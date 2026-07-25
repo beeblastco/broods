@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { DeliverPolicy } from "nats.ws";
 import {
   buildCoreRunBody,
   handleAgentMessage,
@@ -260,6 +261,535 @@ test("rejects an attach whose durable status conversation does not own the reque
       status: "processing",
       statusUrl: "/status/subagent-task?agentId=agent_private",
     });
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps a zero-buffer processing attach open for future live frames", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const encoder = new TextEncoder();
+  let consumerClosed = false;
+  let consumerOptions:
+    | { deliver_policy?: DeliverPolicy; opt_start_seq?: number }
+    | undefined;
+  const streamEvent = (sequence: number, data: Record<string, unknown>) => ({
+    seq: sequence,
+    data: encoder.encode(
+      JSON.stringify({
+        type: "stream",
+        headers: {
+          accountId: "acct_test",
+          agentId: "agent_child",
+          conversationKey: "child-conversation",
+          eventId: "child-task",
+          connectionId: "child-task",
+        },
+        data,
+        sequence,
+      }),
+    ),
+    ack: () => {},
+  });
+  const connection = zeroBufferConnection(
+    async () => ({
+      async *[Symbol.asyncIterator]() {
+        await Bun.sleep(50);
+        yield streamEvent(21, { type: "text-delta", text: "future" });
+        yield streamEvent(22, { type: "done" });
+      },
+      close: async () => {
+        consumerClosed = true;
+      },
+    }),
+    (options) => {
+      consumerOptions = options;
+    },
+  );
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: "processing",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-live",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) =>
+        message.type === "output" &&
+        (message.data as { type?: unknown } | undefined)?.type === "done",
+    );
+    expect(sent[0]).toMatchObject({
+      type: "attached",
+      requestId: "attach-live",
+      status: "processing",
+    });
+    expect(consumerOptions).toMatchObject({
+      deliver_policy: DeliverPolicy.StartSequence,
+      opt_start_seq: 21,
+    });
+    expect(
+      sent
+        .filter((message) => message.type === "output")
+        .map((message) => ({
+          replay: message.replay,
+          type: (message.data as { type: string }).type,
+        })),
+    ).toEqual([
+      { replay: false, type: "text-delta" },
+      { replay: false, type: "done" },
+    ]);
+    await waitForGatewayMessage(sent, () => consumerClosed);
+    expect(
+      sent.filter(
+        (message) =>
+          message.type === "done" ||
+          (message.type === "error" && message.eventId === "child-task"),
+      ),
+    ).toHaveLength(0);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("finishes buffered replay before applying terminal tail grace", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const encoder = new TextEncoder();
+  let consumerClosed = false;
+  const streamEvent = (sequence: number, data: Record<string, unknown>) => ({
+    seq: sequence,
+    data: encoder.encode(
+      JSON.stringify({
+        type: "stream",
+        headers: {
+          accountId: "acct_test",
+          agentId: "agent_child",
+          conversationKey: "child-conversation",
+          eventId: "child-task",
+          connectionId: "child-task",
+        },
+        data,
+        sequence,
+      }),
+    ),
+    ack: () => {},
+  });
+  const connection = zeroBufferConnection(
+    async () => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent(10, { type: "text-delta", text: "first" });
+        await Bun.sleep(2_100);
+        if (consumerClosed) return;
+        yield streamEvent(11, { type: "text-delta", text: "last" });
+        yield streamEvent(12, { type: "done" });
+      },
+      close: async () => {
+        consumerClosed = true;
+      },
+    }),
+    undefined,
+    { bufferedCount: 3, firstSequence: 10, lastSequence: 12 },
+  );
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-buffered-terminal",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "4000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) =>
+        message.type === "output" &&
+        (message.data as { type?: unknown } | undefined)?.type === "done",
+      700,
+    );
+    expect(
+      sent
+        .filter((message) => message.type === "output")
+        .map((message) => (message.data as { type: string }).type),
+    ).toEqual(["text-delta", "text-delta", "done"]);
+    expect(
+      sent.filter(
+        (message) => message.type === "done" || message.type === "error",
+      ),
+    ).toHaveLength(0);
+    await waitForGatewayMessage(sent, () => consumerClosed);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("closes a zero-frame attach after durable completion and emits one terminal frame", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let consumerClosed = false;
+  let statusReads = 0;
+  const connection = zeroBufferConnection(async () => ({
+    async *[Symbol.asyncIterator]() {
+      while (!consumerClosed) {
+        await Bun.sleep(10);
+      }
+    },
+    close: async () => {
+      consumerClosed = true;
+    },
+  }));
+  globalThis.fetch = (async () => {
+    statusReads += 1;
+    return new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: statusReads === 1 ? "processing" : "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-empty",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "done",
+      700,
+    );
+    expect(consumerClosed).toBe(true);
+    expect(sent.filter((message) => message.type === "done")).toHaveLength(1);
+    expect(sent).toContainEqual({
+      type: "status",
+      requestId: "attach-empty",
+      eventId: "child-task",
+      status: "completed",
+      statusUrl: "/status/child-task?agentId=agent_child",
+    });
+    expect(sent.some((message) => message.type === "error")).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not duplicate a streamed error when durable failure arrives without done", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const encoder = new TextEncoder();
+  let consumerClosed = false;
+  let statusReads = 0;
+  const connection = zeroBufferConnection(async () => ({
+    async *[Symbol.asyncIterator]() {
+      yield {
+        seq: 21,
+        data: encoder.encode(
+          JSON.stringify({
+            type: "stream",
+            headers: {
+              accountId: "acct_test",
+              agentId: "agent_child",
+              conversationKey: "child-conversation",
+              eventId: "child-task",
+              connectionId: "child-task",
+            },
+            data: { type: "error", error: "child failed" },
+            sequence: 1,
+          }),
+        ),
+        ack: () => {},
+      };
+      while (!consumerClosed) {
+        await Bun.sleep(10);
+      }
+    },
+    close: async () => {
+      consumerClosed = true;
+    },
+  }));
+  globalThis.fetch = (async () => {
+    statusReads += 1;
+    return new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: statusReads === 1 ? "processing" : "failed",
+        error: "child failed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-failed",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(sent, () => consumerClosed, 700);
+    expect(
+      sent.filter(
+        (message) =>
+          message.type === "output" &&
+          (message.data as { type?: unknown } | undefined)?.type === "error",
+      ),
+    ).toHaveLength(1);
+    expect(sent.filter((message) => message.type === "error")).toHaveLength(0);
+    expect(sent.filter((message) => message.type === "done")).toHaveLength(0);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("closes a zero-frame queued execute consumer after durable completion", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let consumerClosed = false;
+  const connection = zeroBufferConnection(async () => ({
+    async *[Symbol.asyncIterator]() {
+      while (!consumerClosed) {
+        await Bun.sleep(10);
+      }
+    },
+    close: async () => {
+      consumerClosed = true;
+    },
+  }));
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          eventId: "queued-task",
+          conversationKey: "queued-conversation",
+          status: "queued",
+          statusUrl: "/status/queued-task?agentId=agent_child",
+        }),
+        {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        eventId: "queued-task",
+        conversationKey: "queued-conversation",
+        status: "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "queued-conversation",
+        eventId: "queued-task",
+        input: "continue",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "done",
+      700,
+    );
+    expect(consumerClosed).toBe(true);
+    expect(sent.filter((message) => message.type === "done")).toHaveLength(1);
+    expect(sent.some((message) => message.type === "error")).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("falls back to durable attach status when NATS consumer creation fails", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  let statusReads = 0;
+  const connection = zeroBufferConnection(async () => {
+    throw new Error("consumer unavailable");
+  });
+  globalThis.fetch = (async () => {
+    statusReads += 1;
+    return new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: statusReads === 1 ? "processing" : "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-nats-unavailable",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "done",
+      300,
+    );
+    expect(sent.filter((message) => message.type === "done")).toHaveLength(1);
+    expect(sent.some((message) => message.type === "error")).toBe(false);
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("falls back to durable queued status when NATS consumer creation fails", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const connection = zeroBufferConnection(async () => {
+    throw new Error("consumer unavailable");
+  });
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          eventId: "queued-task",
+          conversationKey: "queued-conversation",
+          status: "queued",
+        }),
+        {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        eventId: "queued-task",
+        conversationKey: "queued-conversation",
+        status: "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "execute",
+        agentId: "agent_child",
+        sessionId: "queued-conversation",
+        eventId: "queued-task",
+        input: "continue",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "1000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "done",
+      300,
+    );
+    expect(sent.filter((message) => message.type === "done")).toHaveLength(1);
+    expect(sent.some((message) => message.type === "error")).toBe(false);
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
@@ -1337,8 +1867,9 @@ function replayThenLiveConnection(
 async function waitForGatewayMessage(
   sent: Array<Record<string, unknown>>,
   predicate: (message: Record<string, unknown>) => boolean,
+  attempts = 100,
 ): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
     if (sent.some(predicate)) {
       return;
     }
@@ -1348,4 +1879,61 @@ async function waitForGatewayMessage(
   throw new Error(
     `Timed out waiting for gateway message: ${JSON.stringify(sent)}`,
   );
+}
+
+function zeroBufferConnection(
+  consume: () => Promise<{
+    [Symbol.asyncIterator](): AsyncIterator<{
+      seq: number;
+      data: Uint8Array;
+      ack(): void;
+    }>;
+    close(): Promise<void>;
+  }>,
+  onConsumerOptions?: (options: {
+    deliver_policy?: DeliverPolicy;
+    opt_start_seq?: number;
+  }) => void,
+  snapshot = {
+    bufferedCount: 0,
+    firstSequence: 1,
+    lastSequence: 20,
+  },
+) {
+  return {
+    jetstreamManager: async () => ({
+      streams: {
+        add: async () => {},
+        info: async (
+          _name: string,
+          options?: { subjects_filter?: string },
+        ) => ({
+          created: "2026-07-24T00:00:00.000Z",
+          state: {
+            first_seq: snapshot.firstSequence,
+            last_seq: snapshot.lastSequence,
+            subjects: options?.subjects_filter
+              ? { [options.subjects_filter]: snapshot.bufferedCount }
+              : undefined,
+          },
+        }),
+        update: async () => {},
+      },
+    }),
+    jetstream: () => ({
+      consumers: {
+        get: async (
+          _stream: string,
+          options: {
+            deliver_policy?: DeliverPolicy;
+            opt_start_seq?: number;
+          },
+        ) => {
+          onConsumerOptions?.(options);
+
+          return { consume };
+        },
+      },
+    }),
+  };
 }

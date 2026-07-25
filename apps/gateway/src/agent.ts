@@ -70,6 +70,8 @@ const TERMINAL_STATUSES = new Set<IngressStatus>([
   "expired",
 ]);
 const CURSOR_PREFIX = "ws-responses";
+const STATUS_POLL_INTERVAL_MS = 500;
+const NATS_TAIL_GRACE_POLLS = 4;
 
 export function handleAgentMessage(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
@@ -323,96 +325,122 @@ async function followQueuedExecution(
   const connection = await getNatsConnection();
   const snapshot = await conversationReplaySnapshot({ connection, ...scope });
   const eventKey = cursorEventKey(accepted.eventId);
+  const messages = await readConversationStream({
+    connection,
+    ...scope,
+    startSequence: snapshot.lastSequence + 1,
+  }).catch(() => null);
+  let lastConsumedSequence = snapshot.lastSequence;
   let sawDone = false;
-  void (async () => {
-    const messages = await readConversationStream({
-      connection,
-      ...scope,
-      startSequence: snapshot.lastSequence + 1,
-    });
-    const closeOnAbort = () => void messages.close().catch(() => {});
+  let sawError = false;
+  let streamSettled = messages === null;
+  const closeOnAbort = () => void messages?.close().catch(() => {});
+  if (messages) {
     signal.addEventListener("abort", closeOnAbort, { once: true });
-    try {
-      for await (const message of messages) {
-        if (signal.aborted) break;
-        const event = decodeNatsStreamEvent(message.data);
-        if (!event || event.headers.eventId !== accepted.eventId) {
-          ackNatsMessage(message);
-          continue;
+  }
+  const stream = messages
+    ? (async () => {
+        try {
+          for await (const message of messages) {
+            if (signal.aborted) break;
+            lastConsumedSequence = Math.max(lastConsumedSequence, message.seq);
+            const event = decodeNatsStreamEvent(message.data);
+            if (!event || event.headers.eventId !== accepted.eventId) {
+              ackNatsMessage(message);
+              continue;
+            }
+            const outbound = websocketMessageForNatsData(event.data);
+            if (outbound) {
+              sendAgentTest(socket, {
+                type: "output",
+                eventId: accepted.eventId,
+                cursor: formatCursor(
+                  snapshot.generation,
+                  message.seq,
+                  eventKey,
+                ),
+                replay: false,
+                data: outbound,
+              });
+            }
+            ackNatsMessage(message);
+            if (event.data.type === "done") {
+              sawDone = true;
+              break;
+            }
+            if (event.data.type === "error") {
+              sawError = true;
+            }
+          }
+        } finally {
+          streamSettled = true;
         }
-        const outbound = websocketMessageForNatsData(event.data);
-        if (outbound) {
-          sendAgentTest(socket, {
-            type: "output",
-            eventId: accepted.eventId,
-            cursor: formatCursor(snapshot.generation, message.seq, eventKey),
-            replay: false,
-            data: outbound,
-          });
-        }
-        ackNatsMessage(message);
-        if (event.data.type === "done") {
-          sawDone = true;
-          break;
-        }
-      }
-    } finally {
-      signal.removeEventListener("abort", closeOnAbort);
-      await messages.close().catch(() => {});
-    }
-  })().catch(() => {});
+      })().catch(() => {})
+    : Promise.resolve();
 
   let previous = "";
   let terminal: IngressHttpResponse | null = null;
-  while (!signal.aborted && !sawDone) {
-    await Bun.sleep(500);
-    if (sawDone || signal.aborted) break;
-    const status = await fetchStatus(
-      socket,
-      active.agentId,
-      accepted.eventId,
-      signal,
-      accepted.statusUrl,
-    ).catch(() => null);
-    if (!status?.status) continue;
-    const fingerprint = JSON.stringify([
-      status.status,
-      status.appliedMode,
-      status.appliedToEventId,
-      status.error,
-    ]);
-    if (fingerprint !== previous) {
-      previous = fingerprint;
-      sendAgentTest(socket, {
-        type: "status",
-        requestId: accepted.eventId,
-        eventId: accepted.eventId,
-        status: isIngressStatus(status.status) ? status.status : "expired",
-        ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
-        ...(status.appliedToEventId
-          ? { appliedToEventId: status.appliedToEventId }
-          : {}),
-        ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
-        ...(status.error ? { error: status.error } : {}),
+  try {
+    while (!signal.aborted && !sawDone) {
+      await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+      if (sawDone || signal.aborted) break;
+      const status = await fetchStatus(
+        socket,
+        active.agentId,
+        accepted.eventId,
+        signal,
+        accepted.statusUrl,
+      ).catch(() => null);
+      if (!status?.status) continue;
+      const fingerprint = JSON.stringify([
+        status.status,
+        status.appliedMode,
+        status.appliedToEventId,
+        status.error,
+      ]);
+      if (fingerprint !== previous) {
+        previous = fingerprint;
+        sendAgentTest(socket, {
+          type: "status",
+          requestId: accepted.eventId,
+          eventId: accepted.eventId,
+          status: isIngressStatus(status.status) ? status.status : "expired",
+          ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
+          ...(status.appliedToEventId
+            ? { appliedToEventId: status.appliedToEventId }
+            : {}),
+          ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
+          ...(status.error ? { error: status.error } : {}),
+        });
+      }
+      if (
+        status.status === "not_found" ||
+        (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
+      ) {
+        terminal = status;
+        break;
+      }
+    }
+    if (!sawDone && terminal && messages) {
+      await waitForNatsTail({
+        connection,
+        ...scope,
+        initialBoundary: snapshot.lastSequence,
+        lastConsumedSequence: () => lastConsumedSequence,
+        sawDone: () => sawDone,
+        signal,
+        streamSettled: () => streamSettled,
       });
     }
-    if (
-      status.status === "not_found" ||
-      (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
-    ) {
-      terminal = status;
-      break;
+  } finally {
+    if (messages) {
+      signal.removeEventListener("abort", closeOnAbort);
+      await messages.close().catch(() => {});
     }
+    await stream;
   }
   if (signal.aborted) return;
-  if (!sawDone && terminal) {
-    // Give in-flight stream frames a short grace window before the terminal
-    // frame: settle can land in Convex just ahead of the NATS done marker.
-    for (let i = 0; i < 4 && !sawDone && !signal.aborted; i += 1) {
-      await Bun.sleep(500);
-    }
-  }
-  if (sawDone) return;
+  if (sawDone || sawError) return;
   if (terminal) {
     const status = isIngressStatus(terminal.status)
       ? terminal.status
@@ -549,13 +577,14 @@ async function attachCoreStream(
     () => abort.abort(),
     limits.runStartTimeoutMs,
   );
-  activeRuns.set(socket, {
+  const active: ActiveRun = {
     abort,
     startTimeout,
     agentId: message.agentId,
     publicConversationKey: message.conversationKey,
     publicEventId: message.eventId,
-  });
+  };
+  activeRuns.set(socket, active);
   const statusUrl = `/status/${encodeURIComponent(message.eventId)}?agentId=${encodeURIComponent(message.agentId)}`;
   try {
     const status = await fetchStatus(
@@ -609,8 +638,7 @@ async function attachCoreStream(
     if (
       (message.afterCursor && !cursor) ||
       (cursor && cursor.generation !== snapshot.generation) ||
-      (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey) ||
-      (snapshot.bufferedCount === 0 && !TERMINAL_STATUSES.has(status.status))
+      (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey)
     ) {
       unavailable();
       return;
@@ -667,56 +695,231 @@ async function attachCoreStream(
       statusUrl,
     });
     clearTimeout(startTimeout);
-    if (snapshot.bufferedCount === 0) {
-      sendAgentTest(socket, {
-        type: "status",
-        requestId: message.requestId,
-        eventId: message.eventId,
-        status: status.status,
-        statusUrl,
-      });
-      return;
-    }
-    const messages = await readConversationStream({
+    await followAttachedExecution(
+      socket,
+      active,
+      message,
+      statusUrl,
+      status,
       connection,
-      accountId: socket.data.accountId,
-      agentId: message.agentId,
-      conversationKey: message.conversationKey,
-      ...(replayFrom > 0 ? { startSequence: replayFrom } : {}),
-    });
-    try {
-      for await (const natsMessage of messages) {
-        if (abort.signal.aborted) break;
-        const event = decodeNatsStreamEvent(natsMessage.data);
-        if (!event || event.headers.eventId !== message.eventId) {
-          ackNatsMessage(natsMessage);
-          continue;
-        }
-        const outbound = websocketMessageForNatsData(event.data);
-        if (outbound) {
-          sendAgentTest(socket, {
-            type: "output",
-            eventId: message.eventId,
-            cursor: formatCursor(
-              snapshot.generation,
-              natsMessage.seq,
-              eventKey,
-            ),
-            replay: natsMessage.seq <= snapshot.lastSequence,
-            data: outbound,
-          });
-        }
-        ackNatsMessage(natsMessage);
-        if (event.data.type === "done") break;
-      }
-    } finally {
-      await messages.close().catch(() => {});
-    }
+      snapshot,
+      replayFrom,
+      eventKey,
+    );
   } catch (error) {
     if (!abort.signal.aborted)
       sendAgentTest(socket, { type: "error", error: errorMessage(error) });
   } finally {
     stopActiveRun(socket);
+  }
+}
+
+async function followAttachedExecution(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  active: ActiveRun,
+  message: WebSocketClientAttachMessage,
+  statusUrl: string,
+  initialStatus: IngressHttpResponse,
+  connection: NatsConnection,
+  snapshot: {
+    generation: string;
+    firstSequence: number;
+    lastSequence: number;
+    bufferedCount: number;
+  },
+  replayFrom: number,
+  eventKey: string,
+): Promise<void> {
+  const signal = active.abort.signal;
+  const messages = await readConversationStream({
+    connection,
+    accountId: socket.data.accountId,
+    agentId: message.agentId,
+    conversationKey: message.conversationKey,
+    startSequence:
+      snapshot.bufferedCount === 0
+        ? snapshot.lastSequence + 1
+        : Math.max(1, replayFrom),
+  }).catch(() => null);
+  let lastConsumedSequence =
+    snapshot.bufferedCount === 0
+      ? snapshot.lastSequence
+      : Math.max(0, replayFrom - 1);
+  let sawDone = false;
+  let sawError = false;
+  let streamSettled = messages === null;
+  const closeOnAbort = () => void messages?.close().catch(() => {});
+  if (messages) {
+    signal.addEventListener("abort", closeOnAbort, { once: true });
+  }
+  const stream = messages
+    ? (async () => {
+        try {
+          for await (const natsMessage of messages) {
+            if (signal.aborted) break;
+            lastConsumedSequence = Math.max(
+              lastConsumedSequence,
+              natsMessage.seq,
+            );
+            const event = decodeNatsStreamEvent(natsMessage.data);
+            if (!event || event.headers.eventId !== message.eventId) {
+              ackNatsMessage(natsMessage);
+              continue;
+            }
+            const outbound = websocketMessageForNatsData(event.data);
+            if (outbound) {
+              sendAgentTest(socket, {
+                type: "output",
+                eventId: message.eventId,
+                cursor: formatCursor(
+                  snapshot.generation,
+                  natsMessage.seq,
+                  eventKey,
+                ),
+                replay:
+                  snapshot.bufferedCount > 0 &&
+                  natsMessage.seq <= snapshot.lastSequence,
+                data: outbound,
+              });
+            }
+            ackNatsMessage(natsMessage);
+            if (event.data.type === "done") {
+              sawDone = true;
+              break;
+            }
+            if (event.data.type === "error") {
+              sawError = true;
+            }
+          }
+        } finally {
+          streamSettled = true;
+        }
+      })().catch(() => {})
+    : Promise.resolve();
+
+  let terminal =
+    isIngressStatus(initialStatus.status) &&
+    TERMINAL_STATUSES.has(initialStatus.status)
+      ? initialStatus
+      : null;
+  let previous = JSON.stringify([
+    initialStatus.status,
+    initialStatus.appliedMode,
+    initialStatus.appliedToEventId,
+    initialStatus.error,
+  ]);
+  try {
+    while (!signal.aborted && !sawDone && !terminal) {
+      await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+      if (signal.aborted || sawDone) break;
+      const status = await fetchStatus(
+        socket,
+        message.agentId,
+        message.eventId,
+        signal,
+        statusUrl,
+      ).catch(() => null);
+      if (!status?.status) continue;
+      const fingerprint = JSON.stringify([
+        status.status,
+        status.appliedMode,
+        status.appliedToEventId,
+        status.error,
+      ]);
+      if (fingerprint !== previous) {
+        previous = fingerprint;
+        sendAgentTest(socket, {
+          type: "status",
+          requestId: message.requestId,
+          eventId: message.eventId,
+          status: isIngressStatus(status.status) ? status.status : "expired",
+          ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
+          ...(status.appliedToEventId
+            ? { appliedToEventId: status.appliedToEventId }
+            : {}),
+          statusUrl,
+          ...(status.error ? { error: status.error } : {}),
+        });
+      }
+      if (
+        status.status === "not_found" ||
+        (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
+      ) {
+        terminal = status;
+      }
+    }
+    if (terminal && !sawDone && messages) {
+      await waitForNatsTail({
+        connection,
+        accountId: socket.data.accountId,
+        agentId: message.agentId,
+        conversationKey: message.conversationKey,
+        initialBoundary: snapshot.lastSequence,
+        lastConsumedSequence: () => lastConsumedSequence,
+        sawDone: () => sawDone,
+        signal,
+        streamSettled: () => streamSettled,
+      });
+    }
+  } finally {
+    if (messages) {
+      signal.removeEventListener("abort", closeOnAbort);
+      await messages.close().catch(() => {});
+    }
+    await stream;
+  }
+  if (signal.aborted || sawDone || sawError || !terminal) return;
+  const status = isIngressStatus(terminal.status)
+    ? terminal.status
+    : ("expired" as const);
+  if (status !== "completed") {
+    sendAgentTest(socket, {
+      type: "error",
+      error: terminal.error ?? `Attached run ended with status ${status}`,
+    });
+    return;
+  }
+  sendAgentTest(socket, { type: "done" });
+}
+
+async function waitForNatsTail(options: {
+  connection: NatsConnection;
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+  initialBoundary: number;
+  lastConsumedSequence: () => number;
+  sawDone: () => boolean;
+  signal: AbortSignal;
+  streamSettled: () => boolean;
+}): Promise<void> {
+  let boundary = options.initialBoundary;
+  let stablePolls = 0;
+  while (
+    !options.signal.aborted &&
+    !options.sawDone() &&
+    !options.streamSettled() &&
+    stablePolls < NATS_TAIL_GRACE_POLLS
+  ) {
+    if (options.lastConsumedSequence() < boundary) {
+      await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+      continue;
+    }
+    await Bun.sleep(STATUS_POLL_INTERVAL_MS);
+    if (
+      options.signal.aborted ||
+      options.sawDone() ||
+      options.streamSettled()
+    ) {
+      break;
+    }
+    const latest = await conversationReplaySnapshot(options).catch(() => null);
+    if (latest && latest.lastSequence > boundary) {
+      boundary = latest.lastSequence;
+      stablePolls = 0;
+      continue;
+    }
+    stablePolls += 1;
   }
 }
 

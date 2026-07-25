@@ -466,9 +466,14 @@ Deployment-key attach authorization is parent-bound. The server-issued child
 `taskId` correlates to the parent ingress event, while the exact child
 async-result row proves the task was created by the runtime. Core authorizes the
 status read only after the child event/conversation scope, durable parent ingress
-status, active public parent, and authenticated account/project/environment/
-endpoint deployment all match. The gateway then checks the returned conversation
-key before selecting the NATS subject. Virtual and predefined private children
+status, active public parent, and a dedicated server-derived public-deployment
+ingress marker all match the authenticated account/project/environment/endpoint.
+Generic endpoint metadata on account-authenticated, channel, cron, or internal
+work is not authorization provenance. The gateway then checks the returned
+conversation key before selecting the NATS subject. A zero-buffer processing
+attach tails future frames while polling durable status; terminal status closes
+the consumer after a short NATS grace and synthesizes a terminal frame only when
+the stream did not already emit one. Virtual and predefined private children
 therefore remain non-runnable through the public endpoint, and no client-asserted
 parent field is trusted.
 

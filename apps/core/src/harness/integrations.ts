@@ -92,6 +92,7 @@ import {
   getIngressStatus,
   type IngressMode,
   type IngressStatusRecord,
+  type PublicDeploymentIngress,
 } from "./ingress.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import {
@@ -123,6 +124,9 @@ export interface DirectInboundEvent {
   // harness so it can build NATS observability subjects for live streaming.
   projectSlug?: string;
   environmentSlug?: string;
+  // Dedicated server-derived proof that this ingress entered through a public
+  // deployment route. Generic deployment fields also exist on channel/cron work.
+  publicDeploymentIngress?: PublicDeploymentIngress;
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
@@ -606,6 +610,7 @@ async function handleHttpRequest(
           endpointId: auth.endpointId,
           projectSlug: auth.projectSlug,
           environmentSlug: auth.environmentSlug,
+          publicDeploymentIngress: publicDeploymentIngress(auth),
           statusUrl,
         });
       }
@@ -615,6 +620,7 @@ async function handleHttpRequest(
         endpointId: auth.endpointId,
         projectSlug: auth.projectSlug,
         environmentSlug: auth.environmentSlug,
+        publicDeploymentIngress: publicDeploymentIngress(auth),
       });
     } catch (err) {
       return badRequestResponse(err);
@@ -1270,6 +1276,17 @@ function deploymentMatchesPath(
     (endpoint.environmentSlug === undefined ||
       auth.environmentSlug === endpoint.environmentSlug)
   );
+}
+
+function publicDeploymentIngress(
+  auth: Extract<AuthContext, { kind: "deployment" }>,
+): PublicDeploymentIngress {
+  return {
+    accountId: auth.account.accountId,
+    endpointId: auth.endpointId,
+    environmentSlug: auth.environmentSlug,
+    projectSlug: auth.projectSlug,
+  };
 }
 
 async function parseDirectPayload(

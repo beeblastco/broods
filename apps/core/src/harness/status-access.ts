@@ -74,11 +74,19 @@ async function publicAgentDenial(
       message: `Agent ${request.agentId} is not publicly accessible.`,
     };
   }
-  const deployment = await context.deploymentLoader(
-    request.accountId,
-    request.agentId,
-  );
-  return deploymentScopeMatches(auth, deployment) ? null : accessDenied();
+  const [deployment, status] = await Promise.all([
+    context.deploymentLoader(request.accountId, request.agentId),
+    context.ingressStatusLoader({
+      accountId: request.accountId,
+      agentId: request.agentId,
+      eventId: request.eventId,
+    }),
+  ]);
+  return deploymentScopeMatches(auth, deployment) &&
+    status?.eventId === request.eventId &&
+    deploymentScopeMatches(auth, status.publicDeploymentIngress ?? null)
+    ? null
+    : accessDenied();
 }
 
 async function subagentDenial(
@@ -125,7 +133,8 @@ async function subagentDenial(
     parentAgent.config.publicAccess !== true ||
     !deploymentScopeMatches(auth, parentDeployment) ||
     !parentStatus ||
-    parentStatus.eventId !== parentEventId
+    parentStatus.eventId !== parentEventId ||
+    !deploymentScopeMatches(auth, parentStatus.publicDeploymentIngress ?? null)
   ) {
     return accessDenied();
   }

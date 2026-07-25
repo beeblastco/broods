@@ -547,6 +547,9 @@ async function handleDirectRequest(
         ...(directStatusUrl(event)
           ? { statusUrl: directStatusUrl(event)! }
           : {}),
+        ...(event.publicDeploymentIngress
+          ? { publicDeploymentIngress: event.publicDeploymentIngress }
+          : {}),
       }
     : {
         kind: "http",
@@ -554,6 +557,9 @@ async function handleDirectRequest(
         publicConversationKey: event.publicConversationKey,
         ...(directStatusUrl(event)
           ? { statusUrl: directStatusUrl(event)! }
+          : {}),
+        ...(event.publicDeploymentIngress
+          ? { publicDeploymentIngress: event.publicDeploymentIngress }
           : {}),
       };
   const admission = await acceptIngress({
@@ -671,6 +677,9 @@ async function handleAsyncRequest(
       publicEventId: event.publicEventId,
       publicConversationKey: event.publicConversationKey,
       statusUrl: event.statusUrl,
+      ...(event.publicDeploymentIngress
+        ? { publicDeploymentIngress: event.publicDeploymentIngress }
+        : {}),
     },
     agentConfig: event.agentConfig,
     ...(event.ephemeralSystem
