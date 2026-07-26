@@ -1,8 +1,8 @@
 /**
- * Example: streaming an uploaded custom tool on the sync SSE path via declarative broods resources.
+ * Example: running an async-generator uploaded tool on the sync SSE path.
  *
- * The tool whose `execute` is an async generator streams preliminary tool-result
- * chunks live over SSE before the final result.
+ * Intermediate yields stay inside the runner today; the client receives the
+ * last yield as one final tool result.
  */
 
 import { BroodsClient } from "broods";

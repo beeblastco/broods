@@ -4,8 +4,8 @@ export const webhookAgent = defineAgent({
   name: "webhook-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {
@@ -22,8 +22,8 @@ export const webhookAgent = defineAgent({
     webhooks: [
       {
         enabled: true,
-        url: env.WEBHOOK_URL!,
-        secret: env.WEBHOOK_SECRET!,
+        url: env("WEBHOOK_URL")!,
+        secret: env("WEBHOOK_SECRET")!,
         events: [
           "agent.started",
           "tool.call.started",

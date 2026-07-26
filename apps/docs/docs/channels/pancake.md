@@ -10,10 +10,10 @@ Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
 import { defineAgent, definePancakeChannel, env } from "broods";
 
 export const pancake = definePancakeChannel({
-  pageId: env.PANCAKE_PAGE_ID,
-  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
-  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
-  senderId: env.PANCAKE_SENDER_ID,
+  pageId: env("PANCAKE_PAGE_ID"),
+  pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
+  webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
+  senderId: env("PANCAKE_SENDER_ID"),
 });
 
 export const myAgent = defineAgent({

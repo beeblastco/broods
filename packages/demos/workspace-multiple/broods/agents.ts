@@ -25,8 +25,8 @@ export const multiWorkspaceAgent = defineAgent({
   name: "multi-workspace-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

@@ -81,7 +81,7 @@ export const lambdaSandbox = defineSandbox({
 export const myAgent = defineAgent({
   name: "my-agent",
   provider: {
-    openai: { apiKey: env.OPENAI_API_KEY },
+    openai: { apiKey: env("OPENAI_API_KEY") },
   },
   model: {
     provider: "openai",

@@ -49,7 +49,7 @@ to `gateway.broods.app`), so this swaps only the base URL — see
 - `cron`: create a scheduled agent run with the SDK cron helper.
 - `websocket`: stream a deployed endpoint and steer its active run with a correlated control message.
 - `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
-- `tool-custom-stream`: upload and stream an isolated custom tool.
+- `tool-custom-stream`: upload an async-generator custom tool and receive its final yield.
 - `tool-custom-async-sse`: upload a detached asynchronous custom tool.
 - `policy-enforcement-lambda`: compare OPA policy `audit` vs `enforce` behavior against the AWS Lambda MicroVM sandbox using Bedrock MiniMax.
 

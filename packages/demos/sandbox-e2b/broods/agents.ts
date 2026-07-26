@@ -8,11 +8,11 @@ export const e2bSandbox = defineSandbox({
   timeout: 120,
   outputLimitBytes: 65536,
   envVars: {
-    SANDBOX_SMOKE_VAR: env.SANDBOX_SMOKE_VAR,
+    SANDBOX_SMOKE_VAR: env("SANDBOX_SMOKE_VAR"),
   },
   options: {
-    apiKey: env.E2B_API_KEY,
-    // template: env.E2B_TEMPLATE,
+    apiKey: env("E2B_API_KEY"),
+    // template: env("E2B_TEMPLATE"),
   },
 });
 
@@ -20,8 +20,8 @@ export const e2bAgent = defineAgent({
   name: "e2b-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

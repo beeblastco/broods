@@ -8,7 +8,7 @@ export const greetingSkill = defineSkill({
 export const skillAgent = defineAgent({
   name: "skill-agent",
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",

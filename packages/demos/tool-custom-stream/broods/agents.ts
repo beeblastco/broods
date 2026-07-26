@@ -1,11 +1,10 @@
 import { defineAgent, defineTool, env } from "broods";
 
-// `execute` is an async *generator*: each yield surfaces as a preliminary
-// tool-result, and the last one is the final output the model reads.
+// `execute` is an async generator. Broods currently drains its progress values
+// and returns only the last yield as the final tool result.
 export const streamProgressTool = defineTool({
   name: "stream_progress",
-  description:
-    "Counts to `steps`, streaming one progress update per step before the final summary.",
+  description: "Counts to `steps` and returns the final summary.",
   inputSchema: {
     type: "object",
     properties: {
@@ -30,8 +29,8 @@ export const streamingToolAgent = defineAgent({
   name: "streaming-tool-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

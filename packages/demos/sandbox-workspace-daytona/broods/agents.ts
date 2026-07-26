@@ -8,8 +8,8 @@ export const daytonaSandbox = defineSandbox({
   timeout: 120,
   outputLimitBytes: 65536,
   options: {
-    apiKey: env.DAYTONA_API_KEY,
-    organizationId: env.DAYTONA_ORGANIZATION_ID,
+    apiKey: env("DAYTONA_API_KEY"),
+    organizationId: env("DAYTONA_ORGANIZATION_ID"),
     apiUrl: "https://app.daytona.io/api",
     target: "eu",
     snapshot: "fuse-s3",
@@ -27,8 +27,8 @@ export const sandboxAssistant = defineAgent({
   name: "sandbox-assistant",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

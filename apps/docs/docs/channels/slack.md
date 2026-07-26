@@ -12,8 +12,8 @@ Define a Slack channel with `defineSlackChannel` and attach it to an agent:
 import { defineAgent, defineSlackChannel, env } from "broods";
 
 export const slack = defineSlackChannel({
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
   allowedChannelIds: ["channel-id-1"],
   reactionEmoji: "eyes",
   apiUrl: "https://slack.com/api/",

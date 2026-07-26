@@ -136,6 +136,38 @@ describe("tool-runner containment", () => {
     });
   }, 30_000);
 
+  it("passes configured secrets only through tool context, never process.env", async () => {
+    const bundle = [
+      `export default {`,
+      `  name: "configured",`,
+      `  execute(_input, options) {`,
+      `    return {`,
+      `      configured: options.context.config.apiToken,`,
+      `      leaked: process.env.ACCOUNT_TOOL_API_TOKEN ?? null,`,
+      `    };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(
+      bundle,
+      {
+        toolName: "configured",
+        config: { apiToken: "scoped-tool-secret" },
+      },
+      { ACCOUNT_TOOL_API_TOKEN: "parent-secret-must-not-leak" },
+    );
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(frames.at(-1)).toEqual({
+      t: "final",
+      result: { configured: "scoped-tool-secret", leaked: null },
+    });
+  }, 30_000);
+
   it("reaps a process the tenant bundle leaves running", async () => {
     // A survivor in a warm sandbox outlives the invocation and sees the next
     // tenant's run. handler.mjs kills the child's whole process group.

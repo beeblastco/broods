@@ -93,7 +93,7 @@ async function inlineFixture(): Promise<string> {
       `});\n` +
       `export const myAgent = defineAgent({\n` +
       `  name: "my-agent",\n` +
-      `  provider: { openai: { apiKey: env.OPENAI_API_KEY } },\n` +
+      `  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },\n` +
       `  model: { provider: "openai", modelId: "gpt-5-mini" },\n` +
       `});\n`,
   );

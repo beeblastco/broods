@@ -38,7 +38,7 @@ import { defineAgent, defineCron } from "broods";
 
 export const maintainer = defineAgent({
   name: "maintainer",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a maintenance assistant." },
 });

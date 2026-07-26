@@ -25,7 +25,7 @@ my-project/
 
 ## `env` — Deferred Secrets
 
-Never bake secrets into your resource files. Use `env.NAME` to create a **deferred reference** that resolves on the server at runtime:
+Never bake secrets into your resource files. Use `env("NAME")` to create a **deferred reference** that resolves on the server at runtime:
 
 ```ts
 import { defineAgent, env } from "broods";
@@ -33,16 +33,15 @@ import { defineAgent, env } from "broods";
 export const myAgent = defineAgent({
   name: "my-agent",
   provider: {
-    openai: { apiKey: env.OPENAI_API_KEY },
+    openai: { apiKey: env("OPENAI_API_KEY") },
   },
 });
 ```
 
-Both forms are equivalent:
+Environment references use the callable form:
 
 ```ts
-env.OPENAI_API_KEY; // property access
-env("OPENAI_API_KEY"); // call form
+env("OPENAI_API_KEY");
 ```
 
 Set the value with the CLI:
@@ -53,7 +52,7 @@ broods env set OPENAI_API_KEY
 
 Or let `broods dev` auto-push it from your local `.env.local`.
 
-> `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env.NAME` for anything that should stay server-side.
+> `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
 
 ## Agents
 
@@ -66,7 +65,7 @@ export const myAgent = defineAgent({
   name: "my-agent",
   description: "A general-purpose assistant", // visible to parent agents
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",
@@ -97,7 +96,7 @@ Use `custom` for providers that expose an OpenAI-compatible Chat Completions API
 ```ts
 provider: {
   custom: {
-    apiKey: env.CUSTOM_PROVIDER_API_KEY,
+    apiKey: env("CUSTOM_PROVIDER_API_KEY"),
     base_url: "https://llm.example.com/v1",
   },
 },
@@ -196,8 +195,8 @@ Attach one or more channels to an agent:
 import { defineTelegramChannel } from "broods";
 
 export const telegram = defineTelegramChannel({
-  botToken: env.TELEGRAM_BOT_TOKEN,
-  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  botToken: env("TELEGRAM_BOT_TOKEN"),
+  webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123456789],
 });
 
@@ -343,7 +342,7 @@ hooks: {
     {
       enabled: true,
       url: "https://example.com/webhooks",
-      secret: env.WEBHOOK_SECRET,
+      secret: env("WEBHOOK_SECRET"),
       events: ["agent.started", "agent.finished", "agent.failed"],
     },
   ],

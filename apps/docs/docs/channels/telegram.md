@@ -12,8 +12,8 @@ Define a Telegram channel with `defineTelegramChannel` and attach it to an agent
 import { defineAgent, defineTelegramChannel, env } from "broods";
 
 export const telegram = defineTelegramChannel({
-  botToken: env.TELEGRAM_BOT_TOKEN,
-  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  botToken: env("TELEGRAM_BOT_TOKEN"),
+  webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123456789, 987654321],
   reactionEmoji: "👀",
   apiUrl: "https://api.telegram.org",

@@ -3,7 +3,7 @@ import { defineAgent, env } from "broods";
 export const structuredAssistant = defineAgent({
   name: "structured-assistant",
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",
