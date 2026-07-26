@@ -35,7 +35,7 @@ interface ToolRunnerResponse {
 let sharedClient: LambdaClient | undefined;
 
 /**
- * Streaming entry used by the AI SDK tool adapter (account-tool.tool.ts). Isolate
+ * Streaming entry used by the AI SDK tool adapter (custom.tool.ts). Isolate
  * bundles run in the in-core V8 isolate: an async-generator execute streams each
  * yield (surfaced as a preliminary tool result on the sync SSE path); a normal
  * bundle yields exactly once (its result). A sync-returning async generator lets
