@@ -34,7 +34,7 @@ import type {
   SandboxExecutorConfig,
 } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
-import accountTool from "./account-tool.tool.ts";
+import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import editTool from "./edit.tool.ts";

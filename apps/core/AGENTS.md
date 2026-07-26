@@ -28,7 +28,7 @@ request in
 - storage adapter reach the Convex generated API with `require("@broods/convex/_generated/api")` **on purpose**. a typed import drag every backend source into core stricter typecheck. keep it `require()`.
 - `src/harness/ingress.ts` drain mutate ownership. emit owner-gated side effect **before** you dispatch the next ingress, never after.
 - keep the SSE path alive when you simplify. handlers return a streaming Web `Response`. work after response go through `ctx.waitUntil(...)`.
-- custom tools run inline in the harness during the streaming request. no queue-based tool execution, no external tool-Lambda wiring, unless the architecture change on purpose. the MicroVM sandbox backend that run untrusted bash/python is a different plane, it stay.
+- account-uploaded tools: `src/harness/custom-tools/executor.ts` dispatches by tier and invokes the Lambda; `payload.ts` is the frame protocol it shares with the isolate tier and `hook-runner.ts`. pure/fetch-only bundles run in the in-core V8 isolate (`src/harness/isolate/`); node/npm/native bundles run in the Lambda whose source is `../lambda/` — plain `.mjs`, no build, `sst.config.ts` points straight at it. the MicroVM sandbox that runs bash/python is a different plane; keep custom-tool code out of `src/harness/sandbox/`.
 - Google Search is provider-native, not a tool file. the descriptor (`google.tools.googleSearch({...})`) resolve lazy in `src/harness/tools/provider-tool.ts`. still switch on with `config.tools.googleSearch`.
 - cron come from outside: EventBridge Scheduler → cron-runs event bus → API destination → gateway `/v1/cron-runs` (service-token auth) → `handleScheduledCron`.
 - `opa/broods_authz.rego` is the policy source of truth. stale rego already caused live breakage once.
