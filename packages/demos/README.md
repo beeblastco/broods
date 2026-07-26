@@ -5,9 +5,16 @@ Small runnable examples for the declarative `broods` SDK and deployed service.
 Run demos from their own folder:
 
 ```bash
+bun run --filter broods build   # from the repo root, once
+bun install                     # in the demo folder
 bun run dev
 bun run start
 ```
+
+Each demo depends on `broods` as `file:../../broods`, whose entrypoint is
+`dist/`. Installing before that build produces a linked package with no
+entrypoint and `Cannot find package 'broods'` at runtime — build first, and
+re-run `bun install` in the demo if you built afterwards.
 
 Use `.env.local` for local runtime settings. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
