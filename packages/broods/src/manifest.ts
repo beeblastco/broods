@@ -1157,6 +1157,7 @@ async function normalizeToolConfig(
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }
+  bundle = normalizeBundleComments(bundle, bundlePath, manifestPath);
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
     throw new Error(
@@ -1333,6 +1334,27 @@ function contentTypeForPath(path: string): string {
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Bun stamps each module's path into the bundle as a comment. Those paths vary
+// with the random shim tempdir and the cwd, so identical source would rehash.
+function normalizeBundleComments(
+  bundle: string,
+  bundlePath: string,
+  manifestPath: string,
+): string {
+  const sourceComment = new RegExp(
+    `^// .*${escapeRegExp(basename(bundlePath))}$`,
+    "gm",
+  );
+
+  return bundle
+    .replace(/^\/\/ .*tool-adapter\.mjs$/gm, () => "// tool-adapter.mjs")
+    .replace(sourceComment, () => `// ${manifestPath}`);
 }
 
 function normalizeProjectName(name: string): string {
