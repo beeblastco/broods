@@ -1,15 +1,19 @@
 import { defineAgent, defineTool, env } from "broods";
 
+// Sleeps long enough that the run outlives a sync request.
 export const testAsyncTool = defineTool({
   name: "test_async",
-  path: "tools/test-async.ts",
   description: "Test async tool.",
   inputSchema: {
     type: "object",
     properties: {},
     additionalProperties: false,
   },
-  defaultConfig: {},
+  async execute() {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    return { type: "text", value: "test_async completed successfully" };
+  },
 });
 
 export const asyncToolAgent = defineAgent({
