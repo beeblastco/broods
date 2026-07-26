@@ -246,6 +246,9 @@ describe("channel.message.received rewrite reaches the session", () => {
             updatedAt: "2026-07-16T00:00:00.000Z",
           }),
           deploymentLoader: async () => null,
+          // This account configures no channel records; the storage stub above
+          // omits the store, and a failed lookup refuses the turn by design.
+          channelRecordLoader: async () => null,
           waitUntil: (promise) => waited.push(Promise.resolve(promise)),
         });
 
