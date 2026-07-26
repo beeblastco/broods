@@ -2,28 +2,24 @@ import { defineAgent, defineSkill, env } from "broods";
 
 export const greetingSkill = defineSkill({
   name: "greeting-skill",
-  config: {
-    path: "greeting-skill",
-  },
+  path: "greeting-skill",
 });
 
 export const skillAgent = defineAgent({
   name: "skill-agent",
-  config: {
-    provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: "You are a concise assistant.",
-    },
-    skills: {
-      enabled: true,
-      allowed: [greetingSkill],
-    },
-    publicAccess: true,
+  provider: {
+    google: { apiKey: env.GOOGLE_API_KEY },
   },
+  model: {
+    provider: "google",
+    modelId: "gemma-4-31b-it",
+  },
+  agent: {
+    system: "You are a concise assistant.",
+  },
+  skills: {
+    enabled: true,
+    allowed: [greetingSkill],
+  },
+  publicAccess: true,
 });

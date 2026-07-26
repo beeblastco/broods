@@ -21,9 +21,7 @@ export const telegram = defineTelegramChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [telegram],
-  },
+  channels: [telegram],
 });
 ```
 

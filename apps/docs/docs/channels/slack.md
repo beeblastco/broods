@@ -21,9 +21,7 @@ export const slack = defineSlackChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [slack],
-  },
+  channels: [slack],
 });
 ```
 

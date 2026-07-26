@@ -1622,32 +1622,28 @@ function starterAgent(): string {
     `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
     `export const lambdaSandbox = defineSandbox({\n` +
     `  name: "lambda-sandbox",\n` +
-    `  config: {\n` +
-    `    provider: "lambda",\n` +
-    `    network: { mode: "deny-all" },\n` +
-    `    permissionMode: "bypass",\n` +
-    `    timeout: 60,\n` +
-    `  },\n` +
+    `  provider: "lambda",\n` +
+    `  network: { mode: "deny-all" },\n` +
+    `  permissionMode: "bypass",\n` +
+    `  timeout: 60,\n` +
     `});\n\n` +
     `export const myAgent = defineAgent({\n` +
     `  name: "my-agent",\n` +
-    `  config: {\n` +
-    `    provider: {\n` +
-    `      openai: { apiKey: env.OPENAI_API_KEY },\n` +
-    `    },\n` +
-    `    model: {\n` +
-    `      provider: "openai",\n` +
-    `      modelId: "gpt-5.5",\n` +
-    `    },\n` +
-    `    agent: {\n` +
-    `      system: "You are a helpful assistant.",\n` +
-    `    },\n` +
-    `    sandbox: lambdaSandbox,\n` +
-    `    // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
-    `    // \`broods run\` can reach this agent. Off by default — secured: a\n` +
-    `    // private agent is only reachable via internal endpoints or channel webhooks.\n` +
-    `    publicAccess: true,\n` +
+    `  provider: {\n` +
+    `    openai: { apiKey: env.OPENAI_API_KEY },\n` +
     `  },\n` +
+    `  model: {\n` +
+    `    provider: "openai",\n` +
+    `    modelId: "gpt-5.5",\n` +
+    `  },\n` +
+    `  agent: {\n` +
+    `    system: "You are a helpful assistant.",\n` +
+    `  },\n` +
+    `  sandbox: lambdaSandbox,\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
+    `  // \`broods run\` can reach this agent. Off by default — secured: a\n` +
+    `  // private agent is only reachable via internal endpoints or channel webhooks.\n` +
+    `  publicAccess: true,\n` +
     `});\n`
   );
 }

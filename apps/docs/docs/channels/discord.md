@@ -20,9 +20,7 @@ export const discord = defineDiscordChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [discord],
-  },
+  channels: [discord],
 });
 ```
 

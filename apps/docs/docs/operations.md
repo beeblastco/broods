@@ -173,10 +173,8 @@ The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the envi
 ```ts
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    // …model, provider, sandbox…
-    publicAccess: true, // expose the public SSE/WebSocket endpoint
-  },
+  // …model, provider, sandbox…
+  publicAccess: true, // expose the public SSE/WebSocket endpoint,
 });
 ```
 

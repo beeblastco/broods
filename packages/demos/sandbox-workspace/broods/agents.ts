@@ -5,44 +5,38 @@ import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 // file tools (write/read/edit/glob/grep) operate on a real, durable project checkout.
 export const workspaceSandbox = defineSandbox({
   name: "workspace-sandbox",
-  config: {
-    provider: "sandbox",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    timeout: 120,
-    options: {
-      mountAwsS3Buckets: true,
-    },
+  provider: "sandbox",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  timeout: 120,
+  options: {
+    mountAwsS3Buckets: true,
   },
 });
 
 export const projectWorkspace = defineWorkspace({
   name: "project",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: [
-        "You are testing a workspace-backed self-hosted sandbox.",
-        "Use the file tools (write/read/edit/glob/grep) with workspace-relative paths,",
-        "and bash to run code. Files you write persist in the workspace across calls.",
-        "Use a SEPARATE bash or file-tool call for each numbered step.",
-      ].join(" "),
-    },
-    sandbox: workspaceSandbox,
-    workspaces: [projectWorkspace],
-    publicAccess: true,
+  provider: {
+    google: { apiKey: env.GOOGLE_API_KEY },
   },
+  model: {
+    provider: "google",
+    modelId: "gemma-4-31b-it",
+  },
+  agent: {
+    system: [
+      "You are testing a workspace-backed self-hosted sandbox.",
+      "Use the file tools (write/read/edit/glob/grep) with workspace-relative paths,",
+      "and bash to run code. Files you write persist in the workspace across calls.",
+      "Use a SEPARATE bash or file-tool call for each numbered step.",
+    ].join(" "),
+  },
+  sandbox: workspaceSandbox,
+  workspaces: [projectWorkspace],
+  publicAccess: true,
 });

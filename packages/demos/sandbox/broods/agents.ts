@@ -4,33 +4,29 @@ import { defineAgent, defineSandbox, env } from "broods";
 // ephemeral container per call, with internet egress and a config env var injected.
 export const statelessSandbox = defineSandbox({
   name: "stateless-sandbox",
-  config: {
-    provider: "sandbox",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-    envVars: { DEMO_GREETING: "hello-from-config" },
-  },
+  provider: "sandbox",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  timeout: 60,
+  envVars: { DEMO_GREETING: "hello-from-config" },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: {
-      bedrock: {
-        region: "us-east-1",
-        apiKey: env("BEDROCK_API_KEY"),
-      },
+  provider: {
+    bedrock: {
+      region: "us-east-1",
+      apiKey: env("BEDROCK_API_KEY"),
     },
-    model: {
-      provider: "bedrock",
-      modelId: "minimax.minimax-m2.5",
-    },
-    agent: {
-      system:
-        "You are a helpful assistant. Use bash to write files and run code in a sandboxed Linux environment. Always use the provided tools to interact with the sandbox, and never assume direct access to the filesystem or execution environment.",
-    },
-    sandbox: statelessSandbox,
-    publicAccess: true,
   },
+  model: {
+    provider: "bedrock",
+    modelId: "minimax.minimax-m2.5",
+  },
+  agent: {
+    system:
+      "You are a helpful assistant. Use bash to write files and run code in a sandboxed Linux environment. Always use the provided tools to interact with the sandbox, and never assume direct access to the filesystem or execution environment.",
+  },
+  sandbox: statelessSandbox,
+  publicAccess: true,
 });

@@ -72,30 +72,26 @@ import { defineAgent, defineSandbox, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "bypass",
+  timeout: 60,
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: {
-      openai: { apiKey: env.OPENAI_API_KEY },
-    },
-    model: {
-      provider: "openai",
-      modelId: "gpt-5.5",
-    },
-    agent: {
-      system: "You are a helpful assistant.",
-    },
-    sandbox: lambdaSandbox,
-    publicAccess: true,
+  provider: {
+    openai: { apiKey: env.OPENAI_API_KEY },
   },
+  model: {
+    provider: "openai",
+    modelId: "gpt-5.5",
+  },
+  agent: {
+    system: "You are a helpful assistant.",
+  },
+  sandbox: lambdaSandbox,
+  publicAccess: true,
 });
 ```
 

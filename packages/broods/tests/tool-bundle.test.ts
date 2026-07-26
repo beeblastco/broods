@@ -71,11 +71,9 @@ async function toolFixture(toolFile = "echo.ts"): Promise<string> {
     `import { defineTool } from "${RESOURCES_MODULE}";\n` +
       `export const echo = defineTool({\n` +
       `  name: "echo",\n` +
-      `  config: {\n` +
-      `    path: "tools/${toolFile}",\n` +
-      `    description: "Echoes its input.",\n` +
-      `    inputSchema: { type: "object" },\n` +
-      `  },\n` +
+      `  path: "tools/${toolFile}",\n` +
+      `  description: "Echoes its input.",\n` +
+      `  inputSchema: { type: "object" },\n` +
       `});\n`,
   );
 

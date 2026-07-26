@@ -9,36 +9,34 @@ export const pancake = definePancakeChannel({
 
 export const agent = defineAgent({
   name: "pancake-channel-agent",
-  config: {
-    provider: {
-      custom: {
-        apiKey: env.AI_API_KEY,
-        base_url: env.AI_BASE_URL,
-      },
+  provider: {
+    custom: {
+      apiKey: env.AI_API_KEY,
+      base_url: env.AI_BASE_URL,
     },
-    model: {
-      provider: "custom",
-      modelId: "Qwen3.6-27B",
-    },
-    agent: {
-      system: "You are a helpful assistant.",
-    },
-    // Human-handoff filter: drop inbound messages on conversations a staff member
-    // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
-    // the old baked-in `ignoreTagIds` channel option — the same behavior, now
-    // owned by you. Handlers run in an isolate and must be self-contained, so the
-    // handoff tag ids are inlined rather than read from env or a closure.
-    hooks: {
-      onMessageReceived: (ctx, event) => {
-        if (event.channel !== "pancake") return undefined;
-        const handoffTagIds = ["order-tag", "pending-tag"];
-        const tagIds = event.source.tagIds ?? [];
-
-        return tagIds.some((tagId) => handoffTagIds.includes(tagId))
-          ? { drop: true }
-          : undefined;
-      },
-    },
-    channels: [pancake],
   },
+  model: {
+    provider: "custom",
+    modelId: "Qwen3.6-27B",
+  },
+  agent: {
+    system: "You are a helpful assistant.",
+  },
+  // Human-handoff filter: drop inbound messages on conversations a staff member
+  // has taken over (tagged in Pancake) so the agent stays quiet. This replaces
+  // the old baked-in `ignoreTagIds` channel option — the same behavior, now
+  // owned by you. Handlers run in an isolate and must be self-contained, so the
+  // handoff tag ids are inlined rather than read from env or a closure.
+  hooks: {
+    onMessageReceived: (ctx, event) => {
+      if (event.channel !== "pancake") return undefined;
+      const handoffTagIds = ["order-tag", "pending-tag"];
+      const tagIds = event.source.tagIds ?? [];
+
+      return tagIds.some((tagId) => handoffTagIds.includes(tagId))
+        ? { drop: true }
+        : undefined;
+    },
+  },
+  channels: [pancake],
 });

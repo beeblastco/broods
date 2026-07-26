@@ -21,9 +21,7 @@ export const github = defineGitHubChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [github],
-  },
+  channels: [github],
 });
 ```
 

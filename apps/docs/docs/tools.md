@@ -156,16 +156,14 @@ import { defineAgent, env } from "broods";
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: { google: { apiKey: env.GOOGLE_API_KEY } },
-    model: { provider: "google", modelId: "gemini-3-flash" },
-    tools: {
-      googleSearch: google.tools.googleSearch({
-        searchTypes: { webSearch: {} },
-      }),
-      // Broods-side flags sit alongside the imported descriptor
-      urlContext: { ...google.tools.urlContext({}), needsApproval: true },
-    },
+  provider: { google: { apiKey: env.GOOGLE_API_KEY } },
+  model: { provider: "google", modelId: "gemini-3-flash" },
+  tools: {
+    googleSearch: google.tools.googleSearch({
+      searchTypes: { webSearch: {} },
+    }),
+    // Broods-side flags sit alongside the imported descriptor
+    urlContext: { ...google.tools.urlContext({}), needsApproval: true },
   },
 });
 ```
@@ -195,26 +193,22 @@ import { defineAgent, defineTool, env } from "broods";
 
 export const analyze = defineTool({
   name: "analyze",
-  config: {
-    path: "tools/analyze.ts",
-    description: "Analyze structured data.",
-    inputSchema: {
-      type: "object",
-      properties: { data: { type: "array" } },
-      required: ["data"],
-    },
+  path: "tools/analyze.ts",
+  description: "Analyze structured data.",
+  inputSchema: {
+    type: "object",
+    properties: { data: { type: "array" } },
+    required: ["data"],
   },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    tools: {
-      [analyze.name]: {
-        enabled: true,
-        async: true,
-        needsApproval: false,
-      },
+  tools: {
+    [analyze.name]: {
+      enabled: true,
+      async: true,
+      needsApproval: false,
     },
   },
 });
@@ -255,23 +249,19 @@ import { api } from "./_generated/api";
 
 export const myTool = defineTool({
   name: "my_tool",
-  config: {
-    path: "tools/my-tool.ts",
-    description: "A custom tool.",
-    inputSchema: {
-      type: "object",
-      properties: { query: { type: "string" } },
-      required: ["query"],
-    },
+  path: "tools/my-tool.ts",
+  description: "A custom tool.",
+  inputSchema: {
+    type: "object",
+    properties: { query: { type: "string" } },
+    required: ["query"],
   },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    tools: {
-      [myTool.name]: { enabled: true, async: true },
-    },
+  tools: {
+    [myTool.name]: { enabled: true, async: true },
   },
 });
 ```

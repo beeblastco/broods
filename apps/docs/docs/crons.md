@@ -38,22 +38,18 @@ import { defineAgent, defineCron } from "broods";
 
 export const maintainer = defineAgent({
   name: "maintainer",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    agent: { system: "You are a maintenance assistant." },
-  },
+  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  agent: { system: "You are a maintenance assistant." },
 });
 
 export const dailyMaintenance = defineCron({
   name: "daily-maintenance",
-  config: {
-    agent: maintainer,
-    conversationKey: "cron:daily-maintenance",
-    input: "Run daily maintenance.",
-    scheduleExpression: "cron(0 8 * * ? *)",
-    timezone: "Europe/Amsterdam",
-  },
+  agent: maintainer,
+  conversationKey: "cron:daily-maintenance",
+  input: "Run daily maintenance.",
+  scheduleExpression: "cron(0 8 * * ? *)",
+  timezone: "Europe/Amsterdam",
 });
 ```
 
@@ -62,17 +58,15 @@ Use `events` instead of `input` for multimodal or multi-message payloads:
 ```ts
 export const weeklyDigest = defineCron({
   name: "weekly-digest",
-  config: {
-    agent: maintainer,
-    events: [
-      {
-        role: "user",
-        content: [{ type: "text", text: "Summarize this week." }],
-      },
-    ],
-    scheduleExpression: "cron(0 9 ? * MON *)",
-    timezone: "Europe/Amsterdam",
-  },
+  agent: maintainer,
+  events: [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Summarize this week." }],
+    },
+  ],
+  scheduleExpression: "cron(0 9 ? * MON *)",
+  timezone: "Europe/Amsterdam",
 });
 ```
 

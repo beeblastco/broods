@@ -87,11 +87,14 @@ export interface ResourceDefinition<
   readonly config: Config;
 }
 
-export interface ResourceDefinitionInput<Name extends string, Config> {
+/**
+ * Authoring shape for every resource helper: the resource's own `name` (plus an
+ * optional human `description`) sits inline with that resource's config keys.
+ */
+export type ResourceInput<Name extends string, Config> = {
   name: Name;
   description?: string;
-  config: Config;
-}
+} & Config;
 
 /**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
@@ -532,9 +535,9 @@ export const env: EnvAccessor = new Proxy(
 
 /**
  * Shared builder behind every `define*` helper below. The public helpers are
- * thin, per-kind typed front doors into this one function: each pins its `kind`
- * (the discriminant the sync/codegen pipeline switches on) and constrains
- * `config` to that resource's shape so callers get autocomplete and typo checks.
+ * thin, per-kind typed front doors: each pins its `kind` (the discriminant the
+ * sync/codegen pipeline switches on) and splits the flat authoring input back
+ * into the `{ name, description?, config }` shape the manifest wire format uses.
  */
 function defineResource<
   const Kind extends ResourceKind,
@@ -542,18 +545,16 @@ function defineResource<
   Config,
 >(
   kind: Kind,
-  input: ResourceDefinitionInput<Name, Config>,
+  name: Name,
+  description: string | undefined,
+  config: Config,
 ): ResourceDefinition<Kind, Name, Config> {
-  if (input.config === undefined) {
-    throw new Error(`Resource "${input.name}" must include config`);
-  }
-
   return {
     [RESOURCE_MARKER]: true,
-    kind,
-    name: input.name,
-    ...(input.description ? { description: input.description } : {}),
-    config: input.config,
+    kind: kind,
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
   };
 }
 
@@ -613,49 +614,100 @@ export function defineZaloChannel(
 export function defineBroods(
   config: BroodsProjectConfig,
 ): BroodsConfigDefinition {
-  return { [CONFIG_MARKER]: true, config };
+  return { [CONFIG_MARKER]: true, config: config };
 }
 
 export function defineAgent<const Name extends string>(
-  input: ResourceDefinitionInput<Name, AgentDefinitionConfig>,
+  input: ResourceInput<Name, AgentDefinitionConfig>,
 ): AgentResource<Name> {
-  return defineResource("agent", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "agent",
+    name,
+    description,
+    config as AgentDefinitionConfig,
+  );
 }
 
 export function defineWorkspace<const Name extends string>(
-  input: ResourceDefinitionInput<Name, WorkspaceConfig>,
+  input: ResourceInput<Name, WorkspaceConfig>,
 ): WorkspaceResource<Name> {
-  return defineResource("workspace", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "workspace",
+    name,
+    description,
+    config as WorkspaceConfig,
+  );
 }
 
 export function defineSandbox<const Name extends string>(
-  input: ResourceDefinitionInput<Name, SandboxDefinitionConfig>,
+  input: ResourceInput<Name, SandboxDefinitionConfig>,
 ): SandboxResource<Name> {
-  return defineResource("sandbox", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "sandbox",
+    name,
+    description,
+    config as SandboxDefinitionConfig,
+  );
 }
 
 export function defineSkill<const Name extends string>(
-  input: ResourceDefinitionInput<Name, SkillDefinitionConfig>,
+  input: ResourceInput<Name, SkillDefinitionConfig>,
 ): SkillResource<Name> {
-  return defineResource("skill", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "skill",
+    name,
+    description,
+    config as SkillDefinitionConfig,
+  );
 }
 
+// `description` is the model-facing text, so it stays inside the tool config
+// rather than becoming the resource-level human description.
 export function defineTool<const Name extends string>(
-  input: ResourceDefinitionInput<Name, ToolDefinitionConfig>,
+  input: { name: Name } & ToolDefinitionConfig,
 ): ToolResource<Name> {
-  return defineResource("tool", input);
+  const { name, ...config } = input;
+
+  return defineResource(
+    "tool",
+    name,
+    undefined,
+    config as ToolDefinitionConfig,
+  );
 }
 
 export function definePolicy<const Name extends string>(
-  input: ResourceDefinitionInput<Name, PolicyDefinitionConfig>,
+  input: ResourceInput<Name, PolicyDefinitionConfig>,
 ): PolicyResource<Name> {
-  return defineResource("policy", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "policy",
+    name,
+    description,
+    config as PolicyDefinitionConfig,
+  );
 }
 
 export function defineCron<const Name extends string>(
-  input: ResourceDefinitionInput<Name, CronDefinitionConfig>,
+  input: ResourceInput<Name, CronDefinitionConfig>,
 ): CronResource<Name> {
-  return defineResource("cron", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "cron",
+    name,
+    description,
+    config as CronDefinitionConfig,
+  );
 }
 
 export function isResource(value: unknown): value is AnyResource {
