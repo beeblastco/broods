@@ -1336,6 +1336,10 @@ function contentTypeForPath(path: string): string {
   return "application/octet-stream";
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Bun stamps each module's path into the bundle as a comment. Those paths vary
 // with the random shim tempdir and the cwd, so identical source would rehash.
 function normalizeBundleComments(
@@ -1349,12 +1353,8 @@ function normalizeBundleComments(
   );
 
   return bundle
-    .replace(/^\/\/ .*tool-adapter\.mjs$/gm, "// tool-adapter.mjs")
-    .replace(sourceComment, `// ${manifestPath}`);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    .replace(/^\/\/ .*tool-adapter\.mjs$/gm, () => "// tool-adapter.mjs")
+    .replace(sourceComment, () => `// ${manifestPath}`);
 }
 
 function normalizeProjectName(name: string): string {

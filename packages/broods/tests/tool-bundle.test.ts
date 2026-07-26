@@ -1,8 +1,5 @@
-/**
- * Tool bundle determinism. Bun stamps module paths into the bundle as comments,
- * and those paths move with the shim tempdir and the cwd — so identical source
- * used to rehash on every build and show a spurious update in every sync.
- */
+// Tool bundle determinism: identical source must hash the same regardless of
+// the shim tempdir and the cwd Bun stamps into the bundle as path comments.
 
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -41,7 +38,19 @@ test("compileProject hashes a tool the same from any working directory", async (
   }
 });
 
-async function toolFixture(): Promise<string> {
+test("compileProject keeps a tool path with regex replacement syntax literal", async () => {
+  // `$&` in a replacement string expands to the match, so a path carrying it
+  // would rewrite itself into the bundle and move the hash.
+  const cwd = await toolFixture("ec$&ho.ts");
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const tool = manifest.resources.find((resource) => resource.kind === "tool");
+  const bundle = (tool?.config as { bundle?: unknown }).bundle;
+
+  expect(bundle).toContain("// tools/ec$&ho.ts");
+});
+
+async function toolFixture(toolFile = "echo.ts"): Promise<string> {
   // realpath so /var and /private/var agree: the bundler resolves the symlinked
   // macOS tempdir differently from the path mkdtemp hands back.
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "broods-tool-fixture-")));
@@ -54,7 +63,7 @@ async function toolFixture(): Promise<string> {
       `export default defineBroods({ project: "hash-app" });\n`,
   );
   await writeFile(
-    join(projectDir, "tools", "echo.ts"),
+    join(projectDir, "tools", toolFile),
     `export default { name: "echo", execute: (ctx, input) => ({ echo: input }) };\n`,
   );
   await writeFile(
@@ -63,7 +72,7 @@ async function toolFixture(): Promise<string> {
       `export const echo = defineTool({\n` +
       `  name: "echo",\n` +
       `  config: {\n` +
-      `    path: "tools/echo.ts",\n` +
+      `    path: "tools/${toolFile}",\n` +
       `    description: "Echoes its input.",\n` +
       `    inputSchema: { type: "object" },\n` +
       `  },\n` +
