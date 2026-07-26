@@ -10,8 +10,8 @@ Define a Zalo channel with `defineZaloChannel` and attach it to an agent:
 import { defineAgent, defineZaloChannel, env } from "broods";
 
 export const zalo = defineZaloChannel({
-  botToken: env.ZALO_BOT_TOKEN,
-  webhookSecret: env.ZALO_WEBHOOK_SECRET,
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
 });
 
 export const myAgent = defineAgent({

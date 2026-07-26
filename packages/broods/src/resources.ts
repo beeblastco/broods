@@ -33,16 +33,16 @@ import type {
 const RESOURCE_MARKER = Symbol.for("broods.resource");
 const CONFIG_MARKER = Symbol.for("broods.config");
 const CHANNEL_MARKER = Symbol.for("broods.channel");
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export interface EnvRef<Name extends string = string> {
   readonly __beeblastEnv: true;
   readonly name: Name;
 }
 
-/** Callable + property-access accessor for {@link env}. */
+/** Callable accessor for {@link env}. */
 export interface EnvAccessor {
   <const Name extends string>(name: Name): EnvRef<Name>;
-  readonly [name: string]: EnvRef;
 }
 
 export type EnvRefString<T> = T extends string
@@ -98,7 +98,7 @@ export type ResourceInput<Name extends string, Config> = {
 
 /**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
- * `envVars` values be `env.NAME` references (compiled to `${NAME}` placeholders
+ * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
  * at sync time, exactly like provider `apiKey`). Add overrides here if more
  * sandbox fields should accept env refs.
  */
@@ -138,6 +138,11 @@ export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
   description: string;
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";
+  /**
+   * Account-wide, non-secret defaults. Environment references are rejected
+   * here; put `env("NAME")` under the enabling agent's `tools.<tool>.config` so
+   * the value is resolved per environment and stored with encrypted agent config.
+   */
   defaultConfig?: Record<string, unknown>;
 }
 
@@ -419,7 +424,7 @@ export type AgentPolicyDefinitionConfig = Omit<
  * typo like the camel `baseUrl` (instead of `base_url`/`baseURL`) slip past
  * `tsc`. Keep the keys in lockstep with core's `AgentProviderSettings`; the
  * `_ProviderKeyParity` assertion below fails `broods check` if they drift.
- * Every string field also accepts an `env(...)` reference.
+ * Every string field also accepts an `env("NAME")` reference.
  */
 export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
@@ -526,23 +531,32 @@ export type AnyResource =
  * References an account/environment variable resolved on the SERVER at runtime —
  * set it with `broods env set <NAME>` or in the dashboard (the Convex-style
  * `convex env set` model). It is a deferred reference, never read from your local
- * environment and never baked into the deployed config. Use either form:
+ * environment and never baked into the deployed config:
  *
- *   apiKey: env.OPENAI_API_KEY     // property access (reads like process.env)
- *   apiKey: env("OPENAI_API_KEY")  // call form (equivalent)
+ *   apiKey: env("OPENAI_API_KEY")
  *
- * Both compile to a `${NAME}` placeholder the harness fills in at run time. This is
+ * It compiles to a `${NAME}` placeholder the harness fills in at run time. This is
  * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
  * bake the literal local value into the deployed config instead of deferring it.
  */
 export const env: EnvAccessor = new Proxy(
-  function env(name: string) {
-    return { __beeblastEnv: true, name };
-  } as unknown as EnvAccessor,
+  <const Name extends string>(name: Name): EnvRef<Name> => {
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw new Error(
+        "env name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
+      );
+    }
+
+    return { __beeblastEnv: true, name: name };
+  },
   {
     get(target, property, receiver) {
-      if (typeof property === "string")
-        return { __beeblastEnv: true, name: property };
+      if (typeof property === "string" && ENV_NAME_PATTERN.test(property)) {
+        throw new Error(
+          `env.${property} is not supported; use env("${property}")`,
+        );
+      }
+
       return Reflect.get(target, property, receiver);
     },
   },

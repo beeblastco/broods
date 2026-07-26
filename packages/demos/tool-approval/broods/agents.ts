@@ -4,7 +4,7 @@ import { defineAgent, env } from "broods";
 export const approvalAgent = defineAgent({
   name: "approval-agent",
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",

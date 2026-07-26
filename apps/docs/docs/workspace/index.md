@@ -74,20 +74,20 @@ export const notes = defineWorkspace({
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const github = defineGitHubChannel({
   workspaceScope: { alias: "support", level: "conversation" },
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
   channels: [slack, github],
@@ -246,15 +246,15 @@ export const supportWorkspace = defineWorkspace({
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const github = defineGitHubChannel({
   workspaceScope: { alias: "support", level: "conversation" },
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
 });
 ```
 

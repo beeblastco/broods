@@ -1,18 +1,18 @@
 import { defineAgent, definePancakeChannel, env } from "broods";
 
 export const pancake = definePancakeChannel({
-  pageId: env.PANCAKE_PAGE_ID,
-  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
-  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
-  senderId: env.PANCAKE_SENDER_ID,
+  pageId: env("PANCAKE_PAGE_ID"),
+  pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
+  webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
+  senderId: env("PANCAKE_SENDER_ID"),
 });
 
 export const agent = defineAgent({
   name: "pancake-channel-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

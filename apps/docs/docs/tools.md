@@ -29,10 +29,10 @@ flowchart LR
 
 ## Current Tools
 
-| Tool                  | File                                                                                                                                       | External dependency                                                 | Config key                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------- |
-| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace              | `config.tools.<providerTool>` |
-| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                      | —                             |
+| Tool                  | File                                                                                                                                       | External dependency                                                              | Config key                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------- |
+| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                           | `config.tools.<providerTool>` |
+| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                                   | —                             |
 | Uploaded custom tool  | S3 bundle + account tool metadata                                                                                                          | V8 isolate for `runtime: "isolate"`; tool-runner Lambda for `runtime: "sandbox"` | `config.tools.<toolId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
@@ -63,7 +63,11 @@ Provider-defined tools are executed by the provider during the model call, not b
 
 Both tiers give you timers, `console`, `AbortController`, and `fetch`. The isolate tier has no filesystem and no module imports; the sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
 
-On the sandbox tier a streaming tool's `yield`s are buffered and replayed once the run finishes, rather than surfaced live as they are from the isolate tier. See [data security](./data-security.md) for what isolation each tier does and does not give you.
+Async-generator tools run to completion on both tiers, but their intermediate
+`yield`s are not part of the public SSE contract today. The harness drains the
+runner stream and returns only the last yielded value to the model and client.
+See [data security](./data-security.md) for what isolation each tier does and
+does not give you.
 
 **Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` trips when the request is cancelled.
 
@@ -84,15 +88,19 @@ sequenceDiagram
   N-->>H: stream frames
 ```
 
-### Streaming partial output (sync)
+### Async-generator output (final-only)
 
-A bundle whose `execute` is an async generator streams partial output from the isolate. Each `yield` becomes an NDJSON `chunk` frame, and a normal return produces one `final` frame; thrown errors produce `error` frames. The executor surfaces those frames as an async iterable. The AI SDK turns each yield into a **preliminary tool result** on the sync SSE stream; the last yield is the final output the model sees. Auto-detected per call: a non-generator `execute` behaves exactly as before.
+A bundle whose `execute` is an async generator may yield multiple internal
+runner frames. The adapter drains those frames and returns the last value as one
+final tool result; thrown errors still fail the tool call. Intermediate progress
+is not currently emitted as preliminary SSE tool results. A normal
+non-generator `execute` behaves exactly as before.
 
 ```ts
-// yields stream as preliminary results, the last one is the final output
+// Earlier yields remain internal; the last value is the final tool result.
 export const search = defineTool({
   name: "search",
-  description: "Search and stream progress.",
+  description: "Search and return the final result.",
   inputSchema: { type: "object", properties: { q: { type: "string" } } },
   async *execute(input) {
     yield { type: "text", value: "working…" };
@@ -103,19 +111,19 @@ export const search = defineTool({
 
 ```text
 isolate NDJSON: {"t":"chunk",...}  {"t":"chunk",...}  {"t":"final",...}
-SSE fullStream: tool-result(preliminary) … tool-result(preliminary) … tool-result(final)
+SSE fullStream: tool-result(final)
 ```
 
 When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle from the tool type and request path:
 
-| Tool type                | Request path                     | Tool code runs in        | Request/worker waits? | Result completion            | Model continuation                    |
-| ------------------------ | -------------------------------- | ------------------------ | --------------------- | ---------------------------- | ------------------------------------- |
-| Provider-defined         | all paths                        | the model provider       | Yes                   | provider returns tool output | same active agent loop                |
-| Uploaded isolate sync    | all paths                        | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop                |
-| Uploaded isolate async   | SSE and other non-detached paths | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop injects result |
-| Uploaded sandbox sync    | all paths                        | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop                |
-| Uploaded sandbox async   | SSE and other non-detached paths | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop injects result |
-| Uploaded detached async  | `/async`, channel, NATS          | deferred external tier   | —                     | unsupported off Lambda (#82) | clear dispatcher error                |
+| Tool type               | Request path                     | Tool code runs in        | Request/worker waits? | Result completion            | Model continuation                    |
+| ----------------------- | -------------------------------- | ------------------------ | --------------------- | ---------------------------- | ------------------------------------- |
+| Provider-defined        | all paths                        | the model provider       | Yes                   | provider returns tool output | same active agent loop                |
+| Uploaded isolate sync   | all paths                        | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop                |
+| Uploaded isolate async  | SSE and other non-detached paths | V8 isolate in Node child | Yes                   | isolate returns final result | same active agent loop injects result |
+| Uploaded sandbox sync   | all paths                        | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop                |
+| Uploaded sandbox async  | SSE and other non-detached paths | tool-runner Lambda       | Yes                   | Lambda returns final result  | same active agent loop injects result |
+| Uploaded detached async | `/async`, channel, NATS          | deferred external tier   | —                     | unsupported off Lambda (#82) | clear dispatcher error                |
 
 The async coordination subsystem still exists. It creates `AsyncToolResult` rows, exposes `async_status`, waits for in-process pending work, and injects completed parent results for non-detached uploaded tools (isolate and sandbox). Uploaded detached async execution has no background execution path today; the dispatcher returns a clear error that detached uploaded tools are not yet supported off Lambda and are tracked in #82.
 
@@ -162,7 +170,7 @@ import { defineAgent, env } from "broods";
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  provider: { google: { apiKey: env.GOOGLE_API_KEY } },
+  provider: { google: { apiKey: env("GOOGLE_API_KEY") } },
   model: { provider: "google", modelId: "gemini-3-flash" },
   tools: {
     googleSearch: google.tools.googleSearch({
@@ -226,15 +234,15 @@ The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Age
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
-For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
+For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Keep `defaultConfig` non-secret because it is account-wide tool metadata. Put `env("NAME")` values under the enabling agent's `tools.<tool>.config`; that agent config is resolved per environment and encrypted at rest. The compiler rejects environment references in `defaultConfig` instead of leaving a marker object for the tool to receive. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
 
-See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) covers the streaming variant.
+See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) demonstrates the current async-generator, final-result-only behavior.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 
 ## Upload a Custom Tool
 
-Write `execute` inline. The CLI bundles it on sync, so it runs on the platform rather than on your machine — keep it self-contained, and put secrets in `defaultConfig` or environment variables rather than in the source.
+Write `execute` inline. The CLI bundles it on sync, so it runs on the platform rather than on your machine. Keep it self-contained and keep secrets out of the source and `defaultConfig`: reference them with `env("NAME")` under the enabling agent's `tools.<tool>.config`. Use `defaultConfig` only for non-secret account-wide metadata.
 
 ```ts title="broods/index.ts"
 import { defineTool } from "broods";
@@ -254,8 +262,6 @@ export const myTool = defineTool({
 ```
 
 Prefer the implementation in its own file? Pass `path` instead of `execute` and export the tool as the module's default. Bundles are capped at 1 MB.
-
-
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 

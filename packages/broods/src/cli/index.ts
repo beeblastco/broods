@@ -72,7 +72,7 @@ Commands:
   init                 Create a broods/ project shell
   login                Authenticate with WorkOS through the dashboard
   dev                  Watch + sync Development AND live-tail agent logs (like \`convex dev\`);
-                       confirms before deleting; auto-pushes env.NAME values from .env.local
+                       confirms before deleting; auto-pushes env("NAME") values from .env.local
   dev --once           Sync Development a single time and exit (no watch, no log stream)
   diff                 Show local desired state vs remote state
   deploy               Sync Production once; writes BROODS_API_KEY to .env.local
@@ -721,7 +721,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
-  // Push any `env.NAME` values from .env.local up first, so this sync's configs
+  // Push any `env("NAME")` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
   await syncLocalEnvVars(
     client,
@@ -817,7 +817,7 @@ function printChannelEndpoints(
 }
 
 /**
- * Auto-syncs the env vars an agent config references via `env.NAME` from the
+ * Auto-syncs the env vars an agent config references via `env("NAME")` from the
  * local environment (`.env.local`, already loaded into `process.env`) up to the
  * cloud environment during `dev`. This fulfills the Convex-style `env set` flow
  * automatically so the dashboard never needs a manual step for local secrets.
@@ -1632,7 +1632,7 @@ function starterAgent(): string {
     `export const myAgent = defineAgent({\n` +
     `  name: "my-agent",\n` +
     `  provider: {\n` +
-    `    openai: { apiKey: env.OPENAI_API_KEY },\n` +
+    `    openai: { apiKey: env("OPENAI_API_KEY") },\n` +
     `  },\n` +
     `  model: {\n` +
     `    provider: "openai",\n` +

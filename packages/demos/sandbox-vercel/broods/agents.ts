@@ -14,9 +14,9 @@ export const vercelSandbox = defineSandbox({
     SANDBOX_SMOKE_VAR: "sandbox-env-ok",
   },
   options: {
-    token: env.VERCEL_TOKEN,
-    teamId: env.VERCEL_TEAM_ID,
-    projectId: env.VERCEL_PROJECT_ID,
+    token: env("VERCEL_TOKEN"),
+    teamId: env("VERCEL_TEAM_ID"),
+    projectId: env("VERCEL_PROJECT_ID"),
     runtime: "node24",
   },
 });
@@ -25,8 +25,8 @@ export const vercelAgent = defineAgent({
   name: "vercel-agent",
   provider: {
     custom: {
-      apiKey: env.AI_API_KEY,
-      base_url: env.AI_BASE_URL,
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
   },
   model: {

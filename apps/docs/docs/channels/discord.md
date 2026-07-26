@@ -12,8 +12,8 @@ Define a Discord channel with `defineDiscordChannel` and attach it to an agent:
 import { defineAgent, defineDiscordChannel, env } from "broods";
 
 export const discord = defineDiscordChannel({
-  botToken: env.DISCORD_BOT_TOKEN,
-  publicKey: env.DISCORD_PUBLIC_KEY,
+  botToken: env("DISCORD_BOT_TOKEN"),
+  publicKey: env("DISCORD_PUBLIC_KEY"),
   allowedGuildIds: ["guild-id-1"],
   apiUrl: "https://discord.com/api/v10",
 });

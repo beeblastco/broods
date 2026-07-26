@@ -34,11 +34,11 @@ This keeps the add-on small. Developers who need custom workflow code can deploy
 Define cron jobs as resources alongside your agents:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineCron } from "broods";
+import { defineAgent, defineCron, env } from "broods";
 
 export const maintainer = defineAgent({
   name: "maintainer",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a maintenance assistant." },
 });

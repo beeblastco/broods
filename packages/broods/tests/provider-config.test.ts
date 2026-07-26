@@ -15,12 +15,21 @@ test("accepts base_url and baseURL for the custom provider", () => {
   ).not.toThrow();
 });
 
-test("accepts env() refs as values (only keys are validated)", () => {
+test('accepts env("NAME") refs as values (only keys are validated)', () => {
   expect(() =>
     validateProviderConfig("a", {
       custom: { apiKey: env("API_KEY"), baseURL: env("BASE_URL") },
     }),
   ).not.toThrow();
+});
+
+test("exposes env as a validated callable deferred-reference accessor", () => {
+  expect(typeof env).toBe("function");
+  expect(env("API_KEY")).toEqual({ __beeblastEnv: true, name: "API_KEY" });
+  expect(() => env("lowercase")).toThrow("env name must match");
+  expect(() => (env as unknown as Record<string, unknown>).API_KEY).toThrow(
+    'env.API_KEY is not supported; use env("API_KEY")',
+  );
 });
 
 test("rejects the camel `baseUrl` typo with a did-you-mean hint", () => {

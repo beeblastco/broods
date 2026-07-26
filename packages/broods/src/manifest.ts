@@ -67,7 +67,7 @@ export const defineSkill = passthrough;
 export const definePolicy = passthrough;
 export const defineCron = passthrough;
 export const defineBroods = passthrough;
-export const env = new Proxy({}, { get: (_t, name) => ({ __beeblastEnv: true, name }) });
+export const env = (name) => ({ __beeblastEnv: true, name });
 export default {};
 `;
 
@@ -120,13 +120,11 @@ export async function compileProject(
     .filter((entry): entry is ExportedValue & { value: AnyResource } =>
       isResource(entry.value),
     )
-    .map(
-      (entry): ExportedResource => ({
-        exportName: entry.exportName,
-        file: entry.file,
-        resource: entry.value,
-      }),
-    );
+    .map((entry): ExportedResource => ({
+      exportName: entry.exportName,
+      file: entry.file,
+      resource: entry.value,
+    }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
   const channels = compileChannels(resourceExports, exports);
@@ -169,31 +167,35 @@ export async function compileProject(
 
 /**
  * Collects the distinct account/environment variable names referenced via
- * `env.NAME` (the `{ __beeblastEnv }` marker) across every resource config in a
+ * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
  * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
  * from the local environment to the cloud — never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
-  function walk(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const entry of value) walk(entry);
-      return;
-    }
-    if (value && typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      if (record.__beeblastEnv === true && typeof record.name === "string") {
-        names.add(record.name);
-        return;
-      }
-      for (const entry of Object.values(record)) walk(entry);
-    }
-  }
-
-  for (const resource of manifest.resources) walk(resource.config);
+  for (const resource of manifest.resources)
+    collectEnvRefNamesFromValue(resource.config, names);
 
   return [...names].sort();
+}
+
+function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+
+    return;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.__beeblastEnv === true && typeof record.name === "string") {
+      names.add(record.name);
+
+      return;
+    }
+    for (const entry of Object.values(record))
+      collectEnvRefNamesFromValue(entry, names);
+  }
 }
 
 function resolveEnvironment(
@@ -821,7 +823,7 @@ function suggestProviderKey(key: string): string {
  * Validates each agent's `config.provider` at compile time so a misspelled
  * option — most commonly the camel `baseUrl` instead of `base_url`/`baseURL` —
  * throws inside the `broods dev` watcher (and `deploy`) instead of surfacing as
- * a 400 at run time. Values may be `env(...)` refs, so only keys are checked.
+ * a 400 at run time. Values may be `env("NAME")` refs, so only keys are checked.
  */
 export function validateProviderConfig(
   agentName: string,
@@ -1135,6 +1137,14 @@ async function normalizeToolConfig(
   },
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
+  const defaultConfigEnvRefs = new Set<string>();
+  collectEnvRefNamesFromValue(config.defaultConfig, defaultConfigEnvRefs);
+  if (defaultConfigEnvRefs.size > 0) {
+    throw new Error(
+      `Tool "${entry.resource.name}" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config so they stay encrypted and environment-scoped`,
+    );
+  }
+
   // No `path` means the tool declared `execute` inline: bundle the module that
   // exported it and address the export by name, the way Convex ships actions.
   const bundlePath = config.path
@@ -1153,7 +1163,11 @@ async function normalizeToolConfig(
   // options.context. A shim entrypoint keeps that one generated line in one place.
   const shimDir = await mkdtemp(join(tmpdir(), "broods-tool-"));
   const shimPath = join(shimDir, "tool-adapter.mjs");
-  await writeFile(shimPath, toolShimSource(bundlePath, config.path, entry), "utf8");
+  await writeFile(
+    shimPath,
+    toolShimSource(bundlePath, config.path, entry),
+    "utf8",
+  );
   if (!config.path) {
     await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
   }

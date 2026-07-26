@@ -12,9 +12,9 @@ Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
 import { defineAgent, defineGitHubChannel, env } from "broods";
 
 export const github = defineGitHubChannel({
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
   allowedRepos: ["owner/repo-1", "owner/repo-2"],
   apiUrl: "https://api.github.com",
 });

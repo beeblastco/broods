@@ -3,7 +3,7 @@ import { defineAgent, defineCron, env } from "broods";
 export const cron = defineAgent({
   name: "cron-agent",
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",

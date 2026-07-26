@@ -209,13 +209,13 @@ import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const webhookAgent = defineAgent({
   name: "webhook-agent",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5-mini" },
   hooks: {
     webhooks: [{
       enabled: true,
-      url: env.MOCK_WEBHOOK_URL,
-      secret: env.MOCK_WEBHOOK_SECRET,
+      url: env("MOCK_WEBHOOK_URL"),
+      secret: env("MOCK_WEBHOOK_SECRET"),
       events: ["agent.started", "agent.finished"],
     }],
   },
@@ -249,7 +249,7 @@ import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const publicAgent = defineAgent({
   name: "public-agent",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5-mini" },
   publicAccess: true,
 });
@@ -280,41 +280,41 @@ import {
 } from "${RESOURCES_MODULE}";
 
 export const telegram = defineTelegramChannel({
-  botToken: env.TELEGRAM_BOT_TOKEN,
-  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  botToken: env("TELEGRAM_BOT_TOKEN"),
+  webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123],
   reactionEmoji: "eyes",
   apiUrl: "https://telegram.example",
 });
 export const github = defineGitHubChannel({
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   allowedRepos: ["owner/repo"],
   apiUrl: "https://github.example/api/v3",
 });
 export const slack = defineSlackChannel({
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
   allowedChannelIds: ["C123"],
   reactionEmoji: "white_check_mark",
   apiUrl: "https://slack.example/api/",
 });
 export const discord = defineDiscordChannel({
-  botToken: env.DISCORD_BOT_TOKEN,
-  publicKey: env.DISCORD_PUBLIC_KEY,
+  botToken: env("DISCORD_BOT_TOKEN"),
+  publicKey: env("DISCORD_PUBLIC_KEY"),
   allowedGuildIds: ["G123"],
   apiUrl: "https://discord.example/api/v10",
 });
 export const pancake = definePancakeChannel({
-  pageId: env.PANCAKE_PAGE_ID,
-  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
-  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
+  pageId: env("PANCAKE_PAGE_ID"),
+  pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
+  webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
   senderId: "staff-1",
 });
 export const zalo = defineZaloChannel({
-  botToken: env.ZALO_BOT_TOKEN,
-  webhookSecret: env.ZALO_WEBHOOK_SECRET,
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
   allowedUserIds: ["user-1"],
 });
 
@@ -373,9 +373,9 @@ test("compileProject rejects a channel reused by two agents", async () => {
     `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubChannel({
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
 export const first = defineAgent({ name: "first", channels: [github] });
 export const second = defineAgent({ name: "second", channels: [github] });
@@ -392,8 +392,8 @@ test("compileProject rejects duplicate channel types on one agent", async () => 
     "",
     `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
-const one = defineGitHubChannel({ appId: env.APP_1, privateKey: env.KEY_1, webhookSecret: env.SECRET_1 });
-const two = defineGitHubChannel({ appId: env.APP_2, privateKey: env.KEY_2, webhookSecret: env.SECRET_2 });
+const one = defineGitHubChannel({ appId: env("APP_1"), privateKey: env("KEY_1"), webhookSecret: env("SECRET_1") });
+const two = defineGitHubChannel({ appId: env("APP_2"), privateKey: env("KEY_2"), webhookSecret: env("SECRET_2") });
 export const support = defineAgent({ name: "support", channels: [one, two] });
 `,
   );
@@ -411,15 +411,15 @@ import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, 
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const github = defineGitHubChannel({
   workspaceScope: { alias: "support", level: "conversation" },
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
 
 export const repo = defineWorkspace({
@@ -491,8 +491,8 @@ import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURC
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, isolation: true });
 export const support = defineAgent({ name: "support", channels: [slack], workspaces: [repo] });
@@ -532,8 +532,8 @@ import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURC
 
 export const slack = defineSlackChannel({
   workspaceScope: { alias: "../support", level: "conversation" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, isolation: true });
 export const support = defineAgent({ name: "support", channels: [slack], workspaces: [repo] });
@@ -553,8 +553,8 @@ import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURC
 
 export const slack = defineSlackChannel({
   workspaceScope: { alias: "support", level: "workspace" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, isolation: true });
 export const support = defineAgent({ name: "support", channels: [slack], workspaces: [repo] });
@@ -574,8 +574,8 @@ import { defineAgent, defineSlackChannel, defineWorkspace, env } from "${RESOURC
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" } });
 export const support = defineAgent({ name: "support", channels: [slack], workspaces: [repo] });
@@ -595,13 +595,13 @@ import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, 
 
 export const slack = defineSlackChannel({
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const github = defineGitHubChannel({
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, isolation: true });
 export const support = defineAgent({ name: "support", channels: [slack, github], workspaces: [repo] });
@@ -622,15 +622,15 @@ import { defineAgent, defineGitHubChannel, defineSlackChannel, defineWorkspace, 
 export const slack = defineSlackChannel({
   id: "support-channel",
   workspaceScope: { level: "channel" },
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const github = defineGitHubChannel({
   id: "support-channel",
   workspaceScope: { alias: "support", level: "conversation" },
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
 export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, isolation: true });
 export const support = defineAgent({ name: "support", channels: [slack, github], workspaces: [repo] });
@@ -649,7 +649,7 @@ test("compileProject rejects keyed channel configuration", async () => {
 import { defineAgent, env } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
-  channels: { github: { appId: env.APP_ID, privateKey: env.PRIVATE_KEY, webhookSecret: env.WEBHOOK_SECRET } },
+  channels: { github: { appId: env("APP_ID"), privateKey: env("PRIVATE_KEY"), webhookSecret: env("WEBHOOK_SECRET") } },
 });
 `,
   );
@@ -665,9 +665,9 @@ test("compileProject keeps uploaded tool bundles intact beside typed channels", 
     `
 import { defineAgent, defineGitHubChannel, defineTool, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubChannel({
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
 });
 export const helper = defineTool({
   name: "helper",
@@ -706,6 +706,32 @@ export const support = defineAgent({
   });
 });
 
+test("compileProject rejects env refs in account-wide tool defaults", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineTool, env } from "${RESOURCES_MODULE}";
+export const helper = defineTool({
+  name: "helper",
+  description: "Returns a configured value",
+  inputSchema: { type: "object", properties: {} },
+  defaultConfig: { apiToken: env("TOOL_API_TOKEN") },
+  execute(_input, options) {
+    return { configured: options.context.config.apiToken };
+  },
+});
+export const support = defineAgent({
+  name: "support",
+  tools: { [helper.name]: { enabled: true } },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+    `Tool "helper" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config`,
+  );
+});
+
 test("compileProject emits inline agent hooks as one synthetic hook bundle", async () => {
   const cwd = await fixtureProject(
     "",
@@ -722,8 +748,8 @@ export const support = defineAgent({
         ? { decision: "deny", denyReason: "no shell" }
         : { decision: "allow" },
     webhooks: [{
-      url: env.MOCK_WEBHOOK_URL,
-      secret: env.MOCK_WEBHOOK_SECRET,
+      url: env("MOCK_WEBHOOK_URL"),
+      secret: env("MOCK_WEBHOOK_SECRET"),
       events: ["agent.started"],
     }],
   },
@@ -789,7 +815,7 @@ export const support = defineAgent({
   expect(bundle).toContain('"agent.finished": async function onFinish');
 });
 
-test("collectEnvRefNames returns the sorted, de-duplicated env.NAME references", async () => {
+test('collectEnvRefNames returns sorted, de-duplicated env("NAME") references', async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -797,13 +823,13 @@ import { defineAgent, env } from "${RESOURCES_MODULE}";
 
 export const support = defineAgent({
   name: "support",
-  provider: { openai: { apiKey: env.OPENAI_API_KEY } },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5-mini" },
 });
 
 export const billing = defineAgent({
   name: "billing",
-  provider: { custom: { apiKey: env("STRIPE_API_KEY"), baseURL: env.OPENAI_API_KEY } },
+  provider: { custom: { apiKey: env("STRIPE_API_KEY"), baseURL: env("OPENAI_API_KEY") } },
   model: { provider: "custom", modelId: "gpt-5-mini" },
 });
 `,
@@ -1528,7 +1554,7 @@ test("writeGeneratedFiles emits typed channel references with authoritative webh
     "",
     `
 import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
-export const github = defineGitHubChannel({ appId: env.APP_ID, privateKey: env.KEY, webhookSecret: env.SECRET });
+export const github = defineGitHubChannel({ appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
 export const support = defineAgent({ name: "support", channels: [github] });
 `,
   );

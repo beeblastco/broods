@@ -22,7 +22,7 @@ export const projectWorkspace = defineWorkspace({
 export const myAgent = defineAgent({
   name: "my-agent",
   provider: {
-    google: { apiKey: env.GOOGLE_API_KEY },
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
   model: {
     provider: "google",
