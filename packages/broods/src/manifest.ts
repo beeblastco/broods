@@ -1411,6 +1411,7 @@ function normalizeBundleComments(
 
   return bundle
     .replace(/^\/\/ .*tool-adapter\.mjs$/gm, () => "// tool-adapter.mjs")
+    .replace(/^\/\/ .*broods-stub\.mjs$/gm, () => "// broods-stub.mjs")
     .replace(sourceComment, () => `// ${manifestPath}`);
 }
 
