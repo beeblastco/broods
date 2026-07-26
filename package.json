@@ -15,9 +15,9 @@
     "@types/node": "26.1.1"
   },
   "scripts": {
-    "build": "bun run --filter @broods/tool-runner build && bun run --filter @broods/core build",
-    "check": "bun run --filter @broods/core check && bun run --filter @broods/tool-runner check && bun run --filter @broods/convex check && bun run --filter broods check",
-    "test": "bun run --filter @broods/core test && bun run --filter @broods/tool-runner test",
+    "build": "bun run --filter @broods/core build",
+    "check": "bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter broods check",
+    "test": "bun run --filter @broods/core test",
     "deploy": "bun run --filter @broods/core deploy",
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",

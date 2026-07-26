@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const childRunnerPath = fileURLToPath(
   new URL(
-    "../dist/child-runner.mjs",
+    "../../lambda/child-runner.mjs",
     import.meta.url,
   ),
 );

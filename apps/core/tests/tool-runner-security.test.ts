@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const handlerPath = fileURLToPath(
-  new URL("../dist/handler.mjs", import.meta.url),
+  new URL("../../lambda/handler.mjs", import.meta.url),
 );
 
 // A bundle the runner will accept: sha256 must match what the child recomputes.

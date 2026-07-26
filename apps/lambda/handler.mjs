@@ -8,23 +8,11 @@
  * logic lives in child-runner.mjs; keep this file to spawn + collect + clean up.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-interface RunnerEvent {
-  toolName: string;
-  bundleSourceB64: string;
-  expectedSha256: string;
-  [key: string]: unknown;
-}
-
-interface RunnerResponse {
-  stdout?: string;
-  error?: string;
-}
 
 // Hard bound on the whole invocation; the child self-aborts CHILD_GRACE_MS
 // earlier via TOOL_RUNNER_TIMEOUT_SECONDS so ctx.abortSignal fires (letting the
@@ -36,17 +24,13 @@ const CHILD_GRACE_MS = 2_000;
 // string in { stdout }, and escaping (quotes/backslashes) inflates it.
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
 
-export const handler = async (event: unknown): Promise<RunnerResponse> => {
-  if (
-    !event ||
-    typeof event !== "object" ||
-    typeof (event as RunnerEvent).toolName !== "string"
-  ) {
+export const handler = async (event) => {
+  if (!event || typeof event !== "object" || typeof event.toolName !== "string") {
     return { error: "invalid tool runner event" };
   }
   const home = mkdtempSync(join(tmpdir(), "broods-tool-"));
   try {
-    return await runChild(event as RunnerEvent, home);
+    return await runChild(event, home);
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   } finally {
@@ -54,18 +38,15 @@ export const handler = async (event: unknown): Promise<RunnerResponse> => {
   }
 };
 
-function childRunnerPath(): string {
+function childRunnerPath() {
   const root = process.env.LAMBDA_TASK_ROOT;
   return root
     ? join(root, "child-runner.mjs")
     : fileURLToPath(new URL("./child-runner.mjs", import.meta.url));
 }
 
-async function runChild(
-  event: RunnerEvent,
-  home: string,
-): Promise<RunnerResponse> {
-  return await new Promise<RunnerResponse>((resolve) => {
+async function runChild(event, home) {
+  return await new Promise((resolve) => {
     // detached puts the child in its own process group so killGroup can reap the
     // grandchildren too; a survivor outlives the invocation in a warm sandbox.
     const child = spawn(process.execPath, [childRunnerPath()], {
@@ -81,8 +62,8 @@ async function runChild(
       killGroup(child);
     }, RUN_TIMEOUT_MS);
 
-    child.stdout!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk: string) => {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes > OUTPUT_LIMIT_BYTES) {
         overflow = true;
@@ -91,8 +72,8 @@ async function runChild(
       }
       stdout += chunk;
     });
-    child.stderr!.setEncoding("utf8");
-    child.stderr!.on("data", (chunk: string) => {
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
       stderr += chunk;
       if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
     });
@@ -122,14 +103,14 @@ async function runChild(
 
     // A child that exits before reading stdin makes end() emit EPIPE; an
     // unhandled stream error would crash the handler instead of returning { error }.
-    child.stdin!.on("error", () => {});
-    child.stdin!.end(`${JSON.stringify(event)}\n`);
+    child.stdin.on("error", () => {});
+    child.stdin.end(`${JSON.stringify(event)}\n`);
   });
 }
 
 // The child's cooperative deadline: the smaller of our grace-adjusted bound and
 // any operator override, floored at 1s.
-function childTimeoutSeconds(): string {
+function childTimeoutSeconds() {
   const graceBound = Math.floor((RUN_TIMEOUT_MS - CHILD_GRACE_MS) / 1000);
   const override = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);
   const seconds =
@@ -141,9 +122,9 @@ function childTimeoutSeconds(): string {
 
 // SIGKILL the child's whole process group, not just the child. Falls back to the
 // child alone if the group is already gone (ESRCH) or was never detached.
-function killGroup(child: ChildProcess): void {
+function killGroup(child) {
   try {
-    process.kill(-child.pid!, "SIGKILL");
+    process.kill(-child.pid, "SIGKILL");
   } catch {
     try {
       child.kill("SIGKILL");
@@ -153,7 +134,7 @@ function killGroup(child: ChildProcess): void {
 
 // A minimal, credential-free env. Explicitly no AWS_*/Lambda vars so user code
 // cannot reach the execution role; HOME/TMPDIR point at the per-run scratch dir.
-function scrubbedEnv(home: string): NodeJS.ProcessEnv {
+function scrubbedEnv(home) {
   return {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     HOME: home,

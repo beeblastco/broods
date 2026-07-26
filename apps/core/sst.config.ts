@@ -529,14 +529,14 @@ export default $config({
     // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
     // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
     const toolRunnerFn = new sst.aws.Function("ToolRunner", {
-      handler: "../tool-runner/dist/handler.handler",
+      handler: "../lambda/handler.handler",
       runtime: "nodejs22.x",
       architecture: "arm64",
       timeout: "35 seconds",
       memory: "512 MB",
       copyFiles: [
         {
-          from: "../tool-runner/dist/child-runner.mjs",
+          from: "../lambda/child-runner.mjs",
           to: "child-runner.mjs",
         },
       ],

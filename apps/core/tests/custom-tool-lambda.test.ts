@@ -20,7 +20,7 @@ beforeEach(() => {
   process.env.TOOL_RUNNER_FUNCTION_NAME = "tool-runner";
 });
 
-describe("streamAccountToolInLambda", () => {
+describe("streamInLambda", () => {
   it("replays chunk frames then the final result", async () => {
     const client = fakeClient(
       response({
@@ -95,10 +95,10 @@ async function collect(
   client: LambdaClient,
   options?: unknown,
 ): Promise<unknown[]> {
-  const { streamAccountToolInLambda } =
-    await import("../src/harness/custom-tools/lambda.ts");
+  const { streamInLambda } =
+    await import("../src/harness/custom-tools/executor.ts");
   const outputs: unknown[] = [];
-  for await (const output of streamAccountToolInLambda(
+  for await (const output of streamInLambda(
     {
       accountId: "acct_test",
       tool: toolRecord(),
