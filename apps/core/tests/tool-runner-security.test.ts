@@ -21,6 +21,7 @@ const handlerPath = fileURLToPath(
 async function invokeHandler(
   bundle: string,
   event: Record<string, unknown>,
+  parentEnv: Record<string, string> = {},
 ): Promise<{ stdout?: string; error?: string }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   try {
@@ -41,7 +42,10 @@ async function invokeHandler(
     );
 
     return await new Promise((resolve, reject) => {
-      const child = spawn("node", [driver], { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn("node", [driver], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...parentEnv },
+      });
       let out = "";
       let err = "";
       child.stdout.on("data", (chunk) => (out += chunk));
@@ -94,6 +98,42 @@ describe("tool-runner containment", () => {
       .map((line) => JSON.parse(line));
 
     expect(frames.at(-1)).toEqual({ t: "final", result: { hits: [] } });
+  }, 30_000);
+
+  it("hides the function's AWS credentials from the tenant bundle's env", async () => {
+    // Scrubbing the child's env is not a boundary on its own (same-UID /proc
+    // still reaches the parent), but the env copy itself must not carry through.
+    const bundle = [
+      `export default {`,
+      `  name: "envprobe",`,
+      `  execute() {`,
+      `    return {`,
+      `      secret: process.env.AWS_SECRET_ACCESS_KEY ?? null,`,
+      `      token: process.env.AWS_SESSION_TOKEN ?? null,`,
+      `      runtimeApi: process.env.AWS_LAMBDA_RUNTIME_API ?? null,`,
+      `    };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(
+      bundle,
+      { toolName: "envprobe" },
+      {
+        AWS_SECRET_ACCESS_KEY: "shouldnotleak",
+        AWS_SESSION_TOKEN: "shouldnotleak",
+        AWS_LAMBDA_RUNTIME_API: "127.0.0.1:9001",
+      },
+    );
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(frames.at(-1)).toEqual({
+      t: "final",
+      result: { secret: null, token: null, runtimeApi: null },
+    });
   }, 30_000);
 
   it("reaps a process the tenant bundle leaves running", async () => {

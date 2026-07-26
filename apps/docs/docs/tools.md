@@ -63,7 +63,7 @@ Provider-defined tools are executed by the provider during the model call, not b
 
 Both tiers give you timers, `console`, `AbortController`, and `fetch`. The isolate tier has no filesystem and no module imports; the sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
 
-On the sandbox tier a streaming tool's `yield`s are buffered and replayed once the run finishes, rather than surfaced live as they are from the isolate tier.
+On the sandbox tier a streaming tool's `yield`s are buffered and replayed once the run finishes, rather than surfaced live as they are from the isolate tier. See [data security](./data-security.md) for what isolation each tier does and does not give you.
 
 **Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` trips when the request is cancelled.
 
