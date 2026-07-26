@@ -112,16 +112,6 @@ describe("accountTool adapter", () => {
   });
 });
 
-async function execute(input: Record<string, unknown>): Promise<unknown> {
-  const tool = (await accountToolSet())["sandbox_tool"];
-  if (!tool?.execute) throw new Error("adapter registered no execute");
-
-  return await tool.execute(input, {
-    toolCallId: "call_1",
-    messages: [],
-  } as never);
-}
-
 async function accountToolSet() {
   const accountTool = (await import("../src/harness/tools/custom.tool.ts"))
     .default;
@@ -129,6 +119,16 @@ async function accountToolSet() {
   return accountTool(toolRecord(), {
     accountId: "acct_test",
     config: {},
+  } as never);
+}
+
+async function execute(input: Record<string, unknown>): Promise<unknown> {
+  const tool = (await accountToolSet())["sandbox_tool"];
+  if (!tool?.execute) throw new Error("adapter registered no execute");
+
+  return await tool.execute(input, {
+    toolCallId: "call_1",
+    messages: [],
   } as never);
 }
 

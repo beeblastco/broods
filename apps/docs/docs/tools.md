@@ -242,7 +242,7 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 ## Upload a Custom Tool
 
-Write `execute` inline. The CLI bundles it on sync, so it runs on the platform rather than on your machine — keep it self-contained, and put secrets in `defaultConfig` or environment variables rather than in the source.
+Write `execute` inline. The CLI bundles it on sync, so it runs on the platform rather than on your machine. Keep it self-contained and keep secrets out of the source and `defaultConfig`: reference them with `env("NAME")` under the enabling agent's `tools.<tool>.config`. Use `defaultConfig` only for non-secret account-wide metadata.
 
 ```ts title="broods/index.ts"
 import { defineTool } from "broods";

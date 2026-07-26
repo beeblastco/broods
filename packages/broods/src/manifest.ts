@@ -183,12 +183,14 @@ export function collectEnvRefNames(manifest: CliManifest): string[] {
 function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
   if (Array.isArray(value)) {
     for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+
     return;
   }
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
     if (record.__beeblastEnv === true && typeof record.name === "string") {
       names.add(record.name);
+
       return;
     }
     for (const entry of Object.values(record))

@@ -192,7 +192,7 @@ See [External Tools](tools.md) for uploading custom tools.
 Attach one or more channels to an agent:
 
 ```ts
-import { defineTelegramChannel } from "broods";
+import { defineAgent, defineTelegramChannel, env } from "broods";
 
 export const telegram = defineTelegramChannel({
   botToken: env("TELEGRAM_BOT_TOKEN"),
