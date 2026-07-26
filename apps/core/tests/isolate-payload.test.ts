@@ -33,6 +33,7 @@ describe("createRunnerPayload", () => {
       tool: accountToolRecord(),
       input: { message: "hi" },
       config: { config: { agentKey: "agent" } },
+      bundleTransport: "inline",
     });
 
     expect(payload).toEqual({
@@ -52,6 +53,7 @@ describe("createRunnerPayload", () => {
       tool: accountToolRecord(),
       input: {},
       config: { config: { fromDefault: "overridden" } },
+      bundleTransport: "inline",
     });
 
     expect(payload.config).toEqual({ fromDefault: "overridden" });
@@ -67,6 +69,7 @@ describe("createRunnerPayload", () => {
       input: {},
       config: {},
       toolCallId: "call_abc",
+      bundleTransport: "inline",
     });
     expect(withId.toolCallId).toBe("call_abc");
 
@@ -75,6 +78,7 @@ describe("createRunnerPayload", () => {
       tool: accountToolRecord(),
       input: {},
       config: {},
+      bundleTransport: "inline",
     });
     expect("toolCallId" in withoutId).toBe(false);
   });
@@ -123,7 +127,8 @@ describe("runner frame protocol", () => {
   });
 
   it("FrameQueue yields whole frames as lines arrive, then flushes on close", async () => {
-    const { FrameQueue } = await import("../src/harness/custom-tools/payload.ts");
+    const { FrameQueue } =
+      await import("../src/harness/custom-tools/payload.ts");
     const queue = new FrameQueue();
     const collected: unknown[] = [];
     const consume = (async () => {

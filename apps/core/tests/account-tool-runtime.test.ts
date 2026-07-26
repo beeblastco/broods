@@ -1,10 +1,20 @@
 /**
  * Upload-time execution-tier classification for account tool bundles.
- * Covers the isolate/sandbox split and the guarded-`process`-probe carve-out.
+ * Covers the isolate/sandbox split, the guarded-`process`-probe carve-out, and
+ * the per-tier size bound that classification decides.
  */
 
 import { describe, expect, it } from "bun:test";
-import { inferAccountToolRuntime } from "../src/shared/domain/account-tools.ts";
+import {
+  inferAccountToolRuntime,
+  normalizeAccountToolUpload,
+} from "../src/shared/domain/account-tools.ts";
+
+const MAX_ISOLATE_BUNDLE_BYTES = 1_000_000;
+const MAX_SANDBOX_BUNDLE_BYTES = 10_000_000;
+
+// n ASCII bytes of isolate-safe source (a comment) for exact-boundary checks.
+const bundleOfBytes = (n: number): string => "//" + "a".repeat(n - 2);
 
 describe("inferAccountToolRuntime", () => {
   it("classifies pure-compute bundles as isolate", () => {
@@ -85,3 +95,36 @@ describe("inferAccountToolRuntime", () => {
     ).toBe("sandbox");
   });
 });
+
+describe("per-tier bundle size bound", () => {
+  it("holds an isolate bundle to the tighter bound", () => {
+    expect(() => upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES))).not.toThrow();
+    expect(() => upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1))).toThrow(
+      `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
+    );
+  });
+
+  it("gives a sandbox bundle the larger bound", () => {
+    // A sandbox bundle streams from S3 into the runner instead of being inlined
+    // into core's process, so the isolate's memory argument does not apply.
+    const sandbox = (bytes: number): string =>
+      `${bundleOfBytes(bytes)}\nimport "node:fs";`;
+
+    expect(() => upload(sandbox(MAX_ISOLATE_BUNDLE_BYTES + 1))).not.toThrow();
+    expect(() => upload(sandbox(MAX_SANDBOX_BUNDLE_BYTES + 1))).toThrow(
+      `tool.bundle must be ${MAX_SANDBOX_BUNDLE_BYTES} bytes or smaller on the sandbox runtime`,
+    );
+  });
+});
+
+function upload(bundle: string): unknown {
+  return normalizeAccountToolUpload(
+    {
+      name: "sized",
+      description: "Sized.",
+      inputSchema: { type: "object" },
+      bundle: bundle,
+    },
+    { requireBundle: true },
+  );
+}

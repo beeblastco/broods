@@ -83,8 +83,12 @@ type ExportedResource = {
   resource: AnyResource;
 };
 
-const MAX_BUNDLE_FILE_BYTES = 1_000_000;
-const MAX_BUNDLE_TOTAL_BYTES = 5_000_000;
+// The server bounds a tool bundle per tier: 1 MB on the isolate tier, 10 MB on
+// the sandbox tier, which streams its bundle rather than inlining it. The CLI
+// cannot classify the tier, so it enforces the larger bound and lets the server
+// reject an oversized isolate bundle with the tier named.
+const MAX_BUNDLE_FILE_BYTES = 10_000_000;
+const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [

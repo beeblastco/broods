@@ -43,7 +43,11 @@ export interface RequiredAccountToolUpload {
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Matches the CLI's MAX_BUNDLE_FILE_BYTES so a bundle that passes CLI validation
 // is not rejected at this upload gate — large enough for AI-SDK-derived tools.
-const MAX_BUNDLE_BYTES = 1_000_000;
+// Mirrors core's per-tier bound (apps/core/src/shared/domain/account-tools.ts).
+const MAX_BUNDLE_BYTES: Record<AccountToolRuntime, number> = {
+  isolate: 1_000_000,
+  sandbox: 10_000_000,
+};
 const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
@@ -108,6 +112,16 @@ export async function normalizeAccountToolUpload(
     // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
     // stored runtime so it cannot silently flip an explicitly chosen tier.
     result.runtime = inferAccountToolRuntime(result.bundle);
+  }
+
+  // The size bound is per tier, so it can only be applied once the tier is
+  // settled — including on a bundle-only PATCH, which infers it for this check
+  // alone rather than overwriting the stored runtime.
+  if (result.bundle !== undefined) {
+    assertBundleSize(
+      result.bundle,
+      result.runtime ?? inferAccountToolRuntime(result.bundle),
+    );
   }
 
   if (value.defaultConfig !== undefined) {
@@ -190,12 +204,18 @@ function normalizeInputSchema(value: unknown): Record<string, unknown> {
   return value;
 }
 
+function assertBundleSize(bundle: string, runtime: AccountToolRuntime): void {
+  const limit = MAX_BUNDLE_BYTES[runtime];
+  if (new TextEncoder().encode(bundle).byteLength > limit) {
+    throw new Error(
+      `tool.bundle must be ${limit} bytes or smaller on the ${runtime} runtime`,
+    );
+  }
+}
+
 function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("tool.bundle must be a non-empty string");
-  }
-  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-    throw new Error(`tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
   }
 
   return value;

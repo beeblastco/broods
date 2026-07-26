@@ -31,7 +31,10 @@ async function runToolRequest() {
   const timeoutMs = runTimeoutMs();
   const timeout = setTimeout(() => {
     controller.abort(new Error("custom tool sandbox execution timed out"));
-    emitTerminal({ t: "error", error: "custom tool sandbox execution timed out" }, 1);
+    emitTerminal(
+      { t: "error", error: "custom tool sandbox execution timed out" },
+      1,
+    );
   }, timeoutMs);
   try {
     const payload = parsePayload(JSON.parse(await readAllStdin()));
@@ -48,17 +51,17 @@ async function runToolRequest() {
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
 async function runBundle(payload, abortSignal) {
-  const bundleSource = Buffer.from(payload.bundleSourceB64, "base64");
-  const actualSha = createHash("sha256").update(bundleSource).digest("hex");
+  const bundleSourceB64 = await readBundleSource(payload);
+  const actualSha = createHash("sha256")
+    .update(Buffer.from(bundleSourceB64, "base64"))
+    .digest("hex");
   if (actualSha !== payload.expectedSha256) {
     throw new Error("custom tool bundle hash mismatch inside sandbox runner");
   }
 
   // Imported from memory, never written to disk: /tmp survives in a warm Lambda
   // sandbox, so a bundle on disk is readable by any process that outlives its run.
-  const module = await import(
-    `data:text/javascript;base64,${payload.bundleSourceB64}`
-  );
+  const module = await import(`data:text/javascript;base64,${bundleSourceB64}`);
 
   let definition = module.default;
   if (typeof definition === "function") {
@@ -115,8 +118,12 @@ function parsePayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("invalid sandbox runner payload");
   }
-  if (typeof payload.bundleSourceB64 !== "string") {
-    throw new Error("sandbox runner payload missing bundleSourceB64");
+  const hasSource = typeof payload.bundleSourceB64 === "string";
+  const hasUrl = typeof payload.bundleUrl === "string";
+  if (hasSource === hasUrl) {
+    throw new Error(
+      "sandbox runner payload needs exactly one of bundleSourceB64 or bundleUrl",
+    );
   }
   if (typeof payload.expectedSha256 !== "string") {
     throw new Error("sandbox runner payload missing expectedSha256");
@@ -125,7 +132,8 @@ function parsePayload(payload) {
     throw new Error("sandbox runner payload missing toolName");
   }
   return {
-    bundleSourceB64: payload.bundleSourceB64,
+    bundleSourceB64: hasSource ? payload.bundleSourceB64 : undefined,
+    bundleUrl: hasUrl ? payload.bundleUrl : undefined,
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
     input: payload.input,
@@ -138,6 +146,23 @@ function parsePayload(payload) {
   };
 }
 
+// The bundle arrives either inline or as a short-lived presigned GET. The URL
+// form keeps the bundle out of the invoke payload, whose 6 MB quota would
+// otherwise cap uploads near 4.4 MB once base64 inflates them. Fetched before
+// any tenant code runs, and the sha256 check below is what makes it safe to
+// trust whatever comes back.
+async function readBundleSource(payload) {
+  if (payload.bundleSourceB64 !== undefined) return payload.bundleSourceB64;
+  const response = await fetch(payload.bundleUrl);
+  if (!response.ok) {
+    throw new Error(
+      `custom tool bundle fetch failed with HTTP ${response.status}`,
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer()).toString("base64");
+}
+
 async function readAllStdin() {
   let input = "";
   process.stdin.setEncoding("utf8");
@@ -147,7 +172,8 @@ async function readAllStdin() {
 
 function runTimeoutMs() {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);
-  const seconds = Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
+  const seconds =
+    Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
   return seconds * 1000;
 }
 

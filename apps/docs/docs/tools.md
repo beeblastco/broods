@@ -263,7 +263,9 @@ export const myTool = defineTool({
 });
 ```
 
-Prefer the implementation in its own file? Pass `path` instead of `execute` and export the tool as the module's default. Bundles are capped at 1 MB.
+Prefer the implementation in its own file? Pass `path` instead of `execute` and export the tool as the module's default.
+
+Bundle size is capped per tier: **1 MB** on the isolate tier, **10 MB** on the sandbox tier. The tier is classified from the bundle, so a dependency that pulls in Node builtins moves a tool to the sandbox tier and the larger cap at the same time.
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 

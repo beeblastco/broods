@@ -9,12 +9,17 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaClient } from "@aws-sdk/client-lambda";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import type { ExecuteAccountToolOptions } from "../src/harness/custom-tools/payload.ts";
+import * as realS3 from "../src/shared/s3.ts";
 
 const bundle =
   "export default { name: 'sandbox_tool', execute(input) { return { echo: input }; } };";
 
+// Spread the real module: mock.module replaces it process-wide, so overriding
+// only these two would strip every other export for later test files.
 mock.module("../src/shared/s3.ts", () => ({
+  ...realS3,
   readS3Bytes: async () => new TextEncoder().encode(bundle),
+  getS3ObjectUrl: async () => "https://tool-bundles.s3.amazonaws.com/signed",
 }));
 
 beforeEach(() => {
@@ -96,6 +101,28 @@ describe("streamInLambda", () => {
     const client = fakeClient([]);
 
     await expect(collect(client)).rejects.toThrow(/did not return a result/);
+  });
+
+  it("sends a presigned URL rather than the bundle bytes", async () => {
+    // Inlining the bundle spends the 6 MB invoke-payload quota on it, which caps
+    // uploads near 4.4 MB after base64. The payload must stay metadata-sized.
+    let sent: Record<string, unknown> | undefined;
+    const client = {
+      send: mock(async (command: { input: { Payload: Uint8Array } }) => {
+        sent = JSON.parse(new TextDecoder().decode(command.input.Payload));
+        return {
+          EventStream: (async function* () {
+            yield payloadChunk(frame({ t: "final", result: 1 }));
+          })(),
+        };
+      }),
+    } as unknown as LambdaClient;
+    await collect(client);
+
+    expect(sent?.bundleUrl).toBe(
+      "https://tool-bundles.s3.amazonaws.com/signed",
+    );
+    expect(sent).not.toHaveProperty("bundleSourceB64");
   });
 
   it("forwards the AI SDK abortSignal to the Lambda send call", async () => {

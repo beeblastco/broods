@@ -74,6 +74,7 @@ export async function* streamInLambda(
     input: options.input,
     config: options.config,
     toolCallId: toolCallIdFromOptions(options.options),
+    bundleTransport: "presigned-url",
   });
   const abortSignal = abortSignalFromOptions(options.options);
   const queue = new FrameQueue();
