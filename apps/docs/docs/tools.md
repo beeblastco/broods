@@ -59,11 +59,9 @@ Provider-defined tools are executed by the provider during the model call, not b
 - `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or use of `process` as a bare global. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. Bundlers inline that pattern from common libraries, so an otherwise pure bundle stays on the isolate tier.
 - `runtime: "sandbox"` for code that needs Node, npm, native modules, or other off-core execution.
 
-Only `runtime: "isolate"` executes today. The isolate executor runs the uploaded bundle in a V8 `isolated-vm` isolate hosted in a Node child process of the core because Bun cannot load `isolated-vm`. The isolate exposes timers, `queueMicrotask`, `console`, `AbortController`/`AbortSignal`, Web-Crypto-ish globals, and an SSRF-guarded global `fetch` plus `ctx.fetch`; private and metadata ranges are blocked, and DNS-rebinding protection pins resolved addresses. There is no npm or native import surface.
+Both tiers give you timers, `console`, `AbortController`, and `fetch`. The isolate tier has no filesystem and no module imports; the sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
 
-**Calling convention.** At runtime the isolate invokes the AI SDK signature `execute(input, options)`: `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` is a real `AbortSignal` that trips when the request is cancelled (forwarded from core into the runner). Authoring is unchanged — you write `execute(ctx, input)` and the CLI emits a one-line build-time adapter (`execute(input, options) => impl.execute(options.context, input)`). Because the runtime now matches the SDK convention, a fetch-only tool shaped like the AI SDK `tool({ execute })` is compatible too. Bundle-size caps agree across the CLI, core, and the config plane at 1 MB.
-
-Tools classified as `runtime: "sandbox"` return a clear unsupported error off Lambda: sandbox custom tools are deferred to #82.
+**Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` trips when the request is cancelled.
 
 ```mermaid
 sequenceDiagram
@@ -87,13 +85,16 @@ sequenceDiagram
 A bundle whose `execute` is an async generator streams partial output from the isolate. Each `yield` becomes an NDJSON `chunk` frame, and a normal return produces one `final` frame; thrown errors produce `error` frames. The executor surfaces those frames as an async iterable. The AI SDK turns each yield into a **preliminary tool result** on the sync SSE stream; the last yield is the final output the model sees. Auto-detected per call: a non-generator `execute` behaves exactly as before.
 
 ```ts
-// uploaded bundle — yields stream as preliminary results, last yield is final
-export default {
-  async *execute(ctx, input) {
+// yields stream as preliminary results, the last one is the final output
+export const search = defineTool({
+  name: "search",
+  description: "Search and stream progress.",
+  inputSchema: { type: "object", properties: { q: { type: "string" } } },
+  async *execute(input) {
     yield { type: "text", value: "working…" };
     yield { type: "text", value: "done: " + input.q };
   },
-};
+});
 ```
 
 ```text
@@ -193,12 +194,14 @@ import { defineAgent, defineTool, env } from "broods";
 
 export const analyze = defineTool({
   name: "analyze",
-  path: "tools/analyze.ts",
   description: "Analyze structured data.",
   inputSchema: {
     type: "object",
     properties: { data: { type: "array" } },
     required: ["data"],
+  },
+  async execute(input) {
+    return { type: "text", value: `Analyzed ${input.data.length} rows.` };
   },
 });
 
@@ -226,10 +229,12 @@ The full config field reference lives in the [API Reference](/api-reference) und
 
 ## Upload a Custom Tool
 
-With the CLI, point `defineTool()` at a TypeScript or JavaScript entrypoint under `broods/`. The CLI bundles it as self-contained ESM (wrapping your `execute(ctx, input)` in the runtime `execute(input, options)` adapter), rejects source or output over 1 MB — the same cap core and the config plane enforce — hashes the compiled bundle, classifies it as `runtime: "isolate"` or `runtime: "sandbox"`, and uploads it through manifest sync. Agent references are rewritten to the deployed tool ID.
+Write `execute` inline. The CLI bundles it on sync, so it runs on the platform rather than on your machine — keep it self-contained, and put secrets in `defaultConfig` or environment variables rather than in the source.
 
-```ts title="broods/tools/my-tool.ts"
-export default {
+```ts title="broods/index.ts"
+import { defineTool } from "broods";
+
+export const myTool = defineTool({
   name: "my_tool",
   description: "A custom tool that does something useful.",
   inputSchema: {
@@ -237,34 +242,15 @@ export default {
     properties: { query: { type: "string" } },
     required: ["query"],
   },
-  async execute(ctx, input) {
+  async execute(input) {
     return { type: "text", value: `Result for ${input.query}` };
   },
-};
-```
-
-```ts title="broods/index.ts"
-import { defineAgent, defineTool } from "broods";
-import { api } from "./_generated/api";
-
-export const myTool = defineTool({
-  name: "my_tool",
-  path: "tools/my-tool.ts",
-  description: "A custom tool.",
-  inputSchema: {
-    type: "object",
-    properties: { query: { type: "string" } },
-    required: ["query"],
-  },
-});
-
-export const myAgent = defineAgent({
-  name: "my-agent",
-  tools: {
-    [myTool.name]: { enabled: true, async: true },
-  },
 });
 ```
+
+Prefer the implementation in its own file? Pass `path` instead of `execute` and export the tool as the module's default. Bundles are capped at 1 MB.
+
+
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 

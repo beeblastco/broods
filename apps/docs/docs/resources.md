@@ -425,7 +425,6 @@ import { defineTool } from "broods";
 
 export const analyze = defineTool({
   name: "analyze",
-  path: "tools/analyze.ts",
   description: "Analyze structured data.",
   inputSchema: {
     type: "object",
@@ -434,7 +433,9 @@ export const analyze = defineTool({
     },
     required: ["data"],
   },
-  defaultConfig: {},
+  async execute(input) {
+    return { type: "text", value: `Analyzed ${input.data.length} rows.` };
+  },
 });
 ```
 

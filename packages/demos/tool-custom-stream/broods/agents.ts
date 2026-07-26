@@ -1,8 +1,9 @@
 import { defineAgent, defineTool, env } from "broods";
 
+// `execute` is an async *generator*: each yield surfaces as a preliminary
+// tool-result, and the last one is the final output the model reads.
 export const streamProgressTool = defineTool({
   name: "stream_progress",
-  path: "tools/stream-progress.ts",
   description:
     "Counts to `steps`, streaming one progress update per step before the final summary.",
   inputSchema: {
@@ -13,10 +14,16 @@ export const streamProgressTool = defineTool({
         description: "How many progress updates to stream.",
       },
     },
-    required: ["steps"],
     additionalProperties: false,
   },
-  defaultConfig: {},
+  async *execute(input: { steps?: number }) {
+    const steps = Math.max(1, Math.min(10, input.steps ?? 5));
+    for (let i = 1; i <= steps; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      yield { type: "text", value: `progress ${i}/${steps}` };
+    }
+    yield { type: "text", value: `done: counted to ${steps}` };
+  },
 });
 
 export const streamingToolAgent = defineAgent({
