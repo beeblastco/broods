@@ -63,11 +63,10 @@ Provider-defined tools are executed by the provider during the model call, not b
 
 Both tiers give you timers, `console`, `AbortController`, and `fetch`. The isolate tier has no filesystem and no module imports; the sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
 
-Async-generator tools run to completion on both tiers, but their intermediate
-`yield`s are not part of the public SSE contract today. The harness drains the
-runner stream and returns only the last yielded value to the model and client.
-See [data security](./data-security.md) for what isolation each tier does and
-does not give you.
+Async-generator tools stream on both tiers: each `yield` is delivered as a
+preliminary tool result while the tool is still running, and the last one is the
+tool's result. See [data security](./data-security.md) for what isolation each
+tier does and does not give you.
 
 **Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` trips when the request is cancelled.
 
@@ -88,16 +87,19 @@ sequenceDiagram
   N-->>H: stream frames
 ```
 
-### Async-generator output (final-only)
+### Async-generator output (streamed)
 
-A bundle whose `execute` is an async generator may yield multiple internal
-runner frames. The adapter drains those frames and returns the last value as one
-final tool result; thrown errors still fail the tool call. Intermediate progress
-is not currently emitted as preliminary SSE tool results. A normal
-non-generator `execute` behaves exactly as before.
+A bundle whose `execute` is an async generator streams: every `yield` reaches the
+client as a `tool-result` part marked `preliminary: true` as it happens, and the
+last one is repeated as the final, non-preliminary result the model sees. Thrown
+errors still fail the tool call. A normal non-generator `execute` emits a single
+final result and no preliminary parts.
+
+Clients that render tool results should ignore parts with `preliminary: true`
+unless they want live progress — the final part always follows.
 
 ```ts
-// Earlier yields remain internal; the last value is the final tool result.
+// Each yield is a live progress update; the last value is the tool's result.
 export const search = defineTool({
   name: "search",
   description: "Search and return the final result.",
@@ -110,8 +112,8 @@ export const search = defineTool({
 ```
 
 ```text
-isolate NDJSON: {"t":"chunk",...}  {"t":"chunk",...}  {"t":"final",...}
-SSE fullStream: tool-result(final)
+runner NDJSON: {"t":"chunk",...}  {"t":"chunk",...}  {"t":"final",...}
+SSE fullStream: tool-result(preliminary)  tool-result(preliminary)  tool-result(final)
 ```
 
 When `config.tools.<name>.async` is `true`, the platform chooses the lifecycle from the tool type and request path:
@@ -236,7 +238,7 @@ Omitting a tool disables it. Setting `enabled: false` also disables it. Set `nee
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
 For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Keep `defaultConfig` non-secret because it is account-wide tool metadata. Put `env("NAME")` values under the enabling agent's `tools.<tool>.config`; that agent config is resolved per environment and encrypted at rest. The compiler rejects environment references in `defaultConfig` instead of leaving a marker object for the tool to receive. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
 
-See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) demonstrates the current async-generator, final-result-only behavior.
+See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) demonstrates async-generator streaming.
 
 The full config field reference lives in the [API Reference](/api-reference) under `AgentConfig.tools`.
 

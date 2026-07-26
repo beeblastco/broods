@@ -1,11 +1,13 @@
 /**
  * AWS Lambda entry for the sandbox-tier tool runner. It runs an uploaded account
  * tool bundle (passed inline in the invoke event) in a per-invocation child Node
- * process with a scrubbed env and a fresh TMPDIR, then returns the child's raw
- * NDJSON frame stream to the core invoker. The child is a containment layer, not
- * a trust boundary — it runs same-UID, so keep this function's execution role
- * empty and assume anything it can reach is reachable by tenant code. Execution
- * logic lives in child-runner.mjs; keep this file to spawn + collect + clean up.
+ * process with a scrubbed env and a fresh TMPDIR, and streams the child's raw
+ * NDJSON frames back to the core invoker as they are written, so an
+ * async-generator tool's yields reach the agent loop live. The child is a
+ * containment layer, not a trust boundary — it runs same-UID, so keep this
+ * function's execution role empty and assume anything it can reach is reachable
+ * by tenant code. Execution logic lives in child-runner.mjs; keep this file to
+ * spawn + forward + clean up.
  */
 
 import { spawn } from "node:child_process";
@@ -20,23 +22,36 @@ import { fileURLToPath } from "node:url";
 // the handler always wins and returns a clean error frame.
 const RUN_TIMEOUT_MS = 30_000;
 const CHILD_GRACE_MS = 2_000;
-// Well under Lambda's 6 MB sync-response cap: the NDJSON is re-embedded as a JSON
-// string in { stdout }, and escaping (quotes/backslashes) inflates it.
-const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
+// A streamed response may run to 200 MB, so this is a runaway-tool bound rather
+// than the old 6 MB buffered-invoke ceiling. Core holds one frame at a time.
+const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
-export const handler = async (event) => {
-  if (!event || typeof event !== "object" || typeof event.toolName !== "string") {
-    return { error: "invalid tool runner event" };
+// streamifyResponse is injected by the Node managed runtime. Falling back to the
+// identity wrapper keeps the module importable (and testable) off Lambda.
+const streamifyResponse =
+  globalThis.awslambda?.streamifyResponse ?? ((fn) => fn);
+
+export const handler = streamifyResponse(async (event, responseStream) => {
+  if (
+    !event ||
+    typeof event !== "object" ||
+    typeof event.toolName !== "string"
+  ) {
+    endWithError(responseStream, "invalid tool runner event");
+    return;
   }
   const home = mkdtempSync(join(tmpdir(), "broods-tool-"));
   try {
-    return await runChild(event, home);
+    await runChild(event, home, responseStream);
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
+    endWithError(
+      responseStream,
+      error instanceof Error ? error.message : String(error),
+    );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-};
+});
 
 function childRunnerPath() {
   const root = process.env.LAMBDA_TASK_ROOT;
@@ -45,7 +60,7 @@ function childRunnerPath() {
     : fileURLToPath(new URL("./child-runner.mjs", import.meta.url));
 }
 
-async function runChild(event, home) {
+async function runChild(event, home, responseStream) {
   return await new Promise((resolve) => {
     // detached puts the child in its own process group so killGroup can reap the
     // grandchildren too; a survivor outlives the invocation in a warm sandbox.
@@ -54,23 +69,26 @@ async function runChild(event, home) {
       env: scrubbedEnv(home),
       detached: true,
     });
-    let stdout = "";
-    let stdoutBytes = 0;
+    let forwardedBytes = 0;
     let stderr = "";
     let overflow = false;
     const timeout = setTimeout(() => {
       killGroup(child);
     }, RUN_TIMEOUT_MS);
 
-    child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdoutBytes += Buffer.byteLength(chunk, "utf8");
-      if (stdoutBytes > OUTPUT_LIMIT_BYTES) {
+      forwardedBytes += chunk.length;
+      if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
         overflow = true;
         killGroup(child);
         return;
       }
-      stdout += chunk;
+      // Pause on a full response buffer so a chatty tool cannot outrun the
+      // stream; the child's own stdout pipe then applies the backpressure.
+      if (!responseStream.write(chunk)) {
+        child.stdout.pause();
+        responseStream.once("drain", () => child.stdout.resume());
+      }
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk) => {
@@ -79,7 +97,11 @@ async function runChild(event, home) {
     });
     child.once("error", (error) => {
       clearTimeout(timeout);
-      resolve({ error: error instanceof Error ? error.message : String(error) });
+      endWithError(
+        responseStream,
+        error instanceof Error ? error.message : String(error),
+      );
+      resolve();
     });
     child.once("exit", (code, signal) => {
       clearTimeout(timeout);
@@ -87,22 +109,24 @@ async function runChild(event, home) {
       // returning so nothing survives into the next tenant's invocation.
       killGroup(child);
       if (overflow) {
-        resolve({ error: "custom tool sandbox output exceeded limit" });
-        return;
-      }
-      if (!stdout) {
-        resolve({
-          error:
-            stderr.trim() ||
+        endWithError(
+          responseStream,
+          "custom tool sandbox output exceeded limit",
+        );
+      } else if (forwardedBytes === 0) {
+        endWithError(
+          responseStream,
+          stderr.trim() ||
             (signal ? `signal ${signal}` : `exit ${code ?? "unknown"}`),
-        });
-        return;
+        );
+      } else {
+        responseStream.end();
       }
-      resolve({ stdout });
+      resolve();
     });
 
     // A child that exits before reading stdin makes end() emit EPIPE; an
-    // unhandled stream error would crash the handler instead of returning { error }.
+    // unhandled stream error would crash the handler instead of returning a frame.
     child.stdin.on("error", () => {});
     child.stdin.end(`${JSON.stringify(event)}\n`);
   });
@@ -118,6 +142,13 @@ function childTimeoutSeconds() {
       ? Math.min(graceBound, override)
       : graceBound;
   return String(Math.max(1, seconds));
+}
+
+// Handler-side failures speak the same NDJSON protocol as the child, so core has
+// exactly one frame format to parse whether the run died before or during output.
+function endWithError(responseStream, error) {
+  responseStream.write(`${JSON.stringify({ t: "error", error })}\n`);
+  responseStream.end();
 }
 
 // SIGKILL the child's whole process group, not just the child. Falls back to the

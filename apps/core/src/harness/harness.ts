@@ -80,6 +80,7 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
+import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
@@ -105,28 +106,6 @@ type TrackedSpan = {
   startTimeMs: number;
   attributes: Record<string, string | number | boolean>;
 };
-
-/** Revalidates the fencing token immediately before any executable tool starts. */
-function wrapToolsWithOwnerFence(tools: ToolSet, session: Session): ToolSet {
-  const wrapped: ToolSet = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    const originalExecute = tool.execute;
-    if (typeof originalExecute !== "function") {
-      wrapped[name] = tool;
-      continue;
-    }
-    wrapped[name] = {
-      ...tool,
-      execute: async (input: unknown, options: unknown) => {
-        await session.assertCurrentOwner?.();
-        return (
-          originalExecute as (value: unknown, execution: unknown) => unknown
-        )(input, options);
-      },
-    } as ToolSet[string];
-  }
-  return wrapped;
-}
 
 /** Publish a span update to the live traces subject. Best-effort, non-blocking. */
 // Returns once the span's bytes have been handed to the NATS client; callers that

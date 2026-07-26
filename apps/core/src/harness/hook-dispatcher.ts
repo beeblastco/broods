@@ -19,6 +19,7 @@ import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
+import { isAsyncIterable, isStreamingExecute } from "./tool-execute.ts";
 
 export interface HookDispatcher {
   hasHooksFor(event: AgentHookEventName): boolean;
@@ -143,44 +144,57 @@ export function wrapToolsWithHooks(
       wrapped[name] = tool;
       continue;
     }
-    const execute = async (
+    const call = originalExecute as (
       input: unknown,
-      execOptions: unknown,
-    ): Promise<unknown> => {
-      let effectiveInput = input;
-      if (wantsStart) {
-        const mutation = await hooks.runMutation("tool.call.started", {
-          toolName: name,
-          input: toLifecycleValue(input),
-        });
-        if (mutation) {
-          if (mutation.decision === "deny") {
-            const reason =
-              typeof mutation.denyReason === "string"
-                ? mutation.denyReason
-                : "denied by hook";
-            throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
-          }
-          if (isPlainObject(mutation.args)) {
-            effectiveInput = mutation.args;
-          }
-        }
+      options: unknown,
+    ) => unknown;
+    const applyStart = async (input: unknown): Promise<unknown> => {
+      if (!wantsStart) return input;
+      const mutation = await hooks.runMutation("tool.call.started", {
+        toolName: name,
+        input: toLifecycleValue(input),
+      });
+      if (!mutation) return input;
+      if (mutation.decision === "deny") {
+        const reason =
+          typeof mutation.denyReason === "string"
+            ? mutation.denyReason
+            : "denied by hook";
+        throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
-      let result = await (
-        originalExecute as (input: unknown, options: unknown) => unknown
-      )(effectiveInput, execOptions);
-      if (wantsResult) {
-        const mutation = await hooks.runMutation("tool.result", {
-          toolName: name,
-          output: toLifecycleValue(result as JSONValue),
-        });
-        if (mutation && "output" in mutation) {
-          result = mutation.output;
-        }
-      }
-      return result;
+      return isPlainObject(mutation.args) ? mutation.args : input;
     };
-    wrapped[name] = { ...tool, execute } as ToolSet[string];
+    const applyResult = async (output: unknown): Promise<unknown> => {
+      if (!wantsResult) return output;
+      const mutation = await hooks.runMutation("tool.result", {
+        toolName: name,
+        output: toLifecycleValue(output as JSONValue),
+      });
+      return mutation && "output" in mutation ? mutation.output : output;
+    };
+    // A streaming tool stays a generator: an async wrapper would hand the SDK a
+    // Promise and swallow every yield. Its yields pass through untouched and
+    // tool.result rewrites only the last one, which is the tool's actual result.
+    wrapped[name] = {
+      ...tool,
+      execute: isStreamingExecute(originalExecute)
+        ? async function* (input: unknown, execOptions: unknown) {
+            const result = call(await applyStart(input), execOptions);
+            let last: unknown;
+            if (isAsyncIterable(result)) {
+              for await (const output of result) {
+                last = output;
+                yield output;
+              }
+            } else {
+              last = await result;
+            }
+            const mutated = await applyResult(last);
+            if (mutated !== last || !isAsyncIterable(result)) yield mutated;
+          }
+        : async (input: unknown, execOptions: unknown) =>
+            await applyResult(await call(await applyStart(input), execOptions)),
+    } as ToolSet[string];
   }
   return wrapped;
 }

@@ -1,8 +1,9 @@
 /**
- * Sandbox tool-runner containment regressions. The runner Lambda is shared by
- * every account, so its warm execution environment is reused across tenants:
- * these assert that a run leaves nothing on disk and no live process behind.
- * Driven under real Node (handler.mjs spawns process.execPath).
+ * Sandbox tool-runner handler regressions, driven under real Node (handler.mjs
+ * spawns process.execPath). Containment: the runner Lambda is shared by every
+ * account and its warm execution environment is reused across tenants, so a run
+ * must leave nothing on disk and no live process behind. Delivery: frames must
+ * reach the response stream as the child writes them, not in one final flush.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -22,22 +23,34 @@ async function invokeHandler(
   bundle: string,
   event: Record<string, unknown>,
   parentEnv: Record<string, string> = {},
-): Promise<{ stdout?: string; error?: string }> {
+): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   try {
     const driver = join(dir, "driver.mjs");
     await writeFile(
       driver,
       [
+        // The handler streams NDJSON into a response stream instead of returning
+        // it, so the driver collects the stream and re-emits it as { stdout },
+        // timestamping each write so a test can tell streaming from buffering.
         `import { createHash } from "node:crypto";`,
+        `import { PassThrough } from "node:stream";`,
         `import { handler } from ${JSON.stringify(handlerPath)};`,
         `const bundle = Buffer.from(${JSON.stringify(bundle)}, "utf8");`,
-        `const result = await handler({`,
+        `const responseStream = new PassThrough();`,
+        `const startedAt = Date.now();`,
+        `const arrivalsMs = [];`,
+        `let stdout = "";`,
+        `responseStream.on("data", (chunk) => {`,
+        `  stdout += chunk;`,
+        `  arrivalsMs.push(Date.now() - startedAt);`,
+        `});`,
+        `await handler({`,
         `  ...${JSON.stringify(event)},`,
         `  bundleSourceB64: bundle.toString("base64"),`,
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
-        `});`,
-        `process.stdout.write(JSON.stringify(result));`,
+        `}, responseStream);`,
+        `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
       ].join("\n"),
     );
 
@@ -195,5 +208,38 @@ describe("tool-runner containment", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  }, 30_000);
+});
+
+describe("tool-runner response streaming", () => {
+  it("forwards each yield as the child writes it, not in one final flush", async () => {
+    // The bundle stalls between yields. A buffering handler delivers everything
+    // at the end, so every arrival lands within a few ms of the last one.
+    const bundle = [
+      `const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));`,
+      `export default {`,
+      `  name: "ticker",`,
+      `  async *execute() {`,
+      `    yield { tick: 1 };`,
+      `    await sleep(700);`,
+      `    yield { tick: 2 };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(bundle, { toolName: "ticker" });
+    const arrivals = result.arrivalsMs ?? [];
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(frames).toEqual([
+      { t: "chunk", output: { tick: 1 } },
+      { t: "chunk", output: { tick: 2 } },
+      { t: "final", result: { tick: 2 } },
+    ]);
+    expect(arrivals.length).toBeGreaterThan(1);
+    expect(arrivals.at(-1)! - arrivals[0]!).toBeGreaterThan(500);
   }, 30_000);
 });

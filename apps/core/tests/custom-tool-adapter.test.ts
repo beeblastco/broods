@@ -1,14 +1,22 @@
 /**
- * The AI SDK adapter for uploaded tools. It must resolve the executor's stream
- * to a value: the SDK takes execute()'s return as the tool result, so returning
- * the async generator itself serialized to `{}` and the bundle never ran.
+ * The AI SDK adapter for uploaded tools, driven through the SDK's own tool loop.
+ * Every yield must reach the SDK as a preliminary tool result and survive the
+ * wrappers the harness puts around execute — an `async` wrapper anywhere in that
+ * chain turns the generator into a Promise the SDK hands back unread, which is
+ * how uploaded tools once returned `{}` without ever running the bundle.
  */
 
 import { describe, expect, it, mock } from "bun:test";
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
-import { generateText, stepCountIs } from "ai";
+import { executeTool } from "@ai-sdk/provider-utils";
+import { generateText, stepCountIs, type ToolSet } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import type { ExecuteAccountToolOptions } from "../src/harness/custom-tools/payload.ts";
+import {
+  wrapToolsWithHooks,
+  type HookDispatcher,
+} from "../src/harness/hook-dispatcher.ts";
+import { wrapToolsWithOwnerFence } from "../src/harness/tool-execute.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const streamAccountTool = mock(async function* (
@@ -23,21 +31,69 @@ mock.module("../src/harness/custom-tools/executor.ts", () => ({
 }));
 
 describe("accountTool adapter", () => {
-  it("resolves the executor stream to its final value", async () => {
-    const output = await execute({ message: "hi" });
+  it("streams every yield as a preliminary result, then the last as final", async () => {
+    const parts = await run(await accountToolSet());
 
-    expect(output).toEqual({ done: true });
+    expect(parts).toEqual([
+      { type: "preliminary", output: { step: 1 } },
+      { type: "preliminary", output: { done: true } },
+      { type: "final", output: { done: true } },
+    ]);
   });
 
-  it("never hands the raw generator back to the AI SDK", async () => {
-    const output = await execute({ message: "hi" });
+  it("keeps streaming through the owner fence", async () => {
+    let fenced = 0;
+    const parts = await run(
+      wrapToolsWithOwnerFence(await accountToolSet(), {
+        assertCurrentOwner: async () => {
+          fenced++;
+        },
+      }),
+    );
 
-    // A generator has no own enumerable keys, so it JSON-serializes to `{}` —
-    // the exact silent failure this adapter shipped with.
-    expect(JSON.stringify(output)).not.toBe("{}");
-    expect(
-      (output as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator],
-    ).toBeUndefined();
+    // A lone `{type:"final", output:{}}` here is the regression: the fence
+    // awaited the generator instead of iterating it.
+    expect(fenced).toBe(1);
+    expect(parts.filter((part) => part.type === "preliminary")).toHaveLength(2);
+    expect(parts.at(-1)).toEqual({ type: "final", output: { done: true } });
+  });
+
+  it("keeps streaming through the tool hooks wrapper", async () => {
+    const parts = await run(
+      wrapToolsWithHooks(await accountToolSet(), hooks()),
+    );
+
+    expect(parts.filter((part) => part.type === "preliminary")).toHaveLength(2);
+    expect(parts.at(-1)).toEqual({ type: "final", output: { done: true } });
+  });
+
+  it("lets a tool.result hook rewrite the final value of a streaming tool", async () => {
+    const parts = await run(
+      wrapToolsWithHooks(
+        await accountToolSet(),
+        hooks({ output: { rewritten: true } }),
+      ),
+    );
+
+    expect(parts.at(-1)).toEqual({
+      type: "final",
+      output: { rewritten: true },
+    });
+  });
+
+  it("leaves a non-streaming tool with no preliminary results", async () => {
+    const plain = {
+      plain_tool: {
+        inputSchema: { jsonSchema: { type: "object" } },
+        execute: async () => ({ ok: true }),
+      },
+    } as unknown as ToolSet;
+    const parts = await run(
+      wrapToolsWithOwnerFence(plain, { assertCurrentOwner: async () => {} }),
+      "plain_tool",
+    );
+
+    expect(parts).toEqual([{ type: "final", output: { ok: true } }]);
   });
 
   it("surfaces a failing bundle instead of swallowing it", async () => {
@@ -47,7 +103,7 @@ describe("accountTool adapter", () => {
       },
     );
 
-    await expect(execute({ message: "hi" })).rejects.toThrow("bundle blew up");
+    await expect(run(await accountToolSet())).rejects.toThrow("bundle blew up");
   });
 
   it("executes parallel calls through the installed AI SDK v7 tool loop", async () => {
@@ -112,7 +168,7 @@ describe("accountTool adapter", () => {
   });
 });
 
-async function accountToolSet() {
+async function accountToolSet(): Promise<ToolSet> {
   const accountTool = (await import("../src/harness/tools/custom.tool.ts"))
     .default;
 
@@ -122,14 +178,29 @@ async function accountToolSet() {
   } as never);
 }
 
-async function execute(input: Record<string, unknown>): Promise<unknown> {
-  const tool = (await accountToolSet())["sandbox_tool"];
+async function run(
+  tools: ToolSet,
+  name = "sandbox_tool",
+): Promise<Array<{ type: string; output: unknown }>> {
+  const tool = tools[name];
   if (!tool?.execute) throw new Error("adapter registered no execute");
+  const parts: Array<{ type: string; output: unknown }> = [];
+  for await (const part of executeTool({
+    tool: tool as never,
+    input: { message: "hi" } as never,
+    options: { toolCallId: "call_1", messages: [] } as never,
+  })) {
+    parts.push(part as { type: string; output: unknown });
+  }
 
-  return await tool.execute(input, {
-    toolCallId: "call_1",
-    messages: [],
-  } as never);
+  return parts;
+}
+
+function hooks(resultMutation?: { output: unknown }): HookDispatcher {
+  return {
+    hasHooksFor: (event: string) => event === "tool.result",
+    runMutation: async () => resultMutation,
+  } as unknown as HookDispatcher;
 }
 
 function modelUsage(): LanguageModelV4Usage {
