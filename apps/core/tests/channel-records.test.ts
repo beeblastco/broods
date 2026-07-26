@@ -4,7 +4,7 @@
  * fallback when no record claims the place, and the narrow-and-add contract.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   createIncomingEventRouter,
   type ChannelInboundEvent,
@@ -14,6 +14,7 @@ import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import {
   applyChannelRecord,
   channelActorRoles,
+  channelRecordMatchesWorkspace,
   normalizeChannelRecordConfig,
   resolveChannelAgentId,
   type ChannelRecord,
@@ -22,20 +23,27 @@ import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 import { coreRequest } from "./helpers/http.ts";
 
 // The invoke gate reads assigned policy documents; without a stub the routing
-// tests would reach the real Convex client.
-setStorageForTests({
-  agentPolicies: {
-    getById: async (_accountId: string, policyId: string) => ({
-      accountId: "acct_test",
-      policyId,
-      name: policyId,
-      document: { version: 1 as const, rules: [] },
-      status: "active" as const,
-      createdAt: "2026-07-20T00:00:00.000Z",
-      updatedAt: "2026-07-20T00:00:00.000Z",
-    }),
-  },
-} as unknown as Storage);
+// tests would reach the real Convex client. Scoped to this file — bun shares the
+// module registry across test files, so a module-scope override would leak.
+beforeAll(() => {
+  setStorageForTests({
+    agentPolicies: {
+      getById: async (_accountId: string, policyId: string) => ({
+        accountId: "acct_test",
+        policyId,
+        name: policyId,
+        document: { version: 1 as const, rules: [] },
+        status: "active" as const,
+        createdAt: "2026-07-20T00:00:00.000Z",
+        updatedAt: "2026-07-20T00:00:00.000Z",
+      }),
+    },
+  } as unknown as Storage);
+});
+
+afterAll(() => {
+  setStorageForTests(null);
+});
 
 const ACCOUNT = {
   accountId: "acct_test",
@@ -144,7 +152,7 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_support");
   });
 
-  it("keeps serving the channel when the record lookup fails", async () => {
+  it("refuses the turn when the record lookup fails", async () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: {},
@@ -155,29 +163,32 @@ describe("channel record resolution", () => {
       },
     });
 
-    // A control-plane outage must not take the channel down with it.
+    // Running the receiving agent here would skip a record's policies and
+    // denyTools — an escalation. The channel path already needs Convex to admit
+    // ingress, so failing closed costs no availability that is not already lost.
     expect(response.statusCode).toBe(200);
-    expect(runs[0]!.agentId).toBe("agent_support");
+    expect(runs).toHaveLength(0);
   });
 
-  it("keeps serving the channel when the record loader throws synchronously", async () => {
+  it("refuses without a 500 when the record loader throws synchronously", async () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: {},
       runs,
       path: "/webhooks/acct_test/telegram",
       // A partial storage stub makes `storage.channelRecords` undefined, so the
-      // default loader throws before a promise exists — `.catch` would miss it.
+      // default loader throws before a promise exists — `.catch` would miss it
+      // and the webhook would 500 instead of refusing cleanly.
       channelRecordLoader: (() => {
         throw new TypeError("undefined is not an object");
       }) as never,
     });
 
     expect(response.statusCode).toBe(200);
-    expect(runs[0]!.agentId).toBe("agent_support");
+    expect(runs).toHaveLength(0);
   });
 
-  it("keeps serving the channel when storage has no channelRecords at all", async () => {
+  it("refuses without a 500 when storage has no channelRecords at all", async () => {
     // The module-scope stub above provides only `agentPolicies`, so the default
     // loader reads `undefined.getByExternalId` — the shape that broke CI.
     const runs: ChannelInboundEvent[] = [];
@@ -217,7 +228,7 @@ describe("channel record resolution", () => {
     await Promise.all(waited);
 
     expect(response.status).toBe(200);
-    expect(runs[0]!.agentId).toBe("agent_support");
+    expect(runs).toHaveLength(0);
   });
 
   it("rejects an account-scoped webhook no agent's credentials verify", async () => {
@@ -522,6 +533,17 @@ describe("channel record helpers", () => {
     ).toBe("a");
   });
 
+  it("only rejects a record when both sides name a provider workspace", () => {
+    // A Slack channel id is unique inside its team, not across teams, so a
+    // record naming team A must not drive a message from team B.
+    expect(channelRecordMatchesWorkspace("T_A", "T_B")).toBe(false);
+    expect(channelRecordMatchesWorkspace("T_A", "T_A")).toBe(true);
+    // Telegram gives no team, so there is nothing to compare and it stands.
+    expect(channelRecordMatchesWorkspace("T_A", undefined)).toBe(true);
+    expect(channelRecordMatchesWorkspace(undefined, "T_B")).toBe(true);
+    expect(channelRecordMatchesWorkspace(undefined, undefined)).toBe(true);
+  });
+
   it("lists only the roles the actor actually holds", () => {
     const record = channelRecord({
       config: {
@@ -665,38 +687,44 @@ async function route(options: {
   });
 
   const captureReplies = options.replies;
-  const response = await router(
-    coreRequest(
-      "POST",
-      options.path,
-      options.headers ?? {
-        "x-telegram-bot-api-secret-token": "telegram-secret",
-      },
+  let response: Response;
+  try {
+    response = await router(
+      coreRequest(
+        "POST",
+        options.path,
+        options.headers ?? {
+          "x-telegram-bot-api-secret-token": "telegram-secret",
+        },
+        {
+          update_id: 7,
+          message: {
+            message_id: 9,
+            date: 1713916800,
+            text: "hello",
+            chat: { id: 123, type: "private" },
+            from: { id: 456, is_bot: false, username: "alice" },
+          },
+        },
+      ),
       {
-        update_id: 7,
-        message: {
-          message_id: 9,
-          date: 1713916800,
-          text: "hello",
-          chat: { id: 123, type: "private" },
-          from: { id: 456, is_bot: false, username: "alice" },
+        handleDirectRequest: async () => new Response("ok"),
+        handleChannelRequest: async (event: ChannelInboundEvent) => {
+          options.runs.push(event);
         },
       },
-    ),
-    {
-      handleDirectRequest: async () => new Response("ok"),
-      handleChannelRequest: async (event: ChannelInboundEvent) => {
-        options.runs.push(event);
-      },
-    },
-  );
-  await Promise.all(waited);
-  globalThis.fetch = originalFetch;
-  opa.stop(true);
-  if (previousOpaUrl === undefined) {
-    delete process.env.OPA_BASE_URL;
-  } else {
-    process.env.OPA_BASE_URL = previousOpaUrl;
+    );
+    await Promise.all(waited);
+  } finally {
+    // A throwing router call must not leave the fetch stub installed, the env
+    // pointing at a stopped port, or the server leaked into the rest of the run.
+    globalThis.fetch = originalFetch;
+    opa.stop(true);
+    if (previousOpaUrl === undefined) {
+      delete process.env.OPA_BASE_URL;
+    } else {
+      process.env.OPA_BASE_URL = previousOpaUrl;
+    }
   }
   if (captureReplies) {
     captureReplies.push(...sentTexts);

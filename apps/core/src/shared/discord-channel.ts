@@ -72,7 +72,7 @@ interface DiscordGatewayMessageData {
   guild_id?: string | null;
   id?: string;
   mention_roles?: string[];
-  mentions?: Array<{ id?: string; username?: string }>;
+  mentions?: Array<{ id?: string; username?: string; global_name?: string }>;
   thread?: {
     id?: string;
     parent_id?: string;
@@ -531,7 +531,7 @@ function formatDiscordMessageText(
 ): string {
   const names = new Map<string, string>();
   for (const mention of data.mentions ?? []) {
-    const name = mention.username;
+    const name = mention.global_name || mention.username;
     if (mention.id && name) {
       names.set(mention.id, name);
     }

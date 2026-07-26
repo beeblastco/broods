@@ -402,6 +402,9 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
     const waitUntilPromises: Promise<unknown>[] = [];
     const router = createCoreIncomingEventRouter({
       deploymentLoader: async () => null,
+      // These accounts configure no channel records; without a loader the
+      // default reaches the real storage boundary, which these stubs omit.
+      channelRecordLoader: async () => null,
       ...options,
       waitUntil: (promise) => {
         waitUntilPromises.push(Promise.resolve(promise));

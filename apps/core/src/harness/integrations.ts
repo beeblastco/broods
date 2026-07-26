@@ -42,6 +42,7 @@ import type { AgentRecord } from "../shared/domain/agents.ts";
 import {
   applyChannelRecord,
   channelActorRoles,
+  channelRecordMatchesWorkspace,
   resolveChannelAgentId,
   type ChannelRecord,
 } from "../shared/domain/channel-record.ts";
@@ -764,6 +765,9 @@ async function findChannelCredentialHolder(
   let truncated = false;
   for (const candidate of listed) {
     if (candidate.status !== "active") continue;
+    // Cheap key check before building any adapter: an unauthenticated caller
+    // should not make us instantiate SDK clients for every agent in the account.
+    if (!candidate.config.channels?.[channelName]) continue;
     const adapter = createChannelRegistry(
       candidate.config,
     ).webhookChannels.find(
@@ -795,9 +799,11 @@ async function findChannelCredentialHolder(
 
 /**
  * Hand the turn to the agent this channel is bound to, with the record's
- * instructions, workspaces and policies layered on. Falls back to the agent
- * that received the webhook when no record claims the place, so an
- * unregistered channel behaves exactly as it did before.
+ * instructions, workspaces and policies layered on. A lookup that answers
+ * "no record" falls back to the receiving agent; a lookup that *fails* returns
+ * unavailable, because running without a record's policies and denyTools would
+ * be an escalation. The channel path already needs Convex to admit ingress, so
+ * failing closed here costs no availability that is not already lost.
  */
 async function resolveChannelTarget(
   context: HttpRoutingContext,
@@ -805,12 +811,11 @@ async function resolveChannelTarget(
   agent: AgentRecord,
   channelName: string,
   identity: ChannelIdentity | undefined,
-): Promise<{ agent: AgentRecord; record?: ChannelRecord }> {
-  if (!identity?.channelId) return { agent };
+): Promise<ChannelTarget> {
+  if (!identity?.channelId) return { kind: "resolved", agent };
 
   // try/catch, not .catch(): a loader can throw synchronously (a partial storage
-  // stub, a missing binding) and that must degrade to the receiving agent rather
-  // than 500 the webhook.
+  // stub, a missing binding) and that must not escape as a 500.
   let record: ChannelRecord | null = null;
   try {
     record = await context.channelRecordLoader(
@@ -825,12 +830,27 @@ async function resolveChannelTarget(
       channelId: identity.channelId,
       error: err instanceof Error ? err.message : String(err),
     });
+
+    return { kind: "unavailable" };
   }
-  if (!record) return { agent };
+  if (
+    record &&
+    !channelRecordMatchesWorkspace(record.workspaceRef, identity.workspaceRef)
+  ) {
+    logWarn("Channel record belongs to a different provider workspace", {
+      accountId: account.accountId,
+      channel: channelName,
+      channelId: identity.channelId,
+      recordWorkspaceRef: record.workspaceRef,
+      messageWorkspaceRef: identity.workspaceRef,
+    });
+    record = null;
+  }
+  if (!record) return { kind: "resolved", agent };
 
   const boundAgentId = resolveChannelAgentId(record);
   if (!boundAgentId || boundAgentId === agent.agentId) {
-    return { agent, record };
+    return { kind: "resolved", agent, record };
   }
 
   const bound = await context.agentLoader(account.accountId, boundAgentId);
@@ -841,11 +861,16 @@ async function resolveChannelTarget(
       channelRecordId: record.channelRecordId,
       boundAgentId,
     });
-    return { agent, record };
+    return { kind: "resolved", agent, record };
   }
 
-  return { agent: bound, record };
+  return { kind: "resolved", agent: bound, record };
 }
+
+// A lookup that failed is not the same as "no record": the first must not run.
+type ChannelTarget =
+  | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
+  | { kind: "unavailable" };
 
 /** Attach the roles this actor holds in the channel so policies can read them. */
 function identityWithChannelRoles(
@@ -1028,6 +1053,15 @@ async function handleChannelWebhook(
         message.channelName,
         message.identity,
       );
+      if (target.kind === "unavailable") {
+        logWarn("Channel context dropped; record lookup unavailable", {
+          channel: adapter.name,
+          accountId: account.accountId,
+          conversationKey: message.conversationKey,
+        });
+
+        return toResponse(response);
+      }
       const targetDeployment =
         target.agent.agentId === agent.agentId
           ? deployment
@@ -1100,6 +1134,24 @@ async function handleChannelWebhook(
       message.channelName,
       message.identity,
     );
+    if (target.kind === "unavailable") {
+      logWarn("Channel turn refused; record lookup unavailable", {
+        channel: adapter.name,
+        accountId: account.accountId,
+        conversationKey: message.conversationKey,
+      });
+      waitUntil(
+        channel
+          .sendText(
+            formatChannelErrorText(
+              "I can't reach my channel configuration right now — try again in a moment.",
+            ),
+          )
+          .catch(() => {}),
+      );
+
+      return toResponse(response);
+    }
     const targetDeployment =
       target.agent.agentId === agent.agentId
         ? deployment

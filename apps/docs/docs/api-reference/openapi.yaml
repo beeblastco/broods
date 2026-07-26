@@ -3096,6 +3096,9 @@ components:
           oneOf:
             - type: object
               required: [level]
+              # alias is only meaningful on a conversation scope; the API rejects
+              # it here, so the schema must too or clients validate what 400s.
+              not: { required: [alias] }
               properties:
                 level: { type: string, enum: [channel] }
             - type: object

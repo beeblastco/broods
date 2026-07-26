@@ -82,7 +82,9 @@ export function createTelegramChannel(
           content: parsed.text,
           identity: {
             channelId: String(message.chat.id),
-            ...(parsed.threadId ? { threadId: String(parsed.threadId) } : {}),
+            ...(message.message_thread_id !== undefined
+              ? { threadId: String(message.message_thread_id) }
+              : {}),
             ...(message.from?.id ? { actorId: String(message.from.id) } : {}),
             ...(message.from?.username
               ? { actorName: message.from.username }

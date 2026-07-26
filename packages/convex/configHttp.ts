@@ -1758,11 +1758,8 @@ async function handlePolicyConfigRoute(
   return methodNotAllowed(["GET", "PATCH", "DELETE"]);
 }
 
-/**
- * Channel records CRUD: list/create on the collection, get/patch/delete by id.
- * A record binds one real chat channel to an agent; the runtime reads it on the
- * inbound webhook to decide who answers there.
- */
+// Channel records CRUD. A record binds one real chat channel to an agent; the
+// runtime reads it on the inbound webhook to decide who answers there.
 async function handleChannelRecordRoute(
   ctx: ActionCtx,
   req: Request,

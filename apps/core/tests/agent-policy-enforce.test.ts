@@ -286,7 +286,17 @@ describe("agent.invoke gate", () => {
     ).toBeUndefined();
   });
 
-  it("sends the actor and channel to OPA as agent.invoke", () => {
+  it("sends the actor and channel to OPA as agent.invoke", async () => {
+    // Drive its own evaluation: asserting on a sibling test's recorded input
+    // passes only when that test ran first, and breaks under -t or .only.
+    await evaluateChannelInvoke(agentConfig("enforce"), {
+      accountId: "acct_1",
+      agentId: "agent_1",
+      channel: "slack",
+      channelId: "C042GENERAL",
+      actorId: "U777",
+    });
+
     expect(seenPolicyInputs).toContainEqual(
       expect.objectContaining({
         action: "agent.invoke",

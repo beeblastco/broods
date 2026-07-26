@@ -241,7 +241,9 @@ async function parseEventCallback(
       identity: {
         workspaceRef: payload.team_id,
         channelId,
-        ...(isGroupChannel ? { threadId: threadTs } : {}),
+        ...(payload.event.thread_ts
+          ? { threadId: payload.event.thread_ts }
+          : {}),
         ...(payload.event.user ? { actorId: payload.event.user } : {}),
         ...(actorName ? { actorName } : {}),
       },

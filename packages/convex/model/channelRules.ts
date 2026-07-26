@@ -10,6 +10,14 @@ import { isPlainObject } from "./objects";
 export const CHANNEL_THREAD_POLICIES = ["always-thread", "inline"] as const;
 export type ChannelThreadPolicy = (typeof CHANNEL_THREAD_POLICIES)[number];
 
+const CHANNEL_RECORD_UPDATE_KEYS = [
+  "name",
+  "description",
+  "workspaceRef",
+  "config",
+  "status",
+] as const;
+
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
   "agentBindings",
@@ -121,6 +129,17 @@ export function normalizeUpdateChannelRecordInput(
 ): UpdateChannelRecordInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const input = value as Record<string, unknown>;
+  // Without this a typo like `descripton` normalizes to {} and PATCH answers
+  // 200 having changed nothing.
+  for (const key of Object.keys(input)) {
+    if (
+      !CHANNEL_RECORD_UPDATE_KEYS.includes(
+        key as (typeof CHANNEL_RECORD_UPDATE_KEYS)[number],
+      )
+    ) {
+      throw new Error(`${key} is not supported`);
+    }
+  }
   const patch: UpdateChannelRecordInput = {};
   if (input.name !== undefined) patch.name = requireString(input.name, "name");
   if (input.description !== undefined) {
@@ -314,9 +333,11 @@ function optionalStringArray(
   if (value === undefined) return undefined;
   if (
     !Array.isArray(value) ||
-    value.some((entry) => typeof entry !== "string")
+    value.some(
+      (entry) => typeof entry !== "string" || entry.trim().length === 0,
+    )
   ) {
-    throw new Error(`${name} must be an array of strings`);
+    throw new Error(`${name} must be an array of non-empty strings`);
   }
 
   return value as string[];

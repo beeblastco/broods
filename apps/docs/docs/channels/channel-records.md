@@ -33,15 +33,22 @@ flowchart TD
   Parse --> Lookup["channel record by (platform, externalId)"]
   Lookup -->|"record found"| Bound["bound agent + layered config"]
   Lookup -->|"no record"| Holder2["credential holder runs"]
+  Lookup -->|"lookup failed"| Refused["turn refused"]
   Bound --> Gate["agent.invoke policy gate"]
   Holder2 --> Gate
   Gate -->|"allowed"| Run["agent run"]
   Gate -->|"denied (enforce)"| Refuse["refusal posted in-channel"]
 ```
 
-Both paths honour records. An unregistered channel behaves exactly as it did
-before records existed, and a control-plane failure falls back to the receiving
-agent rather than taking the channel down.
+Both paths honour records, and a lookup that finds nothing falls back — to the
+agent named in the URL on the agent-scoped path, or to the credential holder on
+the account-scoped one. An unregistered channel therefore behaves exactly as it
+did before records existed.
+
+A lookup that **fails** is different: the turn is refused rather than run,
+because executing without a record's policies and `denyTools` would be an
+escalation. The channel path already needs the control plane to admit ingress,
+so this costs no availability that is not already lost.
 
 ## Layering
 

@@ -155,7 +155,7 @@ export interface AccountChannel {
   name: string;
   description?: string;
   config: ChannelRecordConfig;
-  status: string;
+  status: "active" | "deleted";
   createdAt: string;
   updatedAt: string;
 }
@@ -878,7 +878,7 @@ export class BroodsAccountClient {
       description?: string | null;
       workspaceRef?: string | null;
       config?: ChannelRecordConfig;
-      status?: string;
+      status?: "active" | "deleted";
     },
   ): Promise<AccountChannel | null> {
     return await this.request<AccountChannel>(

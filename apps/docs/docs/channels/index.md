@@ -20,8 +20,9 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 A [channel record](channel-records.md) binds one real place — a Slack channel, a
 Discord channel, a repository — to an agent, so one provider app can drive a
-different agent per channel. Both URL shapes honour records; without one, the
-agent named in the URL runs, exactly as before.
+different agent per channel. Both URL shapes honour records. With no record the
+agent named in the URL runs on the agent-scoped path, and the agent whose
+credentials verified the request runs on the account-scoped one.
 
 ## Runtime Flow
 

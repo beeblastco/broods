@@ -97,19 +97,17 @@ interface AgentStore {
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
-/**
- * Account-scoped records binding a real chat channel to an agent. Read on the
- * inbound webhook, so `getByExternalId` is the hot path.
- */
+// Account-scoped records binding a real chat channel to an agent.
+// `getByExternalId` is the inbound-webhook hot path.
 interface ChannelRecordStore {
-  getById(
-    accountId: string,
-    channelRecordId: string,
-  ): Promise<ChannelRecord | null>;
   getByExternalId(
     accountId: string,
     platform: string,
     externalId: string,
+  ): Promise<ChannelRecord | null>;
+  getById(
+    accountId: string,
+    channelRecordId: string,
   ): Promise<ChannelRecord | null>;
   list(accountId: string): Promise<ChannelRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;

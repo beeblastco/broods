@@ -44,12 +44,8 @@ export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
   return (agentConfig.policy?.policyIds?.length ?? 0) > 0;
 }
 
-/**
- * Lift a channel's place and person onto the policy input. The rego resolves any
- * dotted path on the input, so these become usable in rule conditions as soon as
- * they are present — "deny bash in C042 unless the actor is on-call" needs no
- * policy-engine change.
- */
+// Lifts the channel's place and person onto the policy input. The rego resolves
+// any dotted path, so these are usable in rule conditions with no engine change.
 export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
@@ -149,12 +145,8 @@ export async function createPolicyToolApproval(
     : undefined;
 }
 
-/**
- * Ask the policies whether this person may address the agent here, before the
- * turn starts. Audit mode records the decision and lets the turn through, which
- * is how a rule is rolled out on a live channel. An unreachable OPA denies in
- * enforce mode, matching the tool-approval path.
- */
+// Gates the turn before it starts: may this person address the agent here?
+// Audit records only; enforce denies, including on an unreachable OPA.
 export async function evaluateChannelInvoke(
   agentConfig: AgentConfig,
   input: Omit<PolicyDecisionInput, "action">,

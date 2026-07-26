@@ -147,6 +147,26 @@ export const update = internalMutation({
   handler: async (ctx, args) => {
     const { accountId, channelRecordId, ...patch } = args;
     const doc = await loadOwnedRecord(ctx, accountId, channelRecordId);
+    // Reactivating has to re-check the invariant create enforces, or two active
+    // rows can own one place and getByExternalId picks an arbitrary one.
+    if (patch.status === "active" && doc.status !== "active") {
+      const active = (
+        await ctx.db
+          .query("channelRecords")
+          .withIndex("by_accountId_platform_external", (q) =>
+            q
+              .eq("accountId", accountId)
+              .eq("platform", doc.platform)
+              .eq("externalId", doc.externalId),
+          )
+          .collect()
+      ).find((row) => row.status === "active" && row._id !== doc._id);
+      if (active) {
+        throw new Error(
+          `A channel record already exists for ${doc.platform}:${doc.externalId}`,
+        );
+      }
+    }
 
     await ctx.db.patch(doc._id, {
       ...(patch.name !== undefined && { name: patch.name }),
@@ -159,6 +179,7 @@ export const update = internalMutation({
       ...(patch.config !== undefined && { config: patch.config }),
       ...(patch.status !== undefined && { status: patch.status }),
       ...(patch.status === "deleted" && { deletedAt: Date.now() }),
+      ...(patch.status === "active" && { deletedAt: undefined }),
       updatedAt: Date.now(),
     });
 

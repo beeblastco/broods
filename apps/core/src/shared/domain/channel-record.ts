@@ -17,6 +17,19 @@ import type {
 import type { AgentPolicyMode } from "./agent-policy.ts";
 
 export const CHANNEL_THREAD_POLICIES = ["always-thread", "inline"] as const;
+
+const CHANNEL_CONFIG_KEYS = [
+  "instructions",
+  "agentBindings",
+  "workspaces",
+  "policyIds",
+  "policyMode",
+  "denyTools",
+  "threadPolicy",
+  "workspaceScope",
+  "sandboxImages",
+  "tagRoles",
+] as const;
 export type ChannelThreadPolicy = (typeof CHANNEL_THREAD_POLICIES)[number];
 
 export interface ChannelAgentBinding {
@@ -93,6 +106,18 @@ export function resolveChannelAgentId(
 
   return (bindings.find((binding) => binding.isDefault) ?? bindings[0])
     ?.agentId;
+}
+
+// A provider id is only unique inside its team or guild, so a record naming one
+// must match the message's. Either side unset means the provider gave us nothing
+// to compare and the record stands.
+export function channelRecordMatchesWorkspace(
+  recordWorkspaceRef: string | undefined,
+  messageWorkspaceRef: string | undefined,
+): boolean {
+  if (!recordWorkspaceRef || !messageWorkspaceRef) return true;
+
+  return recordWorkspaceRef === messageWorkspaceRef;
 }
 
 /** Role ids an actor holds in this channel, for policy conditions. */
@@ -302,19 +327,6 @@ function mergeWorkspaceRefs(
   ];
 }
 
-const CHANNEL_CONFIG_KEYS = [
-  "instructions",
-  "agentBindings",
-  "workspaces",
-  "policyIds",
-  "policyMode",
-  "denyTools",
-  "threadPolicy",
-  "workspaceScope",
-  "sandboxImages",
-  "tagRoles",
-] as const;
-
 function normalizeAgentBindings(value: unknown): ChannelAgentBinding[] {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error("config.agentBindings must be a non-empty array");
@@ -403,6 +415,15 @@ function normalizeChannelWorkspaceScope(
   };
 }
 
+function normalizePolicyMode(value: unknown): AgentPolicyMode | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "enforce" && value !== "audit") {
+    throw new Error("config.policyMode must be one of: enforce, audit");
+  }
+
+  return value;
+}
+
 function normalizeTagRoles(value: unknown): ChannelTagRole[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
@@ -423,15 +444,6 @@ function normalizeTagRoles(value: unknown): ChannelTagRole[] | undefined {
         ) ?? [],
     };
   });
-}
-
-function normalizePolicyMode(value: unknown): AgentPolicyMode | undefined {
-  if (value === undefined) return undefined;
-  if (value !== "enforce" && value !== "audit") {
-    throw new Error("config.policyMode must be one of: enforce, audit");
-  }
-
-  return value;
 }
 
 function normalizeThreadPolicy(
@@ -462,9 +474,11 @@ function optionalStringArray(
   if (value === undefined) return undefined;
   if (
     !Array.isArray(value) ||
-    value.some((entry) => typeof entry !== "string")
+    value.some(
+      (entry) => typeof entry !== "string" || entry.trim().length === 0,
+    )
   ) {
-    throw new Error(`${name} must be an array of strings`);
+    throw new Error(`${name} must be an array of non-empty strings`);
   }
 
   return value as string[];

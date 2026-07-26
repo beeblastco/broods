@@ -87,6 +87,22 @@ describe("normalizeChannelRecordConfig", () => {
     ).toThrow("config.policyMode must be one of: enforce, audit");
   });
 
+  it("rejects blank entries in a string list", () => {
+    // `policyIds: [""]` would otherwise persist as a live reference to nothing.
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: bindings,
+        policyIds: [""],
+      }),
+    ).toThrow("config.policyIds must be an array of non-empty strings");
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: bindings,
+        denyTools: [" "],
+      }),
+    ).toThrow("config.denyTools must be an array of non-empty strings");
+  });
+
   it("defaults a role with no members to an empty list", () => {
     expect(
       normalizeChannelRecordConfig({
@@ -153,5 +169,12 @@ describe("normalizeUpdateChannelRecordInput", () => {
     expect(() =>
       normalizeUpdateChannelRecordInput({ status: "archived" }),
     ).toThrow("status must be one of: active, deleted");
+  });
+
+  it("rejects an unknown key instead of silently patching nothing", () => {
+    // `{descripton: "x"}` normalized to {} and PATCH answered 200 unchanged.
+    expect(() =>
+      normalizeUpdateChannelRecordInput({ descripton: "typo" }),
+    ).toThrow("descripton is not supported");
   });
 });
