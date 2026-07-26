@@ -4,7 +4,7 @@ An uploaded custom tool that needs the **Node runtime**, so it runs in the platf
 
 ## Why this lands on the sandbox tier
 
-`broods/tools/system-report.ts` imports `node:crypto`, `node:zlib`, `node:fs`, and `node:os`. Nothing declares `runtime` — the classifier reads the built bundle, sees the `node:` imports, and routes it to the sandbox tier on its own. The same bundle in the isolate tier would fail: the isolate has no module surface at all.
+`broods/agents.ts` declares `execute` inline and imports `node:crypto`, `node:zlib`, `node:fs`, and `node:os`. Nothing declares `runtime` — the classifier reads the built bundle, sees the `node:` imports, and routes it to the sandbox tier on its own. The same bundle in the isolate tier would fail: the isolate has no module surface at all.
 
 ## What the tool returns
 
