@@ -82,7 +82,7 @@ Commands:
   env list             List environment variable names (values stay hidden)
   env rm <name>        Remove an environment variable
   stream               Stream live logs for the whole project/environment (Ctrl+C to stop)
-  logs                 Backfill recent logs then live-tail; default 100 lines
+  logs                 Backfill recent logs then live-tail; all levels, default 100 lines
                        (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
   agent list           List the agents in the current project/environment scope
   agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
@@ -1093,7 +1093,9 @@ function resolveObservabilityCredentials(): {
 function resolveMinLevel(args: string[]): LogLevel | undefined {
   if (hasFlag(args, "--errors")) return "WARN";
   const raw = optionValue(args, "--level");
-  if (!raw) return "WARN";
+  // No filter by default: agent-loop and tool-call events are INFO, so a WARN
+  // default hides everything a healthy run emits and reads as "no logs".
+  if (!raw) return undefined;
   const upper = raw.toUpperCase();
   if (upper === "WARN" || upper === "WARNING") return "WARN";
   if (upper === "ERROR") return "ERROR";

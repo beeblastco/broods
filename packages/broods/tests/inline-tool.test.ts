@@ -41,6 +41,22 @@ test("an inline tool bundle drops the SDK the module imported", async () => {
   expect(bundle).toContain("temperature");
 });
 
+test("an inline tool rehashes identically across compiles", async () => {
+  const cwd = await inlineFixture();
+
+  // The SDK stub is written to a fresh mkdtemp dir per compile, so its path
+  // comment must be normalized or the same source rehashes and redeploys.
+  const first = await compileProject({ cwd: cwd, command: "dev" });
+  const second = await compileProject({ cwd: cwd, command: "dev" });
+  const sha = ({ manifest }: typeof first) =>
+    (
+      manifest.resources.find((resource) => resource.kind === "tool")
+        ?.config as { sha256: string }
+    ).sha256;
+
+  expect(sha(first)).toBe(sha(second));
+});
+
 async function inlineFixture(): Promise<string> {
   const cwd = await realpath(await mkdtemp(join(tmpdir(), "broods-inline-")));
   tempDirs.push(cwd);
