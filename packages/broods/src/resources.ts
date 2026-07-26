@@ -116,10 +116,16 @@ export interface SkillDefinitionConfig {
 
 export interface ToolDefinitionConfig {
   /**
-   * JavaScript module file exporting the custom tool bundle. Relative paths are
-   * resolved from the `broods/` project directory.
+   * Optional module file exporting the tool implementation, resolved from the
+   * `broods/` project directory. Omit it and declare `execute` inline instead —
+   * the CLI then bundles the module this tool is exported from.
    */
-  path: string;
+  path?: string;
+  /**
+   * Runs in the isolate or the sandbox runner, not locally. Shaped like the AI
+   * SDK's `tool({ execute })`: the input first, call options second.
+   */
+  execute?: (input: never, options: never) => unknown;
   description: string;
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";

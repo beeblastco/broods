@@ -12,6 +12,7 @@ import type {
   CliManifest,
   CliManifestResource,
 } from "./contracts.ts";
+import type { BunPlugin } from "bun";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -57,11 +58,13 @@ export type ResourceAliases = Partial<
 
 type ExportedValue = {
   exportName: string;
+  file: string;
   value: unknown;
 };
 
 type ExportedResource = {
   exportName: string;
+  file: string;
   resource: AnyResource;
 };
 
@@ -74,6 +77,21 @@ const UNSAFE_BUNDLE_FILE_NAMES = [
   /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i,
   /\.(?:pem|key|p12|pfx)$/i,
 ];
+// Stands in for the SDK inside an inline tool's bundle: the resource helpers
+// only shape config at author time, so returning the input is enough.
+const SDK_STUB_SOURCE = `const passthrough = (input) => input;
+export const defineTool = passthrough;
+export const defineAgent = passthrough;
+export const defineWorkspace = passthrough;
+export const defineSandbox = passthrough;
+export const defineSkill = passthrough;
+export const definePolicy = passthrough;
+export const defineCron = passthrough;
+export const defineBroods = passthrough;
+export const env = new Proxy({}, { get: (_t, name) => ({ __beeblastEnv: true, name }) });
+export default {};
+`;
+
 const INLINE_AGENT_HOOK_EVENTS = {
   onStart: "agent.started",
   onStepFinish: "agent.step.finished",
@@ -105,6 +123,7 @@ export async function compileProject(
     .map(
       (entry): ExportedResource => ({
         exportName: entry.exportName,
+        file: entry.file,
         resource: entry.value,
       }),
     );
@@ -128,7 +147,7 @@ export async function compileProject(
   );
   const manifestResources = (
     await Promise.all(
-      resources.map((resource) => toManifestResources(resource, root)),
+      resourceExports.map((entry) => toManifestResources(entry, root)),
     )
   )
     .flat()
@@ -218,8 +237,9 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
     const mod = (await import(href)) as Record<string, unknown>;
     values.push(
       ...Object.entries(mod).map(([exportName, value]) => ({
-        exportName,
-        value,
+        exportName: exportName,
+        file: file,
+        value: value,
       })),
     );
   }
@@ -682,9 +702,10 @@ function isValidIdentifier(value: string): boolean {
 }
 
 async function toManifestResources(
-  resource: AnyResource,
+  entry: ExportedResource,
   projectRoot: string,
 ): Promise<CliManifestResource[]> {
+  const resource = entry.resource;
   if (resource.kind === "agent") {
     const normalized = normalizeAgentConfig(resource, projectRoot);
     return [
@@ -703,15 +724,16 @@ async function toManifestResources(
       kind: resource.kind,
       name: resource.name,
       ...(resource.description ? { description: resource.description } : {}),
-      config: await normalizeConfig(resource, projectRoot),
+      config: await normalizeConfig(entry, projectRoot),
     },
   ];
 }
 
 async function normalizeConfig(
-  resource: AnyResource,
+  entry: ExportedResource,
   projectRoot: string,
 ): Promise<unknown> {
+  const resource = entry.resource;
   if (resource.kind === "skill") {
     return await normalizeSkillConfig(
       resource.config as { path: string },
@@ -721,8 +743,9 @@ async function normalizeConfig(
 
   if (resource.kind === "tool") {
     return await normalizeToolConfig(
+      entry,
       resource.config as {
-        path: string;
+        path?: string;
         description: string;
         inputSchema: Record<string, unknown>;
         runtime?: "isolate" | "sandbox";
@@ -1102,8 +1125,9 @@ async function normalizeSkillConfig(
 }
 
 async function normalizeToolConfig(
+  entry: ExportedResource,
   config: {
-    path: string;
+    path?: string;
     description: string;
     inputSchema: Record<string, unknown>;
     runtime?: "isolate" | "sandbox";
@@ -1111,11 +1135,11 @@ async function normalizeToolConfig(
   },
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const bundlePath = resolveContainedResourcePath(
-    projectRoot,
-    config.path,
-    "Tool",
-  );
+  // No `path` means the tool declared `execute` inline: bundle the module that
+  // exported it and address the export by name, the way Convex ships actions.
+  const bundlePath = config.path
+    ? resolveContainedResourcePath(projectRoot, config.path, "Tool")
+    : entry.file;
   const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "Tool");
   const sourceSize = Buffer.byteLength(await readFile(bundlePath));
@@ -1129,13 +1153,10 @@ async function normalizeToolConfig(
   // options.context. A shim entrypoint keeps that one generated line in one place.
   const shimDir = await mkdtemp(join(tmpdir(), "broods-tool-"));
   const shimPath = join(shimDir, "tool-adapter.mjs");
-  await writeFile(
-    shimPath,
-    `import __toolModule from ${JSON.stringify(bundlePath)};\n` +
-      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
-      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`,
-    "utf8",
-  );
+  await writeFile(shimPath, toolShimSource(bundlePath, config.path, entry), "utf8");
+  if (!config.path) {
+    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
+  }
   let bundle: string;
   try {
     const build = await Bun.build({
@@ -1143,6 +1164,7 @@ async function normalizeToolConfig(
       target: "node",
       format: "esm",
       minify: false,
+      plugins: config.path ? [] : [sdkStubPlugin(shimDir)],
     });
     if (!build.success || build.outputs.length !== 1) {
       const details = build.logs
@@ -1334,6 +1356,41 @@ function contentTypeForPath(path: string): string {
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+// A `path` tool default-exports its implementation and is called execute(ctx,
+// input); an inline tool is a named export already shaped like the AI SDK's tool().
+function toolShimSource(
+  bundlePath: string,
+  explicitPath: string | undefined,
+  entry: ExportedResource,
+): string {
+  const from = JSON.stringify(bundlePath);
+  if (explicitPath) {
+    return (
+      `import __toolModule from ${from};\n` +
+      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
+      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`
+    );
+  }
+
+  return (
+    `import { ${entry.exportName} as __tool } from ${from};\n` +
+    `export default { name: ${JSON.stringify(entry.resource.name)}, execute: (input, options) => __tool.execute(input, options) };\n`
+  );
+}
+
+// Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
+// those imports to inert stubs so the bundle carries the tool, not the client.
+function sdkStubPlugin(shimDir: string): BunPlugin {
+  const stub = join(shimDir, "broods-stub.mjs");
+
+  return {
+    name: "broods-sdk-stub",
+    setup(build) {
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+    },
+  };
 }
 
 function escapeRegExp(value: string): string {
