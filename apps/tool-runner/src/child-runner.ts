@@ -1,13 +1,37 @@
 /**
- * Node-native runner for sandbox-tier account tools. Unlike the isolate runner
- * (harness/isolate/runner/runner.mjs) this runs the uploaded bundle in a real
- * Node process — full fetch/timers/AbortController, node: builtins, and any npm
- * deps the bundler inlined — so AI-SDK ecosystem tools work. It is spawned per
- * invocation by handler.mjs with a scrubbed env and speaks the same NDJSON frame
- * protocol (chunk/final/error) the core invoker already parses.
+ * Node-native runner for sandbox-tier account tools. Runs the uploaded bundle in
+ * a real Node process — full fetch/timers/AbortController, node: builtins, and
+ * any npm deps the bundler inlined — so AI-SDK ecosystem tools work. Spawned per
+ * invocation by handler.ts with a scrubbed env, and speaks the NDJSON frame
+ * protocol (chunk/final/error) that core's custom-tools/payload.ts parses.
  */
 
 import { createHash } from "node:crypto";
+
+interface RunnerPayload {
+  bundleSourceB64: string;
+  expectedSha256: string;
+  toolName: string;
+  input?: unknown;
+  config: Record<string, unknown>;
+  toolCallId?: string;
+}
+
+interface ToolDefinition {
+  name?: string;
+  execute: (input: unknown, options: ExecuteOptions) => unknown;
+}
+
+interface ExecuteOptions {
+  toolCallId: string | undefined;
+  context: Record<string, unknown>;
+  abortSignal: AbortSignal;
+}
+
+type Frame =
+  | { t: "chunk"; output: unknown }
+  | { t: "final"; result: unknown }
+  | { t: "error"; error: string };
 
 // Wall-clock deadline for the whole run; the handler also hard-kills the child,
 // this is the cooperative in-process bound that trips ctx.abortSignal first.
@@ -21,7 +45,7 @@ process.on("unhandledRejection", (reason) => {
 
 await runToolRequest();
 
-async function runToolRequest() {
+async function runToolRequest(): Promise<void> {
   const controller = new AbortController();
   const timeoutMs = runTimeoutMs();
   const timeout = setTimeout(() => {
@@ -42,7 +66,10 @@ async function runToolRequest() {
 // Loads the bundle, resolves execute(input, options), and returns its result.
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
-async function runBundle(payload, abortSignal) {
+async function runBundle(
+  payload: RunnerPayload,
+  abortSignal: AbortSignal,
+): Promise<unknown> {
   const bundleSource = Buffer.from(payload.bundleSourceB64, "base64");
   const actualSha = createHash("sha256").update(bundleSource).digest("hex");
   if (actualSha !== payload.expectedSha256) {
@@ -55,10 +82,10 @@ async function runBundle(payload, abortSignal) {
     `data:text/javascript;base64,${payload.bundleSourceB64}`
   );
 
-  let definition = module.default;
-  if (typeof definition === "function") {
-    definition = await definition();
-  }
+  const exported = (module as { default?: unknown }).default;
+  const definition = (
+    typeof exported === "function" ? await exported() : exported
+  ) as ToolDefinition | undefined;
   if (!definition || typeof definition.execute !== "function") {
     throw new Error(
       "custom tool bundle default export must expose execute(input, options)",
@@ -68,7 +95,7 @@ async function runBundle(payload, abortSignal) {
     throw new Error("custom tool bundle name does not match uploaded manifest");
   }
 
-  const options = {
+  const options: ExecuteOptions = {
     toolCallId: payload.toolCallId,
     context: {
       config: payload.config,
@@ -77,34 +104,45 @@ async function runBundle(payload, abortSignal) {
       fetch: globalThis.fetch,
       state: {},
     },
-    abortSignal,
+    abortSignal: abortSignal,
   };
   const value = definition.execute(payload.input, options);
-  if (value != null && typeof value[Symbol.asyncIterator] === "function") {
-    let last;
+  if (isAsyncIterable(value)) {
+    let last: unknown;
     for await (const output of value) {
       last = output;
-      writeFrame({ t: "chunk", output });
+      writeFrame({ t: "chunk", output: output });
     }
+
     return last;
   }
+
   return await value;
 }
 
-function emitTerminal(frame, code) {
+function emitTerminal(frame: Frame, code: number): void {
   // Flush the terminal frame before exiting so a pipe write is never truncated,
   // and force-exit so user code's lingering handles cannot keep the child alive.
   process.stdout.write(`${JSON.stringify(frame)}\n`, () => process.exit(code));
 }
 
-function errorMessage(error) {
+function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
+  return (
+    value != null &&
+    typeof (value as AsyncIterable<unknown>)[Symbol.asyncIterator] ===
+      "function"
+  );
+}
+
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function parsePayload(payload) {
-  if (!payload || typeof payload !== "object") {
+function parsePayload(raw: unknown): RunnerPayload {
+  if (!raw || typeof raw !== "object") {
     throw new Error("invalid sandbox runner payload");
   }
+  const payload = raw as Record<string, unknown>;
   if (typeof payload.bundleSourceB64 !== "string") {
     throw new Error("sandbox runner payload missing bundleSourceB64");
   }
@@ -121,26 +159,26 @@ function parsePayload(payload) {
     input: payload.input,
     config:
       payload.config && typeof payload.config === "object"
-        ? payload.config
+        ? (payload.config as Record<string, unknown>)
         : {},
     toolCallId:
       typeof payload.toolCallId === "string" ? payload.toolCallId : undefined,
   };
 }
 
-async function readAllStdin() {
+async function readAllStdin(): Promise<string> {
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) input += chunk;
   return input.trim();
 }
 
-function runTimeoutMs() {
+function runTimeoutMs(): number {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);
   const seconds = Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
   return seconds * 1000;
 }
 
-function writeFrame(frame) {
+function writeFrame(frame: Frame): void {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
 }

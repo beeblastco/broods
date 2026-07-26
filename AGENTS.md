@@ -5,6 +5,7 @@ Bun workspaces monorepo. this file = rules for whole repo. each workspace have o
 ## Workspaces
 
 - `apps/core` (`@broods/core`) — agent harness. one Bun container behind gateway. owns accounts, agent runs, channel webhooks, tools, skills, sandboxes, workspaces, async/status, SSE, deploy.
+- `apps/tool-runner` (`@broods/tool-runner`) — the Lambda that runs account-uploaded custom tools needing node/npm. deploys separately from core.
 - `apps/gateway` (`@broods/gateway`) — the front door. every public request hit this first. splits config-plane paths from core paths, and terminates the agent / observability / terminal WebSockets.
 - `apps/dashboard` (`@broods/dashboard`) — Next.js UI. drives core through Convex.
 - `packages/convex` (`@broods/convex`) — shared Convex backend for both dashboard and core + config plane.

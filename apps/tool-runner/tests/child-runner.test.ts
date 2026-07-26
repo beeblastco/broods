@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const childRunnerPath = fileURLToPath(
   new URL(
-    "../tool-runner/child-runner.mjs",
+    "../dist/child-runner.mjs",
     import.meta.url,
   ),
 );
