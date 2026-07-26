@@ -4,6 +4,14 @@ import { gzipSync } from "node:zlib";
 import { readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 
+// Every credential the runner is expected to strip before spawning the child.
+const AWS_CREDENTIAL_ENV_VARS = [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_LAMBDA_RUNTIME_API",
+];
+
 // No `runtime` here on purpose: the classifier reads the bundle, sees the `node:`
 // imports, and routes it to the sandbox tier by itself.
 export const systemReportTool = defineTool({
@@ -31,9 +39,15 @@ export const systemReportTool = defineTool({
       gzipBytes: compressed.byteLength,
       requestId: randomUUID(),
       nodeVersion: process.version,
-      // Containment checks: credentials scrubbed, and no bundle left on disk.
-      awsCredentialsVisible: Boolean(process.env.AWS_SECRET_ACCESS_KEY),
-      tmpEntries: readdirSync(tmpdir()).length,
+      // Containment checks from #174, both expected to come back empty: every
+      // AWS credential is scrubbed from the child env, and the bundle is
+      // imported from memory so it never lands in the tmpdir as a module.
+      visibleAwsCredentials: AWS_CREDENTIAL_ENV_VARS.filter((name) =>
+        Boolean(process.env[name]),
+      ),
+      tmpModuleFiles: readdirSync(tmpdir()).filter(
+        (entry) => entry.endsWith(".mjs") || entry.endsWith(".js"),
+      ),
     };
   },
 });

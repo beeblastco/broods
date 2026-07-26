@@ -13,6 +13,11 @@ import { createHash } from "node:crypto";
 // this is the cooperative in-process bound that trips ctx.abortSignal first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
+// The timeout and the run's own completion race: process.exit is deferred to the
+// stdout flush callback, so without this the aborted run emits a second terminal
+// frame after the timeout already wrote one.
+let settled = false;
+
 // Stray timers/promises in user code must not crash the runner after the
 // terminal frame is on stdout; still log to stderr so real bugs stay visible.
 process.on("unhandledRejection", (reason) => {
@@ -83,6 +88,9 @@ async function runBundle(payload, abortSignal) {
   if (value != null && typeof value[Symbol.asyncIterator] === "function") {
     let last;
     for await (const output of value) {
+      // User code may ignore abortSignal; stop writing so no chunk lands after
+      // the timeout's terminal frame.
+      if (abortSignal.aborted) break;
       last = output;
       writeFrame({ t: "chunk", output });
     }
@@ -92,6 +100,8 @@ async function runBundle(payload, abortSignal) {
 }
 
 function emitTerminal(frame, code) {
+  if (settled) return;
+  settled = true;
   // Flush the terminal frame before exiting so a pipe write is never truncated,
   // and force-exit so user code's lingering handles cannot keep the child alive.
   process.stdout.write(`${JSON.stringify(frame)}\n`, () => process.exit(code));

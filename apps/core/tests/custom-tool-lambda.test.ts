@@ -7,6 +7,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaClient } from "@aws-sdk/client-lambda";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+import type { ExecuteAccountToolOptions } from "../src/harness/custom-tools/payload.ts";
 
 const bundle =
   "export default { name: 'sandbox_tool', execute(input) { return { echo: input }; } };";
@@ -88,6 +89,57 @@ describe("streamInLambda", () => {
     await collect(client, { abortSignal: controller.signal });
 
     expect(seen).toBe(controller.signal);
+  });
+});
+
+describe("streamAccountTool tier dispatch", () => {
+  it("routes a sandbox tool to the sandbox executor and forwards every frame", async () => {
+    const { streamAccountTool } = await import(
+      "../src/harness/custom-tools/executor.ts"
+    );
+    let seen: ExecuteAccountToolOptions | undefined;
+    const options: ExecuteAccountToolOptions = {
+      accountId: "acct_test",
+      tool: toolRecord(),
+      input: { message: "hi" },
+      config: {},
+      sandboxExecutor: async function* (received) {
+        seen = received;
+        yield { step: 1 };
+        yield { step: 2 };
+      },
+    };
+
+    const outputs: unknown[] = [];
+    for await (const output of streamAccountTool(options)) outputs.push(output);
+
+    expect(seen).toBe(options);
+    expect(outputs).toEqual([{ step: 1 }, { step: 2 }]);
+  });
+
+  it("keeps an isolate tool off the Lambda", async () => {
+    const { streamAccountTool } = await import(
+      "../src/harness/custom-tools/executor.ts"
+    );
+    const sandboxExecutor = mock(async function* () {
+      yield { unreachable: true };
+    });
+    const outputs: unknown[] = [];
+    for await (const output of streamAccountTool({
+      accountId: "acct_test",
+      tool: { ...toolRecord(), runtime: "isolate" },
+      input: { message: "hi" },
+      config: {},
+      sandboxExecutor,
+      isolateExecutor: async function* () {
+        yield { fromIsolate: true };
+      },
+    })) {
+      outputs.push(output);
+    }
+
+    expect(sandboxExecutor).not.toHaveBeenCalled();
+    expect(outputs).toEqual([{ fromIsolate: true }]);
   });
 });
 
