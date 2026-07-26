@@ -15,7 +15,7 @@ import { logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { readS3Bytes } from "../shared/s3.ts";
 import { streamIsolatePayload } from "./isolate/executor.ts";
-import { toolBundlesBucket } from "./isolate/payload.ts";
+import { toolBundlesBucket } from "./custom-tools/payload.ts";
 
 // A hook's return is capped before it re-enters the harness so a runaway hook
 // cannot balloon the conversation or a channel payload.

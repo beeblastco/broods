@@ -1,8 +1,8 @@
 /**
  * Sandbox-tier custom tool execution. Invokes the platform tool-runner Lambda
- * (a plain Node.js function; see sandbox/tool-runner/) with the same bundle
+ * (a plain Node.js function; see apps/core/tool-runner/) with the same bundle
  * payload the isolate runner uses, then replays the child's NDJSON frames as the
- * tool's async-generator output. Used by tools/custom-tool-executor.ts for
+ * tool's async-generator output. Used by ./executor.ts for
  * bundles classified runtime "sandbox" (node/npm/native) that the V8 isolate
  * cannot run. Request/response invoke: yields are buffered, not live-streamed.
  */
@@ -18,7 +18,7 @@ import {
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
   type RunnerPayload,
-} from "../isolate/payload.ts";
+} from "./payload.ts";
 
 interface ToolRunnerResponse {
   stdout?: unknown;

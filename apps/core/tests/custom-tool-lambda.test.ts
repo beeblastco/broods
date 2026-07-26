@@ -96,7 +96,7 @@ async function collect(
   options?: unknown,
 ): Promise<unknown[]> {
   const { streamAccountToolInLambda } =
-    await import("../src/harness/sandbox/lambda-tool-executor.ts");
+    await import("../src/harness/custom-tools/lambda.ts");
   const outputs: unknown[] = [];
   for await (const output of streamAccountToolInLambda(
     {

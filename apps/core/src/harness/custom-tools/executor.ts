@@ -2,12 +2,12 @@
  * Custom (account-uploaded) tool dispatch. Routes by runtime tier: pure-compute /
  * fetch-only bundles run in the in-core V8 isolate (../isolate/executor.ts);
  * node/npm/native bundles (runtime "sandbox") run in the platform tool-runner
- * Lambda (../sandbox/lambda-tool-executor.ts). Detached-async execution still
+ * Lambda (./lambda.ts). Detached-async execution still
  * needs a persistent reservation and is rejected here (tracked in #82). The
- * runner payload shape and frame protocol are shared from ../isolate/payload.ts.
+ * runner payload shape and frame protocol are shared from ./payload.ts.
  */
 
-import type { ExecuteAccountToolOptions } from "../isolate/payload.ts";
+import type { ExecuteAccountToolOptions } from "./payload.ts";
 import { isPlainObject } from "../../shared/object.ts";
 
 interface DetachedAsyncToolMetadata {
@@ -44,7 +44,7 @@ export async function* streamAccountTool(
   if (options.tool.runtime === "sandbox") {
     const sandboxExecutor =
       options.sandboxExecutor ??
-      (await import("../sandbox/lambda-tool-executor.ts"))
+      (await import("./lambda.ts"))
         .streamAccountToolInLambda;
     yield* sandboxExecutor(options);
     return;

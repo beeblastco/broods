@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const childRunnerPath = fileURLToPath(
   new URL(
-    "../src/harness/sandbox/tool-runner/child-runner.mjs",
+    "../tool-runner/child-runner.mjs",
     import.meta.url,
   ),
 );
