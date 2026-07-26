@@ -85,13 +85,16 @@ sequenceDiagram
 A bundle whose `execute` is an async generator streams partial output from the isolate. Each `yield` becomes an NDJSON `chunk` frame, and a normal return produces one `final` frame; thrown errors produce `error` frames. The executor surfaces those frames as an async iterable. The AI SDK turns each yield into a **preliminary tool result** on the sync SSE stream; the last yield is the final output the model sees. Auto-detected per call: a non-generator `execute` behaves exactly as before.
 
 ```ts
-// uploaded bundle — yields stream as preliminary results, last yield is final
-export default {
-  async *execute(ctx, input) {
+// yields stream as preliminary results, the last one is the final output
+export const search = defineTool({
+  name: "search",
+  description: "Search and stream progress.",
+  inputSchema: { type: "object", properties: { q: { type: "string" } } },
+  async *execute(input) {
     yield { type: "text", value: "working…" };
     yield { type: "text", value: "done: " + input.q };
   },
-};
+});
 ```
 
 ```text

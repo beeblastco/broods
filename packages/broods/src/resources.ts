@@ -114,7 +114,14 @@ export interface SkillDefinitionConfig {
   path: string;
 }
 
-export interface ToolDefinitionConfig {
+/** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
+export interface ToolExecuteOptions {
+  toolCallId?: string;
+  context: Record<string, unknown>;
+  abortSignal?: AbortSignal;
+}
+
+export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
   /**
    * Optional module file exporting the tool implementation, resolved from the
    * `broods/` project directory. Omit it and declare `execute` inline instead —
@@ -123,9 +130,11 @@ export interface ToolDefinitionConfig {
   path?: string;
   /**
    * Runs in the isolate or the sandbox runner, not locally. Shaped like the AI
-   * SDK's `tool({ execute })`: the input first, call options second.
+   * SDK's `tool({ execute })`: the input first, call options second. Annotate
+   * the parameter to type it — `inputSchema` is JSON Schema, so it cannot be
+   * inferred.
    */
-  execute?: (input: never, options: never) => unknown;
+  execute?: (input: Input, options: ToolExecuteOptions) => unknown;
   description: string;
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";
@@ -677,9 +686,10 @@ export function defineSkill<const Name extends string>(
 
 // `description` is the model-facing text, so it stays inside the tool config
 // rather than becoming the resource-level human description.
-export function defineTool<const Name extends string>(
-  input: { name: Name } & ToolDefinitionConfig,
-): ToolResource<Name> {
+export function defineTool<
+  const Name extends string,
+  Input = Record<string, unknown>,
+>(input: { name: Name } & ToolDefinitionConfig<Input>): ToolResource<Name> {
   const { name, ...config } = input;
 
   return defineResource(

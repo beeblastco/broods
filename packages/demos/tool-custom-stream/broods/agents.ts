@@ -14,7 +14,6 @@ export const streamProgressTool = defineTool({
         description: "How many progress updates to stream.",
       },
     },
-    required: ["steps"],
     additionalProperties: false,
   },
   async *execute(input: { steps?: number }) {

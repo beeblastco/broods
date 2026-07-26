@@ -56,6 +56,21 @@ export type ResourceAliases = Partial<
   Record<AnyResource["kind"], Record<string, string>>
 >;
 
+// Stands in for the SDK inside an inline tool's bundle: the resource helpers
+// only shape config at author time, so returning the input is enough.
+const SDK_STUB_SOURCE = `const passthrough = (input) => input;
+export const defineTool = passthrough;
+export const defineAgent = passthrough;
+export const defineWorkspace = passthrough;
+export const defineSandbox = passthrough;
+export const defineSkill = passthrough;
+export const definePolicy = passthrough;
+export const defineCron = passthrough;
+export const defineBroods = passthrough;
+export const env = new Proxy({}, { get: (_t, name) => ({ __beeblastEnv: true, name }) });
+export default {};
+`;
+
 type ExportedValue = {
   exportName: string;
   file: string;
@@ -77,21 +92,6 @@ const UNSAFE_BUNDLE_FILE_NAMES = [
   /^id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?$/i,
   /\.(?:pem|key|p12|pfx)$/i,
 ];
-// Stands in for the SDK inside an inline tool's bundle: the resource helpers
-// only shape config at author time, so returning the input is enough.
-const SDK_STUB_SOURCE = `const passthrough = (input) => input;
-export const defineTool = passthrough;
-export const defineAgent = passthrough;
-export const defineWorkspace = passthrough;
-export const defineSandbox = passthrough;
-export const defineSkill = passthrough;
-export const definePolicy = passthrough;
-export const defineCron = passthrough;
-export const defineBroods = passthrough;
-export const env = new Proxy({}, { get: (_t, name) => ({ __beeblastEnv: true, name }) });
-export default {};
-`;
-
 const INLINE_AGENT_HOOK_EVENTS = {
   onStart: "agent.started",
   onStepFinish: "agent.step.finished",
@@ -1358,6 +1358,19 @@ function contentTypeForPath(path: string): string {
   return "application/octet-stream";
 }
 
+// Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
+// those imports to inert stubs so the bundle carries the tool, not the client.
+function sdkStubPlugin(shimDir: string): BunPlugin {
+  const stub = join(shimDir, "broods-stub.mjs");
+
+  return {
+    name: "broods-sdk-stub",
+    setup(build) {
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+    },
+  };
+}
+
 // A `path` tool default-exports its implementation and is called execute(ctx,
 // input); an inline tool is a named export already shaped like the AI SDK's tool().
 function toolShimSource(
@@ -1378,19 +1391,6 @@ function toolShimSource(
     `import { ${entry.exportName} as __tool } from ${from};\n` +
     `export default { name: ${JSON.stringify(entry.resource.name)}, execute: (input, options) => __tool.execute(input, options) };\n`
   );
-}
-
-// Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
-// those imports to inert stubs so the bundle carries the tool, not the client.
-function sdkStubPlugin(shimDir: string): BunPlugin {
-  const stub = join(shimDir, "broods-stub.mjs");
-
-  return {
-    name: "broods-sdk-stub",
-    setup(build) {
-      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
-    },
-  };
 }
 
 function escapeRegExp(value: string): string {

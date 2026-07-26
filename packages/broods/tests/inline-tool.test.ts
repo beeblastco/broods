@@ -27,15 +27,18 @@ test("compileProject bundles a tool declared with an inline execute", async () =
   expect(typeof config.sha256).toBe("string");
 });
 
-test("an inline tool bundle carries neither the SDK nor its sibling agent", async () => {
+test("an inline tool bundle drops the SDK the module imported", async () => {
   const cwd = await inlineFixture();
 
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const tool = manifest.resources.find((resource) => resource.kind === "tool");
   const bundle = (tool?.config as { bundle: string }).bundle;
 
-  expect(bundle).not.toContain("BroodsClient");
+  // The fixture imports the bare `broods` specifier, so this only passes if the
+  // stub actually intercepted it — the real package carries these markers.
+  expect(bundle).not.toContain("__BROODS_SDK__");
   expect(bundle).not.toContain("gateway.broods.app");
+  expect(bundle).toContain("temperature");
 });
 
 async function inlineFixture(): Promise<string> {
@@ -43,9 +46,24 @@ async function inlineFixture(): Promise<string> {
   tempDirs.push(cwd);
   const projectDir = join(cwd, "broods");
   await mkdir(projectDir, { recursive: true });
+  // A local `broods` package so the fixture imports the bare specifier the stub
+  // plugin filters on; it re-exports the real helpers plus the SDK markers.
+  const pkgDir = join(cwd, "node_modules", "broods");
+  await mkdir(pkgDir, { recursive: true });
+  await writeFile(
+    join(pkgDir, "package.json"),
+    JSON.stringify({ name: "broods", type: "module", main: "index.mjs" }),
+  );
+  await writeFile(
+    join(pkgDir, "index.mjs"),
+    `export * from ${JSON.stringify(RESOURCES_MODULE)};\n` +
+      // Module-level side effect: a bundler cannot prove it pure and drop it,
+      // so its absence means the specifier really was aliased away.
+      `globalThis.__BROODS_SDK__ = "gateway.broods.app";\n`,
+  );
   await writeFile(
     join(projectDir, "agents.ts"),
-    `import { defineAgent, defineBroods, defineTool, env } from "${RESOURCES_MODULE}";\n` +
+    `import { defineAgent, defineBroods, defineTool, env } from "broods";\n` +
       `export default defineBroods({ project: "inline-app" });\n` +
       `export const weatherTool = defineTool({\n` +
       `  name: "weather",\n` +
