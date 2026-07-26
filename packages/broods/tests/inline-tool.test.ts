@@ -48,12 +48,16 @@ test("an inline tool rehashes identically across compiles", async () => {
   // comment must be normalized or the same source rehashes and redeploys.
   const first = await compileProject({ cwd: cwd, command: "dev" });
   const second = await compileProject({ cwd: cwd, command: "dev" });
-  const sha = ({ manifest }: typeof first) =>
-    (
-      manifest.resources.find((resource) => resource.kind === "tool")
-        ?.config as { sha256: string }
-    ).sha256;
+  const sha = ({ manifest }: typeof first) => {
+    const tool = manifest.resources.find(
+      (resource) => resource.kind === "tool",
+    );
+    expect(tool).toBeDefined();
 
+    return (tool?.config as { sha256?: string } | undefined)?.sha256;
+  };
+
+  expect(sha(first)).toBeString();
   expect(sha(first)).toBe(sha(second));
 });
 
