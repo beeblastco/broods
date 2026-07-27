@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 const childRunnerPath = fileURLToPath(
@@ -180,8 +181,10 @@ async function runChild(
   const expectedSha256 =
     options.expectedSha256 ??
     new Bun.CryptoHasher("sha256").update(source).digest("hex");
+  // The fourth pipe is the bundle channel the handler writes; the request on
+  // stdin only addresses it.
   const child = spawn("node", [childRunnerPath], {
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
     env: { ...process.env },
   });
   let stdout = "";
@@ -190,9 +193,9 @@ async function runChild(
     stdout += chunk;
   });
   child.stderr.resume();
+  (child.stdio[3] as Writable).end(source);
   child.stdin.end(
     `${JSON.stringify({
-      bundleSourceB64: Buffer.from(source).toString("base64"),
       expectedSha256,
       toolName: options.toolName,
       input: options.input ?? {},

@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
@@ -579,7 +579,7 @@ describe("streamIsolatePayload cross-process abort", () => {
       ].join("\n"),
       "utf8",
     );
-    delete process.env.ISOLATE_POOL; // exercise the one-shot path
+    process.env.ISOLATE_POOL = "0"; // exercise the one-shot fallback path
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
     const { streamIsolatePayload } =
@@ -603,6 +603,115 @@ describe("streamIsolatePayload cross-process abort", () => {
     }
 
     expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("forwards the abortSignal on the pooled path too", async () => {
+    // The pooled path is the default, so this is the forwarding that runs in
+    // production; the worker is checked out of the shared pool, not spawned here.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-stub-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-pool-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let callId;",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  for (const line of chunk.split('\\n')) {",
+        "    if (!line.trim()) continue;",
+        "    try { callId = JSON.parse(line).callId; } catch {}",
+        "  }",
+        "});",
+        "process.on('SIGUSR2', () => {",
+        "  process.stdout.write(JSON.stringify({ t: 'final', callId, result: { aborted: true } }) + '\\n');",
+        "  process.exit(0);",
+        "});",
+        "setTimeout(() => process.exit(3), 5000);",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 150);
+
+    const outputs: unknown[] = [];
+    for await (const output of streamIsolatePayload(
+      "acct_pooled",
+      {
+        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+        expectedSha256: sha256("export default {};"),
+        toolName: "stub",
+        input: {},
+        config: {},
+      },
+      { abortSignal: controller.signal },
+    )) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("serves sequential calls from one worker instead of filling the pool", async () => {
+    // What makes the pool safe to have on by default: core's pod budgets memory
+    // for one process, not for ISOLATE_WORKER_POOL_SIZE resident Node runtimes.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-count-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "counting-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n');",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      for (let call = 0; call < 3; call += 1) {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload("acct_count", {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+        expect(outputs).toEqual([{ ok: true }]);
+      }
+
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(1);
+    } finally {
+      shutdownIsolatePool();
+    }
   });
 });
 

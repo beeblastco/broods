@@ -95,7 +95,10 @@ async function runToolRequest() {
 // disposed and evicted. Mirrors Convex Funrun's per-tenant isolate reuse.
 async function runPoolWorker() {
   const cacheCapRaw = Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER);
-  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 4;
+  // Deliberately small: acquireWorker prefers a worker that already holds the
+  // tenant, so most workers only ever need one, and every cached isolate is
+  // resident memory in a pod that has 1 GiB for everything.
+  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 2;
   const cache = new Map(); // tenantId -> { isolate, lastCpu: bigint }
   writeFrame({ t: "ready" });
   for await (const line of readLines(process.stdin)) {

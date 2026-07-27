@@ -60,7 +60,9 @@ export const handler = streamifyResponse(async (event, responseStream) => {
 });
 
 async function readBundleSource(event) {
-  if (typeof event.bundleSourceB64 === "string") return event.bundleSourceB64;
+  if (typeof event.bundleSourceB64 === "string") {
+    return Buffer.from(event.bundleSourceB64, "base64");
+  }
   if (typeof event.bundleUrl !== "string") {
     throw new Error(
       "tool runner event needs one of bundleSourceB64 or bundleUrl",
@@ -73,15 +75,16 @@ async function readBundleSource(event) {
     );
   }
 
-  return Buffer.from(await response.arrayBuffer()).toString("base64");
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function runChild(event, home, responseStream, bundle) {
   return await new Promise((resolve) => {
     // detached puts the child in its own process group so killGroup can reap the
     // grandchildren too; a survivor outlives the invocation in a warm sandbox.
+    // The fourth pipe carries the bundle bytes; see child-runner.mjs BUNDLE_FD.
     const child = spawn(process.execPath, [childRunnerPath()], {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe", "pipe"],
       env: scrubbedEnv(home),
       detached: true,
     });
@@ -169,17 +172,20 @@ async function runChild(event, home, responseStream, bundle) {
       settle();
     });
 
-    // A child that exits before reading stdin makes end() emit EPIPE; an
+    // A child that exits before reading a pipe makes end() emit EPIPE; an
     // unhandled stream error would crash the handler instead of returning a frame.
+    const bundleStream = child.stdio[3];
     child.stdin.on("error", () => {});
+    bundleStream.on("error", () => {});
+    // The request does not wait on the fetch: the child parses it while the
+    // bundle is still in flight.
+    child.stdin.end(
+      `${JSON.stringify({ ...event, bundleSourceB64: undefined, bundleUrl: undefined })}\n`,
+    );
     void bundle.then(
-      (bundleSourceB64) => {
-        child.stdin.end(
-          `${JSON.stringify({ ...event, bundleSourceB64: bundleSourceB64, bundleUrl: undefined })}\n`,
-        );
-      },
+      (bytes) => bundleStream.end(bytes),
       (error) => {
-        // The child is idle on an stdin that will never arrive, so the same stop
+        // The child is blocked on a pipe that will never arrive, so the same stop
         // path a timeout takes is what settles the run on an error frame.
         stopForwarding(error instanceof Error ? error.message : String(error));
       },

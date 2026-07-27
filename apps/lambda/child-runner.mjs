@@ -4,13 +4,20 @@
  * Node process — full fetch/timers/AbortController, node: builtins, and any npm
  * deps the bundler inlined — so AI-SDK ecosystem tools work. It is spawned per
  * invocation by handler.mjs with a scrubbed env and speaks the same NDJSON frame
- * protocol (chunk/final/error) the core invoker already parses.
+ * protocol (chunk/final/error) the core invoker already parses. The run request
+ * arrives on stdin; the bundle arrives as raw bytes on fd 3.
  */
 
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+// The bundle rides its own pipe rather than base64 inside the request JSON:
+// encoding a 7 MB bundle costs a third more bytes and ~25ms of CPU on both
+// sides of the pipe, for nothing.
+const BUNDLE_FD = 3;
 
 // Wall-clock deadline for the whole run; the handler also hard-kills the child,
 // this is the cooperative in-process bound that trips ctx.abortSignal first.
@@ -48,8 +55,14 @@ async function runToolRequest() {
     );
   }, timeoutMs);
   try {
-    const payload = parsePayload(JSON.parse(await readAllStdin()));
-    const result = await runBundle(payload, controller.signal);
+    // Both pipes at once: the handler writes the request immediately and the
+    // bundle whenever its S3 fetch lands, so neither should gate the other.
+    const [request, bundle] = await Promise.all([
+      readAllStdin(),
+      readBundleBytes(),
+    ]);
+    const payload = parsePayload(JSON.parse(request));
+    const result = await runBundle(payload, bundle, controller.signal);
     clearTimeout(timeout);
     emitTerminal({ t: "final", result }, 0);
   } catch (error) {
@@ -61,14 +74,13 @@ async function runToolRequest() {
 // Loads the bundle, resolves execute(input, options), and returns its result.
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
-async function runBundle(payload, abortSignal) {
-  const bundle = Buffer.from(payload.bundleSourceB64, "base64");
+async function runBundle(payload, bundle, abortSignal) {
   const actualSha = createHash("sha256").update(bundle).digest("hex");
   if (actualSha !== payload.expectedSha256) {
     throw new Error("custom tool bundle hash mismatch inside sandbox runner");
   }
 
-  const module = await importBundle(bundle.toString("utf8"));
+  const module = await importBundle(bundle);
 
   let definition = module.default;
   if (typeof definition === "function") {
@@ -116,9 +128,19 @@ async function readAllStdin() {
   return input.trim();
 }
 
+async function readBundleBytes() {
+  const chunks = [];
+  for await (const chunk of createReadStream(null, { fd: BUNDLE_FD })) {
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
 // Served straight out of memory through a resolve/load hook, never written to
 // disk: /tmp survives in a warm Lambda sandbox, so a bundle on disk is readable
-// by any process that outlives its run.
+// by any process that outlives its run. The hook takes the bytes as-is, so the
+// bundle is never decoded to a string on the way in.
 async function importBundle(source) {
   registerHooks({
     load: (url, context, next) =>
@@ -150,11 +172,6 @@ function parsePayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("invalid sandbox runner payload");
   }
-  // The handler resolves bundleUrl before spawning this process, so by here the
-  // bytes are always inline.
-  if (typeof payload.bundleSourceB64 !== "string") {
-    throw new Error("sandbox runner payload missing bundleSourceB64");
-  }
   if (typeof payload.expectedSha256 !== "string") {
     throw new Error("sandbox runner payload missing expectedSha256");
   }
@@ -162,7 +179,6 @@ function parsePayload(payload) {
     throw new Error("sandbox runner payload missing toolName");
   }
   return {
-    bundleSourceB64: payload.bundleSourceB64,
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
     input: payload.input,
