@@ -967,10 +967,9 @@ export const taskUsageFields = {
   /**
    * CPU consumed in sandboxes during the task, one entry per sandbox context:
    * the agent's own sandbox (role "agent") and the uploaded-tool runner (role
-   * "tool"), tagged by compute `type` ("sandbox", "lambda", "custom-tool-sandbox",
-   * …). cpuUsec is recorded for the self-hosted providers (sandbox via the workdir
-   * exec report, lambda via the MicroVM image's getrusage report) and for the
-   * custom-tool sandbox via the child's own cpuUsage; others store 0.
+   * "tool"), tagged by compute `type` ("sandbox", "lambda", "custom-tool-sandbox").
+   * cpuUsec comes from the workdir exec report, the MicroVM getrusage report, and
+   * the tool child's own cpuUsage respectively; others store 0.
    */
   sandboxUsage: v.array(
     v.object({

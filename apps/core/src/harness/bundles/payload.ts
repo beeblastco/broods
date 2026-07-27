@@ -5,6 +5,7 @@
  * never reaches into tools/. Dispatch and invocation live in executor.ts.
  */
 
+import type { ModelMessage } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
 import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
 import type { SandboxCpuSample } from "../sandbox/types.ts";
@@ -54,22 +55,21 @@ export type RunnerBundleSource =
   | { bundleSourceB64: string }
   | { bundleUrl: string };
 
-// Payload a runner reads on stdin. toolCallId, messages and experimentalContext
-// are the AI SDK's ToolExecutionOptions, forwarded so an uploaded bundle sees
-// what the same tool would see running in-process.
+// Payload a runner reads on stdin. The AI SDK's ToolExecutionOptions ride along
+// so an uploaded bundle sees what the same tool would see running in-process.
 export type RunnerPayload = RunnerBundleSource & {
   expectedSha256: string;
   toolName: string;
   input: unknown;
   config: Record<string, unknown>;
   toolCallId?: string;
-  messages?: unknown;
+  messages?: ModelMessage[];
   experimentalContext?: unknown;
 };
 
 // One NDJSON frame per stdout line: chunk = streamed output, final = a
-// non-streaming result, end = closed stream, error = tool failure. A terminal
-// frame carries cpuUsec when the runner is a process that can measure itself.
+// non-streaming result, end = closed stream, error = tool failure. cpuUsec is
+// stamped by a runner that can measure itself.
 export type ToolRunnerFrame =
   | { t: "chunk"; output: unknown }
   | { t: "final"; result: unknown; cpuUsec?: number }
@@ -128,7 +128,7 @@ export async function createRunnerPayload(options: {
   input: unknown;
   config: AgentToolConfig;
   toolCallId?: string;
-  messages?: unknown;
+  messages?: ModelMessage[];
   experimentalContext?: unknown;
   bundleTransport: "inline" | "presigned-url";
 }): Promise<RunnerPayload> {
@@ -173,10 +173,14 @@ export function experimentalContextFromOptions(options: unknown): unknown {
 }
 
 /** Reads the AI SDK ToolExecutionOptions.messages when present. */
-export function messagesFromOptions(options: unknown): unknown {
+export function messagesFromOptions(
+  options: unknown,
+): ModelMessage[] | undefined {
   if (!isPlainObject(options)) return undefined;
 
-  return Array.isArray(options.messages) ? options.messages : undefined;
+  return Array.isArray(options.messages)
+    ? (options.messages as ModelMessage[])
+    : undefined;
 }
 
 // Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
@@ -266,14 +270,18 @@ async function inlineBundle(
 
 // Newest turns first, dropping the older ones that no longer fit. A tool asking
 // for the conversation wants the recent end of it, and that is what survives.
-function boundedMessages(messages: unknown): unknown {
+function boundedMessages(
+  messages: ModelMessage[] | undefined,
+): ModelMessage[] | undefined {
   if (!Array.isArray(messages)) return undefined;
-  const kept: unknown[] = [];
+  const kept: ModelMessage[] = [];
   let bytes = 0;
   for (let index = messages.length - 1; index >= 0; index--) {
-    bytes += JSON.stringify(messages[index] ?? null).length;
+    const message = messages[index];
+    if (message === undefined) continue;
+    bytes += JSON.stringify(message).length;
     if (bytes > MESSAGES_MAX_BYTES) break;
-    kept.unshift(messages[index]);
+    kept.unshift(message);
   }
 
   return kept;

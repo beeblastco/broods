@@ -7,6 +7,7 @@
  * here is synchronous.
  */
 
+import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
   AgentProviderSettings,
@@ -122,11 +123,7 @@ export interface SkillDefinitionConfig {
 
 /** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
 export interface ToolExecuteContext {
-  /**
-   * The tool's resolved config: `defaultConfig` merged under the enabling
-   * agent's `tools.<tool>.config`, with every `env("NAME")` already substituted.
-   * This is how secrets reach a tool — there is no `process.env` in either runner.
-   */
+  /** Resolved tool config, `env("NAME")` already substituted. Where secrets arrive. */
   config: Record<string, unknown>;
   /** SSRF-guarded fetch. Also installed as the global `fetch`. */
   fetch: typeof fetch;
@@ -139,12 +136,8 @@ export interface ToolExecuteOptions {
   toolCallId?: string;
   context: ToolExecuteContext;
   abortSignal?: AbortSignal;
-  /**
-   * Conversation so far, as the AI SDK passes it. Core forwards the most recent
-   * messages that fit a 512 KB bound, so a long conversation arrives truncated
-   * from the front rather than failing the call.
-   */
-  messages: unknown[];
+  /** Conversation so far. Truncated from the front to the newest 512 KB. */
+  messages: ModelMessage[];
   experimental_context?: unknown;
 }
 

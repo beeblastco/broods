@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
@@ -112,13 +113,10 @@ describe("createRunnerPayload", () => {
   it("forwards the newest messages that fit the size bound", async () => {
     const { createRunnerPayload } =
       await import("../src/harness/bundles/payload.ts");
-    const fat = (role: string, index: number) => ({
-      role: role,
+    const messages: ModelMessage[] = Array.from({ length: 16 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
       content: `${index}`.padStart(64 * 1024, "x"),
-    });
-    const messages = Array.from({ length: 16 }, (_, index) =>
-      fat(index % 2 === 0 ? "user" : "assistant", index),
-    );
+    }));
 
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
@@ -130,7 +128,7 @@ describe("createRunnerPayload", () => {
       bundleTransport: "inline",
     });
 
-    const kept = payload.messages as Array<{ content: string }>;
+    const kept = payload.messages ?? [];
     expect(kept.length).toBeGreaterThan(0);
     expect(kept.length).toBeLessThan(messages.length);
     expect(kept.at(-1)).toEqual(messages.at(-1)!);
@@ -180,9 +178,9 @@ describe("AI SDK options extraction", () => {
     const { experimentalContextFromOptions, messagesFromOptions } =
       await import("../src/harness/bundles/payload.ts");
 
-    expect(messagesFromOptions({ messages: [{ role: "user" }] })).toEqual([
-      { role: "user" },
-    ]);
+    expect(
+      messagesFromOptions({ messages: [{ role: "user", content: "hi" }] }),
+    ).toEqual([{ role: "user", content: "hi" }]);
     expect(messagesFromOptions({ messages: "nope" })).toBeUndefined();
     expect(messagesFromOptions(undefined)).toBeUndefined();
 
