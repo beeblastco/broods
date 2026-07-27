@@ -1589,9 +1589,7 @@ export const support = defineAgent({ name: "support", channels: [github] });
     "utf8",
   );
   expect(api).toContain('github: { kind: "channel", type: "github"');
-  expect(api).toContain(
-    'webhookPath: "/webhooks/account%2F123/agent%2F123/github"',
-  );
+  expect(api).toContain('webhookPath: "/webhooks/account%2F123/github"');
 });
 
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {

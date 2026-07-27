@@ -483,22 +483,31 @@ async function handleHttpRequest(
     }
   }
 
-  // Check for the webhook channel integration. Two shapes:
-  //   /webhooks/{account}/{agent}/{channel} pins the agent in the URL
-  //   /webhooks/{account}/{channel}         lets the channel record choose it
-  // so one provider app can serve a whole account.
+  // One webhook shape: /webhooks/{account}/{channel}. The agent is never named
+  // in the URL — the credentials that verify the request pick the receiving
+  // agent, and the channel record picks who runs.
   const accountWebhookMatch = request.path.match(
-    /^\/webhooks\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/,
+    /^\/webhooks\/([^/]+)\/([^/]+)$/,
   );
+  // Answer a wrong webhook shape here rather than letting it fall through to
+  // the generic 401, which reads as "bad credentials" to a provider that is
+  // really just pointed at the retired /webhooks/{account}/{agent}/{channel}.
+  if (!accountWebhookMatch && request.path.startsWith("/webhooks/")) {
+    logWarn("Webhook path does not match /webhooks/{account}/{channel}", {
+      method: request.method,
+      rawPath: request.path,
+    });
+
+    return errorResponse(
+      404,
+      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} — the agent is chosen by credentials and channel records, never named in the URL.",
+      { code: "unknown_webhook_url" },
+    );
+  }
   if (accountWebhookMatch?.[1] && accountWebhookMatch[2]) {
     const accountId = decodeURIComponent(accountWebhookMatch[1]);
-    const pinnedAgentId = accountWebhookMatch[3]
-      ? decodeURIComponent(accountWebhookMatch[2])
-      : undefined;
-    const channelName = decodeURIComponent(
-      accountWebhookMatch[3] ?? accountWebhookMatch[2],
-    );
-    const agentId = pinnedAgentId ?? "(by channel)";
+    const channelName = decodeURIComponent(accountWebhookMatch[2]);
+    const agentId = "(by channel)";
     logInfo("Webhook request matched account route", {
       accountId,
       agentId,
@@ -527,21 +536,19 @@ async function handleHttpRequest(
       });
       return notFoundResponse();
     }
-    // The credential holder owns the provider app the request came from: the
-    // agent named in the URL, or — on the account-scoped path — whichever of the
-    // account's agents holds credentials that verify this request. Its adapter
-    // parses the request and sends the reply, because the reply must come from
-    // the app that received it; the channel record only chooses who runs.
-    let agent: AgentRecord | null;
+    // The credential holder owns the provider app the request came from:
+    // whichever of the account's agents holds credentials that verify this
+    // request. Its adapter parses the request and sends the reply, because the
+    // reply must come from the app that received it; the channel record only
+    // chooses who runs.
+    let holder: ChannelCredentialHolder;
     try {
-      agent = pinnedAgentId
-        ? await context.agentLoader(account.accountId, pinnedAgentId)
-        : await findChannelCredentialHolder(
-            context,
-            account.accountId,
-            channelName,
-            channelRequest,
-          );
+      holder = await findChannelCredentialHolder(
+        context,
+        account.accountId,
+        channelName,
+        channelRequest,
+      );
     } catch (err) {
       logError("Webhook agent load failed", {
         accountId: account.accountId,
@@ -551,14 +558,34 @@ async function handleHttpRequest(
       });
       throw err;
     }
-    if (!agent || agent.status !== "active") {
-      logWarn("Webhook agent not found or inactive", {
+    // Without an agent in the URL these three cases would all collapse into one
+    // 404, so keep them apart: nothing configures the channel, something does
+    // but no credentials verified, or the scan itself failed.
+    if (holder.kind === "unconfigured") {
+      logWarn("Webhook channel not configured by any agent", {
         accountId: account.accountId,
-        agentId,
+        channel: channelName,
+        channelConfigured: holder.configured,
+      });
+
+      // "configured" means an agent declares the channel but its adapter would
+      // not take this request — a different message from nobody declaring it.
+      return integrationNotConfigured(
+        holder.configured ? `Webhook ${channelName}` : channelName,
+      );
+    }
+    if (holder.kind === "unverified") {
+      logWarn("Webhook credentials verified by no agent", {
+        accountId: account.accountId,
         channel: channelName,
       });
+
+      return unauthorizedResponse();
+    }
+    if (holder.kind === "unavailable") {
       return notFoundResponse();
     }
+    const agent = holder.agent;
 
     const accountChannelRegistry = createChannelRegistry(agent.config);
     const accountChannel = accountChannelRegistry.webhookChannels.find(
@@ -747,7 +774,7 @@ async function findChannelCredentialHolder(
   accountId: string,
   channelName: string,
   request: ChannelRequest,
-): Promise<AgentRecord | null> {
+): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
     listed = await context.agentLister(accountId);
@@ -757,17 +784,20 @@ async function findChannelCredentialHolder(
       channel: channelName,
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
+
+    return { kind: "unavailable" };
   }
   // Cap the agents that actually configure this channel, not the raw list — an
   // account whose 30th agent owns the Slack app must still be reachable.
   const candidates: Array<{ agent: AgentRecord; adapter: ChannelAdapter }> = [];
+  let configured = false;
   let truncated = false;
   for (const candidate of listed) {
     if (candidate.status !== "active") continue;
     // Cheap key check before building any adapter: an unauthenticated caller
     // should not make us instantiate SDK clients for every agent in the account.
     if (!candidate.config.channels?.[channelName]) continue;
+    configured = true;
     const adapter = createChannelRegistry(
       candidate.config,
     ).webhookChannels.find(
@@ -788,13 +818,31 @@ async function findChannelCredentialHolder(
     });
   }
 
+  // Sort before authenticating. With no agent in the URL this scan is the only
+  // thing choosing a receiver, so two agents sharing one provider app must not
+  // resolve differently between requests — pick the same one every time and say
+  // so, since a channel record is what disambiguates them properly.
+  candidates.sort((left, right) =>
+    left.agent.agentId.localeCompare(right.agent.agentId),
+  );
   for (const candidate of candidates) {
     if (await candidate.adapter.authenticate(request)) {
-      return candidate.agent;
+      if (candidates.length > 1) {
+        logInfo("Channel credentials matched multiple agents", {
+          accountId: accountId,
+          channel: channelName,
+          candidates: candidates.length,
+          receivingAgentId: candidate.agent.agentId,
+        });
+      }
+
+      return { kind: "holder", agent: candidate.agent };
     }
   }
 
-  return null;
+  return candidates.length > 0
+    ? { kind: "unverified" }
+    : { kind: "unconfigured", configured: configured };
 }
 
 /**
@@ -870,6 +918,14 @@ async function resolveChannelTarget(
 // A lookup that failed is not the same as "no record": the first must not run.
 type ChannelTarget =
   | { kind: "resolved"; agent: AgentRecord; record?: ChannelRecord }
+  | { kind: "unavailable" };
+
+// With no agent in the webhook URL, "nobody configures this channel", "nobody's
+// credentials verified" and "the scan broke" are the operator's whole diagnosis.
+type ChannelCredentialHolder =
+  | { kind: "holder"; agent: AgentRecord }
+  | { kind: "unconfigured"; configured: boolean }
+  | { kind: "unverified" }
   | { kind: "unavailable" };
 
 /** Attach the roles this actor holds in the channel so policies can read them. */

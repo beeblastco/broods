@@ -220,6 +220,18 @@ describe("channel.message.received rewrite reaches the session", () => {
           allowedChatIds: [123],
         },
       };
+      const hookedAgent = {
+        accountId: "acct_test",
+        agentId: "agent_test",
+        name: "Hooked agent",
+        status: "active" as const,
+        config: {
+          channels,
+          hooks: { code: [{ hookId: hookRecord.hookId, enabled: true }] },
+        },
+        createdAt: "2026-07-16T00:00:00.000Z",
+        updatedAt: "2026-07-16T00:00:00.000Z",
+      };
       const handled: Array<{ content: unknown; events: unknown }> = [];
       try {
         const waited: Promise<unknown>[] = [];
@@ -233,18 +245,8 @@ describe("channel.message.received rewrite reaches the session", () => {
             createdAt: "2026-07-16T00:00:00.000Z",
             updatedAt: "2026-07-16T00:00:00.000Z",
           }),
-          agentLoader: async () => ({
-            accountId: "acct_test",
-            agentId: "agent_test",
-            name: "Hooked agent",
-            status: "active" as const,
-            config: {
-              channels,
-              hooks: { code: [{ hookId: hookRecord.hookId, enabled: true }] },
-            },
-            createdAt: "2026-07-16T00:00:00.000Z",
-            updatedAt: "2026-07-16T00:00:00.000Z",
-          }),
+          agentLoader: async () => hookedAgent,
+          agentLister: async () => [hookedAgent],
           deploymentLoader: async () => null,
           // This account configures no channel records; the storage stub above
           // omits the store, and a failed lookup refuses the turn by design.
@@ -255,7 +257,7 @@ describe("channel.message.received rewrite reaches the session", () => {
         await route(
           coreRequest(
             "POST",
-            "/webhooks/acct_test/agent_test/telegram",
+            "/webhooks/acct_test/telegram",
             { "x-telegram-bot-api-secret-token": "telegram-secret" },
             {
               update_id: 7,

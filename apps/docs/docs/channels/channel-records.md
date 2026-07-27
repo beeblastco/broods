@@ -13,17 +13,21 @@ Slack install can drive a different agent in every channel.
 
 ## Routing
 
-Two webhook shapes are supported:
+There is one webhook shape:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}   # agent pinned in the URL
-{BROODS_BASE_URL}/webhooks/{accountId}/{channel}             # channel record chooses the agent
+{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
 ```
 
-On the account-scoped path, whichever of the account's agents holds credentials
+The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request is the **credential holder**. Its adapter parses the
 request and sends the reply, because the reply must come from the app that
 received it. The record then decides who runs.
+
+If two agents share one provider app, both verify, and the lower agent id
+receives the request — the order is fixed so it cannot vary between requests,
+and the run is logged. That tie is what a channel record is for; do not rely on
+which agent wins it.
 
 ```mermaid
 flowchart TD
@@ -40,10 +44,8 @@ flowchart TD
   Gate -->|"denied (enforce)"| Refuse["refusal posted in-channel"]
 ```
 
-Both paths honour records, and a lookup that finds nothing falls back — to the
-agent named in the URL on the agent-scoped path, or to the credential holder on
-the account-scoped one. An unregistered channel therefore behaves exactly as it
-did before records existed.
+A lookup that finds nothing falls back to the credential holder, so an
+unregistered channel behaves exactly as it did before records existed.
 
 A lookup that **fails** is different: the turn is refused rather than run,
 because executing without a record's policies and `denyTools` would be an

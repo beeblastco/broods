@@ -1071,10 +1071,11 @@ test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpRoute("/accounts")).toBe(true);
   expect(isCoreHttpRoute("/async")).toBe(true);
   expect(isCoreHttpRoute("/status/request-1")).toBe(true);
-  // Both webhook shapes reach core: the agent-scoped one and the account-scoped
-  // one whose agent a channel record picks.
-  expect(isCoreHttpRoute("/webhooks/acct_1/agent_1/slack")).toBe(true);
+  // The one webhook shape reaches core, and so does a retired agent-scoped URL:
+  // core answers that with a 404 naming the right one, which it cannot do if
+  // the gateway swallows the path first.
   expect(isCoreHttpRoute("/webhooks/acct_1/slack")).toBe(true);
+  expect(isCoreHttpRoute("/webhooks/acct_1/agent_1/slack")).toBe(true);
   expect(isCoreHttpRoute("/v1/crons")).toBe(true);
   expect(isCoreHttpRoute("/v1/demo/agents/development/env_123/async")).toBe(
     true,

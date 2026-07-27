@@ -11,27 +11,28 @@ Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
 
 Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
 
-Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL includes the account and channel, and may pin an agent:
+Customers interact with the provider bot, app, or webhook. They do not receive account secrets. There is one webhook URL, per account and channel:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}   # agent pinned in the URL
-{BROODS_BASE_URL}/webhooks/{accountId}/{channel}             # channel record chooses the agent
+{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
 ```
 
-A [channel record](channel-records.md) binds one real place — a Slack channel, a
-Discord channel, a repository — to an agent, so one provider app can drive a
-different agent per channel. Both URL shapes honour records. With no record the
-agent named in the URL runs on the agent-scoped path, and the agent whose
-credentials verified the request runs on the account-scoped one.
+The URL names no agent. Whichever of the account's agents holds credentials
+that verify the request receives it — that agent's adapter parses the request
+and sends the reply, because the reply must come from the app the provider
+called. A [channel record](channel-records.md) then binds one real place — a
+Slack channel, a Discord channel, a repository — to the agent that should
+answer there, so one provider app can drive a different agent per channel. With
+no record, the agent whose credentials verified the request answers.
 
 ## Runtime Flow
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{agentId\}/\{channel\}"]
+  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{channel\}"]
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
-  Account --> Agent["load active agent config"]
+  Account --> Agent["find the agent whose<br/>credentials verify the request"]
   Agent --> Registry["createChannelRegistry(config, scope)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
@@ -180,7 +181,7 @@ The normalized `InboundMessage` contains:
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
 6. Import the channel factory in [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
-8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
+8. Document the webhook URL as `/webhooks/{accountId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.

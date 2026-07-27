@@ -366,13 +366,15 @@ export class BroodsAccountClient {
   }
 
   /**
-   * Provider webhook URL for one of an agent's channels. Paste this into the
+   * Provider webhook URL for one of the account's channels. Paste this into the
    * provider's webhook settings (Slack Event Subscriptions, Zalo OA webhook,
-   * Pancake page webhook). Routing is per account + agent, so each agent's
-   * channels are isolated from every other agent's.
+   * Pancake page webhook). Routing is per account + channel: the credentials
+   * that verify the request pick the receiving agent, and a channel record
+   * binds each place to the agent that should answer there.
    */
-  webhookUrl(accountId: string, agentId: string, channelType: string): string {
-    const segments = [accountId, agentId, channelType].map(encodeURIComponent);
+  webhookUrl(accountId: string, channelType: string): string {
+    const segments = [accountId, channelType].map(encodeURIComponent);
+
     return `${this.baseUrl}/webhooks/${segments.join("/")}`;
   }
 

@@ -98,6 +98,7 @@ describe("account webhook ingress", () => {
         ...TEST_ACCOUNT,
       }),
       agentLoader: async () => ({ ...TEST_AGENT, config: {} }),
+      agentLister: async () => [{ ...TEST_AGENT, config: {} }],
     });
 
     const response = await routeIncomingEvent(
@@ -115,6 +116,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
     });
 
     const response = await routeIncomingEvent(
@@ -132,6 +134,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => ZALO_AGENT,
+      agentLister: async () => [ZALO_AGENT],
     });
 
     const missing = await routeIncomingEvent(
@@ -156,6 +159,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
       deploymentLoader: async () => ({
         accountId: "acct_test",
         endpointId: "endpoint-development",
@@ -216,6 +220,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => PANCAKE_AGENT,
+      agentLister: async () => [PANCAKE_AGENT],
     });
 
     const response = await routeIncomingEvent(
@@ -267,6 +272,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => ZALO_AGENT,
+      agentLister: async () => [ZALO_AGENT],
     });
 
     const response = await routeIncomingEvent(
@@ -306,20 +312,22 @@ describe("account webhook ingress", () => {
   it("accepts Zalo webhook senders when allowedUserIds is omitted or empty", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     for (const allowedUserIds of [undefined, []]) {
-      const routeIncomingEvent = createIncomingEventRouter({
-        accountLoader: async () => TEST_ACCOUNT,
-        agentLoader: async () => ({
-          ...ZALO_AGENT,
-          config: {
-            channels: {
-              zalo: {
-                botToken: "zalo-token",
-                webhookSecret: "zalo-secret",
-                allowedUserIds,
-              },
+      const zaloAgent = {
+        ...ZALO_AGENT,
+        config: {
+          channels: {
+            zalo: {
+              botToken: "zalo-token",
+              webhookSecret: "zalo-secret",
+              allowedUserIds,
             },
           },
-        }),
+        },
+      };
+      const routeIncomingEvent = createIncomingEventRouter({
+        accountLoader: async () => TEST_ACCOUNT,
+        agentLoader: async () => zaloAgent,
+        agentLister: async () => [zaloAgent],
       });
 
       const response = await routeIncomingEvent(
@@ -341,6 +349,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
     });
 
     const response = await routeIncomingEvent(
@@ -358,6 +367,7 @@ describe("account webhook ingress", () => {
     const routeIncomingEvent = createIncomingEventRouter({
       accountLoader: async () => TEST_ACCOUNT,
       agentLoader: async () => TEST_AGENT,
+      agentLister: async () => [TEST_AGENT],
       authResolver: async () => null,
     });
 
@@ -451,7 +461,7 @@ function createPancakeEvent(): ReturnType<typeof coreRequest> {
     {
       "content-type": "application/json",
     },
-    "/webhooks/acct_test/agent_test/pancake",
+    "/webhooks/acct_test/pancake",
     "secret=pancake-secret",
   );
 }
@@ -462,11 +472,7 @@ function createZaloEvent(
     "x-bot-api-secret-token": "zalo-secret",
   },
 ): ReturnType<typeof coreRequest> {
-  return createTelegramEvent(
-    body,
-    headers,
-    "/webhooks/acct_test/agent_test/zalo",
-  );
+  return createTelegramEvent(body, headers, "/webhooks/acct_test/zalo");
 }
 
 function createTelegramEvent(
@@ -474,7 +480,7 @@ function createTelegramEvent(
   headers: Record<string, string> = {
     "x-telegram-bot-api-secret-token": "telegram-secret",
   },
-  rawPath = "/webhooks/acct_test/agent_test/telegram",
+  rawPath = "/webhooks/acct_test/telegram",
   rawQueryString = "",
 ): ReturnType<typeof coreRequest> {
   return coreRequest(

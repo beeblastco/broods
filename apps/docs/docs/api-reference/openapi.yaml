@@ -467,19 +467,14 @@ paths:
         "404":
           description: Unknown resultId or invalid token
 
-  /webhooks/{accountId}/{agentId}/{channelName}:
+  /webhooks/{accountId}/{channelName}:
     post:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: agentId
           in: path
           required: true
           schema:
@@ -496,7 +491,7 @@ paths:
         "401":
           description: Provider authentication failed
         "404":
-          description: Unknown account, agent, or channel
+          description: Unknown account or channel, or no agent holds credentials for it
 
   /accounts:
     post:
@@ -1870,7 +1865,12 @@ paths:
       summary: Get channel record
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: channelId, in: path, required: true, schema: { type: string } }
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
         "200":
           description: Channel
@@ -1884,7 +1884,12 @@ paths:
       summary: Update channel record
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: channelId, in: path, required: true, schema: { type: string } }
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         content:
           application/json:
@@ -1903,7 +1908,12 @@ paths:
       summary: Delete channel record
       security: [{ BearerAuth: [] }]
       parameters:
-        - { name: channelId, in: path, required: true, schema: { type: string } }
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
       responses:
         "200": { description: Deleted }
         "404": { description: Not found }
@@ -3570,7 +3580,7 @@ components:
 
     ChannelsConfig:
       type: object
-      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
+      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{channel}`.
       properties:
         telegram:
           type: object

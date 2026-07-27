@@ -393,7 +393,7 @@ export const sandboxConfigsFields = {
   encryptedSourceConfig: v.optional(v.string()),
   sourceEncryptionIv: v.optional(v.string()),
   sourceEncryptionTag: v.optional(v.string()),
-  /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
+  /** Masked markers of the `env("NAME")` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
   runtimeVariables: v.optional(
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),

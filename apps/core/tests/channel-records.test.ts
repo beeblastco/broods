@@ -56,14 +56,14 @@ const ACCOUNT = {
   updatedAt: "2026-07-20T00:00:00.000Z",
 };
 
+const TELEGRAM_CHANNEL = {
+  botToken: "bot-token",
+  webhookSecret: "telegram-secret",
+  allowedChatIds: [123],
+};
+
 const TELEGRAM_CONFIG: AgentConfig = {
-  channels: {
-    telegram: {
-      botToken: "bot-token",
-      webhookSecret: "telegram-secret",
-      allowedChatIds: [123],
-    },
-  },
+  channels: { telegram: TELEGRAM_CHANNEL },
 };
 
 const SUPPORT_AGENT: AgentRecord = {
@@ -76,10 +76,23 @@ const SUPPORT_AGENT: AgentRecord = {
   updatedAt: "2026-07-20T00:00:00.000Z",
 };
 
+// Sales configures telegram but with a different secret, so only Support's
+// credentials verify the incoming request. That is the real shape: one provider
+// app has one credential set, and the record — not the credentials — decides
+// which agent answers in a given place.
 const SALES_AGENT: AgentRecord = {
   ...SUPPORT_AGENT,
   agentId: "agent_sales",
   name: "Sales",
+  config: {
+    ...TELEGRAM_CONFIG,
+    channels: {
+      telegram: {
+        ...TELEGRAM_CHANNEL,
+        webhookSecret: "sales-telegram-secret",
+      },
+    },
+  },
 };
 
 function channelRecord(overrides: Partial<ChannelRecord> = {}): ChannelRecord {
@@ -126,15 +139,18 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_support");
   });
 
-  it("lets a record retarget the agent-scoped path too", async () => {
+  it("no longer routes a webhook that names an agent in the URL", async () => {
     const runs: ChannelInboundEvent[] = [];
-    await route({
+    const response = await route({
       records: { "telegram:123": channelRecord() },
       runs,
       path: "/webhooks/acct_test/agent_support/telegram",
     });
 
-    expect(runs[0]!.agentId).toBe("agent_sales");
+    // The agent-scoped shape is gone rather than redirected: a stale provider
+    // URL must fail loudly instead of quietly running the wrong agent.
+    expect(response.statusCode).toBe(404);
+    expect(runs).toHaveLength(0);
   });
 
   it("keeps the receiving agent when the bound agent is gone", async () => {
@@ -196,6 +212,7 @@ describe("channel record resolution", () => {
     const router = createIncomingEventRouter({
       accountLoader: async () => ACCOUNT,
       agentLoader: async () => SUPPORT_AGENT,
+      agentLister: async () => [SUPPORT_AGENT],
       deploymentLoader: async () => null,
       waitUntil: (promise) => {
         waited.push(Promise.resolve(promise).catch(() => undefined));
@@ -205,7 +222,7 @@ describe("channel record resolution", () => {
     const response = await router(
       coreRequest(
         "POST",
-        "/webhooks/acct_test/agent_support/telegram",
+        "/webhooks/acct_test/telegram",
         { "x-telegram-bot-api-secret-token": "telegram-secret" },
         {
           update_id: 7,
@@ -239,7 +256,9 @@ describe("channel record resolution", () => {
       headers: { "x-telegram-bot-api-secret-token": "wrong-secret" },
     });
 
-    expect(response.statusCode).toBe(404);
+    // Agents do configure telegram here, so this is a credential failure and
+    // must say so — 404 would send the operator hunting a routing bug.
+    expect(response.statusCode).toBe(401);
   });
 
   it("reaches an agent that configures the channel behind many that do not", async () => {
