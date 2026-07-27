@@ -971,19 +971,18 @@ export async function runAgentLoop(
     onToolExecutionEnd: async ({ toolCall, toolExecutionMs, toolOutput }) => {
       const stepNumber = toolStepNumbers.get(toolCall.toolCallId);
       toolStepNumbers.delete(toolCall.toolCallId);
-      const durationMs = toolExecutionMs;
       const output =
         toolOutput.type === "tool-result" ? toolOutput.output : undefined;
       const error =
         toolOutput.type === "tool-error" ? toolOutput.error : undefined;
-      // Close the tool.call span. Normalize the SDK's duration before anything
-      // uses it as a timestamp — a NaN or negative one would corrupt the start.
+      // Normalize the SDK's duration once, here: it is used as a timestamp and
+      // reported on every surface, so a NaN or negative one must not get through.
       const toolEndMs = Date.now();
       const openSpan = toolSpans.get(toolCall.toolCallId);
       const toolDurationMs = toolSpanDurationMs(
         openSpan?.startTimeMs ?? toolEndMs,
         toolEndMs,
-        durationMs,
+        toolExecutionMs,
       );
       const tracked =
         openSpan ??
@@ -1065,15 +1064,17 @@ export async function runAgentLoop(
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
+      // Every surface quotes the same normalized number the span does, so a
+      // trace and its event log can never disagree about how long a tool took.
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber,
-        durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
       });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
         ...(toolSucceeded ? {} : { error: errorText ?? errorMessage(error) }),
       });
@@ -1083,19 +1084,19 @@ export async function runAgentLoop(
         stepNumber: stepNumber,
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
       };
 
       if (toolSucceeded) {
         logInfo(
-          `Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`,
+          `Tool call finished: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}`,
           details,
         );
         return;
       }
 
       logError(
-        `Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`,
+        `Tool call failed: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}${errorText ? `: ${errorText}` : ""}`,
         {
           ...details,
           error: errorText ?? errorMessage(error),
