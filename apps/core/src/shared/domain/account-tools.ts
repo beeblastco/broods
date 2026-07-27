@@ -132,7 +132,6 @@ export function normalizeAccountToolUpload(
 
   if (value.bundle !== undefined) {
     result.bundle = normalizeBundle(value.bundle);
-    result.sha256 = sha256Hex(result.bundle);
   } else if (options.requireBundle) {
     throw new Error("tool.bundle is required");
   }
@@ -146,7 +145,7 @@ export function normalizeAccountToolUpload(
   }
 
   // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
-  // which deliberately does not restate runtime.
+  // which deliberately does not restate runtime. Checked before hashing.
   if (result.bundle !== undefined) {
     assertBundleSize(
       result.bundle,
@@ -154,6 +153,7 @@ export function normalizeAccountToolUpload(
         options.currentRuntime ??
         inferAccountToolRuntime(result.bundle),
     );
+    result.sha256 = sha256Hex(result.bundle);
   }
 
   if (value.defaultConfig !== undefined) {

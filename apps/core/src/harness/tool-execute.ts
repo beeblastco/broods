@@ -20,11 +20,8 @@ const AsyncGeneratorFunction = Object.getPrototypeOf(
   async function* (): AsyncGenerator<never, void, void> {},
 ).constructor as new () => unknown;
 
-/**
- * Wraps every executable tool in a set, preserving whether each one streams.
- * A streaming tool's yields pass straight through; `after` applies to the last
- * one, which is the value the SDK takes as the tool's result.
- */
+// `after` applies to a streaming tool's last yield, which is the value the SDK
+// takes as its result.
 export function wrapToolExecute(
   tools: ToolSet,
   hooks: (name: string) => ToolExecuteHooks,

@@ -117,9 +117,8 @@ describe("per-tier bundle size bound", () => {
   });
 
   it("bounds a bundle-only PATCH by the stored tier, not the inferred one", () => {
-    // A PATCH deliberately does not restate runtime, so the stored tier is what
-    // the bundle will actually run on. Inferring here would let a 6 MB pure-JS
-    // bundle onto the isolate tier, or reject one bound for the sandbox.
+    // A PATCH does not restate runtime, so the stored tier is the real one:
+    // inferring here would let a multi-MB pure-JS bundle onto the isolate tier.
     const pure = bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1);
 
     expect(() => patch(pure, "sandbox")).not.toThrow();

@@ -1,8 +1,8 @@
 /**
  * AWS Lambda entry for the sandbox-tier tool runner. It runs an uploaded account
- * tool bundle (passed inline in the invoke event) in a per-invocation child Node
- * process with a scrubbed env and a fresh TMPDIR, and streams the child's raw
- * NDJSON frames back to the core invoker as they are written, so an
+ * tool bundle (addressed by the invoke event, fetched by the child) in a
+ * per-invocation child Node process with a scrubbed env and a fresh TMPDIR, and
+ * streams the child's raw NDJSON frames to the core invoker as written, so an
  * async-generator tool's yields reach the agent loop live. The child is a
  * containment layer, not a trust boundary — it runs same-UID, so keep this
  * function's execution role empty and assume anything it can reach is reachable
@@ -22,8 +22,8 @@ import { fileURLToPath } from "node:url";
 // the handler always wins and returns a clean error frame.
 const RUN_TIMEOUT_MS = 30_000;
 const CHILD_GRACE_MS = 2_000;
-// A streamed response may run to 200 MB, so this is a runaway-tool bound rather
-// than the old 6 MB buffered-invoke ceiling. Core holds one frame at a time.
+// Deliberately far below Lambda's 200 MB streamed ceiling: every forwarded byte
+// lands in core's memory and then in an agent's context, so this bounds a tool.
 const OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
 
 // streamifyResponse is injected by the Node managed runtime. Falling back to the
@@ -71,8 +71,7 @@ async function runChild(event, home, responseStream) {
     });
     let forwardedBytes = 0;
     let stderr = "";
-    let overflow = false;
-    let stopped = false;
+    let stopReason;
     let exit;
     let drained = false;
     // Settle on both the exit and the last byte of stdout. "exit" alone can fire
@@ -82,11 +81,10 @@ async function runChild(event, home, responseStream) {
     const settle = () => {
       if (!exit || !drained) return;
       clearTimeout(timeout);
-      if (overflow) {
-        endWithError(
-          responseStream,
-          "custom tool sandbox output exceeded limit",
-        );
+      // A killed run is a failure even when chunks already went out, so it ends
+      // on an error frame rather than a clean close the caller reads as success.
+      if (stopReason) {
+        endWithError(responseStream, stopReason);
       } else if (forwardedBytes === 0) {
         endWithError(
           responseStream,
@@ -102,19 +100,21 @@ async function runChild(event, home, responseStream) {
     };
     // Abandon forwarding and let the pipe run dry: a paused stdout never reaches
     // "end", so the run would never settle.
-    const stopForwarding = () => {
-      stopped = true;
+    const stopForwarding = (reason) => {
+      stopReason = reason;
       child.stdout.resume();
       killGroup(child);
     };
-    const timeout = setTimeout(stopForwarding, RUN_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => stopForwarding("custom tool sandbox execution timed out"),
+      RUN_TIMEOUT_MS,
+    );
 
     child.stdout.on("data", (chunk) => {
-      if (stopped) return;
+      if (stopReason) return;
       forwardedBytes += chunk.length;
       if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
-        overflow = true;
-        stopForwarding();
+        stopForwarding("custom tool sandbox output exceeded limit");
         return;
       }
       // Pause on a full response buffer so a chatty tool cannot outrun the
