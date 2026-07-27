@@ -73,8 +73,35 @@ async function runChild(event, home, responseStream) {
     let stderr = "";
     let overflow = false;
     let stopped = false;
-    // Abandon forwarding and let the pipe run dry: a paused stdout never emits
-    // "end", so the child would never reach "close" and the run would hang.
+    let exit;
+    let drained = false;
+    // Settle on both the exit and the last byte of stdout. "exit" alone can fire
+    // with output still buffered behind a backpressure pause; stdout's "end"
+    // alone can never arrive, because a detached grandchild holds the pipe's
+    // write end open until killGroup runs on exit.
+    const settle = () => {
+      if (!exit || !drained) return;
+      clearTimeout(timeout);
+      if (overflow) {
+        endWithError(
+          responseStream,
+          "custom tool sandbox output exceeded limit",
+        );
+      } else if (forwardedBytes === 0) {
+        endWithError(
+          responseStream,
+          stderr.trim() ||
+            (exit.signal
+              ? `signal ${exit.signal}`
+              : `exit ${exit.code ?? "unknown"}`),
+        );
+      } else {
+        responseStream.end();
+      }
+      resolve();
+    };
+    // Abandon forwarding and let the pipe run dry: a paused stdout never reaches
+    // "end", so the run would never settle.
     const stopForwarding = () => {
       stopped = true;
       child.stdout.resume();
@@ -110,28 +137,17 @@ async function runChild(event, home, responseStream) {
       );
       resolve();
     });
-    // "close", not "exit": exit fires while stdout may still hold buffered data,
-    // and pausing for backpressure widens that window into lost output.
-    child.once("close", (code, signal) => {
-      clearTimeout(timeout);
-      // The child is gone, but anything it spawned is not. Reap the group before
-      // returning so nothing survives into the next tenant's invocation.
+    child.stdout.once("end", () => {
+      drained = true;
+      settle();
+    });
+    child.once("exit", (code, signal) => {
+      exit = { code: code, signal: signal };
+      // The child is gone, but anything it spawned is not. Reap the group here
+      // rather than on "close": a grandchild holding the pipe open would stop
+      // stdout ending, and reaping is what lets the remaining bytes arrive.
       killGroup(child);
-      if (overflow) {
-        endWithError(
-          responseStream,
-          "custom tool sandbox output exceeded limit",
-        );
-      } else if (forwardedBytes === 0) {
-        endWithError(
-          responseStream,
-          stderr.trim() ||
-            (signal ? `signal ${signal}` : `exit ${code ?? "unknown"}`),
-        );
-      } else {
-        responseStream.end();
-      }
-      resolve();
+      settle();
     });
 
     // A child that exits before reading stdin makes end() emit EPIPE; an

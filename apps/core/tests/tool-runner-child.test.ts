@@ -234,11 +234,16 @@ async function runChild(
         : {}),
     })}\n`,
   );
-  const exitCode = await new Promise<number | null>((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code) => resolve(code));
-  });
-  server?.stop(true);
+  let exitCode: number | null;
+  try {
+    exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code));
+    });
+  } finally {
+    // A spawn error rejects above; without this the server outlives the test run.
+    server?.stop(true);
+  }
 
   return {
     frames: stdout

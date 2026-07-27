@@ -275,4 +275,29 @@ describe("tool-runner response streaming", () => {
     expect(frames.filter((frame) => frame.t === "chunk")).toHaveLength(yields);
     expect(frames.at(-1)?.t).toBe("final");
   }, 30_000);
+
+  it("settles promptly when a grandchild inherits the stdout pipe", async () => {
+    // The grandchild holds the pipe's write end open, so stdout never ends on
+    // its own. Waiting for it without reaping the group first would stall the
+    // run until the 30s kill, turning a fast tool into a timeout.
+    const bundle = [
+      `import { spawn } from "node:child_process";`,
+      `export default {`,
+      `  name: "leaky",`,
+      `  execute() {`,
+      // inherit: the grandchild gets this process's stdout, not a fresh pipe.
+      `    spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
+      `      stdio: "inherit",`,
+      `    });`,
+      `    return { spawned: true };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const startedAt = Date.now();
+    const result = await invokeHandler(bundle, { toolName: "leaky" });
+
+    expect(result.stdout).toContain('"spawned":true');
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+  }, 40_000);
 });
