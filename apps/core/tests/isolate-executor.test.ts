@@ -745,6 +745,70 @@ describe("streamIsolatePayload cross-process abort", () => {
       shutdownIsolatePool();
     }
   });
+
+  it("queues past the pool cap instead of spawning past it", async () => {
+    // The cap is what keeps resident memory bounded, so concurrent demand above
+    // it has to wait for a worker rather than grow the pool or fail.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-cap-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "slow-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    setTimeout(() => process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n'), 120);",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_WORKER_POOL_SIZE = "2";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      const call = async (tenant: string): Promise<unknown[]> => {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload(tenant, {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+
+        return outputs;
+      };
+      const results = await Promise.all(
+        ["a", "b", "c", "d", "e"].map((tenant) => call(`acct_${tenant}`)),
+      );
+
+      expect(results).toEqual(Array.from({ length: 5 }, () => [{ ok: true }]));
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(2);
+    } finally {
+      delete process.env.ISOLATE_WORKER_POOL_SIZE;
+      shutdownIsolatePool();
+    }
+  });
 });
 
 async function runPoolRunner(
