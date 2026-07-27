@@ -70,9 +70,11 @@ reading an agent still tells you its ceiling.
 Provider, model and credentials stay on the agent and are never touched.
 
 `denyTools` is applied to the finished tool set rather than to `config.tools`,
-so it can withhold sandbox tools such as `bash` and `read` — which are derived
-from the attached workspaces and never appear in `config.tools`. Naming a tool
-the agent does not have is ignored.
+so it reaches every tool the agent ended up with: built-ins, [custom
+tools](../tools.md) by their model-facing name, and sandbox tools such as `bash`
+and `read` — the last of which are derived from the attached workspaces and
+never appear in `config.tools` at all. Naming a tool the agent does not have is
+ignored.
 
 ## Creating a record
 

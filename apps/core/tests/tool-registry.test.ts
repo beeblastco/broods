@@ -73,6 +73,48 @@ describe("createTools", () => {
     expect(Object.keys(tools).sort()).toEqual(["urlContext"]);
   });
 
+  it("withholds a custom tool by the name the model sees, not its tool id", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const toolId = "qs78zwc4z4q5ysxm74fgrhd13s88xxt";
+    setStorageForTests(
+      storageWithAccountTool({
+        accountId: "acct_test",
+        toolId: toolId,
+        name: "lookup_invoice",
+        description: "Uploaded test tool.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
+        sha256: "a".repeat(64),
+        runtime: "sandbox",
+        status: "active",
+        createdAt: "2026-06-06T00:00:00.000Z",
+        updatedAt: "2026-06-06T00:00:00.000Z",
+      }),
+    );
+
+    // A record's deny list is written by a human reading the channel, so it
+    // names the tool the model is offered — the opaque id must not match.
+    expect(
+      Object.keys(
+        await createTools(createToolContext() as never, {
+          tools: { [toolId]: { enabled: true } },
+          denyTools: [toolId],
+        }),
+      ),
+    ).toEqual(["lookup_invoice"]);
+
+    expect(
+      await createTools(createToolContext() as never, {
+        tools: { [toolId]: { enabled: true } },
+        denyTools: ["lookup_invoice"],
+      }),
+    ).toEqual({});
+  });
+
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
