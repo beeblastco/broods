@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
+import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 const childRunnerPath = fileURLToPath(
@@ -147,46 +148,23 @@ describe("sandbox child-runner", () => {
     ]);
   });
 
-  it("fetches a bundle addressed by URL and runs it", async () => {
+  it("gives a bundler's createRequire(import.meta.url) a usable file URL", async () => {
+    // Bundlers emit this line whenever they inline a CommonJS dependency, and it
+    // runs at module scope: a data: URL throws there, before the tool exists.
     const result = await runChild(
-      "export default { name: 'fetched', execute: () => ({ ok: true }) };",
-      { toolName: "fetched", serveBundle: true },
-    );
-
-    expect(result.frames).toEqual([{ t: "final", result: { ok: true } }]);
-  });
-
-  it("rejects a fetched bundle whose bytes do not match the manifest hash", async () => {
-    // The URL is the only thing the payload carries, so the hash check is what
-    // stands between a swapped object and arbitrary code in the runner.
-    const result = await runChild(
-      "export default { name: 'tampered', execute: () => ({ ok: true }) };",
-      {
-        toolName: "tampered",
-        serveBundle: true,
-        expectedSha256: "0".repeat(64),
-      },
+      `import { createRequire } from 'node:module';
+       const __require = createRequire(import.meta.url);
+       const os = __require('os');
+       export default { name: 'cjsy', execute: () => ({
+         scheme: import.meta.url.slice(0, 5),
+         required: typeof os.platform(),
+       }) };`,
+      { toolName: "cjsy" },
     );
 
     expect(result.frames).toEqual([
-      {
-        t: "error",
-        error: "custom tool bundle hash mismatch inside sandbox runner",
-      },
+      { t: "final", result: { scheme: "file:", required: "string" } },
     ]);
-  });
-
-  it("surfaces a refused bundle URL as an error frame", async () => {
-    // What an expired presigned URL looks like: S3 answers 403, and the run has
-    // to fail loudly rather than hang or report an empty result.
-    const result = await runChild("export default {};", {
-      toolName: "expired",
-      bundleUrl: "https://example.invalid/expired-bundle.mjs",
-    });
-
-    expect(result.frames).toHaveLength(1);
-    expect((result.frames[0] as { t: string }).t).toBe("error");
-    expect(result.exitCode).toBe(1);
   });
 });
 
@@ -198,20 +176,15 @@ async function runChild(
     config?: Record<string, unknown>;
     toolCallId?: string;
     expectedSha256?: string;
-    // Serve the source over HTTP and send a bundleUrl instead of inline bytes,
-    // the way the Lambda tier addresses a bundle it must not put in the payload.
-    serveBundle?: boolean;
-    bundleUrl?: string;
   },
 ): Promise<{ frames: unknown[]; exitCode: number | null }> {
   const expectedSha256 =
     options.expectedSha256 ??
     new Bun.CryptoHasher("sha256").update(source).digest("hex");
-  const server = options.serveBundle
-    ? Bun.serve({ port: 0, fetch: () => new Response(source) })
-    : undefined;
+  // The fourth pipe is the bundle channel the handler writes; the request on
+  // stdin only addresses it.
   const child = spawn("node", [childRunnerPath], {
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe", "pipe"],
     env: { ...process.env },
   });
   let stdout = "";
@@ -220,11 +193,9 @@ async function runChild(
     stdout += chunk;
   });
   child.stderr.resume();
+  (child.stdio[3] as Writable).end(source);
   child.stdin.end(
     `${JSON.stringify({
-      ...(server || options.bundleUrl
-        ? { bundleUrl: options.bundleUrl ?? server!.url.href }
-        : { bundleSourceB64: Buffer.from(source).toString("base64") }),
       expectedSha256,
       toolName: options.toolName,
       input: options.input ?? {},
@@ -234,16 +205,10 @@ async function runChild(
         : {}),
     })}\n`,
   );
-  let exitCode: number | null;
-  try {
-    exitCode = await new Promise<number | null>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => resolve(code));
-    });
-  } finally {
-    // A spawn error rejects above; without this the server outlives the test run.
-    server?.stop(true);
-  }
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
 
   return {
     frames: stdout

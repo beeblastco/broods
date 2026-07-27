@@ -45,10 +45,10 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("const k = process?.env?.API_KEY;")).toBe(
       "sandbox",
     );
-    // A bare `process` reference in any form throws before any `.`/`?.` — cover
-    // the plain-reference and bracket-access shapes the dotted probe misses.
-    expect(inferAccountToolRuntime("const p = process;")).toBe("sandbox");
     expect(inferAccountToolRuntime("const k = process['env'];")).toBe(
+      "sandbox",
+    );
+    expect(inferAccountToolRuntime("const b = Buffer.from('x');")).toBe(
       "sandbox",
     );
     expect(inferAccountToolRuntime("import fs from 'node:fs';")).toBe(
@@ -60,6 +60,23 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("import axios from 'axios';")).toBe(
       "sandbox",
     );
+    // The isolate has no Web Streams, so a bundle touching one is routed here
+    // rather than left to fail at import time.
+    expect(
+      inferAccountToolRuntime("class Chunker extends TransformStream {}"),
+    ).toBe("sandbox");
+  });
+
+  // Bundled zod declares a `process` of its own, as an export-map key and as a
+  // method. Naming something `process` is not reading Node's global, and
+  // treating it as one taxed every zod-shaped bundle with a Lambda round trip.
+  it("does not mistake a locally named process for the global", () => {
+    expect(
+      inferAccountToolRuntime("var mod = { process: () => process2 };"),
+    ).toBe("isolate");
+    expect(
+      inferAccountToolRuntime("class Encoder { process(schema, params) {} }"),
+    ).toBe("isolate");
   });
 });
 

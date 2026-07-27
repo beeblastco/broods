@@ -45,6 +45,30 @@ describe("createRunnerPayload", () => {
     });
   });
 
+  it("reads a bundle from S3 once no matter how many calls want it", async () => {
+    // Content-addressed, so a hit is the same bytes by definition. The two
+    // concurrent calls are the shape that matters: an unmemoized cache would
+    // let both miss, both fetch, and both charge the byte ledger for one entry.
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+    const tool = { ...accountToolRecord(), sha256: "dedupe-me" };
+    const build = (): Promise<unknown> =>
+      createRunnerPayload({
+        bucket: "tool-bundles",
+        tool: tool,
+        input: {},
+        config: {},
+        bundleTransport: "inline",
+      });
+    readS3BytesMock.mockClear();
+
+    const [first, second] = await Promise.all([build(), build()]);
+    await build();
+
+    expect(readS3BytesMock).toHaveBeenCalledTimes(1);
+    expect(first).toEqual(second);
+  });
+
   it("lets agent config override the tool default config", async () => {
     const { createRunnerPayload } =
       await import("../src/harness/bundles/payload.ts");
@@ -127,8 +151,7 @@ describe("runner frame protocol", () => {
   });
 
   it("FrameQueue yields whole frames as lines arrive, then flushes on close", async () => {
-    const { FrameQueue } =
-      await import("../src/harness/bundles/payload.ts");
+    const { FrameQueue } = await import("../src/harness/bundles/payload.ts");
     const queue = new FrameQueue();
     const collected: unknown[] = [];
     const consume = (async () => {

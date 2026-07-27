@@ -44,10 +44,10 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("const k = process?.env?.API_KEY;")).toBe(
       "sandbox",
     );
-    // A bare `process` reference throws before any `.`/`?.` — cover the plain
-    // and bracket-access shapes that a dotted-only probe would miss.
-    expect(inferAccountToolRuntime("const p = process;")).toBe("sandbox");
     expect(inferAccountToolRuntime("const k = process['env'];")).toBe(
+      "sandbox",
+    );
+    expect(inferAccountToolRuntime("const b = Buffer.from('x');")).toBe(
       "sandbox",
     );
     expect(inferAccountToolRuntime("import fs from 'node:fs';")).toBe(
@@ -81,6 +81,33 @@ describe("inferAccountToolRuntime", () => {
     // the guarded probes above and bundler-inlined conditional probes.
     expect(inferAccountToolRuntime("const k = globalThis.process.env;")).toBe(
       "isolate",
+    );
+  });
+
+  // Bundled zod declares a `process` of its own, as an export-map key and as a
+  // method. Reading it as a namespace is what throws in an isolate; naming
+  // something `process` is not, and treating it as Node's global taxed every
+  // zod-shaped bundle with a Lambda round trip it did not need.
+  it("does not mistake a locally named process for the global", () => {
+    expect(
+      inferAccountToolRuntime("var mod = { process: () => process2 };"),
+    ).toBe("isolate");
+    expect(
+      inferAccountToolRuntime("class Encoder { process(schema, params) {} }"),
+    ).toBe("isolate");
+    expect(
+      inferAccountToolRuntime("class A { run() { this.process(1); } }"),
+    ).toBe("isolate");
+  });
+
+  // The isolate installs text codecs, URL and crypto, but not Web Streams, so a
+  // bundle reaching for one is routed rather than left to fail at import time.
+  it("routes Web Streams bundles to sandbox", () => {
+    expect(
+      inferAccountToolRuntime("class Chunker extends TransformStream {}"),
+    ).toBe("sandbox");
+    expect(inferAccountToolRuntime("const r = new ReadableStream();")).toBe(
+      "sandbox",
     );
   });
 

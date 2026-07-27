@@ -91,9 +91,14 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// A bare `process` reference (member, bracket, call, or plain) throws in an isolate
-// even through `?.`; namespaced probes (`globalThis.process?.x`) stay isolate.
-const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
+// Member reads only: a locally declared `process` method or export key is not
+// the global (bundled zod ships one), and `typeof process` is a guarded probe.
+const NODE_GLOBAL_MEMBER_PATTERN =
+  /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
+// Web Streams are outside what isolate/runner/web-globals.mjs installs, so a
+// bundle touching one — every bundle importing `ai` does — runs on sandbox.
+const WEB_STREAMS_PATTERN =
+  /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */
@@ -232,9 +237,9 @@ export function toPublicAccountTool(
 
 /**
  * Cheap upload-time heuristic for choosing the default execution tier. Bundles
- * that mention Node-only globals, node: imports, require(), or bare package
- * imports need the existing sandbox tier; pure relative-import-free bundles can
- * run in the V8 isolate tier.
+ * that mention Node-only globals, node: imports, require(), bare package
+ * imports, or Web Streams need the sandbox tier; everything the isolate's global
+ * set covers stays on the faster isolate tier.
  */
 export function inferAccountToolRuntime(
   bundleSource: string,
@@ -242,7 +247,8 @@ export function inferAccountToolRuntime(
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    NODE_PROCESS_GLOBAL_PATTERN.test(bundleSource) ||
+    NODE_GLOBAL_MEMBER_PATTERN.test(bundleSource) ||
+    WEB_STREAMS_PATTERN.test(bundleSource) ||
     /\b__dirname\b/.test(bundleSource) ||
     BARE_IMPORT_PATTERN.test(bundleSource)
   ) {

@@ -26,8 +26,20 @@ async function invokeHandler(
   // Read the response slowly against a small buffer to force the handler's
   // backpressure path, where a paused stdout can outlive the child's exit.
   throttleMs = 0,
+  // Address the bundle the way core does in production — a presigned GET the
+  // handler resolves — instead of inlining the bytes in the invoke event.
+  bundleAddress?: "served" | { url: string },
 ): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
+  const server =
+    bundleAddress === "served"
+      ? Bun.serve({ port: 0, fetch: () => new Response(bundle) })
+      : undefined;
+  const bundleUrl =
+    server?.url.href ??
+    (bundleAddress && bundleAddress !== "served"
+      ? bundleAddress.url
+      : undefined);
   try {
     const driver = join(dir, "driver.mjs");
     await writeFile(
@@ -56,7 +68,8 @@ async function invokeHandler(
         `})();`,
         `await handler({`,
         `  ...${JSON.stringify(event)},`,
-        `  bundleSourceB64: bundle.toString("base64"),`,
+        `  ...${JSON.stringify(bundleUrl ? { bundleUrl: bundleUrl } : {})},`,
+        bundleUrl ? `` : `  bundleSourceB64: bundle.toString("base64"),`,
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
         `await consumed;`,
@@ -83,6 +96,7 @@ async function invokeHandler(
       });
     });
   } finally {
+    server?.stop(true);
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -218,6 +232,45 @@ describe("tool-runner containment", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  }, 30_000);
+});
+
+describe("tool-runner bundle addressing", () => {
+  it("resolves a bundle the event only addresses by URL", async () => {
+    // Core spends its 6 MB invoke quota on a presigned GET rather than the
+    // bytes; the handler fetches so the per-invocation child does not.
+    const bundle = `export default { name: "byurl", execute: () => ({ ok: true }) };`;
+
+    const result = await invokeHandler(
+      bundle,
+      { toolName: "byurl" },
+      {},
+      0,
+      "served",
+    );
+
+    expect(result.stdout?.trim()).toBe(
+      JSON.stringify({ t: "final", result: { ok: true } }),
+    );
+  }, 30_000);
+
+  it("fails loudly when the bundle URL is refused", async () => {
+    // What an expired presigned URL looks like: the run has to end on an error
+    // frame rather than hang or report an empty result.
+    const result = await invokeHandler(
+      "export default {};",
+      { toolName: "expired" },
+      {},
+      0,
+      { url: "https://example.invalid/expired-bundle.mjs" },
+    );
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { t: string });
+
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.t).toBe("error");
   }, 30_000);
 });
 

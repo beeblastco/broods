@@ -109,8 +109,13 @@ if (import.meta.main) {
   const { handler: accountHandler } = await import("./accounts/handler.ts");
   const { drainInProcessWorkers, handler: harnessHandler } =
     await import("./harness/handler.ts");
+  const { prewarmIsolatePool, shutdownIsolatePool } =
+    await import("./harness/isolate/executor.ts");
 
   initOtel();
+  // One warm isolate worker so the first uploaded-tool call does not pay Node
+  // startup. Failure is not fatal: the pool spawns on demand anyway.
+  void prewarmIsolatePool().catch(() => undefined);
 
   const server = Bun.serve({
     port: positiveIntegerEnv("PORT", 3000),
@@ -165,6 +170,7 @@ if (import.meta.main) {
       await server.stop();
       await drainInFlight();
       await drainInProcessWorkers();
+      shutdownIsolatePool();
     })().catch((err) => {
       logError("Graceful shutdown failed", {
         error: err instanceof Error ? err.message : String(err),

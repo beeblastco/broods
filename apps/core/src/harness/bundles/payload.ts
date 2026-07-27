@@ -14,6 +14,19 @@ import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
 // The runner fetches at the start of a 35s-bounded invocation, so the grant only
 // has to outlive a cold start.
 const BUNDLE_URL_TTL_SECONDS = 120;
+// Inline bundles are keyed by sha256, so a hit is the same bytes by definition
+// and there is nothing to invalidate — only a size bound to keep.
+const BUNDLE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+// bytes stays 0 while the read is in flight, which is also what marks an entry
+// as not yet evictable.
+interface CachedBundle {
+  bytes: number;
+  encoded: Promise<string>;
+}
+
+const bundleCache = new Map<string, CachedBundle>();
+let bundleCacheBytes = 0;
 
 export interface ExecuteAccountToolOptions {
   accountId: string;
@@ -32,7 +45,8 @@ export interface ExecuteAccountToolOptions {
 // The isolate tier inlines the bytes on a local child's stdin; the Lambda tier
 // gets a presigned GET, since an inlined bundle spends its 6 MB invoke quota.
 export type RunnerBundleSource =
-  { bundleSourceB64: string } | { bundleUrl: string };
+  | { bundleSourceB64: string }
+  | { bundleUrl: string };
 
 // Payload a runner reads on stdin. toolCallId is the AI SDK call id surfaced
 // via options.toolCallId.
@@ -111,6 +125,7 @@ export async function createRunnerPayload(options: {
       options.bundleTransport,
       options.bucket,
       options.tool.bundleStorageKey,
+      options.tool.sha256,
     )),
     expectedSha256: options.tool.sha256,
     toolName: options.tool.name,
@@ -172,13 +187,10 @@ async function bundleSource(
   transport: "inline" | "presigned-url",
   bucket: string,
   key: string,
+  sha256: string,
 ): Promise<RunnerBundleSource> {
   if (transport === "inline") {
-    return {
-      bundleSourceB64: Buffer.from(await readS3Bytes(bucket, key)).toString(
-        "base64",
-      ),
-    };
+    return { bundleSourceB64: await inlineBundle(bucket, key, sha256) };
   }
 
   return {
@@ -186,6 +198,49 @@ async function bundleSource(
       expiresInSeconds: BUNDLE_URL_TTL_SECONDS,
     }),
   };
+}
+
+// Caches the read in flight, not just its result, so concurrent calls on one
+// tool share a single S3 GET instead of both fetching and both charging bytes.
+async function inlineBundle(
+  bucket: string,
+  key: string,
+  sha256: string,
+): Promise<string> {
+  const cached = bundleCache.get(sha256);
+  if (cached !== undefined) return await cached.encoded;
+
+  const entry: CachedBundle = {
+    bytes: 0,
+    encoded: readS3Bytes(bucket, key).then((raw) =>
+      Buffer.from(raw).toString("base64"),
+    ),
+  };
+  bundleCache.set(sha256, entry);
+  let encoded: string;
+  try {
+    encoded = await entry.encoded;
+  } catch (error) {
+    // A transient S3 failure must not become this key's cached answer.
+    bundleCache.delete(sha256);
+    throw error;
+  }
+  entry.bytes = encoded.length;
+  bundleCacheBytes += encoded.length;
+  evictOldestBundles();
+
+  return encoded;
+}
+
+// Oldest first; the Map preserves insertion order. An in-flight read has no
+// size yet and nothing to reclaim, so it is left alone.
+function evictOldestBundles(): void {
+  for (const [sha256, entry] of bundleCache) {
+    if (bundleCacheBytes <= BUNDLE_CACHE_MAX_BYTES) return;
+    if (entry.bytes === 0) continue;
+    bundleCacheBytes -= entry.bytes;
+    bundleCache.delete(sha256);
+  }
 }
 
 function mergeToolConfig(
