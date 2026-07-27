@@ -204,8 +204,23 @@ export async function runAgentLoop(
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
   // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
+  // Per-call compute, so the tool.call span can report what that one call cost.
+  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
+  const toolComputeByCallId = new Map<
+    string,
+    { type: string; cpuUsec: number }
+  >();
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
+    if (sample.role === "tool" && sample.toolCallId !== undefined) {
+      const call = toolComputeByCallId.get(sample.toolCallId);
+      if (call) call.cpuUsec += sample.cpuUsec;
+      else
+        toolComputeByCallId.set(sample.toolCallId, {
+          type: sample.type,
+          cpuUsec: sample.cpuUsec,
+        });
+    }
     const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
     const existing = sandboxUsageByKey.get(key);
     if (existing) {
@@ -956,19 +971,18 @@ export async function runAgentLoop(
     onToolExecutionEnd: async ({ toolCall, toolExecutionMs, toolOutput }) => {
       const stepNumber = toolStepNumbers.get(toolCall.toolCallId);
       toolStepNumbers.delete(toolCall.toolCallId);
-      const durationMs = toolExecutionMs;
       const output =
         toolOutput.type === "tool-result" ? toolOutput.output : undefined;
       const error =
         toolOutput.type === "tool-error" ? toolOutput.error : undefined;
-      // Close the tool.call span. Normalize the SDK's duration before anything
-      // uses it as a timestamp — a NaN or negative one would corrupt the start.
+      // Normalize the SDK's duration once, here: it is used as a timestamp and
+      // reported on every surface, so a NaN or negative one must not get through.
       const toolEndMs = Date.now();
       const openSpan = toolSpans.get(toolCall.toolCallId);
       const toolDurationMs = toolSpanDurationMs(
         openSpan?.startTimeMs ?? toolEndMs,
         toolEndMs,
-        durationMs,
+        toolExecutionMs,
       );
       const tracked =
         openSpan ??
@@ -992,11 +1006,22 @@ export async function runAgentLoop(
             outputErrorText ?? errorMessage(error),
             getObservabilityContext()?.secretValues,
           );
+      // Compute is present only for tools that ran off-process, so the pair also
+      // tells a reader which runtime served the call.
+      const compute = toolComputeByCallId.get(toolCall.toolCallId);
+      toolComputeByCallId.delete(toolCall.toolCallId);
+      const computeAttributes = compute
+        ? {
+            "tool.compute.type": compute.type,
+            "tool.compute.cpu_usec": compute.cpuUsec,
+          }
+        : {};
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
+        ...computeAttributes,
         ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
       });
       if (toolSucceeded) {
@@ -1028,6 +1053,7 @@ export async function runAgentLoop(
           "tool.call_id": toolCall.toolCallId,
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
+          ...computeAttributes,
           ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
           ...(stepNumber !== undefined
             ? { "agent.step_number": stepNumber }
@@ -1038,15 +1064,17 @@ export async function runAgentLoop(
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
+      // Every surface quotes the same normalized number the span does, so a
+      // trace and its event log can never disagree about how long a tool took.
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber,
-        durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
       });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
         ...(toolSucceeded ? {} : { error: errorText ?? errorMessage(error) }),
       });
@@ -1056,19 +1084,19 @@ export async function runAgentLoop(
         stepNumber: stepNumber,
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
       };
 
       if (toolSucceeded) {
         logInfo(
-          `Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`,
+          `Tool call finished: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}`,
           details,
         );
         return;
       }
 
       logError(
-        `Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`,
+        `Tool call failed: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}${errorText ? `: ${errorText}` : ""}`,
         {
           ...details,
           error: errorText ?? errorMessage(error),

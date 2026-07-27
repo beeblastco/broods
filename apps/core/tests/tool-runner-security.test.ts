@@ -18,6 +18,25 @@ const handlerPath = fileURLToPath(
   new URL("../../lambda/handler.mjs", import.meta.url),
 );
 
+// cpuUsec rides the terminal frame for usage metering and is inherently
+// variable, so it is dropped here and the frame bodies stay exactly assertable.
+function parseFrames(
+  stdout: string | undefined,
+): Array<Record<string, unknown> & { t: string }> {
+  return (stdout ?? "")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const { cpuUsec: _cpuUsec, ...frame } = JSON.parse(line) as {
+        t: string;
+        cpuUsec?: number;
+      };
+
+      return frame;
+    });
+}
+
 // A bundle the runner will accept: sha256 must match what the child recomputes.
 async function invokeHandler(
   bundle: string,
@@ -129,10 +148,7 @@ describe("tool-runner containment", () => {
     ].join("\n");
 
     const result = await invokeHandler(bundle, { toolName: "hunter" });
-    const frames = (result.stdout ?? "")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const frames = parseFrames(result.stdout);
 
     expect(frames.at(-1)).toEqual({ t: "final", result: { hits: [] } });
   }, 30_000);
@@ -162,10 +178,7 @@ describe("tool-runner containment", () => {
         AWS_LAMBDA_RUNTIME_API: "127.0.0.1:9001",
       },
     );
-    const frames = (result.stdout ?? "")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const frames = parseFrames(result.stdout);
 
     expect(frames.at(-1)).toEqual({
       t: "final",
@@ -194,10 +207,7 @@ describe("tool-runner containment", () => {
       },
       { ACCOUNT_TOOL_API_TOKEN: "parent-secret-must-not-leak" },
     );
-    const frames = (result.stdout ?? "")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const frames = parseFrames(result.stdout);
 
     expect(frames.at(-1)).toEqual({
       t: "final",
@@ -249,9 +259,9 @@ describe("tool-runner bundle addressing", () => {
       "served",
     );
 
-    expect(result.stdout?.trim()).toBe(
-      JSON.stringify({ t: "final", result: { ok: true } }),
-    );
+    expect(parseFrames(result.stdout)).toEqual([
+      { t: "final", result: { ok: true } },
+    ]);
   }, 30_000);
 
   it("fails loudly when the bundle URL is refused", async () => {
@@ -292,10 +302,7 @@ describe("tool-runner response streaming", () => {
 
     const result = await invokeHandler(bundle, { toolName: "ticker" });
     const arrivals = result.arrivalsMs ?? [];
-    const frames = (result.stdout ?? "")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const frames = parseFrames(result.stdout);
 
     expect(frames).toEqual([
       { t: "chunk", output: { tick: 1 } },

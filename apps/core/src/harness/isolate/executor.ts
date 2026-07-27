@@ -19,6 +19,8 @@ import {
   FrameQueue,
   abortSignalFromOptions,
   createRunnerPayload,
+  experimentalContextFromOptions,
+  messagesFromOptions,
   toolBundlesBucket,
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
@@ -82,6 +84,8 @@ async function buildRunPayload({
     input,
     config,
     toolCallId: toolCallIdFromOptions(options),
+    messages: messagesFromOptions(options),
+    experimentalContext: experimentalContextFromOptions(options),
     bundleTransport: "inline",
   });
   return { ...payload };

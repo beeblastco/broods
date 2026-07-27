@@ -2273,7 +2273,9 @@ describe("tool.call span duration", () => {
     // No SDK measurement: the handler clock is all there is.
     expect(toolSpanDurationMs(1_000, 6_000, undefined)).toBe(5_000);
     expect(toolSpanDurationMs(1_000, 6_000, Number.NaN)).toBe(5_000);
-    // A clock that went backwards must not publish a negative span.
+    // A clock that went backwards must not publish a negative span, whether the
+    // negative comes from the handler's own clock or from the SDK's measurement.
     expect(toolSpanDurationMs(6_000, 1_000, undefined)).toBe(0);
+    expect(toolSpanDurationMs(1_000, 6_000, -12)).toBe(0);
   });
 });

@@ -64,7 +64,7 @@ describe("sandbox child-runner", () => {
     ]);
   });
 
-  it("passes SDK execution options (context, toolCallId, abortSignal)", async () => {
+  it("passes the full AI SDK execution options through", async () => {
     const result = await runChild(
       `export default { name: 'opts', execute(input, options) {
          return {
@@ -72,6 +72,9 @@ describe("sandbox child-runner", () => {
            cfg: options.context.config,
            callId: options.toolCallId,
            signalOk: options.abortSignal != null && options.abortSignal.aborted === false,
+           roles: options.messages.map((m) => m.role),
+           ctxKeys: Object.keys(options.context).sort(),
+           experimental: options.experimental_context,
          };
        } };`,
       {
@@ -79,6 +82,11 @@ describe("sandbox child-runner", () => {
         input: { q: "hi" },
         config: { k: "v" },
         toolCallId: "call_123",
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        experimentalContext: { tenant: "acct_1" },
       },
     );
 
@@ -90,9 +98,24 @@ describe("sandbox child-runner", () => {
           cfg: { k: "v" },
           callId: "call_123",
           signalOk: true,
+          roles: ["user", "assistant"],
+          // env and asyncTool were always empty; the contract no longer claims them.
+          ctxKeys: ["config", "fetch", "state"],
+          experimental: { tenant: "acct_1" },
         },
       },
     ]);
+  });
+
+  // CPU rides the terminal frame so core can meter the run as custom-tool
+  // sandbox compute; a child that did real work always burns some.
+  it("reports the run's CPU on the terminal frame", async () => {
+    const result = await runChild(
+      "export default { name: 'cpu', execute() { return { ok: true }; } };",
+      { toolName: "cpu" },
+    );
+
+    expect(result.terminalCpuUsec).toBeGreaterThan(0);
   });
 
   it("surfaces thrown tool errors", async () => {
@@ -175,9 +198,15 @@ async function runChild(
     input?: unknown;
     config?: Record<string, unknown>;
     toolCallId?: string;
+    messages?: unknown[];
+    experimentalContext?: unknown;
     expectedSha256?: string;
   },
-): Promise<{ frames: unknown[]; exitCode: number | null }> {
+): Promise<{
+  frames: unknown[];
+  terminalCpuUsec: number | undefined;
+  exitCode: number | null;
+}> {
   const expectedSha256 =
     options.expectedSha256 ??
     new Bun.CryptoHasher("sha256").update(source).digest("hex");
@@ -203,6 +232,10 @@ async function runChild(
       ...(options.toolCallId !== undefined
         ? { toolCallId: options.toolCallId }
         : {}),
+      ...(options.messages !== undefined ? { messages: options.messages } : {}),
+      ...(options.experimentalContext !== undefined
+        ? { experimentalContext: options.experimentalContext }
+        : {}),
     })}\n`,
   );
   const exitCode = await new Promise<number | null>((resolve, reject) => {
@@ -210,11 +243,19 @@ async function runChild(
     child.once("exit", (code) => resolve(code));
   });
 
+  // cpuUsec rides the terminal frame for usage metering and is inherently
+  // variable, so it is lifted out and the frame bodies stay exactly assertable.
+  const frames = stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const terminal = frames.at(-1);
+  const terminalCpuUsec =
+    typeof terminal?.cpuUsec === "number" ? terminal.cpuUsec : undefined;
+
   return {
-    frames: stdout
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => JSON.parse(line)),
+    frames: frames.map(({ cpuUsec: _cpuUsec, ...frame }) => frame),
+    terminalCpuUsec,
     exitCode,
   };
 }

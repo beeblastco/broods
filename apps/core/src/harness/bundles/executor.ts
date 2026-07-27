@@ -16,6 +16,8 @@ import {
   FrameQueue,
   abortSignalFromOptions,
   createRunnerPayload,
+  experimentalContextFromOptions,
+  messagesFromOptions,
   toolBundlesBucket,
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
@@ -74,6 +76,8 @@ export async function* streamInLambda(
     input: options.input,
     config: options.config,
     toolCallId: toolCallIdFromOptions(options.options),
+    messages: messagesFromOptions(options.options),
+    experimentalContext: experimentalContextFromOptions(options.options),
     bundleTransport: "presigned-url",
   });
   const abortSignal = abortSignalFromOptions(options.options);
@@ -87,6 +91,20 @@ export async function* streamInLambda(
     })
     .finally(() => queue.close());
 
+  // A failed run still burned CPU, so the sample is reported off the terminal
+  // frame either way — before the error path throws.
+  const reportCpu = (cpuUsec: number | undefined): void => {
+    if (!(typeof cpuUsec === "number") || !(cpuUsec > 0)) return;
+    const toolCallId = toolCallIdFromOptions(options.options);
+    options.onSandboxCpu?.({
+      type: "custom-tool-sandbox",
+      role: "tool",
+      toolName: options.tool.name,
+      ...(toolCallId !== undefined ? { toolCallId: toolCallId } : {}),
+      cpuUsec: cpuUsec,
+    });
+  };
+
   try {
     for await (const frame of queue.frames()) {
       if (frame.t === "chunk") {
@@ -94,12 +112,14 @@ export async function* streamInLambda(
         continue;
       }
       if (frame.t === "final") {
+        reportCpu(frame.cpuUsec);
         yield frame.result;
         return;
       }
       if (frame.t === "end") {
         return;
       }
+      reportCpu(frame.cpuUsec);
       throw new Error(frame.error || "custom tool sandbox execution failed");
     }
   } finally {

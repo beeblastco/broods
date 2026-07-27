@@ -29,7 +29,7 @@ export const systemReportTool = defineTool({
     required: ["payload"],
     additionalProperties: false,
   },
-  async execute(input: { payload?: string }) {
+  async execute(input: { payload?: string }, options) {
     const payload = input.payload ?? "broods sandbox tier";
     const compressed = gzipSync(Buffer.from(payload, "utf8"));
 
@@ -39,6 +39,12 @@ export const systemReportTool = defineTool({
       gzipBytes: compressed.byteLength,
       requestId: randomUUID(),
       nodeVersion: process.version,
+      // The AI SDK's own execute options reach an uploaded bundle unchanged, so
+      // the tool can read the conversation it was called from.
+      toolCallId: options.toolCallId,
+      messageCount: options.messages.length,
+      // Secrets live here, never in process.env — see the tools docs.
+      configKeys: Object.keys(options.context.config).sort(),
       // Containment checks from #174, both expected to come back empty: every
       // AWS credential is scrubbed from the child env, and the bundle is
       // imported from memory so it never lands in the tmpdir as a module.

@@ -5,8 +5,10 @@
  * never reaches into tools/. Dispatch and invocation live in executor.ts.
  */
 
+import type { ModelMessage } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
 import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
+import type { SandboxCpuSample } from "../sandbox/types.ts";
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
@@ -17,6 +19,9 @@ const BUNDLE_URL_TTL_SECONDS = 120;
 // Inline bundles are keyed by sha256, so a hit is the same bytes by definition
 // and there is nothing to invalidate — only a size bound to keep.
 const BUNDLE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+// The whole conversation would otherwise ride every invoke against Lambda's 6 MB
+// request quota, so the tail that fits is forwarded and older turns are dropped.
+const MESSAGES_MAX_BYTES = 512 * 1024;
 
 // bytes stays 0 while the read is in flight, which is also what marks an entry
 // as not yet evictable.
@@ -34,6 +39,8 @@ export interface ExecuteAccountToolOptions {
   input: unknown;
   config: AgentToolConfig;
   options?: unknown;
+  /** Reports the run's CPU for usage metering; only the sandbox tier measures it. */
+  onSandboxCpu?: (sample: SandboxCpuSample) => void;
   isolateExecutor?: (
     options: ExecuteAccountToolOptions,
   ) => AsyncGenerator<unknown, void, void>;
@@ -48,23 +55,26 @@ export type RunnerBundleSource =
   | { bundleSourceB64: string }
   | { bundleUrl: string };
 
-// Payload a runner reads on stdin. toolCallId is the AI SDK call id surfaced
-// via options.toolCallId.
+// Payload a runner reads on stdin. The AI SDK's ToolExecutionOptions ride along
+// so an uploaded bundle sees what the same tool would see running in-process.
 export type RunnerPayload = RunnerBundleSource & {
   expectedSha256: string;
   toolName: string;
   input: unknown;
   config: Record<string, unknown>;
   toolCallId?: string;
+  messages?: ModelMessage[];
+  experimentalContext?: unknown;
 };
 
 // One NDJSON frame per stdout line: chunk = streamed output, final = a
-// non-streaming result, end = closed stream, error = tool failure.
+// non-streaming result, end = closed stream, error = tool failure. cpuUsec is
+// stamped by a runner that can measure itself.
 export type ToolRunnerFrame =
   | { t: "chunk"; output: unknown }
-  | { t: "final"; result: unknown }
+  | { t: "final"; result: unknown; cpuUsec?: number }
   | { t: "end" }
-  | { t: "error"; error: string };
+  | { t: "error"; error: string; cpuUsec?: number };
 
 // Push/pull buffer that parses incoming NDJSON text into frames as whole lines
 // arrive, letting a consumer await the next frame until the stream closes.
@@ -118,8 +128,12 @@ export async function createRunnerPayload(options: {
   input: unknown;
   config: AgentToolConfig;
   toolCallId?: string;
+  messages?: ModelMessage[];
+  experimentalContext?: unknown;
   bundleTransport: "inline" | "presigned-url";
 }): Promise<RunnerPayload> {
+  const messages = boundedMessages(options.messages);
+
   return {
     ...(await bundleSource(
       options.bundleTransport,
@@ -134,6 +148,10 @@ export async function createRunnerPayload(options: {
     ...(options.toolCallId !== undefined
       ? { toolCallId: options.toolCallId }
       : {}),
+    ...(messages !== undefined ? { messages: messages } : {}),
+    ...(options.experimentalContext !== undefined
+      ? { experimentalContext: options.experimentalContext }
+      : {}),
   };
 }
 
@@ -145,6 +163,24 @@ export function abortSignalFromOptions(
   const signal = options.abortSignal;
 
   return signal instanceof AbortSignal ? signal : undefined;
+}
+
+/** Reads the AI SDK ToolExecutionOptions.experimental_context when present. */
+export function experimentalContextFromOptions(options: unknown): unknown {
+  if (!isPlainObject(options)) return undefined;
+
+  return options.experimental_context;
+}
+
+/** Reads the AI SDK ToolExecutionOptions.messages when present. */
+export function messagesFromOptions(
+  options: unknown,
+): ModelMessage[] | undefined {
+  if (!isPlainObject(options)) return undefined;
+
+  return Array.isArray(options.messages)
+    ? (options.messages as ModelMessage[])
+    : undefined;
 }
 
 // Parse one NDJSON line into a frame; null for blank or non-protocol lines so a
@@ -230,6 +266,25 @@ async function inlineBundle(
   evictOldestBundles();
 
   return encoded;
+}
+
+// Newest turns first, dropping the older ones that no longer fit. A tool asking
+// for the conversation wants the recent end of it, and that is what survives.
+function boundedMessages(
+  messages: ModelMessage[] | undefined,
+): ModelMessage[] | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  const kept: ModelMessage[] = [];
+  let bytes = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message === undefined) continue;
+    bytes += JSON.stringify(message).length;
+    if (bytes > MESSAGES_MAX_BYTES) break;
+    kept.unshift(message);
+  }
+
+  return kept;
 }
 
 // Oldest first; the Map preserves insertion order. An in-flight read has no

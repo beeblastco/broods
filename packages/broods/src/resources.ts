@@ -7,6 +7,7 @@
  * here is synchronous.
  */
 
+import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
   AgentProviderSettings,
@@ -73,7 +74,13 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+  | "agent"
+  | "workspace"
+  | "sandbox"
+  | "cron"
+  | "skill"
+  | "tool"
+  | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -114,11 +121,24 @@ export interface SkillDefinitionConfig {
   path: string;
 }
 
+/** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
+export interface ToolExecuteContext {
+  /** Resolved tool config, `env("NAME")` already substituted. Where secrets arrive. */
+  config: Record<string, unknown>;
+  /** SSRF-guarded fetch. Also installed as the global `fetch`. */
+  fetch: typeof fetch;
+  /** Per-run scratchpad. Read back after hooks; empty and unused for tools. */
+  state: Record<string, unknown>;
+}
+
 /** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
 export interface ToolExecuteOptions {
   toolCallId?: string;
-  context: Record<string, unknown>;
+  context: ToolExecuteContext;
   abortSignal?: AbortSignal;
+  /** Conversation so far. Truncated from the front to the newest 512 KB. */
+  messages: ModelMessage[];
+  experimental_context?: unknown;
 }
 
 export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
@@ -151,7 +171,12 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+  | "telegram"
+  | "github"
+  | "slack"
+  | "discord"
+  | "pancake"
+  | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;

@@ -25,6 +25,9 @@ export default function accountTool(
           input: input,
           config: context.config,
           options: options,
+          ...(context.onSandboxCpu
+            ? { onSandboxCpu: context.onSandboxCpu }
+            : {}),
         });
       },
     }),

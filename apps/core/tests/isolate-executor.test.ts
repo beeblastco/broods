@@ -108,6 +108,55 @@ describe("streamAccountTool dispatcher", () => {
     expect(isolateExecutor).toHaveBeenCalledTimes(1);
   });
 
+  // The sandbox tier is a process that can measure itself, and its CPU is what
+  // the usage panel's custom-tool sandbox series is fed from.
+  it("meters the sandbox run's CPU as custom-tool-sandbox compute", async () => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "tool-runner-test";
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles-test";
+    const { streamInLambda } =
+      await import("../src/harness/bundles/executor.ts");
+    const samples: unknown[] = [];
+    const client = {
+      send: async () => ({
+        EventStream: [
+          {
+            PayloadChunk: {
+              Payload: new TextEncoder().encode(
+                `${JSON.stringify({ t: "final", result: { ok: true }, cpuUsec: 41_000 })}\n`,
+              ),
+            },
+          },
+        ],
+      }),
+    };
+
+    const outputs: unknown[] = [];
+    for await (const output of streamInLambda(
+      {
+        accountId: "acct_test",
+        tool: accountToolRecord("sandbox"),
+        input: {},
+        config: {},
+        options: { toolCallId: "call_cpu" },
+        onSandboxCpu: (sample) => samples.push(sample),
+      },
+      client as never,
+    )) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ ok: true }]);
+    expect(samples).toEqual([
+      {
+        type: "custom-tool-sandbox",
+        role: "tool",
+        toolName: "test_tool",
+        toolCallId: "call_cpu",
+        cpuUsec: 41_000,
+      },
+    ]);
+  });
+
   it("routes sandbox tools to the sandbox (lambda) path", async () => {
     const isolateExecutor = mock(async function* () {
       yield { isolate: true };
@@ -231,6 +280,42 @@ describe("isolate runner", () => {
       ]);
     },
   );
+
+  // Parity with the sandbox tier: a bundle sees the AI SDK's own options, and
+  // ctx no longer advertises the env/asyncTool fields that were always empty.
+  realRunnerIt("passes the full AI SDK execution options through", async () => {
+    const result = await runRealRunner(
+      `export default { name: 'opts', execute(input, options) {
+         return {
+           callId: options.toolCallId,
+           roles: options.messages.map((m) => m.role),
+           ctxKeys: Object.keys(options.context).sort(),
+           experimental: options.experimental_context,
+         };
+       } };`,
+      {
+        toolName: "opts",
+        toolCallId: "call_123",
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        experimentalContext: { tenant: "acct_1" },
+      },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          callId: "call_123",
+          roles: ["user", "assistant"],
+          ctxKeys: ["config", "fetch", "state"],
+          experimental: { tenant: "acct_1" },
+        },
+      },
+    ]);
+  });
 
   realRunnerIt("surfaces thrown tool errors", async () => {
     const result = await runRealRunner(
@@ -917,6 +1002,8 @@ async function runRealRunner(
     env?: Record<string, string>;
     config?: Record<string, unknown>;
     toolCallId?: string;
+    messages?: unknown[];
+    experimentalContext?: unknown;
     abortAfterMs?: number;
   },
 ): Promise<{ frames: unknown[]; exitCode: number | null; stderr: string }> {
@@ -947,6 +1034,10 @@ async function runRealRunner(
       config: options.config ?? {},
       ...(options.toolCallId !== undefined
         ? { toolCallId: options.toolCallId }
+        : {}),
+      ...(options.messages !== undefined ? { messages: options.messages } : {}),
+      ...(options.experimentalContext !== undefined
+        ? { experimentalContext: options.experimentalContext }
         : {}),
     }) + "\n",
   );

@@ -95,16 +95,18 @@ async function runBundle(payload, bundle, abortSignal) {
     throw new Error("custom tool bundle name does not match uploaded manifest");
   }
 
+  // The AI SDK's own execute options, so an uploaded bundle sees what the same
+  // tool would see in-process. Core bounds messages before it sends them.
   const options = {
     toolCallId: payload.toolCallId,
     context: {
       config: payload.config,
-      asyncTool: null,
-      env: {},
       fetch: globalThis.fetch,
       state: {},
     },
     abortSignal,
+    messages: payload.messages ?? [],
+    experimental_context: payload.experimentalContext ?? undefined,
   };
   const value = definition.execute(payload.input, options);
   if (value != null && typeof value[Symbol.asyncIterator] === "function") {
@@ -156,12 +158,18 @@ async function importBundle(source) {
   return await import(BUNDLE_URL);
 }
 
+// The terminal frame carries this run's CPU. The child is one process per tool
+// call, so its own cpuUsage is exactly what the call cost, S3 fetch and parse in.
 function emitTerminal(frame, code) {
   if (settled) return;
   settled = true;
+  const cpu = process.cpuUsage();
+  const stamped = { ...frame, cpuUsec: cpu.user + cpu.system };
   // Flush the terminal frame before exiting so a pipe write is never truncated,
   // and force-exit so user code's lingering handles cannot keep the child alive.
-  process.stdout.write(`${JSON.stringify(frame)}\n`, () => process.exit(code));
+  process.stdout.write(`${JSON.stringify(stamped)}\n`, () =>
+    process.exit(code),
+  );
 }
 
 function errorMessage(error) {
@@ -188,6 +196,8 @@ function parsePayload(payload) {
         : {},
     toolCallId:
       typeof payload.toolCallId === "string" ? payload.toolCallId : undefined,
+    messages: Array.isArray(payload.messages) ? payload.messages : [],
+    experimentalContext: payload.experimentalContext,
   };
 }
 

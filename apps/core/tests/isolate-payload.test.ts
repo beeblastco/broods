@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
@@ -106,6 +107,49 @@ describe("createRunnerPayload", () => {
     });
     expect("toolCallId" in withoutId).toBe(false);
   });
+
+  // The whole conversation would otherwise ride every invoke against Lambda's
+  // 6 MB quota, so the recent end survives and older turns are dropped.
+  it("forwards the newest messages that fit the size bound", async () => {
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+    const messages: ModelMessage[] = Array.from({ length: 16 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `${index}`.padStart(64 * 1024, "x"),
+    }));
+
+    const payload = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+      messages: messages,
+      experimentalContext: { tenant: "acct_1" },
+      bundleTransport: "inline",
+    });
+
+    const kept = payload.messages ?? [];
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(messages.length);
+    expect(kept.at(-1)).toEqual(messages.at(-1)!);
+    expect(payload.experimentalContext).toEqual({ tenant: "acct_1" });
+  });
+
+  it("omits messages and experimentalContext when the options carry none", async () => {
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+
+    const payload = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+      bundleTransport: "inline",
+    });
+
+    expect("messages" in payload).toBe(false);
+    expect("experimentalContext" in payload).toBe(false);
+  });
 });
 
 describe("AI SDK options extraction", () => {
@@ -128,6 +172,23 @@ describe("AI SDK options extraction", () => {
     );
     expect(abortSignalFromOptions({ abortSignal: "nope" })).toBeUndefined();
     expect(abortSignalFromOptions(undefined)).toBeUndefined();
+  });
+
+  it("reads messages and experimental_context, ignoring wrong shapes", async () => {
+    const { experimentalContextFromOptions, messagesFromOptions } =
+      await import("../src/harness/bundles/payload.ts");
+
+    expect(
+      messagesFromOptions({ messages: [{ role: "user", content: "hi" }] }),
+    ).toEqual([{ role: "user", content: "hi" }]);
+    expect(messagesFromOptions({ messages: "nope" })).toBeUndefined();
+    expect(messagesFromOptions(undefined)).toBeUndefined();
+
+    expect(
+      experimentalContextFromOptions({ experimental_context: { a: 1 } }),
+    ).toEqual({ a: 1 });
+    expect(experimentalContextFromOptions({})).toBeUndefined();
+    expect(experimentalContextFromOptions(undefined)).toBeUndefined();
   });
 });
 
