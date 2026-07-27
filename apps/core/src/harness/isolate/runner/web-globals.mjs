@@ -47,11 +47,23 @@ globalThis.TextEncoder = class TextEncoder {
     }
     return new Uint8Array(bytes);
   }
+  // Stops at the last code point that fits whole. read counts the UTF-16 units
+  // actually consumed, which is the entire point of chunked encodeInto.
   encodeInto(source, destination) {
-    const encoded = this.encode(source);
-    const written = Math.min(encoded.length, destination.length);
-    destination.set(encoded.subarray(0, written));
-    return { read: source.length, written: written };
+    const text = source === undefined ? "" : String(source);
+    let read = 0;
+    let written = 0;
+    while (read < text.length) {
+      const lead = text.charCodeAt(read);
+      const low = text.charCodeAt(read + 1);
+      const units = lead >= 0xd800 && lead <= 0xdbff && low >= 0xdc00 && low <= 0xdfff ? 2 : 1;
+      const encoded = this.encode(text.slice(read, read + units));
+      if (written + encoded.length > destination.length) break;
+      destination.set(encoded, written);
+      written += encoded.length;
+      read += units;
+    }
+    return { read: read, written: written };
   }
 };
 
@@ -322,9 +334,18 @@ for (const part of __URL_PARTS) {
   });
 }
 
+const __RANDOM_QUOTA_BYTES = 65536;
+
 globalThis.crypto = {
   getRandomValues: (view) => {
     if (!ArrayBuffer.isView(view)) throw new TypeError("getRandomValues expects a typed array");
+    // The host bridge caps its reply at the same quota. Throwing is what the
+    // spec says; filling the tail with zeros would be silently weak randomness.
+    if (view.byteLength > __RANDOM_QUOTA_BYTES) {
+      const error = new Error("getRandomValues byteLength exceeds the 65536 byte quota");
+      error.name = "QuotaExceededError";
+      throw error;
+    }
     const bytes = $1(view.byteLength);
     new Uint8Array(view.buffer, view.byteOffset, view.byteLength).set(bytes);
     return view;

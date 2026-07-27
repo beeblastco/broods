@@ -320,6 +320,38 @@ describe("isolate runner", () => {
   });
 
   realRunnerIt(
+    "reports a truncated encodeInto and refuses an oversized random buffer",
+    async () => {
+      // Both silent-corruption shapes: encodeInto claiming it consumed input it
+      // did not write, and getRandomValues zero-filling past the host's quota.
+      const result = await runRealRunner(
+        `export default { name: "edges", execute() {
+          const encoder = new TextEncoder();
+          const small = new Uint8Array(4);
+          const partial = encoder.encodeInto("ab🌍cd", small);
+          const exact = encoder.encodeInto("ab", new Uint8Array(8));
+          let quota = "no-throw";
+          try { crypto.getRandomValues(new Uint8Array(65537)); } catch (error) { quota = error.name; }
+          return { partial: partial, exact: exact, quota: quota };
+        } };`,
+        { toolName: "edges", input: {} },
+      );
+
+      expect(result.frames).toEqual([
+        {
+          t: "final",
+          result: {
+            // "ab" fits; the 4-byte emoji does not, so read stops at 2 units.
+            partial: { read: 2, written: 2 },
+            exact: { read: 2, written: 2 },
+            quota: "QuotaExceededError",
+          },
+        },
+      ]);
+    },
+  );
+
+  realRunnerIt(
     "provides timers, console, and a global fetch to the bundle",
     async () => {
       const result = await runRealRunner(

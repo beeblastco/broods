@@ -91,14 +91,12 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// Reading a member off the Node globals throws in an isolate. Only the member
-// forms count: a locally declared `process` method or export key is not the
-// global (zod ships one), and `typeof process` is a guarded probe that is fine.
+// Member reads only: a locally declared `process` method or export key is not
+// the global (bundled zod ships one), and `typeof process` is a guarded probe.
 const NODE_GLOBAL_MEMBER_PATTERN =
   /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
-// Web Streams are outside what the isolate installs (isolate/runner/web-globals.mjs),
-// so a bundle that touches one — every bundle importing `ai` does — runs on the
-// sandbox tier rather than dying on a ReferenceError halfway through.
+// Web Streams are outside what isolate/runner/web-globals.mjs installs, so a
+// bundle touching one — every bundle importing `ai` does — runs on sandbox.
 const WEB_STREAMS_PATTERN =
   /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;

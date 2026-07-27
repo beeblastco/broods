@@ -18,7 +18,14 @@ const BUNDLE_URL_TTL_SECONDS = 120;
 // and there is nothing to invalidate — only a size bound to keep.
 const BUNDLE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 
-const bundleCache = new Map<string, string>();
+// bytes stays 0 while the read is in flight, which is also what marks an entry
+// as not yet evictable.
+interface CachedBundle {
+  bytes: number;
+  encoded: Promise<string>;
+}
+
+const bundleCache = new Map<string, CachedBundle>();
 let bundleCacheBytes = 0;
 
 export interface ExecuteAccountToolOptions {
@@ -194,29 +201,49 @@ async function bundleSource(
 }
 
 // Every isolate call would otherwise re-download the same immutable object, so
-// the S3 GET sits on the tool's critical path for no reason. Oldest-first
-// eviction; the Map preserves insertion order.
+// the S3 GET sits on the tool's critical path for no reason. What is cached is
+// the read in flight, not just its result: two concurrent calls on one tool are
+// the common case, and both would otherwise fetch and both would charge the
+// ledger for the single entry they end up sharing.
 async function inlineBundle(
   bucket: string,
   key: string,
   sha256: string,
 ): Promise<string> {
   const cached = bundleCache.get(sha256);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return await cached.encoded;
 
-  const encoded = Buffer.from(await readS3Bytes(bucket, key)).toString(
-    "base64",
-  );
-  bundleCache.set(sha256, encoded);
-  bundleCacheBytes += encoded.length;
-  while (bundleCacheBytes > BUNDLE_CACHE_MAX_BYTES) {
-    const oldest = bundleCache.keys().next();
-    if (oldest.done) break;
-    bundleCacheBytes -= bundleCache.get(oldest.value)?.length ?? 0;
-    bundleCache.delete(oldest.value);
+  const entry: CachedBundle = {
+    bytes: 0,
+    encoded: readS3Bytes(bucket, key).then((raw) =>
+      Buffer.from(raw).toString("base64"),
+    ),
+  };
+  bundleCache.set(sha256, entry);
+  let encoded: string;
+  try {
+    encoded = await entry.encoded;
+  } catch (error) {
+    // A transient S3 failure must not become this key's cached answer.
+    bundleCache.delete(sha256);
+    throw error;
   }
+  entry.bytes = encoded.length;
+  bundleCacheBytes += encoded.length;
+  evictOldestBundles();
 
   return encoded;
+}
+
+// Oldest first; the Map preserves insertion order. An in-flight read has no
+// size yet and nothing to reclaim, so it is left alone.
+function evictOldestBundles(): void {
+  for (const [sha256, entry] of bundleCache) {
+    if (bundleCacheBytes <= BUNDLE_CACHE_MAX_BYTES) return;
+    if (entry.bytes === 0) continue;
+    bundleCacheBytes -= entry.bytes;
+    bundleCache.delete(sha256);
+  }
 }
 
 function mergeToolConfig(
