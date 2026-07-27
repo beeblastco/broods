@@ -1,5 +1,5 @@
 /**
- * Custom (account-uploaded) tool dispatch and the sandbox-tier invoker. Routes by
+ * Uploaded-tool dispatch and the sandbox-tier invoker. Routes by
  * runtime tier: pure/fetch-only bundles run in the in-core V8 isolate
  * (../isolate/executor.ts); node/npm/native bundles run in the tool-runner Lambda
  * (apps/lambda). Detached-async needs a persistent reservation and is rejected

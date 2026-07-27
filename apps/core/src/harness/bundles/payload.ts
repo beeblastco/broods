@@ -1,8 +1,8 @@
 /**
- * Shared isolate runtime plumbing: the runner payload shape, the NDJSON frame
- * protocol, and the AI SDK option extractors. Leaf of the isolate plane — depends
- * only on shared/domain, so both the custom-tool dispatch and the hook runner can
- * build payloads without reaching into tools/. Spawning lives in executor.ts.
+ * What every runner of an uploaded bundle shares: the payload shape, the NDJSON
+ * frame protocol, and the AI SDK option extractors. Read by all three runners
+ * (isolate, sandbox Lambda, hooks), so it depends only on shared/domain and
+ * never reaches into tools/. Dispatch and invocation live in executor.ts.
  */
 
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";

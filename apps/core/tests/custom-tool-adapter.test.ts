@@ -11,7 +11,7 @@ import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import { executeTool } from "@ai-sdk/provider-utils";
 import { generateText, stepCountIs, type ToolSet } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import type { ExecuteAccountToolOptions } from "../src/harness/custom-tools/payload.ts";
+import type { ExecuteAccountToolOptions } from "../src/harness/bundles/payload.ts";
 import {
   wrapToolsWithHooks,
   type HookDispatcher,
@@ -26,7 +26,7 @@ const streamAccountTool = mock(async function* (
   yield { done: true };
 });
 
-mock.module("../src/harness/custom-tools/executor.ts", () => ({
+mock.module("../src/harness/bundles/executor.ts", () => ({
   streamAccountTool: streamAccountTool,
 }));
 

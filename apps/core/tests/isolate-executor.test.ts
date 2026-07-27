@@ -92,7 +92,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { isolate: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
     const outputs: unknown[] = [];
     for await (const output of streamAccountTool({
       accountId: "acct_test",
@@ -116,7 +116,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { sandbox: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
     const outputs: unknown[] = [];
     for await (const output of streamAccountTool({
       accountId: "acct_test",
@@ -139,7 +139,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { sandbox: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
 
     await expect(
       drain(
@@ -168,7 +168,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { isolate: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
 
     await expect(
       drain(
