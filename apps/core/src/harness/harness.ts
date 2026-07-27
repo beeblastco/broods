@@ -961,13 +961,20 @@ export async function runAgentLoop(
         toolOutput.type === "tool-result" ? toolOutput.output : undefined;
       const error =
         toolOutput.type === "tool-error" ? toolOutput.error : undefined;
-      // Close the tool.call span.
+      // Close the tool.call span. Normalize the SDK's duration before anything
+      // uses it as a timestamp — a NaN or negative one would corrupt the start.
       const toolEndMs = Date.now();
+      const openSpan = toolSpans.get(toolCall.toolCallId);
+      const toolDurationMs = toolSpanDurationMs(
+        openSpan?.startTimeMs ?? toolEndMs,
+        toolEndMs,
+        durationMs,
+      );
       const tracked =
-        toolSpans.get(toolCall.toolCallId) ??
+        openSpan ??
         startTrackedSpan(
           "tool.call",
-          toolEndMs - (durationMs ?? 0),
+          toolEndMs - toolDurationMs,
           rootOtelContext,
           rootSpanId,
           {
@@ -975,7 +982,7 @@ export async function runAgentLoop(
             "tool.call_id": toolCall.toolCallId,
           },
         );
-      const toolDurationMs = toolEndMs - tracked.startTimeMs;
+      const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
         toolOutput.type === "tool-result" && !outputErrorText;
@@ -1002,7 +1009,7 @@ export async function runAgentLoop(
           message: errorText,
         });
       }
-      tracked.otelSpan.end(toolEndMs);
+      tracked.otelSpan.end(toolSpanEndMs);
       const toolSpanRow: ObservabilitySpanRow = {
         traceId: tracked.traceId,
         spanId: tracked.spanId,
@@ -1010,7 +1017,7 @@ export async function runAgentLoop(
         name: "tool.call",
         kind: "tool.call",
         startTimeMs: tracked.startTimeMs,
-        endTimeMs: toolEndMs,
+        endTimeMs: toolSpanEndMs,
         durationMs: toolDurationMs,
         status: toolSucceeded ? "ok" : "error",
         endpointId: session.endpointId,
@@ -1618,6 +1625,20 @@ function formatDuration(durationMs: number | undefined): string {
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
+}
+
+// The SDK measures execute() directly, so it wins; the handler clock is only a
+// fallback, and it overstates parallel calls by the model's own time.
+export function toolSpanDurationMs(
+  startTimeMs: number,
+  handlerNowMs: number,
+  toolExecutionMs: number | undefined,
+): number {
+  if (typeof toolExecutionMs === "number" && Number.isFinite(toolExecutionMs)) {
+    return Math.max(0, toolExecutionMs);
+  }
+
+  return Math.max(0, handlerNowMs - startTimeMs);
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {
