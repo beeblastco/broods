@@ -74,29 +74,37 @@ async function runChild(event, home, responseStream) {
     let stopReason;
     let exit;
     let drained = false;
+    // A failed spawn emits "error" and may still emit "exit", so finalizing runs
+    // once: writing to an already-ended response stream throws.
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) endWithError(responseStream, error);
+      else responseStream.end();
+      resolve();
+    };
     // Settle on both the exit and the last byte of stdout. "exit" alone can fire
     // with output still buffered behind a backpressure pause; stdout's "end"
     // alone can never arrive, because a detached grandchild holds the pipe's
     // write end open until killGroup runs on exit.
     const settle = () => {
       if (!exit || !drained) return;
-      clearTimeout(timeout);
       // A killed run is a failure even when chunks already went out, so it ends
       // on an error frame rather than a clean close the caller reads as success.
       if (stopReason) {
-        endWithError(responseStream, stopReason);
+        finish(stopReason);
       } else if (forwardedBytes === 0) {
-        endWithError(
-          responseStream,
+        finish(
           stderr.trim() ||
             (exit.signal
               ? `signal ${exit.signal}`
               : `exit ${exit.code ?? "unknown"}`),
         );
       } else {
-        responseStream.end();
+        finish();
       }
-      resolve();
     };
     // Abandon forwarding and let the pipe run dry: a paused stdout never reaches
     // "end", so the run would never settle.
@@ -130,12 +138,7 @@ async function runChild(event, home, responseStream) {
       if (stderr.length > 16 * 1024) stderr = stderr.slice(-16 * 1024);
     });
     child.once("error", (error) => {
-      clearTimeout(timeout);
-      endWithError(
-        responseStream,
-        error instanceof Error ? error.message : String(error),
-      );
-      resolve();
+      finish(error instanceof Error ? error.message : String(error));
     });
     child.stdout.once("end", () => {
       drained = true;
