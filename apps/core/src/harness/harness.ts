@@ -975,7 +975,14 @@ export async function runAgentLoop(
             "tool.call_id": toolCall.toolCallId,
           },
         );
-      const toolDurationMs = toolEndMs - tracked.startTimeMs;
+      // The SDK times execute() itself; this handler is only scheduled after it,
+      // and with parallel calls that gap is the model still generating.
+      const toolDurationMs = toolSpanDurationMs(
+        tracked.startTimeMs,
+        toolEndMs,
+        durationMs,
+      );
+      const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
         toolOutput.type === "tool-result" && !outputErrorText;
@@ -1002,7 +1009,7 @@ export async function runAgentLoop(
           message: errorText,
         });
       }
-      tracked.otelSpan.end(toolEndMs);
+      tracked.otelSpan.end(toolSpanEndMs);
       const toolSpanRow: ObservabilitySpanRow = {
         traceId: tracked.traceId,
         spanId: tracked.spanId,
@@ -1010,7 +1017,7 @@ export async function runAgentLoop(
         name: "tool.call",
         kind: "tool.call",
         startTimeMs: tracked.startTimeMs,
-        endTimeMs: toolEndMs,
+        endTimeMs: toolSpanEndMs,
         durationMs: toolDurationMs,
         status: toolSucceeded ? "ok" : "error",
         endpointId: session.endpointId,
@@ -1618,6 +1625,23 @@ function formatDuration(durationMs: number | undefined): string {
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
+}
+
+/**
+ * How long a `tool.call` span should say the tool ran. The SDK measures
+ * execute() directly, so it wins; the handler's own clock is only a fallback,
+ * and it overstates parallel calls by whatever the model was still doing.
+ */
+export function toolSpanDurationMs(
+  startTimeMs: number,
+  handlerNowMs: number,
+  toolExecutionMs: number | undefined,
+): number {
+  if (typeof toolExecutionMs === "number" && Number.isFinite(toolExecutionMs)) {
+    return Math.max(0, toolExecutionMs);
+  }
+
+  return Math.max(0, handlerNowMs - startTimeMs);
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

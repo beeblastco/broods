@@ -2261,3 +2261,20 @@ function installHarnessEnv(): void {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
 }
+
+describe("tool.call span duration", () => {
+  it("reports what the SDK timed, not how late the handler was scheduled", async () => {
+    // The gap between a tool finishing and core's onToolExecutionEnd running is
+    // model time on parallel calls. Reading the handler's clock turned 4ms tool
+    // calls into multi-second spans in the trace.
+    const { toolSpanDurationMs } = await import("../src/harness/harness.ts");
+
+    expect(toolSpanDurationMs(1_000, 6_000, 12)).toBe(12);
+    expect(toolSpanDurationMs(1_000, 6_000, 0)).toBe(0);
+    // No SDK measurement: the handler clock is all there is.
+    expect(toolSpanDurationMs(1_000, 6_000, undefined)).toBe(5_000);
+    expect(toolSpanDurationMs(1_000, 6_000, Number.NaN)).toBe(5_000);
+    // A clock that went backwards must not publish a negative span.
+    expect(toolSpanDurationMs(6_000, 1_000, undefined)).toBe(0);
+  });
+});
