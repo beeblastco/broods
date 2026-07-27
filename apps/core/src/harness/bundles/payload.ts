@@ -14,6 +14,12 @@ import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
 // The runner fetches at the start of a 35s-bounded invocation, so the grant only
 // has to outlive a cold start.
 const BUNDLE_URL_TTL_SECONDS = 120;
+// Inline bundles are keyed by sha256, so a hit is the same bytes by definition
+// and there is nothing to invalidate — only a size bound to keep.
+const BUNDLE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+const bundleCache = new Map<string, string>();
+let bundleCacheBytes = 0;
 
 export interface ExecuteAccountToolOptions {
   accountId: string;
@@ -32,7 +38,8 @@ export interface ExecuteAccountToolOptions {
 // The isolate tier inlines the bytes on a local child's stdin; the Lambda tier
 // gets a presigned GET, since an inlined bundle spends its 6 MB invoke quota.
 export type RunnerBundleSource =
-  { bundleSourceB64: string } | { bundleUrl: string };
+  | { bundleSourceB64: string }
+  | { bundleUrl: string };
 
 // Payload a runner reads on stdin. toolCallId is the AI SDK call id surfaced
 // via options.toolCallId.
@@ -111,6 +118,7 @@ export async function createRunnerPayload(options: {
       options.bundleTransport,
       options.bucket,
       options.tool.bundleStorageKey,
+      options.tool.sha256,
     )),
     expectedSha256: options.tool.sha256,
     toolName: options.tool.name,
@@ -172,13 +180,10 @@ async function bundleSource(
   transport: "inline" | "presigned-url",
   bucket: string,
   key: string,
+  sha256: string,
 ): Promise<RunnerBundleSource> {
   if (transport === "inline") {
-    return {
-      bundleSourceB64: Buffer.from(await readS3Bytes(bucket, key)).toString(
-        "base64",
-      ),
-    };
+    return { bundleSourceB64: await inlineBundle(bucket, key, sha256) };
   }
 
   return {
@@ -186,6 +191,32 @@ async function bundleSource(
       expiresInSeconds: BUNDLE_URL_TTL_SECONDS,
     }),
   };
+}
+
+// Every isolate call would otherwise re-download the same immutable object, so
+// the S3 GET sits on the tool's critical path for no reason. Oldest-first
+// eviction; the Map preserves insertion order.
+async function inlineBundle(
+  bucket: string,
+  key: string,
+  sha256: string,
+): Promise<string> {
+  const cached = bundleCache.get(sha256);
+  if (cached !== undefined) return cached;
+
+  const encoded = Buffer.from(await readS3Bytes(bucket, key)).toString(
+    "base64",
+  );
+  bundleCache.set(sha256, encoded);
+  bundleCacheBytes += encoded.length;
+  while (bundleCacheBytes > BUNDLE_CACHE_MAX_BYTES) {
+    const oldest = bundleCache.keys().next();
+    if (oldest.done) break;
+    bundleCacheBytes -= bundleCache.get(oldest.value)?.length ?? 0;
+    bundleCache.delete(oldest.value);
+  }
+
+  return encoded;
 }
 
 function mergeToolConfig(

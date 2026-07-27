@@ -278,6 +278,47 @@ describe("isolate runner", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  realRunnerIt("provides the web globals a bare V8 isolate lacks", async () => {
+    // A zod-shaped bundle reaches for TextDecoder and URL at import time, so
+    // these are what stands between the isolate tier and a ReferenceError.
+    const result = await runRealRunner(
+      `export default { name: "web_globals", execute() {
+          const url = new URL("/a?x=1#f", "https://Example.com:8443");
+          url.searchParams.set("y", "a b");
+          const decoder = new TextDecoder();
+          const bytes = new TextEncoder().encode("héllo 🌍");
+          return {
+            href: url.href,
+            origin: url.origin,
+            invalid: (() => { try { new URL("nope"); return "no-throw"; } catch (error) { return error.name; } })(),
+            roundTrip: decoder.decode(bytes),
+            // Split mid-codepoint: a streaming decoder must hold the tail back.
+            streamed: decoder.decode(bytes.slice(0, 3), { stream: true }) + decoder.decode(bytes.slice(3)),
+            base64: atob(btoa("abc")),
+            uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(crypto.randomUUID()),
+            random: crypto.getRandomValues(new Uint8Array(8)).length,
+          };
+        } };`,
+      { toolName: "web_globals", input: {} },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          href: "https://example.com:8443/a?x=1&y=a+b#f",
+          origin: "https://example.com:8443",
+          invalid: "TypeError",
+          roundTrip: "héllo 🌍",
+          streamed: "héllo 🌍",
+          base64: "abc",
+          uuid: true,
+          random: 8,
+        },
+      },
+    ]);
+  });
+
   realRunnerIt(
     "provides timers, console, and a global fetch to the bundle",
     async () => {

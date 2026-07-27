@@ -1,6 +1,6 @@
 /**
- * AWS Lambda entry for the sandbox-tier tool runner. It runs an uploaded account
- * tool bundle (addressed by the invoke event, fetched by the child) in a
+ * AWS Lambda entry for the sandbox-tier tool runner. It resolves the uploaded
+ * account tool bundle the invoke event addresses, then runs it in a
  * per-invocation child Node process with a scrubbed env and a fresh TMPDIR, and
  * streams the child's raw NDJSON frames to the core invoker as written, so an
  * async-generator tool's yields reach the agent loop live. The child is a
@@ -42,7 +42,13 @@ export const handler = streamifyResponse(async (event, responseStream) => {
   }
   const home = mkdtempSync(join(tmpdir(), "broods-tool-"));
   try {
-    await runChild(event, home, responseStream);
+    // Started before the spawn so the S3 round trip overlaps Node's startup, and
+    // done here rather than in the child because this process is warm across
+    // invocations and keeps its connection to S3; a fresh child would pay a TLS
+    // handshake every call.
+    const bundle = readBundleSource(event);
+    bundle.catch(() => {});
+    await runChild(event, home, responseStream, bundle);
   } catch (error) {
     endWithError(
       responseStream,
@@ -53,14 +59,24 @@ export const handler = streamifyResponse(async (event, responseStream) => {
   }
 });
 
-function childRunnerPath() {
-  const root = process.env.LAMBDA_TASK_ROOT;
-  return root
-    ? join(root, "child-runner.mjs")
-    : fileURLToPath(new URL("./child-runner.mjs", import.meta.url));
+async function readBundleSource(event) {
+  if (typeof event.bundleSourceB64 === "string") return event.bundleSourceB64;
+  if (typeof event.bundleUrl !== "string") {
+    throw new Error(
+      "tool runner event needs one of bundleSourceB64 or bundleUrl",
+    );
+  }
+  const response = await fetch(event.bundleUrl);
+  if (!response.ok) {
+    throw new Error(
+      `custom tool bundle fetch failed with HTTP ${response.status}`,
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer()).toString("base64");
 }
 
-async function runChild(event, home, responseStream) {
+async function runChild(event, home, responseStream, bundle) {
   return await new Promise((resolve) => {
     // detached puts the child in its own process group so killGroup can reap the
     // grandchildren too; a survivor outlives the invocation in a warm sandbox.
@@ -156,8 +172,26 @@ async function runChild(event, home, responseStream) {
     // A child that exits before reading stdin makes end() emit EPIPE; an
     // unhandled stream error would crash the handler instead of returning a frame.
     child.stdin.on("error", () => {});
-    child.stdin.end(`${JSON.stringify(event)}\n`);
+    void bundle.then(
+      (bundleSourceB64) => {
+        child.stdin.end(
+          `${JSON.stringify({ ...event, bundleSourceB64: bundleSourceB64, bundleUrl: undefined })}\n`,
+        );
+      },
+      (error) => {
+        // The child is idle on an stdin that will never arrive, so the same stop
+        // path a timeout takes is what settles the run on an error frame.
+        stopForwarding(error instanceof Error ? error.message : String(error));
+      },
+    );
   });
+}
+
+function childRunnerPath() {
+  const root = process.env.LAMBDA_TASK_ROOT;
+  return root
+    ? join(root, "child-runner.mjs")
+    : fileURLToPath(new URL("./child-runner.mjs", import.meta.url));
 }
 
 // The child's cooperative deadline: the smaller of our grace-adjusted bound and

@@ -58,10 +58,10 @@ Tool registry path:
 
 Provider-defined tools are executed by the provider during the model call, not by core. Uploaded custom tools are classified at upload time by a static scan:
 
-- `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, or use of `process` as a bare global. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. Bundlers inline that pattern from common libraries, so an otherwise pure bundle stays on the isolate tier.
-- `runtime: "sandbox"` for code that needs Node, npm, or native modules.
+- `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, Web Streams, or reads off the `process` / `Buffer` globals. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. So is naming your own function or property `process` — only reading it as a namespace counts.
+- `runtime: "sandbox"` for code that needs Node, npm, native modules, or Web Streams. Anything importing the `ai` package lands here.
 
-Both tiers give you timers, `console`, `AbortController`, and `fetch`. The isolate tier has no filesystem and no module imports; the sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
+Both tiers give you timers, `console`, `AbortController`, `fetch`, `TextEncoder` / `TextDecoder`, `URL` / `URLSearchParams`, `atob` / `btoa`, and `crypto.randomUUID` / `crypto.getRandomValues`. The isolate tier stops there: no filesystem, no module imports, no Web Streams, no Node globals. The sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
 
 Async-generator tools stream on both tiers: each `yield` is delivered as a
 preliminary tool result while the tool is still running, and the last one is the

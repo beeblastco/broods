@@ -533,7 +533,11 @@ export default $config({
       runtime: "nodejs22.x",
       architecture: "arm64",
       timeout: "35 seconds",
-      memory: "512 MB",
+      // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
+      // of a core, and this function's cost is almost all CPU — Node startup in
+      // the child plus parsing a bundle — so a smaller size bills roughly the
+      // same GB-ms while taking several times longer.
+      memory: "1769 MB",
       copyFiles: [
         {
           from: "../lambda/child-runner.mjs",

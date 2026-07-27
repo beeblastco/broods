@@ -52,9 +52,16 @@ const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// A bare `process` reference (member, bracket, call, or plain) throws in an isolate
-// even through `?.`; namespaced probes (`globalThis.process?.x`) stay isolate.
-const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
+// Reading a member off the Node globals throws in an isolate. Only the member
+// forms count: a locally declared `process` method or export key is not the
+// global (zod ships one), and `typeof process` is a guarded probe that is fine.
+const NODE_GLOBAL_MEMBER_PATTERN =
+  /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
+// Web Streams are outside what the isolate installs (isolate/runner/web-globals.mjs),
+// so a bundle that touches one — every bundle importing `ai` does — runs on the
+// sandbox tier rather than dying on a ReferenceError halfway through.
+const WEB_STREAMS_PATTERN =
+  /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 
 /**
  * Normalize and validate a CLI-supplied custom tool upload.
@@ -147,8 +154,9 @@ export function accountToolBundleStorageKey(
 
 /**
  * Cheap upload-time heuristic for choosing the default execution tier. Bundles
- * that mention Node-only globals, node: imports, require(), or bare package
- * imports need the existing sandbox tier; pure bundles can run in the V8 isolate.
+ * that mention Node-only globals, node: imports, require(), bare package
+ * imports, or Web Streams need the sandbox tier; everything the isolate's global
+ * set covers stays on the faster isolate tier.
  * @param bundleSource bundled JavaScript module source
  * @returns the inferred runtime tier
  */
@@ -158,7 +166,8 @@ export function inferAccountToolRuntime(
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    NODE_PROCESS_GLOBAL_PATTERN.test(bundleSource) ||
+    NODE_GLOBAL_MEMBER_PATTERN.test(bundleSource) ||
+    WEB_STREAMS_PATTERN.test(bundleSource) ||
     /\b__dirname\b/.test(bundleSource) ||
     BARE_IMPORT_PATTERN.test(bundleSource)
   ) {

@@ -8,10 +8,21 @@
  */
 
 import { createHash } from "node:crypto";
+import { registerHooks } from "node:module";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 // Wall-clock deadline for the whole run; the handler also hard-kills the child,
 // this is the cooperative in-process bound that trips ctx.abortSignal first.
 const DEFAULT_TIMEOUT_SECONDS = 30;
+
+// The identity the bundle is imported under. Nothing is ever written here — the
+// loader hook answers it from memory — but it has to be a file URL: bundlers
+// emit `createRequire(import.meta.url)`, which rejects a data: URL outright and
+// throws before a line of the tool's own code runs.
+const BUNDLE_URL = pathToFileURL(
+  join(process.env.LAMBDA_TASK_ROOT ?? process.cwd(), "broods-tool-bundle.mjs"),
+).href;
 
 // The timeout and the run's own completion race: process.exit is deferred to the
 // stdout flush callback, so without this the aborted run emits a second terminal
@@ -51,17 +62,13 @@ async function runToolRequest() {
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
 async function runBundle(payload, abortSignal) {
-  const bundleSourceB64 = await readBundleSource(payload);
-  const actualSha = createHash("sha256")
-    .update(Buffer.from(bundleSourceB64, "base64"))
-    .digest("hex");
+  const bundle = Buffer.from(payload.bundleSourceB64, "base64");
+  const actualSha = createHash("sha256").update(bundle).digest("hex");
   if (actualSha !== payload.expectedSha256) {
     throw new Error("custom tool bundle hash mismatch inside sandbox runner");
   }
 
-  // Imported from memory, never written to disk: /tmp survives in a warm Lambda
-  // sandbox, so a bundle on disk is readable by any process that outlives its run.
-  const module = await import(`data:text/javascript;base64,${bundleSourceB64}`);
+  const module = await importBundle(bundle.toString("utf8"));
 
   let definition = module.default;
   if (typeof definition === "function") {
@@ -109,16 +116,22 @@ async function readAllStdin() {
   return input.trim();
 }
 
-async function readBundleSource(payload) {
-  if (payload.bundleSourceB64 !== undefined) return payload.bundleSourceB64;
-  const response = await fetch(payload.bundleUrl);
-  if (!response.ok) {
-    throw new Error(
-      `custom tool bundle fetch failed with HTTP ${response.status}`,
-    );
-  }
+// Served straight out of memory through a resolve/load hook, never written to
+// disk: /tmp survives in a warm Lambda sandbox, so a bundle on disk is readable
+// by any process that outlives its run.
+async function importBundle(source) {
+  registerHooks({
+    load: (url, context, next) =>
+      url === BUNDLE_URL
+        ? { format: "module", source: source, shortCircuit: true }
+        : next(url, context),
+    resolve: (specifier, context, next) =>
+      specifier === BUNDLE_URL
+        ? { url: BUNDLE_URL, format: "module", shortCircuit: true }
+        : next(specifier, context),
+  });
 
-  return Buffer.from(await response.arrayBuffer()).toString("base64");
+  return await import(BUNDLE_URL);
 }
 
 function emitTerminal(frame, code) {
@@ -137,12 +150,10 @@ function parsePayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("invalid sandbox runner payload");
   }
-  const hasSource = typeof payload.bundleSourceB64 === "string";
-  const hasUrl = typeof payload.bundleUrl === "string";
-  if (hasSource === hasUrl) {
-    throw new Error(
-      "sandbox runner payload needs exactly one of bundleSourceB64 or bundleUrl",
-    );
+  // The handler resolves bundleUrl before spawning this process, so by here the
+  // bytes are always inline.
+  if (typeof payload.bundleSourceB64 !== "string") {
+    throw new Error("sandbox runner payload missing bundleSourceB64");
   }
   if (typeof payload.expectedSha256 !== "string") {
     throw new Error("sandbox runner payload missing expectedSha256");
@@ -151,8 +162,7 @@ function parsePayload(payload) {
     throw new Error("sandbox runner payload missing toolName");
   }
   return {
-    bundleSourceB64: hasSource ? payload.bundleSourceB64 : undefined,
-    bundleUrl: hasUrl ? payload.bundleUrl : undefined,
+    bundleSourceB64: payload.bundleSourceB64,
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
     input: payload.input,
@@ -164,9 +174,6 @@ function parsePayload(payload) {
       typeof payload.toolCallId === "string" ? payload.toolCallId : undefined,
   };
 }
-
-// Inline bytes or a presigned GET, which keeps the bundle out of the 6 MB invoke
-// quota. Fetched before tenant code runs; the sha256 check is what makes it safe.
 
 function runTimeoutMs() {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);

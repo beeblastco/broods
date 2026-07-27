@@ -5,10 +5,11 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import ivm from "isolated-vm";
 import { guardedFetch, BODY_LIMIT_BYTES, FETCH_TIMEOUT_MS } from "./pinned-fetch.mjs";
+import { WEB_GLOBALS_SOURCE } from "./web-globals.mjs";
 
 // Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
 // remaining budget. Declared before the entry dispatch below assigns it.
@@ -294,6 +295,17 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
       ],
       { timeout: 1_000 },
     );
+    // Text codecs, base64, URL and crypto, in a second closure so the host-bridged
+    // setup above stays readable. Installed before the module evaluates: bundles
+    // reach for these at import time, not only inside execute.
+    await context.evalClosure(
+      WEB_GLOBALS_SOURCE,
+      [
+        new ivm.Callback((input, base, key, value) => parseUrl(input, base, key, value), { sync: true }),
+        new ivm.Callback((length) => Array.from(randomBytes(Math.min(Number(length) || 0, 65_536))), { sync: true }),
+      ],
+      { timeout: 1_000 },
+    );
     fireTimer = await context.global.get("__fireTimer", { reference: true });
     // Expose the run's cancel hook to the SIGUSR2 handler so the core host can
     // trip the in-isolate AbortController when the AI SDK abortSignal fires.
@@ -469,6 +481,31 @@ function asPlainRecord(value, name) {
     throw new Error(`isolate runner payload ${name} must be an object`);
   }
   return value;
+}
+
+// Backs the isolate's URL global. Parsing on the host means bundles get Node's
+// WHATWG parser instead of a hand-rolled one; null is an invalid URL, which the
+// isolate turns back into a TypeError.
+function parseUrl(input, base, setterKey, setterValue) {
+  try {
+    const url = new URL(input, base ?? undefined);
+    if (setterKey) url[setterKey] = setterValue;
+    return {
+      href: url.href,
+      protocol: url.protocol,
+      username: url.username,
+      password: url.password,
+      host: url.host,
+      hostname: url.hostname,
+      port: url.port,
+      pathname: url.pathname,
+      search: url.search,
+      hash: url.hash,
+      origin: url.origin,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function writeFrame(frame) {
