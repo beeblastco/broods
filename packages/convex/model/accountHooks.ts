@@ -47,8 +47,8 @@ export interface RequiredAccountHookUpload {
 }
 
 const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// Matches the CLI's MAX_BUNDLE_FILE_BYTES (see accountTools.ts) so CLI-built
-// hook bundles are never rejected at this gate on size.
+// Hooks only ever run in the isolate, inlined into core's own process, so they
+// keep the tighter of the two tool bounds (see accountTools.ts).
 const MAX_BUNDLE_BYTES = 1_000_000;
 
 /**

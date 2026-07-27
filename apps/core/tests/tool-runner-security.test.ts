@@ -1,8 +1,9 @@
 /**
- * Sandbox tool-runner containment regressions. The runner Lambda is shared by
- * every account, so its warm execution environment is reused across tenants:
- * these assert that a run leaves nothing on disk and no live process behind.
- * Driven under real Node (handler.mjs spawns process.execPath).
+ * Sandbox tool-runner handler regressions, driven under real Node (handler.mjs
+ * spawns process.execPath). Containment: the runner Lambda is shared by every
+ * account and its warm execution environment is reused across tenants, so a run
+ * must leave nothing on disk and no live process behind. Delivery: frames must
+ * reach the response stream as the child writes them, not in one final flush.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -22,22 +23,44 @@ async function invokeHandler(
   bundle: string,
   event: Record<string, unknown>,
   parentEnv: Record<string, string> = {},
-): Promise<{ stdout?: string; error?: string }> {
+  // Read the response slowly against a small buffer to force the handler's
+  // backpressure path, where a paused stdout can outlive the child's exit.
+  throttleMs = 0,
+): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   try {
     const driver = join(dir, "driver.mjs");
     await writeFile(
       driver,
       [
+        // The handler streams NDJSON into a response stream instead of returning
+        // it, so the driver collects the stream and re-emits it as { stdout },
+        // timestamping each write so a test can tell streaming from buffering.
         `import { createHash } from "node:crypto";`,
+        `import { PassThrough } from "node:stream";`,
         `import { handler } from ${JSON.stringify(handlerPath)};`,
+        `const throttleMs = ${throttleMs};`,
         `const bundle = Buffer.from(${JSON.stringify(bundle)}, "utf8");`,
-        `const result = await handler({`,
+        `const responseStream = new PassThrough(`,
+        `  throttleMs ? { highWaterMark: 64 } : {},`,
+        `);`,
+        `const startedAt = Date.now();`,
+        `const arrivalsMs = [];`,
+        `let stdout = "";`,
+        `const consumed = (async () => {`,
+        `  for await (const chunk of responseStream) {`,
+        `    stdout += chunk;`,
+        `    arrivalsMs.push(Date.now() - startedAt);`,
+        `    if (throttleMs) await new Promise((r) => setTimeout(r, throttleMs));`,
+        `  }`,
+        `})();`,
+        `await handler({`,
         `  ...${JSON.stringify(event)},`,
         `  bundleSourceB64: bundle.toString("base64"),`,
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
-        `});`,
-        `process.stdout.write(JSON.stringify(result));`,
+        `}, responseStream);`,
+        `await consumed;`,
+        `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
       ].join("\n"),
     );
 
@@ -196,4 +219,85 @@ describe("tool-runner containment", () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("tool-runner response streaming", () => {
+  it("forwards each yield as the child writes it, not in one final flush", async () => {
+    // The bundle stalls between yields. A buffering handler delivers everything
+    // at the end, so every arrival lands within a few ms of the last one.
+    const bundle = [
+      `const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));`,
+      `export default {`,
+      `  name: "ticker",`,
+      `  async *execute() {`,
+      `    yield { tick: 1 };`,
+      `    await sleep(700);`,
+      `    yield { tick: 2 };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(bundle, { toolName: "ticker" });
+    const arrivals = result.arrivalsMs ?? [];
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+
+    expect(frames).toEqual([
+      { t: "chunk", output: { tick: 1 } },
+      { t: "chunk", output: { tick: 2 } },
+      { t: "final", result: { tick: 2 } },
+    ]);
+    expect(arrivals.length).toBeGreaterThan(1);
+    expect(arrivals.at(-1)! - arrivals[0]!).toBeGreaterThan(500);
+  }, 30_000);
+
+  it("loses nothing when the reader is slower than the tool", async () => {
+    // Backpressure pauses child stdout, and a paused pipe still holds data when
+    // the child exits — so finalizing on "exit" silently truncates the run.
+    const yields = 2000;
+    const bundle = [
+      `export default {`,
+      `  name: "chatty",`,
+      `  async *execute() {`,
+      `    for (let i = 0; i < ${yields}; i++) yield { i: i, pad: "x".repeat(400) };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(bundle, { toolName: "chatty" }, {}, 5);
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { t: string });
+
+    expect(frames.filter((frame) => frame.t === "chunk")).toHaveLength(yields);
+    expect(frames.at(-1)?.t).toBe("final");
+  }, 30_000);
+
+  it("settles promptly when a grandchild inherits the stdout pipe", async () => {
+    // The grandchild holds the pipe's write end open, so stdout never ends on
+    // its own. Waiting for it without reaping the group first would stall the
+    // run until the 30s kill, turning a fast tool into a timeout.
+    const bundle = [
+      `import { spawn } from "node:child_process";`,
+      `export default {`,
+      `  name: "leaky",`,
+      `  execute() {`,
+      // inherit: the grandchild gets this process's stdout, not a fresh pipe.
+      `    spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], {`,
+      `      stdio: "inherit",`,
+      `    });`,
+      `    return { spawned: true };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const startedAt = Date.now();
+    const result = await invokeHandler(bundle, { toolName: "leaky" });
+
+    expect(result.stdout).toContain('"spawned":true');
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+  }, 40_000);
 });

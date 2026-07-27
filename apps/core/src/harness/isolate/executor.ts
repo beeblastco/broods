@@ -78,6 +78,7 @@ async function buildRunPayload({
     input,
     config,
     toolCallId: toolCallIdFromOptions(options),
+    bundleTransport: "inline",
   });
   return { ...payload };
 }

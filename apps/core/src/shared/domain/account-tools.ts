@@ -81,9 +81,12 @@ export interface PublicAccountToolRecord {
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// Matches the CLI's MAX_BUNDLE_FILE_BYTES so a bundle that passes CLI validation
-// is not rejected here — large enough to host AI-SDK-derived fetch-only tools.
-const MAX_BUNDLE_BYTES = 1_000_000;
+// A sandbox bundle streams from S3 into the runner; an isolate bundle is inlined
+// into core's own process, where every concurrent call holds a copy.
+const MAX_BUNDLE_BYTES: Record<AccountToolRuntime, number> = {
+  isolate: 1_000_000,
+  sandbox: 10_000_000,
+};
 const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
@@ -100,7 +103,7 @@ export function isAccountToolId(value: string): boolean {
 
 export function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: boolean },
+  options: { requireBundle: boolean; currentRuntime?: AccountToolRuntime },
 ): NormalizedAccountToolUpload {
   if (!isPlainObject(input)) {
     throw new Error("tool upload body must be an object");
@@ -129,7 +132,6 @@ export function normalizeAccountToolUpload(
 
   if (value.bundle !== undefined) {
     result.bundle = normalizeBundle(value.bundle);
-    result.sha256 = sha256Hex(result.bundle);
   } else if (options.requireBundle) {
     throw new Error("tool.bundle is required");
   }
@@ -140,6 +142,18 @@ export function normalizeAccountToolUpload(
     // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
     // stored runtime so it cannot silently flip an explicitly chosen tier.
     result.runtime = inferAccountToolRuntime(result.bundle);
+  }
+
+  // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
+  // which deliberately does not restate runtime. Checked before hashing.
+  if (result.bundle !== undefined) {
+    assertBundleSize(
+      result.bundle,
+      result.runtime ??
+        options.currentRuntime ??
+        inferAccountToolRuntime(result.bundle),
+    );
+    result.sha256 = sha256Hex(result.bundle);
   }
 
   if (value.defaultConfig !== undefined) {
@@ -272,12 +286,18 @@ function normalizeInputSchema(value: unknown): JSONSchema7 {
   return schema;
 }
 
+function assertBundleSize(bundle: string, runtime: AccountToolRuntime): void {
+  const limit = MAX_BUNDLE_BYTES[runtime];
+  if (Buffer.byteLength(bundle, "utf8") > limit) {
+    throw new Error(
+      `tool.bundle must be ${limit} bytes or smaller on the ${runtime} runtime`,
+    );
+  }
+}
+
 function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("tool.bundle must be a non-empty string");
-  }
-  if (Buffer.byteLength(value, "utf8") > MAX_BUNDLE_BYTES) {
-    throw new Error(`tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
   }
   return value;
 }

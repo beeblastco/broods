@@ -9,7 +9,11 @@ import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
 import type { AgentToolConfig } from "../../shared/domain/agent-config.ts";
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import { readS3Bytes } from "../../shared/s3.ts";
+import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
+
+// The runner fetches at the start of a 35s-bounded invocation, so the grant only
+// has to outlive a cold start.
+const BUNDLE_URL_TTL_SECONDS = 120;
 
 export interface ExecuteAccountToolOptions {
   accountId: string;
@@ -25,16 +29,20 @@ export interface ExecuteAccountToolOptions {
   ) => AsyncGenerator<unknown, void, void>;
 }
 
-// Payload the isolate runner reads on stdin. The bundle is always inlined
-// (base64); toolCallId is the AI SDK call id surfaced via options.toolCallId.
-export interface RunnerPayload {
-  bundleSourceB64: string;
+// The isolate tier inlines the bytes on a local child's stdin; the Lambda tier
+// gets a presigned GET, since an inlined bundle spends its 6 MB invoke quota.
+export type RunnerBundleSource =
+  { bundleSourceB64: string } | { bundleUrl: string };
+
+// Payload a runner reads on stdin. toolCallId is the AI SDK call id surfaced
+// via options.toolCallId.
+export type RunnerPayload = RunnerBundleSource & {
   expectedSha256: string;
   toolName: string;
   input: unknown;
   config: Record<string, unknown>;
   toolCallId?: string;
-}
+};
 
 // One NDJSON frame per stdout line: chunk = streamed output, final = a
 // non-streaming result, end = closed stream, error = tool failure.
@@ -89,20 +97,21 @@ export class FrameQueue {
   }
 }
 
-/** Loads the uploaded bundle from S3 and inlines it into the isolate payload. */
+/** Builds the runner payload, addressing the uploaded bundle per transport. */
 export async function createRunnerPayload(options: {
   bucket: string;
   tool: AccountToolRecord;
   input: unknown;
   config: AgentToolConfig;
   toolCallId?: string;
+  bundleTransport: "inline" | "presigned-url";
 }): Promise<RunnerPayload> {
-  const bytes = await readS3Bytes(
-    options.bucket,
-    options.tool.bundleStorageKey,
-  );
   return {
-    bundleSourceB64: Buffer.from(bytes).toString("base64"),
+    ...(await bundleSource(
+      options.bundleTransport,
+      options.bucket,
+      options.tool.bundleStorageKey,
+    )),
     expectedSha256: options.tool.sha256,
     toolName: options.tool.name,
     input: options.input,
@@ -157,6 +166,26 @@ export function toolCallIdFromOptions(options: unknown): string | undefined {
   return typeof options.toolCallId === "string"
     ? options.toolCallId
     : undefined;
+}
+
+async function bundleSource(
+  transport: "inline" | "presigned-url",
+  bucket: string,
+  key: string,
+): Promise<RunnerBundleSource> {
+  if (transport === "inline") {
+    return {
+      bundleSourceB64: Buffer.from(await readS3Bytes(bucket, key)).toString(
+        "base64",
+      ),
+    };
+  }
+
+  return {
+    bundleUrl: await getS3ObjectUrl(bucket, key, {
+      expiresInSeconds: BUNDLE_URL_TTL_SECONDS,
+    }),
+  };
 }
 
 function mergeToolConfig(

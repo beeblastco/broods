@@ -6,7 +6,10 @@
  * here (#82). Payload shape and frame protocol come from ./payload.ts.
  */
 
-import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
+import {
+  InvokeWithResponseStreamCommand,
+  LambdaClient,
+} from "@aws-sdk/client-lambda";
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -27,23 +30,16 @@ interface DetachedAsyncToolMetadata {
   [key: string]: unknown;
 }
 
-interface ToolRunnerResponse {
-  stdout?: unknown;
-  error?: unknown;
-}
-
 let sharedClient: LambdaClient | undefined;
 
 /**
- * Streaming entry used by the AI SDK tool adapter (custom.tool.ts). Isolate
- * bundles run in the in-core V8 isolate: an async-generator execute streams each
- * yield (surfaced as a preliminary tool result on the sync SSE path); a normal
- * bundle yields exactly once (its result). A sync-returning async generator lets
- * the SDK detect the async-iterable and stream it.
- *
- * Tools classified `runtime: "sandbox"` (node/npm/native) run in the tool-runner
- * Lambda. Detached-async tools still need a persistent reservation and are
- * rejected here (tracked in #82) rather than run inline.
+ * Streaming entry used by the AI SDK tool adapter (custom.tool.ts). An
+ * async-generator execute streams each yield (surfaced as a preliminary tool
+ * result on the SSE path); a normal bundle yields exactly once, its result.
+ * Isolate bundles run in the in-core V8 isolate; bundles classified
+ * `runtime: "sandbox"` (node/npm/native) stream out of the tool-runner Lambda
+ * over InvokeWithResponseStream. Detached-async tools still need a persistent
+ * reservation and are rejected here (tracked in #82) rather than run inline.
  */
 export async function* streamAccountTool(
   options: ExecuteAccountToolOptions,
@@ -78,27 +74,39 @@ export async function* streamInLambda(
     input: options.input,
     config: options.config,
     toolCallId: toolCallIdFromOptions(options.options),
+    bundleTransport: "presigned-url",
   });
   const abortSignal = abortSignalFromOptions(options.options);
-  const stdout = await invoke(client, payload, abortSignal);
-
   const queue = new FrameQueue();
-  queue.push(stdout);
-  queue.close();
-  for await (const frame of queue.frames()) {
-    if (frame.t === "chunk") {
-      yield frame.output;
-      continue;
+  let transportError: unknown;
+  // Fill the queue in the background so each NDJSON line reaches the agent loop
+  // as the Lambda writes it, rather than after the whole run has finished.
+  const pump = drainInvokeStream(client, payload, abortSignal, queue)
+    .catch((error: unknown) => {
+      transportError = error;
+    })
+    .finally(() => queue.close());
+
+  try {
+    for await (const frame of queue.frames()) {
+      if (frame.t === "chunk") {
+        yield frame.output;
+        continue;
+      }
+      if (frame.t === "final") {
+        yield frame.result;
+        return;
+      }
+      if (frame.t === "end") {
+        return;
+      }
+      throw new Error(frame.error || "custom tool sandbox execution failed");
     }
-    if (frame.t === "final") {
-      yield frame.result;
-      return;
-    }
-    if (frame.t === "end") {
-      return;
-    }
-    throw new Error(frame.error || "custom tool sandbox execution failed");
+  } finally {
+    await pump;
   }
+  if (transportError) throw transportError;
+
   throw new Error("custom tool sandbox runner did not return a result");
 }
 
@@ -112,55 +120,40 @@ function defaultClient(): LambdaClient {
   return sharedClient;
 }
 
-// Invoke the runner Lambda and return its raw NDJSON stdout. Surfaces Lambda-side
-// failures (FunctionError, or the handler's { error }) as thrown errors.
-async function invoke(
+// Invoke the runner Lambda and push its raw NDJSON payload chunks into the queue
+// as they arrive. Surfaces a Lambda-side failure (InvokeComplete.ErrorCode) as a
+// thrown error; tool-side failures arrive as an `error` frame instead.
+async function drainInvokeStream(
   client: LambdaClient,
   payload: RunnerPayload,
   abortSignal: AbortSignal | undefined,
-): Promise<string> {
+  queue: FrameQueue,
+): Promise<void> {
   const result = await client.send(
-    new InvokeCommand({
+    new InvokeWithResponseStreamCommand({
       FunctionName: requireEnv("TOOL_RUNNER_FUNCTION_NAME"),
       InvocationType: "RequestResponse",
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
     abortSignal ? { abortSignal } : {},
   );
-  const body = result.Payload
-    ? new TextDecoder().decode(result.Payload)
-    : "";
-  if (result.FunctionError) {
-    throw new Error(
-      `tool runner Lambda failed: ${lambdaErrorMessage(body, result.FunctionError)}`,
-    );
+  // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
+  // to carry state across them.
+  const decoder = new TextDecoder();
+  for await (const event of result.EventStream ?? []) {
+    const chunk = event.PayloadChunk?.Payload;
+    if (chunk) {
+      queue.push(decoder.decode(chunk, { stream: true }));
+      continue;
+    }
+    const errorCode = event.InvokeComplete?.ErrorCode;
+    if (errorCode) {
+      throw new Error(
+        `tool runner Lambda failed: ${event.InvokeComplete?.ErrorDetails || errorCode}`,
+      );
+    }
   }
-  const parsed = parseResponse(body);
-  if (typeof parsed.error === "string" && parsed.error) {
-    throw new Error(parsed.error);
-  }
-  if (typeof parsed.stdout !== "string") {
-    throw new Error("tool runner Lambda returned no output");
-  }
-  return parsed.stdout;
-}
-
-function lambdaErrorMessage(body: string, functionError: string): string {
-  try {
-    const parsed = JSON.parse(body) as { errorMessage?: unknown };
-    if (typeof parsed.errorMessage === "string") return parsed.errorMessage;
-  } catch {}
-  return functionError;
-}
-
-function parseResponse(body: string): ToolRunnerResponse {
-  if (!body) return {};
-  try {
-    const parsed = JSON.parse(body) as unknown;
-    return isPlainObject(parsed) ? (parsed as ToolRunnerResponse) : {};
-  } catch {
-    throw new Error("tool runner Lambda returned a non-JSON response");
-  }
+  queue.push(decoder.decode());
 }
 
 function extractAsyncToolMetadata(options: unknown): unknown {

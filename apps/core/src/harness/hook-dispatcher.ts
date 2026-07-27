@@ -19,6 +19,7 @@ import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
+import { wrapToolExecute } from "./tool-execute.ts";
 
 export interface HookDispatcher {
   hasHooksFor(event: AgentHookEventName): boolean;
@@ -136,53 +137,35 @@ export function wrapToolsWithHooks(
   if (!wantsStart && !wantsResult) {
     return tools;
   }
-  const wrapped: ToolSet = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    const originalExecute = tool.execute;
-    if (typeof originalExecute !== "function") {
-      wrapped[name] = tool;
-      continue;
-    }
-    const execute = async (
-      input: unknown,
-      execOptions: unknown,
-    ): Promise<unknown> => {
-      let effectiveInput = input;
-      if (wantsStart) {
-        const mutation = await hooks.runMutation("tool.call.started", {
-          toolName: name,
-          input: toLifecycleValue(input),
-        });
-        if (mutation) {
-          if (mutation.decision === "deny") {
-            const reason =
-              typeof mutation.denyReason === "string"
-                ? mutation.denyReason
-                : "denied by hook";
-            throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
-          }
-          if (isPlainObject(mutation.args)) {
-            effectiveInput = mutation.args;
-          }
-        }
+
+  return wrapToolExecute(tools, (name) => ({
+    before: async (input: unknown) => {
+      if (!wantsStart) return input;
+      const mutation = await hooks.runMutation("tool.call.started", {
+        toolName: name,
+        input: toLifecycleValue(input),
+      });
+      if (!mutation) return input;
+      if (mutation.decision === "deny") {
+        const reason =
+          typeof mutation.denyReason === "string"
+            ? mutation.denyReason
+            : "denied by hook";
+        throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
-      let result = await (
-        originalExecute as (input: unknown, options: unknown) => unknown
-      )(effectiveInput, execOptions);
-      if (wantsResult) {
-        const mutation = await hooks.runMutation("tool.result", {
-          toolName: name,
-          output: toLifecycleValue(result as JSONValue),
-        });
-        if (mutation && "output" in mutation) {
-          result = mutation.output;
-        }
-      }
-      return result;
-    };
-    wrapped[name] = { ...tool, execute } as ToolSet[string];
-  }
-  return wrapped;
+
+      return isPlainObject(mutation.args) ? mutation.args : input;
+    },
+    after: async (output: unknown) => {
+      if (!wantsResult) return output;
+      const mutation = await hooks.runMutation("tool.result", {
+        toolName: name,
+        output: toLifecycleValue(output as JSONValue),
+      });
+
+      return mutation && "output" in mutation ? mutation.output : output;
+    },
+  }));
 }
 
 /**

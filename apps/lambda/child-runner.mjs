@@ -31,7 +31,10 @@ async function runToolRequest() {
   const timeoutMs = runTimeoutMs();
   const timeout = setTimeout(() => {
     controller.abort(new Error("custom tool sandbox execution timed out"));
-    emitTerminal({ t: "error", error: "custom tool sandbox execution timed out" }, 1);
+    emitTerminal(
+      { t: "error", error: "custom tool sandbox execution timed out" },
+      1,
+    );
   }, timeoutMs);
   try {
     const payload = parsePayload(JSON.parse(await readAllStdin()));
@@ -48,17 +51,17 @@ async function runToolRequest() {
 // A sync async-generator return streams each yield as a chunk frame; a plain
 // return resolves once. Mirrors the isolate runner's execute contract.
 async function runBundle(payload, abortSignal) {
-  const bundleSource = Buffer.from(payload.bundleSourceB64, "base64");
-  const actualSha = createHash("sha256").update(bundleSource).digest("hex");
+  const bundleSourceB64 = await readBundleSource(payload);
+  const actualSha = createHash("sha256")
+    .update(Buffer.from(bundleSourceB64, "base64"))
+    .digest("hex");
   if (actualSha !== payload.expectedSha256) {
     throw new Error("custom tool bundle hash mismatch inside sandbox runner");
   }
 
   // Imported from memory, never written to disk: /tmp survives in a warm Lambda
   // sandbox, so a bundle on disk is readable by any process that outlives its run.
-  const module = await import(
-    `data:text/javascript;base64,${payload.bundleSourceB64}`
-  );
+  const module = await import(`data:text/javascript;base64,${bundleSourceB64}`);
 
   let definition = module.default;
   if (typeof definition === "function") {
@@ -99,6 +102,25 @@ async function runBundle(payload, abortSignal) {
   return await value;
 }
 
+async function readAllStdin() {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  return input.trim();
+}
+
+async function readBundleSource(payload) {
+  if (payload.bundleSourceB64 !== undefined) return payload.bundleSourceB64;
+  const response = await fetch(payload.bundleUrl);
+  if (!response.ok) {
+    throw new Error(
+      `custom tool bundle fetch failed with HTTP ${response.status}`,
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer()).toString("base64");
+}
+
 function emitTerminal(frame, code) {
   if (settled) return;
   settled = true;
@@ -115,8 +137,12 @@ function parsePayload(payload) {
   if (!payload || typeof payload !== "object") {
     throw new Error("invalid sandbox runner payload");
   }
-  if (typeof payload.bundleSourceB64 !== "string") {
-    throw new Error("sandbox runner payload missing bundleSourceB64");
+  const hasSource = typeof payload.bundleSourceB64 === "string";
+  const hasUrl = typeof payload.bundleUrl === "string";
+  if (hasSource === hasUrl) {
+    throw new Error(
+      "sandbox runner payload needs exactly one of bundleSourceB64 or bundleUrl",
+    );
   }
   if (typeof payload.expectedSha256 !== "string") {
     throw new Error("sandbox runner payload missing expectedSha256");
@@ -125,7 +151,8 @@ function parsePayload(payload) {
     throw new Error("sandbox runner payload missing toolName");
   }
   return {
-    bundleSourceB64: payload.bundleSourceB64,
+    bundleSourceB64: hasSource ? payload.bundleSourceB64 : undefined,
+    bundleUrl: hasUrl ? payload.bundleUrl : undefined,
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
     input: payload.input,
@@ -138,16 +165,13 @@ function parsePayload(payload) {
   };
 }
 
-async function readAllStdin() {
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) input += chunk;
-  return input.trim();
-}
+// Inline bytes or a presigned GET, which keeps the bundle out of the 6 MB invoke
+// quota. Fetched before tenant code runs; the sha256 check is what makes it safe.
 
 function runTimeoutMs() {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);
-  const seconds = Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
+  const seconds =
+    Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
   return seconds * 1000;
 }
 

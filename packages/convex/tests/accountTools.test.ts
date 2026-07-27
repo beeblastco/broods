@@ -7,7 +7,8 @@ import {
   normalizeAccountToolUpload,
 } from "../model/accountTools.ts";
 
-const MAX_BUNDLE_BYTES = 1_000_000;
+const MAX_ISOLATE_BUNDLE_BYTES = 1_000_000;
+const MAX_SANDBOX_BUNDLE_BYTES = 10_000_000;
 
 // n ASCII bytes of isolate-safe source (a comment) for exact-boundary checks.
 const bundleOfBytes = (n: number): string => "//" + "a".repeat(n - 2);
@@ -70,7 +71,7 @@ describe("bundle-size upload gate", () => {
           name: "sized",
           description: "Sized.",
           inputSchema: { type: "object" },
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES),
         },
         { requireBundle: true },
       ),
@@ -82,12 +83,44 @@ describe("bundle-size upload gate", () => {
           name: "sized",
           description: "Sized.",
           inputSchema: { type: "object" },
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES + 1),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1),
         },
         { requireBundle: true },
       ),
     ).rejects.toThrow(
-      `tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`,
+      `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
+    );
+  });
+
+  it("gives the sandbox tier the larger bound", async () => {
+    // A sandbox bundle is streamed from S3 into the runner instead of inlined,
+    // so it is not held in core's process and gets the bigger allowance.
+    const oversizedForIsolate = `${bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1)}\nimport "node:fs";`;
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "sized",
+          description: "Sized.",
+          inputSchema: { type: "object" },
+          bundle: oversizedForIsolate,
+        },
+        { requireBundle: true },
+      ),
+    ).resolves.toMatchObject({ runtime: "sandbox" });
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "sized",
+          description: "Sized.",
+          inputSchema: { type: "object" },
+          bundle: `${bundleOfBytes(MAX_SANDBOX_BUNDLE_BYTES + 1)}\nimport "node:fs";`,
+        },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow(
+      `tool.bundle must be ${MAX_SANDBOX_BUNDLE_BYTES} bytes or smaller on the sandbox runtime`,
     );
   });
 
@@ -97,7 +130,7 @@ describe("bundle-size upload gate", () => {
         {
           name: "sized",
           events: ["agent.started"],
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES),
         },
         { requireBundle: true },
       ),
@@ -108,12 +141,12 @@ describe("bundle-size upload gate", () => {
         {
           name: "sized",
           events: ["agent.started"],
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES + 1),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1),
         },
         { requireBundle: true },
       ),
     ).rejects.toThrow(
-      `hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`,
+      `hook.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller`,
     );
   });
 });

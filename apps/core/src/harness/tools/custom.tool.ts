@@ -16,23 +16,16 @@ export default function accountTool(
     [record.name]: tool({
       description: record.description,
       inputSchema: jsonSchema(record.inputSchema),
-      // Drain the stream here and return its last value: the AI SDK takes what
-      // execute returns as the result, so handing back the generator itself
-      // serialized to `{}` and the bundle never ran. The final yield is the
-      // result for both tiers; earlier yields are a streaming bundle's chunks.
-      execute: async (input, options) => {
-        let result: unknown;
-        for await (const value of streamAccountTool({
+      // Declared `async function*` so tool-execute.ts can see this streams. Each
+      // yield is a preliminary tool result; the last one is the tool's result.
+      execute: async function* (input, options) {
+        yield* streamAccountTool({
           accountId: context.accountId,
           tool: record,
-          input,
+          input: input,
           config: context.config,
-          options,
-        })) {
-          result = value;
-        }
-
-        return result;
+          options: options,
+        });
       },
     }),
   };

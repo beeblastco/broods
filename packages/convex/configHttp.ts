@@ -12,6 +12,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
+import { putHookBundle, putToolBundle } from "./model/bundles";
 import {
   ACCOUNT_ENV_VAR_NAME_PATTERN,
   collectEnvPlaceholderNames,
@@ -1861,14 +1862,11 @@ async function handleToolRoute(
       const upload = await normalizeAccountToolUpload(await req.json(), {
         requireBundle: true,
       });
-      const bundleStorageKey = await ctx.runAction(
-        internal.awsBundles.putToolBundle,
-        {
-          accountId: accountId,
-          sha256: upload.sha256,
-          bundle: upload.bundle,
-        },
-      );
+      const bundleStorageKey = await putToolBundle(ctx, {
+        accountId: accountId,
+        sha256: upload.sha256,
+        bundle: upload.bundle,
+      });
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
         name: upload.name,
@@ -1924,10 +1922,11 @@ async function handleToolRoute(
       return json({ error: "Tool not found" }, 404);
     const upload = await normalizeAccountToolUpload(await req.json(), {
       requireBundle: false,
+      currentRuntime: existing.runtime,
     });
     const bundleStorageKey =
       upload.bundle !== undefined && upload.sha256 !== undefined
-        ? await ctx.runAction(internal.awsBundles.putToolBundle, {
+        ? await putToolBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,
@@ -2024,14 +2023,11 @@ async function handleHookRoute(
       const upload = await normalizeAccountHookUpload(await req.json(), {
         requireBundle: true,
       });
-      const bundleStorageKey = await ctx.runAction(
-        internal.awsBundles.putHookBundle,
-        {
-          accountId: accountId,
-          sha256: upload.sha256,
-          bundle: upload.bundle,
-        },
-      );
+      const bundleStorageKey = await putHookBundle(ctx, {
+        accountId: accountId,
+        sha256: upload.sha256,
+        bundle: upload.bundle,
+      });
       const createdId = await ctx.runMutation(internal.accountHooks.create, {
         accountId: accountId,
         name: upload.name,
@@ -2088,7 +2084,7 @@ async function handleHookRoute(
     });
     const bundleStorageKey =
       upload.bundle !== undefined && upload.sha256 !== undefined
-        ? await ctx.runAction(internal.awsBundles.putHookBundle, {
+        ? await putHookBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,
