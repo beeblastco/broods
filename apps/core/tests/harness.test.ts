@@ -2264,9 +2264,8 @@ function installHarnessEnv(): void {
 
 describe("tool.call span duration", () => {
   it("reports what the SDK timed, not how late the handler was scheduled", async () => {
-    // The gap between a tool finishing and core's onToolExecutionEnd running is
-    // model time on parallel calls. Reading the handler's clock turned 4ms tool
-    // calls into multi-second spans in the trace.
+    // On parallel calls that scheduling gap is model time, which turned 4ms
+    // isolate calls into multi-second spans in the trace.
     const { toolSpanDurationMs } = await import("../src/harness/harness.ts");
 
     expect(toolSpanDurationMs(1_000, 6_000, 12)).toBe(12);

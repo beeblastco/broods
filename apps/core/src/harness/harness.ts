@@ -961,13 +961,20 @@ export async function runAgentLoop(
         toolOutput.type === "tool-result" ? toolOutput.output : undefined;
       const error =
         toolOutput.type === "tool-error" ? toolOutput.error : undefined;
-      // Close the tool.call span.
+      // Close the tool.call span. Normalize the SDK's duration before anything
+      // uses it as a timestamp — a NaN or negative one would corrupt the start.
       const toolEndMs = Date.now();
+      const openSpan = toolSpans.get(toolCall.toolCallId);
+      const toolDurationMs = toolSpanDurationMs(
+        openSpan?.startTimeMs ?? toolEndMs,
+        toolEndMs,
+        durationMs,
+      );
       const tracked =
-        toolSpans.get(toolCall.toolCallId) ??
+        openSpan ??
         startTrackedSpan(
           "tool.call",
-          toolEndMs - (durationMs ?? 0),
+          toolEndMs - toolDurationMs,
           rootOtelContext,
           rootSpanId,
           {
@@ -975,13 +982,6 @@ export async function runAgentLoop(
             "tool.call_id": toolCall.toolCallId,
           },
         );
-      // The SDK times execute() itself; this handler is only scheduled after it,
-      // and with parallel calls that gap is the model still generating.
-      const toolDurationMs = toolSpanDurationMs(
-        tracked.startTimeMs,
-        toolEndMs,
-        durationMs,
-      );
       const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
@@ -1627,11 +1627,8 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
-/**
- * How long a `tool.call` span should say the tool ran. The SDK measures
- * execute() directly, so it wins; the handler's own clock is only a fallback,
- * and it overstates parallel calls by whatever the model was still doing.
- */
+// The SDK measures execute() directly, so it wins; the handler clock is only a
+// fallback, and it overstates parallel calls by the model's own time.
 export function toolSpanDurationMs(
   startTimeMs: number,
   handlerNowMs: number,
