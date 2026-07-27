@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import type { LambdaClient } from "@aws-sdk/client-lambda";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
-import type { ExecuteAccountToolOptions } from "../src/harness/custom-tools/payload.ts";
+import type { ExecuteAccountToolOptions } from "../src/harness/bundles/payload.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
 const bundle =
@@ -149,7 +149,7 @@ describe("streamInLambda", () => {
 describe("streamAccountTool tier dispatch", () => {
   it("routes a sandbox tool to the sandbox executor and forwards every frame", async () => {
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
     let seen: ExecuteAccountToolOptions | undefined;
     const options: ExecuteAccountToolOptions = {
       accountId: "acct_test",
@@ -172,7 +172,7 @@ describe("streamAccountTool tier dispatch", () => {
 
   it("keeps an isolate tool off the Lambda", async () => {
     const { streamAccountTool } =
-      await import("../src/harness/custom-tools/executor.ts");
+      await import("../src/harness/bundles/executor.ts");
     const sandboxExecutor = mock(async function* () {
       yield { unreachable: true };
     });
@@ -233,7 +233,7 @@ async function* streamOf(
   options?: unknown,
 ): AsyncGenerator<unknown, void, void> {
   const { streamInLambda } =
-    await import("../src/harness/custom-tools/executor.ts");
+    await import("../src/harness/bundles/executor.ts");
   yield* streamInLambda(
     {
       accountId: "acct_test",

@@ -1,5 +1,5 @@
 /**
- * Custom-tool payload plumbing tests (custom-tools/payload.ts): runner payload building,
+ * Custom-tool payload plumbing tests (bundles/payload.ts): runner payload building,
  * config merge, the AI SDK option extractors, and the NDJSON frame protocol. The
  * tool dispatcher's runtime routing (isolate vs. deferred sandbox rejection) and
  * real isolate execution are covered in isolate-executor.test.ts.
@@ -27,7 +27,7 @@ mock.module("../src/shared/s3.ts", () => ({
 describe("createRunnerPayload", () => {
   it("inlines the bundle and merges default + agent config", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
@@ -47,7 +47,7 @@ describe("createRunnerPayload", () => {
 
   it("lets agent config override the tool default config", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
@@ -61,7 +61,7 @@ describe("createRunnerPayload", () => {
 
   it("includes toolCallId only when the AI SDK options carry one", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
 
     const withId = await createRunnerPayload({
       bucket: "tool-bundles",
@@ -87,7 +87,7 @@ describe("createRunnerPayload", () => {
 describe("AI SDK options extraction", () => {
   it("reads toolCallId and abortSignal, ignoring wrong shapes", async () => {
     const { toolCallIdFromOptions, abortSignalFromOptions } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const controller = new AbortController();
 
     expect(
@@ -110,7 +110,7 @@ describe("AI SDK options extraction", () => {
 describe("runner frame protocol", () => {
   it("parses NDJSON frames and rejects non-protocol lines", async () => {
     const { parseToolRunnerFrame } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
 
     expect(parseToolRunnerFrame('{"t":"chunk","output":{"n":1}}')).toEqual({
       t: "chunk",
@@ -128,7 +128,7 @@ describe("runner frame protocol", () => {
 
   it("FrameQueue yields whole frames as lines arrive, then flushes on close", async () => {
     const { FrameQueue } =
-      await import("../src/harness/custom-tools/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const queue = new FrameQueue();
     const collected: unknown[] = [];
     const consume = (async () => {

@@ -1,11 +1,11 @@
 /**
  * AI SDK adapter for account-uploaded custom tool metadata.
- * Execution is delegated to custom-tools/executor.ts, which dispatches by runtime tier.
+ * Execution is delegated to bundles/executor.ts, which dispatches by runtime tier.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
-import { streamAccountTool } from "../custom-tools/executor.ts";
+import { streamAccountTool } from "../bundles/executor.ts";
 import type { ToolContext } from "./index.ts";
 
 export default function accountTool(
