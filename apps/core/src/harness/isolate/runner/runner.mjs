@@ -205,13 +205,13 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
       `const __fetch = async (url, init) => $2(url, init ?? {});
       globalThis.__ctx = {
         config: $0,
-        asyncTool: null,
-        env: {},
         fetch: __fetch,
         state: $5,
       };
       globalThis.__input = $1;
       globalThis.__toolCallId = $6;
+      globalThis.__messages = $7;
+      globalThis.__experimentalContext = $8;
       globalThis.fetch = __fetch;
       let __nextTimer = 1;
       const __timers = new Map();
@@ -295,6 +295,10 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
         // tools, which are stateless single calls.
         new ivm.ExternalCopy(asPlainRecord(payload.state, "state")).copyInto(),
         new ivm.ExternalCopy(payload.toolCallId ?? null).copyInto(),
+        // The AI SDK's own execute options, so an uploaded bundle sees what the
+        // same tool would see in-process. Core bounds messages before it sends.
+        new ivm.ExternalCopy(payload.messages ?? null).copyInto(),
+        new ivm.ExternalCopy(payload.experimentalContext ?? null).copyInto(),
       ],
       { timeout: 1_000 },
     );
@@ -374,6 +378,8 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
           toolCallId: globalThis.__toolCallId,
           context: globalThis.__ctx,
           abortSignal: globalThis.__abortSignal,
+          messages: globalThis.__messages ?? [],
+          experimental_context: globalThis.__experimentalContext ?? undefined,
         };
         const value = globalThis.__execute(globalThis.__input, options);
         if (value != null && typeof value[Symbol.asyncIterator] === "function") {

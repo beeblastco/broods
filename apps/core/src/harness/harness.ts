@@ -204,8 +204,23 @@ export async function runAgentLoop(
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
   // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
+  // Per-call compute, so the tool.call span can report what that one call cost.
+  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
+  const toolComputeByCallId = new Map<
+    string,
+    { type: string; cpuUsec: number }
+  >();
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
+    if (sample.role === "tool" && sample.toolCallId !== undefined) {
+      const call = toolComputeByCallId.get(sample.toolCallId);
+      if (call) call.cpuUsec += sample.cpuUsec;
+      else
+        toolComputeByCallId.set(sample.toolCallId, {
+          type: sample.type,
+          cpuUsec: sample.cpuUsec,
+        });
+    }
     const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
     const existing = sandboxUsageByKey.get(key);
     if (existing) {
@@ -992,11 +1007,22 @@ export async function runAgentLoop(
             outputErrorText ?? errorMessage(error),
             getObservabilityContext()?.secretValues,
           );
+      // Compute is present only for tools that ran off-process, so the pair also
+      // tells a reader which runtime served the call.
+      const compute = toolComputeByCallId.get(toolCall.toolCallId);
+      toolComputeByCallId.delete(toolCall.toolCallId);
+      const computeAttributes = compute
+        ? {
+            "tool.compute.type": compute.type,
+            "tool.compute.cpu_usec": compute.cpuUsec,
+          }
+        : {};
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
+        ...computeAttributes,
         ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
       });
       if (toolSucceeded) {
@@ -1028,6 +1054,7 @@ export async function runAgentLoop(
           "tool.call_id": toolCall.toolCallId,
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
+          ...computeAttributes,
           ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
           ...(stepNumber !== undefined
             ? { "agent.step_number": stepNumber }

@@ -68,7 +68,17 @@ preliminary tool result while the tool is still running, and the last one is the
 tool's result. See [data security](./data-security.md) for what isolation each
 tier does and does not give you.
 
-**Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. `options.context` carries the broods `ctx` (`{ config, fetch, state, … }`), `options.toolCallId` is the model's tool-call id, and `options.abortSignal` trips when the request is cancelled.
+**Writing `execute`.** It takes the tool input first and call options second, matching the AI SDK's `tool({ execute })`. You get the same options a tool running in-process would:
+
+| option                         | what it carries                                                                                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `options.context`              | The broods `ctx`: `config` (see below), `fetch`, and a per-run `state` scratchpad.                                                                                                               |
+| `options.toolCallId`           | The model's id for this call.                                                                                                                                                                    |
+| `options.abortSignal`          | Trips when the request is cancelled.                                                                                                                                                             |
+| `options.messages`             | The conversation so far. Long conversations arrive truncated from the front — the most recent messages that fit 512 KB are forwarded, because the whole history would otherwise ride every call. |
+| `options.experimental_context` | Forwarded verbatim from the AI SDK.                                                                                                                                                              |
+
+**Secrets reach a tool through `options.context.config`, not `process.env`.** Put `env("NAME")` under the enabling agent's `tools.<tool>.config`; the value is resolved per environment and stored with the encrypted agent config, then merged over the tool's own `defaultConfig`. Neither tier gives a bundle the runner's environment: the sandbox child's `process.env` is scrubbed to `PATH`, `HOME`, `TMPDIR` and `NODE_ENV`, and the isolate has no `process` at all.
 
 ```mermaid
 sequenceDiagram

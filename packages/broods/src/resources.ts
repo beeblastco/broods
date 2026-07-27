@@ -73,7 +73,13 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+  | "agent"
+  | "workspace"
+  | "sandbox"
+  | "cron"
+  | "skill"
+  | "tool"
+  | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -114,11 +120,32 @@ export interface SkillDefinitionConfig {
   path: string;
 }
 
+/** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
+export interface ToolExecuteContext {
+  /**
+   * The tool's resolved config: `defaultConfig` merged under the enabling
+   * agent's `tools.<tool>.config`, with every `env("NAME")` already substituted.
+   * This is how secrets reach a tool — there is no `process.env` in either runner.
+   */
+  config: Record<string, unknown>;
+  /** SSRF-guarded fetch. Also installed as the global `fetch`. */
+  fetch: typeof fetch;
+  /** Per-run scratchpad. Read back after hooks; empty and unused for tools. */
+  state: Record<string, unknown>;
+}
+
 /** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
 export interface ToolExecuteOptions {
   toolCallId?: string;
-  context: Record<string, unknown>;
+  context: ToolExecuteContext;
   abortSignal?: AbortSignal;
+  /**
+   * Conversation so far, as the AI SDK passes it. Core forwards the most recent
+   * messages that fit a 512 KB bound, so a long conversation arrives truncated
+   * from the front rather than failing the call.
+   */
+  messages: unknown[];
+  experimental_context?: unknown;
 }
 
 export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
@@ -151,7 +178,12 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+  | "telegram"
+  | "github"
+  | "slack"
+  | "discord"
+  | "pancake"
+  | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
