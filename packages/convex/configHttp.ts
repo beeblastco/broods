@@ -1922,6 +1922,7 @@ async function handleToolRoute(
       return json({ error: "Tool not found" }, 404);
     const upload = await normalizeAccountToolUpload(await req.json(), {
       requireBundle: false,
+      currentRuntime: existing.runtime,
     });
     const bundleStorageKey =
       upload.bundle !== undefined && upload.sha256 !== undefined

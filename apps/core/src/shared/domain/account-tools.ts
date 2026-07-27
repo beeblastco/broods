@@ -81,9 +81,8 @@ export interface PublicAccountToolRecord {
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// Bounded per tier. A sandbox bundle is streamed from S3 straight into the
-// runner, so its size costs core nothing; an isolate bundle is inlined into
-// core's own process on every call, and every concurrent call holds a copy.
+// A sandbox bundle streams from S3 into the runner; an isolate bundle is inlined
+// into core's own process, where every concurrent call holds a copy.
 const MAX_BUNDLE_BYTES: Record<AccountToolRuntime, number> = {
   isolate: 1_000_000,
   sandbox: 10_000_000,
@@ -104,7 +103,7 @@ export function isAccountToolId(value: string): boolean {
 
 export function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: boolean },
+  options: { requireBundle: boolean; currentRuntime?: AccountToolRuntime },
 ): NormalizedAccountToolUpload {
   if (!isPlainObject(input)) {
     throw new Error("tool upload body must be an object");
@@ -146,13 +145,14 @@ export function normalizeAccountToolUpload(
     result.runtime = inferAccountToolRuntime(result.bundle);
   }
 
-  // The size bound is per tier, so it can only be applied once the tier is
-  // settled — including on a bundle-only PATCH, which infers it for this check
-  // alone rather than overwriting the stored runtime.
+  // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
+  // which deliberately does not restate runtime.
   if (result.bundle !== undefined) {
     assertBundleSize(
       result.bundle,
-      result.runtime ?? inferAccountToolRuntime(result.bundle),
+      result.runtime ??
+        options.currentRuntime ??
+        inferAccountToolRuntime(result.bundle),
     );
   }
 

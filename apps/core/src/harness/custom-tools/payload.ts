@@ -11,8 +11,8 @@ import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { getS3ObjectUrl, readS3Bytes } from "../../shared/s3.ts";
 
-// The runner fetches the bundle at the very start of its invocation, and the
-// Lambda itself is bounded at 35s, so the grant only has to outlive a cold start.
+// The runner fetches at the start of a 35s-bounded invocation, so the grant only
+// has to outlive a cold start.
 const BUNDLE_URL_TTL_SECONDS = 120;
 
 export interface ExecuteAccountToolOptions {
@@ -29,11 +29,8 @@ export interface ExecuteAccountToolOptions {
   ) => AsyncGenerator<unknown, void, void>;
 }
 
-// How the bundle reaches a runner. The isolate tier inlines the bytes on a local
-// child's stdin, where size costs nothing. The Lambda tier gets a short-lived
-// presigned GET instead: an inlined bundle is charged against Lambda's 6 MB
-// invoke-payload quota, and base64 inflates it by a third, so inlining caps
-// uploads near 4.4 MB no matter what the upload limit says.
+// The isolate tier inlines the bytes on a local child's stdin; the Lambda tier
+// gets a presigned GET, since an inlined bundle spends its 6 MB invoke quota.
 export type RunnerBundleSource =
   { bundleSourceB64: string } | { bundleUrl: string };
 

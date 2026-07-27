@@ -64,15 +64,15 @@ const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
  */
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: true },
+  options: { requireBundle: true; currentRuntime?: AccountToolRuntime },
 ): Promise<RequiredAccountToolUpload>;
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: false },
+  options: { requireBundle: false; currentRuntime?: AccountToolRuntime },
 ): Promise<NormalizedAccountToolUpload>;
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: boolean },
+  options: { requireBundle: boolean; currentRuntime?: AccountToolRuntime },
 ): Promise<NormalizedAccountToolUpload> {
   if (!isPlainObject(input)) {
     throw new Error("tool upload body must be an object");
@@ -114,13 +114,14 @@ export async function normalizeAccountToolUpload(
     result.runtime = inferAccountToolRuntime(result.bundle);
   }
 
-  // The size bound is per tier, so it can only be applied once the tier is
-  // settled — including on a bundle-only PATCH, which infers it for this check
-  // alone rather than overwriting the stored runtime.
+  // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
+  // which deliberately does not restate runtime.
   if (result.bundle !== undefined) {
     assertBundleSize(
       result.bundle,
-      result.runtime ?? inferAccountToolRuntime(result.bundle),
+      result.runtime ??
+        options.currentRuntime ??
+        inferAccountToolRuntime(result.bundle),
     );
   }
 

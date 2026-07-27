@@ -115,7 +115,26 @@ describe("per-tier bundle size bound", () => {
       `tool.bundle must be ${MAX_SANDBOX_BUNDLE_BYTES} bytes or smaller on the sandbox runtime`,
     );
   });
+
+  it("bounds a bundle-only PATCH by the stored tier, not the inferred one", () => {
+    // A PATCH deliberately does not restate runtime, so the stored tier is what
+    // the bundle will actually run on. Inferring here would let a 6 MB pure-JS
+    // bundle onto the isolate tier, or reject one bound for the sandbox.
+    const pure = bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1);
+
+    expect(() => patch(pure, "sandbox")).not.toThrow();
+    expect(() => patch(pure, "isolate")).toThrow(
+      `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
+    );
+  });
 });
+
+function patch(bundle: string, currentRuntime: "isolate" | "sandbox"): unknown {
+  return normalizeAccountToolUpload(
+    { bundle: bundle },
+    { requireBundle: false, currentRuntime: currentRuntime },
+  );
+}
 
 function upload(bundle: string): unknown {
   return normalizeAccountToolUpload(

@@ -16,17 +16,15 @@ export default function accountTool(
     [record.name]: tool({
       description: record.description,
       inputSchema: jsonSchema(record.inputSchema),
-      // Declared `async function*`, not an arrow returning the generator, so the
-      // wrappers in tool-execute.ts can see this tool streams and keep that shape.
-      // Every yield reaches the SDK as a preliminary tool result; the last one is
-      // the tool's result, which is the only yield a non-streaming bundle makes.
+      // Declared `async function*` so tool-execute.ts can see this streams. Each
+      // yield is a preliminary tool result; the last one is the tool's result.
       execute: async function* (input, options) {
         yield* streamAccountTool({
           accountId: context.accountId,
           tool: record,
-          input,
+          input: input,
           config: context.config,
-          options,
+          options: options,
         });
       },
     }),

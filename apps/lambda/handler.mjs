@@ -72,15 +72,22 @@ async function runChild(event, home, responseStream) {
     let forwardedBytes = 0;
     let stderr = "";
     let overflow = false;
-    const timeout = setTimeout(() => {
+    let stopped = false;
+    // Abandon forwarding and let the pipe run dry: a paused stdout never emits
+    // "end", so the child would never reach "close" and the run would hang.
+    const stopForwarding = () => {
+      stopped = true;
+      child.stdout.resume();
       killGroup(child);
-    }, RUN_TIMEOUT_MS);
+    };
+    const timeout = setTimeout(stopForwarding, RUN_TIMEOUT_MS);
 
     child.stdout.on("data", (chunk) => {
+      if (stopped) return;
       forwardedBytes += chunk.length;
       if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
         overflow = true;
-        killGroup(child);
+        stopForwarding();
         return;
       }
       // Pause on a full response buffer so a chatty tool cannot outrun the
@@ -103,7 +110,9 @@ async function runChild(event, home, responseStream) {
       );
       resolve();
     });
-    child.once("exit", (code, signal) => {
+    // "close", not "exit": exit fires while stdout may still hold buffered data,
+    // and pausing for backpressure widens that window into lost output.
+    child.once("close", (code, signal) => {
       clearTimeout(timeout);
       // The child is gone, but anything it spawned is not. Reap the group before
       // returning so nothing survives into the next tenant's invocation.

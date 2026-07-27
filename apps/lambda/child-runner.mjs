@@ -102,6 +102,25 @@ async function runBundle(payload, abortSignal) {
   return await value;
 }
 
+async function readAllStdin() {
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) input += chunk;
+  return input.trim();
+}
+
+async function readBundleSource(payload) {
+  if (payload.bundleSourceB64 !== undefined) return payload.bundleSourceB64;
+  const response = await fetch(payload.bundleUrl);
+  if (!response.ok) {
+    throw new Error(
+      `custom tool bundle fetch failed with HTTP ${response.status}`,
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer()).toString("base64");
+}
+
 function emitTerminal(frame, code) {
   if (settled) return;
   settled = true;
@@ -146,29 +165,8 @@ function parsePayload(payload) {
   };
 }
 
-// The bundle arrives either inline or as a short-lived presigned GET. The URL
-// form keeps the bundle out of the invoke payload, whose 6 MB quota would
-// otherwise cap uploads near 4.4 MB once base64 inflates them. Fetched before
-// any tenant code runs, and the sha256 check below is what makes it safe to
-// trust whatever comes back.
-async function readBundleSource(payload) {
-  if (payload.bundleSourceB64 !== undefined) return payload.bundleSourceB64;
-  const response = await fetch(payload.bundleUrl);
-  if (!response.ok) {
-    throw new Error(
-      `custom tool bundle fetch failed with HTTP ${response.status}`,
-    );
-  }
-
-  return Buffer.from(await response.arrayBuffer()).toString("base64");
-}
-
-async function readAllStdin() {
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  for await (const chunk of process.stdin) input += chunk;
-  return input.trim();
-}
+// Inline bytes or a presigned GET, which keeps the bundle out of the 6 MB invoke
+// quota. Fetched before tenant code runs; the sha256 check is what makes it safe.
 
 function runTimeoutMs() {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);

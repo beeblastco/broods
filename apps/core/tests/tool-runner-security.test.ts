@@ -23,6 +23,9 @@ async function invokeHandler(
   bundle: string,
   event: Record<string, unknown>,
   parentEnv: Record<string, string> = {},
+  // Read the response slowly against a small buffer to force the handler's
+  // backpressure path, where a paused stdout can outlive the child's exit.
+  throttleMs = 0,
 ): Promise<{ stdout?: string; arrivalsMs?: number[] }> {
   const dir = await mkdtemp(join(tmpdir(), "broods-handler-drv-"));
   try {
@@ -36,20 +39,27 @@ async function invokeHandler(
         `import { createHash } from "node:crypto";`,
         `import { PassThrough } from "node:stream";`,
         `import { handler } from ${JSON.stringify(handlerPath)};`,
+        `const throttleMs = ${throttleMs};`,
         `const bundle = Buffer.from(${JSON.stringify(bundle)}, "utf8");`,
-        `const responseStream = new PassThrough();`,
+        `const responseStream = new PassThrough(`,
+        `  throttleMs ? { highWaterMark: 64 } : {},`,
+        `);`,
         `const startedAt = Date.now();`,
         `const arrivalsMs = [];`,
         `let stdout = "";`,
-        `responseStream.on("data", (chunk) => {`,
-        `  stdout += chunk;`,
-        `  arrivalsMs.push(Date.now() - startedAt);`,
-        `});`,
+        `const consumed = (async () => {`,
+        `  for await (const chunk of responseStream) {`,
+        `    stdout += chunk;`,
+        `    arrivalsMs.push(Date.now() - startedAt);`,
+        `    if (throttleMs) await new Promise((r) => setTimeout(r, throttleMs));`,
+        `  }`,
+        `})();`,
         `await handler({`,
         `  ...${JSON.stringify(event)},`,
         `  bundleSourceB64: bundle.toString("base64"),`,
         `  expectedSha256: createHash("sha256").update(bundle).digest("hex"),`,
         `}, responseStream);`,
+        `await consumed;`,
         `process.stdout.write(JSON.stringify({ stdout, arrivalsMs }));`,
       ].join("\n"),
     );
@@ -241,5 +251,28 @@ describe("tool-runner response streaming", () => {
     ]);
     expect(arrivals.length).toBeGreaterThan(1);
     expect(arrivals.at(-1)! - arrivals[0]!).toBeGreaterThan(500);
+  }, 30_000);
+
+  it("loses nothing when the reader is slower than the tool", async () => {
+    // Backpressure pauses child stdout, and a paused pipe still holds data when
+    // the child exits — so finalizing on "exit" silently truncates the run.
+    const yields = 2000;
+    const bundle = [
+      `export default {`,
+      `  name: "chatty",`,
+      `  async *execute() {`,
+      `    for (let i = 0; i < ${yields}; i++) yield { i: i, pad: "x".repeat(400) };`,
+      `  },`,
+      `};`,
+    ].join("\n");
+
+    const result = await invokeHandler(bundle, { toolName: "chatty" }, {}, 5);
+    const frames = (result.stdout ?? "")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { t: string });
+
+    expect(frames.filter((frame) => frame.t === "chunk")).toHaveLength(yields);
+    expect(frames.at(-1)?.t).toBe("final");
   }, 30_000);
 });

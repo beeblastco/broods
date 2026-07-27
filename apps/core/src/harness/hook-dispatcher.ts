@@ -19,7 +19,7 @@ import { getStorage } from "../shared/storage.ts";
 import { runCodeHook } from "./hook-runner.ts";
 import type { AgentLifecycleEventPayload } from "./lifecycle.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
-import { isAsyncIterable, isStreamingExecute } from "./tool-execute.ts";
+import { wrapToolExecute } from "./tool-execute.ts";
 
 export interface HookDispatcher {
   hasHooksFor(event: AgentHookEventName): boolean;
@@ -137,18 +137,9 @@ export function wrapToolsWithHooks(
   if (!wantsStart && !wantsResult) {
     return tools;
   }
-  const wrapped: ToolSet = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    const originalExecute = tool.execute;
-    if (typeof originalExecute !== "function") {
-      wrapped[name] = tool;
-      continue;
-    }
-    const call = originalExecute as (
-      input: unknown,
-      options: unknown,
-    ) => unknown;
-    const applyStart = async (input: unknown): Promise<unknown> => {
+
+  return wrapToolExecute(tools, (name) => ({
+    before: async (input: unknown) => {
       if (!wantsStart) return input;
       const mutation = await hooks.runMutation("tool.call.started", {
         toolName: name,
@@ -162,41 +153,19 @@ export function wrapToolsWithHooks(
             : "denied by hook";
         throw new Error(`Tool "${name}" blocked by hook: ${reason}`);
       }
+
       return isPlainObject(mutation.args) ? mutation.args : input;
-    };
-    const applyResult = async (output: unknown): Promise<unknown> => {
+    },
+    after: async (output: unknown) => {
       if (!wantsResult) return output;
       const mutation = await hooks.runMutation("tool.result", {
         toolName: name,
         output: toLifecycleValue(output as JSONValue),
       });
+
       return mutation && "output" in mutation ? mutation.output : output;
-    };
-    // A streaming tool stays a generator: an async wrapper would hand the SDK a
-    // Promise and swallow every yield. Its yields pass through untouched and
-    // tool.result rewrites only the last one, which is the tool's actual result.
-    wrapped[name] = {
-      ...tool,
-      execute: isStreamingExecute(originalExecute)
-        ? async function* (input: unknown, execOptions: unknown) {
-            const result = call(await applyStart(input), execOptions);
-            let last: unknown;
-            if (isAsyncIterable(result)) {
-              for await (const output of result) {
-                last = output;
-                yield output;
-              }
-            } else {
-              last = await result;
-            }
-            const mutated = await applyResult(last);
-            if (mutated !== last || !isAsyncIterable(result)) yield mutated;
-          }
-        : async (input: unknown, execOptions: unknown) =>
-            await applyResult(await call(await applyStart(input), execOptions)),
-    } as ToolSet[string];
-  }
-  return wrapped;
+    },
+  }));
 }
 
 /**
