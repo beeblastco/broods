@@ -387,11 +387,8 @@ const pool: IsolateWorker[] = [];
 const poolWaiters: Array<() => void> = [];
 let reaper: ReturnType<typeof setInterval> | undefined;
 
-// The cap, not the resting size: workers are spawned only when every live one is
-// busy. A measured worker is ~54 MB resident and core's pod has 1 GiB for
-// everything, so this deliberately does not follow ISOLATE_RUNNER_CONCURRENCY —
-// that bounds transient one-shot processes, these stay. Past the cap calls
-// queue, which costs a warm worker's turnaround, not a failure.
+// The cap, not the resting size, and its own knob: a worker is ~54 MB resident
+// where a one-shot process is transient. Past the cap, calls queue.
 function poolSize(): number {
   return positiveIntegerEnv("ISOLATE_WORKER_POOL_SIZE", 4);
 }

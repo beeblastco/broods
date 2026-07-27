@@ -335,10 +335,22 @@ for (const part of __URL_PARTS) {
 }
 
 const __RANDOM_QUOTA_BYTES = 65536;
+// Integer views only, per spec: raw bytes poured into a float array are not
+// uniformly distributed values, so the spec rejects those rather than mislead.
+const __RANDOM_VIEWS = [
+  Int8Array, Uint8Array, Uint8ClampedArray,
+  Int16Array, Uint16Array,
+  Int32Array, Uint32Array,
+  BigInt64Array, BigUint64Array,
+];
 
 globalThis.crypto = {
   getRandomValues: (view) => {
-    if (!ArrayBuffer.isView(view)) throw new TypeError("getRandomValues expects a typed array");
+    if (!__RANDOM_VIEWS.some((type) => view instanceof type)) {
+      const error = new Error("getRandomValues expects an integer typed array");
+      error.name = "TypeMismatchError";
+      throw error;
+    }
     // The host bridge caps its reply at the same quota. Throwing is what the
     // spec says; filling the tail with zeros would be silently weak randomness.
     if (view.byteLength > __RANDOM_QUOTA_BYTES) {

@@ -332,7 +332,9 @@ describe("isolate runner", () => {
           const exact = encoder.encodeInto("ab", new Uint8Array(8));
           let quota = "no-throw";
           try { crypto.getRandomValues(new Uint8Array(65537)); } catch (error) { quota = error.name; }
-          return { partial: partial, exact: exact, quota: quota };
+          let floats = "no-throw";
+          try { crypto.getRandomValues(new Float64Array(4)); } catch (error) { floats = error.name; }
+          return { partial: partial, exact: exact, quota: quota, floats: floats };
         } };`,
         { toolName: "edges", input: {} },
       );
@@ -345,6 +347,9 @@ describe("isolate runner", () => {
             partial: { read: 2, written: 2 },
             exact: { read: 2, written: 2 },
             quota: "QuotaExceededError",
+            // Raw bytes in a float array are not uniform values, so the spec
+            // rejects the view rather than hand back misleading numbers.
+            floats: "TypeMismatchError",
           },
         },
       ]);
@@ -666,24 +671,30 @@ describe("streamIsolatePayload cross-process abort", () => {
     delete process.env.ISOLATE_POOL;
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
-    const { streamIsolatePayload } =
+    const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 150);
 
     const outputs: unknown[] = [];
-    for await (const output of streamIsolatePayload(
-      "acct_pooled",
-      {
-        bundleSourceB64: Buffer.from("export default {};").toString("base64"),
-        expectedSha256: sha256("export default {};"),
-        toolName: "stub",
-        input: {},
-        config: {},
-      },
-      { abortSignal: controller.signal },
-    )) {
-      outputs.push(output);
+    try {
+      for await (const output of streamIsolatePayload(
+        "acct_pooled",
+        {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        },
+        { abortSignal: controller.signal },
+      )) {
+        outputs.push(output);
+      }
+    } finally {
+      // A stub worker surviving the abort would hold a child process for the
+      // rest of the run: the pool outlives this file.
+      shutdownIsolatePool();
     }
 
     expect(outputs).toEqual([{ aborted: true }]);

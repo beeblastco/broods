@@ -200,11 +200,8 @@ async function bundleSource(
   };
 }
 
-// Every isolate call would otherwise re-download the same immutable object, so
-// the S3 GET sits on the tool's critical path for no reason. What is cached is
-// the read in flight, not just its result: two concurrent calls on one tool are
-// the common case, and both would otherwise fetch and both would charge the
-// ledger for the single entry they end up sharing.
+// Caches the read in flight, not just its result, so concurrent calls on one
+// tool share a single S3 GET instead of both fetching and both charging bytes.
 async function inlineBundle(
   bucket: string,
   key: string,
