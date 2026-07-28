@@ -150,4 +150,49 @@ describe("conversationReplaySnapshot", () => {
     });
     expect(queries).toEqual([{ last_by_subj: subject }]);
   });
+
+  it("advertises no replay window when the subject is evicted mid-snapshot", async () => {
+    const subject = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "child-conversation",
+    );
+    const streams = {
+      add: async () => {},
+      getMessage: async () => {
+        throw new Error("no message found");
+      },
+      info: async (
+        _stream: string,
+        options?: { subjects_filter?: string },
+      ) => ({
+        created: "2026-07-28T00:00:00.000Z",
+        state: {
+          first_seq: 2,
+          last_seq: 100,
+          subjects: options?.subjects_filter ? { [subject]: 3 } : undefined,
+        },
+      }),
+      update: async () => {},
+    };
+
+    const snapshot = await conversationReplaySnapshot({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+      } as never,
+      accountId: "acct1",
+      agentId: "agent-child",
+      conversationKey: "child-conversation",
+    });
+
+    // Retention dropped the subject between the filtered info and the direct
+    // read, so the attach tails the stream boundary instead of failing.
+    expect(snapshot).toEqual({
+      bufferedCount: 0,
+      generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(
+        "base64url",
+      ),
+      lastSequence: 100,
+    });
+  });
 });
