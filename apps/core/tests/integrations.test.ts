@@ -1748,9 +1748,8 @@ describe("direct API ingress", () => {
         },
       }),
       {
-        // Same task, same account, but the row belongs to a different agent's
-        // conversation — otherwise the agentId query parameter alone would
-        // choose which child row a caller reads.
+        // Same task and account, but the row is another agent's conversation:
+        // otherwise the agentId query parameter alone picks which row is read.
         asyncAgentResultLoader: async () => ({
           ...fixture.childResult,
           conversationKey: scopedDirectConversationKey(

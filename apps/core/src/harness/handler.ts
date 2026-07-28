@@ -969,9 +969,7 @@ async function handleNatsWorkerRequest(
         session,
         event.agentConfig,
         waitUntilMs(context),
-        undefined,
-        undefined,
-        dispatchNextIngress,
+        { dispatchNextIngress: dispatchNextIngress },
       );
       // Define the async tool mode application map.
       const asyncToolCoordinator = new AsyncToolCoordinator(
@@ -2151,9 +2149,7 @@ function createDirectContinuationSseBody(
           session,
           event.agentConfig,
           waitUntilMs(context),
-          undefined,
-          undefined,
-          dispatchNextIngress,
+          { dispatchNextIngress: dispatchNextIngress },
         );
         const asyncToolCoordinator = new AsyncToolCoordinator(
           session,
@@ -2265,9 +2261,7 @@ async function runAgentLoopUntilSubagentsIdle(
     session,
     agentConfig,
     waitUntilMs(context),
-    undefined,
-    undefined,
-    dispatchNextIngress,
+    { dispatchNextIngress: dispatchNextIngress },
   );
   const asyncToolCoordinator = new AsyncToolCoordinator(
     session,

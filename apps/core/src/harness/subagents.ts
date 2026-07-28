@@ -98,6 +98,14 @@ type SubagentIngressDispatcher = (
   scope: IngressDispatchScope,
 ) => Promise<boolean>;
 
+// Collaborators the handler owns. Every one has a working default, so tests and
+// non-handler callers override only what they exercise.
+interface SubagentCoordinatorDependencies {
+  lifecycle?: AgentLifecycleEmitter;
+  publisherFactory?: SubagentPublisherFactory;
+  dispatchNextIngress?: SubagentIngressDispatcher;
+}
+
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
@@ -108,23 +116,28 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   private hooksPromise?: Promise<HookDispatcher>;
 
+  private readonly lifecycle: AgentLifecycleEmitter;
+  private readonly publisherFactory: SubagentPublisherFactory;
+  private readonly dispatchNextIngress: SubagentIngressDispatcher;
+
   constructor(
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
     private readonly waitUntilMs: number = Date.now() +
       DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
-    private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(
-      parentSession,
-      parentAgentConfig,
-    ),
-    private readonly publisherFactory: SubagentPublisherFactory = (task) =>
-      createSubagentPublisher(parentSession, task),
-    // Injected by the handler, which owns worker scheduling. Defaulting to "no
-    // envelope transferred" keeps the child lease released rather than stranded
-    // when a caller builds a coordinator without the dispatcher.
-    private readonly dispatchNextIngress: SubagentIngressDispatcher = async () =>
-      false,
-  ) {}
+    dependencies: SubagentCoordinatorDependencies = {},
+  ) {
+    this.lifecycle =
+      dependencies.lifecycle ??
+      createAgentLifecycleEmitter(parentSession, parentAgentConfig);
+    this.publisherFactory =
+      dependencies.publisherFactory ??
+      ((task) => createSubagentPublisher(parentSession, task));
+    // Defaulting to "no envelope transferred" releases the child lease rather
+    // than stranding it when a caller builds a coordinator without a dispatcher.
+    this.dispatchNextIngress =
+      dependencies.dispatchNextIngress ?? (async () => false);
+  }
 
   private get isPersistentMode(): boolean {
     return resolveSubagentMode(this.parentAgentConfig) === "persistent";
@@ -572,6 +585,7 @@ export class SubagentCoordinator {
     // here and dropping the answer.
     if (Date.now() >= this.waitUntilMs) {
       await this.transferChildConversation(childSession, task);
+
       return;
     }
     const next = await childSession.takeNextIngress().catch((error) => {
@@ -579,10 +593,12 @@ export class SubagentCoordinator {
         taskId: task.taskId,
         error: error instanceof Error ? error.message : String(error),
       });
+
       return null;
     });
     if (!next) {
       await childSession.releaseConversationLease().catch(() => {});
+
       return;
     }
 

@@ -77,7 +77,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true } },
       Date.now() + 1_000,
-      lifecycle as never,
+      { lifecycle: lifecycle as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async () => {
@@ -147,8 +147,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true } },
       Date.now() + 1_000,
-      undefined,
-      publisherFactory as never,
+      { publisherFactory: publisherFactory as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async () => {});
@@ -167,8 +166,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
-      undefined,
-      (() => publisher) as never,
+      { publisherFactory: (() => publisher) as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async (_task, _parentContext, streamPublisher) => {
@@ -210,8 +208,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
-      undefined,
-      (() => publisher) as never,
+      { publisherFactory: (() => publisher) as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async () => {
@@ -243,8 +240,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
-      undefined,
-      (() => publisher) as never,
+      { publisherFactory: (() => publisher) as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async (_task, _parentContext, streamPublisher) => {
@@ -279,8 +275,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, stream: true } },
       Date.now() + 1_000,
-      undefined,
-      (() => publisher) as never,
+      { publisherFactory: (() => publisher) as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     internals.runTask = mock(async (_task, _parentContext, streamPublisher) => {
@@ -470,7 +465,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() + 1_000,
-      { emit: mock(async () => {}) } as never,
+      { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
 
@@ -509,7 +504,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() + 60_000,
-      { emit: mock(async () => {}) } as never,
+      { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
     const runTask = mock(async () => {});
@@ -551,7 +546,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true } },
       Date.now() + 60_000,
-      { emit: mock(async () => {}) } as never,
+      { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as {
       completeTask(completion: unknown): Promise<void>;
@@ -590,7 +585,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() + 60_000,
-      { emit: mock(async () => {}) } as never,
+      { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
 
@@ -614,11 +609,13 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() - 1,
-      { emit: mock(async () => {}) } as never,
-      undefined,
-      async (_session, scope) => {
-        scopes.push(scope as unknown as Record<string, unknown>);
-        return true;
+      {
+        lifecycle: { emit: mock(async () => {}) } as never,
+        dispatchNextIngress: async (_session, scope) => {
+          scopes.push(scope as unknown as Record<string, unknown>);
+
+          return true;
+        },
       },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
@@ -641,17 +638,18 @@ describe("SubagentCoordinator", () => {
     expect(releaseConversationLease).not.toHaveBeenCalled();
   });
 
-  it("releases the child lease when the expired-budget transfer finds nothing", async () => {
+  it("releases the child lease when the expired-budget transfer fails", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() - 1,
-      { emit: mock(async () => {}) } as never,
-      undefined,
-      async () => {
-        throw new Error("worker unavailable");
+      {
+        lifecycle: { emit: mock(async () => {}) } as never,
+        dispatchNextIngress: async () => {
+          throw new Error("worker unavailable");
+        },
       },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
@@ -672,7 +670,7 @@ describe("SubagentCoordinator", () => {
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
       Date.now() + 1_000,
-      { emit: mock(async () => {}) } as never,
+      { lifecycle: { emit: mock(async () => {}) } as never },
     );
     const internals = coordinator as unknown as CoordinatorInternals;
 
