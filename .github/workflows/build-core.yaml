@@ -70,6 +70,9 @@ jobs:
     needs: build
     if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
     runs-on: ubuntu-24.04
+    # A rollout that has not finished in 20 minutes is stuck, not slow: infra
+    # caps the Helm wait at 5m and the rollout status at another 5m.
+    timeout-minutes: 20
     permissions: {}
     steps:
       - name: Roll the core pod and wait for the rollout
@@ -88,15 +91,15 @@ jobs:
             exit 1
           fi
 
-          DISPATCHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           gh workflow run "$WORKFLOW" --repo "$INFRA_REPO" --ref main -f tag="$TAG"
 
-          # The infra run carries infra's own head_sha, so it cannot be matched on
-          # this commit — the newest dispatch created after ours is the handle.
+          # An infra run reports infra's own head_sha and the API hides dispatch
+          # inputs, so the tag is matched out of display_title instead — infra's
+          # run-name puts it there precisely so a caller can find its own run.
           for _ in $(seq 1 60); do
             RUN_ID=$(gh api \
               "repos/$INFRA_REPO/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=20" \
-              --jq "[.workflow_runs[] | select(.created_at >= \"$DISPATCHED_AT\")] | .[0].id // empty")
+              --jq "[.workflow_runs[] | select(.display_title | endswith(\" $TAG\"))] | .[0].id // empty")
             if [[ -n "$RUN_ID" ]]; then
               break
             fi
@@ -104,7 +107,7 @@ jobs:
           done
 
           if [[ -z "${RUN_ID:-}" ]]; then
-            echo "Timed out waiting for $WORKFLOW to start in $INFRA_REPO" >&2
+            echo "No $WORKFLOW run in $INFRA_REPO reported tag $TAG" >&2
             exit 1
           fi
 
