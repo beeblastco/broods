@@ -85,7 +85,6 @@ const MICROVM_PROXY_PORT = 8080;
 // fast, and reused until close to expiry so a warm exec costs no control-plane call.
 const AUTH_TOKEN_TTL_MINUTES = 15;
 const AUTH_TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
-const AUTH_TOKEN_CACHE_MAX = 512;
 // A freshly run MicroVM restores its snapshot in ~1–10s; the proxy returns 502/503
 // while it warms. Retry the first exec within this budget before giving up, polling
 // fast at first (a resumed VM is usually ready in well under a second) then backing
@@ -93,6 +92,18 @@ const AUTH_TOKEN_CACHE_MAX = 512;
 const WARMUP_BUDGET_MS = 30_000;
 const WARMUP_RETRY_MIN_DELAY_MS = 150;
 const WARMUP_RETRY_MAX_DELAY_MS = 750;
+// A cached endpoint is a guess, so it gets a short warm-up before the call falls back
+// to the authoritative reservation instead of spending the full budget on a dead VM. A
+// warm VM answers in well under this; anything slower is a restore the authoritative
+// path handles with the full budget, or a VM that is gone.
+const CACHED_WARMUP_BUDGET_MS = 1_200;
+// A reserved VM's endpoint is stable for the life of its microvmId and survives
+// suspend (the proxy auto-resumes on ingress), so the reservation lookup + GetMicrovm
+// pair is pure overhead on a repeat call. The TTL is short because a cache entry only
+// survives when calls keep coming, and a VM that is being called is not idling into
+// termination — the one way a reservation goes stale underneath us.
+const RESERVED_ENDPOINT_TTL_MS = 60_000;
+const CACHE_MAX_ENTRIES = 512;
 // MicroVMs live at most 8h; we still bound each instance with a maximumDuration as
 // a backstop (ephemeral VMs are terminated in `finally` long before this).
 const MAX_MICROVM_DURATION_SECONDS = 28_800;
@@ -104,6 +115,13 @@ const PROVIDER = "lambda" as const;
 // per exec burns a control-plane round trip on every call. Cached at module scope
 // because an executor is constructed per request, and dropped again on terminate.
 const authTokens = new Map<string, { token: string; expiresAt: number }>();
+
+// Reserved endpoints, keyed by reservation key. Same module-scope reasoning as the
+// token cache: an executor is constructed per request, so an instance field never hits.
+const reservedEndpoints = new Map<
+  string,
+  { microvmId: string; endpoint: string; expiresAt: number }
+>();
 
 // The proxy authenticates shell WebSocket upgrades with this header; the value
 // comes from CreateMicrovmShellAuthToken. 30 minutes bounds a terminal session's
@@ -131,6 +149,11 @@ interface AcquiredMicrovm {
   ephemeralMirror?: Promise<void>;
 }
 
+// The proxy never accepted the request inside the warm-up budget, so the exec
+// definitely did not run. That is the only failure safe to retry against another VM —
+// any error raised after a 2xx may have already run the caller's code once.
+class MicrovmNotReadyError extends Error {}
+
 export class MicrovmSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #client: LambdaMicrovms;
@@ -146,6 +169,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
+    const payload = this.#execPayload(request);
+    // A reserved VM already reached this pod is exec'd straight through its cached
+    // endpoint, skipping both the reservation lookup and GetMicrovm. Only `run` takes
+    // that shortcut — it is the hot path, and the one with a fallback when the guess
+    // turns out to be dead. Ephemeral runs never cache: they have no reservation.
+    const cached = persistent ? this.#cachedTarget(request) : null;
+    if (cached) {
+      const response = await this.#execReserved(cached, request, payload);
+      if (response) return sandboxResult(request, response, startedAt);
+    }
     const { microvmId, endpoint, ephemeralMirror } =
       await this.#acquire(request);
 
@@ -156,28 +189,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           endpoint,
           this.#workDir(this.#workspaceKey(request)),
         );
-      const response = await this.#exec(
-        microvmId,
-        endpoint,
-        this.#execPayload(request),
+
+      return sandboxResult(
+        request,
+        await this.#exec(microvmId, endpoint, payload),
+        startedAt,
       );
-      const stdout = truncateText(response.stdout, request.outputLimitBytes);
-      const stderr = truncateText(response.stderr, request.outputLimitBytes);
-      return {
-        ok: response.ok,
-        runtime: request.runtime ?? "bash",
-        exitCode: response.exit_code ?? null,
-        stdout: stdout.value,
-        stderr: stderr.value,
-        durationMs: response.duration_ms || Date.now() - startedAt,
-        timedOut: response.timed_out,
-        truncated:
-          response.truncated === true || stdout.truncated || stderr.truncated,
-        provider: PROVIDER,
-        ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
-          ? { cpuUsec: response.cpu_usec }
-          : {}),
-      };
     } finally {
       // The result is already in hand, so teardown must not be on the caller's clock:
       // fire the terminate and drop the VM's dashboard row without awaiting either.
@@ -295,6 +312,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async release(request: SandboxReservationRef): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
+    reservedEndpoints.delete(key);
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
     await deleteSandboxInstance(
@@ -375,6 +393,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     return `${this.#workspaceRoot()}/.fp-jobs/${key}`;
   }
 
+  #cachedTarget(
+    request: SandboxReservationRef,
+  ): { microvmId: string; endpoint: string } | null {
+    const key = sandboxReservationKey(request);
+    const cached = key ? reservedEndpoints.get(key) : undefined;
+    if (!cached || cached.expiresAt <= Date.now()) return null;
+
+    return { microvmId: cached.microvmId, endpoint: cached.endpoint };
+  }
+
   // Acquire a MicroVM endpoint: a fresh ephemeral VM for stateless runs, or the
   // reserved VM (resumed if suspended) for a persistent reservation.
   async #acquire(request: SandboxRunRequest): Promise<AcquiredMicrovm> {
@@ -413,7 +441,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           existing,
           request.metadata,
         );
-        return reconnected;
+        return this.#cacheTarget(key, reconnected);
       } catch (error) {
         // Recreate only when the provider says the VM no longer exists. A slow
         // resume or transient control-plane error must propagate instead: replacing
@@ -444,7 +472,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         created.microvmId,
         request.metadata,
       );
-      return created;
+      return this.#cacheTarget(key, created);
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the winner.
     const winner = await getSandboxExternalId(PROVIDER, key);
@@ -454,7 +482,21 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       : null;
     if (!reconnected)
       throw new Error("failed to reserve MicroVM (lost create race)");
-    return reconnected;
+    return this.#cacheTarget(key, reconnected);
+  }
+
+  #cacheTarget(
+    key: string,
+    target: { microvmId: string; endpoint: string },
+  ): { microvmId: string; endpoint: string } {
+    const now = Date.now();
+    evictToCap(reservedEndpoints, now);
+    reservedEndpoints.set(key, {
+      ...target,
+      expiresAt: now + RESERVED_ENDPOINT_TTL_MS,
+    });
+
+    return target;
   }
 
   // Fetch a reserved VM's endpoint, resuming it first if it idled into SUSPENDED.
@@ -484,6 +526,48 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
     return { microvmId, endpoint: info.endpoint };
+  }
+
+  // Exec against a cached reservation endpoint. Returns null when that VM never
+  // accepted the request — it was terminated, or the reservation moved to another VM
+  // — so the caller re-acquires from the authoritative record. Any other failure
+  // propagates: past the proxy, the caller's code may already have run.
+  async #execReserved(
+    target: { microvmId: string; endpoint: string },
+    request: SandboxRunRequest,
+    payload: object,
+  ): Promise<SandboxResponse | null> {
+    // The reservation's own record has a 30-day TTL, so skipping its refresh costs
+    // nothing — but the dashboard row carries lastUsedAt and the trace link, so it
+    // still mirrors every call. Fire-and-forget, like the acquire path.
+    void upsertSandboxInstance(
+      this.#config.controlPlane,
+      PROVIDER,
+      sandboxReservationKey(request) ?? target.microvmId,
+      target.microvmId,
+      request.metadata,
+    );
+    try {
+      await this.#runLifecycle(
+        target.microvmId,
+        target.endpoint,
+        this.#workDir(this.#workspaceKey(request)),
+        CACHED_WARMUP_BUDGET_MS,
+      );
+
+      return await this.#exec(
+        target.microvmId,
+        target.endpoint,
+        payload,
+        CACHED_WARMUP_BUDGET_MS,
+      );
+    } catch (error) {
+      if (!(error instanceof MicrovmNotReadyError)) throw error;
+      const key = sandboxReservationKey(request);
+      if (key) reservedEndpoints.delete(key);
+
+      return null;
+    }
   }
 
   async #runMicrovm(
@@ -654,17 +738,18 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     microvmId: string,
     endpoint: string,
     payload: object,
+    budgetMs = WARMUP_BUDGET_MS,
   ): Promise<SandboxResponse> {
     const token = await this.#authToken(microvmId);
     const url = `https://${endpoint.replace(/^https?:\/\//, "")}/exec`;
-    const deadline = Date.now() + WARMUP_BUDGET_MS;
+    const deadline = Date.now() + budgetMs;
     let wait = WARMUP_RETRY_MIN_DELAY_MS;
     for (;;) {
       const warming = await this.#postExec(url, token, payload);
       if (!warming.retry) return warming.response;
       if (Date.now() >= deadline) {
-        throw new Error(
-          `MicroVM ${microvmId} did not become ready within ${WARMUP_BUDGET_MS}ms (last status ${warming.status})`,
+        throw new MicrovmNotReadyError(
+          `MicroVM ${microvmId} did not become ready within ${budgetMs}ms (last status ${warming.status})`,
         );
       }
       await delay(wait);
@@ -733,17 +818,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       throw new Error(
         "CreateMicrovmAuthToken did not return an X-aws-proxy-auth token",
       );
-    // A run that dies before its terminate would otherwise leak its entry, so sweep
-    // the expired ones once the map grows past the cap.
-    if (authTokens.size >= AUTH_TOKEN_CACHE_MAX) {
-      for (const [id, entry] of authTokens) {
-        if (entry.expiresAt <= now) authTokens.delete(id);
-      }
-      if (authTokens.size >= AUTH_TOKEN_CACHE_MAX) {
-        const oldest = authTokens.keys().next().value;
-        if (oldest) authTokens.delete(oldest);
-      }
-    }
+    evictToCap(authTokens, now);
     authTokens.set(microvmId, {
       token,
       expiresAt:
@@ -761,13 +836,19 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     endpoint: string,
     script: string,
     timeoutSeconds = 60,
+    budgetMs = WARMUP_BUDGET_MS,
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-    const response = await this.#exec(microvmId, endpoint, {
-      runtime: "bash",
-      code: script,
-      timeout_ms: timeoutSeconds * 1000,
-      env: this.#sandboxEnvVars(),
-    });
+    const response = await this.#exec(
+      microvmId,
+      endpoint,
+      {
+        runtime: "bash",
+        code: script,
+        timeout_ms: timeoutSeconds * 1000,
+        env: this.#sandboxEnvVars(),
+      },
+      budgetMs,
+    );
     return {
       stdout: response.stdout,
       stderr: response.stderr,
@@ -781,6 +862,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     microvmId: string,
     endpoint: string,
     workDir: string,
+    budgetMs = WARMUP_BUDGET_MS,
   ): Promise<void> {
     const script = lifecycleScript(
       workDir,
@@ -793,6 +875,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       endpoint,
       script,
       this.#config.timeout ?? 120,
+      budgetMs,
     );
     if (result.exitCode !== null && result.exitCode !== 0) {
       throw new Error(
@@ -886,6 +969,47 @@ function mapMicrovmState(
     default:
       return "unknown";
   }
+}
+
+function sandboxResult(
+  request: SandboxRunRequest,
+  response: SandboxResponse,
+  startedAt: number,
+): SandboxRunResult {
+  const stdout = truncateText(response.stdout, request.outputLimitBytes);
+  const stderr = truncateText(response.stderr, request.outputLimitBytes);
+
+  return {
+    ok: response.ok,
+    runtime: request.runtime ?? "bash",
+    exitCode: response.exit_code ?? null,
+    stdout: stdout.value,
+    stderr: stderr.value,
+    durationMs: response.duration_ms || Date.now() - startedAt,
+    timedOut: response.timed_out,
+    truncated:
+      response.truncated === true || stdout.truncated || stderr.truncated,
+    provider: PROVIDER,
+    ...(typeof response.cpu_usec === "number" && response.cpu_usec > 0
+      ? { cpuUsec: response.cpu_usec }
+      : {}),
+  };
+}
+
+// A run that dies before its teardown leaks one entry per VM, so drop the expired ones
+// whenever a cache reaches its cap — and the oldest entry too when they were all still
+// live, since the cap has to hold either way.
+function evictToCap<T extends { expiresAt: number }>(
+  cache: Map<string, T>,
+  now: number,
+): void {
+  if (cache.size < CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of cache) {
+    if (entry.expiresAt <= now) cache.delete(key);
+  }
+  if (cache.size < CACHE_MAX_ENTRIES) return;
+  const oldest = cache.keys().next().value;
+  if (oldest) cache.delete(oldest);
 }
 
 function microvmLocalNamespace(namespace: string): string {

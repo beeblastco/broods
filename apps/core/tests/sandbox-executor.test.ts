@@ -307,6 +307,16 @@ afterEach(() => {
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const CHILD_NS = `${NS}/issues/fs-76543210fedcba9876543210fedcba9876543210`;
 
+// The MicroVM endpoint and auth-token caches are process-wide by design (an executor
+// is constructed per request, so an instance field would never hit), which makes the
+// reservation key shared state. Every reserved-VM test takes a namespace of its own.
+let microvmNamespaceSeq = 0;
+function microvmNamespace(): string {
+  microvmNamespaceSeq += 1;
+
+  return `fs-${String(microvmNamespaceSeq).padStart(40, "a")}`;
+}
+
 describe("createSandboxExecutor", () => {
   it("requires an explicit provider and never silently defaults", () => {
     const {
@@ -524,6 +534,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("reconnects to a reserved MicroVM for a persistent run and never terminates it", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     const {
       createSandboxExecutor,
@@ -535,7 +546,7 @@ describe("createSandboxExecutor", () => {
 
     const result = await executor.run({
       code: "echo ok",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -552,6 +563,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("resumes a suspended reserved MicroVM before using its endpoint", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     microvmGetResponses = [
       { microvmId: "microvm-1", state: "SUSPENDED" },
@@ -571,7 +583,7 @@ describe("createSandboxExecutor", () => {
 
     await executor.run({
       code: "echo ok",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -586,6 +598,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("resumes without waiting for RUNNING when the suspended record has an endpoint", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     microvmGetResponses = [
       {
@@ -604,7 +617,7 @@ describe("createSandboxExecutor", () => {
 
     await executor.run({
       code: "echo ok",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -620,6 +633,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("reuses one auth token across execs on the same MicroVM", async () => {
+    const ns = microvmNamespace();
     // A microvmId no other test touches: the token cache is process-wide by design.
     storedSandboxExternalId = "microvm-token";
     microvmGetResponses = [
@@ -643,7 +657,7 @@ describe("createSandboxExecutor", () => {
     });
     const request = {
       code: "echo ok",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -669,12 +683,16 @@ describe("createSandboxExecutor", () => {
       provider: "lambda",
       persistent: true,
     });
-    const request = {
-      code: "echo ok",
-      namespace: NS,
-      workspaceRoot: "/mnt/workspaces",
-      timeoutSeconds: 30,
-      outputLimitBytes: 4096,
+    const run = (externalId: string) => {
+      storedSandboxExternalId = externalId;
+
+      return executor.run({
+        code: "echo ok",
+        namespace: microvmNamespace(),
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      });
     };
     const tokenCalls = () =>
       microvmSendMock.mock.calls.filter(
@@ -684,17 +702,97 @@ describe("createSandboxExecutor", () => {
     const before = tokenCalls();
 
     for (let index = 0; index <= 512; index += 1) {
-      storedSandboxExternalId = `microvm-cache-cap-${index}`;
-      await executor.run(request);
+      await run(`microvm-cache-cap-${index}`);
     }
 
     expect(tokenCalls() - before).toBe(513);
-    storedSandboxExternalId = "microvm-cache-cap-0";
-    await executor.run(request);
+    // The 513th insert evicted the oldest live entry, so its VM mints a fresh token.
+    await run("microvm-cache-cap-0");
     expect(tokenCalls() - before).toBe(514);
   });
 
+  it("execs a warm reservation straight through the cached endpoint", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-cache";
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const request = {
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
+      request,
+    );
+    // A second executor: the caches are module-scoped because one is built per request.
+    await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
+      request,
+    );
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    // The endpoint survives suspend and the proxy auto-resumes on ingress, so the
+    // second call POSTs without a reservation lookup or a status poll.
+    expect(microvmFetchMock).toHaveBeenCalledTimes(2);
+    expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(1);
+    expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the reservation when the cached endpoint is dead", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-stale";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-stale",
+        endpoint: "microvm-stale.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await executor.run(request);
+    // The cached VM is gone, so every POST to it 503s until the short cached budget
+    // runs out. It never ran the code, which is what makes re-exec'ing safe: the
+    // reservation now resolves to a live VM and only that one sees the request.
+    storedSandboxExternalId = "microvm-1";
+    const posted: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      posted.push(String(url));
+      if (String(url).includes("microvm-stale"))
+        return new Response("", { status: 503 });
+
+      return new Response(JSON.stringify(microvmExecPayload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const result = await executor.run(request);
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(2);
+    expect(posted.at(-1)).toContain("microvm-1");
+  });
+
   it("recreates the reserved MicroVM only when the provider says it is gone", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-gone";
     microvmGetResponses = [
       Object.assign(new Error("MicroVM does not exist"), {
@@ -711,7 +809,7 @@ describe("createSandboxExecutor", () => {
 
     const result = await executor.run({
       code: "echo ok",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -726,13 +824,14 @@ describe("createSandboxExecutor", () => {
     // re-claim with a fresh VM is never deleted out from under it.
     expect(deleteSandboxInstanceMock).toHaveBeenCalledWith(
       "lambda",
-      NS,
+      ns,
       undefined,
       "microvm-gone",
     );
   });
 
   it("surfaces transient reconnect failures instead of replacing (and leaking) the reserved MicroVM", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     microvmGetResponses = [
       Object.assign(new Error("Rate exceeded"), {
@@ -750,7 +849,7 @@ describe("createSandboxExecutor", () => {
     await expect(
       executor.run({
         code: "echo ok",
-        namespace: NS,
+        namespace: ns,
         workspaceRoot: "/mnt/workspaces",
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
@@ -785,6 +884,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("fails persistent MicroVM runs when a lifecycle hook exits nonzero", async () => {
+    const ns = microvmNamespace();
     const {
       createSandboxExecutor,
     } = require("../src/harness/sandbox/index.ts");
@@ -804,7 +904,7 @@ describe("createSandboxExecutor", () => {
     await expect(
       executor.run({
         code: "echo ok",
-        namespace: NS,
+        namespace: ns,
         workspaceRoot: "/mnt/workspaces",
         timeoutSeconds: 30,
         outputLimitBytes: 4096,
@@ -813,6 +913,7 @@ describe("createSandboxExecutor", () => {
   });
 
   it("launches a detached background job in the persistent MicroVM and returns a jobId", async () => {
+    const ns = microvmNamespace();
     storedSandboxExternalId = "microvm-1";
     const {
       createSandboxExecutor,
@@ -824,7 +925,7 @@ describe("createSandboxExecutor", () => {
 
     const handle = await executor.runBackground({
       code: "uv run train.py",
-      namespace: NS,
+      namespace: ns,
       workspaceRoot: "/mnt/workspaces",
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
@@ -842,7 +943,7 @@ describe("createSandboxExecutor", () => {
     const launched = JSON.parse(init.body).code as string;
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
-    expect(launched).toContain(`.fp-jobs/${NS}`);
+    expect(launched).toContain(`.fp-jobs/${ns}`);
   });
 
   it("passes the egress network connector for a restricted MicroVM network", async () => {
