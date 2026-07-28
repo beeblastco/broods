@@ -12,7 +12,12 @@ import type {
   CliManifest,
   CliManifestResource,
 } from "./contracts.ts";
-import type { BunPlugin } from "bun";
+import {
+  build as esbuild,
+  transformSync,
+  type BuildFailure,
+  type Plugin,
+} from "esbuild";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -1036,7 +1041,7 @@ function transpileInlineHookBundle(
     .map((entry) => `  ${JSON.stringify(entry.event)}: ${entry.source},`)
     .join("\n")}\n};\n`;
   try {
-    return new Bun.Transpiler({ loader: "ts" }).transformSync(moduleSource);
+    return transformSync(moduleSource, { loader: "ts" }).code;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -1177,23 +1182,36 @@ async function normalizeToolConfig(
   }
   let bundle: string;
   try {
-    const build = await Bun.build({
-      entrypoints: [shimPath],
-      target: "node",
+    const build = await esbuild({
+      entryPoints: [shimPath],
+      bundle: true,
+      platform: "node",
       format: "esm",
       minify: false,
+      write: false,
+      logLevel: "silent",
       plugins: config.path ? [] : [sdkStubPlugin(shimDir)],
-    });
-    if (!build.success || build.outputs.length !== 1) {
-      const details = build.logs
-        .map((entry) => entry.message)
-        .filter(Boolean)
-        .join("; ");
+    }).catch((error: unknown) => {
+      // esbuild throws BuildFailure for source errors, but a plain Error for
+      // install/platform problems — surface that cause instead of masking it.
+      const details = isBuildFailure(error)
+        ? error.errors
+            .map((entry) => entry.text)
+            .filter(Boolean)
+            .join("; ")
+        : error instanceof Error
+          ? error.message
+          : String(error);
       throw new Error(
         `Tool bundle ${manifestPath} failed to build${details ? `: ${details}` : ""}`,
       );
+    });
+    if (build.outputFiles.length !== 1) {
+      throw new Error(
+        `Tool bundle ${manifestPath} failed to build: expected one output file`,
+      );
     }
-    bundle = await build.outputs[0]!.text();
+    bundle = build.outputFiles[0]!.text;
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }
@@ -1353,6 +1371,12 @@ function assertSafeBundlePath(path: string, kind: "Skill" | "Tool"): void {
   }
 }
 
+function isBuildFailure(error: unknown): error is BuildFailure {
+  return (
+    error instanceof Error && Array.isArray((error as BuildFailure).errors)
+  );
+}
+
 function isUnsafeBundlePath(path: string): boolean {
   const parts = path.split("/");
   return parts.some(
@@ -1378,7 +1402,7 @@ function contentTypeForPath(path: string): string {
 
 // Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
 // those imports to inert stubs so the bundle carries the tool, not the client.
-function sdkStubPlugin(shimDir: string): BunPlugin {
+function sdkStubPlugin(shimDir: string): Plugin {
   const stub = join(shimDir, "broods-stub.mjs");
 
   return {
