@@ -43,6 +43,7 @@ import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
   type AgentLifecycleEmitter,
+  type AgentLifecycleEventPayload,
 } from "./lifecycle.ts";
 import { Session } from "./session.ts";
 import type {
@@ -806,13 +807,14 @@ export class SubagentCoordinator {
         taskId: completion.taskId,
         agentId: completion.agentId,
       });
-      await this.lifecycle.emit("subagent.task.finished", {
+      await this.emitTaskFinished({
         taskId: completion.taskId,
         agentId: completion.agentId,
         conversationKey: completion.conversationKey,
         status: "failed",
         error: completion.error,
       });
+
       return;
     }
 
@@ -820,7 +822,18 @@ export class SubagentCoordinator {
     // otherwise subagent.visibility ("none" hides it, "result"/"full" show it).
     let inject = true;
     if (completion.status === "completed") {
-      const hookVisible = await this.runSubagentFinishHook(completion);
+      // The durable result is already written, so a hook that cannot load or
+      // that throws only loses its override — it never fails the child.
+      const hookVisible = await this.runSubagentFinishHook(completion).catch(
+        (error) => {
+          logError("Subagent finish hook failed", {
+            taskId: completion.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+
+          return undefined;
+        },
+      );
       if (hookVisible !== undefined) {
         completion.visibleResult = hookVisible;
       } else if (
@@ -839,7 +852,7 @@ export class SubagentCoordinator {
       agentId: completion.agentId,
       status: completion.status,
     });
-    await this.lifecycle.emit("subagent.task.finished", {
+    await this.emitTaskFinished({
       taskId: completion.taskId,
       agentId: completion.agentId,
       conversationKey: completion.conversationKey,
@@ -849,6 +862,21 @@ export class SubagentCoordinator {
         : {}),
       ...(completion.error ? { error: completion.error } : {}),
     });
+  }
+
+  // Presentation only, and it runs after the durable result is recorded, so a
+  // webhook failure must never propagate into the run's terminal status.
+  private async emitTaskFinished(
+    payload: AgentLifecycleEventPayload,
+  ): Promise<void> {
+    await this.lifecycle
+      .emit("subagent.task.finished", payload)
+      .catch((error) => {
+        logError("Failed to emit subagent lifecycle event", {
+          taskId: payload.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   /** Share the request's hook dispatcher so onSubagentFinish sees the same ctx.state as the loop hooks. */

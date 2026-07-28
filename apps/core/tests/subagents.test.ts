@@ -614,6 +614,57 @@ describe("SubagentCoordinator", () => {
     }
   });
 
+  it("keeps a completed child completed when its finish hook and webhook fail", async () => {
+    const originalMutation = runtime.mutate;
+    const mutations: string[] = [];
+    runtime.mutate = mock(async (name: string) => {
+      mutations.push(name);
+
+      return true;
+    }) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      {
+        lifecycle: {
+          emit: mock(async () => {
+            throw new Error("webhook delivery failed");
+          }),
+        } as never,
+      },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent~task_1", Promise.resolve());
+    coordinator.attachHooks({
+      runMutation: async () => {
+        throw new Error("hook record unreadable");
+      },
+    } as never);
+
+    try {
+      // Rejecting here would reach runTask's failure path, which marks the
+      // already durable completed result failed and erases its response.
+      await expect(
+        internals.completeTask({
+          taskId: "subagent~task_1",
+          eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
+          agentId: "agent_child",
+          conversationKey: "subagent-persistent-1",
+          status: "completed",
+          response: "finished",
+        }),
+      ).resolves.toBeUndefined();
+      // A broken hook loses its override, never the child's answer.
+      expect(internals.completions).toHaveLength(1);
+      expect(internals.completions[0]?.response).toBe("finished");
+      expect(mutations).not.toContain("updateAsyncAgentResult");
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
   it("runs a queued envelope in-process so its result reaches the parent", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
