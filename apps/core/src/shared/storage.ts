@@ -70,7 +70,7 @@ export interface TaskUsageInput {
 
 /** One sandbox's CPU within a task: the agent's own sandbox or a per-tool sandbox. */
 export interface SandboxUsageEntry {
-  /** Sandbox provider type: self-hosted (sandbox/lambda, metered) or third-party (unmetered). */
+  /** Agent sandbox provider (sandbox/lambda metered), or "custom-tool-sandbox". */
   type: string;
   role: "agent" | "tool";
   /** The custom tool that ran, when role is "tool". */

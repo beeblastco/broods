@@ -25,26 +25,23 @@ my-project/
 
 ## `env` — Deferred Secrets
 
-Never bake secrets into your resource files. Use `env.NAME` to create a **deferred reference** that resolves on the server at runtime:
+Never bake secrets into your resource files. Use `env("NAME")` to create a **deferred reference** that resolves on the server at runtime:
 
 ```ts
 import { defineAgent, env } from "broods";
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: {
-      openai: { apiKey: env.OPENAI_API_KEY },
-    },
+  provider: {
+    openai: { apiKey: env("OPENAI_API_KEY") },
   },
 });
 ```
 
-Both forms are equivalent:
+Environment references use the callable form:
 
 ```ts
-env.OPENAI_API_KEY; // property access
-env("OPENAI_API_KEY"); // call form
+env("OPENAI_API_KEY");
 ```
 
 Set the value with the CLI:
@@ -55,7 +52,7 @@ broods env set OPENAI_API_KEY
 
 Or let `broods dev` auto-push it from your local `.env.local`.
 
-> `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env.NAME` for anything that should stay server-side.
+> `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
 
 ## Agents
 
@@ -67,21 +64,19 @@ import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 export const myAgent = defineAgent({
   name: "my-agent",
   description: "A general-purpose assistant", // visible to parent agents
-  config: {
-    provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemini-3-flash",
-      temperature: 0.7,
-    },
-    agent: {
-      system: "You are a helpful assistant.",
-      maxTurn: 10,
-    },
-    publicAccess: true, // enable public SSE/WebSocket endpoint
+  provider: {
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
+  model: {
+    provider: "google",
+    modelId: "gemini-3-flash",
+    temperature: 0.7,
+  },
+  agent: {
+    system: "You are a helpful assistant.",
+    maxTurn: 10,
+  },
+  publicAccess: true, // enable public SSE/WebSocket endpoint,
 });
 ```
 
@@ -101,7 +96,7 @@ Use `custom` for providers that expose an OpenAI-compatible Chat Completions API
 ```ts
 provider: {
   custom: {
-    apiKey: env.CUSTOM_PROVIDER_API_KEY,
+    apiKey: env("CUSTOM_PROVIDER_API_KEY"),
     base_url: "https://llm.example.com/v1",
   },
 },
@@ -181,14 +176,12 @@ uploaded custom tools by name:
 ```ts
 import { google } from "@ai-sdk/google";
 
-config: {
-  tools: {
-    // executed by the provider — any tool on its AI SDK `tools` namespace
-    googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
-    urlContext: google.tools.urlContext({}),
-    // uploaded custom tool
-    [researchTool.name]: { enabled: true },
-  },
+tools: {
+  // executed by the provider — any tool on its AI SDK `tools` namespace
+  googleSearch: google.tools.googleSearch({ searchTypes: { webSearch: {} } }),
+  urlContext: google.tools.urlContext({}),
+  // uploaded custom tool
+  [researchTool.name]: { enabled: true },
 },
 ```
 
@@ -199,19 +192,17 @@ See [External Tools](tools.md) for uploading custom tools.
 Attach one or more channels to an agent:
 
 ```ts
-import { defineTelegramChannel } from "broods";
+import { defineAgent, defineTelegramChannel, env } from "broods";
 
 export const telegram = defineTelegramChannel({
-  botToken: env.TELEGRAM_BOT_TOKEN,
-  webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+  botToken: env("TELEGRAM_BOT_TOKEN"),
+  webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123456789],
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [telegram],
-  },
+  channels: [telegram],
 });
 ```
 
@@ -226,21 +217,17 @@ import { defineWorkspace } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    sandbox: mySandbox,
-    workspaces: [
-      notes, // inherit agent sandbox
-      { workspace: notes, sandbox: null }, // read-only
-      { workspace: teamWorkspace, sandbox: reservedSandbox }, // per-workspace override
-    ],
-  },
+  sandbox: mySandbox,
+  workspaces: [
+    notes, // inherit agent sandbox
+    { workspace: notes, sandbox: null }, // read-only
+    { workspace: teamWorkspace, sandbox: reservedSandbox }, // per-workspace override
+  ],
 });
 ```
 
@@ -249,20 +236,16 @@ export const myAgent = defineAgent({
 ```ts
 export const research = defineAgent({
   name: "research",
-  config: {
-    /* ... */
-  },
+  /* ... */,
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    subagent: {
-      enabled: true,
-      allowed: [research],
-      context: "inherited",
-      mode: "persistent",
-    },
+  subagent: {
+    enabled: true,
+    allowed: [research],
+    context: "inherited",
+    mode: "persistent",
   },
 });
 ```
@@ -276,16 +259,14 @@ import { defineSkill } from "broods";
 
 export const supportFlow = defineSkill({
   name: "support-flow",
-  config: { path: "support-flow" },
+  path: "support-flow",
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    skills: {
-      enabled: true,
-      allowed: [supportFlow],
-    },
+  skills: {
+    enabled: true,
+    allowed: [supportFlow],
   },
 });
 ```
@@ -301,45 +282,41 @@ import { defineAgent, definePolicy } from "broods";
 
 export const workspacePolicy = definePolicy({
   name: "workspace-guard",
-  config: {
-    rules: [
-      { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
-      {
-        id: "deny-secrets",
-        effect: "deny",
-        actions: ["workspace.write", "workspace.exec"],
-        resources: { filePaths: ["/workspace/secrets"] },
-      },
-      {
-        id: "deny-rm-rf",
-        effect: "deny",
-        actions: ["workspace.exec"],
-        resources: { toolNames: ["bash"] },
-        conditions: [
-          {
-            attribute: "tool.input.command",
-            operator: "contains",
-            value: "rm -rf",
-          },
-        ],
-      },
-      {
-        id: "allow-other-bash",
-        effect: "allow",
-        actions: ["workspace.exec"],
-        resources: { toolNames: ["bash"] },
-      },
-    ],
-  },
+  rules: [
+    { id: "allow-read", effect: "allow", actions: ["workspace.read"] },
+    {
+      id: "deny-secrets",
+      effect: "deny",
+      actions: ["workspace.write", "workspace.exec"],
+      resources: { filePaths: ["/workspace/secrets"] },
+    },
+    {
+      id: "deny-rm-rf",
+      effect: "deny",
+      actions: ["workspace.exec"],
+      resources: { toolNames: ["bash"] },
+      conditions: [
+        {
+          attribute: "tool.input.command",
+          operator: "contains",
+          value: "rm -rf",
+        },
+      ],
+    },
+    {
+      id: "allow-other-bash",
+      effect: "allow",
+      actions: ["workspace.exec"],
+      resources: { toolNames: ["bash"] },
+    },
+  ],
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    policy: {
-      mode: "enforce",
-      policies: [workspacePolicy],
-    },
+  policy: {
+    mode: "enforce",
+    policies: [workspacePolicy],
   },
 });
 ```
@@ -360,17 +337,15 @@ When policies are assigned, the runtime sends the same structured input to OPA a
 Configure lifecycle webhooks:
 
 ```ts
-config: {
-  hooks: {
-    webhooks: [
-      {
-        enabled: true,
-        url: "https://example.com/webhooks",
-        secret: env.WEBHOOK_SECRET,
-        events: ["agent.started", "agent.finished", "agent.failed"],
-      },
-    ],
-  },
+hooks: {
+  webhooks: [
+    {
+      enabled: true,
+      url: "https://example.com/webhooks",
+      secret: env("WEBHOOK_SECRET"),
+      events: ["agent.started", "agent.finished", "agent.failed"],
+    },
+  ],
 },
 ```
 
@@ -381,13 +356,11 @@ See [Lifecycle Webhooks](webhook.md).
 Control history pruning and compaction:
 
 ```ts
-config: {
-  session: {
-    pruning: { enabled: true },
-    compaction: {
-      enabled: true,
-      maxContextLength: 100_000,
-    },
+session: {
+  pruning: { enabled: true },
+  compaction: {
+    enabled: true,
+    maxContextLength: 100_000,
   },
 },
 ```
@@ -399,24 +372,20 @@ import { defineSandbox, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "ask",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "ask",
+  timeout: 60,
 });
 
 export const reservedSandbox = defineSandbox({
   name: "persistent",
-  config: {
-    provider: "sandbox",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    persistent: true,
-    lifecycle: { idleTimeoutSeconds: 1800 },
-    options: { mountAwsS3Buckets: true },
-  },
+  provider: "sandbox",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  persistent: true,
+  lifecycle: { idleTimeoutSeconds: 1800 },
+  options: { mountAwsS3Buckets: true },
 });
 ```
 
@@ -431,9 +400,7 @@ import { defineWorkspace } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 ```
 
@@ -444,7 +411,7 @@ import { defineSkill } from "broods";
 
 export const supportFlow = defineSkill({
   name: "support-flow",
-  config: { path: "support-flow" },
+  path: "support-flow",
 });
 ```
 
@@ -457,17 +424,16 @@ import { defineTool } from "broods";
 
 export const analyze = defineTool({
   name: "analyze",
-  config: {
-    path: "tools/analyze.ts",
-    description: "Analyze structured data.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        data: { type: "array" },
-      },
-      required: ["data"],
+  description: "Analyze structured data.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      data: { type: "array" },
     },
-    defaultConfig: {},
+    required: ["data"],
+  },
+  async execute(input) {
+    return { type: "text", value: `Analyzed ${input.data.length} rows.` };
   },
 });
 ```
@@ -481,25 +447,21 @@ import { defineCron } from "broods";
 
 export const dailyDigest = defineCron({
   name: "daily-digest",
-  config: {
-    agent: myAgent,
-    input: "Summarize today's activity.",
-    scheduleExpression: "cron(0 9 * * ? *)",
-    timezone: "Europe/Amsterdam",
-  },
+  agent: myAgent,
+  input: "Summarize today's activity.",
+  scheduleExpression: "cron(0 9 * * ? *)",
+  timezone: "Europe/Amsterdam",
 });
 ```
 
 Or use `events` instead of `input` for multimodal payloads:
 
 ```ts
-config: {
-  agent: myAgent,
-  events: [
-    { role: "user", content: [{ type: "text", text: "Check status." }] },
-  ],
-  scheduleExpression: "rate(1 hour)",
-}
+agent: myAgent,
+events: [
+  { role: "user", content: [{ type: "text", text: "Check status." }] },
+],
+scheduleExpression: "rate(1 hour)",
 ```
 
 ## Channels

@@ -72,36 +72,32 @@ import { defineAgent, defineSandbox, env } from "broods";
 
 export const lambdaSandbox = defineSandbox({
   name: "lambda-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "bypass",
+  timeout: 60,
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: {
-      openai: { apiKey: env.OPENAI_API_KEY },
-    },
-    model: {
-      provider: "openai",
-      modelId: "gpt-5.5",
-    },
-    agent: {
-      system: "You are a helpful assistant.",
-    },
-    sandbox: lambdaSandbox,
-    publicAccess: true,
+  provider: {
+    openai: { apiKey: env("OPENAI_API_KEY") },
   },
+  model: {
+    provider: "openai",
+    modelId: "gpt-5.5",
+  },
+  agent: {
+    system: "You are a helpful assistant.",
+  },
+  sandbox: lambdaSandbox,
+  publicAccess: true,
 });
 ```
 
 > `broods init` and `broods login` are also available as standalone commands if you prefer to run them separately.
 
-## 6. Run Your Agent
+## 4. Run Your Agent
 
 ```bash
 broods run my-agent "Hello, who are you?"
@@ -114,9 +110,9 @@ The CLI streams the response live, showing reasoning, tool calls, and text:
 [text] Hello! I'm a helpful assistant...
 ```
 
-## 7. Programmatic Calls
+## 5. Programmatic Calls
 
-Import the generated API references and the SDK client in your application code:
+Import the generated API references and the SDK client in your application code. `broods/_generated/` is empty until a sync runs, so `broods dev` (or `broods dev --once`) has to have completed at least once before `api` resolves:
 
 ```ts
 import { BroodsClient } from "broods";
@@ -147,7 +143,7 @@ const status = await job.wait();
 console.log(status.response);
 ```
 
-## 8. Deploy to Production
+## 6. Deploy to Production
 
 ```bash
 broods deploy

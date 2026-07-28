@@ -43,14 +43,23 @@ export interface RequiredAccountToolUpload {
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Matches the CLI's MAX_BUNDLE_FILE_BYTES so a bundle that passes CLI validation
 // is not rejected at this upload gate — large enough for AI-SDK-derived tools.
-const MAX_BUNDLE_BYTES = 1_000_000;
+// Mirrors core's per-tier bound (apps/core/src/shared/domain/account-tools.ts).
+const MAX_BUNDLE_BYTES: Record<AccountToolRuntime, number> = {
+  isolate: 1_000_000,
+  sandbox: 10_000_000,
+};
 const NODE_BUILTIN_IMPORT_PATTERN =
   /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
 const BARE_IMPORT_PATTERN =
   /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// A bare `process` reference (member, bracket, call, or plain) throws in an isolate
-// even through `?.`; namespaced probes (`globalThis.process?.x`) stay isolate.
-const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
+// Member reads only: a locally declared `process` method or export key is not
+// the global (bundled zod ships one), and `typeof process` is a guarded probe.
+const NODE_GLOBAL_MEMBER_PATTERN =
+  /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
+// Web Streams are outside what isolate/runner/web-globals.mjs installs, so a
+// bundle touching one — every bundle importing `ai` does — runs on sandbox.
+const WEB_STREAMS_PATTERN =
+  /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 
 /**
  * Normalize and validate a CLI-supplied custom tool upload.
@@ -60,15 +69,15 @@ const NODE_PROCESS_GLOBAL_PATTERN = /(?<![.\w$])process\b/;
  */
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: true },
+  options: { requireBundle: true; currentRuntime?: AccountToolRuntime },
 ): Promise<RequiredAccountToolUpload>;
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: false },
+  options: { requireBundle: false; currentRuntime?: AccountToolRuntime },
 ): Promise<NormalizedAccountToolUpload>;
 export async function normalizeAccountToolUpload(
   input: unknown,
-  options: { requireBundle: boolean },
+  options: { requireBundle: boolean; currentRuntime?: AccountToolRuntime },
 ): Promise<NormalizedAccountToolUpload> {
   if (!isPlainObject(input)) {
     throw new Error("tool upload body must be an object");
@@ -97,7 +106,6 @@ export async function normalizeAccountToolUpload(
 
   if (value.bundle !== undefined) {
     result.bundle = normalizeBundle(value.bundle);
-    result.sha256 = await sha256Hex(result.bundle);
   } else if (options.requireBundle) {
     throw new Error("tool.bundle is required");
   }
@@ -108,6 +116,18 @@ export async function normalizeAccountToolUpload(
     // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
     // stored runtime so it cannot silently flip an explicitly chosen tier.
     result.runtime = inferAccountToolRuntime(result.bundle);
+  }
+
+  // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
+  // which deliberately does not restate runtime. Checked before hashing.
+  if (result.bundle !== undefined) {
+    assertBundleSize(
+      result.bundle,
+      result.runtime ??
+        options.currentRuntime ??
+        inferAccountToolRuntime(result.bundle),
+    );
+    result.sha256 = await sha256Hex(result.bundle);
   }
 
   if (value.defaultConfig !== undefined) {
@@ -132,8 +152,9 @@ export function accountToolBundleStorageKey(
 
 /**
  * Cheap upload-time heuristic for choosing the default execution tier. Bundles
- * that mention Node-only globals, node: imports, require(), or bare package
- * imports need the existing sandbox tier; pure bundles can run in the V8 isolate.
+ * that mention Node-only globals, node: imports, require(), bare package
+ * imports, or Web Streams need the sandbox tier; everything the isolate's global
+ * set covers stays on the faster isolate tier.
  * @param bundleSource bundled JavaScript module source
  * @returns the inferred runtime tier
  */
@@ -143,7 +164,8 @@ export function inferAccountToolRuntime(
   if (
     /\brequire\s*\(/.test(bundleSource) ||
     NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    NODE_PROCESS_GLOBAL_PATTERN.test(bundleSource) ||
+    NODE_GLOBAL_MEMBER_PATTERN.test(bundleSource) ||
+    WEB_STREAMS_PATTERN.test(bundleSource) ||
     /\b__dirname\b/.test(bundleSource) ||
     BARE_IMPORT_PATTERN.test(bundleSource)
   ) {
@@ -190,12 +212,18 @@ function normalizeInputSchema(value: unknown): Record<string, unknown> {
   return value;
 }
 
+function assertBundleSize(bundle: string, runtime: AccountToolRuntime): void {
+  const limit = MAX_BUNDLE_BYTES[runtime];
+  if (new TextEncoder().encode(bundle).byteLength > limit) {
+    throw new Error(
+      `tool.bundle must be ${limit} bytes or smaller on the ${runtime} runtime`,
+    );
+  }
+}
+
 function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("tool.bundle must be a non-empty string");
-  }
-  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-    throw new Error(`tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
   }
 
   return value;

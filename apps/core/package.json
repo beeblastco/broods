@@ -13,6 +13,7 @@
     "build": "bun run scripts/build.ts",
     "check": "bun run scripts/compaction-prompt.ts && bunx tsc --noEmit",
     "test": "bun test --max-concurrency=1",
+    "test:coverage": "bun test --coverage --max-concurrency=1",
     "daytona:s3-snapshot": "bun run scripts/daytona-s3-snapshot.ts",
     "deploy": "bun run build && sst deploy",
     "remove": "sst remove"
@@ -26,8 +27,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^5.0.31",
-    "@ai-sdk/anthropic": "^4.0.20",
+    "@ai-sdk/amazon-bedrock": "^5.0.32",
+    "@ai-sdk/anthropic": "^4.0.21",
     "@ai-sdk/gateway": "^4.0.28",
     "@ai-sdk/google": "^4.0.24",
     "@ai-sdk/openai": "^4.0.20",
@@ -35,6 +36,7 @@
     "@ai-sdk/otel": "^1.0.37",
     "@ai-sdk/policy-opa": "^1.0.37",
     "@ai-sdk/provider": "^4.0.3",
+    "@ai-sdk/provider-utils": "^5.0.12",
     "@aws-sdk/client-cloudwatch-logs": "^3.1095.0",
     "@aws-sdk/client-lambda": "3.1095.0",
     "@aws-sdk/client-lambda-microvms": "^3.1095.0",

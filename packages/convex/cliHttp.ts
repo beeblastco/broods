@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
+import { putHookBundle, putToolBundle } from "./model/bundles";
 
 type RouteParts =
   | { kind: "manifest"; project: string; environment: string }
@@ -650,7 +651,7 @@ async function syncToolResources(
     const bundleStorageKey =
       current?.sha256 === upload.sha256
         ? current.bundleStorageKey
-        : await ctx.runAction(internal.awsBundles.putToolBundle, {
+        : await putToolBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,
@@ -742,7 +743,7 @@ async function syncHookResources(
     const bundleStorageKey =
       current?.sha256 === upload.sha256
         ? current.bundleStorageKey
-        : await ctx.runAction(internal.awsBundles.putHookBundle, {
+        : await putHookBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,

@@ -1,8 +1,8 @@
 /**
- * Example: streaming an uploaded custom tool on the sync SSE path via declarative broods resources.
+ * Example: running an async-generator uploaded tool on the sync SSE path.
  *
- * The tool whose `execute` is an async generator streams preliminary tool-result
- * chunks live over SSE before the final result.
+ * Each yield arrives live as a tool-result marked `preliminary`; the last one
+ * repeats as the final result. This prints the progress ones dimmed.
  */
 
 import { BroodsClient } from "broods";
@@ -35,7 +35,9 @@ for await (const chunk of client.stream(api.agents.streamingToolAgent, {
       break;
     case "tool-result":
       process.stdout.write(
-        `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
+        chunk.preliminary
+          ? `\n\x1b[90m[Tool Progress: ${JSON.stringify(chunk.output)}]\x1b[0m`
+          : `\n\x1b[35m[Tool Result: ${JSON.stringify(chunk.output)}]\x1b[0m\n`,
       );
       break;
     case "finish":

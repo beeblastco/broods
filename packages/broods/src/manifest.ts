@@ -12,6 +12,7 @@ import type {
   CliManifest,
   CliManifestResource,
 } from "./contracts.ts";
+import type { BunPlugin } from "bun";
 import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -55,18 +56,39 @@ export type ResourceAliases = Partial<
   Record<AnyResource["kind"], Record<string, string>>
 >;
 
+// Stands in for the SDK inside an inline tool's bundle: the resource helpers
+// only shape config at author time, so returning the input is enough.
+const SDK_STUB_SOURCE = `const passthrough = (input) => input;
+export const defineTool = passthrough;
+export const defineAgent = passthrough;
+export const defineWorkspace = passthrough;
+export const defineSandbox = passthrough;
+export const defineSkill = passthrough;
+export const definePolicy = passthrough;
+export const defineCron = passthrough;
+export const defineBroods = passthrough;
+export const env = (name) => ({ __beeblastEnv: true, name });
+export default {};
+`;
+
 type ExportedValue = {
   exportName: string;
+  file: string;
   value: unknown;
 };
 
 type ExportedResource = {
   exportName: string;
+  file: string;
   resource: AnyResource;
 };
 
-const MAX_BUNDLE_FILE_BYTES = 1_000_000;
-const MAX_BUNDLE_TOTAL_BYTES = 5_000_000;
+// The server bounds a tool bundle per tier: 1 MB on the isolate tier, 10 MB on
+// the sandbox tier, which streams its bundle rather than inlining it. The CLI
+// cannot classify the tier, so it enforces the larger bound and lets the server
+// reject an oversized isolate bundle with the tier named.
+const MAX_BUNDLE_FILE_BYTES = 10_000_000;
+const MAX_BUNDLE_TOTAL_BYTES = 20_000_000;
 const MAX_BUNDLE_FILES = 200;
 const SKIPPED_BUNDLE_DIRECTORIES = new Set(["node_modules", ".git"]);
 const UNSAFE_BUNDLE_FILE_NAMES = [
@@ -102,12 +124,11 @@ export async function compileProject(
     .filter((entry): entry is ExportedValue & { value: AnyResource } =>
       isResource(entry.value),
     )
-    .map(
-      (entry): ExportedResource => ({
-        exportName: entry.exportName,
-        resource: entry.value,
-      }),
-    );
+    .map((entry): ExportedResource => ({
+      exportName: entry.exportName,
+      file: entry.file,
+      resource: entry.value,
+    }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
   const channels = compileChannels(resourceExports, exports);
@@ -128,7 +149,7 @@ export async function compileProject(
   );
   const manifestResources = (
     await Promise.all(
-      resources.map((resource) => toManifestResources(resource, root)),
+      resourceExports.map((entry) => toManifestResources(entry, root)),
     )
   )
     .flat()
@@ -150,31 +171,35 @@ export async function compileProject(
 
 /**
  * Collects the distinct account/environment variable names referenced via
- * `env.NAME` (the `{ __beeblastEnv }` marker) across every resource config in a
+ * `env("NAME")` (the `{ __beeblastEnv }` marker) across every resource config in a
  * compiled manifest, sorted. `dev` uses this to auto-sync exactly those vars
  * from the local environment to the cloud — never unrelated `.env.local` keys.
  */
 export function collectEnvRefNames(manifest: CliManifest): string[] {
   const names = new Set<string>();
 
-  function walk(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const entry of value) walk(entry);
-      return;
-    }
-    if (value && typeof value === "object") {
-      const record = value as Record<string, unknown>;
-      if (record.__beeblastEnv === true && typeof record.name === "string") {
-        names.add(record.name);
-        return;
-      }
-      for (const entry of Object.values(record)) walk(entry);
-    }
-  }
-
-  for (const resource of manifest.resources) walk(resource.config);
+  for (const resource of manifest.resources)
+    collectEnvRefNamesFromValue(resource.config, names);
 
   return [...names].sort();
+}
+
+function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const entry of value) collectEnvRefNamesFromValue(entry, names);
+
+    return;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.__beeblastEnv === true && typeof record.name === "string") {
+      names.add(record.name);
+
+      return;
+    }
+    for (const entry of Object.values(record))
+      collectEnvRefNamesFromValue(entry, names);
+  }
 }
 
 function resolveEnvironment(
@@ -218,8 +243,9 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
     const mod = (await import(href)) as Record<string, unknown>;
     values.push(
       ...Object.entries(mod).map(([exportName, value]) => ({
-        exportName,
-        value,
+        exportName: exportName,
+        file: file,
+        value: value,
       })),
     );
   }
@@ -682,9 +708,10 @@ function isValidIdentifier(value: string): boolean {
 }
 
 async function toManifestResources(
-  resource: AnyResource,
+  entry: ExportedResource,
   projectRoot: string,
 ): Promise<CliManifestResource[]> {
+  const resource = entry.resource;
   if (resource.kind === "agent") {
     const normalized = normalizeAgentConfig(resource, projectRoot);
     return [
@@ -703,15 +730,16 @@ async function toManifestResources(
       kind: resource.kind,
       name: resource.name,
       ...(resource.description ? { description: resource.description } : {}),
-      config: await normalizeConfig(resource, projectRoot),
+      config: await normalizeConfig(entry, projectRoot),
     },
   ];
 }
 
 async function normalizeConfig(
-  resource: AnyResource,
+  entry: ExportedResource,
   projectRoot: string,
 ): Promise<unknown> {
+  const resource = entry.resource;
   if (resource.kind === "skill") {
     return await normalizeSkillConfig(
       resource.config as { path: string },
@@ -721,8 +749,9 @@ async function normalizeConfig(
 
   if (resource.kind === "tool") {
     return await normalizeToolConfig(
+      entry,
       resource.config as {
-        path: string;
+        path?: string;
         description: string;
         inputSchema: Record<string, unknown>;
         runtime?: "isolate" | "sandbox";
@@ -798,7 +827,7 @@ function suggestProviderKey(key: string): string {
  * Validates each agent's `config.provider` at compile time so a misspelled
  * option — most commonly the camel `baseUrl` instead of `base_url`/`baseURL` —
  * throws inside the `broods dev` watcher (and `deploy`) instead of surfacing as
- * a 400 at run time. Values may be `env(...)` refs, so only keys are checked.
+ * a 400 at run time. Values may be `env("NAME")` refs, so only keys are checked.
  */
 export function validateProviderConfig(
   agentName: string,
@@ -1102,8 +1131,9 @@ async function normalizeSkillConfig(
 }
 
 async function normalizeToolConfig(
+  entry: ExportedResource,
   config: {
-    path: string;
+    path?: string;
     description: string;
     inputSchema: Record<string, unknown>;
     runtime?: "isolate" | "sandbox";
@@ -1111,11 +1141,19 @@ async function normalizeToolConfig(
   },
   projectRoot: string,
 ): Promise<Record<string, unknown>> {
-  const bundlePath = resolveContainedResourcePath(
-    projectRoot,
-    config.path,
-    "Tool",
-  );
+  const defaultConfigEnvRefs = new Set<string>();
+  collectEnvRefNamesFromValue(config.defaultConfig, defaultConfigEnvRefs);
+  if (defaultConfigEnvRefs.size > 0) {
+    throw new Error(
+      `Tool "${entry.resource.name}" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config so they stay encrypted and environment-scoped`,
+    );
+  }
+
+  // No `path` means the tool declared `execute` inline: bundle the module that
+  // exported it and address the export by name, the way Convex ships actions.
+  const bundlePath = config.path
+    ? resolveContainedResourcePath(projectRoot, config.path, "Tool")
+    : entry.file;
   const manifestPath = relative(projectRoot, bundlePath).split("\\").join("/");
   assertSafeBundlePath(manifestPath, "Tool");
   const sourceSize = Buffer.byteLength(await readFile(bundlePath));
@@ -1131,11 +1169,12 @@ async function normalizeToolConfig(
   const shimPath = join(shimDir, "tool-adapter.mjs");
   await writeFile(
     shimPath,
-    `import __toolModule from ${JSON.stringify(bundlePath)};\n` +
-      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
-      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`,
+    toolShimSource(bundlePath, config.path, entry),
     "utf8",
   );
+  if (!config.path) {
+    await writeFile(join(shimDir, "broods-stub.mjs"), SDK_STUB_SOURCE, "utf8");
+  }
   let bundle: string;
   try {
     const build = await Bun.build({
@@ -1143,6 +1182,7 @@ async function normalizeToolConfig(
       target: "node",
       format: "esm",
       minify: false,
+      plugins: config.path ? [] : [sdkStubPlugin(shimDir)],
     });
     if (!build.success || build.outputs.length !== 1) {
       const details = build.logs
@@ -1157,6 +1197,7 @@ async function normalizeToolConfig(
   } finally {
     await rm(shimDir, { recursive: true, force: true });
   }
+  bundle = normalizeBundleComments(bundle, bundlePath, manifestPath);
   const bundleSize = Buffer.byteLength(bundle);
   if (bundleSize > MAX_BUNDLE_FILE_BYTES) {
     throw new Error(
@@ -1333,6 +1374,63 @@ function contentTypeForPath(path: string): string {
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
   return "application/octet-stream";
+}
+
+// Inline tools live beside `defineAgent(...)` calls that import the SDK. Alias
+// those imports to inert stubs so the bundle carries the tool, not the client.
+function sdkStubPlugin(shimDir: string): BunPlugin {
+  const stub = join(shimDir, "broods-stub.mjs");
+
+  return {
+    name: "broods-sdk-stub",
+    setup(build) {
+      build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
+    },
+  };
+}
+
+// A `path` tool default-exports its implementation and is called execute(ctx,
+// input); an inline tool is a named export already shaped like the AI SDK's tool().
+function toolShimSource(
+  bundlePath: string,
+  explicitPath: string | undefined,
+  entry: ExportedResource,
+): string {
+  const from = JSON.stringify(bundlePath);
+  if (explicitPath) {
+    return (
+      `import __toolModule from ${from};\n` +
+      `const __impl = typeof __toolModule === "function" ? __toolModule() : __toolModule;\n` +
+      `export default { name: __impl.name, execute: (input, options) => __impl.execute(options.context, input) };\n`
+    );
+  }
+
+  return (
+    `import { ${entry.exportName} as __tool } from ${from};\n` +
+    `export default { name: ${JSON.stringify(entry.resource.name)}, execute: (input, options) => __tool.execute(input, options) };\n`
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Bun stamps each module's path into the bundle as a comment. Those paths vary
+// with the random shim tempdir and the cwd, so identical source would rehash.
+function normalizeBundleComments(
+  bundle: string,
+  bundlePath: string,
+  manifestPath: string,
+): string {
+  const sourceComment = new RegExp(
+    `^// .*${escapeRegExp(basename(bundlePath))}$`,
+    "gm",
+  );
+
+  return bundle
+    .replace(/^\/\/ .*tool-adapter\.mjs$/gm, () => "// tool-adapter.mjs")
+    .replace(/^\/\/ .*broods-stub\.mjs$/gm, () => "// broods-stub.mjs")
+    .replace(sourceComment, () => `// ${manifestPath}`);
 }
 
 function normalizeProjectName(name: string): string {

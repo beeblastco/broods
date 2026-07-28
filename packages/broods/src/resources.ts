@@ -7,6 +7,7 @@
  * here is synchronous.
  */
 
+import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
   AgentProviderSettings,
@@ -33,16 +34,16 @@ import type {
 const RESOURCE_MARKER = Symbol.for("broods.resource");
 const CONFIG_MARKER = Symbol.for("broods.config");
 const CHANNEL_MARKER = Symbol.for("broods.channel");
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export interface EnvRef<Name extends string = string> {
   readonly __beeblastEnv: true;
   readonly name: Name;
 }
 
-/** Callable + property-access accessor for {@link env}. */
+/** Callable accessor for {@link env}. */
 export interface EnvAccessor {
   <const Name extends string>(name: Name): EnvRef<Name>;
-  readonly [name: string]: EnvRef;
 }
 
 export type EnvRefString<T> = T extends string
@@ -73,7 +74,13 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
+  | "agent"
+  | "workspace"
+  | "sandbox"
+  | "cron"
+  | "skill"
+  | "tool"
+  | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -87,15 +94,18 @@ export interface ResourceDefinition<
   readonly config: Config;
 }
 
-export interface ResourceDefinitionInput<Name extends string, Config> {
+/**
+ * Authoring shape for every resource helper: the resource's own `name` (plus an
+ * optional human `description`) sits inline with that resource's config keys.
+ */
+export type ResourceInput<Name extends string, Config> = {
   name: Name;
   description?: string;
-  config: Config;
-}
+} & Config;
 
 /**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
- * `envVars` values be `env.NAME` references (compiled to `${NAME}` placeholders
+ * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
  * at sync time, exactly like provider `apiKey`). Add overrides here if more
  * sandbox fields should accept env refs.
  */
@@ -111,15 +121,48 @@ export interface SkillDefinitionConfig {
   path: string;
 }
 
-export interface ToolDefinitionConfig {
+/** Broods-side context on `ToolExecuteOptions`, alongside the AI SDK's own fields. */
+export interface ToolExecuteContext {
+  /** Resolved tool config, `env("NAME")` already substituted. Where secrets arrive. */
+  config: Record<string, unknown>;
+  /** SSRF-guarded fetch. Also installed as the global `fetch`. */
+  fetch: typeof fetch;
+  /** Per-run scratchpad. Read back after hooks; empty and unused for tools. */
+  state: Record<string, unknown>;
+}
+
+/** Call options an inline `execute` receives, mirroring the AI SDK's tool(). */
+export interface ToolExecuteOptions {
+  toolCallId?: string;
+  context: ToolExecuteContext;
+  abortSignal?: AbortSignal;
+  /** Conversation so far. Truncated from the front to the newest 512 KB. */
+  messages: ModelMessage[];
+  experimental_context?: unknown;
+}
+
+export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
   /**
-   * JavaScript module file exporting the custom tool bundle. Relative paths are
-   * resolved from the `broods/` project directory.
+   * Optional module file exporting the tool implementation, resolved from the
+   * `broods/` project directory. Omit it and declare `execute` inline instead —
+   * the CLI then bundles the module this tool is exported from.
    */
-  path: string;
+  path?: string;
+  /**
+   * Runs in the isolate or the sandbox runner, not locally. Shaped like the AI
+   * SDK's `tool({ execute })`: the input first, call options second. Annotate
+   * the parameter to type it — `inputSchema` is JSON Schema, so it cannot be
+   * inferred.
+   */
+  execute?: (input: Input, options: ToolExecuteOptions) => unknown;
   description: string;
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";
+  /**
+   * Account-wide, non-secret defaults. Environment references are rejected
+   * here; put `env("NAME")` under the enabling agent's `tools.<tool>.config` so
+   * the value is resolved per environment and stored with encrypted agent config.
+   */
   defaultConfig?: Record<string, unknown>;
 }
 
@@ -128,7 +171,12 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+  | "telegram"
+  | "github"
+  | "slack"
+  | "discord"
+  | "pancake"
+  | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -401,7 +449,7 @@ export type AgentPolicyDefinitionConfig = Omit<
  * typo like the camel `baseUrl` (instead of `base_url`/`baseURL`) slip past
  * `tsc`. Keep the keys in lockstep with core's `AgentProviderSettings`; the
  * `_ProviderKeyParity` assertion below fails `broods check` if they drift.
- * Every string field also accepts an `env(...)` reference.
+ * Every string field also accepts an `env("NAME")` reference.
  */
 export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
@@ -508,23 +556,32 @@ export type AnyResource =
  * References an account/environment variable resolved on the SERVER at runtime —
  * set it with `broods env set <NAME>` or in the dashboard (the Convex-style
  * `convex env set` model). It is a deferred reference, never read from your local
- * environment and never baked into the deployed config. Use either form:
+ * environment and never baked into the deployed config:
  *
- *   apiKey: env.OPENAI_API_KEY     // property access (reads like process.env)
- *   apiKey: env("OPENAI_API_KEY")  // call form (equivalent)
+ *   apiKey: env("OPENAI_API_KEY")
  *
- * Both compile to a `${NAME}` placeholder the harness fills in at run time. This is
+ * It compiles to a `${NAME}` placeholder the harness fills in at run time. This is
  * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
  * bake the literal local value into the deployed config instead of deferring it.
  */
 export const env: EnvAccessor = new Proxy(
-  function env(name: string) {
-    return { __beeblastEnv: true, name };
-  } as unknown as EnvAccessor,
+  <const Name extends string>(name: Name): EnvRef<Name> => {
+    if (!ENV_NAME_PATTERN.test(name)) {
+      throw new Error(
+        "env name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
+      );
+    }
+
+    return { __beeblastEnv: true, name: name };
+  },
   {
     get(target, property, receiver) {
-      if (typeof property === "string")
-        return { __beeblastEnv: true, name: property };
+      if (typeof property === "string" && ENV_NAME_PATTERN.test(property)) {
+        throw new Error(
+          `env.${property} is not supported; use env("${property}")`,
+        );
+      }
+
       return Reflect.get(target, property, receiver);
     },
   },
@@ -532,9 +589,9 @@ export const env: EnvAccessor = new Proxy(
 
 /**
  * Shared builder behind every `define*` helper below. The public helpers are
- * thin, per-kind typed front doors into this one function: each pins its `kind`
- * (the discriminant the sync/codegen pipeline switches on) and constrains
- * `config` to that resource's shape so callers get autocomplete and typo checks.
+ * thin, per-kind typed front doors: each pins its `kind` (the discriminant the
+ * sync/codegen pipeline switches on) and splits the flat authoring input back
+ * into the `{ name, description?, config }` shape the manifest wire format uses.
  */
 function defineResource<
   const Kind extends ResourceKind,
@@ -542,18 +599,16 @@ function defineResource<
   Config,
 >(
   kind: Kind,
-  input: ResourceDefinitionInput<Name, Config>,
+  name: Name,
+  description: string | undefined,
+  config: Config,
 ): ResourceDefinition<Kind, Name, Config> {
-  if (input.config === undefined) {
-    throw new Error(`Resource "${input.name}" must include config`);
-  }
-
   return {
     [RESOURCE_MARKER]: true,
-    kind,
-    name: input.name,
-    ...(input.description ? { description: input.description } : {}),
-    config: input.config,
+    kind: kind,
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
   };
 }
 
@@ -613,49 +668,101 @@ export function defineZaloChannel(
 export function defineBroods(
   config: BroodsProjectConfig,
 ): BroodsConfigDefinition {
-  return { [CONFIG_MARKER]: true, config };
+  return { [CONFIG_MARKER]: true, config: config };
 }
 
 export function defineAgent<const Name extends string>(
-  input: ResourceDefinitionInput<Name, AgentDefinitionConfig>,
+  input: ResourceInput<Name, AgentDefinitionConfig>,
 ): AgentResource<Name> {
-  return defineResource("agent", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "agent",
+    name,
+    description,
+    config as AgentDefinitionConfig,
+  );
 }
 
 export function defineWorkspace<const Name extends string>(
-  input: ResourceDefinitionInput<Name, WorkspaceConfig>,
+  input: ResourceInput<Name, WorkspaceConfig>,
 ): WorkspaceResource<Name> {
-  return defineResource("workspace", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "workspace",
+    name,
+    description,
+    config as WorkspaceConfig,
+  );
 }
 
 export function defineSandbox<const Name extends string>(
-  input: ResourceDefinitionInput<Name, SandboxDefinitionConfig>,
+  input: ResourceInput<Name, SandboxDefinitionConfig>,
 ): SandboxResource<Name> {
-  return defineResource("sandbox", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "sandbox",
+    name,
+    description,
+    config as SandboxDefinitionConfig,
+  );
 }
 
 export function defineSkill<const Name extends string>(
-  input: ResourceDefinitionInput<Name, SkillDefinitionConfig>,
+  input: ResourceInput<Name, SkillDefinitionConfig>,
 ): SkillResource<Name> {
-  return defineResource("skill", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "skill",
+    name,
+    description,
+    config as SkillDefinitionConfig,
+  );
 }
 
-export function defineTool<const Name extends string>(
-  input: ResourceDefinitionInput<Name, ToolDefinitionConfig>,
-): ToolResource<Name> {
-  return defineResource("tool", input);
+// `description` is the model-facing text, so it stays inside the tool config
+// rather than becoming the resource-level human description.
+export function defineTool<
+  const Name extends string,
+  Input = Record<string, unknown>,
+>(input: { name: Name } & ToolDefinitionConfig<Input>): ToolResource<Name> {
+  const { name, ...config } = input;
+
+  return defineResource(
+    "tool",
+    name,
+    undefined,
+    config as ToolDefinitionConfig,
+  );
 }
 
 export function definePolicy<const Name extends string>(
-  input: ResourceDefinitionInput<Name, PolicyDefinitionConfig>,
+  input: ResourceInput<Name, PolicyDefinitionConfig>,
 ): PolicyResource<Name> {
-  return defineResource("policy", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "policy",
+    name,
+    description,
+    config as PolicyDefinitionConfig,
+  );
 }
 
 export function defineCron<const Name extends string>(
-  input: ResourceDefinitionInput<Name, CronDefinitionConfig>,
+  input: ResourceInput<Name, CronDefinitionConfig>,
 ): CronResource<Name> {
-  return defineResource("cron", input);
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "cron",
+    name,
+    description,
+    config as CronDefinitionConfig,
+  );
 }
 
 export function isResource(value: unknown): value is AnyResource {

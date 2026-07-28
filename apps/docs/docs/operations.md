@@ -173,10 +173,8 @@ The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the envi
 ```ts
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    // …model, provider, sandbox…
-    publicAccess: true, // expose the public SSE/WebSocket endpoint
-  },
+  // …model, provider, sandbox…
+  publicAccess: true, // expose the public SSE/WebSocket endpoint,
 });
 ```
 
@@ -306,5 +304,6 @@ Common fields:
 - `model.step.finished` carries per-model-call `durationMs`, the AI SDK `usage`, response ID/model/timestamp, provider metadata, warning counts, and tool call/result counts
 - `model.invocation.finished` and `model.invocation.failed` carry final turn status, whole-run `durationMs`, AI SDK total token `usage`, step count, tool call count, `toolsUsed`, per-tool `toolUsage`, and compact `toolCalls` summaries
 - `toolName`, `toolCallId`, and `durationMs` for tool events
+- A `tool.call` span for an uploaded tool that ran off-process also carries `tool.compute.type` and `tool.compute.cpu_usec`, so a trace shows which runtime served the call and what it cost. Their absence means the call ran in-process.
 
 Prompts, full tool inputs, tool outputs, request bodies, response bodies, and response headers are not logged by default. This keeps the CloudWatch stream useful for usage visualization while avoiding high-volume or sensitive payloads.

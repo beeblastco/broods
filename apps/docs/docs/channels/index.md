@@ -74,20 +74,20 @@ import {
 } from "broods";
 
 export const github = defineGitHubChannel({
-  appId: env.GITHUB_APP_ID,
-  privateKey: env.GITHUB_PRIVATE_KEY,
-  webhookSecret: env.GITHUB_WEBHOOK_SECRET,
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   allowedRepos: ["owner/repo"],
 });
 
 export const slack = defineSlackChannel({
-  botToken: env.SLACK_BOT_TOKEN,
-  signingSecret: env.SLACK_SIGNING_SECRET,
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const support = defineAgent({
   name: "support",
-  config: { channels: [github, slack] },
+  channels: [github, slack],
 });
 ```
 

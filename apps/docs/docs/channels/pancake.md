@@ -10,17 +10,15 @@ Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
 import { defineAgent, definePancakeChannel, env } from "broods";
 
 export const pancake = definePancakeChannel({
-  pageId: env.PANCAKE_PAGE_ID,
-  pageAccessToken: env.PANCAKE_PAGE_ACCESS_TOKEN,
-  webhookSecret: env.PANCAKE_WEBHOOK_SECRET,
-  senderId: env.PANCAKE_SENDER_ID,
+  pageId: env("PANCAKE_PAGE_ID"),
+  pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
+  webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
+  senderId: env("PANCAKE_SENDER_ID"),
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [pancake],
-  },
+  channels: [pancake],
 });
 ```
 
@@ -48,21 +46,19 @@ When staff take over a conversation in Pancake, add a tag; the hook drops the me
 ```ts title="broods/index.ts"
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    channels: [pancake],
-    hooks: {
-      // Drop inbound messages on conversations a human has taken over. `event`
-      // is discriminated on `channel`, so after narrowing `event.source` is the
-      // strongly-typed Pancake source (with `tagIds`).
-      onMessageReceived: (ctx, event) => {
-        if (event.channel !== "pancake") return undefined;
-        const handoffTagIds = ["order-tag", "pending-tag"];
-        const tagIds = event.source.tagIds ?? [];
+  channels: [pancake],
+  hooks: {
+    // Drop inbound messages on conversations a human has taken over. `event`
+    // is discriminated on `channel`, so after narrowing `event.source` is the
+    // strongly-typed Pancake source (with `tagIds`).
+    onMessageReceived: (ctx, event) => {
+      if (event.channel !== "pancake") return undefined;
+      const handoffTagIds = ["order-tag", "pending-tag"];
+      const tagIds = event.source.tagIds ?? [];
 
-        return tagIds.some((tagId) => handoffTagIds.includes(tagId))
-          ? { drop: true }
-          : undefined;
-      },
+      return tagIds.some((tagId) => handoffTagIds.includes(tagId))
+        ? { drop: true }
+        : undefined;
     },
   },
 });

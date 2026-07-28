@@ -72,7 +72,7 @@ Commands:
   init                 Create a broods/ project shell
   login                Authenticate with WorkOS through the dashboard
   dev                  Watch + sync Development AND live-tail agent logs (like \`convex dev\`);
-                       confirms before deleting; auto-pushes env.NAME values from .env.local
+                       confirms before deleting; auto-pushes env("NAME") values from .env.local
   dev --once           Sync Development a single time and exit (no watch, no log stream)
   diff                 Show local desired state vs remote state
   deploy               Sync Production once; writes BROODS_API_KEY to .env.local
@@ -82,7 +82,7 @@ Commands:
   env list             List environment variable names (values stay hidden)
   env rm <name>        Remove an environment variable
   stream               Stream live logs for the whole project/environment (Ctrl+C to stop)
-  logs                 Backfill recent logs then live-tail; default 100 lines
+  logs                 Backfill recent logs then live-tail; all levels, default 100 lines
                        (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
   agent list           List the agents in the current project/environment scope
   agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
@@ -721,7 +721,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
-  // Push any `env.NAME` values from .env.local up first, so this sync's configs
+  // Push any `env("NAME")` values from .env.local up first, so this sync's configs
   // resolve them and the missing-env warning only fires for genuinely-absent vars.
   await syncLocalEnvVars(
     client,
@@ -817,7 +817,7 @@ function printChannelEndpoints(
 }
 
 /**
- * Auto-syncs the env vars an agent config references via `env.NAME` from the
+ * Auto-syncs the env vars an agent config references via `env("NAME")` from the
  * local environment (`.env.local`, already loaded into `process.env`) up to the
  * cloud environment during `dev`. This fulfills the Convex-style `env set` flow
  * automatically so the dashboard never needs a manual step for local secrets.
@@ -1093,7 +1093,9 @@ function resolveObservabilityCredentials(): {
 function resolveMinLevel(args: string[]): LogLevel | undefined {
   if (hasFlag(args, "--errors")) return "WARN";
   const raw = optionValue(args, "--level");
-  if (!raw) return "WARN";
+  // No filter by default: agent-loop and tool-call events are INFO, so a WARN
+  // default hides everything a healthy run emits and reads as "no logs".
+  if (!raw) return undefined;
   const upper = raw.toUpperCase();
   if (upper === "WARN" || upper === "WARNING") return "WARN";
   if (upper === "ERROR") return "ERROR";
@@ -1622,32 +1624,28 @@ function starterAgent(): string {
     `// A Lambda sandbox: a fresh, ephemeral bash environment created per run.\n` +
     `export const lambdaSandbox = defineSandbox({\n` +
     `  name: "lambda-sandbox",\n` +
-    `  config: {\n` +
-    `    provider: "lambda",\n` +
-    `    network: { mode: "deny-all" },\n` +
-    `    permissionMode: "bypass",\n` +
-    `    timeout: 60,\n` +
-    `  },\n` +
+    `  provider: "lambda",\n` +
+    `  network: { mode: "deny-all" },\n` +
+    `  permissionMode: "bypass",\n` +
+    `  timeout: 60,\n` +
     `});\n\n` +
     `export const myAgent = defineAgent({\n` +
     `  name: "my-agent",\n` +
-    `  config: {\n` +
-    `    provider: {\n` +
-    `      openai: { apiKey: env.OPENAI_API_KEY },\n` +
-    `    },\n` +
-    `    model: {\n` +
-    `      provider: "openai",\n` +
-    `      modelId: "gpt-5.5",\n` +
-    `    },\n` +
-    `    agent: {\n` +
-    `      system: "You are a helpful assistant.",\n` +
-    `    },\n` +
-    `    sandbox: lambdaSandbox,\n` +
-    `    // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
-    `    // \`broods run\` can reach this agent. Off by default — secured: a\n` +
-    `    // private agent is only reachable via internal endpoints or channel webhooks.\n` +
-    `    publicAccess: true,\n` +
+    `  provider: {\n` +
+    `    openai: { apiKey: env("OPENAI_API_KEY") },\n` +
     `  },\n` +
+    `  model: {\n` +
+    `    provider: "openai",\n` +
+    `    modelId: "gpt-5.5",\n` +
+    `  },\n` +
+    `  agent: {\n` +
+    `    system: "You are a helpful assistant.",\n` +
+    `  },\n` +
+    `  sandbox: lambdaSandbox,\n` +
+    `  // Expose the public runtime endpoint (SSE/WebSocket) so the API key and\n` +
+    `  // \`broods run\` can reach this agent. Off by default — secured: a\n` +
+    `  // private agent is only reachable via internal endpoints or channel webhooks.\n` +
+    `  publicAccess: true,\n` +
     `});\n`
   );
 }

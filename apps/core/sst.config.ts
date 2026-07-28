@@ -526,9 +526,36 @@ export default $config({
       }),
     });
 
+    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
+    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
+    const toolRunnerFn = new sst.aws.Function("ToolRunner", {
+      handler: "../lambda/handler.handler",
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      timeout: "35 seconds",
+      // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
+      // of a core, and this function's cost is almost all CPU — Node startup in
+      // the child plus parsing a bundle — so a smaller size bills roughly the
+      // same GB-ms while taking several times longer.
+      memory: "1769 MB",
+      copyFiles: [
+        {
+          from: "../lambda/child-runner.mjs",
+          to: "child-runner.mjs",
+        },
+      ],
+      transform: {
+        function: { name: resourceName("tool-runner", stage, region) },
+      },
+    });
+
     // Harness-side permissions for the container runtime user (CoreRuntimeUser
     // below); the account-manage set follows further down.
     const harnessPermissions = [
+      {
+        actions: ["lambda:InvokeFunction"],
+        resources: [toolRunnerFn.arn],
+      },
       {
         actions: ["sts:AssumeRole"],
         resources: [sandboxS3MountRole.arn],
@@ -924,6 +951,7 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
+      toolRunnerFunctionName: toolRunnerFn.name,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,

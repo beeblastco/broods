@@ -7,7 +7,8 @@ import {
   normalizeAccountToolUpload,
 } from "../model/accountTools.ts";
 
-const MAX_BUNDLE_BYTES = 1_000_000;
+const MAX_ISOLATE_BUNDLE_BYTES = 1_000_000;
+const MAX_SANDBOX_BUNDLE_BYTES = 10_000_000;
 
 // n ASCII bytes of isolate-safe source (a comment) for exact-boundary checks.
 const bundleOfBytes = (n: number): string => "//" + "a".repeat(n - 2);
@@ -44,10 +45,10 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("const k = process?.env?.API_KEY;")).toBe(
       "sandbox",
     );
-    // A bare `process` reference in any form throws before any `.`/`?.` — cover
-    // the plain-reference and bracket-access shapes the dotted probe misses.
-    expect(inferAccountToolRuntime("const p = process;")).toBe("sandbox");
     expect(inferAccountToolRuntime("const k = process['env'];")).toBe(
+      "sandbox",
+    );
+    expect(inferAccountToolRuntime("const b = Buffer.from('x');")).toBe(
       "sandbox",
     );
     expect(inferAccountToolRuntime("import fs from 'node:fs';")).toBe(
@@ -59,6 +60,23 @@ describe("inferAccountToolRuntime", () => {
     expect(inferAccountToolRuntime("import axios from 'axios';")).toBe(
       "sandbox",
     );
+    // The isolate has no Web Streams, so a bundle touching one is routed here
+    // rather than left to fail at import time.
+    expect(
+      inferAccountToolRuntime("class Chunker extends TransformStream {}"),
+    ).toBe("sandbox");
+  });
+
+  // Bundled zod declares a `process` of its own, as an export-map key and as a
+  // method. Naming something `process` is not reading Node's global, and
+  // treating it as one taxed every zod-shaped bundle with a Lambda round trip.
+  it("does not mistake a locally named process for the global", () => {
+    expect(
+      inferAccountToolRuntime("var mod = { process: () => process2 };"),
+    ).toBe("isolate");
+    expect(
+      inferAccountToolRuntime("class Encoder { process(schema, params) {} }"),
+    ).toBe("isolate");
   });
 });
 
@@ -70,7 +88,7 @@ describe("bundle-size upload gate", () => {
           name: "sized",
           description: "Sized.",
           inputSchema: { type: "object" },
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES),
         },
         { requireBundle: true },
       ),
@@ -82,12 +100,44 @@ describe("bundle-size upload gate", () => {
           name: "sized",
           description: "Sized.",
           inputSchema: { type: "object" },
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES + 1),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1),
         },
         { requireBundle: true },
       ),
     ).rejects.toThrow(
-      `tool.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`,
+      `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
+    );
+  });
+
+  it("gives the sandbox tier the larger bound", async () => {
+    // A sandbox bundle is streamed from S3 into the runner instead of inlined,
+    // so it is not held in core's process and gets the bigger allowance.
+    const oversizedForIsolate = `${bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1)}\nimport "node:fs";`;
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "sized",
+          description: "Sized.",
+          inputSchema: { type: "object" },
+          bundle: oversizedForIsolate,
+        },
+        { requireBundle: true },
+      ),
+    ).resolves.toMatchObject({ runtime: "sandbox" });
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "sized",
+          description: "Sized.",
+          inputSchema: { type: "object" },
+          bundle: `${bundleOfBytes(MAX_SANDBOX_BUNDLE_BYTES + 1)}\nimport "node:fs";`,
+        },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow(
+      `tool.bundle must be ${MAX_SANDBOX_BUNDLE_BYTES} bytes or smaller on the sandbox runtime`,
     );
   });
 
@@ -97,7 +147,7 @@ describe("bundle-size upload gate", () => {
         {
           name: "sized",
           events: ["agent.started"],
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES),
         },
         { requireBundle: true },
       ),
@@ -108,12 +158,12 @@ describe("bundle-size upload gate", () => {
         {
           name: "sized",
           events: ["agent.started"],
-          bundle: bundleOfBytes(MAX_BUNDLE_BYTES + 1),
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1),
         },
         { requireBundle: true },
       ),
     ).rejects.toThrow(
-      `hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`,
+      `hook.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller`,
     );
   });
 });

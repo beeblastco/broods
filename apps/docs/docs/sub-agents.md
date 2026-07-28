@@ -10,11 +10,9 @@ import { defineAgent } from "broods";
 export const research = defineAgent({
   name: "research",
   description: "Deep research specialist",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "o3" },
-    agent: { system: "You are a research specialist." },
-  },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "o3" },
+  agent: { system: "You are a research specialist." },
 });
 
 export const myAgent = defineAgent({

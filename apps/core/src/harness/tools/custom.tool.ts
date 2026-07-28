@@ -1,11 +1,11 @@
 /**
  * AI SDK adapter for account-uploaded custom tool metadata.
- * Execution is delegated to custom-tool-executor.ts, which dispatches by runtime tier.
+ * Execution is delegated to bundles/executor.ts, which dispatches by runtime tier.
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
-import { streamAccountTool } from "./custom-tool-executor.ts";
+import { streamAccountTool } from "../bundles/executor.ts";
 import type { ToolContext } from "./index.ts";
 
 export default function accountTool(
@@ -16,17 +16,20 @@ export default function accountTool(
     [record.name]: tool({
       description: record.description,
       inputSchema: jsonSchema(record.inputSchema),
-      // Return the async generator synchronously (no `async` wrapper) so the AI SDK
-      // detects an async-iterable and streams a bundle's `yield`s as preliminary
-      // tool results; a non-streaming bundle simply yields once (its result).
-      execute: (input, options) =>
-        streamAccountTool({
+      // Declared `async function*` so tool-execute.ts can see this streams. Each
+      // yield is a preliminary tool result; the last one is the tool's result.
+      execute: async function* (input, options) {
+        yield* streamAccountTool({
           accountId: context.accountId,
           tool: record,
-          input,
+          input: input,
           config: context.config,
-          options,
-        }),
+          options: options,
+          ...(context.onSandboxCpu
+            ? { onSandboxCpu: context.onSandboxCpu }
+            : {}),
+        });
+      },
     }),
   };
 }

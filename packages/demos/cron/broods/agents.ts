@@ -2,32 +2,28 @@ import { defineAgent, defineCron, env } from "broods";
 
 export const cron = defineAgent({
   name: "cron-agent",
-  config: {
-    provider: {
-      google: { apiKey: env.GOOGLE_API_KEY },
-    },
-    model: {
-      provider: "google",
-      modelId: "gemma-4-31b-it",
-    },
-    agent: {
-      system: "You are a concise scheduled maintenance assistant.",
-    },
-    publicAccess: true,
+  provider: {
+    google: { apiKey: env("GOOGLE_API_KEY") },
   },
+  model: {
+    provider: "google",
+    modelId: "gemma-4-31b-it",
+  },
+  agent: {
+    system: "You are a concise scheduled maintenance assistant.",
+  },
+  publicAccess: true,
 });
 
 export const oneMinuteCron = defineCron({
   name: "one-minute-cron-test",
-  config: {
-    agent: cron,
-    conversationKey: "cron:one-minute-test",
-    input: "Say hello and the current time.",
-    scheduleExpression:
-      process.env.CRON_SCHEDULE_EXPRESSION ??
-      atExpressionOneMinuteFromNow("Europe/Amsterdam"),
-    timezone: "Europe/Amsterdam",
-  },
+  agent: cron,
+  conversationKey: "cron:one-minute-test",
+  input: "Say hello and the current time.",
+  scheduleExpression:
+    process.env.CRON_SCHEDULE_EXPRESSION ??
+    atExpressionOneMinuteFromNow("Europe/Amsterdam"),
+  timezone: "Europe/Amsterdam",
 });
 
 function atExpressionOneMinuteFromNow(timeZone: string): string {

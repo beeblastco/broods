@@ -19,23 +19,19 @@ import { defineSandbox, defineAgent, env } from "broods";
 
 export const sandbox = defineSandbox({
   name: "starter",
-  config: {
-    provider: "sandbox", // self-hosted workdir (the default)
-    network: { mode: "deny-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-  },
+  provider: "sandbox", // self-hosted workdir (the default)
+  network: { mode: "deny-all" },
+  permissionMode: "bypass",
+  timeout: 60,
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: { minimax: { apiKey: env.MINIMAX_API_KEY } },
-    model: { provider: "minimax", modelId: "MiniMax-M3" },
-    agent: { system: "Use bash to write files and run code in the sandbox." },
-    sandbox,
-    publicAccess: true,
-  },
+  provider: { minimax: { apiKey: env("MINIMAX_API_KEY") } },
+  model: { provider: "minimax", modelId: "MiniMax-M3" },
+  agent: { system: "Use bash to write files and run code in the sandbox." },
+  sandbox,
+  publicAccess: true,
 });
 ```
 
@@ -75,7 +71,7 @@ import { defineWorkspace } from "broods";
 
 export const projectWorkspace = defineWorkspace({
   name: "project",
-  config: { storage: { provider: "s3" } },
+  storage: { provider: "s3" },
 });
 
 // then on the agent: workspaces: [projectWorkspace]

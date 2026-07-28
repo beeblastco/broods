@@ -5,10 +5,11 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import ivm from "isolated-vm";
 import { guardedFetch, BODY_LIMIT_BYTES, FETCH_TIMEOUT_MS } from "./pinned-fetch.mjs";
+import { WEB_GLOBALS_SOURCE } from "./web-globals.mjs";
 
 // Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
 // remaining budget. Declared before the entry dispatch below assigns it.
@@ -94,7 +95,10 @@ async function runToolRequest() {
 // disposed and evicted. Mirrors Convex Funrun's per-tenant isolate reuse.
 async function runPoolWorker() {
   const cacheCapRaw = Number(process.env.ISOLATE_TENANT_CACHE_PER_WORKER);
-  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 4;
+  // Deliberately small: acquireWorker prefers a worker that already holds the
+  // tenant, so most workers only ever need one, and every cached isolate is
+  // resident memory in a pod that has 1 GiB for everything.
+  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 2;
   const cache = new Map(); // tenantId -> { isolate, lastCpu: bigint }
   writeFrame({ t: "ready" });
   for await (const line of readLines(process.stdin)) {
@@ -201,13 +205,13 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
       `const __fetch = async (url, init) => $2(url, init ?? {});
       globalThis.__ctx = {
         config: $0,
-        asyncTool: null,
-        env: {},
         fetch: __fetch,
         state: $5,
       };
       globalThis.__input = $1;
       globalThis.__toolCallId = $6;
+      globalThis.__messages = $7;
+      globalThis.__experimentalContext = $8;
       globalThis.fetch = __fetch;
       let __nextTimer = 1;
       const __timers = new Map();
@@ -291,6 +295,21 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
         // tools, which are stateless single calls.
         new ivm.ExternalCopy(asPlainRecord(payload.state, "state")).copyInto(),
         new ivm.ExternalCopy(payload.toolCallId ?? null).copyInto(),
+        // The AI SDK's own execute options, so an uploaded bundle sees what the
+        // same tool would see in-process. Core bounds messages before it sends.
+        new ivm.ExternalCopy(payload.messages ?? null).copyInto(),
+        new ivm.ExternalCopy(payload.experimentalContext ?? null).copyInto(),
+      ],
+      { timeout: 1_000 },
+    );
+    // Text codecs, base64, URL and crypto, in a second closure so the host-bridged
+    // setup above stays readable. Installed before the module evaluates: bundles
+    // reach for these at import time, not only inside execute.
+    await context.evalClosure(
+      WEB_GLOBALS_SOURCE,
+      [
+        new ivm.Callback((input, base, key, value) => parseUrl(input, base, key, value), { sync: true }),
+        new ivm.Callback((length) => Array.from(randomBytes(Math.min(Number(length) || 0, 65_536))), { sync: true }),
       ],
       { timeout: 1_000 },
     );
@@ -359,6 +378,8 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
           toolCallId: globalThis.__toolCallId,
           context: globalThis.__ctx,
           abortSignal: globalThis.__abortSignal,
+          messages: globalThis.__messages ?? [],
+          experimental_context: globalThis.__experimentalContext ?? undefined,
         };
         const value = globalThis.__execute(globalThis.__input, options);
         if (value != null && typeof value[Symbol.asyncIterator] === "function") {
@@ -469,6 +490,31 @@ function asPlainRecord(value, name) {
     throw new Error(`isolate runner payload ${name} must be an object`);
   }
   return value;
+}
+
+// Backs the isolate's URL global. Parsing on the host means bundles get Node's
+// WHATWG parser instead of a hand-rolled one; null is an invalid URL, which the
+// isolate turns back into a TypeError.
+function parseUrl(input, base, setterKey, setterValue) {
+  try {
+    const url = new URL(input, base ?? undefined);
+    if (setterKey) url[setterKey] = setterValue;
+    return {
+      href: url.href,
+      protocol: url.protocol,
+      username: url.username,
+      password: url.password,
+      host: url.host,
+      hostname: url.hostname,
+      port: url.port,
+      pathname: url.pathname,
+      search: url.search,
+      hash: url.hash,
+      origin: url.origin,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function writeFrame(frame) {

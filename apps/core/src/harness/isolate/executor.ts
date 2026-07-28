@@ -1,13 +1,14 @@
 /**
  * Node-hosted V8 isolate execution for account-uploaded user code (custom tools
  * and hooks). Bun cannot load isolated-vm, so core spawns a Node runner
- * (./runner/runner.mjs) and speaks the NDJSON frame protocol from payload.ts.
+ * (./runner/runner.mjs) and speaks the NDJSON frame protocol from ../bundles/payload.ts.
  *
- * Two paths share this file: the legacy one-shot spawner (a fresh runner per
- * call) and, behind ISOLATE_POOL, a pool of long-lived hardened workers that
- * keep a tenant-keyed warm isolate cache (Convex-Funrun style) — reuse the
- * isolate within a tenant, fresh context per call, so cold starts and per-call
- * process spawns disappear. The pool is opt-in until it has soaked in dev.
+ * Two paths share this file. The default is a pool of long-lived hardened
+ * workers keeping a tenant-keyed warm isolate cache (Convex-Funrun style) —
+ * reuse the isolate within a tenant, fresh context per call, so cold starts and
+ * per-call process spawns disappear. It grows on demand and reaps idle workers,
+ * because core's pod budgets memory for one process, not a standing fleet.
+ * ISOLATE_POOL=0 falls back to the one-shot spawner, a fresh runner per call.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -18,10 +19,12 @@ import {
   FrameQueue,
   abortSignalFromOptions,
   createRunnerPayload,
+  experimentalContextFromOptions,
+  messagesFromOptions,
   toolBundlesBucket,
   toolCallIdFromOptions,
   type ExecuteAccountToolOptions,
-} from "./payload.ts";
+} from "../bundles/payload.ts";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const RUNNER_OUTPUT_LIMIT_BYTES = 1024 * 1024;
@@ -53,8 +56,11 @@ export async function* streamIsolatePayload(
   yield* streamViaOneShot(runPayload, options.abortSignal);
 }
 
+// Pooled by default. The one-shot path pays a Node spawn plus a cold isolate on
+// every call, which is most of what an isolate-tier tool costs; ISOLATE_POOL=0
+// is the way back to it.
 function isolatePoolEnabled(): boolean {
-  return optionalEnv("ISOLATE_POOL") === "1";
+  return optionalEnv("ISOLATE_POOL") !== "0";
 }
 
 function runnerTimeoutMs(): number {
@@ -78,6 +84,9 @@ async function buildRunPayload({
     input,
     config,
     toolCallId: toolCallIdFromOptions(options),
+    messages: messagesFromOptions(options),
+    experimentalContext: experimentalContextFromOptions(options),
+    bundleTransport: "inline",
   });
   return { ...payload };
 }
@@ -104,7 +113,7 @@ function forwardAbortSignal(
   return () => abortSignal.removeEventListener("abort", onAbort);
 }
 
-// --- Legacy one-shot path (default until ISOLATE_POOL flips on) ----------------
+// --- One-shot fallback path (ISOLATE_POOL=0) ----------------------------------
 
 let activeIsolateRuns = 0;
 const isolateWaiters: Array<() => void> = [];
@@ -241,7 +250,7 @@ function releaseIsolateSlot(): void {
   activeIsolateRuns = Math.max(0, activeIsolateRuns - 1);
 }
 
-// --- Pooled path (ISOLATE_POOL=1): long-lived tenant-scoped warm workers -------
+// --- Pooled path (default): long-lived tenant-scoped warm workers -------------
 
 type IsolateFrame = {
   t: string;
@@ -263,6 +272,7 @@ class IsolateWorker {
   readonly tenants = new Set<string>();
   busy = false;
   alive = true;
+  idleSince = Date.now();
   ready: Promise<void>;
 
   #buffer = "";
@@ -379,37 +389,45 @@ class IsolateWorker {
 
 const pool: IsolateWorker[] = [];
 const poolWaiters: Array<() => void> = [];
+let reaper: ReturnType<typeof setInterval> | undefined;
 
+// The cap, not the resting size, and its own knob: a worker is ~54 MB resident
+// where a one-shot process is transient. Past the cap, calls queue.
 function poolSize(): number {
-  return positiveIntegerEnv(
-    "ISOLATE_WORKER_POOL_SIZE",
-    positiveIntegerEnv("ISOLATE_RUNNER_CONCURRENCY", 8),
-  );
+  return positiveIntegerEnv("ISOLATE_WORKER_POOL_SIZE", 4);
 }
 
-function ensurePool(): void {
-  for (let i = 0; i < pool.length; i += 1) {
-    const worker = pool[i];
-    if (worker && !worker.alive) pool[i] = new IsolateWorker();
-  }
-  while (pool.length < poolSize()) pool.push(new IsolateWorker());
+function workerIdleTtlMs(): number {
+  return positiveIntegerEnv("ISOLATE_WORKER_IDLE_SECONDS", 120) * 1000;
 }
 
-/** Pre-spawn the worker pool so the first real call skips Node startup. */
+/** Pre-spawn one worker so the first real call skips Node startup. */
 export async function prewarmIsolatePool(): Promise<void> {
-  if (!isolatePoolEnabled()) return;
-  ensurePool();
-  await Promise.all(pool.map((worker) => worker.ready.catch(() => {})));
+  if (!isolatePoolEnabled() || pool.length > 0) return;
+  await spawnWorker().ready.catch(() => {});
+}
+
+/** Kills every worker. Workers outlive a request, so shutdown has to reap them. */
+export function shutdownIsolatePool(): void {
+  if (reaper) {
+    clearInterval(reaper);
+    reaper = undefined;
+  }
+  for (const worker of pool.splice(0)) worker.kill();
 }
 
 async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
   while (true) {
-    ensurePool();
+    dropDeadWorkers();
+    // Tenant affinity first: that worker already holds a warm isolate for this
+    // account, which is the whole point of keeping the process around.
     const worker =
       pool.find(
         (candidate) =>
           !candidate.busy && candidate.alive && candidate.tenants.has(tenantId),
-      ) ?? pool.find((candidate) => !candidate.busy && candidate.alive);
+      ) ??
+      pool.find((candidate) => !candidate.busy && candidate.alive) ??
+      (pool.length < poolSize() ? spawnWorker() : undefined);
     if (worker) {
       worker.busy = true;
       await worker.ready.catch(() => {});
@@ -423,11 +441,41 @@ async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
   }
 }
 
+function dropDeadWorkers(): void {
+  for (let index = pool.length - 1; index >= 0; index -= 1) {
+    if (!pool[index]!.alive) pool.splice(index, 1);
+  }
+}
+
+// A burst grows the pool to the cap; without this it would stay there for the
+// life of the process. One worker always survives so the next call stays warm.
+function reapIdleWorkers(): void {
+  const cutoff = Date.now() - workerIdleTtlMs();
+  for (let index = pool.length - 1; index >= 0 && pool.length > 1; index -= 1) {
+    const worker = pool[index]!;
+    if (worker.busy || worker.idleSince > cutoff) continue;
+    worker.kill();
+    pool.splice(index, 1);
+  }
+}
+
 function releaseWorker(worker: IsolateWorker, tenantId: string): void {
   worker.busy = false;
+  worker.idleSince = Date.now();
   if (worker.alive) worker.tenants.add(tenantId);
   const next = poolWaiters.shift();
   if (next) next();
+}
+
+function spawnWorker(): IsolateWorker {
+  const worker = new IsolateWorker();
+  pool.push(worker);
+  if (!reaper) {
+    reaper = setInterval(reapIdleWorkers, 30_000);
+    reaper.unref?.();
+  }
+
+  return worker;
 }
 
 let callCounter = 0;

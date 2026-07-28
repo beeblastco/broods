@@ -12,6 +12,7 @@ import {
   type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import type { Session } from "./session.ts";
+import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -44,7 +45,6 @@ interface AsyncToolCall extends AsyncToolPendingMetadata {
 }
 
 type ToolEntry = ToolSet[string];
-type ToolExecute = NonNullable<ToolEntry["execute"]>;
 
 export type AsyncToolSource = "built-in" | "uploaded";
 export type AsyncToolModeMap = Map<string, AsyncToolSource>;
@@ -414,12 +414,6 @@ async function resolveToolOutput(
   }
 
   return output;
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  return Boolean(
-    value && typeof value === "object" && Symbol.asyncIterator in value,
-  );
 }
 
 function withAsyncToolMetadata(

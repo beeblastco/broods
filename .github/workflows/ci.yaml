@@ -55,7 +55,9 @@ jobs:
         # native addon built (Bun cannot load it; the tests spawn node).
         run: |
           mkdir -p /tmp/broods-ivm-test
-          cp apps/core/src/harness/isolate/runner/runner.mjs apps/core/src/harness/isolate/runner/pinned-fetch.mjs /tmp/broods-ivm-test/
+          # Whole directory, not a file list: the runner imports its siblings, and
+          # naming them here means a new one silently fails every isolate test.
+          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-test/
           npm install --prefix /tmp/broods-ivm-test isolated-vm@7.0.0
           echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-test/runner.mjs" >> "$GITHUB_ENV"
 

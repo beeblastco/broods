@@ -55,6 +55,7 @@ import type * as model_agentSync from "../model/agentSync.js";
 import type * as model_apiCanvasSync from "../model/apiCanvasSync.js";
 import type * as model_auditEvents from "../model/auditEvents.js";
 import type * as model_aws from "../model/aws.js";
+import type * as model_bundles from "../model/bundles.js";
 import type * as model_cascade from "../model/cascade.js";
 import type * as model_configValues from "../model/configValues.js";
 import type * as model_cronRules from "../model/cronRules.js";
@@ -152,6 +153,7 @@ declare const fullApi: ApiFromModules<{
   "model/apiCanvasSync": typeof model_apiCanvasSync;
   "model/auditEvents": typeof model_auditEvents;
   "model/aws": typeof model_aws;
+  "model/bundles": typeof model_bundles;
   "model/cascade": typeof model_cascade;
   "model/configValues": typeof model_configValues;
   "model/cronRules": typeof model_cronRules;
