@@ -419,7 +419,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         request.metadata,
         { ephemeral: true },
       );
-      return { ...created, ephemeralMirror };
+      return { ...created, ephemeralMirror: ephemeralMirror };
     }
     const key = sandboxReservationKey(request)!;
     const existing = await getSandboxExternalId(PROVIDER, key);
