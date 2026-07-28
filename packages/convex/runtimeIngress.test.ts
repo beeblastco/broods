@@ -64,6 +64,117 @@ function admission(options: {
 }
 
 describe("runtime ingress", () => {
+  test("returns only narrowed public deployment ingress provenance from delivery", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId,
+        conversationKey,
+        eventId: "public-owner",
+        mode: "reject",
+      }),
+      delivery: {
+        kind: "websocket",
+        publicDeploymentIngress: {
+          accountId,
+          endpointId: "endpoint-one",
+          environmentSlug: "development",
+          projectSlug: "demo",
+          ignored: "not-returned",
+        },
+      },
+    });
+
+    expect(
+      (
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId,
+          agentId: "test-agent",
+          eventId: "public-owner",
+        })
+      )?.publicDeploymentIngress,
+    ).toEqual({
+      accountId,
+      endpointId: "endpoint-one",
+      environmentSlug: "development",
+      projectSlug: "demo",
+    });
+  });
+
+  test("ignores forged public deployment provenance on channel delivery", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId,
+        conversationKey,
+        eventId: "channel-owner",
+        mode: "reject",
+      }),
+      delivery: {
+        kind: "channel",
+        publicDeploymentIngress: {
+          accountId,
+          endpointId: "endpoint-one",
+          environmentSlug: "development",
+          projectSlug: "demo",
+        },
+      },
+    });
+
+    const status = await t.query(internal.runtimeIngress.getStatus, {
+      accountId,
+      agentId: "test-agent",
+      eventId: "channel-owner",
+    });
+
+    // Assert the row was found first: the negative below holds for null too.
+    expect(status?.eventId).toBe("channel-owner");
+    expect(status).not.toHaveProperty("publicDeploymentIngress");
+  });
+
+  for (const [kind, marker] of [
+    [
+      "http",
+      {
+        accountId: 42,
+        endpointId: "endpoint-one",
+        environmentSlug: "development",
+        projectSlug: "demo",
+      },
+    ],
+    ["async", "client-asserted-marker"],
+  ] as const) {
+    test(`ignores malformed public deployment provenance on ${kind} delivery`, async () => {
+      const t = runtimeTest();
+      const accountId = await createActiveAccount(t);
+      const eventId = `${kind}-owner`;
+      await t.mutation(internal.runtimeIngress.accept, {
+        ...admission({
+          accountId,
+          conversationKey: `acct:${accountId}:agent:test-agent:api:${eventId}`,
+          eventId,
+          mode: "reject",
+        }),
+        delivery: {
+          kind,
+          publicDeploymentIngress: marker,
+        },
+      });
+
+      expect(
+        await t.query(internal.runtimeIngress.getStatus, {
+          accountId,
+          agentId: "test-agent",
+          eventId,
+        }),
+      ).not.toHaveProperty("publicDeploymentIngress");
+    });
+  }
+
   test("atomically owns, rejects, queues, and deduplicates candidates", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);

@@ -62,6 +62,7 @@ import {
   accountAgentScopedKey,
   assertValidPublicConversationKey,
   assertValidPublicEventId,
+  assertValidPublicStatusEventId,
   channelScopeKeyFromConversation,
   normalizeDirectIdentifier,
   scopedDirectConversationKey,
@@ -82,7 +83,17 @@ import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
 } from "./hook-dispatcher.ts";
-import type { IngressMode } from "./ingress.ts";
+import { statusAccessDenial } from "./status-access.ts";
+import {
+  getAsyncAgentResult,
+  type AsyncAgentResultRecord,
+} from "./async-agent-result.ts";
+import {
+  getIngressStatus,
+  type IngressMode,
+  type IngressStatusRecord,
+  type PublicDeploymentIngress,
+} from "./ingress.ts";
 import { toLifecycleValue } from "./lifecycle.ts";
 import {
   resolveS3ReadTarget,
@@ -113,6 +124,9 @@ export interface DirectInboundEvent {
   // harness so it can build NATS observability subjects for live streaming.
   projectSlug?: string;
   environmentSlug?: string;
+  // Dedicated server-derived proof that this ingress entered through a public
+  // deployment route. Generic deployment fields also exist on channel/cron work.
+  publicDeploymentIngress?: PublicDeploymentIngress;
   eventId: string;
   asyncResultEventId?: string;
   publicEventId: string;
@@ -132,6 +146,19 @@ export interface DirectInboundEvent {
   replyTarget?: { channelName: string; source: Record<string, unknown> };
   cronRun?: { cronId: string; runId: string };
 }
+
+/** The scope a queued envelope needs to be rebuilt into its own run. */
+export type IngressDispatchScope = Pick<
+  DirectInboundEvent,
+  | "accountId"
+  | "agentId"
+  | "agentConfig"
+  | "conversationKey"
+  | "publicConversationKey"
+  | "endpointId"
+  | "projectSlug"
+  | "environmentSlug"
+>;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
@@ -226,6 +253,14 @@ export interface IntegrationRoutingOptions {
     accountId: string,
     agentId: string,
   ) => Promise<AgentDeploymentScope | null>;
+  asyncAgentResultLoader?: (
+    eventId: string,
+  ) => Promise<AsyncAgentResultRecord | null>;
+  ingressStatusLoader?: (options: {
+    accountId: string;
+    agentId: string;
+    eventId: string;
+  }) => Promise<IngressStatusRecord | null>;
   directApiEnabled?: boolean;
   /** Registers post-response background work (channel ack-then-process). */
   waitUntil?: (promise: Promise<unknown>) => void;
@@ -239,6 +274,14 @@ interface HttpRoutingContext {
     accountId: string,
     agentId: string,
   ): Promise<AgentDeploymentScope | null>;
+  asyncAgentResultLoader(
+    eventId: string,
+  ): Promise<AsyncAgentResultRecord | null>;
+  ingressStatusLoader(options: {
+    accountId: string;
+    agentId: string;
+    eventId: string;
+  }): Promise<IngressStatusRecord | null>;
   directApiEnabled: boolean;
   waitUntil(promise: Promise<unknown>): void;
 }
@@ -271,6 +314,9 @@ export function createIncomingEventRouter(
     ((accountId: string, agentId: string) =>
       getStorage().agentDeployments.getByAgentId?.(accountId, agentId) ??
       Promise.resolve(null));
+  const asyncAgentResultLoader =
+    options.asyncAgentResultLoader ?? getAsyncAgentResult;
+  const ingressStatusLoader = options.ingressStatusLoader ?? getIngressStatus;
   const directApiEnabled = options.directApiEnabled ?? true;
   const waitUntil = options.waitUntil ?? (() => {});
 
@@ -283,6 +329,8 @@ export function createIncomingEventRouter(
       accountLoader,
       agentLoader,
       deploymentLoader,
+      asyncAgentResultLoader,
+      ingressStatusLoader,
       directApiEnabled,
       waitUntil,
     });
@@ -312,24 +360,13 @@ async function handleHttpRequest(
       }
 
       const parsed = parseStatusPath(request.path, request.search, account);
-      // A deployment key only reaches agents that opted into public access —
-      // the same gate as the run path, so retained status/output of private
-      // agents in the account is not readable through a public key.
       if (auth?.kind === "deployment") {
-        const agent = await context.agentLoader(
-          account.accountId,
-          parsed.agentId,
-        );
-        if (
-          !agent ||
-          agent.status !== "active" ||
-          toRuntimeAgentConfig(agent.config).publicAccess !== true
-        ) {
-          return errorResponse(
-            403,
-            `Agent ${parsed.agentId} is not publicly accessible.`,
-            { code: "public_access_disabled", agentId: parsed.agentId },
-          );
+        const denial = await statusAccessDenial(auth, parsed, context);
+        if (denial) {
+          return errorResponse(403, denial.message, {
+            code: denial.code,
+            agentId: parsed.agentId,
+          });
         }
       }
 
@@ -586,6 +623,7 @@ async function handleHttpRequest(
           endpointId: auth.endpointId,
           projectSlug: auth.projectSlug,
           environmentSlug: auth.environmentSlug,
+          publicDeploymentIngress: publicDeploymentIngress(auth),
           statusUrl,
         });
       }
@@ -595,6 +633,7 @@ async function handleHttpRequest(
         endpointId: auth.endpointId,
         projectSlug: auth.projectSlug,
         environmentSlug: auth.environmentSlug,
+        publicDeploymentIngress: publicDeploymentIngress(auth),
       });
     } catch (err) {
       return badRequestResponse(err);
@@ -1252,6 +1291,17 @@ function deploymentMatchesPath(
   );
 }
 
+function publicDeploymentIngress(
+  auth: Extract<AuthContext, { kind: "deployment" }>,
+): PublicDeploymentIngress {
+  return {
+    accountId: auth.account.accountId,
+    endpointId: auth.endpointId,
+    environmentSlug: auth.environmentSlug,
+    projectSlug: auth.projectSlug,
+  };
+}
+
 async function parseDirectPayload(
   bodyText: string,
   headers: Record<string, string>,
@@ -1444,7 +1494,7 @@ function parseStatusPath(
 ): StatusInboundEvent {
   const match = rawPath.match(/^\/status\/([^/]+)$/);
   const rawEventId = match?.[1] ? decodeURIComponent(match[1]) : "";
-  const publicEventId = assertValidPublicEventId(rawEventId);
+  const publicEventId = assertValidPublicStatusEventId(rawEventId);
 
   const params = new URLSearchParams(rawQueryString);
   const rawAgentId = params.get("agentId");

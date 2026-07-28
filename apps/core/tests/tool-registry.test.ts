@@ -292,6 +292,7 @@ describe("createTools", () => {
       {
         subagent: {
           enabled: true,
+          mode: "ephemeral",
         },
       },
     );
@@ -322,6 +323,27 @@ describe("createTools", () => {
       runSubagentSchema.jsonSchema.properties.tasks.items.properties
         .shareContext,
     ).toBeUndefined();
+
+    const defaultModeTools = await createTools(
+      createToolContext(undefined, "google", dispatch),
+      {
+        subagent: {
+          enabled: true,
+        },
+      },
+    );
+    const defaultModeSchema = defaultModeTools.run_subagent
+      ?.inputSchema as unknown as {
+      jsonSchema: {
+        properties: {
+          tasks: { items: { properties: { conversationKey?: unknown } } };
+        };
+      };
+    };
+    expect(
+      defaultModeSchema.jsonSchema.properties.tasks.items.properties
+        .conversationKey,
+    ).toBeDefined();
     expect(
       (
         tools.run_subagent as {

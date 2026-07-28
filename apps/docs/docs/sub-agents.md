@@ -5,7 +5,7 @@ Subagents let one parent agent dispatch independent work, keep going, and then c
 ## Configuration
 
 ```ts title="broods/index.ts"
-import { defineAgent } from "broods";
+import { defineAgent, env } from "broods";
 
 export const research = defineAgent({
   name: "research",
@@ -24,6 +24,7 @@ export const myAgent = defineAgent({
     allowed: [research],
     context: "new",
     mode: "persistent",
+    stream: true,
   },
 });
 ```
@@ -32,8 +33,10 @@ Defaults:
 
 - omit `subagent` or set `enabled: false` to disable `run_subagent`
 - omit `context` to use `"new"`
-- omit `mode` or set `"ephemeral"` for in-memory-only subagent conversations
-- set `mode: "persistent"` to save subagent conversations to Convex and enable resuming
+- omit `mode` or set `"persistent"` to save subagent conversations to Convex and enable resuming
+- set `mode: "ephemeral"` for in-memory-only subagent conversations
+- omit `stream` or set `false` to keep child model/tool events private to the runtime
+- set `stream: true` to make each child's short-lived event replay attachable over WebSocket
 - use `allowed: []` to allow only virtual one-shot subagents
 - add predefined agent ids to `allowed` when the parent should be able to choose specific account-owned agents
 
@@ -114,7 +117,7 @@ flowchart LR
   style CVX fill:#f9f,stroke:#333
 ```
 
-When `mode: "persistent"` is configured:
+Persistent is the default mode. When it is active:
 
 - subagent task prompts and generated subagent messages are persisted under the child `conversationKey`
 - the system generates a key with the `subagent-persistent-{uuid}` format for new conversations
@@ -122,8 +125,96 @@ When `mode: "persistent"` is configured:
 - the parent agent can pass that key in future `run_subagent` calls to resume the child conversation
 - resumed conversations load the existing child history from Convex and append the new prompt
 - inherited parent context remains request-local model context and is not copied into the child conversation
+- the child run is admitted through the conversation coordinator, so it can be cancelled and steered like any other run
 
-Ephemeral mode is the default. It keeps child model context in memory only and continues to use runtime-generated keys.
+Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memory only, uses runtime-generated keys, and does not accept a `conversationKey`.
+
+## Controlling A Running Child
+
+Persistent children are admitted through the same conversation coordinator as top-level runs, so they are addressed by the ordinary ingress endpoints — there is no subagent-specific control API. Send stop or steer to the **child's** `conversationKey`, which `run_subagent` returns alongside the `taskId`.
+
+- **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set. A stopped child's partial progress is deliberately **not** injected into the parent: it was cancelled on purpose, so it is not an answer the parent asked for. Genuine failures are still reported to the parent
+- **steer** — queued events are merged into the child's next step, exactly as for a top-level run
+- **continue** — a follow-up sent while the child is busy (ingress mode `followup` or `collect`) is queued durably and dispatched automatically once the child settles, exactly as for a top-level run
+
+The parent's own dispatch of a child uses `reject`, so dispatching into a conversation that is still busy surfaces the conflict instead of stalling.
+
+A drained follow-up runs as another turn of the same child task, so its result is injected back into the parent exactly like the child's first answer, under the same `subagent.visibility` rules.
+
+The one exception is timing. If the parent's subagent wait budget has already expired there is no live parent turn left to inject into, so the queued envelope is handed to its own worker instead: it still runs and still writes to the child conversation, but its result is not injected into the parent. Read it from the child conversation, or resume explicitly by passing the child's `conversationKey` to a new `run_subagent` call.
+
+Ephemeral children cannot be controlled. They hold no durable conversation and take no owner generation, so there is nothing to fence a stop or steer against — this is the main reason persistent is the default.
+
+## Live Child Event Streaming
+
+When `subagent.stream` is `true`, every child publishes its reasoning, text, tool, error, and structured-output stream parts through the same NATS response path used by a normal WebSocket run. Both ephemeral and persistent tasks have a public child conversation key; the `run_subagent` result exposes the three values needed to attach:
+
+- `taskId` becomes the attach `eventId` and the durable status id
+- `agentId` identifies the child agent
+- `conversationKey` is the returned child conversation key
+
+```json
+{
+  "type": "attach",
+  "requestId": "attach-child-1",
+  "agentId": "agent_child",
+  "conversationKey": "subagent-persistent-abc123",
+  "eventId": "subagent~base64url-parent-event~task-uuid"
+}
+```
+
+```mermaid
+flowchart LR
+  Child["Subagent harness stream"] -->|"stream=true"| Subject["Account + child agent +<br/>conversation NATS subject"]
+  Subject --> Buffer["WS_RESPONSES<br/>short JetStream retention"]
+  Buffer -->|"one ordered consumer"| Gateway["Gateway attach<br/>retained replay → live tail"]
+  Child --> ChildStatus["Existing Convex<br/>subagent runtime status"]
+  ParentStatus["Durable parent<br/>ingress status"] --> Auth["Core parent/deployment<br/>authorization"]
+  ChildStatus --> Auth
+  Auth --> Gateway
+  Gateway --> Client["WebSocket client"]
+```
+
+The gateway protocol does not change. Treat `taskId` as server-issued: core
+includes a base64url-encoded parent correlation in it and persists that exact
+child event before `run_subagent` returns. The correlation is reversible
+encoding, not encryption, and must not contain or be treated as confidential
+data. Public direct requests cannot choose the reserved `subagent~` event
+namespace. A deployment-key status/attach request succeeds only when the child
+status row, its child agent/conversation scope, the durable parent ingress row,
+the active public parent, and the key's account/project/environment/endpoint
+deployment scope all agree. The client does not provide parent scope. This
+permits a virtual or predefined private child to be observed through its
+already-authorized parent without making the child publicly runnable or exposing
+another deployment's tasks.
+
+The parent ingress row carries a dedicated server-derived public-deployment
+marker only when it entered through deployment-authenticated direct HTTP, async,
+or WebSocket ingress. Core compares every marker field with the authenticated
+deployment. Account-authenticated direct runs, channels, cron runs, and internal
+continuations do not gain attach access merely because they also carry generic
+endpoint metadata.
+
+The gateway also requires the status response's conversation key to equal the
+requested attach conversation before opening the NATS consumer. Its event-bound
+`ws-responses:<generation>:<sequence>:<event-hash>` cursor prevents a child
+cursor from resuming a different task, and the subject includes the authenticated
+account and child agent so conversations cannot cross those scopes. Because the
+durable child row is created before dispatch and JetStream retains the earliest
+frames, clients can use the returned `taskId`, `agentId`, and `conversationKey`
+immediately even if the child began publishing before the tool result arrived.
+A `done` stream part only closes the best-effort token tail. The existing
+`/status/{taskId}?agentId={agentId}` result remains the durable terminal truth
+after completion, failure, or JetStream expiry.
+
+An attach made before the first child frame remains open even when the replay
+buffer is empty. The gateway starts at the next subject sequence and tails
+future frames while polling durable status concurrently. If durable completion
+or failure arrives without a stream `done`, it allows a short NATS-tail grace,
+closes the ordered consumer, and emits one synthetic terminal frame; an error or
+done already received from the stream is never duplicated.
+
+Publishing is best-effort and uses the existing three-minute/2,000-message-per-subject retention window. The publisher drains after the child status settles on success or failure; connection, publish, or flush failures cannot change that durable outcome. Enabling it does not change child persistence, parent result injection, visibility shaping, traces, usage, or request settlement.
 
 ## SSE Continuation
 
