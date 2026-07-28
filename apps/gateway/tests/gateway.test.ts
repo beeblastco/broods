@@ -467,6 +467,90 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
   }
 });
 
+test("replays a fresh buffered attach from its own subject, not the shared stream head", async () => {
+  const originalFetch = globalThis.fetch;
+  const sent: Array<Record<string, unknown>> = [];
+  const socket = gatewaySocket(sent);
+  const encoder = new TextEncoder();
+  const consumerOptions: Array<Record<string, unknown>> = [];
+  const streamEvent = (sequence: number, data: Record<string, unknown>) => ({
+    seq: sequence,
+    data: encoder.encode(
+      JSON.stringify({
+        type: "stream",
+        headers: {
+          accountId: "acct_test",
+          agentId: "agent_child",
+          conversationKey: "child-conversation",
+          eventId: "child-task",
+          connectionId: "child-task",
+        },
+        data,
+        sequence,
+      }),
+    ),
+    ack: () => {},
+  });
+  // The oldest message retained on the shared stream is sequence 2 and belongs
+  // to another conversation; this subject's own frames start at 10.
+  const connection = zeroBufferConnection(
+    async () => ({
+      async *[Symbol.asyncIterator]() {
+        yield streamEvent(10, { type: "text-delta", text: "first" });
+        yield streamEvent(12, { type: "done" });
+      },
+      close: async () => {},
+    }),
+    (options) => {
+      consumerOptions.push(options);
+    },
+    { bufferedCount: 2, firstSequence: 2, lastSequence: 12 },
+  );
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        eventId: "child-task",
+        conversationKey: "child-conversation",
+        status: "completed",
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as unknown as typeof fetch;
+
+  try {
+    handleAgentMessage(
+      socket,
+      JSON.stringify({
+        type: "attach",
+        requestId: "attach-foreign-head",
+        agentId: "agent_child",
+        conversationKey: "child-conversation",
+        eventId: "child-task",
+      }),
+      gatewayLimitsFromEnv({ GATEWAY_RUN_START_TIMEOUT_MS: "4000" }),
+      async () => connection as never,
+    );
+
+    await waitForGatewayMessage(
+      sent,
+      (message) => message.type === "attached",
+      1_600,
+    );
+    const attached = sent.find((message) => message.type === "attached");
+    // A cursor built from the shared stream head names another conversation's
+    // message, so resuming with it would be denied by the subject check.
+    expect(attached?.replayFromCursor).toBeUndefined();
+    // The inclusive upper bound is this subject's own last sequence.
+    expect(attached?.replayThroughCursor).toContain(":12:");
+    expect(consumerOptions[0]?.opt_start_seq).toBeUndefined();
+  } finally {
+    stopActiveRun(socket);
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("closes a zero-frame attach after durable completion and emits one terminal frame", async () => {
   const originalFetch = globalThis.fetch;
   const sent: Array<Record<string, unknown>> = [];

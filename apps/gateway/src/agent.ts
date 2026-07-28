@@ -73,7 +73,9 @@ type FollowedExecution = {
   eventId: string;
   eventKey: string;
   snapshot: ReplaySnapshot;
-  startSequence: number;
+  // Undefined replays from the subject's earliest retained frame, which is the
+  // only way to name that boundary on a stream shared by every conversation.
+  startSequence: number | undefined;
   initialConsumedSequence: number;
   isReplay: (sequence: number) => boolean;
   statusRequestId: string;
@@ -710,7 +712,10 @@ async function attachCoreStream(
         return;
       }
     }
-    const replayFrom = cursor ? cursor.sequence + 1 : snapshot.firstSequence;
+    // Only a client cursor names a real resume point. A fresh attach replays
+    // from the subject's earliest retained frame, whose sequence is unknown
+    // until it arrives, so no lower bound is advertised for it.
+    const replayFrom = cursor ? cursor.sequence + 1 : null;
     sendAgentTest(socket, {
       type: "attached",
       requestId: message.requestId,
@@ -718,11 +723,15 @@ async function attachCoreStream(
       status: status.status,
       ...(snapshot.bufferedCount > 0
         ? {
-            replayFromCursor: formatCursor(
-              snapshot.generation,
-              replayFrom,
-              eventKey,
-            ),
+            ...(replayFrom === null
+              ? {}
+              : {
+                  replayFromCursor: formatCursor(
+                    snapshot.generation,
+                    replayFrom,
+                    eventKey,
+                  ),
+                }),
             replayThroughCursor: formatCursor(
               snapshot.generation,
               snapshot.lastSequence,
@@ -760,10 +769,22 @@ async function followAttachedExecution(
   initialStatus: IngressHttpResponse,
   connection: NatsConnection,
   snapshot: ReplaySnapshot,
-  replayFrom: number,
+  replayFrom: number | null,
   eventKey: string,
 ): Promise<void> {
   const buffered = snapshot.bufferedCount > 0;
+  // Nothing retained: tail from the snapshot boundary. Retained frames with a
+  // cursor: resume after it. Retained frames without one: let the filtered
+  // consumer start at this subject's own first frame.
+  let startSequence: number | undefined = snapshot.lastSequence + 1;
+  let initialConsumedSequence = snapshot.lastSequence;
+  if (buffered && replayFrom !== null) {
+    startSequence = Math.max(1, replayFrom);
+    initialConsumedSequence = startSequence - 1;
+  } else if (buffered) {
+    startSequence = undefined;
+    initialConsumedSequence = 0;
+  }
 
   await followExecution(socket, active.abort.signal, {
     connection: connection,
@@ -775,12 +796,8 @@ async function followAttachedExecution(
     eventId: message.eventId,
     eventKey: eventKey,
     snapshot: snapshot,
-    startSequence: buffered
-      ? Math.max(1, replayFrom)
-      : snapshot.lastSequence + 1,
-    initialConsumedSequence: buffered
-      ? Math.max(0, replayFrom - 1)
-      : snapshot.lastSequence,
+    startSequence: startSequence,
+    initialConsumedSequence: initialConsumedSequence,
     // Only frames at or below the snapshot existed before the attach.
     isReplay: (sequence) => buffered && sequence <= snapshot.lastSequence,
     statusRequestId: message.requestId,

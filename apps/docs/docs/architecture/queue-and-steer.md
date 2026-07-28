@@ -374,6 +374,11 @@ When `afterCursor` is omitted, replay begins at the earliest retained frame for
 the target `eventId`. The gateway filters the conversation-scoped stream by the
 event ID in the NATS envelope headers.
 
+`replayFromCursor` is returned only when the client supplied an `afterCursor`.
+Sequences are global to the shared response stream, so the earliest frame of one
+conversation cannot be named before it is delivered; on a fresh attach the client
+takes its first cursor from the first `output` frame instead.
+
 If the cursor's stream generation is stale, the cursor is bound to a different
 event, the cursor sequence is beyond the subject's last retained message (a
 future cursor), or the message at the cursor sequence is no longer retained for

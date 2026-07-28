@@ -140,9 +140,12 @@ describe("conversationReplaySnapshot", () => {
       conversationKey: "child-conversation",
     });
 
-    expect(snapshot).toMatchObject({
+    // 2 and 100 are the shared stream's boundaries; 92 is this subject's own.
+    expect(snapshot).toEqual({
       bufferedCount: 3,
-      firstSequence: 2,
+      generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(
+        "base64url",
+      ),
       lastSequence: 92,
     });
     expect(queries).toEqual([{ last_by_subj: subject }]);
