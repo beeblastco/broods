@@ -1,0 +1,77 @@
+name: Roll a pod in infra
+
+# Building an image deploys nothing: the pods live in a k3s cluster the infra
+# repo owns. Without a rollout a green build means only that a tag moved, which
+# is how core-dev once served a months-old image behind a passing pipeline, and
+# how dashboard-dev did the same for weeks.
+
+on:
+  workflow_call:
+    inputs:
+      workflow:
+        description: "Workflow file in the infra repo to dispatch"
+        required: true
+        type: string
+      tag:
+        description: "Image tag to roll (a commit sha)"
+        required: true
+        type: string
+    secrets:
+      dispatchToken:
+        description: "Fine-grained PAT for the infra repo, Actions: read and write"
+        required: true
+
+jobs:
+  rollout:
+    runs-on: ubuntu-24.04
+    # A rollout that has not finished in 20 minutes is stuck, not slow: infra
+    # caps the Helm wait at 5m and the rollout status at another 5m.
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - name: Roll the pod and wait for the rollout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.dispatchToken }}
+          INFRA_REPO: beeblastco/infra
+          TAG: ${{ inputs.tag }}
+          WORKFLOW: ${{ inputs.workflow }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing secret: INFRA_DISPATCH_TOKEN" >&2
+            echo "Needs a fine-grained PAT scoped to $INFRA_REPO with Actions: read and write." >&2
+            exit 1
+          fi
+
+          # Run ids only ever increase, so the newest one before dispatching is a
+          # floor that no earlier run can clear. Without it a rerun of this job
+          # matches the previous rollout of the same tag and reports its result.
+          RUNS_URL="repos/$INFRA_REPO/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch"
+          FLOOR_ID=$(gh api "$RUNS_URL&per_page=1" --jq '.workflow_runs[0].id // 0')
+
+          gh workflow run "$WORKFLOW" --repo "$INFRA_REPO" --ref main -f tag="$TAG"
+
+          # An infra run reports infra's own head_sha and the API hides dispatch
+          # inputs, so the tag is matched out of display_title instead — infra's
+          # run-name puts it there precisely so a caller can find its own run.
+          for _ in $(seq 1 60); do
+            RUN_ID=$(gh api "$RUNS_URL&per_page=20" \
+              --jq "[.workflow_runs[]
+                     | select(.id > $FLOOR_ID)
+                     | select(.display_title | endswith(\" $TAG\"))] | .[0].id // empty")
+            if [[ -n "$RUN_ID" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ -z "${RUN_ID:-}" ]]; then
+            echo "No $WORKFLOW run in $INFRA_REPO newer than $FLOOR_ID reported tag $TAG" >&2
+            exit 1
+          fi
+
+          echo "Watching $INFRA_REPO run $RUN_ID (floor $FLOOR_ID, tag $TAG)"
+
+          gh run watch "$RUN_ID" --repo "$INFRA_REPO" --exit-status
