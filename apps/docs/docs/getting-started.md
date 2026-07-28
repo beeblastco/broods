@@ -103,11 +103,22 @@ export const myAgent = defineAgent({
 broods run my-agent "Hello, who are you?"
 ```
 
-The CLI streams the response live, showing reasoning, tool calls, and text:
+This opens a terminal UI chat session and sends your prompt as the first turn.
+Reasoning streams as it arrives, tool calls render as cards with their input and
+output, and tools that need approval stop for a `y`/`n` answer. The session stays
+open for follow-ups — press Esc or Ctrl+C to leave.
 
-```text
-[thinking] The user is greeting me...
-[text] Hello! I'm a helpful assistant...
+Leave the prompt off to start an empty session:
+
+```bash
+broods run my-agent
+```
+
+Redirect the output and you get plain text instead of the terminal UI, so runs
+stay scriptable:
+
+```bash
+broods run my-agent "Hello, who are you?" > answer.txt
 ```
 
 ## 5. Programmatic Calls

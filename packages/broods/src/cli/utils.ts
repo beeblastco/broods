@@ -21,6 +21,39 @@ interface LoginCallback {
   baseUrl: string;
 }
 
+/** Options whose value is a separate token, so both have to leave a prompt. */
+const VALUE_OPTIONS = new Set([
+  "--base-url",
+  "--dashboard-url",
+  "--env",
+  "--level",
+  "--limit",
+  "--project",
+  "--region",
+  "-n",
+]);
+
+/**
+ * Positional arguments only. `--project foo` puts `foo` in the list too, so
+ * dropping just the flag would leave the value looking like a run prompt.
+ */
+export function positionalArgs(args: string[]): string[] {
+  const positional: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (VALUE_OPTIONS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    positional.push(arg);
+  }
+
+  return positional;
+}
+
 export function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
