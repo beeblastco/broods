@@ -427,6 +427,17 @@ export default $config({
         vpcId: sandboxNetwork.id,
         serviceName: `com.amazonaws.${region}.s3`,
         vpcEndpointType: "Gateway",
+        policy: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Effect: "Allow",
+              Principal: "*",
+              Action: "s3:*",
+              Resource: [filesystemBucketArn, `${filesystemBucketArn}/*`],
+            },
+          ],
+        }),
         routeTableIds: sandboxNetwork.nodes.privateRouteTables.apply(
           (routeTables) => routeTables.map((routeTable) => routeTable.id),
         ),
