@@ -28,7 +28,11 @@ import {
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
-import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
+import {
+  runAgentLoop,
+  USER_STOP_MESSAGE,
+  type SubagentParentContext,
+} from "./harness.ts";
 import {
   createAgentHookDispatcher,
   type HookDispatcher,
@@ -710,6 +714,25 @@ export class SubagentCoordinator {
     }
 
     if (!shouldInjectToParent) {
+      return;
+    }
+
+    // A stopped child was cancelled on purpose, so its partial progress is not
+    // an answer the parent asked for. Record it, but keep it out of the transcript.
+    if (completion.error === USER_STOP_MESSAGE) {
+      this.notifyCompletion();
+      logInfo("Subagent task stopped", {
+        parentEventId: this.parentSession.eventId,
+        taskId: completion.taskId,
+        agentId: completion.agentId,
+      });
+      await this.lifecycle.emit("subagent.task.finished", {
+        taskId: completion.taskId,
+        agentId: completion.agentId,
+        conversationKey: completion.conversationKey,
+        status: "failed",
+        error: completion.error,
+      });
       return;
     }
 

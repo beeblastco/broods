@@ -135,7 +135,7 @@ Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memor
 
 Persistent children are admitted through the same conversation coordinator as top-level runs, so they are addressed by the ordinary ingress endpoints — there is no subagent-specific control API. Send stop or steer to the **child's** `conversationKey`, which `run_subagent` returns alongside the `taskId`.
 
-- **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set
+- **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set. A stopped child's partial progress is deliberately **not** injected into the parent: it was cancelled on purpose, so it is not an answer the parent asked for. Genuine failures are still reported to the parent
 - **steer** — queued events are merged into the child's next step, exactly as for a top-level run
 - **continue** — a follow-up sent while the child is busy (ingress mode `followup` or `collect`) is queued durably and dispatched automatically once the child settles, exactly as for a top-level run
 

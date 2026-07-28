@@ -543,6 +543,46 @@ describe("SubagentCoordinator", () => {
     expect(releaseConversationLease).not.toHaveBeenCalled();
   });
 
+  it("keeps a stopped child's progress out of the parent transcript", async () => {
+    const originalMutation = runtime.mutate;
+    runtime.mutate = mock(async () => true) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true } },
+      Date.now() + 60_000,
+      { emit: mock(async () => {}) } as never,
+    );
+    const internals = coordinator as unknown as {
+      completeTask(completion: unknown): Promise<void>;
+      pending: Map<string, Promise<void>>;
+    };
+    const failure = {
+      taskId: "subagent~task_1",
+      agentId: "agent_child",
+      conversationKey: "subagent-persistent-1",
+      status: "failed",
+    };
+
+    try {
+      internals.pending.set("subagent~task_1", Promise.resolve());
+      await internals.completeTask({
+        ...failure,
+        error: "Stopped by user at the model boundary",
+      });
+
+      expect(await coordinator.drainCompletionsToParent()).toBe(0);
+
+      // A genuine failure is still reported, so the parent can react to it.
+      internals.pending.set("subagent~task_1", Promise.resolve());
+      await internals.completeTask({ ...failure, error: "provider exploded" });
+
+      expect(await coordinator.drainCompletionsToParent()).toBe(1);
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
   it("releases the child lease when nothing is queued behind it", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
