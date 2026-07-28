@@ -34,6 +34,7 @@ import {
 } from "@aws-sdk/client-lambda-microvms";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
+import { logWarn } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
   DEFAULT_RELEASE_GRACE_SECONDS,
@@ -555,14 +556,29 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           ],
         }
       : {};
-    const mode = this.#config.network?.mode ?? "deny-all";
-    if (mode === "allow-all") return ingress;
+    const network = this.#config.network ?? { mode: "deny-all" as const };
+    if (network.mode === "allow-all") return ingress;
     const egress = optionalEnv("MICROVM_EGRESS_NETWORK_CONNECTOR_ARN");
     if (!egress) {
       throw new Error(
-        `MicroVM sandbox cannot enforce ${mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`,
+        `MicroVM sandbox cannot enforce ${network.mode} egress without MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`,
       );
     }
+    // The connector's security group is fixed at deploy time, so a per-account allowlist
+    // cannot be applied to it. Both restricted modes get the same workspace-S3-only egress.
+    if (
+      (network.allowDomains?.length ?? 0) > 0 ||
+      (network.allowCidrs?.length ?? 0) > 0
+    ) {
+      logWarn(
+        "MicroVM sandbox ignores restricted network allowlists; egress is the shared connector (workspace S3 only)",
+        {
+          allowCidrs: network.allowCidrs?.length ?? 0,
+          allowDomains: network.allowDomains?.length ?? 0,
+        },
+      );
+    }
+
     return { ...ingress, egressNetworkConnectors: [egress] };
   }
 
