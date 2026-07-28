@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import {
+  conversationReplaySnapshot,
   consumerStartPolicy,
   streamResponseSubject,
   subjectToken,
@@ -96,5 +97,54 @@ describe("consumerStartPolicy (resume cursor)", () => {
       deliver_policy: DeliverPolicy.StartSequence,
       opt_start_seq: 7,
     });
+  });
+});
+
+describe("conversationReplaySnapshot", () => {
+  it("uses the filtered subject boundaries instead of the shared stream boundaries", async () => {
+    const subject = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "child-conversation",
+    );
+    const queries: Array<Record<string, unknown>> = [];
+    const streams = {
+      add: async () => {},
+      getMessage: async (_stream: string, query: Record<string, unknown>) => {
+        queries.push(query);
+
+        return {
+          seq: "last_by_subj" in query ? 92 : 12,
+        };
+      },
+      info: async (
+        _stream: string,
+        options?: { subjects_filter?: string },
+      ) => ({
+        created: "2026-07-28T00:00:00.000Z",
+        state: {
+          first_seq: 2,
+          last_seq: 100,
+          subjects: options?.subjects_filter ? { [subject]: 3 } : undefined,
+        },
+      }),
+      update: async () => {},
+    };
+
+    const snapshot = await conversationReplaySnapshot({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+      } as never,
+      accountId: "acct1",
+      agentId: "agent-child",
+      conversationKey: "child-conversation",
+    });
+
+    expect(snapshot).toMatchObject({
+      bufferedCount: 3,
+      firstSequence: 2,
+      lastSequence: 92,
+    });
+    expect(queries).toEqual([{ last_by_subj: subject }]);
   });
 });

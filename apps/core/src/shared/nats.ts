@@ -517,14 +517,29 @@ export async function conversationReplaySnapshot(options: {
   });
   const created =
     typeof info.created === "string" ? info.created : String(info.created);
+  let bufferedCount =
+    (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0;
+  const firstSequence = info.state.first_seq;
+  let lastSequence = info.state.last_seq;
+  if (bufferedCount > 0) {
+    try {
+      const last = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+        last_by_subj: subject,
+      });
+      lastSequence = last.seq;
+    } catch {
+      // Retention can evict the subject between the filtered info and direct
+      // reads. Treat that race as an empty snapshot and tail from the stream
+      // boundary instead of failing the attach.
+      bufferedCount = 0;
+    }
+  }
 
   return {
     generation: Buffer.from(created, "utf8").toString("base64url"),
-    firstSequence: info.state.first_seq,
-    lastSequence: info.state.last_seq,
-    bufferedCount:
-      (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
-      0,
+    firstSequence: firstSequence,
+    lastSequence: lastSequence,
+    bufferedCount: bufferedCount,
   };
 }
 

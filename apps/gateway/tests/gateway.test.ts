@@ -1832,7 +1832,7 @@ function replayThenLiveConnection(
     jetstreamManager: async () => ({
       streams: {
         add: async () => {},
-        getMessage: async () => ({ seq: 11, subject }),
+        getMessage: async () => ({ seq: 10, subject }),
         info: async (
           _name: string,
           options?: { subjects_filter?: string },
@@ -1919,6 +1919,14 @@ function zeroBufferConnection(
     jetstreamManager: async () => ({
       streams: {
         add: async () => {},
+        getMessage: async (
+          _stream: string,
+          query: { last_by_subj?: string },
+        ) => ({
+          seq: query.last_by_subj
+            ? snapshot.lastSequence
+            : snapshot.firstSequence,
+        }),
         info: async (
           _name: string,
           options?: { subjects_filter?: string },
