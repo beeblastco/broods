@@ -422,6 +422,9 @@ export default $config({
       ? new sst.aws.Vpc("SandboxNetwork", { az: 2 })
       : null;
 
+    // Scoped to the managed workspace bucket, so a `deny-all` sandbox on a
+    // bring-your-own-bucket workspace cannot reach its mount. Widen this policy before
+    // offering those two together (see the lambda provider docs).
     if (sandboxNetwork) {
       new aws.ec2.VpcEndpoint("SandboxS3Endpoint", {
         vpcId: sandboxNetwork.id,
@@ -468,7 +471,9 @@ export default $config({
       : null;
 
     // Lambda assumes this to manage the connector's ENIs in the sandbox VPC. Network
-    // Connector assume-role calls do not include SourceArn/SourceAccount context.
+    // Connector assume-role calls do not include SourceArn/SourceAccount context, so the
+    // usual confused-deputy conditions would deny every call. What bounds it instead is
+    // the policy below: ENIs only in these subnets, only with this security group.
     const sandboxConnectorRole = sandboxNetwork
       ? new aws.iam.Role("SandboxConnectorOperatorRole", {
           name: resourceName("microvm-connector", stage, region),

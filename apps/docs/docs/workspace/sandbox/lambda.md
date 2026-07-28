@@ -199,6 +199,10 @@ cannot be applied to it; setting either logs a warning and changes nothing. Pref
 If the deployment has no egress boundary provisioned, `deny-all` and `restricted` sandboxes
 fail to launch rather than silently falling back to full internet access.
 
+> **`deny-all` needs the managed workspace bucket.** The storage the boundary reaches is the
+> deployment's own workspace bucket. A workspace that brings its own bucket has no route to
+> it under `deny-all` / `restricted`, so pair those workspaces with `allow-all`.
+
 ## Sizes & logging
 
 MicroVM sizes range from **0.5 GB / 0.25 vCPU** up to **8 GB / 4 vCPU** (fixed disk per size);
@@ -210,7 +214,11 @@ when the sandbox log bridge is deployed.
 
 ## Security
 
-- child processes run with no AWS credentials (`env_clear()` first)
+- child processes run with no AWS credentials (`env_clear()` first). This clears the
+  _environment_, not the VM's instance metadata service: code in the sandbox can still read
+  the MicroVM execution role from IMDS on any network mode, because that address is
+  link-local and never crosses the egress boundary. That role is deliberately kept to
+  writing this sandbox's own CloudWatch logs and nothing else
 - the workspace mount is rooted at the run's `<namespace>/` prefix, scoped by the per-mount
   STS session policy; arbitrary `bash` is privileged workspace compute, not a hard
   cross-workspace filesystem boundary — dedicated file tools still reject path traversal
