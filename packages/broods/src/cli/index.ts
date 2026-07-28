@@ -946,6 +946,7 @@ async function forgetEnvSyncValue(
 }
 
 async function printDevTarget(args: string[]): Promise<void> {
+  const runtime = loadBroodsRuntimeConfig();
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
     environment: optionValue(args, "--env"),
@@ -957,7 +958,12 @@ async function printDevTarget(args: string[]): Promise<void> {
   printDeploymentTarget({
     project: manifest.project,
     environment: manifest.environment,
-    dashboardUrl: auth.dashboardUrl ?? DEFAULT_DASHBOARD_URL,
+    dashboardUrl:
+      optionValue(args, "--dashboard-url") ??
+      runtime.dashboardUrl ??
+      auth.dashboardUrl ??
+      config.dashboardUrl ??
+      DEFAULT_DASHBOARD_URL,
   });
 }
 
