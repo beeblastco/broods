@@ -578,10 +578,17 @@ export default $config({
     // Core reads this as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN; without it the executor
     // fails closed rather than launching deny-all on the default internet egress.
     const microvmEgressConnectorArn = sandboxEgressConnector
-      ? sandboxEgressConnector.properties.apply(
-          (properties) =>
-            (JSON.parse(properties) as NetworkConnectorProperties).Arn,
-        )
+      ? sandboxEgressConnector.properties.apply((properties) => {
+          const arn = (JSON.parse(properties) as NetworkConnectorProperties)
+            .Arn;
+          if (typeof arn !== "string" || arn.trim() === "") {
+            throw new Error(
+              "AWS::Lambda::NetworkConnector returned no connector ARN",
+            );
+          }
+
+          return arn;
+        })
       : undefined;
 
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3

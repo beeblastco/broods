@@ -477,11 +477,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
   );
 }
 
-/**
- * Whether the lifecycle actions apply to a row. An ephemeral instance is one
- * in-flight call that broods tears down itself, so suspend/resume/terminate have
- * nothing left to act on by the time a click lands.
- */
+/** Lifecycle actions apply only to reserved, non-ephemeral instances. */
 function controllable(
   instance: Doc<"sandboxInstances">,
 ): instance is Doc<"sandboxInstances"> & {

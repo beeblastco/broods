@@ -125,6 +125,12 @@ interface SandboxResponse {
   cpu_usec?: number;
 }
 
+interface AcquiredMicrovm {
+  microvmId: string;
+  endpoint: string;
+  ephemeralMirror?: Promise<void>;
+}
+
 export class MicrovmSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
   readonly #client: LambdaMicrovms;
@@ -140,7 +146,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   async run(request: SandboxRunRequest): Promise<SandboxRunResult> {
     const startedAt = Date.now();
     const persistent = this.#persistent(request);
-    const { microvmId, endpoint } = await this.#acquire(request);
+    const { microvmId, endpoint, ephemeralMirror } =
+      await this.#acquire(request);
 
     try {
       if (persistent)
@@ -176,7 +183,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       // fire the terminate and drop the VM's dashboard row without awaiting either.
       if (!persistent) {
         void this.#terminate(microvmId);
-        void this.#unmirror(microvmId);
+        // Preserve upsert → remove ordering without putting either Convex write on
+        // the tool-call clock; otherwise a slow upsert can recreate a deleted row.
+        void ephemeralMirror?.then(() => this.#unmirror(microvmId));
       }
     }
   }
@@ -368,15 +377,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   // Acquire a MicroVM endpoint: a fresh ephemeral VM for stateless runs, or the
   // reserved VM (resumed if suspended) for a persistent reservation.
-  async #acquire(
-    request: SandboxRunRequest,
-  ): Promise<{ microvmId: string; endpoint: string }> {
+  async #acquire(request: SandboxRunRequest): Promise<AcquiredMicrovm> {
     if (!this.#persistent(request)) {
       const created = await this.#runMicrovm(request);
       // An ephemeral VM is still real, chargeable compute for the length of the call,
       // so it shows in the dashboard too — keyed by microvmId (it has no reservation)
       // and dropped again by run()'s teardown.
-      void upsertSandboxInstance(
+      const ephemeralMirror = upsertSandboxInstance(
         this.#config.controlPlane,
         PROVIDER,
         created.microvmId,
@@ -384,7 +391,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         request.metadata,
         { ephemeral: true },
       );
-      return created;
+      return { ...created, ephemeralMirror };
     }
     const key = sandboxReservationKey(request)!;
     const existing = await getSandboxExternalId(PROVIDER, key);
@@ -731,6 +738,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (authTokens.size >= AUTH_TOKEN_CACHE_MAX) {
       for (const [id, entry] of authTokens) {
         if (entry.expiresAt <= now) authTokens.delete(id);
+      }
+      if (authTokens.size >= AUTH_TOKEN_CACHE_MAX) {
+        const oldest = authTokens.keys().next().value;
+        if (oldest) authTokens.delete(oldest);
       }
     }
     authTokens.set(microvmId, {

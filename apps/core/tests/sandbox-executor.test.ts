@@ -103,6 +103,15 @@ const saveSandboxInstanceMock = mock(
 const deleteSandboxInstanceMock = mock(async () => {
   storedSandboxExternalId = null;
 });
+let resolveSandboxInstanceUpsert: (() => void) | undefined;
+let waitForSandboxInstanceUpsert = false;
+const removeSandboxInstanceMock = mock(async () => {});
+const upsertSandboxInstanceMock = mock(async () => {
+  if (!waitForSandboxInstanceUpsert) return;
+  await new Promise<void>((resolve) => {
+    resolveSandboxInstanceUpsert = resolve;
+  });
+});
 const stsSendMock = mock(async (_command: unknown) => ({
   Credentials: {
     AccessKeyId: "scoped-access-key",
@@ -203,6 +212,11 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
 
+mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
+  removeSandboxInstance: removeSandboxInstanceMock,
+  upsertSandboxInstance: upsertSandboxInstanceMock,
+}));
+
 mock.module("@aws-sdk/client-lambda-microvms", () => ({
   LambdaMicrovms: class {
     send = microvmSendMock;
@@ -268,6 +282,10 @@ beforeEach(() => {
   claimSandboxInstanceMock.mockClear();
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
+  removeSandboxInstanceMock.mockClear();
+  upsertSandboxInstanceMock.mockClear();
+  resolveSandboxInstanceUpsert = undefined;
+  waitForSandboxInstanceUpsert = false;
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
@@ -371,6 +389,39 @@ describe("createSandboxExecutor", () => {
       workspace_root: "/mnt/workspaces",
       timeout_ms: 30000,
     });
+  });
+
+  it("removes an ephemeral mirror only after its non-blocking upsert settles", async () => {
+    waitForSandboxInstanceUpsert = true;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      controlPlane: {
+        accountId: "account-1",
+        name: "ephemeral",
+        specs: { vcpu: 0.5, memoryMb: 1024, storageGb: 8 },
+      },
+    });
+
+    const result = await executor.run({
+      code: "echo ok",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(upsertSandboxInstanceMock).toHaveBeenCalledTimes(1);
+    expect(removeSandboxInstanceMock).not.toHaveBeenCalled();
+
+    resolveSandboxInstanceUpsert?.();
+    await Bun.sleep(0);
+
+    expect(removeSandboxInstanceMock).toHaveBeenCalledWith(
+      "account-1",
+      "microvm-1",
+    );
   });
 
   it("uses a flat MicroVM local namespace while mounting the hierarchical storage prefix", async () => {
@@ -608,6 +659,39 @@ describe("createSandboxExecutor", () => {
     expect(
       types.filter((type) => type === "CreateMicrovmAuthToken"),
     ).toHaveLength(1);
+  });
+
+  it("evicts a live auth token before the cache exceeds its cap", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      code: "echo ok",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+    const tokenCalls = () =>
+      microvmSendMock.mock.calls.filter(
+        (call) =>
+          (call[0] as { _type?: string })?._type === "CreateMicrovmAuthToken",
+      ).length;
+    const before = tokenCalls();
+
+    for (let index = 0; index <= 512; index += 1) {
+      storedSandboxExternalId = `microvm-cache-cap-${index}`;
+      await executor.run(request);
+    }
+
+    expect(tokenCalls() - before).toBe(513);
+    storedSandboxExternalId = "microvm-cache-cap-0";
+    await executor.run(request);
+    expect(tokenCalls() - before).toBe(514);
   });
 
   it("recreates the reserved MicroVM only when the provider says it is gone", async () => {
