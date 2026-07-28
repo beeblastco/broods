@@ -207,10 +207,10 @@ The agent still runs where it is deployed — each turn is a normal SSE run on o
 
 When stdout is not a terminal (a pipe, a redirect, CI), `run` streams the answer as plain text instead, so scripted runs stay parseable. A prompt is required in that case, since there is no way to type one.
 
-For quick health checks, you can also run a one-off probe:
+For quick health checks, redirect the output so the probe stays non-interactive:
 
 ```bash
-broods run my-agent "ping"
+broods run my-agent "ping" | cat
 ```
 
 Or verify the harness URL directly:
