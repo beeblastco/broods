@@ -18,18 +18,27 @@ export type IngressStatus =
   | "failed"
   | "expired";
 
+export interface PublicDeploymentIngress {
+  accountId: string;
+  endpointId: string;
+  environmentSlug: string;
+  projectSlug: string;
+}
+
 export type IngressDelivery =
   | {
       kind: "http";
       publicEventId: string;
       publicConversationKey: string;
       statusUrl?: string;
+      publicDeploymentIngress?: PublicDeploymentIngress;
     }
   | {
       kind: "async";
       publicEventId: string;
       publicConversationKey: string;
       statusUrl: string;
+      publicDeploymentIngress?: PublicDeploymentIngress;
     }
   | {
       kind: "websocket";
@@ -37,6 +46,7 @@ export type IngressDelivery =
       publicConversationKey: string;
       connectionId: string;
       statusUrl?: string;
+      publicDeploymentIngress?: PublicDeploymentIngress;
     }
   | { kind: "channel"; channel: string; source?: Record<string, unknown> };
 
@@ -98,6 +108,7 @@ export interface IngressStatusRecord {
   error?: string;
   stoppedByUser?: boolean;
   result?: unknown;
+  publicDeploymentIngress?: PublicDeploymentIngress;
 }
 
 export const DEFAULT_INGRESS_TTL_MS = 15 * 60 * 1000;

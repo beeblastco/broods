@@ -36,6 +36,7 @@ export type AgentConfig = Record<string, unknown> & {
     allowed?: string[];
     context?: "new" | "inherited";
     mode?: "ephemeral" | "persistent";
+    stream?: boolean;
     [key: string]: unknown;
   };
   policy?: AgentPolicyConfig;
@@ -662,6 +663,7 @@ function normalizeSubagentConfig(value: unknown): void {
     throw new Error("config.subagent must be an object");
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.subagent.enabled");
+  assertOptionalBoolean(config.stream, "config.subagent.stream");
   assertOptionalStringArray(config.allowed, "config.subagent.allowed");
   assertOptionalEnum(config.context, "config.subagent.context", [
     "new",

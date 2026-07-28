@@ -87,6 +87,8 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+/** Thrown when an owner is stopped; callers match on it to skip result delivery. */
+export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
 // I/O show in full on the dashboard (delivered full-fidelity over the live
 // JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
@@ -810,7 +812,7 @@ export async function runAgentLoop(
     prepareStep: async ({ messages }) => {
       const renewal = await session.renewConversationLease();
       if (renewal === "stopped") {
-        throw new Error("Stopped by user at the model boundary");
+        throw new Error(USER_STOP_MESSAGE);
       }
       if (renewal === "stale") {
         throw new Error(

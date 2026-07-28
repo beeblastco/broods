@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   mergeAgentConfig,
   normalizeAgentConfig,
+  normalizeAgentConfigPatch,
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
   redactAgentConfig,
@@ -160,6 +161,39 @@ describe("agent rules", () => {
         channels: { zalo: { id: "zalo", webhookSecret: "short" } },
       }),
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+  });
+
+  it("validates subagent event streaming across full, create, update, and patch inputs", () => {
+    expect(
+      normalizeAgentConfig({ subagent: { stream: true } }).subagent,
+    ).toMatchObject({ stream: true });
+    expect(
+      normalizeCreateAgentInput({
+        name: "streamer",
+        config: { subagent: { stream: false } },
+      }).config.subagent,
+    ).toMatchObject({ stream: false });
+    for (const normalize of [
+      () => normalizeAgentConfig({ subagent: { stream: "yes" } }),
+      () =>
+        normalizeCreateAgentInput({
+          name: "streamer",
+          config: { subagent: { stream: "yes" } },
+        }),
+      () =>
+        normalizeUpdateAgentInput(
+          {},
+          {
+            config: { subagent: { stream: "yes" } },
+          },
+        ),
+      () =>
+        normalizeAgentConfigPatch({
+          subagent: { stream: "yes" },
+        }),
+    ]) {
+      expect(normalize).toThrow("config.subagent.stream must be a boolean");
+    }
   });
 
   it("accepts native Convex resource ids and rejects deprecated public ids", () => {
