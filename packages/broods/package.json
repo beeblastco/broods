@@ -1,6 +1,6 @@
 {
   "name": "broods",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "MIT",
@@ -50,11 +50,19 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@ai-sdk/tui": "^1.0.41",
-    "ai": "^7.0.40",
     "esbuild": "^0.27.0"
   },
+  "peerDependencies": {
+    "ai": "^7.0.40"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@ai-sdk/tui": "^1.0.41",
+    "ai": "^7.0.40",
     "@chat-adapter/discord": "^4.35.0",
     "@chat-adapter/github": "^4.35.0",
     "@chat-adapter/slack": "^4.35.0",
