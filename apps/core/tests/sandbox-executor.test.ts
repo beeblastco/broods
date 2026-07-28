@@ -534,6 +534,82 @@ describe("createSandboxExecutor", () => {
     expect(microvmFetchMock).toHaveBeenCalled();
   });
 
+  it("resumes without waiting for RUNNING when the suspended record has an endpoint", async () => {
+    storedSandboxExternalId = "microvm-1";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-1",
+        endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
+        state: "SUSPENDED",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await executor.run({
+      code: "echo ok",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    // The endpoint survives suspend and #exec retries the proxy's 502/503 while the
+    // snapshot restores, so the resume is fired without a second status poll.
+    expect(types).toContain("ResumeMicrovm");
+    expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(1);
+  });
+
+  it("reuses one auth token across execs on the same MicroVM", async () => {
+    // A microvmId no other test touches: the token cache is process-wide by design.
+    storedSandboxExternalId = "microvm-token";
+    microvmGetResponses = [
+      {
+        microvmId: "microvm-token",
+        endpoint: "microvm-token.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+      },
+      {
+        microvmId: "microvm-token",
+        endpoint: "microvm-token.lambda-microvm.us-east-1.on.aws",
+        state: "RUNNING",
+      },
+    ];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+    const request = {
+      code: "echo ok",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    };
+
+    await executor.run(request);
+    await executor.run(request);
+
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(microvmFetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      types.filter((type) => type === "CreateMicrovmAuthToken"),
+    ).toHaveLength(1);
+  });
+
   it("recreates the reserved MicroVM only when the provider says it is gone", async () => {
     storedSandboxExternalId = "microvm-gone";
     microvmGetResponses = [

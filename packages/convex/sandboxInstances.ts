@@ -62,6 +62,7 @@ export const listForActiveOrg = query({
  * @param specs the instance's vcpu/memory/disk footprint.
  * @param sandboxConfigId the sandbox config row this instance was reserved from.
  * @param snapshotId the snapshot/image the instance launched from, when pinned.
+ * @param ephemeral marks a per-call instance the dashboard must not try to control.
  */
 export const upsert = internalMutation({
   args: {
@@ -85,6 +86,7 @@ export const upsert = internalMutation({
     conversationKey: sandboxInstancesFields.conversationKey,
     workspaceName: sandboxInstancesFields.workspaceName,
     workspaceId: sandboxInstancesFields.workspaceId,
+    ephemeral: sandboxInstancesFields.ephemeral,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -121,6 +123,7 @@ export const upsert = internalMutation({
         : {}),
       ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
       ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+      ...(args.ephemeral ? { ephemeral: true } : {}),
     };
     if (existing) {
       await ctx.db.patch(existing._id, {
