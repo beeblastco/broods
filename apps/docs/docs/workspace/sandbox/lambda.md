@@ -71,12 +71,12 @@ prefix-scoped session creds go in. This is the same scoped-credential model Dayt
 
 > **Why `mount-s3` and not S3 Files?** AWS also offers **S3 Files** (`mount -t s3files` over a
 > managed NFS mount target), which allows true in-place edits and keeps credentials out of the
-> VM. We deliberately use **Mountpoint-for-S3** instead: it works over the default
-> `INTERNET_EGRESS` (no VPC egress connector, and no **NAT gateway** to keep internet access
-> alongside the mount), it avoids S3 Files' usage-based surcharges (per-GB cache + per-GB
-> read/write + higher request rates), and it is the **same code path** the `sandbox` and
-> `daytona` providers use, fed prefix-scoped 1-hour STS creds. S3 Files stays a future opt-in
-> for write-heavy or strict-isolation sandboxes — see the
+> VM. We deliberately use **Mountpoint-for-S3** instead: the managed workspace bucket works
+> on every network mode without a **NAT gateway** (bring-your-own buckets require `allow-all`),
+> it avoids S3 Files' usage-based surcharges (per-GB cache + per-GB read/write + higher request
+> rates), and it is the **same code path** the `sandbox` and `daytona` providers use, fed
+> prefix-scoped 1-hour STS creds. S3 Files stays a future opt-in for write-heavy or
+> strict-isolation sandboxes — see the
 > [Security model](security.md) for how the scoped creds are contained.
 
 ### What the model sees
@@ -187,10 +187,26 @@ runtime invocations, but a general VM cannot make this a hard isolation boundary
 
 `network.mode` maps onto the MicroVM's egress:
 
-| Mode                      | MicroVM egress                                                                                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `allow-all`               | default `INTERNET_EGRESS` (no connector)                                                                                                                                                                                                                                       |
-| `deny-all` / `restricted` | a customer-managed **VPC egress network connector** (provisioned in SST, ARN passed via `MICROVM_EGRESS_NETWORK_CONNECTOR_ARN`); domain allowlists are logged as unsupported. Without a connector the executor fails closed instead of launching with default internet egress. |
+| Mode                      | MicroVM egress                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow-all`               | full outbound internet.                                                                                                                                     |
+| `deny-all` / `restricted` | no internet. The managed workspace S3 mount and link-local IMDS stay reachable, so this is a restricted boundary rather than a literally empty egress rule. |
+
+`restricted` currently behaves exactly like `deny-all`. Egress is enforced by a shared,
+deploy-time network boundary, so a per-account `allowDomains` / `allowCidrs` allowlist
+cannot be applied to it; setting either logs a warning and changes nothing. Prefer
+`deny-all`, which states what you actually get.
+
+Omitting `network` defaults to `deny-all`; it does not grant unrestricted internet. The
+deployment must therefore have the same managed egress boundary, and a workspace must use
+the managed bucket, unless the configuration explicitly chooses `allow-all`.
+
+If the deployment has no egress boundary provisioned, `deny-all` and `restricted` sandboxes
+fail to launch rather than silently falling back to full internet access.
+
+> **`deny-all` needs the managed workspace bucket.** The storage the boundary reaches is the
+> deployment's own workspace bucket. A workspace that brings its own bucket has no route to
+> it under `deny-all` / `restricted`, so pair those workspaces with `allow-all`.
 
 ## Sizes & logging
 
@@ -203,10 +219,15 @@ when the sandbox log bridge is deployed.
 
 ## Security
 
-- child processes run with no AWS credentials (`env_clear()` first)
+- child processes run with no AWS credentials (`env_clear()` first). This clears the
+  _environment_, not the VM's instance metadata service: code in the sandbox can still read
+  the MicroVM execution role from IMDS on any network mode, because that address is
+  link-local and never crosses the egress boundary. That role is deliberately kept to
+  writing this sandbox's own CloudWatch logs and nothing else
 - the workspace mount is rooted at the run's `<namespace>/` prefix, scoped by the per-mount
   STS session policy; arbitrary `bash` is privileged workspace compute, not a hard
   cross-workspace filesystem boundary — dedicated file tools still reject path traversal
-- internet access is gated by `network.mode` (egress connector for restricted/deny-all)
-- each exec is authenticated by a short-lived (`≤15 min`) per-call JWE auth token scoped to
-  port 8080
+- internet access is gated by `network.mode`; `deny-all` and `restricted` leave the
+  managed workspace mount and link-local IMDS reachable while blocking public egress
+- each exec is authenticated by a short-lived (`≤15 min`) per-MicroVM JWE auth token scoped
+  to port 8080; the harness reuses it until five minutes before expiry

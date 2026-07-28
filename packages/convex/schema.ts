@@ -451,6 +451,13 @@ export const sandboxInstancesFields = {
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
   terminatedAt: v.optional(v.number()),
+  /**
+   * Set for a create-and-destroy instance that only exists for the length of one
+   * call (its `reservationKey` is the provider id, not a reconnect key). It is shown
+   * so live compute is visible, but nothing can suspend/resume/terminate it — broods
+   * drops the row itself when the call ends.
+   */
+  ephemeral: v.optional(v.boolean()),
 };
 
 /**
