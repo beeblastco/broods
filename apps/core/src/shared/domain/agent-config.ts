@@ -175,6 +175,11 @@ export interface AgentSubagentConfig {
   context?: "new" | "inherited";
   mode?: "ephemeral" | "persistent";
   /**
+   * Publishes child reasoning, text, and tool stream parts to the existing
+   * WebSocket/JetStream response path. Off by default.
+   */
+  stream?: boolean;
+  /**
    * Controls what the parent agent sees from a finished subagent (AI SDK
    * "controlling what the model sees"): `full` = the child's whole transcript,
    * `result` = only its final result (default), `none` = nothing. A
@@ -520,6 +525,14 @@ export function isProviderToolName(toolName: string): boolean {
     !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
     !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
   );
+}
+
+// Persistent is the default so a child owns a durable conversation that can be
+// resumed and controlled; only an explicit "ephemeral" opts out.
+export function resolveSubagentMode(
+  config: AgentConfig,
+): "ephemeral" | "persistent" {
+  return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
 }
 
 export function normalizeAgentConfig(value: unknown): AgentConfig {
@@ -1058,6 +1071,7 @@ function normalizeSubagentConfig(value: unknown): void {
     "ephemeral",
     "persistent",
   ]);
+  assertOptionalBoolean(config.stream, "config.subagent.stream");
   assertOptionalEnum(config.visibility, "config.subagent.visibility", [
     "full",
     "result",

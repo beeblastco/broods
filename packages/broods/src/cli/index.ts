@@ -27,7 +27,11 @@ import {
   BroodsSyncClient,
   type RemoteManifestResponse,
 } from "../sync.ts";
-import { BroodsClient, DEFAULT_CORE_BASE_URL } from "../client.ts";
+import {
+  BroodsClient,
+  DEFAULT_CORE_BASE_URL,
+  type AgentReference,
+} from "../client.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
 import { subscribeObservabilityLogs } from "../observability-client.ts";
 import type {
@@ -39,6 +43,7 @@ import {
   isPlainObject,
   loginWithBrowser,
   optionValue,
+  positionalArgs,
   promptConfirm,
   promptSecret,
   promptSelect,
@@ -52,7 +57,7 @@ import {
   printReadyLine,
   printWarning,
 } from "./output.ts";
-import { createRenderState, renderStreamPart } from "./render.ts";
+import { runAgentTui, streamAgentText } from "./tui.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 const VERSION = packageJson.version;
@@ -86,7 +91,8 @@ Commands:
                        (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
   agent list           List the agents in the current project/environment scope
   agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
-  run <agent> <prompt> Run an agent once and pretty-stream the result (thinking, tool calls, text)
+  run <agent> [prompt] Chat with an agent in a terminal UI (reasoning, tool cards, y/n approvals)
+                       A prompt is sent as the first turn; redirected output streams plain text
 
 Options:
   --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
@@ -1366,11 +1372,18 @@ function agentModelLabel(config: Record<string, unknown>): string {
 }
 
 async function run(args: string[]): Promise<void> {
-  const [agentName, ...promptParts] = args.filter(
-    (arg) => !arg.startsWith("--"),
-  );
-  if (!agentName || promptParts.length === 0) {
-    throw new Error("Usage: broods run <agent> <prompt>");
+  const [agentName, ...promptParts] = positionalArgs(args);
+  if (!agentName) {
+    throw new Error("Usage: broods run <agent> [prompt]");
+  }
+  // The terminal UI needs a terminal to draw into. Redirected output falls back
+  // to plain text, which in turn needs a prompt since nothing can be typed.
+  const prompt = promptParts.join(" ");
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (!interactive && !prompt) {
+    throw new Error(
+      "Usage: broods run <agent> <prompt>. Omit the prompt for an interactive session, which requires a TTY.",
+    );
   }
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
@@ -1424,30 +1437,29 @@ async function run(args: string[]): Promise<void> {
       auth.baseUrl,
     ...(runtimeKey?.apiKey ? { apiKey: runtimeKey.apiKey } : {}),
   });
-  const state = createRenderState();
+  const ref: AgentReference = {
+    kind: "agent",
+    name: agentName,
+    id: agentId,
+    project: manifest.project,
+    environment: manifest.environment,
+    ...(runtimeKey?.endpointId ? { endpointId: runtimeKey.endpointId } : {}),
+    ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
+    ...(runtimeKey?.environmentSlug
+      ? { environmentSlug: runtimeKey.environmentSlug }
+      : {}),
+  };
   try {
-    for await (const part of client.stream(
-      {
-        kind: "agent",
-        name: agentName,
-        id: agentId,
-        project: manifest.project,
-        environment: manifest.environment,
-        ...(runtimeKey?.endpointId
-          ? { endpointId: runtimeKey.endpointId }
-          : {}),
-        ...(runtimeKey?.projectSlug
-          ? { projectSlug: runtimeKey.projectSlug }
-          : {}),
-        ...(runtimeKey?.environmentSlug
-          ? { environmentSlug: runtimeKey.environmentSlug }
-          : {}),
-      },
-      { input: promptParts.join(" ") },
-    )) {
-      renderStreamPart(part, state);
+    if (interactive) {
+      await runAgentTui({
+        client: client,
+        agent: ref,
+        ...(prompt ? { prompt: prompt } : {}),
+      });
+
+      return;
     }
-    process.stdout.write("\n");
+    await streamAgentText({ client: client, agent: ref, prompt: prompt });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("public_access_disabled")) {

@@ -60,3 +60,13 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  rollout:
+    needs: build
+    if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
+    uses: ./.github/workflows/rollout.yaml
+    with:
+      workflow: ${{ github.ref_name == 'main' && 'deploy-gateway.yaml' || 'deploy-gateway-dev.yaml' }}
+      tag: ${{ github.sha }}
+    secrets:
+      dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

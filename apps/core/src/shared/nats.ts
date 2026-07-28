@@ -494,6 +494,10 @@ export async function conversationLastSequence(options: {
   }
 }
 
+// Every sequence here is scoped to the conversation's own subject: `state`
+// boundaries on the shared stream belong to whichever conversation published
+// them. There is no first sequence because the client API cannot resolve one
+// per subject — a filtered consumer given no start sequence replays from it.
 export async function conversationReplaySnapshot(options: {
   connection: NatsConnection;
   accountId: string;
@@ -501,7 +505,6 @@ export async function conversationReplaySnapshot(options: {
   conversationKey: string;
 }): Promise<{
   generation: string;
-  firstSequence: number;
   lastSequence: number;
   bufferedCount: number;
 }> {
@@ -517,14 +520,27 @@ export async function conversationReplaySnapshot(options: {
   });
   const created =
     typeof info.created === "string" ? info.created : String(info.created);
+  let bufferedCount =
+    (info.state.subjects as Record<string, number> | undefined)?.[subject] ?? 0;
+  let lastSequence = info.state.last_seq;
+  if (bufferedCount > 0) {
+    try {
+      const last = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
+        last_by_subj: subject,
+      });
+      lastSequence = last.seq;
+    } catch {
+      // Retention can evict the subject between the filtered info and direct
+      // reads. Treat that race as an empty snapshot and tail from the stream
+      // boundary instead of failing the attach.
+      bufferedCount = 0;
+    }
+  }
 
   return {
     generation: Buffer.from(created, "utf8").toString("base64url"),
-    firstSequence: info.state.first_seq,
-    lastSequence: info.state.last_seq,
-    bufferedCount:
-      (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
-      0,
+    lastSequence: lastSequence,
+    bufferedCount: bufferedCount,
   };
 }
 

@@ -44,7 +44,8 @@ broods logs --errors    # WARN+ only
 ```bash
 broods agent list       # list agents (name, public/private, model, deploy status)
 broods agent get my-agent  # show resolved config
-broods run my-agent "Hello"  # one-off run with pretty streaming
+broods run my-agent          # terminal UI chat session
+broods run my-agent "Hello"  # same, with the prompt sent as the first turn
 ```
 
 ### Global Options
@@ -193,15 +194,23 @@ Inspect and test agents from the CLI:
 ```bash
 broods agent list            # name, public/private, model, deploy status
 broods agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
-broods run <name> "<prompt>" # one-off run; pretty-streams thinking, tool calls, results over SSE
+broods run <name>            # terminal UI chat session
+broods run <name> "<prompt>" # same session, with the prompt sent as the first turn
+broods run <name> "<prompt>" > out.txt  # redirected output streams plain text instead
 ```
 
 `run` reaches the agent over the public endpoint, so it needs `publicAccess: true`; otherwise it reports the secured-by-default `403` with guidance to enable it.
 
-For quick health checks, you can also run a one-off probe:
+In a terminal, `run` opens the AI SDK terminal UI: a scrollable chat session with rendered markdown, streamed reasoning, expanded tool cards showing each call's input and output, token statistics, and `y`/`n` approval prompts for tools that request them. Press Enter to send, arrow keys or PgUp/PgDn to scroll, Ctrl+L to repaint, and Esc or Ctrl+C to leave. A prompt on the command line is sent as the first turn and the session stays open for follow-ups.
+
+The agent still runs where it is deployed — each turn is a normal SSE run on one conversation, and approvals travel back over the same direct API — so tools, sandboxes, and policies behave exactly as they do in production.
+
+When stdin or stdout is not a terminal (a pipe, a redirect, CI), `run` streams the answer as plain text instead, so scripted runs stay parseable. A prompt is required in that case, since there is no way to type one.
+
+For quick health checks, redirect the output so the probe stays non-interactive:
 
 ```bash
-broods run my-agent "ping"
+broods run my-agent "ping" | cat
 ```
 
 Or verify the harness URL directly:

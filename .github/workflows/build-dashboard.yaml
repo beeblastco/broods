@@ -78,3 +78,13 @@ jobs:
             NEXT_PUBLIC_BROODS_BASE_URL=${{ vars.NEXT_PUBLIC_BROODS_BASE_URL || 'https://gateway.broods.app' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  rollout:
+    needs: build
+    if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
+    uses: ./.github/workflows/rollout.yaml
+    with:
+      workflow: ${{ github.ref_name == 'main' && 'deploy-dashboard.yaml' || 'deploy-dashboard-dev.yaml' }}
+      tag: ${{ github.sha }}
+    secrets:
+      dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

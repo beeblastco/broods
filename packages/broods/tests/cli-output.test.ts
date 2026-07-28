@@ -9,6 +9,7 @@ import {
   formatReadyLine,
   formatWarning,
 } from "../src/cli/output.ts";
+import { positionalArgs } from "../src/cli/utils.ts";
 
 test("init writes gitignore entries for generated folders", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-cli-init-"));
@@ -132,4 +133,19 @@ test("formatWarning renders yellow warning output", () => {
   expect(formatWarning("⚠ Heads up", { color: true })).toBe(
     "\x1b[33m⚠ Heads up\x1b[0m",
   );
+});
+
+test("positionalArgs drops option values so they cannot become a run prompt", () => {
+  expect(positionalArgs(["my-agent", "--project", "foo"])).toEqual([
+    "my-agent",
+  ]);
+  expect(positionalArgs(["my-agent", "-n", "50", "hello"])).toEqual([
+    "my-agent",
+    "hello",
+  ]);
+  expect(positionalArgs(["my-agent", "--prune", "say", "hi"])).toEqual([
+    "my-agent",
+    "say",
+    "hi",
+  ]);
 });

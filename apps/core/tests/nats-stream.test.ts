@@ -7,6 +7,7 @@
 import { describe, expect, it } from "bun:test";
 import { DeliverPolicy } from "nats.ws";
 import {
+  conversationReplaySnapshot,
   consumerStartPolicy,
   streamResponseSubject,
   subjectToken,
@@ -34,6 +35,24 @@ describe("nats subject scheme", () => {
     const second = streamResponseSubject("acct1", "agent1", "conv-1");
     expect(first).toBe(second);
     expect(first.startsWith("v1.acct1.agent1.ws.response.")).toBe(true);
+  });
+
+  it("isolates subagent subjects by account, agent, and conversation", () => {
+    const base = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "subagent-persistent-1",
+    );
+
+    expect(
+      streamResponseSubject("acct2", "agent-child", "subagent-persistent-1"),
+    ).not.toBe(base);
+    expect(
+      streamResponseSubject("acct1", "agent-other", "subagent-persistent-1"),
+    ).not.toBe(base);
+    expect(
+      streamResponseSubject("acct1", "agent-child", "subagent-persistent-2"),
+    ).not.toBe(base);
   });
 
   it("produces exactly six tokens so it matches the stream wildcard v1.*.*.ws.response.*", () => {
@@ -77,6 +96,103 @@ describe("consumerStartPolicy (resume cursor)", () => {
     expect(consumerStartPolicy(7, "2026-06-05T00:00:00.000Z")).toEqual({
       deliver_policy: DeliverPolicy.StartSequence,
       opt_start_seq: 7,
+    });
+  });
+});
+
+describe("conversationReplaySnapshot", () => {
+  it("uses the filtered subject boundaries instead of the shared stream boundaries", async () => {
+    const subject = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "child-conversation",
+    );
+    const queries: Array<Record<string, unknown>> = [];
+    const streams = {
+      add: async () => {},
+      getMessage: async (_stream: string, query: Record<string, unknown>) => {
+        queries.push(query);
+
+        return {
+          seq: "last_by_subj" in query ? 92 : 12,
+        };
+      },
+      info: async (
+        _stream: string,
+        options?: { subjects_filter?: string },
+      ) => ({
+        created: "2026-07-28T00:00:00.000Z",
+        state: {
+          first_seq: 2,
+          last_seq: 100,
+          subjects: options?.subjects_filter ? { [subject]: 3 } : undefined,
+        },
+      }),
+      update: async () => {},
+    };
+
+    const snapshot = await conversationReplaySnapshot({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+      } as never,
+      accountId: "acct1",
+      agentId: "agent-child",
+      conversationKey: "child-conversation",
+    });
+
+    // 2 and 100 are the shared stream's boundaries; 92 is this subject's own.
+    expect(snapshot).toEqual({
+      bufferedCount: 3,
+      generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(
+        "base64url",
+      ),
+      lastSequence: 92,
+    });
+    expect(queries).toEqual([{ last_by_subj: subject }]);
+  });
+
+  it("advertises no replay window when the subject is evicted mid-snapshot", async () => {
+    const subject = streamResponseSubject(
+      "acct1",
+      "agent-child",
+      "child-conversation",
+    );
+    const streams = {
+      add: async () => {},
+      getMessage: async () => {
+        throw new Error("no message found");
+      },
+      info: async (
+        _stream: string,
+        options?: { subjects_filter?: string },
+      ) => ({
+        created: "2026-07-28T00:00:00.000Z",
+        state: {
+          first_seq: 2,
+          last_seq: 100,
+          subjects: options?.subjects_filter ? { [subject]: 3 } : undefined,
+        },
+      }),
+      update: async () => {},
+    };
+
+    const snapshot = await conversationReplaySnapshot({
+      connection: {
+        jetstreamManager: async () => ({ streams: streams }),
+      } as never,
+      accountId: "acct1",
+      agentId: "agent-child",
+      conversationKey: "child-conversation",
+    });
+
+    // Retention dropped the subject between the filtered info and the direct
+    // read, so the attach tails the stream boundary instead of failing.
+    expect(snapshot).toEqual({
+      bufferedCount: 0,
+      generation: Buffer.from("2026-07-28T00:00:00.000Z", "utf8").toString(
+        "base64url",
+      ),
+      lastSequence: 100,
     });
   });
 });

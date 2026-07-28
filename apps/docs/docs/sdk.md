@@ -521,7 +521,7 @@ See [Architecture](architecture.md) for the WebSocket protocol details.
 The CLI includes runtime helpers that do not require writing code:
 
 ```bash
-# Run an agent once and pretty-print the result
+# Chat with an agent in a terminal UI, sending this prompt first
 broods run my-agent "What is the capital of France?"
 
 # Stream live logs for the whole project

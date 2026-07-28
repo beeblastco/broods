@@ -17,6 +17,14 @@ bun add -g broods
 broods dev
 ```
 
+`ai` is an optional peer dependency. The CLI and the SDK both run without it —
+it is only needed to resolve the AI SDK types the SDK re-exports, so add it when
+you consume those types from TypeScript:
+
+```bash
+npm install ai
+```
+
 ## Invoke an Agent
 
 ```ts
