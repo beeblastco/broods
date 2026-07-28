@@ -316,11 +316,6 @@ async function runCoreStream(
 }
 
 /**
- * Follows a queued (non-owner) execute to completion: live-streams its output
- * once the durable envelope runs, polls its ingress status, and always closes
- * the client stream with a terminal done/error frame.
- */
-/**
  * Follows one run to its terminal frame: streams its NATS responses, polls its
  * status, drains the tail, then emits exactly one done or error frame. Shared by
  * the queued and attached paths, which differ only in `execution`.
@@ -940,7 +935,6 @@ function sendAgentTest(
   socket.send(JSON.stringify(payload));
 }
 
-/** Binds a cursor to its originating event so it cannot resume another one. */
 /** One stable digest of the status fields a client sees, for change detection. */
 function statusFingerprint(status: IngressHttpResponse): string {
   return JSON.stringify([
@@ -970,6 +964,7 @@ function sendTerminalFrame(
   sendAgentTest(socket, { type: "done" });
 }
 
+/** Binds a cursor to its originating event so it cannot resume another one. */
 function cursorEventKey(eventId: string): string {
   return createHash("sha256").update(eventId).digest("base64url").slice(0, 16);
 }

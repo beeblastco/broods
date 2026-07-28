@@ -17,6 +17,7 @@ beforeEach(() => {
 
 interface TestCompletion {
   taskId: string;
+  eventId: string;
   agentId: string;
   conversationKey: string;
   status: "completed" | "failed";
@@ -32,6 +33,16 @@ interface CoordinatorInternals {
     Omit<TestCompletion, "status" | "response" | "error">
   >;
   completeTask(completion: TestCompletion): Promise<void>;
+  completeSuccessfulRun(
+    childSession: unknown,
+    task: unknown,
+    finalResponse: unknown,
+  ): Promise<void>;
+  createChildTurnContext(
+    childSession: unknown,
+    task: unknown,
+    incoming: ModelMessage[],
+  ): Promise<unknown>;
   notifyCompletion(): void;
   runTask(
     task: unknown,
@@ -356,6 +367,7 @@ describe("SubagentCoordinator", () => {
     internals.pending.set("subagent_2", new Promise(() => {}));
     internals.pendingMetadata.set("subagent_2", {
       taskId: "subagent_2",
+      eventId: "event_subagent_2",
       agentId: "agent_research",
       conversationKey: "subagent-subagent_2",
     });
@@ -456,10 +468,12 @@ describe("SubagentCoordinator", () => {
   it("admits a persistent child conversation to own a fencing generation", async () => {
     const originalMutation = runtime.mutate;
     const candidates: Record<string, unknown>[] = [];
-    runtime.mutate = mock(async (name: string, args: Record<string, unknown>) => {
-      candidates.push({ name: name, ...args });
-      return { outcome: "owner", ownerGeneration: 7 };
-    }) as never;
+    runtime.mutate = mock(
+      async (name: string, args: Record<string, unknown>) => {
+        candidates.push({ name: name, ...args });
+        return { outcome: "owner", ownerGeneration: 7 };
+      },
+    ) as never;
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
@@ -489,9 +503,112 @@ describe("SubagentCoordinator", () => {
         kind: "async",
         publicEventId: "subagent~task_1",
         publicConversationKey: "subagent-persistent-1",
-        statusUrl:
-          "/status/subagent~task_1?agentId=agent_child",
+        statusUrl: "/status/subagent~task_1?agentId=agent_child",
       });
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
+  it("settles and releases an admitted child when turn context creation fails", async () => {
+    const originalMutation = runtime.mutate;
+    const mutations: string[] = [];
+    runtime.mutate = mock(async (name: string) => {
+      mutations.push(name);
+
+      return null;
+    }) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.admitChildConversation = mock(async () => 7);
+    internals.createChildTurnContext = mock(async () => {
+      throw new Error("turn context failed");
+    });
+
+    try {
+      await expect(internals.runTask(persistentChildTask())).rejects.toThrow(
+        "turn context failed",
+      );
+      expect(mutations).toContain("settleIngress");
+      expect(mutations).toContain("takeNextIngress");
+      expect(mutations).toContain("releaseIngressOwner");
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
+  it("preserves the original child failure when queued draining also fails", async () => {
+    const originalMutation = runtime.mutate;
+    runtime.mutate = mock(async () => null) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.admitChildConversation = mock(async () => 7);
+    internals.createChildTurnContext = mock(async () => {
+      throw new Error("provider failed");
+    });
+    internals.drainChildConversation = mock(async () => {
+      throw new Error("queued drain failed");
+    });
+
+    try {
+      await expect(internals.runTask(persistentChildTask())).rejects.toThrow(
+        "provider failed",
+      );
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
+  it("keeps a completed result authoritative when settlement and drain fail", async () => {
+    const originalMutation = runtime.mutate;
+    const mutations: string[] = [];
+    runtime.mutate = mock(async (name: string) => {
+      mutations.push(name);
+
+      return true;
+    }) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const completeTask = mock(async () => {});
+    const drainChildConversation = mock(async () => {
+      throw new Error("queued drain failed");
+    });
+    const settleIngress = mock(async () => {
+      throw new Error("settlement failed");
+    });
+    internals.completeTask = completeTask;
+    internals.drainChildConversation = drainChildConversation;
+
+    try {
+      await expect(
+        internals.completeSuccessfulRun(
+          { settleIngress: settleIngress } as never,
+          persistentChildTask(),
+          "finished",
+        ),
+      ).resolves.toBeUndefined();
+      expect(mutations).toContain("updateAsyncAgentResult");
+      expect(completeTask).toHaveBeenCalledTimes(1);
+      expect(settleIngress).toHaveBeenCalledTimes(1);
+      expect(drainChildConversation).toHaveBeenCalledTimes(1);
     } finally {
       runtime.mutate = originalMutation;
     }
@@ -538,6 +655,54 @@ describe("SubagentCoordinator", () => {
     expect(releaseConversationLease).not.toHaveBeenCalled();
   });
 
+  it("records a queued child failure against its own event", async () => {
+    const originalMutation = runtime.mutate;
+    const updates: Record<string, unknown>[] = [];
+    runtime.mutate = mock(
+      async (name: string, args: Record<string, unknown>) => {
+        updates.push({ name: name, ...args });
+
+        return null;
+      },
+    ) as never;
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { lifecycle: { emit: mock(async () => {}) } as never },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    internals.pending.set("subagent~task_1", Promise.resolve());
+    internals.runTask = mock(async () => {
+      throw new Error("queued child failed");
+    });
+
+    try {
+      await expect(
+        internals.drainChildConversation(
+          {
+            takeNextIngress: async () => ({
+              eventId: "queued-event",
+              events: [{ role: "user", content: "follow up" }],
+              ownerGeneration: 9,
+            }),
+          } as never,
+          persistentChildTask(),
+        ),
+      ).rejects.toThrow("queued child failed");
+      expect(updates).toContainEqual({
+        name: "updateAsyncAgentResult",
+        eventId: "queued-event",
+        status: "failed",
+        error: "queued child failed",
+      });
+      expect(await coordinator.drainCompletionsToParent()).toBe(1);
+    } finally {
+      runtime.mutate = originalMutation;
+    }
+  });
+
   it("keeps a stopped child's progress out of the parent transcript", async () => {
     const originalMutation = runtime.mutate;
     runtime.mutate = mock(async () => true) as never;
@@ -554,6 +719,7 @@ describe("SubagentCoordinator", () => {
     };
     const failure = {
       taskId: "subagent~task_1",
+      eventId: "acct:account_1:agent:agent_child:api:subagent~task_1",
       agentId: "agent_child",
       conversationKey: "subagent-persistent-1",
       status: "failed",
@@ -662,6 +828,28 @@ describe("SubagentCoordinator", () => {
     expect(releaseConversationLease).toHaveBeenCalledTimes(1);
   });
 
+  it("releases the child lease when an expired-budget transfer finds no work", async () => {
+    const releaseConversationLease = mock(async () => {});
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() - 1,
+      {
+        lifecycle: { emit: mock(async () => {}) } as never,
+        dispatchNextIngress: async () => false,
+      },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    await internals.drainChildConversation(
+      { releaseConversationLease } as never,
+      persistentChildTask(),
+    );
+
+    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to run a persistent child whose conversation is busy", async () => {
     const originalMutation = runtime.mutate;
     runtime.mutate = mock(async () => ({ outcome: "rejected" })) as never;
@@ -754,6 +942,7 @@ describe("SubagentCoordinator", () => {
 function completion(taskId: string, response: unknown): TestCompletion {
   return {
     taskId,
+    eventId: `event_${taskId}`,
     agentId: `agent_${taskId}`,
     conversationKey: `conversation_${taskId}`,
     status: "completed",
@@ -768,7 +957,8 @@ function persistentChildTask() {
     agentId: "agent_child",
     agentConfig: {},
     publicConversationKey: "subagent-persistent-1",
-    conversationKey: "acct:account_1:agent:agent_child:api:subagent-persistent-1",
+    conversationKey:
+      "acct:account_1:agent:agent_child:api:subagent-persistent-1",
     prompt: "research",
     inheritedContext: false,
     parentMessages: [],

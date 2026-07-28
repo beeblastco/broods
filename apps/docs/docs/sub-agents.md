@@ -5,7 +5,7 @@ Subagents let one parent agent dispatch independent work, keep going, and then c
 ## Configuration
 
 ```ts title="broods/index.ts"
-import { defineAgent } from "broods";
+import { defineAgent, env } from "broods";
 
 export const research = defineAgent({
   name: "research",
@@ -17,16 +17,14 @@ export const research = defineAgent({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    provider: { openai: { apiKey: env.OPENAI_API_KEY } },
-    model: { provider: "openai", modelId: "gpt-5.5" },
-    subagent: {
-      enabled: true,
-      allowed: [research],
-      context: "new",
-      mode: "persistent",
-      stream: true,
-    },
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  subagent: {
+    enabled: true,
+    allowed: [research],
+    context: "new",
+    mode: "persistent",
+    stream: true,
   },
 });
 ```
