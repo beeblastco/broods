@@ -6,7 +6,11 @@ import {
   type UIMessage,
 } from "ai";
 import { BroodsClient, type AgentReference } from "../src/client.ts";
-import { RemoteAgentTransport } from "../src/cli/tui.ts";
+import {
+  RemoteAgentTransport,
+  streamAgentText,
+  submitPrompt,
+} from "../src/cli/tui.ts";
 
 const AGENT: AgentReference = {
   kind: "agent",
@@ -226,4 +230,51 @@ test("transport sends each new user turn once", async () => {
   expect(bodies[1]?.events).toEqual([
     { role: "user", content: [{ type: "text", text: "second" }] },
   ]);
+});
+
+test("redirected output streams plain text without terminal escapes", async () => {
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async () =>
+      sse(
+        { type: "reasoning-start", id: "r0" },
+        { type: "reasoning-delta", id: "r0", text: "thinking hard" },
+        { type: "reasoning-end", id: "r0" },
+        { type: "text-start", id: "t0" },
+        { type: "text-delta", id: "t0", text: "Paris" },
+        { type: "text-delta", id: "t0", text: " is the capital." },
+        { type: "text-end", id: "t0" },
+        { type: "finish", finishReason: "stop" },
+      ),
+  });
+  const written: string[] = [];
+  const write = process.stdout.write;
+  process.stdout.write = ((chunk: string) => {
+    written.push(String(chunk));
+
+    return true;
+  }) as typeof process.stdout.write;
+
+  try {
+    await streamAgentText({ client: client, agent: AGENT, prompt: "capital?" });
+  } finally {
+    process.stdout.write = write;
+  }
+
+  expect(written.join("")).toBe("Paris is the capital.\n");
+});
+
+test("a CLI prompt is typed into the terminal UI once it listens", async () => {
+  const chunks: string[] = [];
+  const submitted = submitPrompt("hello there");
+
+  // The terminal UI attaches its listener a tick after the run starts.
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const listener = (chunk: Buffer) => chunks.push(chunk.toString("utf8"));
+  process.stdin.on("data", listener);
+
+  await submitted;
+  process.stdin.off("data", listener);
+
+  expect(chunks).toEqual(["hello there", "\r"]);
 });

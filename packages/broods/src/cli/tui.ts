@@ -1,13 +1,14 @@
 /**
- * Interactive terminal UI for `broods run`, backed by `@ai-sdk/tui`.
- * The agent stays deployed: a `ChatTransport` turns every TUI turn into a
- * direct-API SSE run and maps core's stream parts back into UI message chunks.
+ * Presentation for `broods run`. Terminals get the AI SDK terminal UI; pipes get
+ * plain text. The agent stays deployed either way: a `ChatTransport` turns every
+ * turn into a direct-API SSE run and the SDK maps core's stream parts for us.
  */
 
 import { runAgentTUI } from "@ai-sdk/tui";
 import {
   convertToModelMessages,
   generateId,
+  toTextStream,
   toUIMessageStream,
   type ChatTransport,
   type ModelMessage,
@@ -23,17 +24,54 @@ type SendMessagesOptions = Parameters<
   ChatTransport<UIMessage>["sendMessages"]
 >[0];
 
-export interface AgentTuiOptions {
+export interface AgentRunOptions {
   client: BroodsClient;
   agent: AgentReference;
+  /** Sent as the first turn. The TUI stays open afterwards for follow-ups. */
+  prompt?: string;
 }
 
 /** Run a deployed agent in the AI SDK terminal UI until the user exits. */
-export async function runAgentTui(options: AgentTuiOptions): Promise<void> {
+export async function runAgentTui(options: AgentRunOptions): Promise<void> {
+  if (options.prompt !== undefined) void submitPrompt(options.prompt);
   await runAgentTUI({
     title: `broods · ${options.agent.name}`,
+    // Tool cards stay expanded: their input and output are what a dev testing
+    // an agent came to see, and the default collapses them once text arrives.
+    tools: "full",
     transport: new RemoteAgentTransport(options.client, options.agent),
   });
+}
+
+/** Stream a single run as plain text, for redirected or piped output. */
+export async function streamAgentText(
+  options: AgentRunOptions & { prompt: string },
+): Promise<void> {
+  const stream = toTextStream({
+    stream: toReadableStream(
+      options.client.stream(options.agent, { input: options.prompt }),
+      undefined,
+    ),
+  });
+  for await (const text of stream) {
+    process.stdout.write(text);
+  }
+  process.stdout.write("\n");
+}
+
+/**
+ * `runAgentTUI` takes no initial prompt, so type the CLI's prompt into the
+ * listener the terminal UI attaches to stdin once it is ready for input.
+ */
+export async function submitPrompt(prompt: string): Promise<void> {
+  const listeners = process.stdin.listenerCount("data");
+  const deadline = Date.now() + 10_000;
+  while (process.stdin.listenerCount("data") <= listeners) {
+    if (Date.now() > deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  process.stdin.emit("data", Buffer.from(prompt));
+  process.stdin.emit("data", Buffer.from("\r"));
 }
 
 /**
@@ -75,6 +113,7 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
       stream: toReadableStream(stream, options.abortSignal),
       originalMessages: options.messages,
       generateMessageId: generateId,
+      sendSources: true,
     });
   }
 
