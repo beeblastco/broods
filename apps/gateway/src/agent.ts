@@ -59,6 +59,30 @@ type IngressHttpResponse = {
   statusUrl?: string;
   error?: string;
 };
+// Derived from the NATS helpers rather than restated, so neither can drift.
+type ConversationScope = Omit<
+  Parameters<typeof conversationReplaySnapshot>[0],
+  "connection"
+>;
+type ReplaySnapshot = Awaited<ReturnType<typeof conversationReplaySnapshot>>;
+// Everything the queued and attached paths follow a run with. Only these fields
+// differ between them; the lifecycle itself is shared.
+type FollowedExecution = {
+  connection: NatsConnection;
+  scope: ConversationScope;
+  eventId: string;
+  eventKey: string;
+  snapshot: ReplaySnapshot;
+  startSequence: number;
+  initialConsumedSequence: number;
+  isReplay: (sequence: number) => boolean;
+  statusRequestId: string;
+  statusUrl?: string;
+  // Seeds the terminal state and the status fingerprint, so an attach that is
+  // already terminal neither re-sends its seed frame nor polls again.
+  seedStatus: IngressHttpResponse | null;
+  terminalLabel: string;
+};
 
 const activeRuns = new WeakMap<
   Bun.ServerWebSocket<AgentTestGatewayData>,
@@ -296,42 +320,22 @@ async function runCoreStream(
  * once the durable envelope runs, polls its ingress status, and always closes
  * the client stream with a terminal done/error frame.
  */
-async function followQueuedExecution(
+/**
+ * Follows one run to its terminal frame: streams its NATS responses, polls its
+ * status, drains the tail, then emits exactly one done or error frame. Shared by
+ * the queued and attached paths, which differ only in `execution`.
+ */
+async function followExecution(
   socket: Bun.ServerWebSocket<AgentTestGatewayData>,
-  active: ActiveRun,
-  accepted: { eventId: string; status: IngressStatus; statusUrl?: string },
-  getNatsConnection: () => Promise<NatsConnection>,
+  signal: AbortSignal,
+  execution: FollowedExecution,
 ): Promise<void> {
-  const signal = active.abort.signal;
-  const finishTerminal = (status: IngressStatus, error?: string) => {
-    if (TERMINAL_STATUSES.has(status) && status !== "completed") {
-      sendAgentTest(socket, {
-        type: "error",
-        error: error ?? `Queued run ended with status ${status}`,
-      });
-      return;
-    }
-    sendAgentTest(socket, { type: "done" });
-  };
-  if (TERMINAL_STATUSES.has(accepted.status)) {
-    finishTerminal(accepted.status);
-    return;
-  }
-
-  const scope = {
-    accountId: socket.data.accountId,
-    agentId: active.agentId,
-    conversationKey: active.publicConversationKey,
-  };
-  const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({ connection, ...scope });
-  const eventKey = cursorEventKey(accepted.eventId);
   const messages = await readConversationStream({
-    connection,
-    ...scope,
-    startSequence: snapshot.lastSequence + 1,
+    connection: execution.connection,
+    ...execution.scope,
+    startSequence: execution.startSequence,
   }).catch(() => null);
-  let lastConsumedSequence = snapshot.lastSequence;
+  let lastConsumedSequence = execution.initialConsumedSequence;
   let sawDone = false;
   let sawError = false;
   let streamSettled = messages === null;
@@ -342,29 +346,32 @@ async function followQueuedExecution(
   const stream = messages
     ? (async () => {
         try {
-          for await (const message of messages) {
+          for await (const natsMessage of messages) {
             if (signal.aborted) break;
-            lastConsumedSequence = Math.max(lastConsumedSequence, message.seq);
-            const event = decodeNatsStreamEvent(message.data);
-            if (!event || event.headers.eventId !== accepted.eventId) {
-              ackNatsMessage(message);
+            lastConsumedSequence = Math.max(
+              lastConsumedSequence,
+              natsMessage.seq,
+            );
+            const event = decodeNatsStreamEvent(natsMessage.data);
+            if (!event || event.headers.eventId !== execution.eventId) {
+              ackNatsMessage(natsMessage);
               continue;
             }
             const outbound = websocketMessageForNatsData(event.data);
             if (outbound) {
               sendAgentTest(socket, {
                 type: "output",
-                eventId: accepted.eventId,
+                eventId: execution.eventId,
                 cursor: formatCursor(
-                  snapshot.generation,
-                  message.seq,
-                  eventKey,
+                  execution.snapshot.generation,
+                  natsMessage.seq,
+                  execution.eventKey,
                 ),
-                replay: false,
+                replay: execution.isReplay(natsMessage.seq),
                 data: outbound,
               });
             }
-            ackNatsMessage(message);
+            ackNatsMessage(natsMessage);
             if (event.data.type === "done") {
               sawDone = true;
               break;
@@ -379,38 +386,37 @@ async function followQueuedExecution(
       })().catch(() => {})
     : Promise.resolve();
 
-  let previous = "";
-  let terminal: IngressHttpResponse | null = null;
+  const seed = execution.seedStatus;
+  let terminal =
+    seed && isIngressStatus(seed.status) && TERMINAL_STATUSES.has(seed.status)
+      ? seed
+      : null;
+  let previous = seed ? statusFingerprint(seed) : "";
   try {
-    while (!signal.aborted && !sawDone) {
+    while (!signal.aborted && !sawDone && !terminal) {
       await Bun.sleep(STATUS_POLL_INTERVAL_MS);
-      if (sawDone || signal.aborted) break;
+      if (signal.aborted || sawDone) break;
       const status = await fetchStatus(
         socket,
-        active.agentId,
-        accepted.eventId,
+        execution.scope.agentId,
+        execution.eventId,
         signal,
-        accepted.statusUrl,
+        execution.statusUrl,
       ).catch(() => null);
       if (!status?.status) continue;
-      const fingerprint = JSON.stringify([
-        status.status,
-        status.appliedMode,
-        status.appliedToEventId,
-        status.error,
-      ]);
+      const fingerprint = statusFingerprint(status);
       if (fingerprint !== previous) {
         previous = fingerprint;
         sendAgentTest(socket, {
           type: "status",
-          requestId: accepted.eventId,
-          eventId: accepted.eventId,
+          requestId: execution.statusRequestId,
+          eventId: execution.eventId,
           status: isIngressStatus(status.status) ? status.status : "expired",
           ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
           ...(status.appliedToEventId
             ? { appliedToEventId: status.appliedToEventId }
             : {}),
-          ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
+          ...(execution.statusUrl ? { statusUrl: execution.statusUrl } : {}),
           ...(status.error ? { error: status.error } : {}),
         });
       }
@@ -419,17 +425,16 @@ async function followQueuedExecution(
         (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
       ) {
         terminal = status;
-        break;
       }
     }
-    if (!sawDone && terminal && messages) {
+    if (terminal && !sawDone && messages) {
       await waitForNatsTail({
-        connection,
-        ...scope,
-        initialBoundary: snapshot.lastSequence,
+        connection: execution.connection,
+        ...execution.scope,
+        initialBoundary: execution.snapshot.lastSequence,
         lastConsumedSequence: () => lastConsumedSequence,
         sawDone: () => sawDone,
-        signal,
+        signal: signal,
         streamSettled: () => streamSettled,
       });
     }
@@ -440,14 +445,51 @@ async function followQueuedExecution(
     }
     await stream;
   }
-  if (signal.aborted) return;
-  if (sawDone || sawError) return;
-  if (terminal) {
-    const status = isIngressStatus(terminal.status)
-      ? terminal.status
-      : ("expired" as const);
-    finishTerminal(status, terminal.error);
+  if (signal.aborted || sawDone || sawError || !terminal) return;
+
+  sendTerminalFrame(
+    socket,
+    execution.terminalLabel,
+    isIngressStatus(terminal.status) ? terminal.status : "expired",
+    terminal.error,
+  );
+}
+
+async function followQueuedExecution(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  active: ActiveRun,
+  accepted: { eventId: string; status: IngressStatus; statusUrl?: string },
+  getNatsConnection: () => Promise<NatsConnection>,
+): Promise<void> {
+  if (TERMINAL_STATUSES.has(accepted.status)) {
+    sendTerminalFrame(socket, "Queued", accepted.status);
+
+    return;
   }
+
+  const scope = {
+    accountId: socket.data.accountId,
+    agentId: active.agentId,
+    conversationKey: active.publicConversationKey,
+  };
+  const connection = await getNatsConnection();
+  const snapshot = await conversationReplaySnapshot({ connection, ...scope });
+
+  await followExecution(socket, active.abort.signal, {
+    connection: connection,
+    scope: scope,
+    eventId: accepted.eventId,
+    eventKey: cursorEventKey(accepted.eventId),
+    snapshot: snapshot,
+    startSequence: snapshot.lastSequence + 1,
+    initialConsumedSequence: snapshot.lastSequence,
+    // A queued run starts after the snapshot, so nothing it emits is a replay.
+    isReplay: () => false,
+    statusRequestId: accepted.eventId,
+    ...(accepted.statusUrl ? { statusUrl: accepted.statusUrl } : {}),
+    seedStatus: null,
+    terminalLabel: "Queued",
+  });
 }
 
 async function submitControl(
@@ -722,165 +764,35 @@ async function followAttachedExecution(
   statusUrl: string,
   initialStatus: IngressHttpResponse,
   connection: NatsConnection,
-  snapshot: {
-    generation: string;
-    firstSequence: number;
-    lastSequence: number;
-    bufferedCount: number;
-  },
+  snapshot: ReplaySnapshot,
   replayFrom: number,
   eventKey: string,
 ): Promise<void> {
-  const signal = active.abort.signal;
-  const messages = await readConversationStream({
-    connection,
-    accountId: socket.data.accountId,
-    agentId: message.agentId,
-    conversationKey: message.conversationKey,
-    startSequence:
-      snapshot.bufferedCount === 0
-        ? snapshot.lastSequence + 1
-        : Math.max(1, replayFrom),
-  }).catch(() => null);
-  let lastConsumedSequence =
-    snapshot.bufferedCount === 0
-      ? snapshot.lastSequence
-      : Math.max(0, replayFrom - 1);
-  let sawDone = false;
-  let sawError = false;
-  let streamSettled = messages === null;
-  const closeOnAbort = () => void messages?.close().catch(() => {});
-  if (messages) {
-    signal.addEventListener("abort", closeOnAbort, { once: true });
-  }
-  const stream = messages
-    ? (async () => {
-        try {
-          for await (const natsMessage of messages) {
-            if (signal.aborted) break;
-            lastConsumedSequence = Math.max(
-              lastConsumedSequence,
-              natsMessage.seq,
-            );
-            const event = decodeNatsStreamEvent(natsMessage.data);
-            if (!event || event.headers.eventId !== message.eventId) {
-              ackNatsMessage(natsMessage);
-              continue;
-            }
-            const outbound = websocketMessageForNatsData(event.data);
-            if (outbound) {
-              sendAgentTest(socket, {
-                type: "output",
-                eventId: message.eventId,
-                cursor: formatCursor(
-                  snapshot.generation,
-                  natsMessage.seq,
-                  eventKey,
-                ),
-                replay:
-                  snapshot.bufferedCount > 0 &&
-                  natsMessage.seq <= snapshot.lastSequence,
-                data: outbound,
-              });
-            }
-            ackNatsMessage(natsMessage);
-            if (event.data.type === "done") {
-              sawDone = true;
-              break;
-            }
-            if (event.data.type === "error") {
-              sawError = true;
-            }
-          }
-        } finally {
-          streamSettled = true;
-        }
-      })().catch(() => {})
-    : Promise.resolve();
+  const buffered = snapshot.bufferedCount > 0;
 
-  let terminal =
-    isIngressStatus(initialStatus.status) &&
-    TERMINAL_STATUSES.has(initialStatus.status)
-      ? initialStatus
-      : null;
-  let previous = JSON.stringify([
-    initialStatus.status,
-    initialStatus.appliedMode,
-    initialStatus.appliedToEventId,
-    initialStatus.error,
-  ]);
-  try {
-    while (!signal.aborted && !sawDone && !terminal) {
-      await Bun.sleep(STATUS_POLL_INTERVAL_MS);
-      if (signal.aborted || sawDone) break;
-      const status = await fetchStatus(
-        socket,
-        message.agentId,
-        message.eventId,
-        signal,
-        statusUrl,
-      ).catch(() => null);
-      if (!status?.status) continue;
-      const fingerprint = JSON.stringify([
-        status.status,
-        status.appliedMode,
-        status.appliedToEventId,
-        status.error,
-      ]);
-      if (fingerprint !== previous) {
-        previous = fingerprint;
-        sendAgentTest(socket, {
-          type: "status",
-          requestId: message.requestId,
-          eventId: message.eventId,
-          status: isIngressStatus(status.status) ? status.status : "expired",
-          ...(status.appliedMode ? { appliedMode: status.appliedMode } : {}),
-          ...(status.appliedToEventId
-            ? { appliedToEventId: status.appliedToEventId }
-            : {}),
-          statusUrl,
-          ...(status.error ? { error: status.error } : {}),
-        });
-      }
-      if (
-        status.status === "not_found" ||
-        (isIngressStatus(status.status) && TERMINAL_STATUSES.has(status.status))
-      ) {
-        terminal = status;
-      }
-    }
-    if (terminal && !sawDone && messages) {
-      await waitForNatsTail({
-        connection,
-        accountId: socket.data.accountId,
-        agentId: message.agentId,
-        conversationKey: message.conversationKey,
-        initialBoundary: snapshot.lastSequence,
-        lastConsumedSequence: () => lastConsumedSequence,
-        sawDone: () => sawDone,
-        signal,
-        streamSettled: () => streamSettled,
-      });
-    }
-  } finally {
-    if (messages) {
-      signal.removeEventListener("abort", closeOnAbort);
-      await messages.close().catch(() => {});
-    }
-    await stream;
-  }
-  if (signal.aborted || sawDone || sawError || !terminal) return;
-  const status = isIngressStatus(terminal.status)
-    ? terminal.status
-    : ("expired" as const);
-  if (status !== "completed") {
-    sendAgentTest(socket, {
-      type: "error",
-      error: terminal.error ?? `Attached run ended with status ${status}`,
-    });
-    return;
-  }
-  sendAgentTest(socket, { type: "done" });
+  await followExecution(socket, active.abort.signal, {
+    connection: connection,
+    scope: {
+      accountId: socket.data.accountId,
+      agentId: message.agentId,
+      conversationKey: message.conversationKey,
+    },
+    eventId: message.eventId,
+    eventKey: eventKey,
+    snapshot: snapshot,
+    startSequence: buffered
+      ? Math.max(1, replayFrom)
+      : snapshot.lastSequence + 1,
+    initialConsumedSequence: buffered
+      ? Math.max(0, replayFrom - 1)
+      : snapshot.lastSequence,
+    // Only frames at or below the snapshot existed before the attach.
+    isReplay: (sequence) => buffered && sequence <= snapshot.lastSequence,
+    statusRequestId: message.requestId,
+    statusUrl: statusUrl,
+    seedStatus: initialStatus,
+    terminalLabel: "Attached",
+  });
 }
 
 async function waitForNatsTail(options: {
@@ -1029,6 +941,35 @@ function sendAgentTest(
 }
 
 /** Binds a cursor to its originating event so it cannot resume another one. */
+/** One stable digest of the status fields a client sees, for change detection. */
+function statusFingerprint(status: IngressHttpResponse): string {
+  return JSON.stringify([
+    status.status,
+    status.appliedMode,
+    status.appliedToEventId,
+    status.error,
+  ]);
+}
+
+/** Emits the single closing frame for a run: done when completed, else error. */
+function sendTerminalFrame(
+  socket: Bun.ServerWebSocket<AgentTestGatewayData>,
+  label: string,
+  status: IngressStatus,
+  error?: string,
+): void {
+  if (status !== "completed") {
+    sendAgentTest(socket, {
+      type: "error",
+      error: error ?? `${label} run ended with status ${status}`,
+    });
+
+    return;
+  }
+
+  sendAgentTest(socket, { type: "done" });
+}
+
 function cursorEventKey(eventId: string): string {
   return createHash("sha256").update(eventId).digest("base64url").slice(0, 16);
 }
