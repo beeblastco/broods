@@ -1,0 +1,229 @@
+import { expect, test } from "bun:test";
+import {
+  isToolUIPart,
+  readUIMessageStream,
+  type ModelMessage,
+  type UIMessage,
+} from "ai";
+import { BroodsClient, type AgentReference } from "../src/client.ts";
+import { RemoteAgentTransport } from "../src/cli/tui.ts";
+
+const AGENT: AgentReference = {
+  kind: "agent",
+  name: "helper",
+  id: "agent_1",
+  project: "demo",
+  environment: "dev",
+};
+
+type RunBody = { conversationKey: string; events: ModelMessage[] };
+
+/** Collect the streamed assistant message the TUI would assemble for a turn. */
+async function readTurn(
+  transport: RemoteAgentTransport,
+  messages: UIMessage[],
+): Promise<UIMessage | undefined> {
+  const stream = await transport.sendMessages({
+    trigger: "submit-message",
+    chatId: "chat_1",
+    messageId: undefined,
+    messages: messages,
+    abortSignal: undefined,
+  });
+  let last: UIMessage | undefined;
+  for await (const message of readUIMessageStream({ stream: stream })) {
+    last = message;
+  }
+
+  return last;
+}
+
+function sse(...parts: unknown[]): Response {
+  return new Response(
+    `${parts.map((part) => `data: ${JSON.stringify(part)}`).join("\n\n")}\n\n`,
+  );
+}
+
+function userMessage(id: string, text: string): UIMessage {
+  return {
+    id: id,
+    role: "user",
+    parts: [{ type: "text", text: text }],
+  };
+}
+
+function testTransport(responses: Response[]): {
+  transport: RemoteAgentTransport;
+  bodies: RunBody[];
+} {
+  const bodies: RunBody[] = [];
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as RunBody);
+
+      return responses[bodies.length - 1] ?? sse();
+    },
+  });
+
+  return { transport: new RemoteAgentTransport(client, AGENT), bodies: bodies };
+}
+
+test("transport streams a user turn and converts core parts to UI chunks", async () => {
+  const { transport, bodies } = testTransport([
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "hi" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const message = await readTurn(transport, [userMessage("m1", "hello")]);
+
+  expect(bodies[0]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "hello" }] },
+  ]);
+  expect(message?.parts).toContainEqual({
+    type: "text",
+    text: "hi",
+    state: "done",
+  });
+});
+
+test("transport forwards only the approval response on an approval round-trip", async () => {
+  const { transport, bodies } = testTransport([
+    sse(
+      {
+        type: "tool-input-start",
+        id: "call_1",
+        toolName: "bash",
+      },
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "bash",
+        input: { command: "ls" },
+      },
+      {
+        type: "tool-approval-request",
+        approvalId: "approval_1",
+        toolCall: {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: "bash",
+          input: { command: "ls" },
+        },
+      },
+      { type: "finish", finishReason: "tool-approvals" },
+    ),
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "done" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+  ]);
+
+  const messages: UIMessage[] = [userMessage("m1", "list files")];
+  const assistant = await readTurn(transport, messages);
+  const pending = assistant?.parts.find(
+    (part) => isToolUIPart(part) && part.state === "approval-requested",
+  );
+  expect(pending).toBeDefined();
+
+  // What the TUI does after the user presses "y".
+  if (pending && isToolUIPart(pending)) {
+    pending.state = "approval-responded";
+    pending.approval = { id: "approval_1", approved: true };
+  }
+  messages.push(assistant as UIMessage);
+  await readTurn(transport, messages);
+
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]?.events).toEqual([
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-approval-response",
+          approvalId: "approval_1",
+          approved: true,
+          reason: undefined,
+          providerExecuted: undefined,
+        },
+      ],
+    },
+  ]);
+  // Core owns the conversation, so every turn resumes the same one.
+  expect(bodies[1]?.conversationKey).toBe(bodies[0]?.conversationKey as string);
+});
+
+test("transport re-sends only the newest approval when one turn asks twice", async () => {
+  const { transport, bodies } = testTransport([
+    sse({ type: "finish", finishReason: "stop" }),
+    sse({ type: "finish", finishReason: "stop" }),
+    sse({ type: "finish", finishReason: "stop" }),
+  ]);
+  const assistant: UIMessage = {
+    id: "a1",
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-bash",
+        toolCallId: "call_1",
+        state: "approval-responded",
+        input: { command: "ls" },
+        approval: { id: "approval_1", approved: true },
+      },
+    ],
+  };
+  const messages: UIMessage[] = [userMessage("m1", "list files"), assistant];
+
+  await readTurn(transport, messages);
+  // Core approves the first call, then stops on a second one in the same turn.
+  assistant.parts.push({
+    type: "tool-bash",
+    toolCallId: "call_2",
+    state: "approval-responded",
+    input: { command: "rm -rf ." },
+    approval: { id: "approval_2", approved: false, reason: "Denied by user." },
+  });
+  await readTurn(transport, messages);
+
+  expect(bodies[1]?.events).toEqual([
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-approval-response",
+          approvalId: "approval_2",
+          approved: false,
+          reason: "Denied by user.",
+          providerExecuted: undefined,
+        },
+      ],
+    },
+  ]);
+});
+
+test("transport sends each new user turn once", async () => {
+  const { transport, bodies } = testTransport([
+    sse(
+      { type: "text-start", id: "0" },
+      { type: "text-delta", id: "0", text: "ok" },
+      { type: "text-end", id: "0" },
+      { type: "finish", finishReason: "stop" },
+    ),
+    sse({ type: "finish", finishReason: "stop" }),
+  ]);
+
+  const messages: UIMessage[] = [userMessage("m1", "first")];
+  messages.push((await readTurn(transport, messages)) as UIMessage);
+  messages.push(userMessage("m2", "second"));
+  await readTurn(transport, messages);
+
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ]);
+});

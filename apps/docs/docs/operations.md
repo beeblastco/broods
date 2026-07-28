@@ -45,6 +45,7 @@ broods logs --errors    # WARN+ only
 broods agent list       # list agents (name, public/private, model, deploy status)
 broods agent get my-agent  # show resolved config
 broods run my-agent "Hello"  # one-off run with pretty streaming
+broods run my-agent          # interactive terminal UI session
 ```
 
 ### Global Options
@@ -194,9 +195,12 @@ Inspect and test agents from the CLI:
 broods agent list            # name, public/private, model, deploy status
 broods agent get <name>      # model, sandbox, workspaces, tools, channels, webhook
 broods run <name> "<prompt>" # one-off run; pretty-streams thinking, tool calls, results over SSE
+broods run <name>            # interactive terminal UI session (needs a TTY)
 ```
 
 `run` reaches the agent over the public endpoint, so it needs `publicAccess: true`; otherwise it reports the secured-by-default `403` with guidance to enable it.
+
+Without a prompt, `run` opens the AI SDK terminal UI: a scrollable chat session with rendered markdown, collapsible reasoning and tool sections, token statistics, and `y`/`n` approval prompts for tools that request them. The agent still runs where it is deployed — each turn is a normal SSE run, and approvals travel back over the same direct API — so tools, sandboxes, and policies behave exactly as they do in production. Keep passing a prompt for scripted, pipe-friendly runs.
 
 For quick health checks, you can also run a one-off probe:
 

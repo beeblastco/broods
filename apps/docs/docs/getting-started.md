@@ -110,6 +110,14 @@ The CLI streams the response live, showing reasoning, tool calls, and text:
 [text] Hello! I'm a helpful assistant...
 ```
 
+Leave the prompt off to open an interactive terminal UI instead — a full chat
+session with rendered markdown, collapsible reasoning and tool cards, and `y`/`n`
+prompts for tools that need approval:
+
+```bash
+broods run my-agent
+```
+
 ## 5. Programmatic Calls
 
 Import the generated API references and the SDK client in your application code. `broods/_generated/` is empty until a sync runs, so `broods dev` (or `broods dev --once`) has to have completed at least once before `api` resolves:
