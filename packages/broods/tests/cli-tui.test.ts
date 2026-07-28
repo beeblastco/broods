@@ -48,14 +48,6 @@ function sse(...parts: unknown[]): Response {
   );
 }
 
-function userMessage(id: string, text: string): UIMessage {
-  return {
-    id: id,
-    role: "user",
-    parts: [{ type: "text", text: text }],
-  };
-}
-
 function testTransport(responses: Response[]): {
   transport: RemoteAgentTransport;
   bodies: RunBody[];
@@ -71,6 +63,14 @@ function testTransport(responses: Response[]): {
   });
 
   return { transport: new RemoteAgentTransport(client, AGENT), bodies: bodies };
+}
+
+function userMessage(id: string, text: string): UIMessage {
+  return {
+    id: id,
+    role: "user",
+    parts: [{ type: "text", text: text }],
+  };
 }
 
 test("transport streams a user turn and converts core parts to UI chunks", async () => {
