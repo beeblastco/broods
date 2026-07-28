@@ -99,10 +99,10 @@ const WARMUP_RETRY_MAX_DELAY_MS = 750;
 const CACHED_WARMUP_BUDGET_MS = 1_200;
 // A reserved VM's endpoint is stable for the life of its microvmId and survives
 // suspend (the proxy auto-resumes on ingress), so the reservation lookup + GetMicrovm
-// pair is pure overhead on a repeat call. The TTL is short because a cache entry only
-// survives when calls keep coming, and a VM that is being called is not idling into
-// termination — the one way a reservation goes stale underneath us.
-const RESERVED_ENDPOINT_TTL_MS = 60_000;
+// pair is pure overhead on a repeat call. The TTL bounds how long a reservation that
+// moved on another pod can go unnoticed here; a stale entry costs one failed POST and
+// CACHED_WARMUP_BUDGET_MS before the authoritative path takes over.
+const RESERVED_ENDPOINT_TTL_MS = 3 * 60_000;
 const CACHE_MAX_ENTRIES = 512;
 // MicroVMs live at most 8h; we still bound each instance with a maximumDuration as
 // a backstop (ephemeral VMs are terminated in `finally` long before this).

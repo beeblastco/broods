@@ -729,18 +729,24 @@ describe("createSandboxExecutor", () => {
       request,
     );
     // A second executor: the caches are module-scoped because one is built per request.
+    const controlPlaneCalls = microvmSendMock.mock.calls.length;
+    const lookups = getSandboxExternalIdMock.mock.calls.length;
     await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
       request,
     );
 
-    const types = microvmSendMock.mock.calls.map(
-      (c) => (c[0] as { _type?: string })?._type,
-    );
-    // The endpoint survives suspend and the proxy auto-resumes on ingress, so the
-    // second call POSTs without a reservation lookup or a status poll.
+    // The whole point of the cache: the second call's only network operation is the
+    // POST that runs the code. No reservation lookup, no GetMicrovm, no token mint.
     expect(microvmFetchMock).toHaveBeenCalledTimes(2);
-    expect(types.filter((type) => type === "GetMicrovm")).toHaveLength(1);
-    expect(getSandboxExternalIdMock).toHaveBeenCalledTimes(1);
+    expect(microvmSendMock.mock.calls.length).toBe(controlPlaneCalls);
+    expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups);
+    // ...and the first call is what paid for it: lookup + GetMicrovm + token mint.
+    expect(lookups).toBe(1);
+    expect(
+      microvmSendMock.mock.calls.map(
+        (c) => (c[0] as { _type?: string })?._type,
+      ),
+    ).toEqual(["GetMicrovm", "CreateMicrovmAuthToken"]);
   });
 
   it("falls back to the reservation when the cached endpoint is dead", async () => {
