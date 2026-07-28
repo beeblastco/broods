@@ -51,6 +51,8 @@ export async function streamAgentText(
     stream: toReadableStream(
       options.client.stream(options.agent, { input: options.prompt }),
       undefined,
+      // One-shot: there is no follow-up turn to keep bookkeeping for.
+      () => {},
     ),
   });
   for await (const text of stream) {
@@ -97,20 +99,20 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   async sendMessages(
     options: SendMessagesOptions,
   ): Promise<ReadableStream<UIMessageChunk>> {
-    const events = this.pendingEvents(
+    const pending = this.pendingEvents(
       await convertToModelMessages(options.messages),
     );
-    if (events.length === 0) {
+    if (pending.events.length === 0) {
       throw new Error("Nothing new to send: the agent already saw this turn.");
     }
 
     const stream = this.client.stream(this.agent, {
       conversationKey: this.conversationKey,
-      events: events as [ModelMessage, ...ModelMessage[]],
+      events: pending.events as [ModelMessage, ...ModelMessage[]],
     });
 
     return toUIMessageStream({
-      stream: toReadableStream(stream, options.abortSignal),
+      stream: toReadableStream(stream, options.abortSignal, pending.commit),
       originalMessages: options.messages,
       generateMessageId: generateId,
       sendSources: true,
@@ -118,10 +120,14 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
   }
 
   /**
-   * Diff the converted history against what core already has. Approvals are
-   * tracked by id because one assistant turn can collect several rounds of them.
+   * Diff the converted history against what core already has, without recording
+   * anything: `commit` runs only once core answers, so a run that never reached
+   * it is re-sent on the next turn instead of being silently dropped.
    */
-  private pendingEvents(messages: ModelMessage[]): ModelMessage[] {
+  private pendingEvents(messages: ModelMessage[]): {
+    events: ModelMessage[];
+    commit: () => void;
+  } {
     const events: ModelMessage[] = [];
     const approvals: ToolApprovalResponse[] = [];
     let userTurns = 0;
@@ -138,39 +144,69 @@ export class RemoteAgentTransport implements ChatTransport<UIMessage> {
           part.type === "tool-approval-response" &&
           !this.sentApprovals.has(part.approvalId)
         ) {
-          this.sentApprovals.add(part.approvalId);
           approvals.push(part);
         }
       }
     }
-    this.sentUserTurns = userTurns;
     // Core resumes on a tool message whose parts are all approval responses;
     // the denial `tool-result` the SDK synthesizes is core's job, not ours.
     if (approvals.length > 0) events.push({ role: "tool", content: approvals });
 
-    return events;
+    return {
+      events: events,
+      commit: () => {
+        this.sentUserTurns = userTurns;
+        for (const approval of approvals)
+          this.sentApprovals.add(approval.approvalId);
+      },
+    };
   }
 }
 
-/** Adapt the client's async generator to the `ReadableStream` the SDK expects. */
+/**
+ * Adapt the client's async generator to the `ReadableStream` the SDK expects.
+ * Aborting races the in-flight read so a stalled turn stops immediately instead
+ * of waiting for the model's next event, and `onAnswered` fires once core has
+ * replied, which is the point the turn counts as delivered.
+ */
 function toReadableStream(
   stream: AsyncGenerator<TextStreamPart<ToolSet>>,
   signal: AbortSignal | undefined,
+  onAnswered: () => void,
 ): ReadableStream<TextStreamPart<ToolSet>> {
+  let answered = false;
+  // Never awaited: the generator can be parked on a read that never completes,
+  // and `return()` queues behind it, so awaiting would hang the abort itself.
+  const release = () => void stream.return(undefined);
+
   return new ReadableStream({
     async pull(controller) {
+      const next = await Promise.race([stream.next(), abortedRead(signal)]);
       if (signal?.aborted) {
-        await stream.return(undefined);
+        release();
         controller.close();
 
         return;
       }
-      const next = await stream.next();
+      if (!answered) {
+        answered = true;
+        onAnswered();
+      }
       if (next.done) controller.close();
       else controller.enqueue(next.value);
     },
-    async cancel() {
-      await stream.return(undefined);
-    },
+    cancel: release,
+  });
+}
+
+/** Resolves as an exhausted read when the signal aborts; never otherwise. */
+function abortedRead(
+  signal: AbortSignal | undefined,
+): Promise<IteratorResult<TextStreamPart<ToolSet>>> {
+  return new Promise((resolve) => {
+    if (!signal) return;
+    const done = () => resolve({ done: true, value: undefined });
+    if (signal.aborted) done();
+    else signal.addEventListener("abort", done, { once: true });
   });
 }

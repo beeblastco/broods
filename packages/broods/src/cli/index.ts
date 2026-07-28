@@ -43,6 +43,7 @@ import {
   isPlainObject,
   loginWithBrowser,
   optionValue,
+  positionalArgs,
   promptConfirm,
   promptSecret,
   promptSelect,
@@ -1365,9 +1366,7 @@ function agentModelLabel(config: Record<string, unknown>): string {
 }
 
 async function run(args: string[]): Promise<void> {
-  const [agentName, ...promptParts] = args.filter(
-    (arg) => !arg.startsWith("--"),
-  );
+  const [agentName, ...promptParts] = positionalArgs(args);
   if (!agentName) {
     throw new Error("Usage: broods run <agent> [prompt]");
   }

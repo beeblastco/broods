@@ -205,7 +205,7 @@ In a terminal, `run` opens the AI SDK terminal UI: a scrollable chat session wit
 
 The agent still runs where it is deployed — each turn is a normal SSE run on one conversation, and approvals travel back over the same direct API — so tools, sandboxes, and policies behave exactly as they do in production.
 
-When stdout is not a terminal (a pipe, a redirect, CI), `run` streams the answer as plain text instead, so scripted runs stay parseable. A prompt is required in that case, since there is no way to type one.
+When stdin or stdout is not a terminal (a pipe, a redirect, CI), `run` streams the answer as plain text instead, so scripted runs stay parseable. A prompt is required in that case, since there is no way to type one.
 
 For quick health checks, redirect the output so the probe stays non-interactive:
 

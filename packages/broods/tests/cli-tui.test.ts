@@ -278,3 +278,63 @@ test("a CLI prompt is typed into the terminal UI once it listens", async () => {
 
   expect(chunks).toEqual(["hello there", "\r"]);
 });
+
+test("a failed run is re-sent, not silently dropped from the conversation", async () => {
+  const bodies: RunBody[] = [];
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    fetch: async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as RunBody);
+      if (bodies.length === 1) return new Response("nope", { status: 503 });
+
+      return sse({ type: "finish", finishReason: "stop" });
+    },
+  });
+  const transport = new RemoteAgentTransport(client, AGENT);
+  const messages = [userMessage("m1", "hello")];
+
+  // The SDK turns a failed run into an error part rather than rejecting.
+  await readTurn(transport, messages);
+  await readTurn(transport, messages);
+
+  // Core never saw the first attempt, so the same turn has to go out again.
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]?.events).toEqual([
+    { role: "user", content: [{ type: "text", text: "hello" }] },
+  ]);
+});
+
+test("aborting stops a turn that is waiting on the model", async () => {
+  const controller = new AbortController();
+  const client = new BroodsClient({
+    apiKey: "test-key",
+    // A run that streams one part and then never produces another.
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          start(sse) {
+            sse.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ type: "text-start", id: "0" })}\n\n`,
+              ),
+            );
+          },
+        }),
+      ),
+  });
+  const stream = await new RemoteAgentTransport(client, AGENT).sendMessages({
+    trigger: "submit-message",
+    chatId: "chat_1",
+    messageId: undefined,
+    messages: [userMessage("m1", "hello")],
+    abortSignal: controller.signal,
+  });
+
+  const reader = stream.getReader();
+  await reader.read();
+  const pending = reader.read();
+  controller.abort();
+
+  // Without racing the signal this would hang until the server sent more.
+  expect((await pending).done).toBe(true);
+});
