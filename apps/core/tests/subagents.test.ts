@@ -502,14 +502,78 @@ describe("SubagentCoordinator", () => {
     }
   });
 
-  it("hands a settled child conversation to its next queued envelope", async () => {
-    const scopes: Record<string, unknown>[] = [];
+  it("runs a queued envelope in-process so its result reaches the parent", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() + 1_000,
+      Date.now() + 60_000,
+      { emit: mock(async () => {}) } as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+    const runTask = mock(async () => {});
+    internals.runTask = runTask;
+
+    await internals.drainChildConversation(
+      {
+        releaseConversationLease,
+        takeNextIngress: async () => ({
+          eventId: "queued-event",
+          events: [{ role: "user", content: "follow up" }],
+          ownerGeneration: 9,
+        }),
+      } as never,
+      persistentChildTask(),
+    );
+
+    expect(runTask).toHaveBeenCalledTimes(1);
+    const [followUp, , , preOwned] = runTask.mock.calls[0] as unknown as [
+      { eventId: string; taskId: string; resuming: boolean },
+      unknown,
+      unknown,
+      { ownerGeneration: number; events: unknown[] },
+    ];
+    // Same taskId keeps the follow-up attached to the parent's pending task, so
+    // completeTask still injects its result back into the parent.
+    expect(followUp.taskId).toBe("subagent~task_1");
+    expect(followUp.eventId).toBe("queued-event");
+    expect(followUp.resuming).toBe(true);
+    expect(preOwned.ownerGeneration).toBe(9);
+    expect(releaseConversationLease).not.toHaveBeenCalled();
+  });
+
+  it("releases the child lease when nothing is queued behind it", async () => {
+    const releaseConversationLease = mock(async () => {});
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 60_000,
+      { emit: mock(async () => {}) } as never,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    await internals.drainChildConversation(
+      {
+        releaseConversationLease,
+        takeNextIngress: async () => null,
+      } as never,
+      persistentChildTask(),
+    );
+
+    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("transfers the queue to a worker once the parent wait budget has passed", async () => {
+    const scopes: Record<string, unknown>[] = [];
+    const releaseConversationLease = mock(async () => {});
+    const takeNextIngress = mock(async () => null);
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() - 1,
       { emit: mock(async () => {}) } as never,
       undefined,
       async (_session, scope) => {
@@ -520,7 +584,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     await internals.drainChildConversation(
-      { releaseConversationLease } as never,
+      { releaseConversationLease, takeNextIngress } as never,
       persistentChildTask(),
     );
 
@@ -531,38 +595,19 @@ describe("SubagentCoordinator", () => {
         "acct:account_1:agent:agent_child:api:subagent-persistent-1",
       publicConversationKey: "subagent-persistent-1",
     });
+    // No live parent turn to inject into, so it must not run in-process.
+    expect(takeNextIngress).not.toHaveBeenCalled();
     // Ownership moved to the queued envelope, so releasing would strand it.
     expect(releaseConversationLease).not.toHaveBeenCalled();
   });
 
-  it("releases the child lease when nothing is queued behind it", async () => {
+  it("releases the child lease when the expired-budget transfer finds nothing", async () => {
     const releaseConversationLease = mock(async () => {});
     const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
     const coordinator = new SubagentCoordinator(
       parentSession(),
       { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() + 1_000,
-      { emit: mock(async () => {}) } as never,
-      undefined,
-      async () => false,
-    );
-    const internals = coordinator as unknown as CoordinatorInternals;
-
-    await internals.drainChildConversation(
-      { releaseConversationLease } as never,
-      persistentChildTask(),
-    );
-
-    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
-  });
-
-  it("releases the child lease when the queued dispatch throws", async () => {
-    const releaseConversationLease = mock(async () => {});
-    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
-    const coordinator = new SubagentCoordinator(
-      parentSession(),
-      { subagent: { enabled: true, mode: "persistent" } },
-      Date.now() + 1_000,
+      Date.now() - 1,
       { emit: mock(async () => {}) } as never,
       undefined,
       async () => {

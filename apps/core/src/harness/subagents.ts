@@ -424,6 +424,9 @@ export class SubagentCoordinator {
     task: ResolvedSubagentTask,
     subagentParent?: SubagentParentContext,
     publisher?: NatsPublisher,
+    // Set when this turn continues a queued envelope the child already owns, so
+    // it reuses that fencing token instead of admitting the conversation again.
+    preOwned?: { ownerGeneration: number; events: ModelMessage[] },
   ): Promise<void> {
     logInfo("Subagent task started", {
       parentEventId: this.parentSession.eventId,
@@ -439,12 +442,15 @@ export class SubagentCoordinator {
       role: "user",
       content: [{ type: "text", text: task.prompt }],
     };
+    const incoming = preOwned?.events ?? [promptMessage];
     // Persistent children run through the same conversation coordinator as
     // top-level runs. Without an owner generation every steer and stop the
     // session exposes is a silent no-op.
-    const ownerGeneration = task.persistent
-      ? await this.admitChildConversation(task, promptMessage)
-      : undefined;
+    const ownerGeneration = preOwned
+      ? preOwned.ownerGeneration
+      : task.persistent
+        ? await this.admitChildConversation(task, promptMessage)
+        : undefined;
     // Initialize an isolated child session using the generated conversation key.
     // Inherit the parent's deployment scope (endpoint/project/environment) so the
     // child's spans and logs publish to the same live dashboard subscription and
@@ -467,7 +473,7 @@ export class SubagentCoordinator {
     const turnContext = await this.createChildTurnContext(
       childSession,
       task,
-      promptMessage,
+      incoming,
     );
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
@@ -514,7 +520,12 @@ export class SubagentCoordinator {
       await childSession.settleIngress("failed", {
         error: error instanceof Error ? error.message : String(error),
       });
-      await this.drainChildConversation(childSession, task);
+      await this.drainChildConversation(
+        childSession,
+        task,
+        subagentParent,
+        publisher,
+      );
       throw error;
     }
 
@@ -533,7 +544,12 @@ export class SubagentCoordinator {
     // Settling hands the conversation to whoever queued behind this run, so it
     // must come after the result is durably recorded above.
     await childSession.settleIngress("completed", { result: finalResponse });
-    await this.drainChildConversation(childSession, task);
+    await this.drainChildConversation(
+      childSession,
+      task,
+      subagentParent,
+      publisher,
+    );
   }
 
   /**
@@ -542,6 +558,51 @@ export class SubagentCoordinator {
    * generation, so both calls are no-ops for them.
    */
   private async drainChildConversation(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    subagentParent?: SubagentParentContext,
+    publisher?: NatsPublisher,
+  ): Promise<void> {
+    // Past the parent's wait budget there is no live parent turn left to inject
+    // into, so hand the envelope to a standalone worker instead of running it
+    // here and dropping the answer.
+    if (Date.now() >= this.waitUntilMs) {
+      await this.transferChildConversation(childSession, task);
+      return;
+    }
+    const next = await childSession.takeNextIngress().catch((error) => {
+      logError("Subagent queued ingress read failed", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    if (!next) {
+      await childSession.releaseConversationLease().catch(() => {});
+      return;
+    }
+
+    // Run the queued envelope as another turn of the same child task, so its
+    // result reaches the parent through the normal completion path.
+    await this.runTask(
+      {
+        ...task,
+        eventId: next.eventId,
+        resuming: true,
+        inheritedContext: false,
+        ...(next.agentConfig ? { agentConfig: next.agentConfig } : {}),
+      },
+      subagentParent,
+      publisher,
+      {
+        ownerGeneration: next.ownerGeneration,
+        events: next.events as ModelMessage[],
+      },
+    );
+  }
+
+  /** Hands the next queued envelope to its own worker and drops the lease. */
+  private async transferChildConversation(
     childSession: Session,
     task: ResolvedSubagentTask,
   ): Promise<void> {
@@ -606,16 +667,16 @@ export class SubagentCoordinator {
   private async createChildTurnContext(
     childSession: Session,
     task: ResolvedSubagentTask,
-    promptMessage: UserModelMessage,
+    incoming: ModelMessage[],
   ) {
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
-        [...(task.inheritedContext ? task.parentMessages : []), promptMessage],
+        [...(task.inheritedContext ? task.parentMessages : []), ...incoming],
         task.parentEphemeralSystem,
       );
     }
 
-    await childSession.persistModelMessages([promptMessage]);
+    await childSession.persistModelMessages(incoming);
     // `resuming` means the caller supplied an existing public conversationKey.
     // That is enough to load prior child history; when omitted, this is a new
     // persistent child conversation with a generated public key.
@@ -624,7 +685,7 @@ export class SubagentCoordinator {
     }
 
     return childSession.createEphemeralTurnContext(
-      [...task.parentMessages, promptMessage],
+      [...task.parentMessages, ...incoming],
       task.parentEphemeralSystem,
     );
   }

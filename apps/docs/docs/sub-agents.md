@@ -141,7 +141,9 @@ Persistent children are admitted through the same conversation coordinator as to
 
 The parent's own dispatch of a child uses `reject`, so dispatching into a conversation that is still busy surfaces the conflict instead of stalling.
 
-A drained follow-up runs as an ordinary run of the child agent on that conversation — it is no longer a task of the original parent, so its result is not injected back into the parent's transcript. Steer instead when the parent still needs the answer. You can also continue explicitly by passing the child's `conversationKey` to a new `run_subagent` call once it settles.
+A drained follow-up runs as another turn of the same child task, so its result is injected back into the parent exactly like the child's first answer, under the same `subagent.visibility` rules.
+
+The one exception is timing. If the parent's subagent wait budget has already expired there is no live parent turn left to inject into, so the queued envelope is handed to its own worker instead: it still runs and still writes to the child conversation, but its result is not injected into the parent. Read it from the child conversation, or resume explicitly by passing the child's `conversationKey` to a new `run_subagent` call.
 
 Ephemeral children cannot be controlled. They hold no durable conversation and take no owner generation, so there is nothing to fence a stop or steer against — this is the main reason persistent is the default.
 
