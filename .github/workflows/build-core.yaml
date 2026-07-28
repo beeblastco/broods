@@ -62,3 +62,50 @@ jobs:
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Building an image deploys nothing: the pod lives in a k3s cluster the infra
+  # repo owns. Without this job a green build meant only that a tag moved, which
+  # is how core-dev once served a months-old image behind a passing pipeline.
+  rollout:
+    needs: build
+    if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Roll the core pod and wait for the rollout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+          INFRA_REPO: beeblastco/infra
+          TAG: ${{ github.sha }}
+          WORKFLOW: ${{ github.ref_name == 'main' && 'deploy-core.yaml' || 'deploy-core-dev.yaml' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "Missing secret: INFRA_DISPATCH_TOKEN" >&2
+            echo "Needs a fine-grained PAT scoped to $INFRA_REPO with Actions: read and write." >&2
+            exit 1
+          fi
+
+          DISPATCHED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          gh workflow run "$WORKFLOW" --repo "$INFRA_REPO" --ref main -f tag="$TAG"
+
+          # The infra run carries infra's own head_sha, so it cannot be matched on
+          # this commit — the newest dispatch created after ours is the handle.
+          for _ in $(seq 1 60); do
+            RUN_ID=$(gh api \
+              "repos/$INFRA_REPO/actions/workflows/$WORKFLOW/runs?event=workflow_dispatch&per_page=20" \
+              --jq "[.workflow_runs[] | select(.created_at >= \"$DISPATCHED_AT\")] | .[0].id // empty")
+            if [[ -n "$RUN_ID" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ -z "${RUN_ID:-}" ]]; then
+            echo "Timed out waiting for $WORKFLOW to start in $INFRA_REPO" >&2
+            exit 1
+          fi
+
+          gh run watch "$RUN_ID" --repo "$INFRA_REPO" --exit-status
