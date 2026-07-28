@@ -495,7 +495,9 @@ export default $config({
               Sid: "CreateConnectorNetworkInterfaceInSubnets",
               Effect: "Allow",
               Action: "ec2:CreateNetworkInterface",
-              Resource: sandboxNetwork.privateSubnets.apply((subnetIds) =>
+              Resource: $resolve({
+                subnetIds: sandboxNetwork.privateSubnets,
+              }).apply(({ subnetIds }) =>
                 subnetIds.map(
                   (subnetId) =>
                     `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:subnet/${subnetId}`,
