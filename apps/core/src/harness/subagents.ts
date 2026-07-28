@@ -34,6 +34,7 @@ import {
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import { acceptIngress } from "./ingress.ts";
+import type { IngressDispatchScope } from "./integrations.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
@@ -88,6 +89,10 @@ type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type SubagentPublisherFactory = (
   task: ResolvedSubagentTask,
 ) => NatsPublisher | undefined;
+type SubagentIngressDispatcher = (
+  session: Session,
+  scope: IngressDispatchScope,
+) => Promise<boolean>;
 
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
@@ -110,6 +115,11 @@ export class SubagentCoordinator {
     ),
     private readonly publisherFactory: SubagentPublisherFactory = (task) =>
       createSubagentPublisher(parentSession, task),
+    // Injected by the handler, which owns worker scheduling. Defaulting to "no
+    // envelope transferred" keeps the child lease released rather than stranded
+    // when a caller builds a coordinator without the dispatcher.
+    private readonly dispatchNextIngress: SubagentIngressDispatcher = async () =>
+      false,
   ) {}
 
   private get isPersistentMode(): boolean {
@@ -504,6 +514,7 @@ export class SubagentCoordinator {
       await childSession.settleIngress("failed", {
         error: error instanceof Error ? error.message : String(error),
       });
+      await this.drainChildConversation(childSession, task);
       throw error;
     }
 
@@ -522,6 +533,37 @@ export class SubagentCoordinator {
     // Settling hands the conversation to whoever queued behind this run, so it
     // must come after the result is durably recorded above.
     await childSession.settleIngress("completed", { result: finalResponse });
+    await this.drainChildConversation(childSession, task);
+  }
+
+  /**
+   * Transfers ownership to the next queued envelope for this child, or releases
+   * the lease when nothing is waiting. Ephemeral children never own a
+   * generation, so both calls are no-ops for them.
+   */
+  private async drainChildConversation(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+  ): Promise<void> {
+    const transferred = await this.dispatchNextIngress(childSession, {
+      accountId: requireParentAccountId(this.parentSession),
+      agentId: task.agentId,
+      agentConfig: task.agentConfig,
+      conversationKey: task.conversationKey,
+      publicConversationKey: task.publicConversationKey,
+      endpointId: this.parentSession.endpointId,
+      projectSlug: this.parentSession.projectSlug,
+      environmentSlug: this.parentSession.environmentSlug,
+    }).catch((error) => {
+      logError("Subagent queued ingress dispatch failed", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    });
+    if (!transferred) {
+      await childSession.releaseConversationLease().catch(() => {});
+    }
   }
 
   /**

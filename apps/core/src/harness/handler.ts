@@ -48,6 +48,7 @@ import {
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
+  type IngressDispatchScope,
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
@@ -968,6 +969,9 @@ async function handleNatsWorkerRequest(
         session,
         event.agentConfig,
         waitUntilMs(context),
+        undefined,
+        undefined,
+        dispatchNextIngress,
       );
       // Define the async tool mode application map.
       const asyncToolCoordinator = new AsyncToolCoordinator(
@@ -1682,7 +1686,7 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
 /** Transfers the fenced owner to the next durable FIFO application and schedules it. */
 async function dispatchNextIngress(
   session: Session,
-  previous: DirectInboundEvent,
+  previous: IngressDispatchScope,
 ): Promise<boolean> {
   const next = await session.takeNextIngress();
   if (!next) return false;
@@ -1697,17 +1701,7 @@ async function dispatchNextIngress(
  * request never inherits a previous request's overrides.
  */
 async function dispatchAppliedIngress(
-  base: Pick<
-    DirectInboundEvent,
-    | "accountId"
-    | "agentId"
-    | "agentConfig"
-    | "conversationKey"
-    | "publicConversationKey"
-    | "endpointId"
-    | "projectSlug"
-    | "environmentSlug"
-  >,
+  base: IngressDispatchScope,
   next: AppliedIngress,
 ): Promise<void> {
   const delivery = next.delivery;
@@ -2157,6 +2151,9 @@ function createDirectContinuationSseBody(
           session,
           event.agentConfig,
           waitUntilMs(context),
+          undefined,
+          undefined,
+          dispatchNextIngress,
         );
         const asyncToolCoordinator = new AsyncToolCoordinator(
           session,
@@ -2268,6 +2265,9 @@ async function runAgentLoopUntilSubagentsIdle(
     session,
     agentConfig,
     waitUntilMs(context),
+    undefined,
+    undefined,
+    dispatchNextIngress,
   );
   const asyncToolCoordinator = new AsyncToolCoordinator(
     session,

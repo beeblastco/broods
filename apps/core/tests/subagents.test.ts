@@ -56,6 +56,7 @@ interface CoordinatorInternals {
     task: unknown,
     promptMessage: UserModelMessage,
   ): Promise<number>;
+  drainChildConversation(childSession: unknown, task: unknown): Promise<void>;
 }
 
 describe("SubagentCoordinator", () => {
@@ -499,6 +500,83 @@ describe("SubagentCoordinator", () => {
     } finally {
       runtime.mutate = originalMutation;
     }
+  });
+
+  it("hands a settled child conversation to its next queued envelope", async () => {
+    const scopes: Record<string, unknown>[] = [];
+    const releaseConversationLease = mock(async () => {});
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 1_000,
+      { emit: mock(async () => {}) } as never,
+      undefined,
+      async (_session, scope) => {
+        scopes.push(scope as unknown as Record<string, unknown>);
+        return true;
+      },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    await internals.drainChildConversation(
+      { releaseConversationLease } as never,
+      persistentChildTask(),
+    );
+
+    expect(scopes[0]).toMatchObject({
+      accountId: "account_1",
+      agentId: "agent_child",
+      conversationKey:
+        "acct:account_1:agent:agent_child:api:subagent-persistent-1",
+      publicConversationKey: "subagent-persistent-1",
+    });
+    // Ownership moved to the queued envelope, so releasing would strand it.
+    expect(releaseConversationLease).not.toHaveBeenCalled();
+  });
+
+  it("releases the child lease when nothing is queued behind it", async () => {
+    const releaseConversationLease = mock(async () => {});
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 1_000,
+      { emit: mock(async () => {}) } as never,
+      undefined,
+      async () => false,
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    await internals.drainChildConversation(
+      { releaseConversationLease } as never,
+      persistentChildTask(),
+    );
+
+    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the child lease when the queued dispatch throws", async () => {
+    const releaseConversationLease = mock(async () => {});
+    const { SubagentCoordinator } = await import("../src/harness/subagents.ts");
+    const coordinator = new SubagentCoordinator(
+      parentSession(),
+      { subagent: { enabled: true, mode: "persistent" } },
+      Date.now() + 1_000,
+      { emit: mock(async () => {}) } as never,
+      undefined,
+      async () => {
+        throw new Error("worker unavailable");
+      },
+    );
+    const internals = coordinator as unknown as CoordinatorInternals;
+
+    await internals.drainChildConversation(
+      { releaseConversationLease } as never,
+      persistentChildTask(),
+    );
+
+    expect(releaseConversationLease).toHaveBeenCalledTimes(1);
   });
 
   it("refuses to run a persistent child whose conversation is busy", async () => {

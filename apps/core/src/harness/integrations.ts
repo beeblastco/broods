@@ -147,6 +147,19 @@ export interface DirectInboundEvent {
   cronRun?: { cronId: string; runId: string };
 }
 
+/** The scope a queued envelope needs to be rebuilt into its own run. */
+export type IngressDispatchScope = Pick<
+  DirectInboundEvent,
+  | "accountId"
+  | "agentId"
+  | "agentConfig"
+  | "conversationKey"
+  | "publicConversationKey"
+  | "endpointId"
+  | "projectSlug"
+  | "environmentSlug"
+>;
+
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;
 }

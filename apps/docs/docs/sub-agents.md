@@ -137,13 +137,11 @@ Persistent children are admitted through the same conversation coordinator as to
 
 - **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set
 - **steer** — queued events are merged into the child's next step, exactly as for a top-level run
-- **continue** — send a new `run_subagent` call with the child's `conversationKey` once the child has settled; the run resumes the stored history
+- **continue** — a follow-up sent while the child is busy (ingress mode `followup` or `collect`) is queued durably and dispatched automatically once the child settles, exactly as for a top-level run
 
 The parent's own dispatch of a child uses `reject`, so dispatching into a conversation that is still busy surfaces the conflict instead of stalling.
 
-:::caution
-Follow-ups queued against a **busy** child (ingress mode `followup` or `collect`) are durably accepted but are not auto-dispatched when the child settles — only top-level runs drain their queue today. Resume explicitly, as above, or steer instead of queueing.
-:::
+A drained follow-up runs as an ordinary run of the child agent on that conversation — it is no longer a task of the original parent, so its result is not injected back into the parent's transcript. Steer instead when the parent still needs the answer. You can also continue explicitly by passing the child's `conversationKey` to a new `run_subagent` call once it settles.
 
 Ephemeral children cannot be controlled. They hold no durable conversation and take no owner generation, so there is nothing to fence a stop or steer against — this is the main reason persistent is the default.
 
