@@ -467,8 +467,8 @@ export default $config({
         })
       : null;
 
-    // Lambda assumes this to manage the connector's ENIs in the sandbox VPC. The SourceArn
-    // condition keeps it usable by network connectors only, not any other Lambda resource.
+    // Lambda assumes this to manage the connector's ENIs in the sandbox VPC. Network
+    // Connector assume-role calls do not include SourceArn/SourceAccount context.
     const sandboxConnectorRole = sandboxNetwork
       ? new aws.iam.Role("SandboxConnectorOperatorRole", {
           name: resourceName("microvm-connector", stage, region),
@@ -479,14 +479,6 @@ export default $config({
                 Effect: "Allow",
                 Principal: { Service: "lambda.amazonaws.com" },
                 Action: "sts:AssumeRole",
-                Condition: {
-                  StringEquals: {
-                    "aws:SourceAccount": AWS_ACCOUNT_ID,
-                  },
-                  ArnLike: {
-                    "aws:SourceArn": `arn:aws:lambda:${region}:${AWS_ACCOUNT_ID}:network-connector:*`,
-                  },
-                },
               },
             ],
           }),
@@ -500,35 +492,39 @@ export default $config({
           Version: "2012-10-17",
           Statement: [
             {
-              // EC2 Describe* takes no resource-level permissions.
-              Sid: "DescribeSandboxNetwork",
+              Sid: "CreateConnectorNetworkInterfaceInSubnets",
               Effect: "Allow",
-              Action: [
-                "ec2:DescribeNetworkInterfaces",
-                "ec2:DescribeSecurityGroups",
-                "ec2:DescribeSubnets",
-                "ec2:DescribeVpcs",
-              ],
-              Resource: ["*"],
-            },
-            {
-              Sid: "ManageConnectorNetworkInterfaces",
-              Effect: "Allow",
-              Action: [
-                "ec2:CreateNetworkInterface",
-                "ec2:DeleteNetworkInterface",
-              ],
-              Resource: $resolve({
-                securityGroupId: sandboxEgressSecurityGroup.id,
-                subnetIds: sandboxNetwork.privateSubnets,
-              }).apply(({ securityGroupId, subnetIds }) => [
-                `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
-                `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:security-group/${securityGroupId}`,
-                ...subnetIds.map(
+              Action: "ec2:CreateNetworkInterface",
+              Resource: sandboxNetwork.privateSubnets.apply((subnetIds) =>
+                subnetIds.map(
                   (subnetId) =>
                     `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:subnet/${subnetId}`,
                 ),
-              ]),
+              ),
+            },
+            {
+              Sid: "CreateConnectorNetworkInterfaceWithSecurityGroup",
+              Effect: "Allow",
+              Action: "ec2:CreateNetworkInterface",
+              Resource: [
+                $interpolate`arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:security-group/${sandboxEgressSecurityGroup.id}`,
+              ],
+            },
+            {
+              Sid: "CreateTaggedConnectorNetworkInterface",
+              Effect: "Allow",
+              Action: "ec2:CreateNetworkInterface",
+              Resource: [
+                `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
+              ],
+              Condition: {
+                "ForAllValues:StringEquals": {
+                  "aws:TagKeys": [
+                    "aws:lambda:networkConnectorName",
+                    "aws:lambda:networkConnectorId",
+                  ],
+                },
+              },
             },
             {
               Sid: "TagConnectorNetworkInterfaces",
@@ -540,6 +536,8 @@ export default $config({
               Condition: {
                 StringEquals: {
                   "ec2:CreateAction": "CreateNetworkInterface",
+                  "ec2:ManagedResourceOperator":
+                    "network-connectors.lambda.amazonaws.com",
                 },
               },
             },
