@@ -10,6 +10,12 @@ const HASH_HEX_LENGTH = 40;
 const SUBAGENT_TASK_ID_PREFIX = "subagent~";
 const UUID_PATTERN =
   "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+// Built once: both sit on the status/attach path, and the patterns are composed
+// from the constants above, never from caller input.
+const UUID_EXACT = new RegExp(`^${UUID_PATTERN}$`);
+const SUBAGENT_TASK_ID = new RegExp(
+  `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
+);
 
 export interface AccountAgentScopedKey {
   accountId: string;
@@ -202,7 +208,7 @@ export function createSubagentTaskId(
   if (!parentScope) {
     throw new Error("Subagent parent event must be account and agent scoped");
   }
-  if (!new RegExp(`^${UUID_PATTERN}$`).test(taskNonce)) {
+  if (!UUID_EXACT.test(taskNonce)) {
     throw new Error("Subagent task nonce must be a UUID");
   }
 
@@ -225,9 +231,7 @@ export function parseAccountAgentScopedKey(
 }
 
 export function subagentParentEventId(taskId: string): string | null {
-  const match = new RegExp(
-    `^${SUBAGENT_TASK_ID_PREFIX}([A-Za-z0-9_-]+)~${UUID_PATTERN}$`,
-  ).exec(taskId);
+  const match = SUBAGENT_TASK_ID.exec(taskId);
   if (!match?.[1]) {
     return null;
   }

@@ -53,6 +53,7 @@ export async function statusAccessDenial(
   context: StatusAccessContext,
 ): Promise<StatusAccessDenial | null> {
   const parentEventId = subagentParentEventId(request.publicEventId);
+
   return parentEventId
     ? subagentDenial(auth, request, parentEventId, context)
     : publicAgentDenial(auth, request, context);
@@ -82,6 +83,7 @@ async function publicAgentDenial(
       eventId: request.eventId,
     }),
   ]);
+
   return deploymentScopeMatches(auth, deployment) &&
     status?.eventId === request.eventId &&
     deploymentScopeMatches(auth, status.publicDeploymentIngress ?? null)

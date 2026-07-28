@@ -362,7 +362,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
       { replay: false, type: "text-delta" },
       { replay: false, type: "done" },
     ]);
-    await waitForGatewayMessage(sent, () => consumerClosed);
+    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
     expect(
       sent.filter(
         (message) =>
@@ -460,7 +460,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         (message) => message.type === "done" || message.type === "error",
       ),
     ).toHaveLength(0);
-    await waitForGatewayMessage(sent, () => consumerClosed);
+    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
@@ -598,7 +598,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
-    await waitForGatewayMessage(sent, () => consumerClosed, 700);
+    await waitForCondition(() => consumerClosed, 700, () => "consumer close");
     expect(
       sent.filter(
         (message) =>
@@ -1869,16 +1869,31 @@ async function waitForGatewayMessage(
   predicate: (message: Record<string, unknown>) => boolean,
   attempts = 100,
 ): Promise<void> {
+  await waitForCondition(
+    () => sent.some(predicate),
+    attempts,
+    () => `Timed out waiting for gateway message: ${JSON.stringify(sent)}`,
+  );
+}
+
+/**
+ * For conditions that do not depend on a sent frame. `sent.some(predicate)`
+ * never calls the predicate while `sent` is empty, so those waits would time
+ * out even once the condition held.
+ */
+async function waitForCondition(
+  condition: () => boolean,
+  attempts = 100,
+  describe: () => string = () => "condition",
+): Promise<void> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    if (sent.some(predicate)) {
+    if (condition()) {
       return;
     }
     await Bun.sleep(5);
   }
 
-  throw new Error(
-    `Timed out waiting for gateway message: ${JSON.stringify(sent)}`,
-  );
+  throw new Error(`Timed out waiting for ${describe()}`);
 }
 
 function zeroBufferConnection(

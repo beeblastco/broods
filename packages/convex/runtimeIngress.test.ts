@@ -125,13 +125,15 @@ describe("runtime ingress", () => {
       },
     });
 
-    expect(
-      await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
-        agentId: "test-agent",
-        eventId: "channel-owner",
-      }),
-    ).not.toHaveProperty("publicDeploymentIngress");
+    const status = await t.query(internal.runtimeIngress.getStatus, {
+      accountId,
+      agentId: "test-agent",
+      eventId: "channel-owner",
+    });
+
+    // Assert the row was found first: the negative below holds for null too.
+    expect(status?.eventId).toBe("channel-owner");
+    expect(status).not.toHaveProperty("publicDeploymentIngress");
   });
 
   for (const [kind, marker] of [

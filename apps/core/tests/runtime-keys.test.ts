@@ -113,5 +113,31 @@ describe("subagent task correlation", () => {
         "019833ce-7f5d-7000-8000-000000000001",
       ),
     ).toThrow("account and agent scoped");
+    expect(() =>
+      createSubagentTaskId("acct:acct_1:agent:agent_parent:api:event_1", "nope"),
+    ).toThrow("must be a UUID");
+  });
+
+  it("rejects a task id whose parent segment is not canonical base64url", () => {
+    // Length deliberately not a multiple of 3, so the encoding's final character
+    // carries slack bits and alias spellings exist at all.
+    const parent = "acct:acct_1:agent:agent_parent:api:event_10";
+    const canonical = Buffer.from(parent, "utf8").toString("base64url");
+    const nonce = "019833ce-7f5d-7000-8000-000000000001";
+    // An alias spelling: still [A-Za-z0-9_-], still decodes to the same parent,
+    // but re-encodes differently because its final character carries slack bits.
+    const alias = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+      .split("")
+      .map((character) => canonical.slice(0, -1) + character)
+      .find(
+        (candidate) =>
+          candidate !== canonical &&
+          Buffer.from(candidate, "base64url").toString("utf8") === parent,
+      );
+
+    expect(subagentParentEventId(`subagent~${canonical}~${nonce}`)).toBe(parent);
+    expect(alias).toBeDefined();
+    // Without the round-trip guard one parent would have several task-id spellings.
+    expect(subagentParentEventId(`subagent~${alias}~${nonce}`)).toBeNull();
   });
 });

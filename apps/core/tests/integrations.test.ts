@@ -1737,6 +1737,40 @@ describe("direct API ingress", () => {
     });
   });
 
+  it("rejects a child row whose conversation is scoped to another agent", async () => {
+    const fixture = subagentStatusFixture();
+    const response = await deploymentStatusRequest(
+      fixture.taskId,
+      fixture.childAgentId,
+      createHandlers({
+        handleStatusRequest: async () => {
+          throw new Error("unauthorized status must not reach the handler");
+        },
+      }),
+      {
+        // Same task, same account, but the row belongs to a different agent's
+        // conversation — otherwise the agentId query parameter alone would
+        // choose which child row a caller reads.
+        asyncAgentResultLoader: async () => ({
+          ...fixture.childResult,
+          conversationKey: scopedDirectConversationKey(
+            TEST_ACCOUNT.accountId,
+            "virtual_subagent_other",
+            "subagent-child",
+          ),
+        }),
+        ingressStatusLoader: async () => {
+          throw new Error("foreign child scope must be rejected before lookup");
+        },
+      },
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(responseJson(response)).toMatchObject({
+      code: "status_access_denied",
+    });
+  });
+
   it("routes async tool completion requests through account auth", async () => {
     const handledEvents: AsyncToolCompletionInboundEvent[] = [];
     const response = await routeIncomingEvent(
