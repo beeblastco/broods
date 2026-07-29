@@ -57,8 +57,10 @@ jobs:
         run: |
           set -uo pipefail
 
-          report=$(bun scripts/dependency-watch.ts)
-          exit_code=$?
+          # The runner starts bash with `-e`, so exit 1 ("updates found") has to
+          # be a checked command or the step dies before the report is read.
+          exit_code=0
+          report=$(bun scripts/dependency-watch.ts) || exit_code=$?
 
           {
             echo "report<<REPORT_EOF"
