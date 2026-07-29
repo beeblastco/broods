@@ -1,0 +1,65 @@
+# Dependabot version updates.
+#
+# Known limitation (npm ecosystem): Dependabot does not regenerate `bun.lock`
+# in a workspaces repo — https://github.com/dependabot/dependabot-core/issues/14223.
+# Every CI job here runs `bun install --frozen-lockfile`, so an npm PR arrives
+# red until someone checks the branch out, runs `bun install`, and pushes the
+# lockfile. Treat those PRs as "a release exists", and use
+# `bun run deps:check` for the authoritative picture.
+#
+# Everything is grouped. The AI SDK packages pin `ai` at an exact version inside
+# their own manifests, so one PR per package would each install a second copy of
+# `ai` and break type identity; the `ai-sdk` group keeps them in one commit.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore(deps)
+    ignore:
+      # Pinned deliberately in root `overrides`; a bump here fights that.
+      - dependency-name: "@types/node"
+      - dependency-name: tar
+      - dependency-name: webpack
+    groups:
+      ai-sdk:
+        patterns:
+          - ai
+          - "@ai-sdk/*"
+      aws-sdk:
+        patterns:
+          - "@aws-sdk/*"
+          - sst
+      types:
+        patterns:
+          - "@types/*"
+      remaining:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - ai
+          - "@ai-sdk/*"
+          - "@aws-sdk/*"
+          - "@types/*"
+          - sst
