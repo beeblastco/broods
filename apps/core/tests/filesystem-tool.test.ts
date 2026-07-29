@@ -83,8 +83,8 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     Boolean(
       error &&
-      typeof error === "object" &&
-      (error as { name?: string }).name === "NoSuchKey",
+        typeof error === "object" &&
+        (error as { name?: string }).name === "NoSuchKey",
     ),
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -183,7 +183,7 @@ function ownSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
 
 // The workspace borrows a different sandbox as its execution layer; the agent's own
 // sandbox stays beside it, mounted by nothing.
-function borrowedSandboxCtx() {
+function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [
       {
@@ -195,6 +195,7 @@ function borrowedSandboxCtx() {
           provider: "lambda",
           network: { mode: "allow-all" },
           controlPlane: { sandboxConfigId: "sb_borrowed" },
+          ...sandboxOverrides,
         },
       },
     ],
@@ -246,8 +247,9 @@ async function approvalStatus(
     agentSandboxPermissionMode?: unknown;
   },
 ) {
-  const { compatibilityApprovalStatus } =
-    await import("../src/harness/policy.ts");
+  const { compatibilityApprovalStatus } = await import(
+    "../src/harness/policy.ts"
+  );
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
@@ -261,7 +263,8 @@ async function approvalStatus(
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
-    [string, { body: string }] | undefined;
+    | [string, { body: string }]
+    | undefined;
   return { payload: JSON.parse(call![1].body) };
 }
 
@@ -271,6 +274,7 @@ async function tool(
 ) {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
   return mod.default(ctx)[name] as {
+    description: string;
     inputSchema: unknown;
     execute(
       input: Record<string, unknown>,
@@ -342,8 +346,9 @@ describe("sandbox tool set", () => {
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { sandboxSupportsBackgroundJobs } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     expect(
       sandboxSupportsBackgroundJobs({
         provider: "lambda",
@@ -528,6 +533,39 @@ describe("sandbox tool set", () => {
     });
     expect(result.type).toBe("error-text");
     expect(result.value).toContain("outside the workspace");
+  });
+
+  it("bash describes the write guard only where it actually applies", async () => {
+    const reserved = {
+      persistent: true,
+      controlPlane: { accountId: "acct_1", sandboxConfigId: "sb_own" },
+    };
+    // Own + reserved: the guard steps aside, so promising a rejection would be a
+    // lie the model then works around instead of trusting the tool.
+    const own = await tool("bash", ownSandboxCtx(reserved));
+    expect(own.description).not.toContain(
+      "absolute path elsewhere are rejected",
+    );
+    expect(own.description).toContain(
+      "writing outside the workspace directory",
+    );
+
+    // Own but ephemeral: nothing outside the mount survives the call.
+    const ephemeral = await tool("bash", ownSandboxCtx());
+    expect(ephemeral.description).toContain(
+      "Writes to an absolute path elsewhere are rejected",
+    );
+
+    // Borrowed: the filesystem does survive between calls, and the description has
+    // to say so — the durability bullet is about outliving the reservation.
+    const borrowed = await tool(
+      "bash",
+      borrowedSandboxCtx({ persistent: true }),
+    );
+    expect(borrowed.description).toContain(
+      "absolute path elsewhere are rejected",
+    );
+    expect(borrowed.description).toContain("survive across calls");
   });
 
   it("bash offers the standalone sandbox flag only when it is unmounted", async () => {
@@ -979,8 +1017,9 @@ describe("memory tool", () => {
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -989,8 +1028,9 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     for (const path of [
       "../etc/passwd",
       "a/../../b",

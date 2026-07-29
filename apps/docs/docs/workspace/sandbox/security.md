@@ -38,7 +38,10 @@ and **workspace scoping** (a run can only touch its own files).
   with the workspace path to use instead. `/tmp` and `/var/tmp` are exempt — writing there
   is a deliberate "this is throwaway". The gate also steps aside when the workspace runs on
   the agent's **own** `persistent` sandbox, because that filesystem survives between calls
-  (see [Whose sandbox is it?](../index.md)). See [Network](./lambda.md) for the egress
+  (see [Whose sandbox is it?](../index.md)). A `persistent` sandbox the workspace only
+  **borrows** keeps its filesystem between calls too, but stays gated — it is an execution
+  layer, not the agent's machine. Either way the reservation ends eventually, so the mount
+  is still the only storage that outlives it. See [Network](./lambda.md) for the egress
   boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 

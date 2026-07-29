@@ -37,6 +37,7 @@ import {
   toolError,
   toolText,
   workspaceParamSchema,
+  writesOutsideAllowed,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
 
@@ -129,24 +130,66 @@ Usage notes:
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
-- DURABILITY: the workspace directory is the only storage that survives. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path. Writes elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.
+- DURABILITY: the workspace directory is the only storage that outlives the sandbox. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path.${writeGuardNote(context)}
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${ownSandboxNote(context)}${sandboxTargetNote(context)}${
-    backgroundAvailable(context)
-      ? `
-- This workspace is reserved (persistent): packages installed under $HOME (e.g. a uv/venv or npm prefix) and files survive across calls. Set background:true for long-running commands; the result is delivered back automatically when it finishes, and you can check on it with async_status.`
-      : ""
-  }`;
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${reservedNote(context)}${ownSandboxNote(context)}${sandboxTargetNote(context)}${backgroundNote(context)}`;
+}
+
+// Detached jobs need a reserved sandbox, so this rides alongside the two reserved
+// notes rather than repeating inside each of them.
+function backgroundNote(context: SandboxToolContext): string {
+  if (!backgroundAvailable(context)) {
+    return "";
+  }
+
+  return `
+- Set background:true for long-running commands in a reserved workspace; the result is delivered back automatically when it finishes, and you can check on it with async_status.`;
+}
+
+// The write guard is not on everywhere: it steps aside on the agent's own reserved
+// sandbox, so claiming "writes elsewhere are rejected" there would be a lie the model
+// then works around. Stay silent when every workspace is exempt.
+function writeGuardNote(context: SandboxToolContext): string {
+  const guarded = context.workspaces.filter(
+    (workspace) => !writesOutsideAllowed(workspace, context.agentSandbox),
+  );
+  if (guarded.length === 0) {
+    return "";
+  }
+
+  const scope =
+    guarded.length === context.workspaces.length
+      ? "Writes"
+      : `In ${guarded.map((workspace) => workspace.name).join(", ")}, writes`;
+
+  return ` ${scope} to an absolute path elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.`;
+}
+
+// Scenario note: a reserved sandbox the agent only borrows. Its filesystem does
+// survive between calls — the durability bullet above is about what outlives the
+// reservation, and saying nothing here would read as "this resets every call".
+function reservedNote(context: SandboxToolContext): string {
+  const names = context.workspaces
+    .filter(
+      (workspace) =>
+        workspace.sandbox?.persistent === true &&
+        !isAgentOwnSandbox(workspace, context.agentSandbox),
+    )
+    .map((workspace) => workspace.name);
+  if (names.length === 0) {
+    return "";
+  }
+
+  return `
+- ${names.join(", ")} run on a reserved (persistent) sandbox: packages installed under $HOME (e.g. a uv/venv or npm prefix) survive across calls until the reservation ends. It is an execution layer you borrow, so writes outside the workspace directory are still rejected — keep results in the workspace.`;
 }
 
 // Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
 // machine around them is the agent's too and the durability guard steps aside.
 function ownSandboxNote(context: SandboxToolContext): string {
   const names = context.workspaces
-    .filter(
-      (workspace) =>
-        workspace.sandbox?.persistent === true &&
-        isAgentOwnSandbox(workspace, context.agentSandbox),
+    .filter((workspace) =>
+      writesOutsideAllowed(workspace, context.agentSandbox),
     )
     .map((workspace) => workspace.name);
   if (names.length === 0) {
@@ -269,8 +312,13 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
       async execute(input, options) {
-        const { command, workspace, sandbox: onSandbox, background, pty } =
-          input as BashInput;
+        const {
+          command,
+          workspace,
+          sandbox: onSandbox,
+          background,
+          pty,
+        } = input as BashInput;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
@@ -296,9 +344,10 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           }
           const outsideWorkspace = ws
             ? outsideWorkspaceCommand(trimmed, {
-                persistentOwnSandbox:
-                  ws.sandbox?.persistent === true &&
-                  isAgentOwnSandbox(ws, context.agentSandbox),
+                persistentOwnSandbox: writesOutsideAllowed(
+                  ws,
+                  context.agentSandbox,
+                ),
               })
             : undefined;
           if (outsideWorkspace) {

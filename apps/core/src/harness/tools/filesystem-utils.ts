@@ -348,7 +348,10 @@ export function bashNeedsApproval(
 ): boolean {
   try {
     if (!targetsAgentSandbox(context, selection)) {
-      const workspace = resolveWorkspace(context.workspaces, selection.workspace);
+      const workspace = resolveWorkspace(
+        context.workspaces,
+        selection.workspace,
+      );
       // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
       // call falls through to the tool's clean "no sandbox available" rejection.
       if (workspace && !workspace.sandbox) {
@@ -537,9 +540,10 @@ export function disallowedRuntimeCommand(
   return undefined;
 }
 
-// The workspace mount is the only durable storage a sandbox has; the rest of its
-// filesystem dies with the VM. So writes are what this guard is about — reading a
-// sandbox's own system files risks nothing and is often how a task gets done.
+// The workspace mount is the only storage that outlives the sandbox; the rest of the
+// filesystem dies with the VM, or with the reservation when there is one. So writes
+// are what this guard is about — reading a sandbox's own system files risks nothing
+// and is often how a task gets done.
 export function outsideWorkspaceCommand(
   command: string,
   options: { persistentOwnSandbox?: boolean } = {},
@@ -569,6 +573,21 @@ export function outsideWorkspaceCommand(
   }
 
   return undefined;
+}
+
+/**
+ * Whether the write guard steps aside for this workspace. One predicate for both
+ * callers on purpose: the bash description promises exactly what the guard enforces,
+ * and two copies of this condition would drift into the tool lying to the model.
+ */
+export function writesOutsideAllowed(
+  workspace: ResolvedWorkspace,
+  agentSandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  return (
+    workspace.sandbox?.persistent === true &&
+    isAgentOwnSandbox(workspace, agentSandbox)
+  );
 }
 
 /**
