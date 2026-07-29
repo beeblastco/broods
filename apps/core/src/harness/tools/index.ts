@@ -40,6 +40,7 @@ import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
+  agentSandboxTarget,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
 } from "./filesystem-utils.ts";
@@ -62,10 +63,11 @@ export interface ToolContext {
   // Each workspace carries its own effective sandbox + permissionMode (or no
   // sandbox => read-only). See resolveAgentRuntime.
   workspaces?: ResolvedWorkspace[];
-  // Agent-level sandbox for stateless bash (no workspace). Undefined => no
-  // stateless bash. Workspace-backed runs use the workspace's own sandbox instead.
-  statelessSandbox?: SandboxExecutorConfig;
-  statelessPermissionMode?: SandboxPermissionMode;
+  // The agent's own sandbox (`config.sandbox`). Backs bash outright when no
+  // workspace is attached, and stays reachable as its own bash target when the
+  // attached workspaces all borrow a different sandbox. Undefined => no own sandbox.
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
   config: AgentToolConfig;
   modelProviderName: AccountModelProviderName;
   modelProvider: unknown;
@@ -87,30 +89,34 @@ export async function createTools(
   const tools: ToolSet = {};
 
   // Sandbox tool surface. Tool availability is derived per workspace:
-  //  - bash: stateless (no workspace) on the agent-level sandbox, or in any
-  //    sandbox-backed workspace.
+  //  - bash: the agent's own sandbox (no workspace, or the standalone target),
+  //    or in any sandbox-backed workspace.
   //  - read/glob: every workspace (sandbox-backed via the mount, read-only
   //    workspaces straight from S3).
   //  - write/edit/grep: sandbox-backed workspaces only.
   // Per-call sandbox approval is handled by the harness-level v7 toolApproval.
   const workspaces = context.workspaces ?? [];
   const sandboxWorkspaces = workspaces.filter((workspace) => workspace.sandbox);
-  const statelessSandbox =
-    workspaces.length === 0 ? context.statelessSandbox : undefined;
-  const statelessOptions =
-    typeof statelessSandbox?.options === "object" &&
-    statelessSandbox.options !== null
-      ? (statelessSandbox.options as Record<string, unknown>)
+  const agentSandbox = context.agentSandbox;
+  const sandboxOptions =
+    typeof agentSandbox?.options === "object" && agentSandbox.options !== null
+      ? (agentSandbox.options as Record<string, unknown>)
       : {};
-  const hasStatelessReservation =
-    typeof statelessOptions.reservationKey === "string" &&
-    statelessOptions.reservationKey.trim().length > 0;
-  if (statelessSandbox?.persistent === true && !hasStatelessReservation) {
-    // Persistence is keyed by workspace namespace; a stateless (no-workspace)
-    // sandbox needs an explicit options.reservationKey to reconnect — warn so a
-    // misconfiguration is visible rather than silently behaving ephemerally.
+  const hasSandboxReservation =
+    typeof sandboxOptions.reservationKey === "string" &&
+    sandboxOptions.reservationKey.trim().length > 0;
+  // Persistence is keyed by workspace namespace, so a run that reaches the sandbox
+  // without one needs an explicit options.reservationKey to reconnect.
+  const runsWithoutNamespace =
+    workspaces.length === 0 ||
+    agentSandboxTarget(workspaces, agentSandbox) !== undefined;
+  if (
+    agentSandbox?.persistent === true &&
+    runsWithoutNamespace &&
+    !hasSandboxReservation
+  ) {
     logWarn(
-      "persistent sandbox attached without a workspace; it runs ephemerally",
+      "persistent sandbox reachable without a workspace; those runs are ephemeral",
       {
         conversationKey: context.conversationKey,
       },
@@ -138,19 +144,20 @@ export async function createTools(
         }
       : undefined;
 
-  // bash: stateless (no workspace) on the agent sandbox, or in any sandbox-backed workspace.
+  // bash: the agent's own sandbox, or any sandbox-backed workspace.
   // Pass the full workspace list so omitting `workspace` preserves the configured
   // default; if that default is read-only, the tool returns a clear error instead
   // of silently selecting the first writable workspace.
-  if (statelessSandbox || sandboxWorkspaces.length > 0) {
+  if (agentSandbox || sandboxWorkspaces.length > 0) {
     Object.assign(
       sandboxTools,
       bashTool({
-        workspaces,
-        ...(statelessSandbox
+        workspaces: workspaces,
+        ...(agentSandbox
           ? {
-              statelessSandbox,
-              statelessPermissionMode: context.statelessPermissionMode ?? "ask",
+              agentSandbox: agentSandbox,
+              agentSandboxPermissionMode:
+                context.agentSandboxPermissionMode ?? "ask",
             }
           : {}),
         ...(backgroundContext ? { background: backgroundContext } : {}),

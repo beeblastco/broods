@@ -21,8 +21,10 @@ import type {
 } from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
 import {
+  agentSandboxTarget,
   disallowedRuntimeCommand,
   formatRunText,
+  isAgentOwnSandbox,
   outsideWorkspaceCommand,
   resolveWorkspace,
   runSandbox,
@@ -31,6 +33,7 @@ import {
   sandboxRunMetadata,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
+  targetsAgentSandbox,
   toolError,
   toolText,
   workspaceParamSchema,
@@ -63,7 +66,10 @@ function backgroundAvailable(context: SandboxToolContext): boolean {
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
+  const workspaceProp = workspaceParamSchema(
+    context.workspaces,
+    agentSandboxTarget(context.workspaces, context.agentSandbox),
+  );
   return {
     type: "object",
     properties: {
@@ -94,7 +100,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
 
 function description(context: SandboxToolContext): string {
   if (context.workspaces.length === 0) {
-    const runtimes = runtimeDescription(context.statelessSandbox);
+    const runtimes = runtimeDescription(context.agentSandbox);
     return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
 
 Usage notes:
@@ -114,12 +120,42 @@ Usage notes:
 - Each command starts in the current workspace directory; use relative paths.
 - DURABILITY: the workspace directory is the only storage that survives. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path. Writes elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.
 - Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
-- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${
+- Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${ownSandboxNote(context)}${sandboxTargetNote(context)}${
     backgroundAvailable(context)
       ? `
 - This workspace is reserved (persistent): packages installed under $HOME (e.g. a uv/venv or npm prefix) and files survive across calls. Set background:true for long-running commands; the result is delivered back automatically when it finishes, and you can check on it with async_status.`
       : ""
   }`;
+}
+
+// Scenario note: these workspaces sit on the agent's OWN reserved sandbox, so the
+// machine around them is the agent's too and the durability guard steps aside.
+function ownSandboxNote(context: SandboxToolContext): string {
+  const names = context.workspaces
+    .filter(
+      (workspace) =>
+        workspace.sandbox?.persistent === true &&
+        isAgentOwnSandbox(workspace, context.agentSandbox),
+    )
+    .map((workspace) => workspace.name);
+  if (names.length === 0) {
+    return "";
+  }
+
+  return `
+- Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
+}
+
+// Scenario note: the agent's own sandbox is not mounted by any workspace, so it is
+// only reachable by naming it.
+function sandboxTargetNote(context: SandboxToolContext): string {
+  const target = agentSandboxTarget(context.workspaces, context.agentSandbox);
+  if (!target) {
+    return "";
+  }
+
+  return `
+- workspace:"${target}" runs on your own sandbox instead, with no workspace mounted. Nothing written there is kept, so use it for throwaway work and a workspace for anything that must survive.`;
 }
 
 async function dispatchBackground(
@@ -229,16 +265,19 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           return toolError("Error: command is required");
         }
         try {
-          const ws =
-            context.workspaces.length > 0
-              ? resolveWorkspace(context.workspaces, workspace)
-              : undefined;
-          const sandbox = ws?.sandbox ?? context.statelessSandbox;
+          const ws = targetsAgentSandbox(context, workspace)
+            ? undefined
+            : resolveWorkspace(context.workspaces, workspace);
+          const sandbox = ws?.sandbox ?? context.agentSandbox;
           if (!sandbox) {
             return toolError("Error: no sandbox available for this command");
           }
           const outsideWorkspace = ws
-            ? outsideWorkspaceCommand(trimmed)
+            ? outsideWorkspaceCommand(trimmed, {
+                persistentOwnSandbox:
+                  ws.sandbox?.persistent === true &&
+                  isAgentOwnSandbox(ws, context.agentSandbox),
+              })
             : undefined;
           if (outsideWorkspace) {
             return toolError(outsideWorkspace);

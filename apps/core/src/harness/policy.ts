@@ -162,14 +162,14 @@ export function policyDecisionLogMessage(input: {
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
-  statelessSandbox?: SandboxExecutorConfig;
-  statelessPermissionMode?: SandboxPermissionMode;
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
   policyApproval?: RuntimeToolApproval;
 }): RuntimeToolApproval | undefined {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
-    Boolean(options.statelessSandbox);
+    Boolean(options.agentSandbox);
 
   if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
 
@@ -190,8 +190,8 @@ export function compatibilityApprovalStatus(
   options: {
     configuredApprovals: ReadonlyMap<string, true>;
     workspaces: ResolvedWorkspace[];
-    statelessSandbox?: SandboxExecutorConfig;
-    statelessPermissionMode?: SandboxPermissionMode;
+    agentSandbox?: SandboxExecutorConfig;
+    agentSandboxPermissionMode?: SandboxPermissionMode;
   },
 ): ToolApprovalStatus {
   const record =
@@ -205,11 +205,9 @@ export function compatibilityApprovalStatus(
     return bashNeedsApproval(
       {
         workspaces: options.workspaces,
-        ...(options.statelessSandbox
-          ? { statelessSandbox: options.statelessSandbox }
-          : {}),
-        ...(options.statelessPermissionMode
-          ? { statelessPermissionMode: options.statelessPermissionMode }
+        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+        ...(options.agentSandboxPermissionMode
+          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
           : {}),
       },
       workspace,

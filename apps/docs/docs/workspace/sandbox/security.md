@@ -33,8 +33,10 @@ and **workspace scoping** (a run can only touch its own files).
 - What `bash` does gate is **durability**, not access: the workspace mount is the only
   storage that outlives the sandbox, so writes to an absolute path outside it are rejected
   with the workspace path to use instead. `/tmp` and `/var/tmp` are exempt — writing there
-  is a deliberate "this is throwaway". See [Network](./lambda.md) for the egress boundary,
-  which is a genuine security control.
+  is a deliberate "this is throwaway". The gate also steps aside when the workspace runs on
+  the agent's **own** `persistent` sandbox, because that filesystem survives between calls
+  (see [Whose sandbox is it?](../index.md)). See [Network](./lambda.md) for the egress
+  boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 
 ## Runtime allow-list

@@ -973,8 +973,8 @@ export function createEphemeralChildSession(
     environmentSlug: childSession.environmentSlug,
     filesystemNamespace: () => childSession.filesystemNamespace(),
     resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
-    statelessSandbox: () => childSession.statelessSandbox(),
-    statelessPermissionMode: () => childSession.statelessPermissionMode(),
+    agentSandbox: () => childSession.agentSandbox(),
+    agentSandboxPermissionMode: () => childSession.agentSandboxPermissionMode(),
     persistModelMessages: async () => [],
     loadSkillPrompt: (
       allowedSkillPaths: string[],

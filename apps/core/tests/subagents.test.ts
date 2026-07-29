@@ -938,8 +938,8 @@ describe("SubagentCoordinator", () => {
       environmentSlug: "development",
       filesystemNamespace: () => "ns",
       resolvedWorkspaces: () => [],
-      statelessSandbox: () => undefined,
-      statelessPermissionMode: () => "ask",
+      agentSandbox: () => undefined,
+      agentSandboxPermissionMode: () => "ask",
       loadSkillPrompt: async () => "",
       createEphemeralTurnContext: async () => ({ system: [] }),
     } as never;

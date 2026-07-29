@@ -270,7 +270,7 @@ export async function runAgentLoop(
     conversationKey: session.conversationKey,
   };
   const resolvedWorkspaces = session.resolvedWorkspaces();
-  const statelessSandbox = session.statelessSandbox();
+  const agentSandbox = session.agentSandbox();
   // A subagent run is its own top-level trace, distinguished by kind "subtask" and
   // linked to the parent via parent.trace_id/parent.task_id attributes (set below).
   // A normal run is a "task". Both are roots, so each gets its own scaled waterfall.
@@ -302,7 +302,7 @@ export async function runAgentLoop(
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([
       agentConfig,
-      statelessSandbox,
+      agentSandbox,
       resolvedWorkspaces,
     ]),
   });
@@ -449,8 +449,8 @@ export async function runAgentLoop(
         accountId: session.accountId,
         conversationKey: session.conversationKey,
         workspaces: resolvedWorkspaces,
-        statelessSandbox: statelessSandbox,
-        statelessPermissionMode: session.statelessPermissionMode(),
+        agentSandbox: agentSandbox,
+        agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
         modelProviderName: configuredModel.providerName,
         modelProvider: configuredModel.provider,
         session: session,
@@ -509,8 +509,8 @@ export async function runAgentLoop(
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals,
     workspaces: resolvedWorkspaces,
-    ...(statelessSandbox ? { statelessSandbox } : {}),
-    statelessPermissionMode: session.statelessPermissionMode(),
+    ...(agentSandbox ? { agentSandbox } : {}),
+    agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
     ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
   });
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;

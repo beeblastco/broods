@@ -38,6 +38,10 @@ export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 // Everything else outside the workspace mount looks like work about to be lost.
 const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 
+// Names the agent's own sandbox can take in the `workspace` selector. The first one
+// no workspace has claimed wins, so a workspace called "sandbox" keeps its own name.
+const AGENT_SANDBOX_TARGETS = ["sandbox", "agent-sandbox"];
+
 // Absolute write targets, by construct: redirection, tee, dd, and the file-producing
 // commands whose destination is an argument. `path` is the captured destination.
 const ABSOLUTE_WRITE_PATTERNS = [
@@ -78,12 +82,13 @@ function isFatalSandboxSetupError(value: string): boolean {
 }
 
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
-// may operate on. `statelessSandbox` is only set for `bash` when there are no
-// workspaces, so it runs ephemerally on the agent-level sandbox.
+// may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
+// backs `bash` outright when no workspace is attached, and stays separately
+// reachable when workspaces are — see agentSandboxTarget.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
-  statelessSandbox?: SandboxExecutorConfig;
-  statelessPermissionMode?: SandboxPermissionMode;
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
   // Set when the parent session can track background jobs: bash exposes a
   // `background` flag for persistent workspaces and records each job as an
   // AsyncToolResult keyed by these ids so `async_status` can find it. `delivery`
@@ -117,6 +122,45 @@ function statelessReservationKeyFor(
   return typeof reservationKey === "string" && reservationKey.trim()
     ? reservationKey.trim()
     : undefined;
+}
+
+/**
+ * The name the agent's own sandbox answers to in the `workspace` selector, or
+ * undefined when it needs no name of its own: with no workspaces `bash` already
+ * runs there, and when a workspace mounts that same sandbox, the workspace IS the
+ * way in — a second target would reach the same machine with nothing mounted.
+ */
+export function agentSandboxTarget(
+  workspaces: ResolvedWorkspace[],
+  agentSandbox: SandboxExecutorConfig | undefined,
+): string | undefined {
+  if (!agentSandbox || workspaces.length === 0) {
+    return undefined;
+  }
+  if (
+    workspaces.some((workspace) => isAgentOwnSandbox(workspace, agentSandbox))
+  ) {
+    return undefined;
+  }
+  const taken = new Set(workspaces.map((workspace) => workspace.name));
+
+  return AGENT_SANDBOX_TARGETS.find((name) => !taken.has(name));
+}
+
+/**
+ * Whether this workspace is mounted in the agent's OWN sandbox rather than
+ * borrowing a different one. Identity is the sandbox record, so a workspace that
+ * inherits the agent default and one that names it explicitly are the same case.
+ */
+export function isAgentOwnSandbox(
+  workspace: ResolvedWorkspace,
+  agentSandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  const owned = agentSandbox?.controlPlane?.sandboxConfigId;
+
+  return Boolean(
+    owned && workspace.sandbox?.controlPlane?.sandboxConfigId === owned,
+  );
 }
 
 export function sandboxSupportsBackgroundJobs(
@@ -153,16 +197,24 @@ export function resolveWorkspace(
   return workspace;
 }
 
-export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
+export function workspaceParamSchema(
+  workspaces: ResolvedWorkspace[],
+  sandboxTarget?: string,
+) {
+  const names = [
+    ...workspaces.map((w) => w.name),
+    ...(sandboxTarget ? [sandboxTarget] : []),
+  ];
   // Only expose the selector when there is a genuine choice.
-  if (workspaces.length <= 1) {
+  if (names.length <= 1) {
     return undefined;
   }
   return {
     type: "string" as const,
-    enum: workspaces.map((w) => w.name),
-    description:
-      "Named workspace to operate in. Omit to use the default workspace.",
+    enum: names,
+    description: sandboxTarget
+      ? `Where to run: a named workspace, or "${sandboxTarget}" for your own sandbox with no workspace mounted. Omit to use the default workspace.`
+      : "Named workspace to operate in. Omit to use the default workspace.",
   };
 }
 
@@ -296,7 +348,7 @@ export function bashNeedsApproval(
   requested?: string,
 ): boolean {
   try {
-    if (context.workspaces.length > 0) {
+    if (!targetsAgentSandbox(context, requested)) {
       const workspace = resolveWorkspace(context.workspaces, requested);
       // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
       // call falls through to the tool's clean "no sandbox available" rejection.
@@ -305,10 +357,27 @@ export function bashNeedsApproval(
       }
       return permissionModeFor(workspace) !== "bypass";
     }
-    return (context.statelessPermissionMode ?? "ask") !== "bypass";
+    return (context.agentSandboxPermissionMode ?? "ask") !== "bypass";
   } catch {
     return true;
   }
+}
+
+/**
+ * Whether this call runs on the agent's own sandbox with no workspace mounted:
+ * either the agent has no workspaces at all, or it explicitly selected the
+ * standalone sandbox target.
+ */
+export function targetsAgentSandbox(
+  context: SandboxToolContext,
+  requested?: string,
+): boolean {
+  if (context.workspaces.length === 0) {
+    return true;
+  }
+  const target = agentSandboxTarget(context.workspaces, context.agentSandbox);
+
+  return target !== undefined && requested === target;
 }
 
 function permissionModeFor(
@@ -470,12 +539,20 @@ export function disallowedRuntimeCommand(
 // The workspace mount is the only durable storage a sandbox has; the rest of its
 // filesystem dies with the VM. So writes are what this guard is about — reading a
 // sandbox's own system files risks nothing and is often how a task gets done.
-export function outsideWorkspaceCommand(command: string): string | undefined {
+export function outsideWorkspaceCommand(
+  command: string,
+  options: { persistentOwnSandbox?: boolean } = {},
+): string | undefined {
   const scanned = stripHereDocBodies(command);
   // Traversal is a containment concern, not a durability one: read/write/edit reject
   // `..` too, and bash must not become the way around them.
   if (/(^|[\s"'=:{([<>,])\.\.(?:[\/\s;&|)]|$)/.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
+  }
+  // A reserved sandbox the agent owns keeps its whole filesystem between calls, so
+  // writing outside the mount there loses nothing until the reservation ends.
+  if (options.persistentOwnSandbox === true) {
+    return undefined;
   }
 
   const target = absoluteWriteTarget(scanned);

@@ -23,7 +23,9 @@ sandboxes, and lets a single workspace be **read-only**. A read-only workspace r
 a service-managed read-only mount by default (so it sees committed writes immediately);
 `sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
 reads lag mount writes — see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
-stateless `bash` when there is no workspace at all.
+stateless `bash` when there is no workspace at all, and stays directly reachable when
+every attached workspace borrows a different sandbox — see
+[Whose sandbox is it?](#whose-sandbox-is-it) below.
 
 ```mermaid
 flowchart LR
@@ -115,10 +117,11 @@ union across its workspaces:
 
 Plus the agent-level cases:
 
-| Agent references              | Tools exposed                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| sandbox, **no** workspace     | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
-| neither sandbox nor workspace | none                                                                           |
+| Agent references                                         | Tools exposed                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| sandbox, **no** workspace                                | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` target named `sandbox` (see below)          |
+| neither sandbox nor workspace                            | none                                                                           |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -132,6 +135,25 @@ implementation details for logs and debugging.
 > `write`/`edit`/`grep` returns a clean "workspace is read-only" error, and `bash` reports
 > "no sandbox available for this command" — in both cases with **no approval prompt**,
 > because a workspace with no sandbox has no `permissionMode` to ask against.
+
+## Whose sandbox is it?
+
+Two agents can reach the same workspace through very different arrangements, and the
+difference decides how much of the machine the agent gets. What matters is whether the
+workspace's effective sandbox **is the one the agent itself references**:
+
+| Arrangement                                                 | What the agent gets                                                                                                                                                  |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.   |
+| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).      |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable as its own `bash` target named `sandbox` — with no workspace mounted, so nothing is kept. |
+
+Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
+resolves both to the same record, so both land in the first row.
+
+The `workspace` argument keeps defaulting to the **default workspace**, never to the
+standalone sandbox target. Relative paths therefore keep landing in durable storage unless
+the model deliberately asks for the sandbox instead.
 
 ## permissionMode
 

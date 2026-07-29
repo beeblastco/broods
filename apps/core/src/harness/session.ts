@@ -746,15 +746,16 @@ export class Session {
   }
 
   /**
-   * Agent-level sandbox for stateless bash (no workspace attached). Workspace-backed
-   * tools use each workspace's own effective sandbox (see resolvedWorkspaces). Undefined
-   * when no agent-level sandbox is referenced.
+   * The agent's own sandbox (`config.sandbox`). Backs bash when no workspace is
+   * attached, is the fallback sandbox for workspaces that declare none, and stays
+   * separately reachable when every workspace borrows a different one. Undefined
+   * when the agent references no sandbox.
    */
-  statelessSandbox(): SandboxExecutorConfig | undefined {
+  agentSandbox(): SandboxExecutorConfig | undefined {
     return this.resolvedRuntime?.sandbox;
   }
 
-  statelessPermissionMode(): SandboxPermissionMode {
+  agentSandboxPermissionMode(): SandboxPermissionMode {
     return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
   }
 
