@@ -9,6 +9,11 @@ import type { Id } from "./_generated/dataModel";
 export const handle = httpAction(async (ctx, req) => {
   try {
     const auth = await bearerAuth(req);
+    if (!auth) {
+
+      return json({ error: "Authorization Bearer token is required" }, 401);
+    }
+
     if (req.method === "GET") {
       const context = await ctx.runMutation(
         internal.cliAuth.getOnboardingContext,
@@ -58,25 +63,27 @@ export const handle = httpAction(async (ctx, req) => {
 
     return json({ error: "Method not allowed" }, 405);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status =
-      message.includes("Authorization") || message.includes("token")
-        ? 401
-        : 400;
+    console.error("CLI onboarding request failed", error);
+    if (error instanceof SyntaxError) {
 
-    return json({ error: message }, status);
+      return json({ error: "Request body must be valid JSON" }, 400);
+    }
+
+    return json({ error: "Onboarding request failed" }, 500);
   }
 });
 
 async function bearerAuth(
   req: Request,
-): Promise<{ token: string; secretHash: string }> {
+): Promise<{ secretHash: string } | null> {
   const header = req.headers.get("Authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) throw new Error("Authorization Bearer token is required");
+  if (!match?.[1]) {
+
+    return null;
+  }
 
   return {
-    token: match[1],
     secretHash: await sha256Hex(match[1]),
   };
 }

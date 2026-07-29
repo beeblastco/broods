@@ -64,6 +64,7 @@ jobs:
   rollout:
     needs: build
     if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
+    permissions: {}
     uses: ./.github/workflows/rollout.yaml
     with:
       workflow: ${{ github.ref_name == 'main' && 'deploy-gateway.yaml' || 'deploy-gateway-dev.yaml' }}

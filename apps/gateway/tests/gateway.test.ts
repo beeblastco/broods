@@ -1200,7 +1200,7 @@ test("routes a runtime key to the matching core upstream", async () => {
     ["https://dev.example", "https://prod.example"],
     async (input) => {
       calls.push(String(input));
-      if (String(input).startsWith("https://dev.example"))
+      if (new URL(String(input)).origin === "https://dev.example")
         return new Response("unauthorized", { status: 401 });
       return Response.json({
         accountId: "account-1",
