@@ -545,14 +545,6 @@ describe("sandbox tool set", () => {
     expect(result.type).toBe("text");
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
 
-    // The flag wins over an explicit workspace rather than the two fighting.
-    await borrowed.execute({
-      command: "echo hi",
-      workspace: "notes",
-      sandbox: true,
-    });
-    expect(lastSandboxExec().payload.namespace).toBeUndefined();
-
     // When a workspace already mounts that sandbox, the workspace is the way in.
     const own = await tool("bash", ownSandboxCtx());
     const ownSchema = own.inputSchema as unknown as {
@@ -767,6 +759,60 @@ describe("write/edit approval policy", () => {
         workspaceCtx({ permissionMode: "bypass" }),
       ),
     ).resolves.toBeUndefined();
+  });
+
+  // A workspace-scoped policy must not authorize a run that never touches that
+  // workspace. Policy input has to name the same target execution picked.
+  it("policy input drops workspace identity when the run is on the agent sandbox", async () => {
+    const { policyInputForTool } = await import("../src/harness/policy.ts");
+    const ctx = borrowedSandboxCtx() as unknown as {
+      workspaces: never;
+      agentSandbox: never;
+    };
+    const onSandbox = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: true },
+      ctx.workspaces,
+      { agentSandbox: ctx.agentSandbox },
+    );
+    expect(onSandbox.workspaceId).toBeUndefined();
+    expect(onSandbox.workspaceName).toBeUndefined();
+    expect(onSandbox.sandboxPermissionMode).toBeUndefined();
+
+    // A real workspace run still reports it, or workspace-scoped rules stop working.
+    const onWorkspace = policyInputForTool(
+      "bash",
+      { command: "ls", workspace: "notes" },
+      ctx.workspaces,
+      { agentSandbox: ctx.agentSandbox },
+    );
+    expect(onWorkspace.workspaceName).toBe("notes");
+
+    // The flag only redirects when a standalone sandbox exists; when the workspace
+    // already mounts the agent's sandbox, the run IS the workspace.
+    const own = ownSandboxCtx() as unknown as {
+      workspaces: never;
+      agentSandbox: never;
+    };
+    const mounted = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: true },
+      own.workspaces,
+      { agentSandbox: own.agentSandbox },
+    );
+    expect(mounted.workspaceName).toBe("notes");
+  });
+
+  it("bash refuses a selection that names both a workspace and the sandbox", async () => {
+    const bash = await tool("bash", borrowedSandboxCtx());
+    const result = await bash.execute({
+      command: "echo hi",
+      workspace: "notes",
+      sandbox: true,
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("not both");
+    expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("the standalone sandbox target follows the agent sandbox's own mode", async () => {

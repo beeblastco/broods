@@ -508,7 +508,10 @@ export async function runAgentLoop(
         : {}),
     },
     resolvedWorkspaces,
-    { toolIdsByName: policyToolIdsByName },
+    {
+      toolIdsByName: policyToolIdsByName,
+      ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
+    },
   );
   const toolApproval = createRuntimeToolApproval({
     configuredApprovals,

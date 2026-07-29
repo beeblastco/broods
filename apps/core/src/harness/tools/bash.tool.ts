@@ -85,7 +85,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
             sandbox: {
               type: "boolean",
               description:
-                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there is kept, so use it for throwaway work. Overrides `workspace` when both are given.",
+                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there is kept, so use it for throwaway work. Mutually exclusive with `workspace`.",
             } as JSONSchema7,
           }
         : {}),
@@ -276,6 +276,13 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           return toolError("Error: command is required");
         }
         try {
+          // Silently preferring one would let the policy layer be told a workspace
+          // that the run never touches, so an incoherent selection is refused.
+          if (workspace !== undefined && onSandbox === true) {
+            return toolError(
+              "Error: pass either workspace or sandbox, not both — they select different places to run",
+            );
+          }
           const target = {
             ...(workspace ? { workspace: workspace } : {}),
             ...(onSandbox === true ? { sandbox: true } : {}),

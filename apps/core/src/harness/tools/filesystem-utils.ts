@@ -38,7 +38,8 @@ export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 // Everything else outside the workspace mount looks like work about to be lost.
 const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 
-// `..` as a whole path segment. The separator before it counts, so `a/../b` is caught
+// `..` as a whole path segment, in the literal text only (see outsideWorkspaceCommand
+// for what that does not cover). The separator before it counts, so `a/../b` is caught
 // as surely as `../b`; word characters do not, so `{1..10}` and `main..dev` are left alone.
 const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
 
@@ -545,7 +546,10 @@ export function outsideWorkspaceCommand(
 ): string | undefined {
   const scanned = unescapeShellChars(stripHereDocBodies(command));
   // Traversal is a containment concern, not a durability one: read/write/edit reject
-  // `..` too, and bash must not become the way around them.
+  // `..`, and bash should not be the trivial way around them. This only sees the
+  // literal text — bash expands `$'\x2e\x2e'`, `$(printf ..)` and variables after
+  // this runs, so it is a guardrail, not a boundary. The boundary is the VM plus the
+  // prefix-scoped mount credentials, which no amount of traversal escapes.
   if (PARENT_TRAVERSAL.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
   }
