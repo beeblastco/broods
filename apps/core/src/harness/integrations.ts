@@ -975,6 +975,22 @@ async function refuseChannelInvoke(
   return decision.mode === "enforce" ? decision.reason : null;
 }
 
+/**
+ * Reply routing for this turn. A record's `threadPolicy` decides between a
+ * thread and the channel, so it applies only where the provider gives the
+ * runtime that choice — everywhere else the source is already the one place.
+ */
+function channelReplySource(
+  adapter: ChannelAdapter,
+  message: InboundMessage,
+  record: ChannelRecord | undefined,
+): Record<string, unknown> {
+  const policy = record?.config.threadPolicy;
+  if (!policy || !adapter.applyThreadPolicy) return message.source;
+
+  return adapter.applyThreadPolicy(message.source, policy);
+}
+
 /** Scope the run to this channel's own config, then layer the record over it. */
 function channelRuntimeAgentConfig(
   target: { agent: AgentRecord; record?: ChannelRecord },
@@ -1179,9 +1195,6 @@ async function handleChannelWebhook(
     // is restored in finally before background channel processing establishes
     // its own context.
     const { message, ack } = parsed;
-    // Replies go out through the adapter that received the webhook — the same
-    // provider app — even when the channel record hands the run to another agent.
-    const channel = adapter.actions(message);
     const response = ack ?? { statusCode: 200 };
     const target = await resolveChannelTarget(
       context,
@@ -1197,7 +1210,8 @@ async function handleChannelWebhook(
         conversationKey: message.conversationKey,
       });
       waitUntil(
-        channel
+        adapter
+          .actions(message)
           .sendText(
             formatChannelErrorText(
               "I can't reach my channel configuration right now — try again in a moment.",
@@ -1208,6 +1222,12 @@ async function handleChannelWebhook(
 
       return toResponse(response);
     }
+    // The rewritten source is what every later reply routes on, so a background
+    // job's delayed answer lands in the same place this turn's did.
+    const source = channelReplySource(adapter, message, target.record);
+    // Replies go out through the adapter that received the webhook — the same
+    // provider app — even when the channel record hands the run to another agent.
+    const channel = adapter.actions({ ...message, source: source });
     const targetDeployment =
       target.agent.agentId === agent.agentId
         ? deployment
@@ -1268,7 +1288,7 @@ async function handleChannelWebhook(
             ],
             channelName: message.channelName,
             ...(identity ? { identity } : {}),
-            source: message.source,
+            source: source,
             channel: channel,
             accountId: account.accountId,
             agentId: target.agent.agentId,

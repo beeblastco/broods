@@ -65,7 +65,7 @@ reading an agent still tells you its ceiling.
 | `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
 | `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
 | `workspaceScope` | Overrides the channel's scope (`channel` or `conversation`)       |
-| `threadPolicy`   | `always-thread` or `inline`                                       |
+| `threadPolicy`   | Where the reply lands — `always-thread` or `inline` (Slack only)  |
 | `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
 | `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
 
@@ -75,6 +75,14 @@ A workspace is capability, not configuration: attaching one is what materialises
 the sandbox file tools. So a record may only name a workspace the agent already
 attaches — it can mount that workspace under a channel-specific name, but a
 `workspaceId` the agent does not carry is dropped and logged.
+
+`threadPolicy` decides where the answer appears. `always-thread` opens a thread
+on the message that tagged the agent, so the whole exchange stays out of the
+channel; `inline` answers in the channel, and threads only when the message
+itself arrived in a thread. It applies to Slack alone — every other provider
+delivers the reply to the one place the message came from, so there is no
+choice to express. Unset, a Slack reply threads in a channel and stays inline
+in a DM.
 
 `denyTools` is applied to the finished tool set rather than to `config.tools`,
 so it reaches every tool the agent ended up with: built-ins, [custom
