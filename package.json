@@ -33,6 +33,7 @@
   },
   "patchedDependencies": {
     "@ai-sdk/harness-claude-code@1.0.48": "patches/@ai-sdk%2Fharness-claude-code@1.0.48.patch",
-    "@ai-sdk/harness-codex@1.0.49": "patches/@ai-sdk%2Fharness-codex@1.0.49.patch"
+    "@ai-sdk/harness-codex@1.0.49": "patches/@ai-sdk%2Fharness-codex@1.0.49.patch",
+    "e2b@2.36.0": "patches/e2b@2.36.0.patch"
   }
 }
