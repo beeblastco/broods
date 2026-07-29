@@ -55,19 +55,25 @@ describe("agent config codec", () => {
       }),
     ).toThrow("config.model.options is not supported");
 
-    expect(() =>
-      toNestedAgentConfig({
-        extraConfig: { workspace: { filesystem: { enabled: true } } },
-      }),
-    ).toThrow("config.workspace.filesystem is not supported");
+  });
 
-    expect(() =>
+  test("drops the removed workspace branch on read, rejects it on write", () => {
+    // Rows saved before the branch was removed still carry the blob. Reading one
+    // has to work, or an old agent cannot be opened to be fixed.
+    expect(
       toNestedAgentConfig({
         extraConfig: {
-          workspace: { sandbox: { filesystem: { enabled: true } } },
+          workspace: { namespace: "legacy", workspaces: { a: {} } },
+          workspaces: [{ name: "notes", workspaceId: "ws_a" }],
         },
       }),
-    ).toThrow("config.workspace.sandbox.filesystem is not supported");
+    ).toEqual({ workspaces: [{ name: "notes", workspaceId: "ws_a" }] });
+
+    // Writing it is a mistake worth naming: nothing reads it, so a silent drop
+    // would look like it saved.
+    expect(() =>
+      fromNestedAgentConfig({ workspace: { namespace: "legacy" } }),
+    ).toThrow("config.workspace is no longer supported");
   });
 });
 

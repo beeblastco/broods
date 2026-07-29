@@ -44,8 +44,14 @@ export interface FlatAgentConfig {
 
 export type NestedAgentConfig = Record<string, unknown>;
 
-const UNSUPPORTED_WORKSPACE_KEYS = ["memory", "tasks", "filesystem"] as const;
-const UNSUPPORTED_SANDBOX_KEYS = ["filesystem"] as const;
+// Removed branches, kept only to answer with a pointer instead of dropping the
+// value silently. `workspace` (singular) was the pre-records shape: a namespace,
+// a map of named workspaces, and an inline sandbox. Nothing has read it since
+// workspaces became account-scoped records referenced by id.
+const REMOVED_BRANCH_HINTS: Record<string, string> = {
+  workspace:
+    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',
+};
 
 /**
  * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
@@ -146,31 +152,15 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     };
   }
 
-  const workspace: Record<string, unknown> = {
-    ...((extra.workspace as Record<string, unknown> | undefined) ?? {}),
-  };
-  assertNoUnsupportedKeys(
-    workspace,
-    UNSUPPORTED_WORKSPACE_KEYS,
-    "config.workspace",
-  );
-  if (isPlainObject(workspace.sandbox)) {
-    const sandbox = { ...workspace.sandbox };
-    assertNoUnsupportedKeys(
-      sandbox,
-      UNSUPPORTED_SANDBOX_KEYS,
-      "config.workspace.sandbox",
-    );
-    workspace.sandbox = sandbox;
-  }
-
+  // Read drops a removed branch rather than throwing: rows written before it was
+  // removed still carry the blob, and reading one must not fail. Writing it back
+  // is what clears it, so an agent cleans itself on its next save.
   return {
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
     ...(provider ? { provider } : {}),
     ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
     ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
-    ...(pruneEmpty(workspace) ? { workspace: pruneEmpty(workspace) } : {}),
     ...(extra.session ? { session: extra.session } : {}),
     ...(extra.hooks ? { hooks: extra.hooks } : {}),
     ...(extra.channels ? { channels: extra.channels } : {}),
@@ -294,7 +284,6 @@ const NESTED_BRANCHES = [
   "provider",
   "sandbox",
   "workspaces",
-  "workspace",
   "session",
   "hooks",
   "channels",
@@ -313,9 +302,13 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
     ? { ...(model.providerOptions as Record<string, unknown>) }
     : undefined;
   const tools = isPlainObject(nested.tools) ? { ...nested.tools } : undefined;
-  const workspace = isPlainObject(nested.workspace)
-    ? { ...nested.workspace }
-    : undefined;
+  // A removed branch is rejected on write. Dropping it silently would let someone
+  // configure a workspace, see it saved, and never learn nothing reads it.
+  for (const [branch, hint] of Object.entries(REMOVED_BRANCH_HINTS)) {
+    if (nested[branch] !== undefined) {
+      throw new Error(hint);
+    }
+  }
 
   const patch: FlatPatch = {};
 
@@ -370,8 +363,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   if (model && Object.keys(model).length > 0) extra.model = model;
   if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
   if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
-  if (workspace && Object.keys(workspace).length > 0)
-    extra.workspace = workspace;
   if (tools && Object.keys(tools).length > 0) extra.tools = tools;
   for (const branch of NESTED_BRANCHES) {
     if (
@@ -379,7 +370,6 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
       branch === "model" ||
       branch === "sandbox" ||
       branch === "workspaces" ||
-      branch === "workspace" ||
       branch === "tools"
     )
       continue;
