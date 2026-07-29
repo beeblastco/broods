@@ -297,7 +297,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
     });
 
-     await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
+    await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
     const ids: Ids = {
       agents: agentIds,
       workspaces: workspaceIds,
@@ -2771,6 +2771,9 @@ function rewriteResourceRefs(
       ),
     };
   }
+  // `config.tools` is keyed by account tool id at rest; a key left as a name is
+  // read at runtime as a provider tool and kills the run. Unknown keys stay put
+  // — those are provider-defined tools (googleSearch), not uploads.
   if (isPlainObject(result.tools)) {
     result.tools = Object.fromEntries(
       Object.entries(result.tools).map(([key, value]) => [
