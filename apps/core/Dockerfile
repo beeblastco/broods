@@ -22,6 +22,7 @@ FROM ${BUN_IMAGE} AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
+COPY --from=deps /app/packages/ai-sdk-sandbox/node_modules ./packages/ai-sdk-sandbox/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
 # The storage provider require()s @broods/convex/_generated/api (committed).
