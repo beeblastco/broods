@@ -93,6 +93,15 @@ export function persistentSandboxName(reservationKey: string): string {
   return `fp-p-${slugFor(reservationKey)}-${shortHash(reservationKey)}`;
 }
 
+// Scanned instead of `replace(/\/+$/, "")`: the backtracking form is quadratic on
+// account-supplied roots that are a long run of slashes.
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+
+  return value.slice(0, end);
+}
+
 export function slugFor(
   value: string | undefined,
   fallback = "sandbox",

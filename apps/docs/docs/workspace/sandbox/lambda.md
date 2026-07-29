@@ -138,6 +138,40 @@ See [Best Practice → Background jobs](best-practice.md#background-jobs--async_
 > `network.mode: "allow-all"` or allow that URL. Without egress the job still runs and
 > `async_status` polling still works; only the automatic push-back is skipped.
 
+## Claude Code and Codex Harness bridge
+
+The core-owned Lambda MicroVM Harness driver can bootstrap the upstream Claude
+Code and Codex Harness bridges inside a persistent MicroVM. This is currently a
+validated construction path; the main Broods agent run loop does not select it
+yet.
+
+The upstream Harness contract returns application ports as a URL, but Lambda
+MicroVM WebSocket ingress requires the AWS authentication token and target port
+as WebSocket subprotocols. Core resolves that mismatch with a loopback-only
+proxy:
+
+```mermaid
+flowchart LR
+  Adapter["Harness adapter"] -->|"opaque ws://127.0.0.1 URL"| Proxy["Broods WebSocket proxy"]
+  Proxy -->|"wss + auth/port subprotocols"| Ingress["AWS MicroVM ingress"]
+  Ingress --> Bridge["Claude Code / Codex bridge<br/>port 4321"]
+```
+
+The AWS token is minted just in time, scoped to the declared bridge port, and
+exists only in core and the upstream `Sec-WebSocket-Protocol` header. It is never
+placed in the adapter URL, query string, error text, or log. The loopback route is
+a random 256-bit capability, pre-connect buffering is bounded, and production
+upstreams must be `wss:` endpoints in the AWS Lambda MicroVM hostname namespace.
+
+The opt-in live test uses unique synthetic reservations plus an in-memory
+reservation store and terminates every VM in `finally`; it does not read or
+mutate shared Convex state:
+
+```bash
+cd apps/core
+MICROVM_HARNESS_TEST=1 bun test tests/sandbox-microvm-harness.integration.test.ts
+```
+
 ## Config
 
 ```jsonc
@@ -229,5 +263,9 @@ when the sandbox log bridge is deployed.
   cross-workspace filesystem boundary — dedicated file tools still reject path traversal
 - internet access is gated by `network.mode`; `deny-all` and `restricted` leave the
   managed workspace mount and link-local IMDS reachable while blocking public egress
-- each exec is authenticated by a short-lived (`≤15 min`) per-MicroVM JWE auth token scoped
-  to port 8080; the harness reuses it until five minutes before expiry
+- each exec is authenticated by a short-lived (`≤15 min`) JWE auth token scoped to port
+  8080; the harness caches it per MicroVM and port, and reuses it until five minutes
+  before expiry
+- Harness bridge WebSockets use a separate just-in-time JWE scoped to the
+  declared bridge port; it is sent only as an AWS ingress subprotocol through a
+  loopback Broods proxy and never appears in a URL or log
