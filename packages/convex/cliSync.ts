@@ -2736,6 +2736,7 @@ function rewriteResourceRefs(
   workspaceIds: Record<string, string>,
   sandboxIds: Record<string, string>,
   policyIds: Record<string, string>,
+  toolIds: Record<string, string>,
 ): Record<string, unknown> {
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
@@ -2769,6 +2770,14 @@ function rewriteResourceRefs(
           : entry,
       ),
     };
+  }
+  if (isPlainObject(result.tools)) {
+    result.tools = Object.fromEntries(
+      Object.entries(result.tools).map(([key, value]) => [
+        toolIds[key] ?? key,
+        value,
+      ]),
+    );
   }
 
   return result;
