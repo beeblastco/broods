@@ -129,7 +129,7 @@ Agents, OpenCode, or Pi.
 ```ts
 import { defineAgent, defineHarness, defineSandbox, env } from "broods";
 
-const runner = defineSandbox({
+export const runner = defineSandbox({
   name: "codex-runner",
   provider: "sandbox",
   persistent: true,

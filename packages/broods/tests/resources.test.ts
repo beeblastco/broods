@@ -153,6 +153,31 @@ export const coding = defineAgent({
   );
 });
 
+test("compileProject rejects an unexported AI SDK Harness sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness, defineSandbox } from "${RESOURCES_MODULE}";
+
+const runner = defineSandbox({
+  name: "runner",
+  provider: "sandbox",
+  persistent: true,
+});
+
+export const coding = defineAgent({
+  name: "coding",
+  harness: defineHarness({ type: "opencode", sandbox: runner }),
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "coding" harness references sandbox "runner", but that sandbox is not exported from broods/',
+  );
+});
+
 test("compileProject defaults to the Broods harness when harness is omitted", async () => {
   const cwd = await fixtureProject(
     "",
