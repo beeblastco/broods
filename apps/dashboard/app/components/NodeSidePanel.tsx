@@ -121,7 +121,12 @@ const ToolTestTab = dynamic(loadToolTestTab, {
 });
 
 type NodeType =
-  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
+  | "agent"
+  | "database"
+  | "tool"
+  | "workspace"
+  | "sandbox"
+  | "skill";
 type HeaderStatusBadge = {
   text: string;
   color: string;
@@ -188,7 +193,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const agentConfigId = nodeData?.agentConfigId as
-    Id<"agentConfigs"> | undefined;
+    | Id<"agentConfigs">
+    | undefined;
   const nodeId = node?.id;
   const canQueryToolStatus =
     isTool && !!projectId && !!environmentId && !!nodeId;
@@ -395,7 +401,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         };
       }
 
-      const isToolEnabled = toolService?.status !== "disabled";
+      const isToolEnabled = toolService?.disabled !== true;
 
       return {
         text: isToolEnabled ? "Enabled" : "Disabled",

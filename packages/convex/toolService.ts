@@ -1,51 +1,43 @@
 /**
- * Tool service persistence and execution proxy for canvas nodes.
+ * Dashboard-facing API for custom tools, backed by the same `accountTools` rows
+ * the CLI syncs and the runtime executes. A tool authored on the canvas is a
+ * real tool: its source is bundled to S3 on save, so an agent can call it.
  */
 
-import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
-import { api } from "./_generated/api";
-import type { DataModel, Id } from "./_generated/dataModel";
-import { action, mutation, query } from "./_generated/server";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  query,
+} from "./_generated/server";
 import { authKit } from "./auth";
+import { putToolBundle } from "./model/bundles";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
-import { toolServicesFields } from "./schema";
-
-type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
+import { accountToolsFields } from "./schema";
 
 const MAX_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_INPUT_BYTES = 256 * 1024;
 const MAX_TOOL_SOURCE_BYTES = 256 * 1024;
 const MAX_TOOL_OUTPUT_BYTES = 1024 * 1024;
 
-const toolServiceDoc = v.object({
-  ...toolServicesFields,
-  _id: v.id("toolServices"),
+const toolDoc = v.object({
+  ...accountToolsFields,
+  _id: v.id("accountTools"),
   _creationTime: v.number(),
 });
 
-async function requireOwnedProjectEnv(
-  ctx: Ctx,
-  authId: string,
-  projectId: Id<"projects">,
-  environmentId: Id<"environments">,
-) {
-  const project = await getOwnedProject(ctx, authId, projectId);
-  if (!project) throw new Error("Project not found.");
-  const environment = await getOwnedEnvironment(ctx, authId, environmentId);
-  if (!environment || environment.projectId !== projectId) {
-    throw new Error("Environment not found.");
-  }
-}
-
+/** The tool a canvas node owns, or null when the node has never been saved. */
 export const getByNode = query({
   args: {
     projectId: v.id("projects"),
     environmentId: v.id("environments"),
     nodeId: v.string(),
   },
-  returns: v.union(v.null(), toolServiceDoc),
+  returns: v.union(v.null(), toolDoc),
   handler: async (ctx, { projectId, environmentId, nodeId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
@@ -61,90 +53,117 @@ export const getByNode = query({
     );
     if (!environment || environment.projectId !== projectId) return null;
 
-    return ctx.db
-      .query("toolServices")
-      .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("environmentId", environmentId)
-          .eq("nodeId", nodeId),
+    return await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_nodeId", (q) =>
+        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
       )
       .first();
   },
 });
 
-export const upsertForNode = mutation({
+/** Every tool in an environment, CLI-synced and dashboard-authored alike. */
+export const listForEnvironment = query({
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+  },
+  returns: v.array(toolDoc),
+  handler: async (ctx, { projectId, environmentId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    if (!project) return [];
+    const environment = await getOwnedEnvironment(
+      ctx,
+      authUser.id,
+      environmentId,
+    );
+    if (!environment || environment.projectId !== projectId) return [];
+
+    return await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_status", (q) =>
+        q.eq("environmentId", environmentId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
+/**
+ * Save a canvas-authored tool. An action, not a mutation: the source has to
+ * reach S3 as a bundle before the row can point at it, otherwise the tool would
+ * exist in config but fail the moment an agent called it.
+ */
+export const saveForNode = action({
   args: {
     projectId: v.id("projects"),
     environmentId: v.id("environments"),
     nodeId: v.string(),
     nodeLabel: v.string(),
     sourceCode: v.optional(v.string()),
-    language: v.optional(v.union(v.literal("javascript"), v.literal("python"))),
-    status: v.optional(v.union(v.literal("enabled"), v.literal("disabled"))),
+    description: v.optional(v.string()),
+    inputSchema: v.optional(v.any()),
+    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+    disabled: v.optional(v.boolean()),
   },
-  returns: v.id("toolServices"),
-  handler: async (
-    ctx,
-    {
-      projectId,
-      environmentId,
-      nodeId,
-      nodeLabel,
-      sourceCode,
-      language,
-      status,
-    },
-  ) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-    await requireOwnedProjectEnv(ctx, authUser.id, projectId, environmentId);
-
+  returns: v.id("accountTools"),
+  handler: async (ctx, args): Promise<Id<"accountTools">> => {
     if (
-      sourceCode &&
-      new TextEncoder().encode(sourceCode).byteLength > MAX_TOOL_SOURCE_BYTES
+      args.sourceCode &&
+      new TextEncoder().encode(args.sourceCode).byteLength >
+        MAX_TOOL_SOURCE_BYTES
     ) {
       throw new Error(
         `Tool source code must be ${MAX_TOOL_SOURCE_BYTES} bytes or smaller.`,
       );
     }
 
-    const now = Date.now();
-    const existing = await ctx.db
-      .query("toolServices")
-      .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("environmentId", environmentId)
-          .eq("nodeId", nodeId),
-      )
-      .first();
+    const context = await ctx.runQuery(internal.toolService.nodeContext, {
+      projectId: args.projectId,
+      environmentId: args.environmentId,
+      nodeId: args.nodeId,
+    });
 
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        nodeLabel: nodeLabel.trim() || existing.nodeLabel,
-        sourceCode: sourceCode ?? existing.sourceCode,
-        language: language ?? existing.language,
-        status: status ?? existing.status,
-        updatedAt: now,
-      });
-      return existing._id;
-    }
+    // Only re-upload when the source actually changed; the key is the digest.
+    const sourceCode = args.sourceCode ?? context.existing?.sourceCode ?? "";
+    const sha256 = await digest(sourceCode);
+    const bundleStorageKey =
+      context.existing && context.existing.sha256 === sha256
+        ? context.existing.bundleStorageKey
+        : await putToolBundle(ctx, {
+            accountId: context.accountId,
+            sha256: sha256,
+            bundle: sourceCode,
+          });
 
-    return ctx.db.insert("toolServices", {
-      authId: authUser.id,
-      projectId,
-      environmentId,
-      nodeId,
-      nodeLabel: nodeLabel.trim() || "Tool",
-      language: language ?? "javascript",
-      sourceCode: sourceCode ?? "",
-      status: status ?? "enabled",
-      updatedAt: now,
+    return await ctx.runMutation(internal.toolService.upsertForNode, {
+      accountId: context.accountId,
+      projectId: args.projectId,
+      environmentId: args.environmentId,
+      nodeId: args.nodeId,
+      name: args.nodeLabel,
+      sourceCode: sourceCode,
+      sha256: sha256,
+      bundleStorageKey: bundleStorageKey,
+      ...(args.description !== undefined
+        ? { description: args.description }
+        : {}),
+      ...(args.inputSchema !== undefined
+        ? { inputSchema: args.inputSchema }
+        : {}),
+      ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+      ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     });
   },
 });
 
+/**
+ * Run a tool's source against the executor so the canvas can test it without a
+ * full agent run. Reads the same row the runtime executes, so what passes here
+ * is what the agent calls.
+ */
 export const execute = action({
   args: {
     projectId: v.id("projects"),
@@ -163,12 +182,8 @@ export const execute = action({
       environmentId: environmentId,
       nodeId: nodeId,
     });
-    if (!tool) {
-      throw new Error("Tool configuration not found.");
-    }
-    if (tool.status !== "enabled") {
-      throw new Error("Tool is disabled.");
-    }
+    if (!tool) throw new Error("Tool configuration not found.");
+    if (tool.disabled === true) throw new Error("Tool is disabled.");
 
     const normalizedInput = input ?? {};
     const inputBytes = new TextEncoder().encode(
@@ -189,7 +204,6 @@ export const execute = action({
     const secretHeader =
       process.env.CUSTOM_TOOL_EXECUTOR_SECRET_HEADER?.trim() ||
       "X-Executor-Secret";
-
     if (!url || !secret) {
       throw new Error(
         "CUSTOM_TOOL_EXECUTOR_URL and CUSTOM_TOOL_EXECUTOR_SECRET must be configured.",
@@ -203,8 +217,8 @@ export const execute = action({
         [secretHeader]: secret,
       },
       body: JSON.stringify({
-        language: tool.language,
-        sourceCode: tool.sourceCode,
+        language: "javascript",
+        sourceCode: tool.sourceCode ?? "",
         input: normalizedInput,
         timeoutMs: boundedTimeoutMs,
       }),
@@ -233,3 +247,154 @@ export const execute = action({
     return body;
   },
 });
+
+/** Ownership check plus the account and existing row `saveForNode` needs. */
+export const nodeContext = internalQuery({
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    nodeId: v.string(),
+  },
+  returns: v.object({
+    accountId: v.id("accounts"),
+    existing: v.union(v.null(), toolDoc),
+  }),
+  handler: async (ctx, { projectId, environmentId, nodeId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    if (!project) throw new Error("Project not found.");
+    const environment = await getOwnedEnvironment(
+      ctx,
+      authUser.id,
+      environmentId,
+    );
+    if (!environment || environment.projectId !== projectId) {
+      throw new Error("Environment not found.");
+    }
+    if (!project.orgId) throw new Error("Project is not linked to an org");
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId as string))
+      .first();
+    if (!account) throw new Error("Account not found for project org");
+
+    const existing = await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_nodeId", (q) =>
+        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
+      )
+      .first();
+
+    return { accountId: account._id, existing: existing };
+  },
+});
+
+export const upsertForNode = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    nodeId: v.string(),
+    name: v.string(),
+    sourceCode: v.string(),
+    sha256: v.string(),
+    bundleStorageKey: v.string(),
+    description: v.optional(v.string()),
+    inputSchema: v.optional(v.any()),
+    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+    disabled: v.optional(v.boolean()),
+  },
+  returns: v.id("accountTools"),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_nodeId", (q) =>
+        q.eq("environmentId", args.environmentId).eq("nodeId", args.nodeId),
+      )
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        name: toolName(args.name) || existing.name,
+        sourceCode: args.sourceCode,
+        sha256: args.sha256,
+        bundleStorageKey: args.bundleStorageKey,
+        ...(args.description !== undefined
+          ? { description: args.description }
+          : {}),
+        ...(args.inputSchema !== undefined
+          ? { inputSchema: args.inputSchema }
+          : {}),
+        ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+        ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
+        updatedAt: now,
+      });
+
+      return existing._id;
+    }
+
+    return await ctx.db.insert("accountTools", {
+      accountId: args.accountId,
+      projectId: args.projectId,
+      environmentId: args.environmentId,
+      nodeId: args.nodeId,
+      name: toolName(args.name) || "tool",
+      description: args.description ?? "",
+      inputSchema: args.inputSchema ?? {
+        type: "object",
+        properties: {},
+      },
+      bundleStorageKey: args.bundleStorageKey,
+      sha256: args.sha256,
+      sourceCode: args.sourceCode,
+      runtime: args.runtime ?? "isolate",
+      disabled: args.disabled,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+/** Remove a canvas-authored tool when its node is deleted. */
+export const removeForNode = internalMutation({
+  args: {
+    environmentId: v.id("environments"),
+    nodeId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, { environmentId, nodeId }) => {
+    const existing = await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_nodeId", (q) =>
+        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
+      )
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
+
+    return null;
+  },
+});
+
+async function digest(source: string): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(source),
+  );
+
+  return [...new Uint8Array(bytes)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The model calls a tool by name, so a canvas label has to become an identifier. */
+function toolName(label: string): string {
+  return label
+    .trim()
+    .replace(/[^A-Za-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+}

@@ -15,10 +15,9 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { toErrorMessage } from "@/app/lib/errors";
-import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { Check } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -90,9 +89,9 @@ export function ToolConfigTab({
         }
       : "skip",
   );
-  const upsertToolService = useMutation(
-    api.toolService.upsertForNode,
-  ).withOptimisticUpdate(applyToolServiceUpsert);
+  // An action, not a mutation: saving bundles the source to S3 so the agent can
+  // actually call the tool. That rules out an optimistic update.
+  const upsertToolService = useAction(api.toolService.saveForNode);
   const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
   const toolKey = nodeLabel.trim() || nodeId;
   const toolOptions = useMemo(() => {

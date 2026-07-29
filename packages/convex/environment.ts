@@ -211,22 +211,7 @@ async function duplicateEnvironmentContents(
     });
   }
 
-  // 4. Clone tool services.
-  const sourceTools = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", sourceEnvironmentId),
-    )
-    .collect();
-  for (const tool of sourceTools) {
-    await ctx.db.insert("toolServices", {
-      ...stripSystemFields(tool),
-      environmentId: targetEnvironmentId,
-      updatedAt: now,
-    });
-  }
-
-  // 6. Clone environment variables.
+  // 5. Clone environment variables.
   const sourceVars = await ctx.db
     .query("environmentVariables")
     .withIndex("by_projectId_and_environmentId", (q) =>
@@ -298,14 +283,6 @@ export async function deleteEnvironmentContents(
     .collect();
   for (const layout of layouts) await ctx.db.delete(layout._id);
 
-  const tools = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
-    )
-    .collect();
-  for (const tool of tools) await ctx.db.delete(tool._id);
-
   // Custom tools are environment-scoped resources, so they go with it. The S3
   // bundle is left to the account-level sweep; nothing else references it.
   const customTools = await ctx.db
@@ -363,9 +340,9 @@ async function hasEnvironmentContents(
   if (layout) return true;
 
   const tool = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .query("accountTools")
+    .withIndex("by_environmentId_and_status", (q) =>
+      q.eq("environmentId", environmentId),
     )
     .first();
   if (tool) return true;
