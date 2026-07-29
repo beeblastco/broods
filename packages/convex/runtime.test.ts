@@ -132,7 +132,7 @@ describe("runtime persistence", () => {
 
     await t.mutation(internal.runtime.saveHarnessSession, {
       conversationKey,
-      harnessKind: "codex",
+      harnessType: "codex",
       sessionId: "codex-session",
       resumeState: {
         type: "resume-session",
@@ -144,7 +144,7 @@ describe("runtime persistence", () => {
     expect(
       await t.query(internal.runtime.getHarnessSession, { conversationKey }),
     ).toEqual({
-      harnessKind: "codex",
+      harnessType: "codex",
       sessionId: "codex-session",
       resumeState: {
         type: "resume-session",
@@ -157,6 +157,31 @@ describe("runtime persistence", () => {
     await t.mutation(internal.runtime.clearConversation, { conversationKey });
     expect(
       await t.query(internal.runtime.getHarnessSession, { conversationKey }),
+    ).toBeNull();
+  });
+
+  test("rejects oversized harness resume state before writing Convex", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+
+    await expect(
+      t.mutation(internal.runtime.saveHarnessSession, {
+        conversationKey: conversationKey,
+        harnessType: "opencode",
+        sessionId: "opencode-session",
+        resumeState: {
+          type: "resume-session",
+          harnessId: "opencode",
+          specificationVersion: "harness-v1",
+          data: { oversized: "x".repeat(64 * 1_024) },
+        },
+      }),
+    ).rejects.toThrow("Harness resume state is");
+    expect(
+      await t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
     ).toBeNull();
   });
 

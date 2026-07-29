@@ -1,4 +1,4 @@
-import { defineAgent, defineSandbox, env } from "broods";
+import { defineAgent, defineHarness, defineSandbox, env } from "broods";
 
 export const runner = defineSandbox({
   name: "harness-codex-runner",
@@ -8,14 +8,16 @@ export const runner = defineSandbox({
   network: { mode: "allow-all" },
 });
 
+export const codexHarness = defineHarness({
+  type: "codex",
+  sandbox: runner,
+  permissionMode: "allow-all",
+  startupTimeoutMs: 180_000,
+});
+
 export const codingAgent = defineAgent({
   name: "harness-codex",
-  harness: {
-    kind: "codex",
-    permissionMode: "allow-all",
-    startupTimeoutMs: 180_000,
-  },
-  sandbox: runner,
+  harness: codexHarness,
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),

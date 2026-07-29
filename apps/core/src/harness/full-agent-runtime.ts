@@ -1,35 +1,48 @@
 /**
- * AI SDK HarnessAgent construction over Broods-owned persistent sandboxes.
+ * Full-agent adapter construction over Broods-owned persistent sandboxes.
  */
 
 import {
-    VERSION as CLAUDE_CODE_HARNESS_VERSION,
-    createClaudeCode,
-    type ClaudeCodeHarnessSettings,
+  VERSION as CLAUDE_CODE_HARNESS_VERSION,
+  createClaudeCode,
+  type ClaudeCodeHarnessSettings,
 } from "@ai-sdk/harness-claude-code";
 import {
-    VERSION as CODEX_HARNESS_VERSION,
-    createCodex,
-    type CodexHarnessSettings,
+  VERSION as CODEX_HARNESS_VERSION,
+  createCodex,
+  type CodexHarnessSettings,
 } from "@ai-sdk/harness-codex";
 import {
-    VERSION as PI_HARNESS_VERSION,
-    createPi,
-    type PiHarnessSettings,
+  VERSION as DEEP_AGENTS_HARNESS_VERSION,
+  createDeepAgents,
+  type DeepAgentsHarnessSettings,
+} from "@ai-sdk/harness-deepagents";
+import {
+  VERSION as OPENCODE_HARNESS_VERSION,
+  createOpenCode,
+  type OpenCodeHarnessSettings,
+} from "@ai-sdk/harness-opencode";
+import {
+  VERSION as PI_HARNESS_VERSION,
+  createPi,
+  type PiHarnessSettings,
 } from "@ai-sdk/harness-pi";
 import {
-    HarnessAgent,
-    type HarnessAgentPermissionMode,
-    type HarnessAgentSandboxConfig,
-    type HarnessAgentSkill,
-    type HarnessAgentToolApprovalConfiguration,
+  HarnessAgent,
+  type HarnessAgentAdapter,
+  type HarnessAgentPermissionMode,
+  type HarnessAgentSkill,
+  type HarnessAgentToolApprovalConfiguration,
+  type HarnessDiagnostic,
 } from "@ai-sdk/harness/agent";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
 import type { ToolSet } from "ai";
 import type {
   AgentConfig,
+  AgentHarnessDebugConfig,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
+import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
 import { createMicrovmHarnessDriver } from "./sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import { createWorkdirHarnessDriver } from "./sandbox/workdir-harness-driver.ts";
@@ -38,91 +51,49 @@ const DEFAULT_HARNESS_BRIDGE_PORT = 4_321;
 const ENSURE_PNPM_COMMAND =
   "command -v pnpm >/dev/null 2>&1 || npm install --global pnpm@10.34.5 --no-audit --no-fund";
 const ENSURE_HARNESS_WORKSPACE_COMMAND = "mkdir -p /workspace";
-const CLAUDE_CODE_BUILTIN_TOOL_NAMES = new Set([
-  "bash",
-  "edit",
-  "glob",
-  "grep",
-  "read",
-  "webSearch",
-  "write",
-]);
-const CODEX_BUILTIN_TOOL_NAMES = new Set(["bash", "webSearch"]);
-const PI_BUILTIN_TOOL_NAMES = new Set([
-  "bash",
-  "edit",
-  "glob",
-  "grep",
-  "read",
-  "write",
-]);
 
-export type HarnessKind = "claude-code" | "codex" | "pi";
-export type WorkdirHarnessKind = HarnessKind;
+export type HarnessType =
+  "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
+export type WorkdirHarnessType = HarnessType;
 
 interface HarnessAgentCommonOptions {
-  id?: string;
-  reservationKey: string;
+  activeTools?: string[];
   bridgePort?: number;
+  debug?: AgentHarnessDebugConfig;
+  id?: string;
+  inactiveTools?: string[];
   instructions?: string;
   permissionMode?: HarnessAgentPermissionMode;
-  sandboxConfig?: HarnessAgentSandboxConfig;
+  reservationKey: string;
   skills?: ReadonlyArray<HarnessAgentSkill>;
   toolApproval?: HarnessAgentToolApprovalConfiguration;
   tools?: ToolSet;
 }
 
-export type WorkdirHarnessAgentOptions =
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "sandbox";
-        persistent: true;
-      };
-      harness: "claude-code";
-      harnessSettings?: ClaudeCodeHarnessSettings;
-    })
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "sandbox";
-        persistent: true;
-      };
-      harness: "codex";
-      harnessSettings?: CodexHarnessSettings;
-    })
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "sandbox";
-        persistent: true;
-      };
-      harness: "pi";
-      harnessSettings?: PiHarnessSettings;
-    });
+type HarnessSettings =
+  | ClaudeCodeHarnessSettings
+  | CodexHarnessSettings
+  | DeepAgentsHarnessSettings
+  | OpenCodeHarnessSettings
+  | PiHarnessSettings;
 
-export type MicrovmHarnessAgentOptions =
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "lambda";
-        persistent: true;
-      };
-      harness: "claude-code";
-      harnessSettings?: ClaudeCodeHarnessSettings;
-    })
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "lambda";
-        persistent: true;
-      };
-      harness: "codex";
-      harnessSettings?: CodexHarnessSettings;
-    })
-  | (HarnessAgentCommonOptions & {
-      compute: SandboxExecutorConfig & {
-        provider: "lambda";
-        persistent: true;
-      };
-      harness: "pi";
-      harnessSettings?: PiHarnessSettings;
-    });
+export interface WorkdirHarnessAgentOptions extends HarnessAgentCommonOptions {
+  compute: SandboxExecutorConfig & {
+    provider: "sandbox";
+    persistent: true;
+  };
+  harness: HarnessType;
+  harnessSettings?: HarnessSettings;
+}
+
+export interface MicrovmHarnessAgentOptions extends HarnessAgentCommonOptions {
+  compute: SandboxExecutorConfig & {
+    provider: "lambda";
+    persistent: true;
+  };
+  harness: HarnessType;
+  harnessSettings?: HarnessSettings;
+}
 
 export interface HarnessAgentRuntime {
   agent: HarnessAgent<any, any>;
@@ -137,8 +108,10 @@ export type MicrovmHarnessAgentRuntime = HarnessAgentRuntime;
 export interface ConfiguredHarnessAgentOptions {
   agentConfig: AgentConfig;
   compute: SandboxExecutorConfig;
+  id?: string;
   instructions: string;
   reservationKey: string;
+  skills?: ReadonlyArray<HarnessAgentSkill>;
   toolApproval?: HarnessAgentToolApprovalConfiguration;
   tools: ToolSet;
 }
@@ -150,16 +123,26 @@ export function createConfiguredHarnessAgent(
   if (!harness) {
     throw new Error("config.harness is required");
   }
+  if (harness.type === "default") {
+    throw new Error(
+      "config.harness.type default uses the Broods serverless agent loop",
+    );
+  }
   const compute = requireHarnessCompute(options.compute);
+  const toolFiltering = resolveHarnessToolFiltering(options.agentConfig);
   const common = {
+    ...toolFiltering,
     compute: compute,
-    harness: harness.kind,
+    debug: harness.debug,
+    harness: harness.type as HarnessType,
     harnessSettings: resolveHarnessSettings(options.agentConfig),
+    id: options.id,
     instructions: options.instructions,
     permissionMode: harness.permissionMode,
     reservationKey: options.reservationKey,
+    skills: options.skills,
     toolApproval: options.toolApproval,
-    tools: withoutHarnessBuiltinTools(options.tools, harness.kind),
+    tools: options.tools,
   } as const;
 
   return compute.provider === "sandbox"
@@ -229,42 +212,114 @@ export function createMicrovmHarnessAgent(
   return { agent, bridgePort, reservationKey, sandbox };
 }
 
-export function workdirHarnessVersion(kind: WorkdirHarnessKind): string {
-  return harnessVersion(kind);
+export function workdirHarnessVersion(type: WorkdirHarnessType): string {
+  return harnessVersion(type);
 }
 
-export function microvmHarnessVersion(kind: HarnessKind): string {
-  return harnessVersion(kind);
+export function microvmHarnessVersion(type: HarnessType): string {
+  return harnessVersion(type);
 }
 
-function harnessVersion(kind: HarnessKind): string {
-  if (kind === "claude-code") {
+function createHarnessAdapter(
+  options: WorkdirHarnessAgentOptions | MicrovmHarnessAgentOptions,
+): HarnessAgentAdapter {
+  if (options.harness === "claude-code") {
+    return createClaudeCode(
+      options.harnessSettings as ClaudeCodeHarnessSettings | undefined,
+    );
+  }
+  if (options.harness === "codex") {
+    return createCodex(
+      options.harnessSettings as CodexHarnessSettings | undefined,
+    );
+  }
+  if (options.harness === "deepagents") {
+    return createDeepAgents(
+      options.harnessSettings as DeepAgentsHarnessSettings | undefined,
+    );
+  }
+  if (options.harness === "opencode") {
+    return createOpenCode(
+      options.harnessSettings as OpenCodeHarnessSettings | undefined,
+    );
+  }
+
+  return createPi(options.harnessSettings as PiHarnessSettings | undefined);
+}
+
+function harnessVersion(type: HarnessType): string {
+  if (type === "claude-code") {
     return CLAUDE_CODE_HARNESS_VERSION;
   }
-  if (kind === "codex") {
+  if (type === "codex") {
     return CODEX_HARNESS_VERSION;
+  }
+  if (type === "deepagents") {
+    return DEEP_AGENTS_HARNESS_VERSION;
+  }
+  if (type === "opencode") {
+    return OPENCODE_HARNESS_VERSION;
   }
 
   return PI_HARNESS_VERSION;
 }
 
+function logHarnessDiagnostic(diagnostic: HarnessDiagnostic): void {
+  const data = {
+    eventType: "harness.diagnostic",
+    attrs: diagnostic.attrs,
+    error: diagnostic.error,
+    harnessDiagnosticKind: diagnostic.kind,
+    sessionId: diagnostic.sessionId,
+    source: diagnostic.source,
+    stream: diagnostic.stream,
+    subsystem: diagnostic.subsystem,
+  };
+  if (diagnostic.level === "error") {
+    logError(diagnostic.message, data);
+  } else if (diagnostic.level === "warn") {
+    logWarn(diagnostic.message, data);
+  } else if (diagnostic.level === "info") {
+    logInfo(diagnostic.message, data);
+  } else {
+    logDebug(diagnostic.message, data);
+  }
+}
+
+function resolveHarnessToolFiltering(agentConfig: AgentConfig): {
+  activeTools?: string[];
+  inactiveTools?: string[];
+} {
+  const activeTools = agentConfig.harness?.activeTools;
+  const inactiveTools = [
+    ...(agentConfig.harness?.inactiveTools ?? []),
+    ...(agentConfig.denyTools ?? []),
+  ];
+  if (activeTools) {
+    const denied = new Set(agentConfig.denyTools ?? []);
+
+    return {
+      activeTools: activeTools.filter((toolName) => !denied.has(toolName)),
+    };
+  }
+
+  return inactiveTools.length > 0
+    ? { inactiveTools: [...new Set(inactiveTools)] }
+    : {};
+}
+
 function versionScopedReservationKey(
   reservationKey: string,
-  kind: HarnessKind,
+  type: HarnessType,
 ): string {
-  return `${reservationKey}:${kind}:${harnessVersion(kind)}`;
+  return `${reservationKey}:${type}:${harnessVersion(type)}`;
 }
 
 function createHarnessAgent(
   options: WorkdirHarnessAgentOptions | MicrovmHarnessAgentOptions,
   sandbox: ReturnType<typeof createBroodsSandbox>,
 ): HarnessAgent<any, any> {
-  const harness =
-    options.harness === "claude-code"
-      ? createClaudeCode(options.harnessSettings)
-      : options.harness === "codex"
-        ? createCodex(options.harnessSettings)
-        : createPi(options.harnessSettings);
+  const harness = createHarnessAdapter(options);
 
   if (
     options.harness === "codex" &&
@@ -273,38 +328,44 @@ function createHarnessAgent(
   ) {
     throw new Error("Codex Harness requires permissionMode allow-all");
   }
+  const tools = withoutHarnessBuiltinTools(options.tools ?? {}, harness);
 
   return new HarnessAgent({
     harness,
     sandbox,
+    ...(options.activeTools !== undefined
+      ? { activeTools: options.activeTools as never }
+      : {}),
+    ...(options.debug !== undefined ? { debug: options.debug } : {}),
     ...(options.id !== undefined ? { id: options.id } : {}),
+    ...(options.inactiveTools !== undefined
+      ? { inactiveTools: options.inactiveTools as never }
+      : {}),
     ...(options.instructions !== undefined
       ? { instructions: options.instructions }
       : {}),
+    onLog: logHarnessDiagnostic,
     ...(options.permissionMode !== undefined
       ? { permissionMode: options.permissionMode }
-      : {}),
-    ...(options.sandboxConfig !== undefined
-      ? { sandboxConfig: options.sandboxConfig }
       : {}),
     ...(options.skills !== undefined ? { skills: options.skills } : {}),
     ...(options.toolApproval !== undefined
       ? { toolApproval: options.toolApproval }
       : {}),
-    ...(options.tools !== undefined ? { tools: options.tools } : {}),
+    telemetry: {
+      functionId: `harness.${options.harness}`,
+      recordInputs: false,
+      recordOutputs: false,
+    },
+    tools: tools,
   });
 }
 
 function withoutHarnessBuiltinTools(
   tools: ToolSet,
-  kind: HarnessKind,
+  harness: HarnessAgentAdapter,
 ): ToolSet {
-  const builtinNames =
-    kind === "claude-code"
-      ? CLAUDE_CODE_BUILTIN_TOOL_NAMES
-      : kind === "codex"
-        ? CODEX_BUILTIN_TOOL_NAMES
-        : PI_BUILTIN_TOOL_NAMES;
+  const builtinNames = new Set(Object.keys(harness.builtinTools));
 
   return Object.fromEntries(
     Object.entries(tools).filter(([name]) => !builtinNames.has(name)),
@@ -358,9 +419,7 @@ function requireHarnessModelId(agentConfig: AgentConfig): string {
   return modelId;
 }
 
-function resolveHarnessSettings(
-  agentConfig: AgentConfig,
-): ClaudeCodeHarnessSettings | CodexHarnessSettings | PiHarnessSettings {
+function resolveHarnessSettings(agentConfig: AgentConfig): HarnessSettings {
   const harness = agentConfig.harness;
   if (!harness) {
     throw new Error("config.harness is required");
@@ -371,10 +430,10 @@ function resolveHarnessSettings(
     throw new Error("config.model.provider is required for config.harness");
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
-  if (harness.kind === "claude-code") {
+  if (harness.type === "claude-code") {
     if (providerName !== "anthropic" && providerName !== "gateway") {
       throw new Error(
-        "config.harness.kind claude-code requires the anthropic or gateway model provider",
+        "config.harness.type claude-code requires the anthropic or gateway model provider",
       );
     }
     const auth =
@@ -403,17 +462,106 @@ function resolveHarnessSettings(
       startupTimeoutMs: harness.startupTimeoutMs,
     };
   }
+  if (harness.type === "deepagents") {
+    if (providerName !== "anthropic" && providerName !== "gateway") {
+      throw new Error(
+        "config.harness.type deepagents requires the anthropic or gateway model provider",
+      );
+    }
+    const auth =
+      providerName === "anthropic"
+        ? {
+            anthropic: {
+              apiKey: provider.apiKey,
+              ...(provider.base_url || provider.baseURL
+                ? { baseUrl: provider.base_url ?? provider.baseURL }
+                : {}),
+            },
+          }
+        : {
+            gateway: {
+              apiKey: provider.apiKey,
+              ...(provider.base_url || provider.baseURL
+                ? { baseUrl: provider.base_url ?? provider.baseURL }
+                : {}),
+            },
+          };
+
+    return {
+      auth: auth,
+      model: model,
+      recursionLimit: agentConfig.agent?.maxTurn,
+      startupTimeoutMs: harness.startupTimeoutMs,
+    };
+  }
+  if (harness.type === "opencode") {
+    const auth =
+      providerName === "custom"
+        ? {
+            openaiCompatible: {
+              apiKey: provider.apiKey,
+              baseUrl: provider.base_url ?? provider.baseURL,
+              name: provider.name ?? "custom",
+            },
+          }
+        : providerName === "openai"
+          ? {
+              openai: {
+                apiKey: provider.apiKey,
+                ...(provider.base_url || provider.baseURL
+                  ? { baseUrl: provider.base_url ?? provider.baseURL }
+                  : {}),
+                organization: provider.organization,
+                project: provider.project,
+              },
+            }
+          : providerName === "anthropic"
+            ? {
+                anthropic: {
+                  apiKey: provider.apiKey,
+                  ...(provider.base_url || provider.baseURL
+                    ? { baseUrl: provider.base_url ?? provider.baseURL }
+                    : {}),
+                },
+              }
+            : providerName === "gateway"
+              ? {
+                  gateway: {
+                    apiKey: provider.apiKey,
+                    ...(provider.base_url || provider.baseURL
+                      ? { baseUrl: provider.base_url ?? provider.baseURL }
+                      : {}),
+                  },
+                }
+              : undefined;
+    if (!auth) {
+      throw new Error(
+        "config.harness.type opencode requires the anthropic, custom, gateway, or openai model provider",
+      );
+    }
+    const reasoning = agentConfig.model?.reasoning;
+
+    return {
+      auth: auth,
+      model: model,
+      provider:
+        providerName === "custom" ? (provider.name ?? "custom") : providerName,
+      reasoningVariant:
+        reasoning && reasoning !== "none" ? reasoning : undefined,
+      startupTimeoutMs: harness.startupTimeoutMs,
+    };
+  }
   if (
-    harness.kind === "codex" &&
+    harness.type === "codex" &&
     providerName !== "custom" &&
     providerName !== "openai" &&
     providerName !== "gateway"
   ) {
     throw new Error(
-      "config.harness.kind codex requires the custom, openai, or gateway model provider",
+      "config.harness.type codex requires the custom, openai, or gateway model provider",
     );
   }
-  if (harness.kind === "pi") {
+  if (harness.type === "pi") {
     const prefix =
       providerName === "gateway"
         ? "AI_GATEWAY"

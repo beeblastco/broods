@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
-import { createMicrovmHarnessAgent } from "../src/harness/harness-agent-runtime.ts";
+import { createMicrovmHarnessAgent } from "../src/harness/full-agent-runtime.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createMicrovmHarnessDriver } from "../src/harness/sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";

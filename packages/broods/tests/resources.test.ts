@@ -96,7 +96,7 @@ test("compileProject emits full-agent harness selection", async () => {
   const cwd = await fixtureProject(
     "",
     `
-import { defineAgent, defineSandbox, env } from "${RESOURCES_MODULE}";
+import { defineAgent, defineHarness, defineSandbox, env } from "${RESOURCES_MODULE}";
 
 export const runner = defineSandbox({
   name: "runner",
@@ -104,17 +104,21 @@ export const runner = defineSandbox({
   persistent: true,
   permissionMode: "bypass",
   network: { mode: "allow-all" },
+  onCreate: ["bun install"],
+  onResume: ["git status --short"],
+});
+
+const harness = defineHarness({
+  type: "opencode",
+  sandbox: runner,
+  activeTools: ["bash", "read", "write"],
+  debug: { enabled: true, level: "debug", subsystems: ["bridge"] },
+  startupTimeoutMs: 180000,
 });
 
 export const coding = defineAgent({
   name: "coding",
-  harness: {
-    kind: "codex",
-    permissionMode: "allow-all",
-    startupTimeoutMs: 180000,
-    webSearch: true,
-  },
-  sandbox: runner,
+  harness,
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),
@@ -134,12 +138,45 @@ export const coding = defineAgent({
       name: "coding",
       config: expect.objectContaining({
         harness: {
-          kind: "codex",
-          permissionMode: "allow-all",
+          type: "opencode",
+          activeTools: ["bash", "read", "write"],
+          debug: {
+            enabled: true,
+            level: "debug",
+            subsystems: ["bridge"],
+          },
           startupTimeoutMs: 180000,
-          webSearch: true,
         },
         sandbox: "runner",
+      }),
+    }),
+  );
+});
+
+test("compileProject emits the explicit default Broods harness", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness } from "${RESOURCES_MODULE}";
+
+const broodsHarness = defineHarness({ type: "default" });
+
+export const assistant = defineAgent({
+  name: "assistant",
+  harness: broodsHarness,
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "assistant",
+      config: expect.objectContaining({
+        harness: { type: "default" },
       }),
     }),
   );

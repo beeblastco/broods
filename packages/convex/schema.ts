@@ -777,9 +777,11 @@ export const runtimeConversationEventsFields = {
 export const runtimeHarnessSessionsFields = {
   accountId: v.string(),
   conversationKey: v.string(),
-  harnessKind: v.union(
+  harnessType: v.union(
     v.literal("claude-code"),
     v.literal("codex"),
+    v.literal("deepagents"),
+    v.literal("opencode"),
     v.literal("pi"),
   ),
   sessionId: v.string(),

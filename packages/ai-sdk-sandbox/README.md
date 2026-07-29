@@ -1,11 +1,11 @@
 # `@broods/ai-sdk-sandbox`
 
 This package adapts an injected Broods sandbox driver to the experimental
-`HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.43`. The bounded
+`HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.47`. The bounded
 Workdir and Lambda MicroVM drivers in `apps/core/src/harness/sandbox/` import it,
-and `apps/core/src/harness/harness-agent-runtime.ts` constructs real Claude Code
-and Codex `HarnessAgent` instances with those drivers. The Broods core run loop
-does not select those instances yet.
+and `apps/core/src/harness/full-agent-runtime.ts` constructs Claude Code, Codex,
+Deep Agents, OpenCode, and Pi `HarnessAgent` instances with those drivers. The
+Broods core run loop selects them from a non-default harness definition.
 
 ## Boundary
 
@@ -28,7 +28,7 @@ const driver: BroodsSandboxDriver =
   createCoreHarnessDriver(/* runtime context */);
 const sandbox = createBroodsSandbox({ driver });
 
-// Core passes `sandbox` to the selected Claude Code or Codex HarnessAgent.
+// Core passes `sandbox` to the selected full-agent HarnessAgent.
 ```
 
 The driver creates or resumes a `BroodsSandboxDriverSession`. A create result
@@ -63,11 +63,11 @@ alone.
   supported.
 
 The live Workdir integration test creates real Firecracker guests, exercises the
-driver lifecycle, and bootstraps both upstream Claude Code and Codex bridges
-through Workdir's authenticated WebSocket proxy. The current upstream adapters
-append their bridge token with a literal `?`; Broods carries a narrow patch for
-the latest adapter versions so provider URLs that already contain Workdir's
-authentication query parameter are merged with `&`.
+driver lifecycle, and bootstraps upstream bridges through Workdir's authenticated
+WebSocket proxy. The current Claude Code and Codex adapters append their bridge
+token with a literal `?`; Broods carries a narrow patch for the latest adapter
+versions so provider URLs that already contain Workdir's authentication query
+parameter are merged with `&`.
 
 ## Lambda MicroVM bridge
 
@@ -106,5 +106,5 @@ The test uses an in-memory reservation store rather than shared Convex state and
 terminates each uniquely named MicroVM in `finally`.
 
 This package deliberately does not define queueing, steering, cancellation,
-streaming, or the live agent run loop. Those remain runtime integration concerns
-for later phases, including the queue/steer contract tracked in #71.
+streaming, or the live agent run loop. Those remain owned by Broods core rather
+than the sandbox-provider adapter.

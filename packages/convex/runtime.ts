@@ -19,6 +19,7 @@ import {
 const DAY_SECONDS = 24 * 60 * 60;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
+const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
 /**
  * Extracts the account ID from an account-scoped runtime key.
@@ -240,9 +241,11 @@ export const getHarnessSession = internalQuery({
   args: { conversationKey: v.string() },
   returns: v.union(
     v.object({
-      harnessKind: v.union(
+      harnessType: v.union(
         v.literal("claude-code"),
         v.literal("codex"),
+        v.literal("deepagents"),
+        v.literal("opencode"),
         v.literal("pi"),
       ),
       sessionId: v.string(),
@@ -267,7 +270,7 @@ export const getHarnessSession = internalQuery({
     }
 
     return {
-      harnessKind: row.harnessKind,
+      harnessType: row.harnessType,
       sessionId: row.sessionId,
       resumeState: row.resumeState,
     };
@@ -278,9 +281,11 @@ export const getHarnessSession = internalQuery({
 export const saveHarnessSession = internalMutation({
   args: {
     conversationKey: v.string(),
-    harnessKind: v.union(
+    harnessType: v.union(
       v.literal("claude-code"),
       v.literal("codex"),
+      v.literal("deepagents"),
+      v.literal("opencode"),
       v.literal("pi"),
     ),
     sessionId: v.string(),
@@ -290,6 +295,18 @@ export const saveHarnessSession = internalMutation({
   handler: async (ctx, args) => {
     const accountId = accountIdFromKey(args.conversationKey);
     await requireActiveAccount(ctx, accountId);
+    const serializedResumeState = JSON.stringify(args.resumeState);
+    if (serializedResumeState === undefined) {
+      throw new Error("Harness resume state must be JSON serializable");
+    }
+    const resumeStateBytes = new TextEncoder().encode(
+      serializedResumeState,
+    ).byteLength;
+    if (resumeStateBytes > MAX_HARNESS_RESUME_STATE_BYTES) {
+      throw new Error(
+        `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
+      );
+    }
     const existing = await ctx.db
       .query("runtimeHarnessSessions")
       .withIndex("by_conversationKey", (q) =>
@@ -299,7 +316,7 @@ export const saveHarnessSession = internalMutation({
     const value = {
       accountId: accountId,
       conversationKey: args.conversationKey,
-      harnessKind: args.harnessKind,
+      harnessType: args.harnessType,
       sessionId: args.sessionId,
       resumeState: args.resumeState,
       updatedAt: Date.now(),

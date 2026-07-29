@@ -66,7 +66,7 @@ import {
   wrapToolsWithHooks,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
-import { createConfiguredHarnessAgent } from "./harness-agent-runtime.ts";
+import { createConfiguredHarnessAgent } from "./full-agent-runtime.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import {
   channelPolicyIdentity,
@@ -1557,8 +1557,10 @@ export async function runAgentLoop(
     ReturnType<typeof createConfiguredHarnessAgent> | undefined;
   let harnessLeaseAbort: AbortController | undefined;
   let stream: ReturnType<typeof streamText>;
+  const usesFullAgentHarness =
+    agentConfig.harness !== undefined && agentConfig.harness.type !== "default";
   try {
-    if (agentConfig.harness) {
+    if (usesFullAgentHarness) {
       if (policyToolApproval) {
         throw new Error(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
@@ -1566,14 +1568,16 @@ export async function runAgentLoop(
       }
       await applyHarnessSteeringBeforeTurn(session, turnContext);
     }
-    harnessRuntime = agentConfig.harness
+    harnessRuntime = usesFullAgentHarness
       ? createConfiguredHarnessAgent({
           agentConfig: agentConfig,
           compute: requireHarnessSandbox(statelessSandbox),
+          id: session.agentId,
           instructions: turnContext.system
             .map((message) => message.content)
             .join("\n\n"),
           reservationKey: session.conversationKey,
+          skills: await session.loadHarnessSkills(),
           toolApproval:
             configuredApprovals.size > 0
               ? Object.fromEntries(
@@ -1588,9 +1592,9 @@ export async function runAgentLoop(
       : undefined;
     if (harnessRuntime) {
       const stored = await session.loadHarnessSession();
-      if (stored && stored.harnessKind !== agentConfig.harness?.kind) {
+      if (stored && stored.harnessType !== agentConfig.harness?.type) {
         throw new Error(
-          `Conversation is already bound to the ${stored.harnessKind} harness; clear it before switching to ${agentConfig.harness?.kind}`,
+          `Conversation is already bound to the ${stored.harnessType} harness; clear it before switching to ${agentConfig.harness?.type}`,
         );
       }
       harnessLeaseAbort = new AbortController();
@@ -1651,7 +1655,10 @@ export async function runAgentLoop(
       const resumeState = await activeHarnessSession.stop();
       await session.assertCurrentOwner();
       await session.saveHarnessSession({
-        harnessKind: agentConfig.harness!.kind,
+        harnessType: agentConfig.harness!.type as Exclude<
+          NonNullable<AgentConfig["harness"]>["type"],
+          "default"
+        >,
         sessionId: activeHarnessSession.sessionId,
         resumeState: resumeState,
       });
@@ -1805,6 +1812,18 @@ async function applyHarnessSteeringBeforeTurn(
 }
 
 function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "tool") {
+    const assistantIndex = messages.findLastIndex(
+      (message, index) =>
+        index < messages.length - 1 && message.role === "assistant",
+    );
+    if (assistantIndex >= 0) {
+      return [messages[assistantIndex]!, lastMessage];
+    }
+
+    return [lastMessage];
+  }
   const lastAssistantIndex = messages.findLastIndex(
     (message) => message.role === "assistant",
   );

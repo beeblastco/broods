@@ -2964,12 +2964,35 @@ components:
 
     HarnessConfig:
       type: object
-      required: [kind]
-      description: Selects a full Codex, Claude Code, or Pi runtime inside a persistent Broods Workdir or Lambda MicroVM sandbox.
+      required: [type]
+      description: Selects the Broods serverless loop or a full agent runtime. Non-default types require the agent sandbox reference to resolve to a persistent Broods Workdir or Lambda MicroVM.
       properties:
-        kind:
+        type:
           type: string
-          enum: [claude-code, codex, pi]
+          enum: [default, claude-code, codex, deepagents, opencode, pi]
+        activeTools:
+          type: array
+          items:
+            type: string
+          description: Allow-list of adapter built-in and custom tool names. Mutually exclusive with inactiveTools.
+        inactiveTools:
+          type: array
+          items:
+            type: string
+          description: Tool names to disable. Mutually exclusive with activeTools; channel denyTools are added at runtime.
+        debug:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            level:
+              type: string
+              enum: [error, warn, info, debug, trace]
+            subsystems:
+              type: array
+              items:
+                type: string
+          description: Routes adapter diagnostics into Broods structured logs.
         permissionMode:
           type: string
           enum: [allow-reads, allow-edits, allow-all]

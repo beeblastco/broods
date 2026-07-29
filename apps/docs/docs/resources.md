@@ -122,26 +122,33 @@ output total, so usage tracking still shows thinking-token spend.
 
 ### Full-agent harnesses
 
-Set `harness` to run Codex, Claude Code, or Pi inside the agent's persistent Broods
-sandbox instead of using the built-in `streamText` tool loop:
+Every agent uses a harness: the default is Broods' serverless `streamText` loop.
+Use `defineHarness()` when you want to make that choice explicit or replace the
+default loop with Claude Code, Codex, Deep Agents, OpenCode, or Pi.
 
 ```ts
+import { defineAgent, defineHarness, defineSandbox, env } from "broods";
+
 const runner = defineSandbox({
   name: "codex-runner",
   provider: "sandbox",
   persistent: true,
   permissionMode: "bypass",
   network: { mode: "allow-all" },
+  onCreate: ["bun install"],
+  onResume: ["git status --short"],
+});
+
+const codexHarness = defineHarness({
+  type: "codex",
+  sandbox: runner,
+  permissionMode: "allow-all",
+  startupTimeoutMs: 180_000,
 });
 
 export const codingAgent = defineAgent({
   name: "coding-agent",
-  harness: {
-    kind: "codex",
-    permissionMode: "allow-all",
-    startupTimeoutMs: 180_000,
-  },
-  sandbox: runner,
+  harness: codexHarness,
   provider: {
     custom: {
       apiKey: env("AI_API_KEY"),
@@ -153,10 +160,23 @@ export const codingAgent = defineAgent({
 });
 ```
 
-The sandbox must be persistent and use the Workdir (`sandbox`) or Lambda
-MicroVM (`lambda`) provider. Broods stores the adapter's resume state after
-each turn, so the same Codex/Claude/Pi session continues across requests. Clearing
-the conversation also clears that resume state.
+`defineHarness({ type: "default" })` explicitly selects the Broods harness;
+omitting `harness` means the same thing. This serverless loop runs in Broods core
+and provides the normal Broods tool registry, including `bash`, `read`, `write`,
+`edit`, `glob`, and `grep` when their required sandbox or workspace is configured.
+An agent-level `sandbox` on a default harness is a tool execution target; the
+serverless loop itself does not live inside it.
+
+Every non-default harness requires its `sandbox` on `defineHarness()`. The
+sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
+(`lambda`) provider. Compute lifecycle belongs to `defineSandbox()`: use
+`onCreate` for one-time setup and `onResume` for per-acquisition setup.
+
+Broods stores the adapter's opaque resume state after each turn, so the same
+native session continues across requests. Resume state is limited to 64 KiB; it
+is not a JSON copy of the conversation. The native conversation and working
+files remain in the harness sandbox, and clearing the Broods conversation clears
+the resume pointer.
 
 Steering already queued when the turn starts is folded into the harness prompt.
 Because these runtimes own their internal tool loop, steering that arrives after
@@ -164,10 +184,32 @@ the turn has started is retained by the durable ingress coordinator and runs as
 the next follow-up. User stop requests abort the active harness turn.
 
 `codex` supports the `custom`, `openai`, and `gateway` model providers;
-`claude-code` supports `anthropic` and `gateway`; Pi uses its model catalog with
-credentials derived from the configured provider. Codex requires
-`permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA policies
-and structured output are not currently supported on this runtime.
+`opencode` supports `anthropic`, `custom`, `gateway`, and `openai`;
+`claude-code` and `deepagents` support `anthropic` and `gateway`; Pi uses its
+model catalog with credentials derived from the configured provider. Codex
+requires `permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA
+policies and structured output are not currently supported by non-default
+harnesses.
+
+All non-default harnesses receive enabled Broods custom tools and account skills.
+Use `activeTools` or `inactiveTools` on `defineHarness()` to filter adapter
+built-ins and custom tools. Channel-level denied tools are applied in addition.
+Adapter capabilities still differ:
+
+| Harness     | Custom tools | Account skills | Built-in approval | Built-in filtering |
+| ----------- | ------------ | -------------- | ----------------- | ------------------ |
+| Claude Code | Yes          | Yes            | Yes               | Yes                |
+| Codex       | Yes          | Yes            | No                | No                 |
+| Deep Agents | Yes          | Yes            | Yes               | Auto-rejection     |
+| OpenCode    | Yes          | Yes            | Yes               | Auto-rejection     |
+| Pi          | Yes          | Yes            | Yes               | Yes                |
+
+Broods uses its existing Convex ingress and lease coordination instead of
+embedding Vercel Workflow. A turn receives only the newest user input, while a
+trailing approval or tool-result message continues the unfinished native turn.
+The runtime streams through the normal Broods SSE/channel path, then calls
+`stop()` and persists the bounded resume state. Mid-turn time slicing with
+`suspendTurn()` and `continueStream()` is not currently enabled.
 
 ### Reasoning / Thinking Tokens
 

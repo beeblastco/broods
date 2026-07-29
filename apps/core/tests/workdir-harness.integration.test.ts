@@ -7,10 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
-import {
-  createWorkdirHarnessAgent,
-  type WorkdirHarnessKind,
-} from "../src/harness/harness-agent-runtime.ts";
+import { createWorkdirHarnessAgent } from "../src/harness/full-agent-runtime.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createWorkdirHarnessDriver } from "../src/harness/sandbox/workdir-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";

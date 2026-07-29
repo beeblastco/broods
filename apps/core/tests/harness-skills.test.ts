@@ -645,6 +645,54 @@ describe("listSkillMetadataForConfig", () => {
   });
 });
 
+describe("loadConfiguredHarnessSkills", () => {
+  it("maps configured account skills and their files into HarnessAgent skills", async () => {
+    const skillContent = createSkillMarkdown(
+      "review-code",
+      "Review a code change",
+      "Read the diff and report correctness risks.",
+    );
+    s3ObjectExistsMock.mockResolvedValue(true);
+    readS3TextMock.mockImplementation(async (_bucket: string, key: string) => {
+      if (key.endsWith("SKILL.md")) return skillContent;
+      if (key.endsWith("references/checklist.md")) return "Check tests.";
+      throw new Error("NoSuchKey");
+    });
+    listS3PrefixMock.mockResolvedValue([
+      {
+        key: "acct_test/review-code/SKILL.md",
+        size: skillContent.length,
+        etag: "skill-etag",
+      },
+      {
+        key: "acct_test/review-code/references/checklist.md",
+        size: 12,
+        etag: "reference-etag",
+      },
+    ]);
+
+    const { loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+    const result = await loadConfiguredHarnessSkills("acct_test", {
+      skills: { enabled: true, allowed: ["acct_test/review-code"] },
+    });
+
+    expect(result).toEqual([
+      {
+        name: "review-code",
+        description: "Review a code change",
+        content: "Read the diff and report correctness risks.",
+        files: [
+          {
+            path: "references/checklist.md",
+            content: "Check tests.",
+          },
+        ],
+      },
+    ]);
+  });
+});
+
 describe("loadSkillContent", () => {
   it("loads skill content with metadata", async () => {
     const skillContent = createSkillMarkdown(

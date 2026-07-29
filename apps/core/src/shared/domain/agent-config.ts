@@ -48,7 +48,21 @@ const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-const AGENT_HARNESS_KINDS = ["claude-code", "codex", "pi"] as const;
+const AGENT_HARNESS_TYPES = [
+  "default",
+  "claude-code",
+  "codex",
+  "deepagents",
+  "opencode",
+  "pi",
+] as const;
+const AGENT_HARNESS_DEBUG_LEVELS = [
+  "error",
+  "warn",
+  "info",
+  "debug",
+  "trace",
+] as const;
 const AGENT_HARNESS_PERMISSION_MODES = [
   "allow-reads",
   "allow-edits",
@@ -138,10 +152,19 @@ export interface AgentBehaviorConfig {
 }
 
 export interface AgentHarnessConfig {
-  kind: (typeof AGENT_HARNESS_KINDS)[number];
+  activeTools?: string[];
+  debug?: AgentHarnessDebugConfig;
+  inactiveTools?: string[];
+  type: (typeof AGENT_HARNESS_TYPES)[number];
   permissionMode?: (typeof AGENT_HARNESS_PERMISSION_MODES)[number];
   startupTimeoutMs?: number;
   webSearch?: boolean;
+}
+
+export interface AgentHarnessDebugConfig {
+  enabled?: boolean;
+  level?: (typeof AGENT_HARNESS_DEBUG_LEVELS)[number];
+  subsystems?: string[];
 }
 
 /**
@@ -579,6 +602,15 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
+  if (
+    isPlainObject(config.harness) &&
+    config.harness.type !== "default" &&
+    typeof config.sandbox !== "string"
+  ) {
+    throw new Error(
+      `config.sandbox is required for the ${String(config.harness.type)} harness`,
+    );
+  }
   normalizeWorkspaceRefs(config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
@@ -593,11 +625,16 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   } else {
     delete config.policy;
   }
-  if (config.harness !== undefined && config.policy !== undefined) {
+  if (
+    isPlainObject(config.harness) &&
+    config.harness.type !== "default" &&
+    config.policy !== undefined
+  ) {
     throw new Error("config.policy is not supported with config.harness");
   }
   if (
-    config.harness !== undefined &&
+    isPlainObject(config.harness) &&
+    config.harness.type !== "default" &&
     isPlainObject(config.model) &&
     isPlainObject(config.model.output) &&
     config.model.output.type !== "text"
@@ -621,13 +658,13 @@ function normalizeHarnessConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   if (
-    typeof config.kind !== "string" ||
-    !AGENT_HARNESS_KINDS.includes(
-      config.kind as (typeof AGENT_HARNESS_KINDS)[number],
+    typeof config.type !== "string" ||
+    !AGENT_HARNESS_TYPES.includes(
+      config.type as (typeof AGENT_HARNESS_TYPES)[number],
     )
   ) {
     throw new Error(
-      `config.harness.kind must be one of: ${AGENT_HARNESS_KINDS.join(", ")}`,
+      `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
     );
   }
   assertOptionalEnum(
@@ -641,8 +678,27 @@ function normalizeHarnessConfig(value: unknown): void {
     AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
   );
   assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
+  assertOptionalStringArray(config.activeTools, "config.harness.activeTools");
+  assertOptionalStringArray(
+    config.inactiveTools,
+    "config.harness.inactiveTools",
+  );
+  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
+    throw new Error(
+      "config.harness must use either activeTools or inactiveTools, not both",
+    );
+  }
+  normalizeHarnessDebugConfig(config.debug);
   if (
-    config.kind === "codex" &&
+    config.type === "default" &&
+    Object.keys(config).some((key) => key !== "type")
+  ) {
+    throw new Error(
+      "config.harness.type default does not accept adapter options; configure Broods tools on config.tools",
+    );
+  }
+  if (
+    config.type === "codex" &&
     config.permissionMode !== undefined &&
     config.permissionMode !== "allow-all"
   ) {
@@ -650,16 +706,35 @@ function normalizeHarnessConfig(value: unknown): void {
       "config.harness.permissionMode must be allow-all for the codex harness",
     );
   }
-  if (config.kind !== "codex" && config.webSearch !== undefined) {
+  if (config.type !== "codex" && config.webSearch !== undefined) {
     throw new Error(
       "config.harness.webSearch is only supported by the codex harness",
     );
   }
-  if (config.kind === "pi" && config.startupTimeoutMs !== undefined) {
+  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
     throw new Error(
       "config.harness.startupTimeoutMs is not supported by the pi harness",
     );
   }
+}
+
+function normalizeHarnessDebugConfig(value: unknown): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.harness.debug must be an object");
+  }
+  assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
+  assertOptionalEnum(
+    value.level,
+    "config.harness.debug.level",
+    AGENT_HARNESS_DEBUG_LEVELS,
+  );
+  assertOptionalStringArray(
+    value.subsystems,
+    "config.harness.debug.subsystems",
+  );
 }
 
 export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {

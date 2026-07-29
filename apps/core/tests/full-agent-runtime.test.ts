@@ -1,5 +1,5 @@
 /**
- * Broods persistent HarnessAgent construction tests.
+ * Broods persistent full-agent runtime construction tests.
  * Each probe runs in a child process so importing the real driver cannot prime
  * Bun's module cache ahead of executor tests that install module-level fakes.
  * Live bridge bootstrap and connectivity are covered by the opt-in integration test.
@@ -27,11 +27,11 @@ const MICROVM_COMPUTE = {
 } as const;
 
 const MODULE_URL = pathToFileURL(
-  resolve(import.meta.dir, "../src/harness/harness-agent-runtime.ts"),
+  resolve(import.meta.dir, "../src/harness/full-agent-runtime.ts"),
 ).href;
 
 describe("createWorkdirHarnessAgent", () => {
-  it.each(["claude-code", "codex", "pi"] as const)(
+  it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(
     "constructs the %s bridge on a version-scoped reservation",
     async (harness) => {
       const result = await runProbe(`
@@ -87,7 +87,7 @@ describe("createConfiguredHarnessAgent", () => {
     const result = await runProbe(`
       const runtime = module.createConfiguredHarnessAgent({
         agentConfig: {
-          harness: { kind: "codex", permissionMode: "allow-all" },
+          harness: { type: "codex", permissionMode: "allow-all" },
           model: { provider: "custom", modelId: "Qwen3.6-27B", reasoning: "medium" },
           provider: {
             custom: {
@@ -113,12 +113,80 @@ describe("createConfiguredHarnessAgent", () => {
     });
   });
 
+  it("maps custom models, tool filters, and diagnostics into OpenCode", async () => {
+    const result = await runProbe(`
+      const runtime = module.createConfiguredHarnessAgent({
+        agentConfig: {
+          harness: {
+            type: "opencode",
+            activeTools: ["bash", "custom_tool"],
+            debug: { enabled: true, level: "trace", subsystems: ["bridge"] },
+          },
+          denyTools: ["bash"],
+          model: { provider: "custom", modelId: "Qwen3.6-27B", reasoning: "high" },
+          provider: {
+            custom: {
+              apiKey: "test-key",
+              base_url: "https://llm.example.test/v1/",
+            },
+          },
+        },
+        compute: ${JSON.stringify(COMPUTE)},
+        instructions: "Work carefully.",
+        reservationKey: "acct:agent:conversation",
+        tools: {
+          custom_tool: { description: "custom", inputSchema: { jsonSchema: {} } },
+        },
+      });
+      console.log(JSON.stringify({
+        harnessId: runtime.agent.harnessId,
+        reservationKey: runtime.reservationKey,
+      }));
+    `);
+
+    expect(JSON.parse(result)).toMatchObject({
+      harnessId: "opencode",
+      reservationKey: expect.stringContaining(
+        "acct:agent:conversation:opencode:",
+      ),
+    });
+  });
+
+  it("rejects unsupported providers for Deep Agents", async () => {
+    const result = await runProbe(`
+      try {
+        module.createConfiguredHarnessAgent({
+          agentConfig: {
+            harness: { type: "deepagents" },
+            model: { provider: "custom", modelId: "Qwen3.6-27B" },
+            provider: {
+              custom: {
+                apiKey: "test-key",
+                base_url: "https://llm.example.test/v1/",
+              },
+            },
+          },
+          compute: ${JSON.stringify(COMPUTE)},
+          instructions: "",
+          reservationKey: "acct:agent:conversation",
+          tools: {},
+        });
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : String(error));
+      }
+    `);
+
+    expect(result).toBe(
+      "config.harness.type deepagents requires the anthropic or gateway model provider",
+    );
+  });
+
   it("rejects ephemeral and unsupported sandbox providers", async () => {
     const result = await runProbe(`
       try {
         module.createConfiguredHarnessAgent({
           agentConfig: {
-            harness: { kind: "codex" },
+            harness: { type: "codex" },
             model: { provider: "openai", modelId: "gpt-5" },
             provider: { openai: { apiKey: "test-key" } },
           },
@@ -143,7 +211,7 @@ describe("createConfiguredHarnessAgent", () => {
 });
 
 describe("createMicrovmHarnessAgent", () => {
-  it.each(["claude-code", "codex", "pi"] as const)(
+  it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(
     "constructs the %s bridge on a version-scoped MicroVM reservation",
     async (harness) => {
       const result = await runProbe(`

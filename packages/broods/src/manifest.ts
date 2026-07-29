@@ -66,6 +66,7 @@ export type ResourceAliases = Partial<
 const SDK_STUB_SOURCE = `const passthrough = (input) => input;
 export const defineTool = passthrough;
 export const defineAgent = passthrough;
+export const defineHarness = passthrough;
 export const defineWorkspace = passthrough;
 export const defineSandbox = passthrough;
 export const defineSkill = passthrough;
@@ -821,9 +822,13 @@ const KNOWN_PROVIDER_SETTING_KEYS = new Set([
   "sessionToken",
 ]);
 const KNOWN_HARNESS_KEYS = new Set([
-  "kind",
+  "activeTools",
+  "debug",
+  "inactiveTools",
   "permissionMode",
+  "sandbox",
   "startupTimeoutMs",
+  "type",
   "webSearch",
 ]);
 
@@ -901,12 +906,37 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     }
   }
   if (
-    config.kind !== "claude-code" &&
-    config.kind !== "codex" &&
-    config.kind !== "pi"
+    config.type !== "default" &&
+    config.type !== "claude-code" &&
+    config.type !== "codex" &&
+    config.type !== "deepagents" &&
+    config.type !== "opencode" &&
+    config.type !== "pi"
   ) {
     throw new Error(
-      `Agent "${agentName}" config.harness.kind must be claude-code, codex, or pi`,
+      `Agent "${agentName}" config.harness.type must be default, claude-code, codex, deepagents, opencode, or pi`,
+    );
+  }
+  if (config.type === "default" && Object.keys(config).length !== 1) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.type default does not accept adapter options; configure Broods tools on config.tools`,
+    );
+  }
+  if (config.type !== "default" && config.sandbox === undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.sandbox is required for ${config.type}`,
+    );
+  }
+  if (
+    config.type !== "default" &&
+    config.sandbox !== undefined &&
+    !(
+      typeof config.sandbox === "string" ||
+      (isResource(config.sandbox) && config.sandbox.kind === "sandbox")
+    )
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.sandbox must be a defineSandbox resource or sandbox name`,
     );
   }
   if (
@@ -920,7 +950,7 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     );
   }
   if (
-    config.kind === "codex" &&
+    config.type === "codex" &&
     config.permissionMode !== undefined &&
     config.permissionMode !== "allow-all"
   ) {
@@ -944,14 +974,68 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
       `Agent "${agentName}" config.harness.webSearch must be a boolean`,
     );
   }
-  if (config.kind !== "codex" && config.webSearch !== undefined) {
+  if (config.type !== "codex" && config.webSearch !== undefined) {
     throw new Error(
       `Agent "${agentName}" config.harness.webSearch is only supported by codex`,
     );
   }
-  if (config.kind === "pi" && config.startupTimeoutMs !== undefined) {
+  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
     throw new Error(
       `Agent "${agentName}" config.harness.startupTimeoutMs is not supported by pi`,
+    );
+  }
+  validateHarnessStringArray(agentName, config.activeTools, "activeTools");
+  validateHarnessStringArray(agentName, config.inactiveTools, "inactiveTools");
+  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness must use either activeTools or inactiveTools, not both`,
+    );
+  }
+  validateHarnessDebugConfig(agentName, config.debug);
+}
+
+function validateHarnessDebugConfig(agentName: string, value: unknown): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug must be an object`,
+    );
+  }
+  const config = value as Record<string, unknown>;
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug.enabled must be a boolean`,
+    );
+  }
+  if (
+    config.level !== undefined &&
+    config.level !== "error" &&
+    config.level !== "warn" &&
+    config.level !== "info" &&
+    config.level !== "debug" &&
+    config.level !== "trace"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug.level must be error, warn, info, debug, or trace`,
+    );
+  }
+  validateHarnessStringArray(agentName, config.subsystems, "debug.subsystems");
+}
+
+function validateHarnessStringArray(
+  agentName: string,
+  value: unknown,
+  field: string,
+): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) ||
+      !value.every(
+        (entry) => typeof entry === "string" && entry.trim().length > 0,
+      ))
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.${field} must be an array of non-empty strings`,
     );
   }
 }
@@ -963,6 +1047,27 @@ function normalizeAgentConfig(
   const config = { ...(resource.config as Record<string, unknown>) };
   validateProviderConfig(resource.name, config.provider);
   validateHarnessConfig(resource.name, config.harness);
+  if (
+    config.harness &&
+    typeof config.harness === "object" &&
+    !Array.isArray(config.harness)
+  ) {
+    const harness = {
+      ...(config.harness as Record<string, unknown>),
+    };
+    if (harness.type !== "default") {
+      if (config.sandbox !== undefined) {
+        throw new Error(
+          `Agent "${resource.name}" must configure the full-agent sandbox on defineHarness, not defineAgent`,
+        );
+      }
+      config.sandbox = isResource(harness.sandbox)
+        ? harness.sandbox.name
+        : harness.sandbox;
+      delete harness.sandbox;
+    }
+    config.harness = harness;
+  }
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

@@ -3,6 +3,7 @@
  * Keep account skill CRUD in account-manage and shared rules in _shared.
  */
 
+import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";
@@ -96,6 +97,43 @@ export async function loadConfiguredSkillPrompt(
       content: formatLoadedSkillPrompt(loaded, staged),
     },
   };
+}
+
+export async function loadConfiguredHarnessSkills(
+  accountId: string | undefined,
+  agentConfig: AgentConfig,
+): Promise<HarnessAgentSkill[]> {
+  if (!(agentConfig.skills?.enabled === true) || !accountId) {
+    return [];
+  }
+
+  return Promise.all(
+    (agentConfig.skills.allowed ?? []).map(async (skillPath) => {
+      await assertAccountOwnsSkillPath(accountId, skillPath);
+      const parsed = parseSkillPath(skillPath)!;
+      const skillText = await readSkillMarkdown(accountId, parsed.skillName);
+      if (!skillText) {
+        throw new Error(`Skill does not exist: ${skillPath}`);
+      }
+      const skill = parseSkillMarkdown(skillText);
+      const sourceFiles = await listSkillSourceFiles(skillPath);
+      const files = await Promise.all(
+        sourceFiles
+          .filter((file) => file.path !== SKILL_FILE)
+          .map(async (file) => ({
+            path: file.path,
+            content: await readSkillText(skillPath, file.path),
+          })),
+      );
+
+      return {
+        name: skill.name,
+        description: skill.description,
+        content: skillInstructionsFromMarkdown(skillText),
+        ...(files.length > 0 ? { files: files } : {}),
+      };
+    }),
+  );
 }
 
 export async function listSkillMetadataForConfig(

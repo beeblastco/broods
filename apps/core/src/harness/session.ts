@@ -3,14 +3,15 @@
  * Keep event persistence, context projection, leases, and prompt loading here.
  */
 
-import type {
-  AssistantModelMessage,
-  ModelMessage,
-  SystemModelMessage,
-  ToolModelMessage,
-  UserModelMessage,
+import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
+import {
+  systemModelMessageSchema,
+  type AssistantModelMessage,
+  type ModelMessage,
+  type SystemModelMessage,
+  type ToolModelMessage,
+  type UserModelMessage,
 } from "ai";
-import { systemModelMessageSchema } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import type {
   AgentChannelWorkspaceScope,
@@ -44,6 +45,7 @@ import {
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   listConfiguredSkillMetadata,
+  loadConfiguredHarnessSkills,
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
@@ -55,6 +57,8 @@ import {
   type AppliedIngress,
 } from "./ingress.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
+
+const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
 export type ConversationIngressEvent =
   // `metadata` is opaque hook data persisted on the stored-event envelope,
@@ -106,7 +110,7 @@ interface SubagentMetadata {
 }
 
 export interface StoredHarnessSession {
-  harnessKind: "claude-code" | "codex" | "pi";
+  harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
   sessionId: string;
   resumeState: unknown;
 }
@@ -339,6 +343,16 @@ export class Session {
   }
 
   async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    const serialized = JSON.stringify(state.resumeState);
+    if (serialized === undefined) {
+      throw new Error("Harness resume state must be JSON serializable");
+    }
+    const bytes = Buffer.byteLength(serialized, "utf-8");
+    if (bytes > MAX_HARNESS_RESUME_STATE_BYTES) {
+      throw new Error(
+        `Harness resume state is ${bytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
+      );
+    }
     await runtime.mutate("saveHarnessSession", {
       conversationKey: this.conversationKey,
       ...state,
@@ -510,6 +524,10 @@ export class Session {
     );
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
+  }
+
+  async loadHarnessSkills(): Promise<HarnessAgentSkill[]> {
+    return loadConfiguredHarnessSkills(this.accountId, this.agentConfig);
   }
 
   /**

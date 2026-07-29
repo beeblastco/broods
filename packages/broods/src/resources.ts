@@ -107,6 +107,18 @@ export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
   envVars?: Record<string, string | EnvRef | undefined>;
 };
 
+export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
+export type FullAgentHarnessType = Exclude<HarnessType, "default">;
+
+export type HarnessDefinition =
+  | {
+      type: "default";
+    }
+  | (Omit<NonNullable<AgentConfig["harness"]>, "type"> & {
+      type: FullAgentHarnessType;
+      sandbox: SandboxResource | string;
+    });
+
 export interface SkillDefinitionConfig {
   /**
    * Folder containing SKILL.md plus optional scripts/assets. Relative paths are
@@ -480,8 +492,9 @@ const _providerKeyParity: KeysEqual<
 void _providerKeyParity;
 
 export type AgentDefinitionConfig = EnvRefString<
-  Pick<AgentConfig, "agent" | "harness" | "model" | "session" | "tools">
+  Pick<AgentConfig, "agent" | "model" | "session" | "tools">
 > & { provider?: ProviderConfigInput } & {
+  harness?: HarnessDefinition;
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
@@ -676,6 +689,12 @@ export function defineAgent<const Name extends string>(
     description,
     config as AgentDefinitionConfig,
   );
+}
+
+export function defineHarness<const Definition extends HarnessDefinition>(
+  definition: Definition,
+): Definition {
+  return definition;
 }
 
 export function defineWorkspace<const Name extends string>(

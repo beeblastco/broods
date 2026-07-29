@@ -10,40 +10,60 @@ describe("agent config validation", () => {
     expect(
       normalizeAgentConfig({
         harness: {
-          kind: "codex",
+          activeTools: ["shell", "read"],
+          debug: {
+            enabled: true,
+            level: "debug",
+            subsystems: ["bridge"],
+          },
+          type: "codex",
           permissionMode: "allow-all",
           startupTimeoutMs: 180_000,
           webSearch: true,
         },
+        sandbox: "persistent-sandbox",
       }),
     ).toEqual({
       harness: {
-        kind: "codex",
+        activeTools: ["shell", "read"],
+        debug: {
+          enabled: true,
+          level: "debug",
+          subsystems: ["bridge"],
+        },
+        type: "codex",
         permissionMode: "allow-all",
         startupTimeoutMs: 180_000,
         webSearch: true,
       },
+      sandbox: "persistent-sandbox",
     });
-    expect(() => normalizeAgentConfig({ harness: { kind: "other" } })).toThrow(
-      "config.harness.kind must be one of: claude-code, codex, pi",
+    expect(() => normalizeAgentConfig({ harness: { type: "other" } })).toThrow(
+      "config.harness.type must be one of: default, claude-code, codex, deepagents, opencode, pi",
     );
+    expect(normalizeAgentConfig({ harness: { type: "default" } })).toEqual({
+      harness: { type: "default" },
+    });
     expect(() =>
       normalizeAgentConfig({
-        harness: { kind: "codex", permissionMode: "allow-edits" },
+        harness: { type: "codex", permissionMode: "allow-edits" },
+        sandbox: "persistent-sandbox",
       }),
     ).toThrow(
       "config.harness.permissionMode must be allow-all for the codex harness",
     );
     expect(() =>
       normalizeAgentConfig({
-        harness: { kind: "claude-code", webSearch: true },
+        harness: { type: "claude-code", webSearch: true },
+        sandbox: "persistent-sandbox",
       }),
     ).toThrow(
       "config.harness.webSearch is only supported by the codex harness",
     );
     expect(() =>
       normalizeAgentConfig({
-        harness: { kind: "codex" },
+        harness: { type: "codex" },
+        sandbox: "persistent-sandbox",
         model: {
           output: {
             type: "object",
@@ -56,10 +76,38 @@ describe("agent config validation", () => {
     );
     expect(() =>
       normalizeAgentConfig({
-        harness: { kind: "codex" },
+        harness: { type: "codex" },
         policy: { policyIds: ["policy-1"] },
+        sandbox: "persistent-sandbox",
       }),
     ).toThrow("config.policy is not supported with config.harness");
+    expect(() =>
+      normalizeAgentConfig({
+        harness: {
+          type: "opencode",
+          activeTools: ["bash"],
+          inactiveTools: ["write"],
+        },
+        sandbox: "persistent-sandbox",
+      }),
+    ).toThrow(
+      "config.harness must use either activeTools or inactiveTools, not both",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: {
+          type: "default",
+          activeTools: ["bash"],
+        },
+      }),
+    ).toThrow(
+      "config.harness.type default does not accept adapter options; configure Broods tools on config.tools",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "pi" },
+      }),
+    ).toThrow("config.sandbox is required for the pi harness");
   });
 
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
