@@ -42,6 +42,13 @@ updates:
       - dependency-name: "@types/node"
       - dependency-name: tar
       - dependency-name: webpack
+      # eslint-config-next still ships eslint-plugin-react 7.x and
+      # typescript-eslint 8.x, neither of which runs on eslint 10 — the plugin
+      # calls the `context.getFilename()` that eslint 10 removed. Drop this once
+      # eslint-config-next peers eslint 10.
+      - dependency-name: eslint
+        update-types:
+          - version-update:semver-major
     groups:
       ai-sdk:
         patterns:

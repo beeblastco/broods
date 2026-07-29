@@ -8,6 +8,9 @@ import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 export const AGENT_POLICY_ACTIONS = [
+  // Gates the turn itself, before any tool runs: "may this person address the
+  // agent here?". Everything below gates one action inside an admitted turn.
+  "agent.invoke",
   "tool.call",
   "workspace.read",
   "workspace.write",
@@ -277,6 +280,16 @@ function normalizeConditions(
     if (!isConditionValue(record.value)) {
       throw new Error(
         `policy rules[${index}].conditions[${conditionIndex}].value is invalid`,
+      );
+    }
+    // A scalar here matches no rego branch, so the condition never fires — which
+    // on notIn means the deny silently never applies. Refuse it instead.
+    if (
+      (record.operator === "in" || record.operator === "notIn") &&
+      !Array.isArray(record.value)
+    ) {
+      throw new Error(
+        `policy rules[${index}].conditions[${conditionIndex}].value must be an array when operator is ${record.operator}; use ${record.operator === "in" ? "equals" : "notEquals"} to compare one value`,
       );
     }
 

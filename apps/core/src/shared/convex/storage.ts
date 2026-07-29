@@ -22,6 +22,10 @@ import {
 } from "../domain/agent-config.ts";
 import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
+import type {
+  ChannelRecord,
+  ChannelRecordConfig,
+} from "../domain/channel-record.ts";
 import type { CronRecord } from "../domain/cron.ts";
 import type {
   SandboxConfig,
@@ -166,7 +170,7 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
 const accounts: Storage["accounts"] = {
   async getById(accountId) {
     const doc = await getConvexClient().query(internal.accounts.getById, {
-      accountId: accountId as any,
+      accountId: accountId,
     });
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
@@ -223,6 +227,12 @@ const agents: Storage["agents"] = {
       agentId: agentId as any,
     });
     return agentFromConvex(doc as ConvexAgentDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.agents.list, {
+      accountId: accountId as any,
+    })) as ConvexAgentDoc[];
+    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
   },
   async removeAllForAccount(accountId) {
     const docs = (await getConvexClient().query(internal.agents.list, {
@@ -405,6 +415,78 @@ function workspaceConfigFromConvex(
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
 }
+
+interface ConvexChannelRecordDoc {
+  _id: string;
+  accountId: string;
+  platform: string;
+  externalId: string;
+  workspaceRef?: string;
+  name: string;
+  description?: string;
+  config: ChannelRecordConfig;
+  status: "active" | "deleted";
+  createdAt: number;
+  updatedAt: number;
+}
+
+function channelRecordFromConvex(
+  doc: ConvexChannelRecordDoc | null,
+): ChannelRecord | null {
+  if (!doc) return null;
+  return {
+    accountId: doc.accountId,
+    channelRecordId: doc._id,
+    platform: doc.platform,
+    externalId: doc.externalId,
+    ...(doc.workspaceRef ? { workspaceRef: doc.workspaceRef } : {}),
+    name: doc.name,
+    ...(doc.description ? { description: doc.description } : {}),
+    config: doc.config ?? { agentBindings: [] },
+    status: doc.status,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+const channelRecords: Storage["channelRecords"] = {
+  async getById(accountId, channelRecordId) {
+    const doc = await getConvexClient().query(internal.channelRecords.getById, {
+      accountId: accountId as any,
+      channelRecordId: channelRecordId as any,
+    });
+    return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
+  },
+  async getByExternalId(accountId, platform, externalId) {
+    const doc = await getConvexClient().query(
+      internal.channelRecords.getByExternalId,
+      {
+        accountId: accountId as any,
+        platform: platform as any,
+        externalId: externalId as any,
+      },
+    );
+    return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
+  },
+  async list(accountId) {
+    const docs = (await getConvexClient().query(internal.channelRecords.list, {
+      accountId: accountId as any,
+    })) as ConvexChannelRecordDoc[];
+    return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
+  },
+  async removeAllForAccount(accountId) {
+    const docs = (await getConvexClient().query(internal.channelRecords.list, {
+      accountId: accountId as any,
+    })) as ConvexChannelRecordDoc[];
+    await removeInBatches(docs, (doc) =>
+      getConvexClient().mutation(internal.channelRecords.remove, {
+        accountId: accountId as any,
+        channelRecordId: doc._id as any,
+      }),
+    );
+    return docs.length;
+  },
+};
 
 const sandboxConfigs: Storage["sandboxConfigs"] = {
   async getById(accountId, sandboxId) {
@@ -634,6 +716,7 @@ export const convexStorage: Storage = {
   accounts,
   agents,
   agentDeployments,
+  channelRecords,
   crons,
   sandboxConfigs,
   workspaceConfigs,

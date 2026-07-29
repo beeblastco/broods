@@ -15,7 +15,7 @@ type Call = {
 function mockClient(responses: Array<{ status: number; body: unknown }>) {
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
-    baseUrl: "https://gateway.example.com/",
+    baseUrl: "https://gateway.example.com///",
     accountSecret: "secret-1",
     fetch: async (input, init) => {
       calls.push({
@@ -146,11 +146,11 @@ test("getAccount unwraps the account envelope", async () => {
   expect(account.accountId).toBe("acc_1");
 });
 
-test("webhookUrl builds the per-account per-agent channel path", () => {
+test("webhookUrl builds the per-account channel path", () => {
   const { client } = mockClient([]);
 
-  expect(client.webhookUrl("acc 1", "agent/1", "slack")).toBe(
-    "https://gateway.example.com/webhooks/acc%201/agent%2F1/slack",
+  expect(client.webhookUrl("acc 1", "slack")).toBe(
+    "https://gateway.example.com/webhooks/acc%201/slack",
   );
 });
 
@@ -389,8 +389,8 @@ test("baseUrl defaults to the managed gateway when option and env var are absent
   delete process.env.BROODS_BASE_URL;
   try {
     const client = new BroodsAccountClient({ accountSecret: "fp_acct_test" });
-    expect(client.webhookUrl("acc1", "agent1", "slack")).toBe(
-      "https://gateway.broods.app/webhooks/acc1/agent1/slack",
+    expect(client.webhookUrl("acc1", "slack")).toBe(
+      "https://gateway.broods.app/webhooks/acc1/slack",
     );
   } finally {
     if (savedBaseUrl !== undefined) process.env.BROODS_BASE_URL = savedBaseUrl;

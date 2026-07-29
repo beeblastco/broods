@@ -10,8 +10,10 @@ COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
 COPY apps/docs/package.json ./apps/docs/
 COPY apps/gateway/package.json ./apps/gateway/
+COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
+COPY patches ./patches
 # --ignore-scripts skips core's `sst install` postinstall; system prompts are
 # generated explicitly in the builder stage instead.
 RUN bun install --frozen-lockfile --ignore-scripts
@@ -23,6 +25,7 @@ COPY --from=deps /app/apps/core/node_modules ./apps/core/node_modules
 COPY --from=deps /app/packages/convex/node_modules ./packages/convex/node_modules
 COPY package.json bun.lock ./
 # The storage provider require()s @broods/convex/_generated/api (committed).
+COPY packages/ai-sdk-sandbox ./packages/ai-sdk-sandbox
 COPY packages/convex ./packages/convex
 COPY apps/core ./apps/core
 # Compile at the amd64 target: the k3s cluster nodes are amd64.

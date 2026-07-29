@@ -105,19 +105,43 @@ condition_match(condition) if {
   actual != condition.value
 }
 
+# `in`/`notIn` compare against a set. A scalar is read as the one-element set:
+# otherwise it satisfies no branch at all, and a notIn deny silently never fires.
+condition_values(condition) := condition.value if is_array(condition.value)
+
+condition_values(condition) := [condition.value] if not is_array(condition.value)
+
 condition_match(condition) if {
-  actual := condition_attribute_value(condition.attribute)
   condition.operator == "in"
-  is_array(condition.value)
-  value_in_collection(condition.value, actual)
+  actual := condition_attribute_value(condition.attribute)
+  not is_array(actual)
+  value_in_collection(condition_values(condition), actual)
+}
+
+# Array-valued attributes (actorRoles) match `in` on any overlap, so a rule can
+# be scoped to people holding one of several roles.
+condition_match(condition) if {
+  condition.operator == "in"
+  actual := condition_attribute_value(condition.attribute)
+  is_array(actual)
+  actual[_] == condition_values(condition)[_]
 }
 
 condition_match(condition) if {
   condition.operator == "notIn"
   actual := condition_attribute_value(condition.attribute)
   actual != null
-  is_array(condition.value)
-  not value_in_collection(condition.value, actual)
+  not is_array(actual)
+  not value_in_collection(condition_values(condition), actual)
+}
+
+# An array attribute is "not in" the set only when nothing overlaps; without
+# this an actor who does hold the named role would still satisfy notIn.
+condition_match(condition) if {
+  condition.operator == "notIn"
+  actual := condition_attribute_value(condition.attribute)
+  is_array(actual)
+  not arrays_overlap(condition_values(condition), actual)
 }
 
 condition_match(condition) if {
@@ -134,8 +158,20 @@ condition_match(condition) if {
   contains(actual, condition.value)
 }
 
+# On an array attribute, `contains` means membership: "the actor holds this role".
+condition_match(condition) if {
+  condition.operator == "contains"
+  actual := condition_attribute_value(condition.attribute)
+  is_array(actual)
+  actual[_] == condition.value
+}
+
 value_in_collection(values, actual) if {
   values[_] == actual
+}
+
+arrays_overlap(values, actual) if {
+  values[_] == actual[_]
 }
 
 condition_attribute_value(attribute) := value if {

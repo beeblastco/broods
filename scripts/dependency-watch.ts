@@ -113,7 +113,7 @@ async function readLatest(
   name: string,
 ): Promise<{ version: string; pinnedAi: string | undefined }> {
   const response = await fetch(
-    `${REGISTRY}/${name.replace("/", "%2F")}/latest`,
+    `${REGISTRY}/${name.replaceAll("/", "%2F")}/latest`,
     { headers: { accept: "application/json" } },
   );
   if (!response.ok) {

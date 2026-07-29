@@ -81,7 +81,10 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
 }
 
 export function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, "");
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+
+  return value.slice(0, end);
 }
 
 /**

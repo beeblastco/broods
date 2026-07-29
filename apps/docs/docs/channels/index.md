@@ -11,26 +11,36 @@ Slack, Telegram, Discord, and GitHub are built on the Chat SDK adapter packages:
 
 Use the Chat SDK docs for provider capability details: [Platform Adapters](https://chat-sdk.dev/docs/platform-adapters), [Markdown](https://chat-sdk.dev/docs/api/markdown), [Streaming](https://chat-sdk.dev/docs/streaming), and [Slash Commands](https://chat-sdk.dev/docs/slash-commands). Pancake and Zalo are Broods-native adapters because Chat SDK does not provide those providers.
 
-Customers interact with the provider bot, app, or webhook. They do not receive account secrets. The webhook URL always includes the account, agent, and channel:
+Customers interact with the provider bot, app, or webhook. They do not receive account secrets. There is one webhook URL, per account and channel:
 
 ```bash
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/{channel}
+{BROODS_BASE_URL}/webhooks/{accountId}/{channel}
 ```
+
+The URL names no agent. Whichever of the account's agents holds credentials
+that verify the request receives it — that agent's adapter parses the request
+and sends the reply, because the reply must come from the app the provider
+called. A [channel record](channel-records.md) then binds one real place — a
+Slack channel, a Discord channel, a repository — to the agent that should
+answer there, so one provider app can drive a different agent per channel. With
+no record, the agent whose credentials verified the request answers.
 
 ## Runtime Flow
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{agentId\}/\{channel\}"]
+  Provider["Provider webhook"] --> Url["/webhooks/\{accountId\}/\{channel\}"]
   Url --> Integrations["integrations.ts"]
   Integrations --> Account["load active account"]
-  Account --> Agent["load active agent config"]
+  Account --> Agent["find the agent whose<br/>credentials verify the request"]
   Agent --> Registry["createChannelRegistry(config, scope)"]
   Registry --> Adapter["ChannelAdapter"]
   Adapter --> Auth["authenticate(req)"]
   Auth --> Parse["parse(req)"]
+  Parse --> Record["channel record lookup<br/>(platform, externalId)"]
+  Record --> Gate["agent.invoke policy gate"]
   Parse -->|"response / ignore"| ProviderAck["provider response"]
-  Parse -->|"message"| Ack["provider ACK"]
+  Gate -->|"message"| Ack["provider ACK"]
   Ack --> After["afterResponse"]
   After --> Handler["handler.ts<br/>handleChannelRequest"]
   Handler --> Session["session.ts"]
@@ -107,6 +117,8 @@ Every channel gets these behaviors from the shared pipeline, not from the adapte
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
 - **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
 - **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
+- **Channel records** — a run may be re-targeted to the agent a [channel record](channel-records.md) binds, with that record's instructions, workspaces and policies layered on.
+- **Tag gating** — when a policy denies `agent.invoke`, the refusal is posted in-channel and the turn never starts.
 
 ---
 
@@ -153,7 +165,8 @@ The normalized `InboundMessage` contains:
 - `conversationKey`: provider thread/chat/channel key used for persisted conversation state
 - `channelName`: adapter name
 - `content`: Vercel AI SDK `UserContent`
-- `source`: provider metadata needed for commands, replies, or diagnostics
+- `identity`: provider-neutral `ChannelIdentity` — `workspaceRef`, `channelId`, `threadId`, `actorId`, `actorName`. This is the part channel lookup and policy read.
+- `source`: provider metadata needed for commands, replies, or diagnostics. Stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.
 
@@ -168,7 +181,7 @@ The normalized `InboundMessage` contains:
 5. Use a Chat SDK adapter when the provider is supported; keep provider-specific reply formatting and send logic inside the channel module only for unsupported providers or Broods-specific event normalization.
 6. Import the channel factory in [`src/harness/integrations.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/integrations.ts).
 7. Add `create<Channel>ChannelFromConfig()` and include it in `createChannelRegistry()`.
-8. Document the webhook URL as `/webhooks/{accountId}/{agentId}/{channel}`.
+8. Document the webhook URL as `/webhooks/{accountId}/{channel}`.
 9. Update the SDK constructor, [API Reference](/api-reference), and focused tests/examples when the public config changes.
 
 Do not hardcode channel-specific behavior in commands, shared handlers, or the core agent loop. Commands receive only the channel-agnostic `ChannelActions` interface.

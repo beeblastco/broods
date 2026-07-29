@@ -76,7 +76,7 @@ const idsValidator = v.object({
 
 /**
  * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
- * names referenced via `env.NAME` in agent config but not yet stored for the
+ * names referenced via `env("NAME")` in agent config but not yet stored for the
  * environment, so the operator can run `broods env set <NAME>`.
  * `missingPolicies` lists `policy.policyIds` refs that did not resolve to a
  * policy resource in this deploy, so a typo cannot silently weaken the
@@ -238,6 +238,11 @@ export const syncManifestBySecretHash = internalMutation({
       environmentDoc._id,
       manifest.resources,
     );
+    const externalIds = await externalIdsForEnvironment(
+      ctx,
+      projectDoc._id,
+      environmentDoc._id,
+    );
     const envValues = await loadEnvironmentVariableValues(
       ctx,
       projectDoc._id,
@@ -261,6 +266,7 @@ export const syncManifestBySecretHash = internalMutation({
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
       policyIds: policyIds,
+      toolIds: externalIds.tools,
       envValues: envValues,
       missingEnv: missingEnv,
       missingPolicies: missingPolicies,
@@ -292,11 +298,6 @@ export const syncManifestBySecretHash = internalMutation({
     });
 
     await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
-    const externalIds = await externalIdsForEnvironment(
-      ctx,
-      projectDoc._id,
-      environmentDoc._id,
-    );
     const ids: Ids = {
       agents: agentIds,
       workspaces: workspaceIds,
@@ -1216,7 +1217,7 @@ async function syncSandboxResources(
 
   for (const resource of sandboxes) {
     const name = resourceName(resource.name);
-    // Resolve `env.NAME` refs to their stored values before encrypting, the
+    // Resolve `env("NAME")` refs to their stored values before encrypting, the
     // same way agent configs are resolved at sync time — core reads the
     // sandbox blob verbatim and has no placeholder substitution of its own.
     // Missing names surface as a deploy warning instead of leaking a literal
@@ -1420,6 +1421,7 @@ async function syncAgentResources(
     workspaceIds: Record<string, string>;
     sandboxIds: Record<string, string>;
     policyIds: Record<string, string>;
+    toolIds: Record<string, string>;
     envValues: Record<string, string>;
     missingEnv: Set<string>;
     missingPolicies: Set<string>;
@@ -1433,6 +1435,7 @@ async function syncAgentResources(
     workspaceIds,
     sandboxIds,
     policyIds,
+    toolIds,
     envValues,
     missingEnv,
     missingPolicies,
@@ -1484,9 +1487,10 @@ async function syncAgentResources(
       workspaceIds,
       sandboxIds,
       policyIds,
+      toolIds,
     );
     const flat = fromNestedAgentConfig(nested);
-    // Names referenced via `env.NAME` but not yet stored for this environment.
+    // Names referenced via `env("NAME")` but not yet stored for this environment.
     // Surfaced as a deploy warning so a typo/rename can't silently no-op into
     // an unresolved `${NAME}` placeholder at run time.
     for (const envNameEntry of envNames) {
@@ -2732,6 +2736,7 @@ function rewriteResourceRefs(
   workspaceIds: Record<string, string>,
   sandboxIds: Record<string, string>,
   policyIds: Record<string, string>,
+  toolIds: Record<string, string>,
 ): Record<string, unknown> {
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
@@ -2765,6 +2770,16 @@ function rewriteResourceRefs(
           : entry,
       ),
     };
+  }
+  // `config.tools` is keyed by account tool id at rest: a key left as a name is
+  // read at runtime as a provider tool. Unknown keys are provider tools, so stay.
+  if (isPlainObject(result.tools)) {
+    result.tools = Object.fromEntries(
+      Object.entries(result.tools).map(([key, value]) => [
+        toolIds[key] ?? key,
+        value,
+      ]),
+    );
   }
 
   return result;

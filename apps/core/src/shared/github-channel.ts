@@ -9,6 +9,7 @@ import { createSign } from "node:crypto";
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelIdentity,
   ChannelIngressEvent,
   ChannelParseResult,
 } from "./channels.ts";
@@ -76,10 +77,7 @@ export interface GitHubSource {
   pullNumber?: number;
   commentId?: number;
   target:
-    | "issue"
-    | "issue_comment"
-    | "pull_request"
-    | "pull_request_review_comment";
+    "issue" | "issue_comment" | "pull_request" | "pull_request_review_comment";
 }
 
 const GITHUB_API_VERSION = "2022-11-28";
@@ -286,6 +284,7 @@ function parseIssuesEvent(
             ),
           },
         ],
+        identity: githubIdentity(repoFullName, issueNumber, payload.sender),
         source: {
           owner,
           repo,
@@ -328,6 +327,7 @@ function parseIssuesEvent(
           ),
         },
       ],
+      identity: githubIdentity(repoFullName, issueNumber, payload.sender),
       source: {
         owner,
         repo,
@@ -452,6 +452,11 @@ async function buildCommentMessage(options: {
       channelName: "github",
       content: [{ type: "text", text: options.body }],
       events,
+      identity: githubIdentity(
+        options.repoFullName,
+        options.issueNumber,
+        options.payload.sender,
+      ),
       source: {
         owner: options.owner,
         repo: options.repo,
@@ -517,6 +522,7 @@ function parsePullRequestEvent(
             ),
           },
         ],
+        identity: githubIdentity(repoFullName, pullNumber, payload.sender),
         source: {
           owner,
           repo,
@@ -555,6 +561,7 @@ function parsePullRequestEvent(
           ),
         },
       ],
+      identity: githubIdentity(repoFullName, pullNumber, payload.sender),
       source: {
         owner,
         repo,
@@ -677,6 +684,11 @@ async function buildReviewCommentMessage(options: {
       channelName: "github",
       content: [{ type: "text", text: options.body }],
       events,
+      identity: githubIdentity(
+        options.repoFullName,
+        options.pullNumber,
+        options.payload.sender,
+      ),
       source: {
         owner: options.owner,
         repo: options.repo,
@@ -689,6 +701,27 @@ async function buildReviewCommentMessage(options: {
         target: "pull_request_review_comment",
       } satisfies GitHubSource,
     },
+  };
+}
+
+/**
+ * The repository is the channel and an issue or PR is a thread in it, so a
+ * policy can scope the agent per repo the same way it scopes per chat channel.
+ */
+function githubIdentity(
+  repoFullName: string,
+  resourceNumber: number,
+  sender: GitHubWebhookPayload["sender"],
+): ChannelIdentity {
+  const owner = repoFullName.split("/")[0];
+
+  return {
+    ...(owner ? { workspaceRef: owner } : {}),
+    channelId: repoFullName,
+    threadId: String(resourceNumber),
+    ...(sender?.login
+      ? { actorId: sender.login, actorName: sender.login }
+      : {}),
   };
 }
 

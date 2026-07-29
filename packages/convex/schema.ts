@@ -276,6 +276,36 @@ export const agentPoliciesFields = {
 };
 
 /**
+ * One row per real place a team talks — a Slack channel, a Discord channel, a
+ * repository. Binds that place to an agent and carries the instructions,
+ * workspaces, policies and roles scoped to it. `config.channels` on an agent
+ * still holds the adapter credentials; this row decides who answers where.
+ */
+export const channelRecordsFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  /** Adapter name: slack, discord, telegram, github, pancake, zalo. */
+  platform: v.string(),
+  /** Provider id of the place, e.g. a Slack channel id or an owner/repo. */
+  externalId: v.string(),
+  /** Team or guild the place sits in, when the provider has one. */
+  workspaceRef: v.optional(v.string()),
+  name: v.string(),
+  description: v.optional(v.string()),
+  /** Plaintext: bindings, instructions, policy and workspace ids — no secrets. */
+  config: v.any(),
+  status: v.union(v.literal("active"), v.literal("deleted")),
+  /** Ownership marker; see `agentConfigsFields.managedBy`. */
+  managedBy: v.optional(
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  deletedAt: v.optional(v.number()),
+};
+
+/**
  * Cherry-coke SaaS workspace. Owns the per-tenant broods `accounts`
  * row; `orgId` on `accounts` points back to one of these.
  */
@@ -363,7 +393,7 @@ export const sandboxConfigsFields = {
   encryptedSourceConfig: v.optional(v.string()),
   sourceEncryptionIv: v.optional(v.string()),
   sourceEncryptionTag: v.optional(v.string()),
-  /** Masked markers of the `env.NAME` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
+  /** Masked markers of the `env("NAME")` refs this config uses; see `agentConfigsFields.runtimeVariables`. */
   runtimeVariables: v.optional(
     v.array(v.object({ key: v.string(), value: v.string() })),
   ),
@@ -624,6 +654,7 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("cron"),
   v.literal("sandbox"),
   v.literal("policy"),
+  v.literal("channel"),
   v.literal("environmentVariable"),
   v.literal("deployment"),
   v.literal("webhook"),
@@ -1101,6 +1132,15 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_environmentId_and_name", ["environmentId", "name"]),
+  channelRecords: defineTable(channelRecordsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_status", ["accountId", "status"])
+    // The inbound-webhook lookup: which record owns this place?
+    .index("by_accountId_platform_external", [
+      "accountId",
+      "platform",
+      "externalId",
+    ]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])

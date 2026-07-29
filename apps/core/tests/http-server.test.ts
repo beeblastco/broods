@@ -35,7 +35,7 @@ async function buildCoreRequest(
 describe("toCoreRequest", () => {
   it("builds the CoreRequest shape", async () => {
     const request = await buildCoreRequest({
-      url: "http://127.0.0.1/webhooks/acct/agent/telegram?limit=2&q=a%20b",
+      url: "http://127.0.0.1/webhooks/acct/telegram?limit=2&q=a%20b",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -45,7 +45,7 @@ describe("toCoreRequest", () => {
       body: JSON.stringify({ hello: "world" }),
     });
 
-    expect(request.path).toBe("/webhooks/acct/agent/telegram");
+    expect(request.path).toBe("/webhooks/acct/telegram");
     expect(request.search).toBe("limit=2&q=a%20b");
     expect(request.query.get("limit")).toBe("2");
     expect(request.query.get("q")).toBe("a b");

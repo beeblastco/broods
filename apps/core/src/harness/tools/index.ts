@@ -310,9 +310,21 @@ export async function createTools(
     );
   }
 
+  // Withhold last, so a channel's deny list covers sandbox and account tools too
+  // — those are derived from workspaces and ids, never from config.tools.
+  withholdTools(tools, agentConfig.denyTools);
+
   return context.dispatchAsyncTools
     ? context.dispatchAsyncTools(tools, asyncModes)
     : tools;
+}
+
+function withholdTools(tools: ToolSet, denyTools: string[] | undefined): void {
+  for (const toolName of denyTools ?? []) {
+    if (toolName in tools) {
+      delete tools[toolName];
+    }
+  }
 }
 
 function isToolEnabled(

@@ -7,6 +7,9 @@ import { randomBytes } from "node:crypto";
 import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 
 export const AGENT_POLICY_ACTIONS = [
+  // Gates the turn itself, before any tool runs: "may this person address the
+  // agent here?". Everything below gates one action inside an admitted turn.
+  "agent.invoke",
   "tool.call",
   "workspace.read",
   "workspace.write",
@@ -19,12 +22,7 @@ export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
 export type AgentPolicyEffect = "allow" | "deny";
 export type AgentPolicyMode = "enforce" | "audit";
 export type AgentPolicyConditionOperator =
-  | "equals"
-  | "notEquals"
-  | "in"
-  | "notIn"
-  | "prefix"
-  | "contains";
+  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
 
 export interface AgentPolicyCondition {
   attribute: string;
@@ -80,7 +78,17 @@ export interface PolicyDecisionInput {
   agentId?: string;
   conversationKey?: string;
   delivery?: string;
+  /** Adapter name, e.g. "slack". The place is `channelId`, not this. */
   channel?: string;
+  /** Provider id of the channel the turn arrived in, e.g. a Slack channel id. */
+  channelId?: string;
+  /** Thread inside that channel, when the turn is threaded. */
+  threadId?: string;
+  /** The person who addressed the agent, so a rule can be scoped to people. */
+  actorId?: string;
+  actorName?: string;
+  /** Ids of the channel record's roles the actor holds, when one is configured. */
+  actorRoles?: string[];
   toolName?: string;
   toolId?: string;
   workspaceId?: string;
@@ -312,6 +320,16 @@ function normalizeConditions(
     if (!isConditionValue(record.value)) {
       throw new Error(
         `policy rules[${index}].conditions[${conditionIndex}].value is invalid`,
+      );
+    }
+    // A scalar here matches no rego branch, so the condition never fires — which
+    // on notIn means the deny silently never applies. Refuse it instead.
+    if (
+      (record.operator === "in" || record.operator === "notIn") &&
+      !Array.isArray(record.value)
+    ) {
+      throw new Error(
+        `policy rules[${index}].conditions[${conditionIndex}].value must be an array when operator is ${record.operator}; use ${record.operator === "in" ? "equals" : "notEquals"} to compare one value`,
       );
     }
 

@@ -230,4 +230,29 @@ describe("agent policy validation", () => {
       normalizeAgentPolicyDocument(documentWithValue(["prod", "staging"])),
     ).not.toThrow();
   });
+
+  // A scalar satisfies no rego in/notIn branch, so the condition never fires —
+  // on a deny that means the rule silently does nothing. Fail at write time.
+  it("rejects a scalar value for in and notIn", () => {
+    const documentWith = (operator: string, value: unknown) => ({
+      version: 1,
+      rules: [
+        {
+          effect: "deny",
+          actions: ["agent.invoke"],
+          conditions: [{ attribute: "actorRoles", operator, value }],
+        },
+      ],
+    });
+    expect(() => normalizeAgentPolicyDocument(documentWith("notIn", "oncall")))
+      .toThrow("must be an array when operator is notIn");
+    expect(() => normalizeAgentPolicyDocument(documentWith("in", "oncall")))
+      .toThrow("must be an array when operator is in");
+    expect(() =>
+      normalizeAgentPolicyDocument(documentWith("notIn", ["oncall"])),
+    ).not.toThrow();
+    expect(() =>
+      normalizeAgentPolicyDocument(documentWith("equals", "oncall")),
+    ).not.toThrow();
+  });
 });

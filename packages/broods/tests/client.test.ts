@@ -113,9 +113,9 @@ test("client resolves generated channel webhook paths against its configured hos
       agentName: "support",
       agentId: "agent_1",
       accountId: "account_1",
-      webhookPath: "/webhooks/account_1/agent_1/github",
+      webhookPath: "/webhooks/account_1/github",
     }),
-  ).toBe("https://hooks.example.com/webhooks/account_1/agent_1/github");
+  ).toBe("https://hooks.example.com/webhooks/account_1/github");
 });
 
 test("client reads apiKey from the shared SDK environment variable", async () => {

@@ -1,5 +1,6 @@
 /** Async tool result, fan-in, callback, delivery, and observed state in Convex. */
 
+import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
 export type AsyncToolDelivery =
@@ -10,7 +11,12 @@ export type AsyncToolDelivery =
       publicEventId: string;
       publicConversationKey: string;
     }
-  | { kind: "channel"; channelName: string; source: Record<string, unknown> };
+  | {
+      kind: "channel";
+      channelName: string;
+      identity?: ChannelIdentity;
+      source: Record<string, unknown>;
+    };
 export interface AsyncToolResultRecord {
   resultId: string;
   parentEventId: string;
