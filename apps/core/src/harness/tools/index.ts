@@ -40,7 +40,7 @@ import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
-  agentSandboxTarget,
+  hasStandaloneSandbox,
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
 } from "./filesystem-utils.ts";
@@ -108,8 +108,7 @@ export async function createTools(
   // Persistence is keyed by workspace namespace, so a run that reaches the sandbox
   // without one needs an explicit options.reservationKey to reconnect.
   const runsWithoutNamespace =
-    workspaces.length === 0 ||
-    agentSandboxTarget(workspaces, agentSandbox) !== undefined;
+    workspaces.length === 0 || hasStandaloneSandbox(workspaces, agentSandbox);
   if (
     agentSandbox?.persistent === true &&
     runsWithoutNamespace &&

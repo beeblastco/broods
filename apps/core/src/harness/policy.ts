@@ -261,6 +261,7 @@ export function compatibilityApprovalStatus(
       : {};
   const workspace =
     typeof record.workspace === "string" ? record.workspace : undefined;
+  const onSandbox = record.sandbox === true;
 
   if (toolName === "bash") {
     return bashNeedsApproval(
@@ -271,7 +272,10 @@ export function compatibilityApprovalStatus(
           ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
           : {}),
       },
-      workspace,
+      {
+        ...(workspace ? { workspace: workspace } : {}),
+        ...(onSandbox ? { sandbox: true } : {}),
+      },
     )
       ? "user-approval"
       : undefined;

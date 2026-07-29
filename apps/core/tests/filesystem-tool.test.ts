@@ -530,30 +530,35 @@ describe("sandbox tool set", () => {
     expect(result.value).toContain("outside the workspace");
   });
 
-  it("bash exposes the agent's own sandbox as a target only when unmounted", async () => {
+  it("bash offers the standalone sandbox flag only when it is unmounted", async () => {
     const borrowed = await tool("bash", borrowedSandboxCtx());
     const schema = borrowed.inputSchema as unknown as {
-      jsonSchema: { properties: { workspace?: { enum: string[] } } };
+      jsonSchema: { properties: { sandbox?: unknown } };
     };
-    expect(schema.jsonSchema.properties.workspace?.enum).toEqual([
-      "notes",
-      "sandbox",
-    ]);
+    expect(schema.jsonSchema.properties.sandbox).toBeDefined();
 
-    // Selecting it runs with no workspace mounted, so no namespace is sent.
+    // Asking for it runs with no workspace mounted, so no namespace is sent.
     const result = await borrowed.execute({
       command: "echo hi",
-      workspace: "sandbox",
+      sandbox: true,
     });
     expect(result.type).toBe("text");
+    expect(lastSandboxExec().payload.namespace).toBeUndefined();
+
+    // The flag wins over an explicit workspace rather than the two fighting.
+    await borrowed.execute({
+      command: "echo hi",
+      workspace: "notes",
+      sandbox: true,
+    });
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
 
     // When a workspace already mounts that sandbox, the workspace is the way in.
     const own = await tool("bash", ownSandboxCtx());
     const ownSchema = own.inputSchema as unknown as {
-      jsonSchema: { properties: { workspace?: { enum: string[] } } };
+      jsonSchema: { properties: { sandbox?: unknown } };
     };
-    expect(ownSchema.jsonSchema.properties.workspace).toBeUndefined();
+    expect(ownSchema.jsonSchema.properties.sandbox).toBeUndefined();
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {
@@ -771,12 +776,12 @@ describe("write/edit approval policy", () => {
       agentSandboxPermissionMode: string;
     };
     await expect(
-      approvalStatus("bash", { command: "ls", workspace: "sandbox" }, ctx),
+      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
     ).resolves.toBe("user-approval");
     await expect(
       approvalStatus(
         "bash",
-        { command: "ls", workspace: "sandbox" },
+        { command: "ls", sandbox: true },
         {
           ...ctx,
           agentSandboxPermissionMode: "bypass",

@@ -38,10 +38,6 @@ export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 // Everything else outside the workspace mount looks like work about to be lost.
 const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 
-// Names the agent's own sandbox can take in the `workspace` selector. The first one
-// no workspace has claimed wins, so a workspace called "sandbox" keeps its own name.
-const AGENT_SANDBOX_TARGETS = ["sandbox", "agent-sandbox"];
-
 // `..` as a whole path segment. The separator before it counts, so `a/../b` is caught
 // as surely as `../b`; word characters do not, so `{1..10}` and `main..dev` are left alone.
 const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
@@ -89,10 +85,17 @@ function isFatalSandboxSetupError(value: string): boolean {
   );
 }
 
+// What a bash call picked to run on. The two are orthogonal, not two spellings of
+// one field: `workspace` names a mount, `sandbox` says "no mount, my own machine".
+export interface BashTarget {
+  workspace?: string;
+  sandbox?: boolean;
+}
+
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
 // may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
 // backs `bash` outright when no workspace is attached, and stays separately
-// reachable when workspaces are — see agentSandboxTarget.
+// reachable when workspaces are — see hasStandaloneSandbox.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
   agentSandbox?: SandboxExecutorConfig;
@@ -133,26 +136,21 @@ function statelessReservationKeyFor(
 }
 
 /**
- * The name the agent's own sandbox answers to in the `workspace` selector, or
- * undefined when it needs no name of its own: with no workspaces `bash` already
- * runs there, and when a workspace mounts that same sandbox, the workspace IS the
- * way in — a second target would reach the same machine with nothing mounted.
+ * Whether the agent's own sandbox needs a way in of its own. It does not when there
+ * are no workspaces (bash already runs there), nor when a workspace mounts that same
+ * sandbox — the workspace IS the way in, and reaches the same machine with storage.
  */
-export function agentSandboxTarget(
+export function hasStandaloneSandbox(
   workspaces: ResolvedWorkspace[],
   agentSandbox: SandboxExecutorConfig | undefined,
-): string | undefined {
+): boolean {
   if (!agentSandbox || workspaces.length === 0) {
-    return undefined;
+    return false;
   }
-  if (
-    workspaces.some((workspace) => isAgentOwnSandbox(workspace, agentSandbox))
-  ) {
-    return undefined;
-  }
-  const taken = new Set(workspaces.map((workspace) => workspace.name));
 
-  return AGENT_SANDBOX_TARGETS.find((name) => !taken.has(name));
+  return !workspaces.some((workspace) =>
+    isAgentOwnSandbox(workspace, agentSandbox),
+  );
 }
 
 /**
@@ -205,24 +203,16 @@ export function resolveWorkspace(
   return workspace;
 }
 
-export function workspaceParamSchema(
-  workspaces: ResolvedWorkspace[],
-  sandboxTarget?: string,
-) {
-  const names = [
-    ...workspaces.map((w) => w.name),
-    ...(sandboxTarget ? [sandboxTarget] : []),
-  ];
+export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
   // Only expose the selector when there is a genuine choice.
-  if (names.length <= 1) {
+  if (workspaces.length <= 1) {
     return undefined;
   }
   return {
     type: "string" as const,
-    enum: names,
-    description: sandboxTarget
-      ? `Where to run: a named workspace, or "${sandboxTarget}" for your own sandbox with no workspace mounted. Omit to use the default workspace.`
-      : "Named workspace to operate in. Omit to use the default workspace.",
+    enum: workspaces.map((w) => w.name),
+    description:
+      "Named workspace to operate in. Omit to use the default workspace.",
   };
 }
 
@@ -353,11 +343,11 @@ export function editNeedsApproval(
 
 export function bashNeedsApproval(
   context: SandboxToolContext,
-  requested?: string,
+  selection: BashTarget = {},
 ): boolean {
   try {
-    if (!targetsAgentSandbox(context, requested)) {
-      const workspace = resolveWorkspace(context.workspaces, requested);
+    if (!targetsAgentSandbox(context, selection)) {
+      const workspace = resolveWorkspace(context.workspaces, selection.workspace);
       // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
       // call falls through to the tool's clean "no sandbox available" rejection.
       if (workspace && !workspace.sandbox) {
@@ -373,19 +363,21 @@ export function bashNeedsApproval(
 
 /**
  * Whether this call runs on the agent's own sandbox with no workspace mounted:
- * either the agent has no workspaces at all, or it explicitly selected the
- * standalone sandbox target.
+ * either the agent has no workspaces at all, or it asked for the sandbox and one
+ * is standalone. `sandbox` wins over `workspace`; the two never both apply.
  */
 export function targetsAgentSandbox(
   context: SandboxToolContext,
-  requested?: string,
+  selection: BashTarget = {},
 ): boolean {
   if (context.workspaces.length === 0) {
     return true;
   }
-  const target = agentSandboxTarget(context.workspaces, context.agentSandbox);
 
-  return target !== undefined && requested === target;
+  return (
+    selection.sandbox === true &&
+    hasStandaloneSandbox(context.workspaces, context.agentSandbox)
+  );
 }
 
 function permissionModeFor(

@@ -21,9 +21,9 @@ import type {
 } from "../sandbox/types.ts";
 import { shellQuote } from "../sandbox/utils.ts";
 import {
-  agentSandboxTarget,
   disallowedRuntimeCommand,
   formatRunText,
+  hasStandaloneSandbox,
   isAgentOwnSandbox,
   outsideWorkspaceCommand,
   resolveWorkspace,
@@ -43,6 +43,7 @@ import {
 interface BashInput {
   command: string;
   workspace?: string;
+  sandbox?: boolean;
   background?: boolean;
   pty?: boolean;
 }
@@ -66,9 +67,10 @@ function backgroundAvailable(context: SandboxToolContext): boolean {
 }
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+  const standaloneSandbox = hasStandaloneSandbox(
     context.workspaces,
-    agentSandboxTarget(context.workspaces, context.agentSandbox),
+    context.agentSandbox,
   );
   return {
     type: "object",
@@ -78,6 +80,15 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
         description: "The bash command to run.",
       },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+      ...(standaloneSandbox
+        ? {
+            sandbox: {
+              type: "boolean",
+              description:
+                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there is kept, so use it for throwaway work. Overrides `workspace` when both are given.",
+            } as JSONSchema7,
+          }
+        : {}),
       pty: {
         type: "boolean",
         description:
@@ -146,16 +157,15 @@ function ownSandboxNote(context: SandboxToolContext): string {
 - Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
 }
 
-// Scenario note: the agent's own sandbox is not mounted by any workspace, so it is
-// only reachable by naming it.
+// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
+// only way onto it is to ask for it.
 function sandboxTargetNote(context: SandboxToolContext): string {
-  const target = agentSandboxTarget(context.workspaces, context.agentSandbox);
-  if (!target) {
+  if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
     return "";
   }
 
   return `
-- workspace:"${target}" runs on your own sandbox instead, with no workspace mounted. Nothing written there is kept, so use it for throwaway work and a workspace for anything that must survive.`;
+- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there is kept, so use it for throwaway work and a workspace for anything that must survive.`;
 }
 
 async function dispatchBackground(
@@ -259,13 +269,18 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
       async execute(input, options) {
-        const { command, workspace, background, pty } = input as BashInput;
+        const { command, workspace, sandbox: onSandbox, background, pty } =
+          input as BashInput;
         const trimmed = (command ?? "").trim();
         if (!trimmed) {
           return toolError("Error: command is required");
         }
         try {
-          const ws = targetsAgentSandbox(context, workspace)
+          const target = {
+            ...(workspace ? { workspace: workspace } : {}),
+            ...(onSandbox === true ? { sandbox: true } : {}),
+          };
+          const ws = targetsAgentSandbox(context, target)
             ? undefined
             : resolveWorkspace(context.workspaces, workspace);
           const sandbox = ws?.sandbox ?? context.agentSandbox;

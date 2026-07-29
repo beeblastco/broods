@@ -120,7 +120,7 @@ Plus the agent-level cases:
 | Agent references                                         | Tools exposed                                                                  |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | sandbox, **no** workspace                                | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` target named `sandbox` (see below)          |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)          |
 | neither sandbox nor workspace                            | none                                                                           |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
@@ -146,14 +146,14 @@ workspace's effective sandbox **is the one the agent itself references**:
 | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.   |
 | workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).      |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable as its own `bash` target named `sandbox` — with no workspace mounted, so nothing is kept. |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace mounted, so nothing is kept. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
 resolves both to the same record, so both land in the first row.
 
-The `workspace` argument keeps defaulting to the **default workspace**, never to the
-standalone sandbox target. Relative paths therefore keep landing in durable storage unless
-the model deliberately asks for the sandbox instead.
+`workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
+own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
+keep landing in durable storage unless the model deliberately passes `sandbox: true`.
 
 ## permissionMode
 
