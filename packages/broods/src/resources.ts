@@ -74,13 +74,7 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  | "agent"
-  | "workspace"
-  | "sandbox"
-  | "cron"
-  | "skill"
-  | "tool"
-  | "policy";
+  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -171,12 +165,7 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  | "telegram"
-  | "github"
-  | "slack"
-  | "discord"
-  | "pancake"
-  | "zalo";
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -491,7 +480,7 @@ const _providerKeyParity: KeysEqual<
 void _providerKeyParity;
 
 export type AgentDefinitionConfig = EnvRefString<
-  Pick<AgentConfig, "agent" | "model" | "session" | "tools">
+  Pick<AgentConfig, "agent" | "harness" | "model" | "session" | "tools">
 > & { provider?: ProviderConfigInput } & {
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];

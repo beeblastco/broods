@@ -122,6 +122,44 @@ describe("runtime persistence", () => {
     });
   });
 
+  test("persists one resumable harness session per conversation", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    expect(
+      await t.query(internal.runtime.getHarnessSession, { conversationKey }),
+    ).toBeNull();
+
+    await t.mutation(internal.runtime.saveHarnessSession, {
+      conversationKey,
+      harnessKind: "codex",
+      sessionId: "codex-session",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "codex",
+        specificationVersion: "harness-v1",
+        data: { threadId: "thread-1" },
+      },
+    });
+    expect(
+      await t.query(internal.runtime.getHarnessSession, { conversationKey }),
+    ).toEqual({
+      harnessKind: "codex",
+      sessionId: "codex-session",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "codex",
+        specificationVersion: "harness-v1",
+        data: { threadId: "thread-1" },
+      },
+    });
+
+    await t.mutation(internal.runtime.clearConversation, { conversationKey });
+    expect(
+      await t.query(internal.runtime.getHarnessSession, { conversationKey }),
+    ).toBeNull();
+  });
+
   test("reports whether a bounded conversation clear has more events", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
@@ -546,6 +584,7 @@ describe("runtime persistence", () => {
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
         asyncToolGroupDeleted: 100,
+        harnessSessionDeleted: 0,
         sandboxReservationDeleted: 100,
         totalDeleted: 300,
       },
@@ -555,6 +594,7 @@ describe("runtime persistence", () => {
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
         asyncToolGroupDeleted: 1,
+        harnessSessionDeleted: 0,
         sandboxReservationDeleted: 1,
         totalDeleted: 3,
       },
@@ -564,6 +604,7 @@ describe("runtime persistence", () => {
         asyncAgentResultDeleted: 0,
         asyncToolResultDeleted: 0,
         asyncToolGroupDeleted: 0,
+        harnessSessionDeleted: 0,
         sandboxReservationDeleted: 0,
         totalDeleted: 0,
       },

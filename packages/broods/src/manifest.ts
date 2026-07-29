@@ -291,6 +291,7 @@ async function findConfig(
  */
 const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "agent",
+  "harness",
   "model",
   "provider",
   "session",
@@ -819,6 +820,12 @@ const KNOWN_PROVIDER_SETTING_KEYS = new Set([
   "secretAccessKey",
   "sessionToken",
 ]);
+const KNOWN_HARNESS_KEYS = new Set([
+  "kind",
+  "permissionMode",
+  "startupTimeoutMs",
+  "webSearch",
+]);
 
 /** Suggest the canonical key for a common misspelling, else "". */
 function suggestProviderKey(key: string): string {
@@ -880,12 +887,82 @@ export function validateProviderConfig(
   }
 }
 
+function validateHarnessConfig(agentName: string, harness: unknown): void {
+  if (harness === undefined || harness === null) return;
+  if (typeof harness !== "object" || Array.isArray(harness)) {
+    throw new Error(`Agent "${agentName}" config.harness must be an object`);
+  }
+  const config = harness as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!KNOWN_HARNESS_KEYS.has(key)) {
+      throw new Error(
+        `Agent "${agentName}" config.harness has unknown option "${key}"`,
+      );
+    }
+  }
+  if (
+    config.kind !== "claude-code" &&
+    config.kind !== "codex" &&
+    config.kind !== "pi"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.kind must be claude-code, codex, or pi`,
+    );
+  }
+  if (
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-reads" &&
+    config.permissionMode !== "allow-edits" &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.permissionMode must be allow-reads, allow-edits, or allow-all`,
+    );
+  }
+  if (
+    config.kind === "codex" &&
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.permissionMode must be allow-all for codex`,
+    );
+  }
+  if (
+    config.startupTimeoutMs !== undefined &&
+    (typeof config.startupTimeoutMs !== "number" ||
+      !Number.isSafeInteger(config.startupTimeoutMs) ||
+      config.startupTimeoutMs < 1 ||
+      config.startupTimeoutMs > 600_000)
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.startupTimeoutMs must be an integer from 1 to 600000`,
+    );
+  }
+  if (config.webSearch !== undefined && typeof config.webSearch !== "boolean") {
+    throw new Error(
+      `Agent "${agentName}" config.harness.webSearch must be a boolean`,
+    );
+  }
+  if (config.kind !== "codex" && config.webSearch !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.webSearch is only supported by codex`,
+    );
+  }
+  if (config.kind === "pi" && config.startupTimeoutMs !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.startupTimeoutMs is not supported by pi`,
+    );
+  }
+}
+
 function normalizeAgentConfig(
   resource: Extract<AnyResource, { kind: "agent" }>,
   _projectRoot: string,
 ): { config: unknown; hookResource?: CliManifestResource } {
   const config = { ...(resource.config as Record<string, unknown>) };
   validateProviderConfig(resource.name, config.provider);
+  validateHarnessConfig(resource.name, config.harness);
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

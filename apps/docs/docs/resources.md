@@ -120,6 +120,55 @@ duplicated). When the endpoint reports no reasoning-token breakdown in usage,
 reasoning tokens are estimated from the reasoning/text character share of the
 output total, so usage tracking still shows thinking-token spend.
 
+### Full-agent harnesses
+
+Set `harness` to run Codex, Claude Code, or Pi inside the agent's persistent Broods
+sandbox instead of using the built-in `streamText` tool loop:
+
+```ts
+const runner = defineSandbox({
+  name: "codex-runner",
+  provider: "sandbox",
+  persistent: true,
+  permissionMode: "bypass",
+  network: { mode: "allow-all" },
+});
+
+export const codingAgent = defineAgent({
+  name: "coding-agent",
+  harness: {
+    kind: "codex",
+    permissionMode: "allow-all",
+    startupTimeoutMs: 180_000,
+  },
+  sandbox: runner,
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
+    },
+  },
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+  publicAccess: true,
+});
+```
+
+The sandbox must be persistent and use the Workdir (`sandbox`) or Lambda
+MicroVM (`lambda`) provider. Broods stores the adapter's resume state after
+each turn, so the same Codex/Claude/Pi session continues across requests. Clearing
+the conversation also clears that resume state.
+
+Steering already queued when the turn starts is folded into the harness prompt.
+Because these runtimes own their internal tool loop, steering that arrives after
+the turn has started is retained by the durable ingress coordinator and runs as
+the next follow-up. User stop requests abort the active harness turn.
+
+`codex` supports the `custom`, `openai`, and `gateway` model providers;
+`claude-code` supports `anthropic` and `gateway`; Pi uses its model catalog with
+credentials derived from the configured provider. Codex requires
+`permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA policies
+and structured output are not currently supported on this runtime.
+
 ### Reasoning / Thinking Tokens
 
 Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is

@@ -2897,6 +2897,8 @@ components:
               type: integer
             asyncToolGroupDeleted:
               type: integer
+            harnessSessionDeleted:
+              type: integer
             sandboxReservationDeleted:
               type: integer
             filesystemObjectsDeleted:
@@ -2922,6 +2924,8 @@ components:
           $ref: "#/components/schemas/ModelConfig"
         agent:
           $ref: "#/components/schemas/AgentRuntimeConfig"
+        harness:
+          $ref: "#/components/schemas/HarnessConfig"
         hooks:
           $ref: "#/components/schemas/HooksConfig"
         skills:
@@ -2957,6 +2961,26 @@ components:
           $ref: "#/components/schemas/ToolsConfig"
         channels:
           $ref: "#/components/schemas/ChannelsConfig"
+
+    HarnessConfig:
+      type: object
+      required: [kind]
+      description: Selects a full Codex, Claude Code, or Pi runtime inside a persistent Broods Workdir or Lambda MicroVM sandbox.
+      properties:
+        kind:
+          type: string
+          enum: [claude-code, codex, pi]
+        permissionMode:
+          type: string
+          enum: [allow-reads, allow-edits, allow-all]
+          description: Codex supports only allow-all.
+        startupTimeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 600000
+        webSearch:
+          type: boolean
+          description: Enables Codex web search. Not supported by Claude Code.
 
     AgentPolicyConfig:
       type: object

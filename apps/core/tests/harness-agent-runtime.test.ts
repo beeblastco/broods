@@ -31,7 +31,7 @@ const MODULE_URL = pathToFileURL(
 ).href;
 
 describe("createWorkdirHarnessAgent", () => {
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "pi"] as const)(
     "constructs the %s bridge on a version-scoped reservation",
     async (harness) => {
       const result = await runProbe(`
@@ -82,8 +82,68 @@ describe("createWorkdirHarnessAgent", () => {
   });
 });
 
+describe("createConfiguredHarnessAgent", () => {
+  it("maps a custom OpenAI-compatible model into Codex on Workdir", async () => {
+    const result = await runProbe(`
+      const runtime = module.createConfiguredHarnessAgent({
+        agentConfig: {
+          harness: { kind: "codex", permissionMode: "allow-all" },
+          model: { provider: "custom", modelId: "Qwen3.6-27B", reasoning: "medium" },
+          provider: {
+            custom: {
+              apiKey: "test-key",
+              base_url: "https://llm.example.test/v1/",
+            },
+          },
+        },
+        compute: ${JSON.stringify(COMPUTE)},
+        instructions: "Work carefully.",
+        reservationKey: "acct:agent:conversation",
+        tools: {},
+      });
+      console.log(JSON.stringify({
+        harnessId: runtime.agent.harnessId,
+        reservationKey: runtime.reservationKey,
+      }));
+    `);
+
+    expect(JSON.parse(result)).toMatchObject({
+      harnessId: "codex",
+      reservationKey: expect.stringContaining("acct:agent:conversation:codex:"),
+    });
+  });
+
+  it("rejects ephemeral and unsupported sandbox providers", async () => {
+    const result = await runProbe(`
+      try {
+        module.createConfiguredHarnessAgent({
+          agentConfig: {
+            harness: { kind: "codex" },
+            model: { provider: "openai", modelId: "gpt-5" },
+            provider: { openai: { apiKey: "test-key" } },
+          },
+          compute: {
+            provider: "vercel",
+            persistent: false,
+            network: { mode: "allow-all" },
+          },
+          instructions: "",
+          reservationKey: "acct:agent:conversation",
+          tools: {},
+        });
+      } catch (error) {
+        console.log(error instanceof Error ? error.message : String(error));
+      }
+    `);
+
+    expect(result).toBe(
+      "config.harness requires a persistent sandbox using the sandbox or lambda provider",
+    );
+  });
+});
+
 describe("createMicrovmHarnessAgent", () => {
-  it.each(["claude-code", "codex"] as const)(
+  it.each(["claude-code", "codex", "pi"] as const)(
     "constructs the %s bridge on a version-scoped MicroVM reservation",
     async (harness) => {
       const result = await runProbe(`

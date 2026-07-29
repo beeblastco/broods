@@ -6,6 +6,62 @@ import {
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
+  it("validates full-agent harness selection", () => {
+    expect(
+      normalizeAgentConfig({
+        harness: {
+          kind: "codex",
+          permissionMode: "allow-all",
+          startupTimeoutMs: 180_000,
+          webSearch: true,
+        },
+      }),
+    ).toEqual({
+      harness: {
+        kind: "codex",
+        permissionMode: "allow-all",
+        startupTimeoutMs: 180_000,
+        webSearch: true,
+      },
+    });
+    expect(() => normalizeAgentConfig({ harness: { kind: "other" } })).toThrow(
+      "config.harness.kind must be one of: claude-code, codex, pi",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { kind: "codex", permissionMode: "allow-edits" },
+      }),
+    ).toThrow(
+      "config.harness.permissionMode must be allow-all for the codex harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { kind: "claude-code", webSearch: true },
+      }),
+    ).toThrow(
+      "config.harness.webSearch is only supported by the codex harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { kind: "codex" },
+        model: {
+          output: {
+            type: "object",
+            schema: { type: "object" },
+          },
+        },
+      }),
+    ).toThrow(
+      "config.model.output structured output is not supported with config.harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { kind: "codex" },
+        policy: { policyIds: ["policy-1"] },
+      }),
+    ).toThrow("config.policy is not supported with config.harness");
+  });
+
   it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
     expect(resolveSubagentMode({})).toBe("persistent");
     expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(

@@ -44,9 +44,16 @@ export type { AccountModelProviderName } from "../providers.ts";
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
 const AGENT_MAX_TURN_LIMIT = 100;
+const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+const AGENT_HARNESS_KINDS = ["claude-code", "codex", "pi"] as const;
+const AGENT_HARNESS_PERMISSION_MODES = [
+  "allow-reads",
+  "allow-edits",
+  "allow-all",
+] as const;
 // Deprecated public account-tool id prefix. It is neither a native Convex id
 // nor a provider tool name, so it must not fall through as one.
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
@@ -95,6 +102,7 @@ export const AGENT_HOOK_EVENT_NAMES = [
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
+  harness?: AgentHarnessConfig;
   model?: AgentModelConfig;
   provider?: AgentProviderConfig;
   // References to standalone, account-scoped sandbox / workspace records. The
@@ -127,6 +135,13 @@ export interface AgentBehaviorConfig {
   maxTurn?: number;
   system?: string | SystemModelMessage | SystemModelMessage[];
   [key: string]: unknown;
+}
+
+export interface AgentHarnessConfig {
+  kind: (typeof AGENT_HARNESS_KINDS)[number];
+  permissionMode?: (typeof AGENT_HARNESS_PERMISSION_MODES)[number];
+  startupTimeoutMs?: number;
+  webSearch?: boolean;
 }
 
 /**
@@ -481,6 +496,7 @@ type AgentConfigPatch = Record<string, unknown>;
 export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   const {
     agent,
+    harness,
     model,
     provider,
     sandbox,
@@ -497,6 +513,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
 
   return normalizeAgentConfig({
     ...(agent !== undefined ? { agent } : {}),
+    ...(harness !== undefined ? { harness } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(provider !== undefined ? { provider } : {}),
     ...(sandbox !== undefined ? { sandbox } : {}),
@@ -558,6 +575,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
 
   const config = value as Record<string, unknown>;
   normalizeAgentBehaviorConfig(config.agent);
+  normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
@@ -575,9 +593,73 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   } else {
     delete config.policy;
   }
+  if (config.harness !== undefined && config.policy !== undefined) {
+    throw new Error("config.policy is not supported with config.harness");
+  }
+  if (
+    config.harness !== undefined &&
+    isPlainObject(config.model) &&
+    isPlainObject(config.model.output) &&
+    config.model.output.type !== "text"
+  ) {
+    throw new Error(
+      "config.model.output structured output is not supported with config.harness",
+    );
+  }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
   return config as AgentConfig;
+}
+
+function normalizeHarnessConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.harness must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  if (
+    typeof config.kind !== "string" ||
+    !AGENT_HARNESS_KINDS.includes(
+      config.kind as (typeof AGENT_HARNESS_KINDS)[number],
+    )
+  ) {
+    throw new Error(
+      `config.harness.kind must be one of: ${AGENT_HARNESS_KINDS.join(", ")}`,
+    );
+  }
+  assertOptionalEnum(
+    config.permissionMode,
+    "config.harness.permissionMode",
+    AGENT_HARNESS_PERMISSION_MODES,
+  );
+  assertOptionalPositiveInteger(
+    config.startupTimeoutMs,
+    "config.harness.startupTimeoutMs",
+    AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
+  );
+  assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
+  if (
+    config.kind === "codex" &&
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      "config.harness.permissionMode must be allow-all for the codex harness",
+    );
+  }
+  if (config.kind !== "codex" && config.webSearch !== undefined) {
+    throw new Error(
+      "config.harness.webSearch is only supported by the codex harness",
+    );
+  }
+  if (config.kind === "pi" && config.startupTimeoutMs !== undefined) {
+    throw new Error(
+      "config.harness.startupTimeoutMs is not supported by the pi harness",
+    );
+  }
 }
 
 export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {

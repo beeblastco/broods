@@ -92,6 +92,59 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject emits full-agent harness selection", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSandbox, env } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "sandbox",
+  persistent: true,
+  permissionMode: "bypass",
+  network: { mode: "allow-all" },
+});
+
+export const coding = defineAgent({
+  name: "coding",
+  harness: {
+    kind: "codex",
+    permissionMode: "allow-all",
+    startupTimeoutMs: 180000,
+    webSearch: true,
+  },
+  sandbox: runner,
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
+    },
+  },
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "coding",
+      config: expect.objectContaining({
+        harness: {
+          kind: "codex",
+          permissionMode: "allow-all",
+          startupTimeoutMs: 180000,
+          webSearch: true,
+        },
+        sandbox: "runner",
+      }),
+    }),
+  );
+});
+
 test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
   const cwd = await fixtureProject(
     "",

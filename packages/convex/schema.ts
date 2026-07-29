@@ -773,6 +773,19 @@ export const runtimeConversationEventsFields = {
   cursor: v.string(),
   event: v.any(),
 };
+/** Resumable state for one full-agent harness conversation. */
+export const runtimeHarnessSessionsFields = {
+  accountId: v.string(),
+  conversationKey: v.string(),
+  harnessKind: v.union(
+    v.literal("claude-code"),
+    v.literal("codex"),
+    v.literal("pi"),
+  ),
+  sessionId: v.string(),
+  resumeState: v.any(),
+  updatedAt: v.number(),
+};
 /** Context-only webhook event dedupe claims. */
 export const runtimeClaimsFields = {
   accountId: v.optional(v.string()),
@@ -1211,6 +1224,9 @@ export default defineSchema({
     .index("by_eventId", ["eventId"]),
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
+    .index("by_accountId", ["accountId"]),
+  runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
+    .index("by_conversationKey", ["conversationKey"])
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])

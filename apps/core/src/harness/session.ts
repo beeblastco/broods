@@ -105,6 +105,12 @@ interface SubagentMetadata {
   description?: string;
 }
 
+export interface StoredHarnessSession {
+  harnessKind: "claude-code" | "codex" | "pi";
+  sessionId: string;
+  resumeState: unknown;
+}
+
 /**
  * Shared fields for every stored conversation event.
  * `version` gives us a migration hook for future schema changes, and
@@ -324,6 +330,19 @@ export class Session {
     }
 
     return createdAtValues;
+  }
+
+  async loadHarnessSession(): Promise<StoredHarnessSession | null> {
+    return runtime.query("getHarnessSession", {
+      conversationKey: this.conversationKey,
+    });
+  }
+
+  async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    await runtime.mutate("saveHarnessSession", {
+      conversationKey: this.conversationKey,
+      ...state,
+    });
   }
 
   async createTurnContext(
