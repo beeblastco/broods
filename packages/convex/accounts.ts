@@ -19,11 +19,17 @@ const accountDoc = v.object({
 
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
+// Takes a string, not v.id: the caller is a URL segment. A v.id validator
+// rejects an unissued id by throwing, which reaches the webhook as a 500 and
+// makes a provider retry a webhook that will never work. normalizeId turns
+// "not an account id" into null, so it answers 404 and a real outage still throws.
 export const getById = internalQuery({
-  args: { accountId: v.id("accounts") },
+  args: { accountId: v.string() },
   returns: v.union(accountDoc, v.null()),
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.accountId);
+    const accountId = ctx.db.normalizeId("accounts", args.accountId);
+
+    return accountId ? await ctx.db.get(accountId) : null;
   },
 });
 
