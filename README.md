@@ -20,9 +20,9 @@ This is the open-source engine behind [Broods](https://github.com/beeblastco). T
 
 ---
 
-## Quick Start (Managed Service)
+## Quick Start
 
-The fastest way to run agents is through the Broods CLI and SDK:
+The fastest way to get running is the managed service via the Broods CLI and SDK:
 
 ```bash
 # 1. Install the CLI (requires Bun)
@@ -30,51 +30,35 @@ bun add -g broods
 
 # 2. Initialize your project
 mkdir my-agents && cd my-agents
-broods init
+bunx broods init
 
 # 3. Log in and set your model key
-broods login
-broods env set OPENAI_API_KEY
+bunx broods login
+bunx broods env set OPENAI_API_KEY
 
 # 4. Sync to the cloud and run your first agent
-broods dev
-broods run my-agent "Hello!"
+bunx broods dev
+bunx broods run my-agent "Hello!"
 ```
 
 See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough.
 
-## Quick Start (Self-Hosted)
-
-```bash
-# 1. Clone and install
-bun install
-cp apps/core/.env.example apps/core/.env
-# Edit apps/core/.env and set AWS_ACCOUNT_ID, PROJECT_NAME, PROJECT_OWNER_EMAIL
-
-# 2. Set required secrets
-cd apps/core
-bunx sst secret set AdminAccountSecret <random-value>
-bunx sst secret set AccountConfigEncryptionSecret <random-value>
-
-# 3. Deploy
-bun run deploy
-```
-
-For self-hosted deployments, point `BROODS_HOST` or `BROODS_BASE_URL` at your gateway/core container URL.
+For self-hosted deployments, see the [Deployment guide](apps/docs/docs/deployment.md).
 
 ---
 
 ## Demos
 
-After deploying, try the runnable scripts in `packages/demos/`:
+After deploying, try the runnable demos in `packages/demos/`:
 
 ```bash
-cp packages/demos/.env.example packages/demos/.env
-bun run demo stream.ts
-bun run demo async.ts
+bun run --filter broods build   # once, from repo root
+cp packages/demos/.env.example packages/demos/.env.local
+cd packages/demos/basic-stream && bun run start
+cd packages/demos/basic-async && bun run start
 ```
 
-See `packages/demos/` for the full list.
+See `packages/demos/README.md` for the full list of demos and setup steps.
 
 ---
 
@@ -98,7 +82,7 @@ bun run docs
 ## Contributing
 
 Contributions are welcome. Open an issue first to align on the approach, then send a PR.
-This checkout uses the Bun 1.4 Rust canary selected by `.bun-version`; run
+This checkout uses the Bun canary channel selected by `.bun-version`; run
 `bun upgrade --canary` before the commands below until Bun 1.4 is stable.
 
 ```bash

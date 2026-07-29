@@ -19,7 +19,8 @@ cp apps/core/.env.example apps/core/.env
 bun run check            # typecheck core + convex + SDK + demos
 bun run test             # core unit tests (max-concurrency 1)
 bun run build            # build the core Bun container binary
-bun run demo stream.ts   # run a demo script (loads packages/demos/.env)
+# Try a demo (from repo root):
+cd packages/demos/basic-stream && bun run start
 ```
 
 - Dashboard: `bun run format` for formatting.
