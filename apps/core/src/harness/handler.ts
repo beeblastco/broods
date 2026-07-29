@@ -5,83 +5,82 @@
 
 import type { JSONValue, SystemModelMessage, ToolModelMessage } from "ai";
 import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
-import { markHandlerEntry } from "../shared/cold-start.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
+import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
-import { runtime } from "../shared/convex/runtime.ts";
-import { getStorage } from "../shared/storage.ts";
 import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import {
-  booleanEnv,
-  getHarnessPublicUrl,
-  optionalEnv,
-  positiveIntegerEnv,
+    booleanEnv,
+    getHarnessPublicUrl,
+    optionalEnv,
+    positiveIntegerEnv,
 } from "../shared/env.ts";
 import {
-  errorResponse,
-  jsonResponse,
-  parseJsonBody,
-  type CoreRequest,
-  type RequestContext,
+    errorResponse,
+    jsonResponse,
+    parseJsonBody,
+    type CoreRequest,
+    type RequestContext,
 } from "../shared/http.ts";
-import { logError, logInfo, logWarn } from "../shared/log.ts";
+import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
-  publicConversationKeyFromScoped,
-  scopedDirectConversationKey,
-  scopedDirectEventId,
+    publicConversationKeyFromScoped,
+    scopedDirectConversationKey,
+    scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
-import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
+import { getStorage } from "../shared/storage.ts";
 import {
-  applyMessageSendingHook,
-  createAgentHookDispatcher,
-  type HookDispatcher,
-} from "./hook-dispatcher.ts";
-import {
-  routeIncomingEvent,
-  rewriteLatestUserIngressText,
-  sendChannelReply,
-  type AsyncDirectInboundEvent,
-  type AsyncToolCompletionInboundEvent,
-  type ChannelContextEvent,
-  type ChannelInboundEvent,
-  type DirectInboundEvent,
-  type IngressDispatchScope,
-  type SandboxJobCompletionInboundEvent,
-  type StatusInboundEvent,
-} from "./integrations.ts";
-import { Session, type ConversationIngressEvent } from "./session.ts";
-import {
-  createPendingAsyncAgentResult,
-  getAsyncAgentResult,
-  markAsyncAgentResultAwaitingApproval,
-  markAsyncAgentResultCompleted,
-  markAsyncAgentResultFailed,
+    createPendingAsyncAgentResult,
+    getAsyncAgentResult,
+    markAsyncAgentResultAwaitingApproval,
+    markAsyncAgentResultCompleted,
+    markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
-import { SubagentCoordinator } from "./subagents.ts";
 import {
-  AsyncToolCoordinator,
-  completionToParentMessage,
-} from "./async-tools.ts";
-import {
-  getDetachedAsyncToolGroup,
-  getAsyncToolResult,
-  listAsyncToolResultsByParentEvent,
-  sealDetachedAsyncToolGroup,
-  settleAsyncToolResultFromCallback,
-  type AsyncToolDelivery,
-  type AsyncToolResultRecord,
-  verifyAsyncToolCompletionToken,
+    getAsyncToolResult,
+    getDetachedAsyncToolGroup,
+    listAsyncToolResultsByParentEvent,
+    sealDetachedAsyncToolGroup,
+    settleAsyncToolResultFromCallback,
+    verifyAsyncToolCompletionToken,
+    type AsyncToolDelivery,
+    type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 import {
-  acceptIngress,
-  getIngressStatus,
-  type AppliedIngress,
-  type IngressAdmission,
-  type IngressDelivery,
+    AsyncToolCoordinator,
+    completionToParentMessage,
+} from "./async-tools.ts";
+import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
+import {
+    applyMessageSendingHook,
+    createAgentHookDispatcher,
+    type HookDispatcher,
+} from "./hook-dispatcher.ts";
+import {
+    acceptIngress,
+    getIngressStatus,
+    type AppliedIngress,
+    type IngressAdmission,
+    type IngressDelivery,
 } from "./ingress.ts";
+import {
+    rewriteLatestUserIngressText,
+    routeIncomingEvent,
+    sendChannelReply,
+    type AsyncDirectInboundEvent,
+    type AsyncToolCompletionInboundEvent,
+    type ChannelContextEvent,
+    type ChannelInboundEvent,
+    type DirectInboundEvent,
+    type IngressDispatchScope,
+    type SandboxJobCompletionInboundEvent,
+    type StatusInboundEvent,
+} from "./integrations.ts";
+import { Session, type ConversationIngressEvent } from "./session.ts";
+import { SubagentCoordinator } from "./subagents.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type ContinuationOutcome =

@@ -20,7 +20,7 @@
     "check": "bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run scripts:check",
     "deps:check": "bun scripts/dependency-watch.ts",
     "scripts:check": "tsc -p scripts/tsconfig.json",
-    "test": "bun run --filter @broods/core test",
+    "test": "bun run --filter @broods/core test && bun run --filter @broods/convex test",
     "deploy": "bun run --filter @broods/core deploy",
     "dashboard": "bun run --filter @broods/dashboard dev",
     "dashboard:build": "bun run --filter @broods/dashboard build",

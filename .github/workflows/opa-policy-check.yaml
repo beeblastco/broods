@@ -1,0 +1,64 @@
+name: Check deployed OPA policy
+
+# apps/core/opa/broods_authz.rego is the source of truth here but deploys from
+# the infra repo, so the two drift with nothing to notice. They did: the
+# deployed copy failed half these cases for weeks, including denying an actor
+# who did hold the named role, and it took reading the configmap by hand.
+#
+# Three questions, in the order worth answering: is the rego here correct, is
+# OPA running this exact rego, and does it decide the way we expect.
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - apps/core/opa/broods_authz.rego
+      - scripts/opa-decision-cases.ts
+      - .github/workflows/opa-policy-check.yaml
+  # Drift comes from the other repo, so it appears with no change here.
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: opa-policy-check-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      OPA_BASE_URL: ${{ vars.OPA_BASE_URL }}
+      OPA_API_TOKEN: ${{ secrets.OPA_API_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install OPA
+        run: |
+          curl -fsSL -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/v1.18.2/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+
+      # The source of truth first: blaming the deployment for a policy that is
+      # wrong here would send you to the wrong repo.
+      - name: Check the rego parses
+        run: opa check apps/core/opa/broods_authz.rego
+
+      - name: Evaluate cases against the repo copy
+        run: bun scripts/opa-decision-cases.ts --local
+
+      # Compares the policy OPA is actually running, not the configmap: a
+      # correct file that was never applied looks identical from the repo.
+      - name: Check the deployed policy matches this repo
+        run: bun scripts/opa-decision-cases.ts --drift
+
+      - name: Evaluate cases against the deployed policy
+        run: bun scripts/opa-decision-cases.ts

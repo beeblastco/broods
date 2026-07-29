@@ -170,7 +170,7 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
 const accounts: Storage["accounts"] = {
   async getById(accountId) {
     const doc = await getConvexClient().query(internal.accounts.getById, {
-      accountId: accountId as any,
+      accountId: accountId,
     });
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
