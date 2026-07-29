@@ -35,6 +35,13 @@ const SANDBOX_DEFAULT_CONFIG = {
   permissionMode: "ask",
 };
 
+// What the default harness gives every workspace. Always on; turning one off is a
+// deliberate code-only choice, so these are reported here and never edited here.
+const HARNESS_FEATURES = [
+  { key: "workspace", label: "Guidance" },
+  { key: "memory", label: "Memory" },
+] as const;
+
 /** Details editor for a workspaceConfig reference node. */
 export function WorkspaceResourceDetailsTab({
   data,
@@ -68,13 +75,16 @@ export function WorkspaceResourceDetailsTab({
     setLastSavedOwnBucket(savedOwnBucket);
     setOwnBucket(savedOwnBucket);
   }
-  const harnessFeatureEnabled = (key: "workspace" | "memory") => {
-    const feature = isPlainObject(harness[key])
-      ? (harness[key] as Record<string, unknown>)
+  // Guidance and memory are part of what the default harness IS, so they are on and
+  // stay on — there is no switch here. The opt-out is a code-only escape hatch; the
+  // dashboard only reports it, so an agent configured in code never looks untouched.
+  const disabledFeatures = HARNESS_FEATURES.filter((feature) => {
+    const value = isPlainObject(harness[feature.key])
+      ? (harness[feature.key] as Record<string, unknown>)
       : {};
 
-    return feature.enabled !== false;
-  };
+    return value.enabled === false;
+  });
 
   function setConfig(patch: Record<string, unknown>) {
     onUpdateNodeData({ config: { ...config, ...patch } });
@@ -84,18 +94,6 @@ export function WorkspaceResourceDetailsTab({
   // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
   function setStorage(patch: Record<string, unknown>) {
     setConfig({ storage: { ...storage, provider: "s3", ...patch } });
-  }
-
-  // Features default to on: an enabled feature is stored as an omitted key, a
-  // disabled one as { enabled: false }; an empty harness object is dropped.
-  function setHarnessFeature(key: "workspace" | "memory", enabled: boolean) {
-    const next: Record<string, unknown> = { ...harness };
-    if (enabled) {
-      delete next[key];
-    } else {
-      next[key] = { enabled: false };
-    }
-    setConfig({ harness: Object.keys(next).length > 0 ? next : undefined });
   }
 
   return (
@@ -258,18 +256,14 @@ export function WorkspaceResourceDetailsTab({
             </p>
           </ExpandBlock>
         )}
-        <ToggleRow
-          label="Guidance"
-          description="Inject the workspace guidance prompt."
-          checked={harnessFeatureEnabled("workspace")}
-          onCheckedChange={(enabled) => setHarnessFeature("workspace", enabled)}
-        />
-        <ToggleRow
-          label="Memory"
-          description="Structured memory: memory_save tool and memory/MEMORY.md index."
-          checked={harnessFeatureEnabled("memory")}
-          onCheckedChange={(enabled) => setHarnessFeature("memory", enabled)}
-        />
+        {disabledFeatures.length > 0 && (
+          <p className="text-[11px] text-muted-foreground">
+            {disabledFeatures.map((feature) => feature.label).join(" and ")}{" "}
+            {disabledFeatures.length > 1 ? "are" : "is"} switched off in code
+            for this workspace. Both are on by default and can only be changed
+            through the CLI or SDK.
+          </p>
+        )}
       </div>
     </div>
   );

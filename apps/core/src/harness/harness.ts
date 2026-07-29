@@ -1575,7 +1575,7 @@ export async function runAgentLoop(
     harnessRuntime = usesAiSdkHarness
       ? createConfiguredHarnessAgent({
           agentConfig: agentConfig,
-          compute: requireHarnessSandbox(statelessSandbox),
+          compute: requireHarnessSandbox(agentSandbox),
           id: session.agentId,
           instructions: turnContext.system
             .map((message) => message.content)
