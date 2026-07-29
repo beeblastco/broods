@@ -1150,11 +1150,14 @@ export default defineSchema({
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
-    // The inbound-webhook lookup: which record owns this place?
+    // The inbound-webhook lookup: which record owns this place? `status` is in
+    // the key because deleting leaves the row, so a place churned repeatedly
+    // would otherwise make every inbound message read its whole history.
     .index("by_accountId_platform_external", [
       "accountId",
       "platform",
       "externalId",
+      "status",
     ])
     .index("by_environmentId_and_name", ["environmentId", "name"]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
