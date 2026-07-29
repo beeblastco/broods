@@ -34,6 +34,21 @@ import type {
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
+// Writing here is a deliberate "this does not need to survive", so it is left alone.
+// Everything else outside the workspace mount looks like work about to be lost.
+const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
+
+// Absolute write targets, by construct: redirection, tee, dd, and the file-producing
+// commands whose destination is an argument. `path` is the captured destination.
+const ABSOLUTE_WRITE_PATTERNS = [
+  /(?:^|[\s;&|()])\d*>>?\s*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])tee\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])dd\s[^;&|]*\bof=(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])(?:cp|mv|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
+  /(?:^|[\s;&|()])(?:mkdir|touch|rm|rmdir|truncate|unlink)\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])sed\s+[^;&|]*-i[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)/g,
+];
+
 // Model-facing tool result shape (matches the AI SDK toModelOutput contract).
 export type ToolModelResult = Awaited<
   ReturnType<
@@ -452,33 +467,26 @@ export function disallowedRuntimeCommand(
   return undefined;
 }
 
+// The workspace mount is the only durable storage a sandbox has; the rest of its
+// filesystem dies with the VM. So writes are what this guard is about — reading a
+// sandbox's own system files risks nothing and is often how a task gets done.
 export function outsideWorkspaceCommand(command: string): string | undefined {
   const scanned = stripHereDocBodies(command);
-  if (
-    /(^|[\s;&|()])cd\s+(?:--\s+)?(?:\.\.(?:[\/\s;&|)]|$)|\/(?!dev\/null(?:\s|$)))/.test(
-      scanned,
-    )
-  ) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
-  if (/(^|[\s;&|()])(?:pushd|popd)\b/.test(scanned)) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
-  if (/(^|[\s;&|()])(?:find|du|tree)\s+\/(?:\s|$)/.test(scanned)) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
+  // Traversal is a containment concern, not a durability one: read/write/edit reject
+  // `..` too, and bash must not become the way around them.
   if (/(^|[\s"'=:{([<>,])\.\.(?:[\/\s;&|)]|$)/.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
   }
 
-  // A leading `:` still flags `host:/abs/path`, but a `:` followed by `//` is a
-  // URL scheme separator (https://...), not an absolute path, so it is exempt.
-  const absolutePath = scanned.match(
-    /(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/,
-  );
-  if (absolutePath) {
-    return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
+  const target = absoluteWriteTarget(scanned);
+  if (target) {
+    return (
+      `Error: ${target} is outside the workspace, so anything written there is lost when the sandbox stops. ` +
+      `Write to a workspace-relative path instead (e.g. ${workspaceRelativeSuggestion(target)}), ` +
+      `or use /tmp when the file is genuinely throwaway.`
+    );
   }
+
   return undefined;
 }
 
@@ -529,6 +537,38 @@ export function boundedInteger(
     );
   }
   return value;
+}
+
+// The first absolute path the command would write to, ignoring roots that are
+// ephemeral by convention. Shell semantics are not parseable with a regex, so this
+// covers the constructs that actually lose an agent's work — redirections and the
+// common file-producing commands. Anything it misses is caught by the durability
+// rule stated in the bash tool description, not by this guard.
+function absoluteWriteTarget(command: string): string | undefined {
+  for (const pattern of ABSOLUTE_WRITE_PATTERNS) {
+    for (const match of command.matchAll(pattern)) {
+      const path = match.groups?.path?.trim();
+      if (path && !isEphemeralPath(path)) {
+        return path;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isEphemeralPath(path: string): boolean {
+  return EPHEMERAL_WRITE_ROOTS.some(
+    (root) => path === root.slice(0, -1) || path.startsWith(root),
+  );
+}
+
+// Name a concrete relative path in the error so the retry is obvious rather than
+// something the model has to invent.
+function workspaceRelativeSuggestion(target: string): string {
+  const basename = target.split("/").filter(Boolean).pop();
+
+  return basename ? `./${basename}` : "./output";
 }
 
 function invokesCommand(command: string, names: string[]): boolean {

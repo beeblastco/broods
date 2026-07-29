@@ -204,8 +204,7 @@ async function approvalStatus(
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
-    | [string, { body: string }]
-    | undefined;
+    [string, { body: string }] | undefined;
   return { payload: JSON.parse(call![1].body) };
 }
 
@@ -305,29 +304,61 @@ describe("sandbox tool set", () => {
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("bash rejects obvious attempts to leave the workspace", async () => {
+  it("bash rejects parent directory traversal", async () => {
     const bash = await tool("bash", workspaceCtx());
     await expect(bash.execute({ command: "cd .. && ls" })).resolves.toEqual({
       type: "error-text",
-      value: "Error: bash commands must stay in the workspace directory",
+      value: "Error: parent directory traversal is not allowed",
     });
-    await expect(bash.execute({ command: "cat /etc/passwd" })).resolves.toEqual(
-      {
-        type: "error-text",
-        value:
-          "Error: absolute paths are not allowed in workspace bash commands: /etc/passwd",
-      },
-    );
     await expect(
-      bash.execute({ command: "find / -maxdepth 1" }),
+      bash.execute({ command: "cat ../secrets.env" }),
     ).resolves.toEqual({
       type: "error-text",
-      value: "Error: bash commands must stay in the workspace directory",
+      value: "Error: parent directory traversal is not allowed",
     });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("bash allows URL scheme separators while still blocking absolute paths", async () => {
+  // A sandbox is a whole machine and reading it risks nothing, so the guard is about
+  // durability only. Blocking reads used to send the model hunting for a way around
+  // the check instead of getting on with the task.
+  it("bash reads outside the workspace without complaint", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "cat /etc/os-release",
+      "python3 -c \"print(open('/proc/version').read())\"",
+      "ls -la /usr/lib",
+    ]) {
+      const result = await bash.execute({ command: command });
+      expect(result.type).toBe("text");
+    }
+    expect(microvmFetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("bash rejects writes that would be lost, naming a workspace path to use", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    const result = await bash.execute({
+      command: "echo report > /srv/report.txt",
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("/srv/report.txt is outside the workspace");
+    expect(result.value).toContain("./report.txt");
+
+    for (const command of [
+      "cp result.json /opt/result.json",
+      "tee /var/log/run.log",
+      "mkdir /data/out",
+      "sed -i 's/a/b/' /etc/hosts",
+      "dd if=in.bin of=/mnt/other/out.bin",
+    ]) {
+      const blocked = await bash.execute({ command: command });
+      expect(blocked.type).toBe("error-text");
+      expect(blocked.value).toContain("outside the workspace");
+    }
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("bash allows scratch writes to /tmp and keeps URL schemes working", async () => {
     const bash = await tool("bash", workspaceCtx());
     const ok = await bash.execute({
       command: "curl -sS https://api.github.com/zen -o out.txt",
@@ -336,14 +367,15 @@ describe("sandbox tool set", () => {
     expect(lastSandboxExec().payload.code).toContain(
       "https://api.github.com/zen",
     );
-    // A bare absolute path stays rejected; only the scheme `://` is exempt.
-    await expect(
-      bash.execute({ command: "curl https://x -o /tmp/out.txt" }),
-    ).resolves.toEqual({
-      type: "error-text",
-      value:
-        "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt",
-    });
+    // /tmp is declared scratch: writing there is a deliberate "this is throwaway".
+    for (const command of [
+      "curl https://x -o /tmp/out.txt",
+      "echo hi > /var/tmp/note",
+      "python3 script.py 2>/dev/null",
+    ]) {
+      const scratch = await bash.execute({ command: command });
+      expect(scratch.type).toBe("text");
+    }
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {

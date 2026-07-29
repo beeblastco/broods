@@ -26,10 +26,15 @@ and **workspace scoping** (a run can only touch its own files).
 - File tools (`read`/`write`/`edit`/`glob`/`grep`) **normalize paths to the workspace and
   reject directory traversal** (`..`, absolute paths, whole-filesystem scans) before the
   command reaches a provider.
-- Workspace-backed `bash` likewise rejects obvious attempts to use absolute paths, parent
-  traversal, or whole-filesystem scans. This is a guardrail on a general VM, **not** a hard
-  cross-workspace filesystem boundary — the kernel-grade isolation is the sandbox itself
-  (Firecracker for `lambda`/`sandbox`).
+- Workspace-backed `bash` rejects parent traversal (`..`) for the same reason, so it cannot
+  be used to get around the file tools. It does **not** restrict reads elsewhere in the
+  sandbox: the isolation that matters is the sandbox itself (Firecracker for
+  `lambda`/`sandbox`), and a run reading its own machine's system files crosses no boundary.
+- What `bash` does gate is **durability**, not access: the workspace mount is the only
+  storage that outlives the sandbox, so writes to an absolute path outside it are rejected
+  with the workspace path to use instead. `/tmp` and `/var/tmp` are exempt — writing there
+  is a deliberate "this is throwaway". See [Network](./lambda.md) for the egress boundary,
+  which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 
 ## Runtime allow-list

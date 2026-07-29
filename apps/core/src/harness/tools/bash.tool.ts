@@ -112,6 +112,8 @@ Usage notes:
 - IMPORTANT: prefer the dedicated \`read\`, \`write\`, \`edit\`, \`glob\`, and \`grep\` tools over their bash equivalents (cat/sed/find/grep) — they are faster, safer, and return structured results.
 - Run programs directly, e.g. \`python3 script.py\` or \`node app.js\`. stdout and stderr are returned together; very large output is truncated.
 - Each command starts in the current workspace directory; use relative paths.
+- DURABILITY: the workspace directory is the only storage that survives. Anything the task should keep — results, generated code, reports — must be written to a workspace-relative path. Writes elsewhere are rejected, except /tmp and /var/tmp, which are available for genuine scratch and are discarded when the sandbox stops.
+- Reading outside the workspace is fine: the sandbox is a whole Linux machine, so inspecting system files, installed packages, or /proc needs no special handling.
 - Files you write to the workspace persist across calls, but shell state does not: the working directory, environment variables, and background processes reset every call — chain dependent steps with && in a single command.${
     backgroundAvailable(context)
       ? `
