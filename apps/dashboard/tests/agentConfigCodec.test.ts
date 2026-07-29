@@ -54,7 +54,6 @@ describe("agent config codec", () => {
         },
       }),
     ).toThrow("config.model.options is not supported");
-
   });
 
   test("drops the removed workspace branch on read, rejects it on write", () => {

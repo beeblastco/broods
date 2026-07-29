@@ -7,7 +7,10 @@
  */
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
-import { ToggleRow } from "@/app/components/side-panel/ConfigControls";
+import {
+  ExpandBlock,
+  ToggleRow,
+} from "@/app/components/side-panel/ConfigControls";
 import { SectionHeader } from "@/app/components/side-panel/SectionHeader";
 import { Input } from "@/app/components/ui/input";
 import {
@@ -49,6 +52,12 @@ export function WorkspaceResourceDetailsTab({
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
   const harness = isPlainObject(config.harness) ? config.harness : {};
+  const storage: Record<string, unknown> = isPlainObject(config.storage)
+    ? config.storage
+    : { provider: "s3" };
+  const auth = isPlainObject(storage.auth) ? storage.auth : {};
+  const ownBucket =
+    auth.type === "assumeRole" || typeof storage.bucket === "string";
   const harnessFeatureEnabled = (key: "workspace" | "memory") => {
     const feature = isPlainObject(harness[key])
       ? (harness[key] as Record<string, unknown>)
@@ -56,23 +65,28 @@ export function WorkspaceResourceDetailsTab({
 
     return feature.enabled !== false;
   };
+
+  function setConfig(patch: Record<string, unknown>) {
+    onUpdateNodeData({ config: { ...config, ...patch } });
+  }
+
+  // Storage merges rather than replaces: a bring-your-own bucket lives here, and
+  // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
+  function setStorage(patch: Record<string, unknown>) {
+    setConfig({ storage: { ...storage, provider: "s3", ...patch } });
+  }
+
   // Features default to on: an enabled feature is stored as an omitted key, a
   // disabled one as { enabled: false }; an empty harness object is dropped.
-  const setHarnessFeature = (key: "workspace" | "memory", enabled: boolean) => {
+  function setHarnessFeature(key: "workspace" | "memory", enabled: boolean) {
     const next: Record<string, unknown> = { ...harness };
     if (enabled) {
       delete next[key];
     } else {
       next[key] = { enabled: false };
     }
-    onUpdateNodeData({
-      config: {
-        ...config,
-        storage: { provider: "s3" },
-        harness: Object.keys(next).length > 0 ? next : undefined,
-      },
-    });
-  };
+    setConfig({ harness: Object.keys(next).length > 0 ? next : undefined });
+  }
 
   return (
     <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-4">
@@ -121,6 +135,118 @@ export function WorkspaceResourceDetailsTab({
             </SelectContent>
           </Select>
         </div>
+        <ToggleRow
+          label="Bring your own bucket"
+          description="Mount your S3 bucket instead of the managed one."
+          checked={ownBucket}
+          onCheckedChange={(own) =>
+            setConfig({
+              storage: own
+                ? { ...storage, provider: "s3" }
+                : { provider: "s3" },
+            })
+          }
+        />
+        {ownBucket && (
+          <ExpandBlock>
+            <TextField
+              label="Bucket"
+              value={typeof storage.bucket === "string" ? storage.bucket : ""}
+              placeholder="my-workspace-bucket"
+              onCommit={(bucket) => setStorage({ bucket: bucket || undefined })}
+            />
+            <TextField
+              label="Region"
+              value={typeof storage.region === "string" ? storage.region : ""}
+              placeholder="eu-west-1"
+              onCommit={(region) => setStorage({ region: region || undefined })}
+            />
+            <TextField
+              label="Endpoint"
+              value={
+                typeof storage.endpoint === "string" ? storage.endpoint : ""
+              }
+              placeholder="https://…  (R2, MinIO — omit for AWS)"
+              onCommit={(endpoint) =>
+                setStorage({ endpoint: endpoint || undefined })
+              }
+            />
+            <TextField
+              label="Prefix"
+              value={typeof storage.prefix === "string" ? storage.prefix : ""}
+              placeholder="teams/support"
+              onCommit={(prefix) => setStorage({ prefix: prefix || undefined })}
+            />
+            <SelectField
+              label="Auth"
+              value={auth.type === "assumeRole" ? "assumeRole" : "managed"}
+              onValueChange={(type) =>
+                setStorage({
+                  auth:
+                    type === "assumeRole"
+                      ? {
+                          ...auth,
+                          type: "assumeRole",
+                          roleArn: auth.roleArn ?? "",
+                        }
+                      : { type: "managed" },
+                })
+              }
+              options={[
+                { value: "managed", label: "Managed" },
+                { value: "assumeRole", label: "Assume role" },
+              ]}
+            />
+            {auth.type === "assumeRole" && (
+              <ExpandBlock>
+                <TextField
+                  label="Role ARN"
+                  value={typeof auth.roleArn === "string" ? auth.roleArn : ""}
+                  placeholder="arn:aws:iam::123456789012:role/BroodsWorkspace"
+                  onCommit={(roleArn) =>
+                    setStorage({
+                      auth: { ...auth, type: "assumeRole", roleArn: roleArn },
+                    })
+                  }
+                />
+                <TextField
+                  label="External id"
+                  value={
+                    typeof auth.externalId === "string" ? auth.externalId : ""
+                  }
+                  placeholder="optional, pair with your role's trust policy"
+                  onCommit={(externalId) =>
+                    setStorage({
+                      auth: {
+                        ...auth,
+                        type: "assumeRole",
+                        externalId: externalId || undefined,
+                      },
+                    })
+                  }
+                />
+              </ExpandBlock>
+            )}
+          </ExpandBlock>
+        )}
+        <ToggleRow
+          label="Isolation"
+          description="Split the filesystem per conversation instead of sharing one root."
+          checked={config.isolation === true}
+          onCheckedChange={(isolation) =>
+            setConfig({ isolation: isolation ? true : undefined })
+          }
+        />
+        {config.isolation === true && (
+          <ExpandBlock>
+            <p className="text-[11px] text-muted-foreground">
+              Every channel attached to this workspace must set
+              `workspaceScope`. A `conversation` scope mounts a private child
+              folder per thread, issue, or PR; a `channel` scope mounts the
+              workspace root.
+            </p>
+          </ExpandBlock>
+        )}
         <ToggleRow
           label="Guidance"
           description="Inject the workspace guidance prompt."

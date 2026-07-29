@@ -120,7 +120,7 @@ Plus the agent-level cases:
 | Agent references                                         | Tools exposed                                                                  |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | sandbox, **no** workspace                                | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)          |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)            |
 | neither sandbox nor workspace                            | none                                                                           |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
@@ -142,11 +142,11 @@ Two agents can reach the same workspace through very different arrangements, and
 difference decides how much of the machine the agent gets. What matters is whether the
 workspace's effective sandbox **is the one the agent itself references**:
 
-| Arrangement                                                 | What the agent gets                                                                                                                                                  |
-| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.   |
-| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).      |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace mounted, so nothing is kept. |
+| Arrangement                                                 | What the agent gets                                                                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount. |
+| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).    |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace mounted, so nothing is kept.             |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
 resolves both to the same record, so both land in the first row.
@@ -327,6 +327,29 @@ If the workspace root already contains `fileA`, `MEMORY.md`, and `TASKS.md`, Git
 `#123` will not see them. GitHub issue `#123` sees its own child folder under `support/`.
 GitHub issue `#456` sees another child folder under `support/`. All three runs use the same
 workspace name, but each scope is backed by a different folder.
+
+### When an isolated folder is reclaimed
+
+A conversation-scoped folder is not permanent. When the channel reports that the
+conversation is over, the harness deletes that folder's S3 prefix and releases any
+reserved sandbox bound to it. This is what keeps per-ticket isolation from turning into
+unbounded storage growth.
+
+| Channel                                 | End-of-conversation signal | Folder reclaimed |
+| --------------------------------------- | -------------------------- | ---------------- |
+| GitHub issue                            | issue `closed`             | yes              |
+| GitHub pull request                     | PR `closed`                | yes              |
+| Slack, Discord, Telegram, Pancake, Zalo | none — a thread never ends | **no**           |
+
+Only `level: "conversation"` folders are reclaimed; a `level: "channel"` scope mounts the
+workspace root, which is never deleted automatically. Reclaim is fire-and-forget after the
+webhook is acknowledged, so a closed issue's folder disappears shortly after, not
+synchronously.
+
+The chat platforms have no equivalent of "closed", so a `conversation`-scoped folder there
+accumulates one prefix per thread for as long as the workspace exists. If you scope a chat
+channel per conversation, plan to prune it yourself — through the workspace Files view or
+the workspace-files API — or scope it at `level: "channel"` instead.
 
 The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`
