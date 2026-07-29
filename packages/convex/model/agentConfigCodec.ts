@@ -1,8 +1,8 @@
 /**
- * Server-side codec mirroring `app/lib/agentConfigCodec.ts`. Convex mutations
- * cannot import from the Next.js app tree, so the projection logic lives
- * here too. Keep the two files in lockstep — any change to the flat ↔
- * nested mapping must apply to both.
+ * The flat ↔ nested agent config codec, and the only copy of it. Convex
+ * mutations cannot import from the Next.js app tree, so this is the end that
+ * both sides share: `apps/dashboard/app/lib/agentConfigCodec.ts` re-exports
+ * from here and keeps only its own UI helpers.
  *
  * The encryption helper at the bottom uses Web Crypto (`crypto.subtle`)
  * because Convex mutations run in a V8 isolate without `node:crypto`.
