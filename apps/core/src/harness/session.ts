@@ -58,8 +58,6 @@ import {
 } from "./ingress.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
-const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
-
 export type ConversationIngressEvent =
   // `metadata` is opaque hook data persisted on the stored-event envelope,
   // never inside the model message. See StoredEventBase.
@@ -346,12 +344,6 @@ export class Session {
     const serialized = JSON.stringify(state.resumeState);
     if (serialized === undefined) {
       throw new Error("Harness resume state must be JSON serializable");
-    }
-    const bytes = Buffer.byteLength(serialized, "utf-8");
-    if (bytes > MAX_HARNESS_RESUME_STATE_BYTES) {
-      throw new Error(
-        `Harness resume state is ${bytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
-      );
     }
     await runtime.mutate("saveHarnessSession", {
       conversationKey: this.conversationKey,

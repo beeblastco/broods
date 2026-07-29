@@ -108,16 +108,14 @@ export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
 };
 
 export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
-export type FullAgentHarnessType = Exclude<HarnessType, "default">;
 
-export type HarnessDefinition =
-  | {
-      type: "default";
-    }
-  | (Omit<NonNullable<AgentConfig["harness"]>, "type"> & {
-      type: FullAgentHarnessType;
-      sandbox: SandboxResource | string;
-    });
+export type HarnessDefinition = Omit<
+  NonNullable<AgentConfig["harness"]>,
+  "type"
+> & {
+  type: HarnessType;
+  sandbox: SandboxResource | string;
+};
 
 export interface SkillDefinitionConfig {
   /**

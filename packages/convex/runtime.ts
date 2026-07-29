@@ -19,6 +19,8 @@ import {
 const DAY_SECONDS = 24 * 60 * 60;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
+// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
+// coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
 /**
@@ -236,7 +238,7 @@ export const listConversationEvents = internalQuery({
   },
 });
 
-/** Loads resumable state for a full-agent harness conversation. */
+/** Loads the resumable checkpoint for an AI SDK Harness conversation. */
 export const getHarnessSession = internalQuery({
   args: { conversationKey: v.string() },
   returns: v.union(
@@ -277,7 +279,7 @@ export const getHarnessSession = internalQuery({
   },
 });
 
-/** Upserts the latest resumable state after a full-agent harness turn. */
+/** Upserts the latest checkpoint after an AI SDK Harness turn. */
 export const saveHarnessSession = internalMutation({
   args: {
     conversationKey: v.string(),

@@ -1,5 +1,5 @@
 /**
- * Broods persistent full-agent runtime construction tests.
+ * Broods AI SDK Harness runtime construction tests.
  * Each probe runs in a child process so importing the real driver cannot prime
  * Bun's module cache ahead of executor tests that install module-level fakes.
  * Live bridge bootstrap and connectivity are covered by the opt-in integration test.
@@ -27,16 +27,16 @@ const MICROVM_COMPUTE = {
 } as const;
 
 const MODULE_URL = pathToFileURL(
-  resolve(import.meta.dir, "../src/harness/full-agent-runtime.ts"),
+  resolve(import.meta.dir, "../src/harness/ai-sdk-harness/index.ts"),
 ).href;
 
 describe("createWorkdirHarnessAgent", () => {
   it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(
     "constructs the %s bridge on a version-scoped reservation",
-    async (harness) => {
+    async (type) => {
       const result = await runProbe(`
         const runtime = module.createWorkdirHarnessAgent({
-          harness: ${JSON.stringify(harness)},
+          type: ${JSON.stringify(type)},
           reservationKey: "acct:agent:conversation",
           compute: ${JSON.stringify(COMPUTE)},
           bridgePort: 4567,
@@ -47,16 +47,16 @@ describe("createWorkdirHarnessAgent", () => {
           reservationKey: runtime.reservationKey,
           expectedReservationKey:
             "acct:agent:conversation:" +
-            ${JSON.stringify(harness)} +
+            ${JSON.stringify(type)} +
             ":" +
-            module.workdirHarnessVersion(${JSON.stringify(harness)}),
+            module.harnessRuntimeVersion(${JSON.stringify(type)}),
           bridgePorts: runtime.sandbox.bridgePorts,
         }));
       `);
 
       const parsed = JSON.parse(result);
       expect(parsed).toMatchObject({
-        harnessId: harness,
+        harnessId: type,
         bridgePort: 4_567,
         bridgePorts: [4_567],
       });
@@ -68,7 +68,7 @@ describe("createWorkdirHarnessAgent", () => {
     const result = await runProbe(`
       try {
         module.createWorkdirHarnessAgent({
-          harness: "codex",
+          type: "codex",
           reservationKey: "acct:agent:conversation",
           compute: ${JSON.stringify(COMPUTE)},
           permissionMode: "allow-edits",
@@ -104,6 +104,9 @@ describe("createConfiguredHarnessAgent", () => {
       console.log(JSON.stringify({
         harnessId: runtime.agent.harnessId,
         reservationKey: runtime.reservationKey,
+        activeUserToolNames: Object.keys(runtime.agent.activeUserTools),
+        builtinToolFiltering: runtime.agent.builtinToolFiltering,
+        debug: runtime.agent.settings.debug,
       }));
     `);
 
@@ -141,6 +144,9 @@ describe("createConfiguredHarnessAgent", () => {
       console.log(JSON.stringify({
         harnessId: runtime.agent.harnessId,
         reservationKey: runtime.reservationKey,
+        activeUserToolNames: Object.keys(runtime.agent.activeUserTools),
+        builtinToolFiltering: runtime.agent.builtinToolFiltering,
+        debug: runtime.agent.settings.debug,
       }));
     `);
 
@@ -149,7 +155,16 @@ describe("createConfiguredHarnessAgent", () => {
       reservationKey: expect.stringContaining(
         "acct:agent:conversation:opencode:",
       ),
+      activeUserToolNames: ["custom_tool"],
+      debug: {
+        enabled: true,
+        level: "trace",
+        subsystems: ["bridge"],
+      },
     });
+    expect(
+      JSON.stringify(JSON.parse(result).builtinToolFiltering),
+    ).not.toContain("bash");
   });
 
   it("rejects unsupported providers for Deep Agents", async () => {
@@ -213,10 +228,10 @@ describe("createConfiguredHarnessAgent", () => {
 describe("createMicrovmHarnessAgent", () => {
   it.each(["claude-code", "codex", "deepagents", "opencode", "pi"] as const)(
     "constructs the %s bridge on a version-scoped MicroVM reservation",
-    async (harness) => {
+    async (type) => {
       const result = await runProbe(`
         const runtime = module.createMicrovmHarnessAgent({
-          harness: ${JSON.stringify(harness)},
+          type: ${JSON.stringify(type)},
           reservationKey: "acct:agent:conversation",
           compute: ${JSON.stringify(MICROVM_COMPUTE)},
           bridgePort: 4567,
@@ -227,16 +242,16 @@ describe("createMicrovmHarnessAgent", () => {
           reservationKey: runtime.reservationKey,
           expectedReservationKey:
             "acct:agent:conversation:" +
-            ${JSON.stringify(harness)} +
+            ${JSON.stringify(type)} +
             ":" +
-            module.microvmHarnessVersion(${JSON.stringify(harness)}),
+            module.harnessRuntimeVersion(${JSON.stringify(type)}),
           bridgePorts: runtime.sandbox.bridgePorts,
         }));
       `);
 
       const parsed = JSON.parse(result);
       expect(parsed).toMatchObject({
-        harnessId: harness,
+        harnessId: type,
         bridgePort: 4_567,
         bridgePorts: [4_567],
       });

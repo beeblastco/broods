@@ -12,7 +12,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
-import { createMicrovmHarnessAgent } from "../src/harness/full-agent-runtime.ts";
+import { createMicrovmHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createMicrovmHarnessDriver } from "../src/harness/sandbox/microvm-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
@@ -128,12 +128,12 @@ describe.skipIf(!ENABLED)(
 
     it.each(["claude-code", "codex"] as const)(
       "bootstraps and connects the real %s bridge through the secure proxy",
-      async (harness) => {
+      async (type) => {
         const compute = liveCompute();
         const created = createMicrovmHarnessAgent({
-          harness,
-          reservationKey: `broods-microvm-harness-${harness}-${randomUUID()}`,
-          compute,
+          type: type,
+          reservationKey: `broods-microvm-harness-${type}-${randomUUID()}`,
+          compute: compute,
           harnessSettings: { startupTimeoutMs: 240_000 },
         });
         let session: Awaited<
@@ -142,9 +142,9 @@ describe.skipIf(!ENABLED)(
 
         try {
           session = await created.agent.createSession({
-            sessionId: `live-${harness}-${randomUUID()}`,
+            sessionId: `live-${type}-${randomUUID()}`,
           });
-          expect(session.sessionId).toStartWith(`live-${harness}-`);
+          expect(session.sessionId).toStartWith(`live-${type}-`);
         } finally {
           if (session) await session.destroy();
           else {

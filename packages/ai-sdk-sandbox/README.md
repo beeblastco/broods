@@ -3,9 +3,9 @@
 This package adapts an injected Broods sandbox driver to the experimental
 `HarnessV1SandboxProvider` contract in `@ai-sdk/harness@1.0.47`. The bounded
 Workdir and Lambda MicroVM drivers in `apps/core/src/harness/sandbox/` import it,
-and `apps/core/src/harness/full-agent-runtime.ts` constructs Claude Code, Codex,
-Deep Agents, OpenCode, and Pi `HarnessAgent` instances with those drivers. The
-Broods core run loop selects them from a non-default harness definition.
+and `apps/core/src/harness/ai-sdk-harness/` constructs Claude Code, Codex, Deep
+Agents, OpenCode, and Pi `HarnessAgent` instances with those drivers. The Broods
+core run loop selects them from an explicit adapter definition.
 
 ## Boundary
 
@@ -28,7 +28,7 @@ const driver: BroodsSandboxDriver =
   createCoreHarnessDriver(/* runtime context */);
 const sandbox = createBroodsSandbox({ driver });
 
-// Core passes `sandbox` to the selected full-agent HarnessAgent.
+// Core passes `sandbox` to the selected AI SDK Harness adapter.
 ```
 
 The driver creates or resumes a `BroodsSandboxDriverSession`. A create result

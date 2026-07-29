@@ -2965,11 +2965,11 @@ components:
     HarnessConfig:
       type: object
       required: [type]
-      description: Selects the Broods serverless loop or a full agent runtime. Non-default types require the agent sandbox reference to resolve to a persistent Broods Workdir or Lambda MicroVM.
+      description: Selects an AI SDK Harness adapter. Omit harness to use the Broods serverless loop. Every configured adapter requires the agent sandbox reference to resolve to a persistent Broods Workdir or Lambda MicroVM.
       properties:
         type:
           type: string
-          enum: [default, claude-code, codex, deepagents, opencode, pi]
+          enum: [claude-code, codex, deepagents, opencode, pi]
         activeTools:
           type: array
           items:

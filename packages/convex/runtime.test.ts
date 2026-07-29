@@ -154,13 +154,69 @@ describe("runtime persistence", () => {
       },
     });
 
+    await t.mutation(internal.runtime.saveHarnessSession, {
+      conversationKey: conversationKey,
+      harnessType: "codex",
+      sessionId: "codex-session-replaced",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "codex",
+        specificationVersion: "harness-v1",
+        data: { threadId: "thread-2" },
+      },
+    });
+    expect(
+      await t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
+    ).toEqual({
+      harnessType: "codex",
+      sessionId: "codex-session-replaced",
+      resumeState: {
+        type: "resume-session",
+        harnessId: "codex",
+        specificationVersion: "harness-v1",
+        data: { threadId: "thread-2" },
+      },
+    });
+
     await t.mutation(internal.runtime.clearConversation, { conversationKey });
     expect(
       await t.query(internal.runtime.getHarnessSession, { conversationKey }),
     ).toBeNull();
   });
 
-  test("rejects oversized harness resume state before writing Convex", async () => {
+  test("rejects a harness checkpoint stored under another account", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const otherAccountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("runtimeHarnessSessions", {
+        accountId: otherAccountId,
+        conversationKey: conversationKey,
+        harnessType: "pi",
+        sessionId: "foreign-session",
+        resumeState: {
+          type: "resume-session",
+          harnessId: "pi",
+          specificationVersion: "harness-v1",
+          data: {},
+        },
+        updatedAt: Date.now(),
+      });
+    });
+
+    await expect(
+      t.query(internal.runtime.getHarnessSession, {
+        conversationKey: conversationKey,
+      }),
+    ).rejects.toThrow(
+      "Harness session does not belong to conversation account",
+    );
+  });
+
+  test("rejects an oversized harness checkpoint before writing Convex", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);

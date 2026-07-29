@@ -49,7 +49,6 @@ const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const AGENT_HARNESS_TYPES = [
-  "default",
   "claude-code",
   "codex",
   "deepagents",
@@ -68,6 +67,16 @@ const AGENT_HARNESS_PERMISSION_MODES = [
   "allow-edits",
   "allow-all",
 ] as const;
+const AGENT_HARNESS_KEYS = new Set([
+  "activeTools",
+  "debug",
+  "inactiveTools",
+  "permissionMode",
+  "startupTimeoutMs",
+  "type",
+  "webSearch",
+]);
+const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 // Deprecated public account-tool id prefix. It is neither a native Convex id
 // nor a provider tool name, so it must not fall through as one.
 const DEPRECATED_TOOL_ID_PREFIX = "tool_";
@@ -602,11 +611,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
-  if (
-    isPlainObject(config.harness) &&
-    config.harness.type !== "default" &&
-    typeof config.sandbox !== "string"
-  ) {
+  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
     throw new Error(
       `config.sandbox is required for the ${String(config.harness.type)} harness`,
     );
@@ -625,16 +630,11 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   } else {
     delete config.policy;
   }
-  if (
-    isPlainObject(config.harness) &&
-    config.harness.type !== "default" &&
-    config.policy !== undefined
-  ) {
+  if (isPlainObject(config.harness) && config.policy !== undefined) {
     throw new Error("config.policy is not supported with config.harness");
   }
   if (
     isPlainObject(config.harness) &&
-    config.harness.type !== "default" &&
     isPlainObject(config.model) &&
     isPlainObject(config.model.output) &&
     config.model.output.type !== "text"
@@ -657,6 +657,11 @@ function normalizeHarnessConfig(value: unknown): void {
   }
 
   const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!AGENT_HARNESS_KEYS.has(key)) {
+      throw new Error(`config.harness has unknown option "${key}"`);
+    }
+  }
   if (
     typeof config.type !== "string" ||
     !AGENT_HARNESS_TYPES.includes(
@@ -690,14 +695,6 @@ function normalizeHarnessConfig(value: unknown): void {
   }
   normalizeHarnessDebugConfig(config.debug);
   if (
-    config.type === "default" &&
-    Object.keys(config).some((key) => key !== "type")
-  ) {
-    throw new Error(
-      "config.harness.type default does not accept adapter options; configure Broods tools on config.tools",
-    );
-  }
-  if (
     config.type === "codex" &&
     config.permissionMode !== undefined &&
     config.permissionMode !== "allow-all"
@@ -724,6 +721,11 @@ function normalizeHarnessDebugConfig(value: unknown): void {
   }
   if (!isPlainObject(value)) {
     throw new Error("config.harness.debug must be an object");
+  }
+  for (const key of Object.keys(value)) {
+    if (!AGENT_HARNESS_DEBUG_KEYS.has(key)) {
+      throw new Error(`config.harness.debug has unknown option "${key}"`);
+    }
   }
   assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
   assertOptionalEnum(

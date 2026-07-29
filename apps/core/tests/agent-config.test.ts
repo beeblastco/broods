@@ -6,7 +6,7 @@ import {
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
-  it("validates full-agent harness selection", () => {
+  it("validates AI SDK Harness selection", () => {
     expect(
       normalizeAgentConfig({
         harness: {
@@ -39,11 +39,14 @@ describe("agent config validation", () => {
       sandbox: "persistent-sandbox",
     });
     expect(() => normalizeAgentConfig({ harness: { type: "other" } })).toThrow(
-      "config.harness.type must be one of: default, claude-code, codex, deepagents, opencode, pi",
+      "config.harness.type must be one of: claude-code, codex, deepagents, opencode, pi",
     );
-    expect(normalizeAgentConfig({ harness: { type: "default" } })).toEqual({
-      harness: { type: "default" },
-    });
+    expect(normalizeAgentConfig({})).toEqual({});
+    expect(() =>
+      normalizeAgentConfig({ harness: { type: "default" } }),
+    ).toThrow(
+      "config.harness.type must be one of: claude-code, codex, deepagents, opencode, pi",
+    );
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex", permissionMode: "allow-edits" },
@@ -96,13 +99,21 @@ describe("agent config validation", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: {
-          type: "default",
-          activeTools: ["bash"],
+          type: "codex",
+          webSerch: true,
         },
+        sandbox: "persistent-sandbox",
       }),
-    ).toThrow(
-      "config.harness.type default does not accept adapter options; configure Broods tools on config.tools",
-    );
+    ).toThrow('config.harness has unknown option "webSerch"');
+    expect(() =>
+      normalizeAgentConfig({
+        harness: {
+          type: "codex",
+          debug: { enabled: true, subystems: ["bridge"] },
+        },
+        sandbox: "persistent-sandbox",
+      }),
+    ).toThrow('config.harness.debug has unknown option "subystems"');
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "pi" },

@@ -773,7 +773,7 @@ export const runtimeConversationEventsFields = {
   cursor: v.string(),
   event: v.any(),
 };
-/** Resumable state for one full-agent harness conversation. */
+/** Resumable checkpoint for one AI SDK Harness conversation. */
 export const runtimeHarnessSessionsFields = {
   accountId: v.string(),
   conversationKey: v.string(),

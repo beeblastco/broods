@@ -39,8 +39,8 @@ export class SkillNotFoundError extends Error {
 export const SKILL_FILE = "SKILL.md";
 const MAX_SKILL_NAME_LENGTH = 64;
 const MAX_SKILL_DESCRIPTION_LENGTH = 1024;
-const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
-const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+export const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
+export const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
 const TEXT_EXTENSIONS = new Set([
   ".css",
   ".csv",

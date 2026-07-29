@@ -831,6 +831,7 @@ const KNOWN_HARNESS_KEYS = new Set([
   "type",
   "webSearch",
 ]);
+const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
 /** Suggest the canonical key for a common misspelling, else "". */
 function suggestProviderKey(key: string): string {
@@ -906,7 +907,6 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     }
   }
   if (
-    config.type !== "default" &&
     config.type !== "claude-code" &&
     config.type !== "codex" &&
     config.type !== "deepagents" &&
@@ -914,21 +914,15 @@ function validateHarnessConfig(agentName: string, harness: unknown): void {
     config.type !== "pi"
   ) {
     throw new Error(
-      `Agent "${agentName}" config.harness.type must be default, claude-code, codex, deepagents, opencode, or pi`,
+      `Agent "${agentName}" config.harness.type must be claude-code, codex, deepagents, opencode, or pi`,
     );
   }
-  if (config.type === "default" && Object.keys(config).length !== 1) {
-    throw new Error(
-      `Agent "${agentName}" config.harness.type default does not accept adapter options; configure Broods tools on config.tools`,
-    );
-  }
-  if (config.type !== "default" && config.sandbox === undefined) {
+  if (config.sandbox === undefined) {
     throw new Error(
       `Agent "${agentName}" config.harness.sandbox is required for ${config.type}`,
     );
   }
   if (
-    config.type !== "default" &&
     config.sandbox !== undefined &&
     !(
       typeof config.sandbox === "string" ||
@@ -1002,6 +996,13 @@ function validateHarnessDebugConfig(agentName: string, value: unknown): void {
     );
   }
   const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!KNOWN_HARNESS_DEBUG_KEYS.has(key)) {
+      throw new Error(
+        `Agent "${agentName}" config.harness.debug has unknown option "${key}"`,
+      );
+    }
+  }
   if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
     throw new Error(
       `Agent "${agentName}" config.harness.debug.enabled must be a boolean`,
@@ -1055,17 +1056,15 @@ function normalizeAgentConfig(
     const harness = {
       ...(config.harness as Record<string, unknown>),
     };
-    if (harness.type !== "default") {
-      if (config.sandbox !== undefined) {
-        throw new Error(
-          `Agent "${resource.name}" must configure the full-agent sandbox on defineHarness, not defineAgent`,
-        );
-      }
-      config.sandbox = isResource(harness.sandbox)
-        ? harness.sandbox.name
-        : harness.sandbox;
-      delete harness.sandbox;
+    if (config.sandbox !== undefined) {
+      throw new Error(
+        `Agent "${resource.name}" must configure the AI SDK harness sandbox on defineHarness, not defineAgent`,
+      );
     }
+    config.sandbox = isResource(harness.sandbox)
+      ? harness.sandbox.name
+      : harness.sandbox;
+    delete harness.sandbox;
     config.harness = harness;
   }
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);

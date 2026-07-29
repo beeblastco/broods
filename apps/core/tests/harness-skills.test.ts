@@ -691,6 +691,23 @@ describe("loadConfiguredHarnessSkills", () => {
       },
     ]);
   });
+
+  it("rejects an oversized SKILL.md before building a harness skill", async () => {
+    s3ObjectExistsMock.mockResolvedValue(true);
+    readS3TextMock.mockResolvedValue("x".repeat(5 * 1024 * 1024 + 1));
+
+    const { loadConfiguredHarnessSkills } =
+      await import("../src/harness/skills.ts");
+
+    await expect(
+      loadConfiguredHarnessSkills("acct_test", {
+        skills: { enabled: true, allowed: ["acct_test/oversized-skill"] },
+      }),
+    ).rejects.toThrow(
+      "Skill file exceeds 5242880 bytes: acct_test/oversized-skill/SKILL.md",
+    );
+    expect(listS3PrefixMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("loadSkillContent", () => {

@@ -28,10 +28,7 @@ import {
   type ToolSet,
   type UserModelMessage,
 } from "ai";
-import type {
-  HarnessAgentResumeSessionState,
-  HarnessAgentSession,
-} from "@ai-sdk/harness/agent";
+import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
@@ -66,7 +63,11 @@ import {
   wrapToolsWithHooks,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
-import { createConfiguredHarnessAgent } from "./full-agent-runtime.ts";
+import {
+  createConfiguredHarnessAgent,
+  openAiSdkHarnessSession,
+  parkAiSdkHarnessSession,
+} from "./ai-sdk-harness/index.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import {
   channelPolicyIdentity,
@@ -97,6 +98,7 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 /** Thrown when an owner is stopped; callers match on it to skip result delivery. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
@@ -1557,10 +1559,9 @@ export async function runAgentLoop(
     ReturnType<typeof createConfiguredHarnessAgent> | undefined;
   let harnessLeaseAbort: AbortController | undefined;
   let stream: ReturnType<typeof streamText>;
-  const usesFullAgentHarness =
-    agentConfig.harness !== undefined && agentConfig.harness.type !== "default";
+  const usesAiSdkHarness = agentConfig.harness !== undefined;
   try {
-    if (usesFullAgentHarness) {
+    if (usesAiSdkHarness) {
       if (policyToolApproval) {
         throw new Error(
           "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
@@ -1568,7 +1569,7 @@ export async function runAgentLoop(
       }
       await applyHarnessSteeringBeforeTurn(session, turnContext);
     }
-    harnessRuntime = usesFullAgentHarness
+    harnessRuntime = usesAiSdkHarness
       ? createConfiguredHarnessAgent({
           agentConfig: agentConfig,
           compute: requireHarnessSandbox(statelessSandbox),
@@ -1591,21 +1592,12 @@ export async function runAgentLoop(
         })
       : undefined;
     if (harnessRuntime) {
-      const stored = await session.loadHarnessSession();
-      if (stored && stored.harnessType !== agentConfig.harness?.type) {
-        throw new Error(
-          `Conversation is already bound to the ${stored.harnessType} harness; clear it before switching to ${agentConfig.harness?.type}`,
-        );
-      }
       harnessLeaseAbort = new AbortController();
-      activeHarnessSession = await harnessRuntime.agent.createSession({
-        sessionId: stored?.sessionId ?? crypto.randomUUID(),
-        ...(stored
-          ? {
-              resumeFrom: stored.resumeState as HarnessAgentResumeSessionState,
-            }
-          : {}),
+      activeHarnessSession = await openAiSdkHarnessSession({
         abortSignal: harnessLeaseAbort.signal,
+        agent: harnessRuntime.agent,
+        broodsSession: session,
+        type: agentConfig.harness!.type,
       });
       stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
         session,
@@ -1652,35 +1644,34 @@ export async function runAgentLoop(
       : undefined;
     let finalizationError = streamError ?? abortError;
     try {
-      const resumeState = await activeHarnessSession.stop();
-      await session.assertCurrentOwner();
-      await session.saveHarnessSession({
-        harnessType: agentConfig.harness!.type as Exclude<
-          NonNullable<AgentConfig["harness"]>["type"],
-          "default"
-        >,
-        sessionId: activeHarnessSession.sessionId,
-        resumeState: resumeState,
+      await parkAiSdkHarnessSession({
+        broodsSession: session,
+        nativeSession: activeHarnessSession,
+        successful: finalizationError === undefined,
+        type: agentConfig.harness!.type,
       });
     } catch (error) {
       const message = errorMessage(error);
       finalizationError ??= error instanceof Error ? error : new Error(message);
-      await activeHarnessSession.destroy().catch(() => {});
     } finally {
       activeHarnessSession = undefined;
     }
     if (!finishObserved && finalizationError !== undefined) {
       await streamOptions.onError?.({ error: finalizationError } as never);
     } else if (!finishObserved) {
-      await streamOptions.onEnd?.({
-        response: await stream.response,
-        text: await stream.text,
-        finishReason: await stream.finishReason,
-        rawFinishReason: await stream.rawFinishReason,
-        steps: await stream.steps,
-        toolCalls: await stream.toolCalls,
-        usage: await stream.usage,
-      } as never);
+      try {
+        await streamOptions.onEnd?.({
+          response: await stream.response,
+          text: await stream.text,
+          finishReason: await stream.finishReason,
+          rawFinishReason: await stream.rawFinishReason,
+          steps: await stream.steps,
+          toolCalls: await stream.toolCalls,
+          usage: await stream.usage,
+        } as never);
+      } catch (error) {
+        await streamOptions.onError?.({ error: error } as never);
+      }
     }
   };
 
@@ -1830,7 +1821,12 @@ function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
   const userMessages = messages
     .slice(lastAssistantIndex + 1)
     .filter((message): message is UserModelMessage => message.role === "user");
-  if (userMessages.length <= 1) {
+  if (userMessages.length === 0) {
+    throw new Error(
+      "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
+    );
+  }
+  if (userMessages.length === 1) {
     return userMessages;
   }
   const content = userMessages.flatMap((message) =>
@@ -1859,6 +1855,7 @@ function startHarnessLeaseMonitor(
   abortController: AbortController,
 ): () => void {
   let checking = false;
+  let consecutiveFailures = 0;
   const timer = setInterval(async () => {
     if (checking || abortController.signal.aborted) {
       return;
@@ -1866,6 +1863,7 @@ function startHarnessLeaseMonitor(
     checking = true;
     try {
       const renewal = await session.renewConversationLease();
+      consecutiveFailures = 0;
       if (renewal === "stopped") {
         abortController.abort(new Error(USER_STOP_MESSAGE));
       } else if (renewal === "stale") {
@@ -1874,7 +1872,10 @@ function startHarnessLeaseMonitor(
         );
       }
     } catch (error) {
-      abortController.abort(error);
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= HARNESS_LEASE_RENEWAL_FAILURE_LIMIT) {
+        abortController.abort(error);
+      }
     } finally {
       checking = false;
     }

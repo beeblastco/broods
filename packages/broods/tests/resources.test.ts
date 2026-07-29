@@ -92,7 +92,7 @@ export const support = defineAgent({
   );
 });
 
-test("compileProject emits full-agent harness selection", async () => {
+test("compileProject emits AI SDK Harness selection", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -153,17 +153,14 @@ export const coding = defineAgent({
   );
 });
 
-test("compileProject emits the explicit default Broods harness", async () => {
+test("compileProject defaults to the Broods harness when harness is omitted", async () => {
   const cwd = await fixtureProject(
     "",
     `
-import { defineAgent, defineHarness } from "${RESOURCES_MODULE}";
-
-const broodsHarness = defineHarness({ type: "default" });
+import { defineAgent } from "${RESOURCES_MODULE}";
 
 export const assistant = defineAgent({
   name: "assistant",
-  harness: broodsHarness,
   model: { provider: "openai", modelId: "gpt-5-mini" },
 });
 `,
@@ -175,8 +172,8 @@ export const assistant = defineAgent({
     expect.objectContaining({
       kind: "agent",
       name: "assistant",
-      config: expect.objectContaining({
-        harness: { type: "default" },
+      config: expect.not.objectContaining({
+        harness: expect.anything(),
       }),
     }),
   );
