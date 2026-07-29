@@ -74,13 +74,7 @@ export interface BroodsConfigDefinition {
 }
 
 export type ResourceKind =
-  | "agent"
-  | "workspace"
-  | "sandbox"
-  | "cron"
-  | "skill"
-  | "tool"
-  | "policy";
+  "agent" | "workspace" | "sandbox" | "cron" | "skill" | "tool" | "policy";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -111,6 +105,16 @@ export type ResourceInput<Name extends string, Config> = {
  */
 export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
   envVars?: Record<string, string | EnvRef | undefined>;
+};
+
+export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
+
+export type HarnessDefinition = Omit<
+  NonNullable<AgentConfig["harness"]>,
+  "type"
+> & {
+  type: HarnessType;
+  sandbox: SandboxResource | string;
 };
 
 export interface SkillDefinitionConfig {
@@ -171,12 +175,7 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  | "telegram"
-  | "github"
-  | "slack"
-  | "discord"
-  | "pancake"
-  | "zalo";
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -493,6 +492,7 @@ void _providerKeyParity;
 export type AgentDefinitionConfig = EnvRefString<
   Pick<AgentConfig, "agent" | "model" | "session" | "tools">
 > & { provider?: ProviderConfigInput } & {
+  harness?: HarnessDefinition;
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
@@ -687,6 +687,12 @@ export function defineAgent<const Name extends string>(
     description,
     config as AgentDefinitionConfig,
   );
+}
+
+export function defineHarness<const Definition extends HarnessDefinition>(
+  definition: Definition,
+): Definition {
+  return definition;
 }
 
 export function defineWorkspace<const Name extends string>(

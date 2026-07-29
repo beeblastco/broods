@@ -120,6 +120,105 @@ duplicated). When the endpoint reports no reasoning-token breakdown in usage,
 reasoning tokens are estimated from the reasoning/text character share of the
 output total, so usage tracking still shows thinking-token spend.
 
+### AI SDK Harness adapters
+
+When `harness` is omitted, the agent uses Broods' serverless `streamText` loop.
+Use `defineHarness()` only to replace that loop with Claude Code, Codex, Deep
+Agents, OpenCode, or Pi.
+
+```ts
+import { defineAgent, defineHarness, defineSandbox, env } from "broods";
+
+const runner = defineSandbox({
+  name: "codex-runner",
+  provider: "sandbox",
+  persistent: true,
+  permissionMode: "bypass",
+  network: { mode: "allow-all" },
+  onCreate: ["bun install"],
+  onResume: ["git status --short"],
+});
+
+const codexHarness = defineHarness({
+  type: "codex",
+  sandbox: runner,
+  permissionMode: "allow-all",
+  startupTimeoutMs: 180_000,
+});
+
+export const codingAgent = defineAgent({
+  name: "coding-agent",
+  harness: codexHarness,
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
+    },
+  },
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+  publicAccess: true,
+});
+```
+
+There is no default `defineHarness()` definition. Omit `harness` to use Broods.
+This serverless loop runs in Broods core and provides the normal Broods tool
+registry, including `bash`, `read`, `write`, `edit`, `glob`, and `grep` when
+their required sandbox or workspace is configured. An agent-level `sandbox` is
+a tool execution target; the serverless loop itself does not live inside it.
+
+Every AI SDK Harness adapter requires its `sandbox` on `defineHarness()`. The
+sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
+(`lambda`) provider. Compute lifecycle belongs to `defineSandbox()`: use
+`onCreate` for one-time setup and `onResume` for per-acquisition setup.
+
+Broods stores the adapter's opaque checkpoint after each turn so the same native
+session continues across requests. The checkpoint contains identifiers and
+bridge coordinates, not the conversation. Its 64 KiB guard therefore does not
+limit model context: native history and compacted summaries remain in the
+persistent sandbox. A 1M-token logical conversation grows sandbox state, not the
+Convex checkpoint row. The selected runtime owns model-context compaction.
+Clearing the Broods conversation clears the checkpoint pointer.
+
+Claude Code, Codex, OpenCode, and Pi checkpoint their native thread before the
+sandbox is stopped between turns. Deep Agents keeps its in-memory thread alive
+by detaching the persistent sandbox session after a successful turn; a failed or
+cancelled turn is stopped instead.
+
+Steering already queued when the turn starts is folded into the harness prompt.
+Because these runtimes own their internal tool loop, steering that arrives after
+the turn has started is retained by the durable ingress coordinator and runs as
+the next follow-up. User stop requests abort the active harness turn.
+
+`codex` supports the `custom`, `openai`, and `gateway` model providers;
+`opencode` supports `anthropic`, `custom`, `gateway`, and `openai`;
+`claude-code` and `deepagents` support `anthropic` and `gateway`; Pi uses its
+model catalog with credentials derived from the configured provider. Codex
+requires `permissionMode: "allow-all"`. `webSearch` is Codex-only. Dynamic OPA
+policies and structured output are not currently supported by AI SDK Harness
+adapters.
+
+All AI SDK Harness adapters receive enabled Broods custom tools and account
+skills.
+Use `activeTools` or `inactiveTools` on `defineHarness()` to filter adapter
+built-ins and custom tools. Channel-level denied tools are applied in addition.
+Adapter capabilities still differ:
+
+| Harness     | Custom tools | Account skills | Built-in approval | Built-in filtering |
+| ----------- | ------------ | -------------- | ----------------- | ------------------ |
+| Claude Code | Yes          | Yes            | Yes               | Yes                |
+| Codex       | Yes          | Yes            | No                | No                 |
+| Deep Agents | Yes          | Yes            | Yes               | Auto-rejection     |
+| OpenCode    | Yes          | Yes            | Yes               | Auto-rejection     |
+| Pi          | Yes          | Yes            | Yes               | Yes                |
+
+Broods uses its existing Convex ingress and lease coordination instead of
+embedding Vercel Workflow. A turn receives only the newest user input, while a
+trailing approval or tool-result message continues the unfinished native turn.
+The runtime streams through the normal Broods SSE/channel path, parks the native
+session according to the adapter's lifecycle capability, and persists the
+bounded checkpoint. Mid-turn time slicing with `suspendTurn()` and
+`continueStream()` is not currently enabled.
+
 ### Reasoning / Thinking Tokens
 
 Prefer the AI SDK v7 unified `reasoning` level in `config.model` — it is

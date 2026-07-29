@@ -3,14 +3,15 @@
  * Keep event persistence, context projection, leases, and prompt loading here.
  */
 
-import type {
-  AssistantModelMessage,
-  ModelMessage,
-  SystemModelMessage,
-  ToolModelMessage,
-  UserModelMessage,
+import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
+import {
+  systemModelMessageSchema,
+  type AssistantModelMessage,
+  type ModelMessage,
+  type SystemModelMessage,
+  type ToolModelMessage,
+  type UserModelMessage,
 } from "ai";
-import { systemModelMessageSchema } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import type {
   AgentChannelWorkspaceScope,
@@ -44,6 +45,7 @@ import {
 import type { SandboxExecutorConfig } from "./sandbox/types.ts";
 import {
   listConfiguredSkillMetadata,
+  loadConfiguredHarnessSkills,
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
@@ -103,6 +105,12 @@ interface SubagentMetadata {
   agentId: string;
   name: string;
   description?: string;
+}
+
+export interface StoredHarnessSession {
+  harnessType: "claude-code" | "codex" | "deepagents" | "opencode" | "pi";
+  sessionId: string;
+  resumeState: unknown;
 }
 
 /**
@@ -326,6 +334,23 @@ export class Session {
     return createdAtValues;
   }
 
+  async loadHarnessSession(): Promise<StoredHarnessSession | null> {
+    return runtime.query("getHarnessSession", {
+      conversationKey: this.conversationKey,
+    });
+  }
+
+  async saveHarnessSession(state: StoredHarnessSession): Promise<void> {
+    const serialized = JSON.stringify(state.resumeState);
+    if (serialized === undefined) {
+      throw new Error("Harness resume state must be JSON serializable");
+    }
+    await runtime.mutate("saveHarnessSession", {
+      conversationKey: this.conversationKey,
+      ...state,
+    });
+  }
+
   async createTurnContext(
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
@@ -491,6 +516,10 @@ export class Session {
     );
     this.loadedSkillPrompts.push(loaded.prompt);
     return loaded;
+  }
+
+  async loadHarnessSkills(): Promise<HarnessAgentSkill[]> {
+    return loadConfiguredHarnessSkills(this.accountId, this.agentConfig);
   }
 
   /**

@@ -92,6 +92,93 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject emits AI SDK Harness selection", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness, defineSandbox, env } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "sandbox",
+  persistent: true,
+  permissionMode: "bypass",
+  network: { mode: "allow-all" },
+  onCreate: ["bun install"],
+  onResume: ["git status --short"],
+});
+
+const harness = defineHarness({
+  type: "opencode",
+  sandbox: runner,
+  activeTools: ["bash", "read", "write"],
+  debug: { enabled: true, level: "debug", subsystems: ["bridge"] },
+  startupTimeoutMs: 180000,
+});
+
+export const coding = defineAgent({
+  name: "coding",
+  harness,
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
+    },
+  },
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "coding",
+      config: expect.objectContaining({
+        harness: {
+          type: "opencode",
+          activeTools: ["bash", "read", "write"],
+          debug: {
+            enabled: true,
+            level: "debug",
+            subsystems: ["bridge"],
+          },
+          startupTimeoutMs: 180000,
+        },
+        sandbox: "runner",
+      }),
+    }),
+  );
+});
+
+test("compileProject defaults to the Broods harness when harness is omitted", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const assistant = defineAgent({
+  name: "assistant",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "assistant",
+      config: expect.not.objectContaining({
+        harness: expect.anything(),
+      }),
+    }),
+  );
+});
+
 test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
   const cwd = await fixtureProject(
     "",

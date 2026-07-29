@@ -1,0 +1,18 @@
+diff --git a/package.json b/package.json
+index be9108bf99e36889e7784085ad6e39521200d7da..cacfd31469fda7818a52c83a266f568678f94d6d 100644
+--- a/package.json
++++ b/package.json
+@@ -21,6 +21,13 @@
+   "sideEffects": false,
+   "main": "dist/index.js",
+   "module": "dist/index.mjs",
++  "exports": {
++    ".": {
++      "types": "./dist/index.d.ts",
++      "import": "./dist/index.mjs",
++      "require": "./dist/index.js"
++    }
++  },
+   "types": "dist/index.d.ts",
+   "devDependencies": {
+     "@cloudflare/vitest-pool-workers": "^0.18.7",

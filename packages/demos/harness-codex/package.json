@@ -1,0 +1,17 @@
+{
+  "name": "@broods/demo-harness-codex",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "start": "bun index.ts",
+    "dev": "broods dev",
+    "deploy": "broods deploy"
+  },
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}
