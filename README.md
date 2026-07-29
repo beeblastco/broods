@@ -64,21 +64,6 @@ For self-hosted deployments, point `BROODS_HOST` or `BROODS_BASE_URL` at your ga
 
 ---
 
-## Project Layout
-
-```text
-apps/
-  core/         # SST-provisioned AWS data plane + Bun container runtime
-  dashboard/    # Next.js dashboard
-  docs/         # Docusaurus docs
-packages/
-  convex/       # Shared Convex backend
-  broods/ # CLI + TypeScript SDK
-  demos/        # Runnable demo scripts
-```
-
----
-
 ## Demos
 
 After deploying, try the runnable scripts in `packages/demos/`:
