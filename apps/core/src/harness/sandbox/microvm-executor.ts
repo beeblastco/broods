@@ -76,6 +76,7 @@ import {
   configString,
   sandboxReservationKey,
   stringRecord,
+  stripTrailingSlashes,
   truncateText,
 } from "./utils.ts";
 
@@ -464,9 +465,9 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const options = isPlainObject(this.#config.options)
       ? this.#config.options
       : {};
-    return (
-      configString(options.workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT
-    ).replace(/\/+$/, "");
+    return stripTrailingSlashes(
+      configString(options.workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT,
+    );
   }
 
   #workDir(key: string): string {

@@ -67,6 +67,7 @@ import {
   sandboxReservationKey,
   shellQuote,
   stringRecord,
+  stripTrailingSlashes,
   truncateText,
   workspacePath,
 } from "./utils.ts";
@@ -349,9 +350,9 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }
 
   #workspaceRoot(): string {
-    return (
-      configString(this.#options().workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT
-    ).replace(/\/+$/, "");
+    return stripTrailingSlashes(
+      configString(this.#options().workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT,
+    );
   }
 
   #workDir(namespace: string): string {
