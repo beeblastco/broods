@@ -25,9 +25,9 @@ export const exchange = httpAction(async (ctx, req) => {
 
     return json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    console.error("CLI login exchange failed", error);
 
-    return json({ error: message }, 400);
+    return json({ error: "Login code is invalid or expired" }, 400);
   }
 });
 

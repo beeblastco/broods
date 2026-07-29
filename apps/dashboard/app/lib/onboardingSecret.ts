@@ -1,13 +1,13 @@
 /**
  * Cross-route handoff for a freshly-provisioned one-time account secret. The
- * publisher (home bootstrap or org switcher) stores the plaintext briefly so
+ * publisher (home bootstrap or org switcher) keeps the plaintext in memory so
  * the onboarding dialog rendered in the persistent main layout can surface it
- * after the publishing route navigates away. The secret is cleared once the
- * flow completes.
+ * after client navigation. The secret never enters browser storage and is
+ * cleared once the flow completes or the page reloads.
  */
 
-const STORAGE_KEY = "fp:onboarding-secret";
 const EVENT_NAME = "fp:onboarding-secret";
+let pendingSecret: string | null = null;
 
 /**
  * Publishes a one-time secret so the onboarding dialog can show it on the next
@@ -17,7 +17,7 @@ const EVENT_NAME = "fp:onboarding-secret";
 export function publishOnboardingSecret(secret: string) {
   if (typeof window === "undefined") return;
 
-  window.sessionStorage.setItem(STORAGE_KEY, secret);
+  pendingSecret = secret;
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 
@@ -28,14 +28,14 @@ export function publishOnboardingSecret(secret: string) {
 export function readOnboardingSecret(): string | null {
   if (typeof window === "undefined") return null;
 
-  return window.sessionStorage.getItem(STORAGE_KEY);
+  return pendingSecret;
 }
 
 /** Clears the pending one-time secret and notifies listeners. */
 export function clearOnboardingSecret() {
   if (typeof window === "undefined") return;
 
-  window.sessionStorage.removeItem(STORAGE_KEY);
+  pendingSecret = null;
   window.dispatchEvent(new CustomEvent(EVENT_NAME));
 }
 

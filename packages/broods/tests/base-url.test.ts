@@ -1,5 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { gatewayUrlForDashboard, readStoredAuth } from "../src/config.ts";
+import {
+  gatewayUrlForDashboard,
+  readStoredAuth,
+  stripTrailingSlash,
+} from "../src/config.ts";
 
 const savedEnv = {
   BROODS_TOKEN: process.env.BROODS_TOKEN,
@@ -59,4 +63,13 @@ test("gatewayUrlForDashboard never guesses a host we do not own", () => {
   expect(gatewayUrlForDashboard("http://localhost:3000")).toBeUndefined();
   expect(gatewayUrlForDashboard("https://broods.app")).toBeUndefined();
   expect(gatewayUrlForDashboard("not a url")).toBeUndefined();
+});
+
+test("stripTrailingSlash removes every trailing slash in linear time", () => {
+  expect(stripTrailingSlash("https://gateway.example.com///")).toBe(
+    "https://gateway.example.com",
+  );
+  expect(stripTrailingSlash("https://gateway.example.com/path")).toBe(
+    "https://gateway.example.com/path",
+  );
 });

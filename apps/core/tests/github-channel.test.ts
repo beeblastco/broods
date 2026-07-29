@@ -991,7 +991,7 @@ function normalizeHeaders(
 }
 
 function testPrivateKey(): string {
-  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 1024 });
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 }
 

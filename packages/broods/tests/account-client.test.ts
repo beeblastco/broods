@@ -15,7 +15,7 @@ type Call = {
 function mockClient(responses: Array<{ status: number; body: unknown }>) {
   const calls: Call[] = [];
   const client = new BroodsAccountClient({
-    baseUrl: "https://gateway.example.com/",
+    baseUrl: "https://gateway.example.com///",
     accountSecret: "secret-1",
     fetch: async (input, init) => {
       calls.push({
