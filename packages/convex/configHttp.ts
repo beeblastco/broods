@@ -2009,10 +2009,17 @@ async function handleToolRoute(
   toolId?: string,
 ): Promise<Response> {
   if (!toolId) {
+    // Tools belong to one environment, so the collection routes need a scope.
+    // Without it a create would write a row no project owns, which the cleanup
+    // migration then deletes out from under the caller.
+    const scope = await resolveToolScope(ctx, req, accountId);
+    if (!scope.ok) return scope.response;
+
     if (req.method === "GET") {
-      const records = await ctx.runQuery(internal.accountTools.list, {
-        accountId: accountId,
-      });
+      const records = await ctx.runQuery(
+        internal.accountTools.listForEnvironment,
+        { environmentId: scope.environmentId },
+      );
 
       return json({
         tools: records.map((record) => toPublicAccountTool(record)),
@@ -2029,6 +2036,8 @@ async function handleToolRoute(
       });
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
+        projectId: scope.projectId,
+        environmentId: scope.environmentId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
@@ -2956,4 +2965,49 @@ function json(body: unknown, status = 200): Response {
     status: status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+type ToolScope =
+  | { ok: true; projectId: Id<"projects">; environmentId: Id<"environments"> }
+  | { ok: false; response: Response };
+
+/** Reads and resolves the `project` / `environment` query pair tool routes require. */
+async function resolveToolScope(
+  ctx: ActionCtx,
+  req: Request,
+  accountId: Id<"accounts">,
+): Promise<ToolScope> {
+  const params = new URL(req.url).searchParams;
+  const project = params.get("project")?.trim();
+  const environment = params.get("environment")?.trim();
+  if (!project || !environment) {
+    return {
+      ok: false,
+      response: json(
+        {
+          error:
+            "Tools are scoped to an environment: pass ?project=<slug>&environment=<name>",
+        },
+        400,
+      ),
+    };
+  }
+
+  const scope = await ctx.runQuery(internal.accountTools.resolveScope, {
+    accountId: accountId,
+    project: project,
+    environment: environment,
+  });
+  if (!scope) {
+    return {
+      ok: false,
+      response: json({ error: "Project or environment not found" }, 404),
+    };
+  }
+
+  return {
+    ok: true,
+    projectId: scope.projectId,
+    environmentId: scope.environmentId,
+  };
 }

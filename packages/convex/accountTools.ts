@@ -1,9 +1,12 @@
 /**
- * Internal account tool metadata API consumed by core's Convex storage adapter.
+ * Internal custom tool metadata API consumed by core's Convex storage adapter.
+ * Tools are scoped to one (projectId, environmentId); the runtime resolves them
+ * by `_id`, so a per-environment row already yields a per-environment tool.
  */
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { resolveProjectEnvironment } from "./model/projectScope";
 import { accountToolsFields } from "./schema";
 
 const accountToolDoc = v.object({
@@ -44,9 +47,52 @@ export const list = internalQuery({
   },
 });
 
+/**
+ * Resolve a project/environment slug pair the REST API was called with. Unlike
+ * the CLI's `ensureScopeBySecretHash` this never creates: an unknown slug is a
+ * client error, not a reason to spawn a project.
+ */
+export const resolveScope = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+    environment: v.string(),
+  },
+  returns: v.union(
+    v.object({
+      projectId: v.id("projects"),
+      environmentId: v.id("environments"),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    return await resolveProjectEnvironment(
+      ctx,
+      args.accountId,
+      args.project,
+      args.environment,
+    );
+  },
+});
+
+export const listForEnvironment = internalQuery({
+  args: { environmentId: v.id("environments") },
+  returns: v.array(accountToolDoc),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("accountTools")
+      .withIndex("by_environmentId_and_status", (q) =>
+        q.eq("environmentId", args.environmentId).eq("status", "active"),
+      )
+      .collect();
+  },
+});
+
 export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
     name: v.string(),
     description: v.string(),
     inputSchema: v.any(),
@@ -54,6 +100,7 @@ export const create = internalMutation({
     sha256: v.string(),
     runtime: v.optional(runtimeValidator),
     defaultConfig: v.optional(v.any()),
+    sourceCode: v.optional(v.string()),
   },
   returns: v.id("accountTools"),
   handler: async (ctx, args) => {
@@ -61,11 +108,17 @@ export const create = internalMutation({
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
     }
+    const environment = await ctx.db.get(args.environmentId);
+    if (!environment || environment.projectId !== args.projectId) {
+      throw new Error(`Environment not found: ${args.environmentId}`);
+    }
 
     const now = Date.now();
 
     return await ctx.db.insert("accountTools", {
       accountId: args.accountId,
+      projectId: args.projectId,
+      environmentId: args.environmentId,
       name: args.name,
       description: args.description,
       inputSchema: args.inputSchema,
@@ -73,6 +126,7 @@ export const create = internalMutation({
       sha256: args.sha256,
       runtime: args.runtime ?? "sandbox",
       defaultConfig: args.defaultConfig,
+      sourceCode: args.sourceCode,
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -91,6 +145,7 @@ export const update = internalMutation({
     sha256: v.optional(v.string()),
     runtime: v.optional(runtimeValidator),
     defaultConfig: v.optional(v.any()),
+    sourceCode: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -116,6 +171,7 @@ export const update = internalMutation({
         : {}),
       ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
       ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+      ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
       ...(args.defaultConfig !== undefined
         ? {
             defaultConfig:

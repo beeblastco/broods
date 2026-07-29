@@ -15,6 +15,54 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type Ctx = QueryCtx | MutationCtx;
 
+/** Environment names are matched case- and whitespace-insensitively everywhere. */
+export function environmentNameEquals(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/**
+ * The (project, environment) an account-plane caller named by slug or display
+ * name. Resolve-only: an unknown name yields null rather than creating a
+ * project, which is what separates the REST API from the CLI's ensure path.
+ */
+export async function resolveProjectEnvironment(
+  ctx: Ctx,
+  accountId: Id<"accounts">,
+  project: string,
+  environment: string,
+): Promise<{
+  projectId: Id<"projects">;
+  environmentId: Id<"environments">;
+} | null> {
+  const account = await ctx.db.get(accountId);
+  if (!account) return null;
+  const orgId = ctx.db.normalizeId("orgs", account.orgId);
+  if (!orgId) return null;
+
+  const projects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
+  const projectDoc = projects.find(
+    (entry) => entry.name === project || entry.slug === project,
+  );
+  if (!projectDoc) return null;
+
+  const environments = await ctx.db
+    .query("environments")
+    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+    .collect();
+  const environmentDoc = environments.find((entry) =>
+    environmentNameEquals(entry.name, environment),
+  );
+  if (!environmentDoc) return null;
+
+  return {
+    projectId: projectDoc._id,
+    environmentId: environmentDoc._id,
+  };
+}
+
 /**
  * The agents that `accountId` owns and that belong to `projectId`, across
  * every environment.

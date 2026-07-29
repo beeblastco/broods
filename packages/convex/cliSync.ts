@@ -39,6 +39,7 @@ import {
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
+import { environmentNameEquals } from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -431,6 +432,38 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       environmentSlug: result.environmentSlug,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
+    };
+  },
+});
+
+/**
+ * Resolve (and create) the project/environment a sync targets. The HTTP action
+ * needs these ids before it uploads tools, so tool rows land in the right
+ * environment instead of being matched by name across the whole account.
+ */
+export const ensureScopeBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    environment: v.string(),
+  },
+  returns: v.object({
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+  }),
+  handler: async (ctx, args) => {
+    const account = await accountFromSecretHash(ctx, args.secretHash);
+    if (!account) throw new Error("Invalid Broods token");
+    const projectDoc = await ensureProject(ctx, account, args.project);
+    const environmentDoc = await ensureEnvironment(
+      ctx,
+      projectDoc,
+      args.environment,
+    );
+
+    return {
+      projectId: projectDoc._id,
+      environmentId: environmentDoc._id,
     };
   },
 });
@@ -3251,10 +3284,6 @@ function resourceName(value: string): string {
   if (!trimmed) throw new Error("Resource name is required");
 
   return trimmed;
-}
-
-function environmentNameEquals(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
 function environmentKindForName(
