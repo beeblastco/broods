@@ -105,6 +105,19 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
+http.route({ path: "/v1/channels", method: "GET", handler: configHttp });
+http.route({ path: "/v1/channels", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/channels/", method: "GET", handler: configHttp });
+http.route({
+  pathPrefix: "/v1/channels/",
+  method: "PATCH",
+  handler: configHttp,
+});
+http.route({
+  pathPrefix: "/v1/channels/",
+  method: "DELETE",
+  handler: configHttp,
+});
 http.route({ path: "/v1/env", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/env/", method: "PUT", handler: configHttp });
 http.route({ pathPrefix: "/v1/env/", method: "DELETE", handler: configHttp });
