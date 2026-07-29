@@ -92,6 +92,118 @@ export const support = defineAgent({
   );
 });
 
+test("compileProject emits AI SDK Harness selection", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness, defineSandbox, env } from "${RESOURCES_MODULE}";
+
+export const runner = defineSandbox({
+  name: "runner",
+  provider: "sandbox",
+  persistent: true,
+  permissionMode: "bypass",
+  network: { mode: "allow-all" },
+  onCreate: ["bun install"],
+  onResume: ["git status --short"],
+});
+
+const harness = defineHarness({
+  type: "opencode",
+  sandbox: runner,
+  activeTools: ["bash", "read", "write"],
+  debug: { enabled: true, level: "debug", subsystems: ["bridge"] },
+  startupTimeoutMs: 180000,
+});
+
+export const coding = defineAgent({
+  name: "coding",
+  harness,
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
+    },
+  },
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "coding",
+      config: expect.objectContaining({
+        harness: {
+          type: "opencode",
+          activeTools: ["bash", "read", "write"],
+          debug: {
+            enabled: true,
+            level: "debug",
+            subsystems: ["bridge"],
+          },
+          startupTimeoutMs: 180000,
+        },
+        sandbox: "runner",
+      }),
+    }),
+  );
+});
+
+test("compileProject rejects an unexported AI SDK Harness sandbox", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineHarness, defineSandbox } from "${RESOURCES_MODULE}";
+
+const runner = defineSandbox({
+  name: "runner",
+  provider: "sandbox",
+  persistent: true,
+});
+
+export const coding = defineAgent({
+  name: "coding",
+  harness: defineHarness({ type: "opencode", sandbox: runner }),
+  model: { provider: "custom", modelId: "Qwen3.6-27B" },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Agent "coding" harness references sandbox "runner", but that sandbox is not exported from broods/',
+  );
+});
+
+test("compileProject defaults to the Broods harness when harness is omitted", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent } from "${RESOURCES_MODULE}";
+
+export const assistant = defineAgent({
+  name: "assistant",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+
+  expect(manifest.resources).toContainEqual(
+    expect.objectContaining({
+      kind: "agent",
+      name: "assistant",
+      config: expect.not.objectContaining({
+        harness: expect.anything(),
+      }),
+    }),
+  );
+});
+
 test("compileProject carries the sandbox size + snapshot knobs into the manifest", async () => {
   const cwd = await fixtureProject(
     "",
@@ -1712,6 +1824,56 @@ export const echoTool = defineTool({
     { context: { config: { a: 1 } }, toolCallId: "call_1" },
   );
   expect(result).toEqual({ echo: { q: "hi" }, cfgSeen: { a: 1 } });
+});
+
+// A channel record is the one resource that binds a place to an agent rather
+// than describing the agent, so its refs must survive compilation by name — the
+// backend resolves them to ids, and a raw agent name reaching Convex would bind
+// to nothing.
+test("compileProject emits channel records with their agent and policy refs by name", async () => {
+  const cwd = await fixtureProject(
+    undefined,
+    `
+import { defineAgent, defineChannelRecord, definePolicy } from "${RESOURCES_MODULE}";
+
+export const opsOnly = definePolicy({
+  name: "ops-only",
+  rules: [{ id: "r1", effect: "deny", actions: ["agent.invoke"] }],
+});
+
+export const desk = defineAgent({
+  name: "desk",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+
+export const productEng = defineChannelRecord({
+  name: "product-eng",
+  platform: "slack",
+  externalId: "C042PRODENG",
+  workspaceRef: "T09BEEBLAST",
+  agents: [desk],
+  policies: [opsOnly],
+  instructions: "Escalate billing to #finance.",
+  threadPolicy: "always-thread",
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const record = manifest.resources.find(
+    (resource) => resource.kind === "channelRecord",
+  );
+
+  expect(record?.name).toBe("product-eng");
+  expect(record?.config).toEqual({
+    platform: "slack",
+    externalId: "C042PRODENG",
+    workspaceRef: "T09BEEBLAST",
+    agents: ["desk"],
+    policies: ["ops-only"],
+    instructions: "Escalate billing to #finance.",
+    threadPolicy: "always-thread",
+  });
 });
 
 async function fixtureProject(

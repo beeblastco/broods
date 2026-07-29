@@ -66,6 +66,7 @@ export type ResourceAliases = Partial<
 const SDK_STUB_SOURCE = `const passthrough = (input) => input;
 export const defineTool = passthrough;
 export const defineAgent = passthrough;
+export const defineHarness = passthrough;
 export const defineWorkspace = passthrough;
 export const defineSandbox = passthrough;
 export const defineSkill = passthrough;
@@ -136,6 +137,7 @@ export async function compileProject(
     }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
+  assertExportedHarnessSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
@@ -291,6 +293,7 @@ async function findConfig(
  */
 const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "agent",
+  "harness",
   "model",
   "provider",
   "session",
@@ -592,6 +595,29 @@ function sandboxProvider(sandbox: SandboxResource): string {
     : "sandbox";
 }
 
+function assertExportedHarnessSandboxes(resources: AnyResource[]): void {
+  const exportedSandboxNames = new Set(
+    resources
+      .filter(
+        (resource): resource is SandboxResource => resource.kind === "sandbox",
+      )
+      .map((sandbox) => sandbox.name),
+  );
+  for (const resource of resources) {
+    if (resource.kind !== "agent") continue;
+    const sandbox = resource.config.harness?.sandbox;
+    if (
+      isResource(sandbox) &&
+      sandbox.kind === "sandbox" &&
+      !exportedSandboxNames.has(sandbox.name)
+    ) {
+      throw new Error(
+        `Agent "${resource.name}" harness references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
+      );
+    }
+  }
+}
+
 function assertUniqueResources(resources: AnyResource[]): void {
   const seen = new Set<string>();
   for (const resource of resources) {
@@ -819,6 +845,17 @@ const KNOWN_PROVIDER_SETTING_KEYS = new Set([
   "secretAccessKey",
   "sessionToken",
 ]);
+const KNOWN_HARNESS_KEYS = new Set([
+  "activeTools",
+  "debug",
+  "inactiveTools",
+  "permissionMode",
+  "sandbox",
+  "startupTimeoutMs",
+  "type",
+  "webSearch",
+]);
+const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
 /** Suggest the canonical key for a common misspelling, else "". */
 function suggestProviderKey(key: string): string {
@@ -880,12 +917,180 @@ export function validateProviderConfig(
   }
 }
 
+function validateHarnessConfig(agentName: string, harness: unknown): void {
+  if (harness === undefined || harness === null) return;
+  if (typeof harness !== "object" || Array.isArray(harness)) {
+    throw new Error(`Agent "${agentName}" config.harness must be an object`);
+  }
+  const config = harness as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!KNOWN_HARNESS_KEYS.has(key)) {
+      throw new Error(
+        `Agent "${agentName}" config.harness has unknown option "${key}"`,
+      );
+    }
+  }
+  if (
+    config.type !== "claude-code" &&
+    config.type !== "codex" &&
+    config.type !== "deepagents" &&
+    config.type !== "opencode" &&
+    config.type !== "pi"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.type must be claude-code, codex, deepagents, opencode, or pi`,
+    );
+  }
+  if (config.sandbox === undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.sandbox is required for ${config.type}`,
+    );
+  }
+  if (
+    config.sandbox !== undefined &&
+    !(
+      typeof config.sandbox === "string" ||
+      (isResource(config.sandbox) && config.sandbox.kind === "sandbox")
+    )
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.sandbox must be a defineSandbox resource or sandbox name`,
+    );
+  }
+  if (
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-reads" &&
+    config.permissionMode !== "allow-edits" &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.permissionMode must be allow-reads, allow-edits, or allow-all`,
+    );
+  }
+  if (
+    config.type === "codex" &&
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.permissionMode must be allow-all for codex`,
+    );
+  }
+  if (
+    config.startupTimeoutMs !== undefined &&
+    (typeof config.startupTimeoutMs !== "number" ||
+      !Number.isSafeInteger(config.startupTimeoutMs) ||
+      config.startupTimeoutMs < 1 ||
+      config.startupTimeoutMs > 600_000)
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.startupTimeoutMs must be an integer from 1 to 600000`,
+    );
+  }
+  if (config.webSearch !== undefined && typeof config.webSearch !== "boolean") {
+    throw new Error(
+      `Agent "${agentName}" config.harness.webSearch must be a boolean`,
+    );
+  }
+  if (config.type !== "codex" && config.webSearch !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.webSearch is only supported by codex`,
+    );
+  }
+  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.startupTimeoutMs is not supported by pi`,
+    );
+  }
+  validateHarnessStringArray(agentName, config.activeTools, "activeTools");
+  validateHarnessStringArray(agentName, config.inactiveTools, "inactiveTools");
+  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
+    throw new Error(
+      `Agent "${agentName}" config.harness must use either activeTools or inactiveTools, not both`,
+    );
+  }
+  validateHarnessDebugConfig(agentName, config.debug);
+}
+
+function validateHarnessDebugConfig(agentName: string, value: unknown): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug must be an object`,
+    );
+  }
+  const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!KNOWN_HARNESS_DEBUG_KEYS.has(key)) {
+      throw new Error(
+        `Agent "${agentName}" config.harness.debug has unknown option "${key}"`,
+      );
+    }
+  }
+  if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug.enabled must be a boolean`,
+    );
+  }
+  if (
+    config.level !== undefined &&
+    config.level !== "error" &&
+    config.level !== "warn" &&
+    config.level !== "info" &&
+    config.level !== "debug" &&
+    config.level !== "trace"
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.debug.level must be error, warn, info, debug, or trace`,
+    );
+  }
+  validateHarnessStringArray(agentName, config.subsystems, "debug.subsystems");
+}
+
+function validateHarnessStringArray(
+  agentName: string,
+  value: unknown,
+  field: string,
+): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) ||
+      !value.every(
+        (entry) => typeof entry === "string" && entry.trim().length > 0,
+      ))
+  ) {
+    throw new Error(
+      `Agent "${agentName}" config.harness.${field} must be an array of non-empty strings`,
+    );
+  }
+}
+
 function normalizeAgentConfig(
   resource: Extract<AnyResource, { kind: "agent" }>,
   _projectRoot: string,
 ): { config: unknown; hookResource?: CliManifestResource } {
   const config = { ...(resource.config as Record<string, unknown>) };
   validateProviderConfig(resource.name, config.provider);
+  validateHarnessConfig(resource.name, config.harness);
+  if (
+    config.harness &&
+    typeof config.harness === "object" &&
+    !Array.isArray(config.harness)
+  ) {
+    const harness = {
+      ...(config.harness as Record<string, unknown>),
+    };
+    if (config.sandbox !== undefined) {
+      throw new Error(
+        `Agent "${resource.name}" must configure the AI SDK harness sandbox on defineHarness, not defineAgent`,
+      );
+    }
+    config.sandbox = isResource(harness.sandbox)
+      ? harness.sandbox.name
+      : harness.sandbox;
+    delete harness.sandbox;
+    config.harness = harness;
+  }
   const inlineHooks = normalizeInlineAgentHooks(resource.name, config.hooks);
   if (inlineHooks) {
     config.hooks = inlineHooks.agentHooksConfig;

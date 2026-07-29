@@ -23,7 +23,13 @@ Agent-platform domain (shared with core): `accounts`, `agents`,
 `conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
-`runtimeAsyncToolGroups`, and `sandboxReservations`.
+`runtimeAsyncToolGroups`, `runtimeHarnessSessions`, and
+`sandboxReservations`.
+`runtimeHarnessSessions` stores only the opaque adapter checkpoint for Claude
+Code, Codex, Deep Agents, OpenCode, or Pi, with a 64 KiB write limit. The
+checkpoint is made of identifiers, bridge coordinates, and unfinished-tool
+metadata; it does not store the native harness conversation as one JSON
+document or limit the model's context window.
 
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.

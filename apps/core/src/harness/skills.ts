@@ -3,6 +3,7 @@
  * Keep account skill CRUD in account-manage and shared rules in _shared.
  */
 
+import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
 import type { SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { optionalEnv } from "../shared/env.ts";
@@ -17,6 +18,8 @@ import {
   assertAccountOwnsSkillPath,
   contentTypeForSkillPath,
   isExecutableSkillPath,
+  MAX_SKILL_BUNDLE_BYTES,
+  MAX_SKILL_FILE_BYTES,
   normalizeBundlePath,
   parseSkillMarkdown,
   parseSkillPath,
@@ -96,6 +99,67 @@ export async function loadConfiguredSkillPrompt(
       content: formatLoadedSkillPrompt(loaded, staged),
     },
   };
+}
+
+export async function loadConfiguredHarnessSkills(
+  accountId: string | undefined,
+  agentConfig: AgentConfig,
+): Promise<HarnessAgentSkill[]> {
+  if (!(agentConfig.skills?.enabled === true) || !accountId) {
+    return [];
+  }
+
+  const skills: HarnessAgentSkill[] = [];
+  let totalBytes = 0;
+  for (const skillPath of agentConfig.skills.allowed ?? []) {
+    await assertAccountOwnsSkillPath(accountId, skillPath);
+    const parsed = parseSkillPath(skillPath)!;
+    const skillText = await readSkillMarkdown(accountId, parsed.skillName);
+    if (!skillText) {
+      throw new Error(`Skill does not exist: ${skillPath}`);
+    }
+    const skillBytes = Buffer.byteLength(skillText, "utf-8");
+    if (skillBytes > MAX_SKILL_FILE_BYTES) {
+      throw new Error(
+        `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${SKILL_FILE}`,
+      );
+    }
+    totalBytes += skillBytes;
+    if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+      throw new Error(
+        `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
+      );
+    }
+    const skill = parseSkillMarkdown(skillText);
+    const sourceFiles = await listSkillSourceFiles(skillPath);
+    const files: Array<{ path: string; content: string }> = [];
+    for (const file of sourceFiles.filter(
+      (sourceFile) => sourceFile.path !== SKILL_FILE,
+    )) {
+      const content = await readSkillText(skillPath, file.path);
+      const fileBytes = Buffer.byteLength(content, "utf-8");
+      if (fileBytes > MAX_SKILL_FILE_BYTES) {
+        throw new Error(
+          `Skill file exceeds ${MAX_SKILL_FILE_BYTES} bytes: ${skillPath}/${file.path}`,
+        );
+      }
+      totalBytes += fileBytes;
+      if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+        throw new Error(
+          `Configured harness skills exceed ${MAX_SKILL_BUNDLE_BYTES} bytes`,
+        );
+      }
+      files.push({ path: file.path, content: content });
+    }
+    skills.push({
+      name: skill.name,
+      description: skill.description,
+      content: skillInstructionsFromMarkdown(skillText),
+      ...(files.length > 0 ? { files: files } : {}),
+    });
+  }
+
+  return skills;
 }
 
 export async function listSkillMetadataForConfig(

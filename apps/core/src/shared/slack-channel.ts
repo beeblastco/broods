@@ -46,7 +46,10 @@ interface SlackEventEnvelope {
 export interface SlackSource {
   teamId: string;
   channelId: string;
+  /** Where the reply goes. Unset posts to the channel. */
   threadTs?: string;
+  /** The thread the message arrived in, unset when it arrived in the channel. */
+  inThreadTs?: string;
   messageTs?: string;
   responseUrl?: string;
   commandToken?: string;
@@ -134,6 +137,19 @@ export function createSlackChannel(
         toSlackSource(msg.source),
         reactionEmoji,
       );
+    },
+
+    // Slack is the one provider where the reply has two places it can land, so
+    // it is the one that can honour the record. A slash command still answers
+    // through its response URL, which carries no thread either way.
+    applyThreadPolicy(source, policy) {
+      const slackSource = toSlackSource(source);
+      const threadTs =
+        policy === "always-thread"
+          ? (slackSource.inThreadTs ?? slackSource.messageTs)
+          : slackSource.inThreadTs;
+
+      return { ...source, threadTs: threadTs };
     },
   };
 }
@@ -252,6 +268,7 @@ async function parseEventCallback(
         channelId,
         messageTs: ts,
         threadTs: replyThreadTs,
+        inThreadTs: payload.event.thread_ts,
         userId: payload.event.user,
       } satisfies SlackSource,
     },
@@ -472,6 +489,8 @@ function toSlackSource(source: Record<string, unknown>): SlackSource {
     teamId: source.teamId,
     channelId: source.channelId,
     threadTs: typeof source.threadTs === "string" ? source.threadTs : undefined,
+    inThreadTs:
+      typeof source.inThreadTs === "string" ? source.inThreadTs : undefined,
     messageTs:
       typeof source.messageTs === "string" ? source.messageTs : undefined,
     responseUrl:

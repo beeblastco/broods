@@ -2897,6 +2897,8 @@ components:
               type: integer
             asyncToolGroupDeleted:
               type: integer
+            harnessSessionDeleted:
+              type: integer
             sandboxReservationDeleted:
               type: integer
             filesystemObjectsDeleted:
@@ -2922,6 +2924,8 @@ components:
           $ref: "#/components/schemas/ModelConfig"
         agent:
           $ref: "#/components/schemas/AgentRuntimeConfig"
+        harness:
+          $ref: "#/components/schemas/HarnessConfig"
         hooks:
           $ref: "#/components/schemas/HooksConfig"
         skills:
@@ -2957,6 +2961,49 @@ components:
           $ref: "#/components/schemas/ToolsConfig"
         channels:
           $ref: "#/components/schemas/ChannelsConfig"
+
+    HarnessConfig:
+      type: object
+      required: [type]
+      description: Selects an AI SDK Harness adapter. Omit harness to use the Broods serverless loop. Every configured adapter requires the agent sandbox reference to resolve to a persistent Broods Workdir or Lambda MicroVM.
+      properties:
+        type:
+          type: string
+          enum: [claude-code, codex, deepagents, opencode, pi]
+        activeTools:
+          type: array
+          items:
+            type: string
+          description: Allow-list of adapter built-in and custom tool names. Mutually exclusive with inactiveTools.
+        inactiveTools:
+          type: array
+          items:
+            type: string
+          description: Tool names to disable. Mutually exclusive with activeTools; channel denyTools are added at runtime.
+        debug:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            level:
+              type: string
+              enum: [error, warn, info, debug, trace]
+            subsystems:
+              type: array
+              items:
+                type: string
+          description: Routes adapter diagnostics into Broods structured logs.
+        permissionMode:
+          type: string
+          enum: [allow-reads, allow-edits, allow-all]
+          description: Codex supports only allow-all.
+        startupTimeoutMs:
+          type: integer
+          minimum: 1
+          maximum: 600000
+        webSearch:
+          type: boolean
+          description: Enables Codex web search. Not supported by Claude Code.
 
     AgentPolicyConfig:
       type: object
@@ -3102,6 +3149,12 @@ components:
         threadPolicy:
           type: string
           enum: [always-thread, inline]
+          description: >-
+            Where the reply lands. always-thread opens a thread on the message;
+            inline answers in the channel, and only threads when the message
+            itself arrived in one. Slack only — no other provider gives the
+            runtime a choice of place. Defaults to always-thread in a channel
+            and inline in a DM.
         workspaceScope:
           oneOf:
             - type: object
@@ -3702,6 +3755,20 @@ components:
               type: array
               items:
                 type: string
+            botUserId:
+              type: string
+              description: >-
+                The bot's own Discord user id. Set it to answer only when
+                actually mentioned; every other message in an allowed guild is
+                stored as context instead. Unset, the agent replies to every
+                non-bot message in the guild.
+            mentionRoleIds:
+              type: array
+              items:
+                type: string
+              description: >-
+                Role ids that also count as a mention, so tagging @oncall
+                reaches the agent without naming it directly.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."

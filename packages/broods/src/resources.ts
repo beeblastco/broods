@@ -80,7 +80,8 @@ export type ResourceKind =
   | "cron"
   | "skill"
   | "tool"
-  | "policy";
+  | "policy"
+  | "channelRecord";
 
 export interface ResourceDefinition<
   Kind extends ResourceKind,
@@ -111,6 +112,16 @@ export type ResourceInput<Name extends string, Config> = {
  */
 export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
   envVars?: Record<string, string | EnvRef | undefined>;
+};
+
+export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
+
+export type HarnessDefinition = Omit<
+  NonNullable<AgentConfig["harness"]>,
+  "type"
+> & {
+  type: HarnessType;
+  sandbox: SandboxResource | string;
 };
 
 export interface SkillDefinitionConfig {
@@ -493,6 +504,7 @@ void _providerKeyParity;
 export type AgentDefinitionConfig = EnvRefString<
   Pick<AgentConfig, "agent" | "model" | "session" | "tools">
 > & { provider?: ProviderConfigInput } & {
+  harness?: HarnessDefinition;
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
@@ -513,6 +525,34 @@ export type AgentDefinitionConfig = EnvRefString<
 
 export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {
   agent: AgentResource | string;
+};
+
+/**
+ * Binds one real place — a Slack channel, a Discord channel, a repo — to the
+ * agent that answers there. Distinct from `channels` on an agent, which carries
+ * one adapter's credentials: those say how to reach Slack, this says who replies
+ * in #product-eng. A record narrows and adds, never granting what the agent lacks.
+ */
+export type ChannelRecordDefinitionConfig = {
+  platform: ChannelType;
+  /** Provider id of the place: a Slack channel id, or an owner/repo. */
+  externalId: string;
+  /** Team or guild the place sits in, when the provider has one. */
+  workspaceRef?: string;
+  /** Who answers here. The first is the default when a turn matches no other. */
+  agents: readonly (AgentResource | string)[];
+  /** Appended after the bound agent's own system prompt. */
+  instructions?: string;
+  /** Selects from what the agent already attaches; anything else is dropped. */
+  workspaces?: readonly AgentWorkspaceInput[];
+  policies?: readonly (PolicyResource | string)[];
+  policyMode?: AgentPolicyConfig["mode"];
+  denyTools?: readonly string[];
+  /** Where the reply lands. Slack only — see the channel-records docs. */
+  threadPolicy?: "always-thread" | "inline";
+  workspaceScope?: AgentChannelWorkspaceScope;
+  sandboxImages?: readonly string[];
+  tagRoles?: readonly { roleId: string; actorIds: readonly string[] }[];
 };
 
 export type AgentResource<Name extends string = string> = ResourceDefinition<
@@ -548,6 +588,9 @@ export type CronResource<Name extends string = string> = ResourceDefinition<
   CronDefinitionConfig
 >;
 
+export type ChannelRecordResource<Name extends string = string> =
+  ResourceDefinition<"channelRecord", Name, ChannelRecordDefinitionConfig>;
+
 export type AnyResource =
   | AgentResource
   | WorkspaceResource
@@ -555,7 +598,8 @@ export type AnyResource =
   | CronResource
   | SkillResource
   | ToolResource
-  | PolicyResource;
+  | PolicyResource
+  | ChannelRecordResource;
 
 /**
  * References an account/environment variable resolved on the SERVER at runtime —
@@ -689,6 +733,12 @@ export function defineAgent<const Name extends string>(
   );
 }
 
+export function defineHarness<const Definition extends HarnessDefinition>(
+  definition: Definition,
+): Definition {
+  return definition;
+}
+
 export function defineWorkspace<const Name extends string>(
   input: ResourceInput<Name, WorkspaceConfig>,
 ): WorkspaceResource<Name> {
@@ -754,6 +804,19 @@ export function definePolicy<const Name extends string>(
     name,
     description,
     config as PolicyDefinitionConfig,
+  );
+}
+
+export function defineChannelRecord<const Name extends string>(
+  input: ResourceInput<Name, ChannelRecordDefinitionConfig>,
+): ChannelRecordResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "channelRecord",
+    name,
+    description,
+    config as ChannelRecordDefinitionConfig,
   );
 }
 

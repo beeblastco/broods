@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { createHmac } from "node:crypto";
 import {
   createIncomingEventRouter,
   type ChannelInboundEvent,
@@ -91,6 +92,21 @@ const SALES_AGENT: AgentRecord = {
         ...TELEGRAM_CHANNEL,
         webhookSecret: "sales-telegram-secret",
       },
+    },
+  },
+};
+
+const SLACK_MESSAGE_TS = "1713916800.000030";
+
+// Slack is the one provider whose reply has two places it can land, so it is
+// where a record's threadPolicy is observable end to end.
+const SLACK_AGENT: AgentRecord = {
+  ...SUPPORT_AGENT,
+  agentId: "agent_slack",
+  name: "Slack desk",
+  config: {
+    channels: {
+      slack: { botToken: "slack-bot-token", signingSecret: "slack-secret" },
     },
   },
 };
@@ -377,6 +393,38 @@ describe("channel record resolution", () => {
     });
 
     expect(runs).toHaveLength(1);
+  });
+
+  // The reply the router itself sends goes through the same rewritten source
+  // the run gets, so a refusal is where the placement is observable end to end.
+  it("posts the record's inline reply to the channel, not a thread", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    await routeSlackMention({ threadPolicy: "inline", posts });
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.thread_ts).toBeUndefined();
+  });
+
+  it("posts the record's always-thread reply into a new thread", async () => {
+    const posts: Array<Record<string, unknown>> = [];
+    await routeSlackMention({ threadPolicy: "always-thread", posts });
+
+    expect(posts[0]!.thread_ts).toBe(SLACK_MESSAGE_TS);
+  });
+
+  it("carries the placement into the run, so a delayed reply lands there too", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await routeSlackMention({ threadPolicy: "inline", runs });
+
+    // handler.ts rebuilds a background job's sender from this stored source.
+    expect(runs[0]!.source.threadTs).toBeUndefined();
+  });
+
+  it("threads a Slack reply when no record asks otherwise", async () => {
+    const runs: ChannelInboundEvent[] = [];
+    await routeSlackMention({ runs });
+
+    expect(runs[0]!.source.threadTs).toBe(SLACK_MESSAGE_TS);
   });
 });
 
@@ -674,6 +722,65 @@ describe("channel record validation", () => {
   });
 });
 
+/**
+ * One Slack mention through the account-scoped webhook. A denied invoke makes
+ * the router reply itself, which is the only outbound post these tests can see.
+ */
+async function routeSlackMention(options: {
+  threadPolicy?: "always-thread" | "inline";
+  posts?: Array<Record<string, unknown>>;
+  runs?: ChannelInboundEvent[];
+}) {
+  const body = {
+    type: "event_callback",
+    event_id: "evt-thread-policy",
+    team_id: "T1",
+    authorizations: [{ user_id: "BOT", is_bot: true }],
+    event: {
+      type: "app_mention",
+      text: "<@BOT> status?",
+      channel: "C1",
+      channel_type: "channel",
+      user: "U1",
+      ts: SLACK_MESSAGE_TS,
+    },
+  };
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = createHmac("sha256", "slack-secret")
+    .update(`v0:${timestamp}:${JSON.stringify(body)}`)
+    .digest("hex");
+
+  return await route({
+    records: {
+      "slack:C1": channelRecord({
+        platform: "slack",
+        externalId: "C1",
+        config: {
+          agentBindings: [{ agentId: "agent_slack" }],
+          ...(options.threadPolicy
+            ? { threadPolicy: options.threadPolicy }
+            : {}),
+          // The invoke gate only evaluates when a policy is assigned, and a
+          // refusal is the only reply this router sends by itself.
+          ...(options.posts
+            ? { policyIds: ["policy_ops_only"], policyMode: "enforce" as const }
+            : {}),
+        },
+      }),
+    },
+    runs: options.runs ?? [],
+    agents: [SLACK_AGENT],
+    path: "/webhooks/acct_test/slack",
+    headers: {
+      "x-slack-request-timestamp": timestamp,
+      "x-slack-signature": `v0=${signature}`,
+    },
+    body: body,
+    // Only a refusal makes the router post; the run itself never replies here.
+    ...(options.posts ? { policyDenies: true, posts: options.posts } : {}),
+  });
+}
+
 async function route(options: {
   records: Record<string, ChannelRecord>;
   runs: ChannelInboundEvent[];
@@ -683,6 +790,10 @@ async function route(options: {
   policyMode?: "enforce" | "audit";
   replies?: string[];
   agents?: AgentRecord[];
+  /** Overrides the Telegram update these tests otherwise post. */
+  body?: Record<string, unknown>;
+  /** Outbound chat.postMessage bodies only — reactions carry no placement. */
+  posts?: Array<Record<string, unknown>>;
   channelRecordLoader?: (
     accountId: string,
     platform: string,
@@ -709,10 +820,22 @@ async function route(options: {
   // The refusal goes out through the real Telegram adapter, so capture the
   // outbound call rather than asserting on a mocked ChannelActions.
   const sentTexts: string[] = [];
+  const slackPosts: Array<Record<string, unknown>> = [];
   const originalFetch = globalThis.fetch;
   type FetchInput = Parameters<typeof fetch>[0];
   globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
+    if (new URL(url).hostname === "slack.com") {
+      const body = init?.body;
+      // chat.postMessage is form-encoded, and an omitted thread_ts is simply
+      // an absent key — which is the whole assertion for `inline`.
+      if (new URL(url).pathname.endsWith("/chat.postMessage")) {
+        slackPosts.push(
+          Object.fromEntries(new URLSearchParams(String(body)).entries()),
+        );
+      }
+      return Response.json({ ok: true, ts: "1713916800.000099" });
+    }
     if (new URL(url).hostname === "api.telegram.org") {
       const body = init?.body;
       if (typeof body === "string") {
@@ -753,7 +876,7 @@ async function route(options: {
         options.headers ?? {
           "x-telegram-bot-api-secret-token": "telegram-secret",
         },
-        {
+        options.body ?? {
           update_id: 7,
           message: {
             message_id: 9,
@@ -786,6 +909,7 @@ async function route(options: {
   if (captureReplies) {
     captureReplies.push(...sentTexts);
   }
+  options.posts?.push(...slackPosts);
 
   return { statusCode: response.status };
 }

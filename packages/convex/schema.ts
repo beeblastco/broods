@@ -773,6 +773,21 @@ export const runtimeConversationEventsFields = {
   cursor: v.string(),
   event: v.any(),
 };
+/** Resumable checkpoint for one AI SDK Harness conversation. */
+export const runtimeHarnessSessionsFields = {
+  accountId: v.string(),
+  conversationKey: v.string(),
+  harnessType: v.union(
+    v.literal("claude-code"),
+    v.literal("codex"),
+    v.literal("deepagents"),
+    v.literal("opencode"),
+    v.literal("pi"),
+  ),
+  sessionId: v.string(),
+  resumeState: v.any(),
+  updatedAt: v.number(),
+};
 /** Context-only webhook event dedupe claims. */
 export const runtimeClaimsFields = {
   accountId: v.optional(v.string()),
@@ -1135,12 +1150,16 @@ export default defineSchema({
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
-    // The inbound-webhook lookup: which record owns this place?
+    // The inbound-webhook lookup: which record owns this place? `status` is in
+    // the key because deleting leaves the row, so a place churned repeatedly
+    // would otherwise make every inbound message read its whole history.
     .index("by_accountId_platform_external", [
       "accountId",
       "platform",
       "externalId",
-    ]),
+      "status",
+    ])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])
@@ -1211,6 +1230,9 @@ export default defineSchema({
     .index("by_eventId", ["eventId"]),
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
+    .index("by_accountId", ["accountId"]),
+  runtimeHarnessSessions: defineTable(runtimeHarnessSessionsFields)
+    .index("by_conversationKey", ["conversationKey"])
     .index("by_accountId", ["accountId"]),
   runtimeClaims: defineTable(runtimeClaimsFields)
     .index("by_key", ["key"])

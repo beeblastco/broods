@@ -15,7 +15,8 @@ export type CliManifestResource = {
     | "skill"
     | "tool"
     | "hook"
-    | "policy";
+    | "policy"
+    | "channelRecord";
   name: string;
   description?: string;
   config: unknown;
@@ -30,6 +31,7 @@ export type GeneratedIds = {
   tools: Record<string, string>;
   hooks: Record<string, string>;
   policies: Record<string, string>;
+  channelRecords: Record<string, string>;
 };
 
 export type CliManifest = {

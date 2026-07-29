@@ -19,6 +19,9 @@ import {
 const DAY_SECONDS = 24 * 60 * 60;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
+// AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
+// coordinates, never chat history. Keep adapter regressions out of Convex rows.
+const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
 
 /**
  * Extracts the account ID from an account-scoped runtime key.
@@ -235,6 +238,101 @@ export const listConversationEvents = internalQuery({
   },
 });
 
+/** Loads the resumable checkpoint for an AI SDK Harness conversation. */
+export const getHarnessSession = internalQuery({
+  args: { conversationKey: v.string() },
+  returns: v.union(
+    v.object({
+      harnessType: v.union(
+        v.literal("claude-code"),
+        v.literal("codex"),
+        v.literal("deepagents"),
+        v.literal("opencode"),
+        v.literal("pi"),
+      ),
+      sessionId: v.string(),
+      resumeState: v.any(),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    if (!row) {
+      return null;
+    }
+    if (row.accountId !== accountIdFromKey(args.conversationKey)) {
+      throw new Error(
+        "Harness session does not belong to conversation account",
+      );
+    }
+
+    return {
+      harnessType: row.harnessType,
+      sessionId: row.sessionId,
+      resumeState: row.resumeState,
+    };
+  },
+});
+
+/** Upserts the latest checkpoint after an AI SDK Harness turn. */
+export const saveHarnessSession = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    harnessType: v.union(
+      v.literal("claude-code"),
+      v.literal("codex"),
+      v.literal("deepagents"),
+      v.literal("opencode"),
+      v.literal("pi"),
+    ),
+    sessionId: v.string(),
+    resumeState: v.any(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const accountId = accountIdFromKey(args.conversationKey);
+    await requireActiveAccount(ctx, accountId);
+    const serializedResumeState = JSON.stringify(args.resumeState);
+    if (serializedResumeState === undefined) {
+      throw new Error("Harness resume state must be JSON serializable");
+    }
+    const resumeStateBytes = new TextEncoder().encode(
+      serializedResumeState,
+    ).byteLength;
+    if (resumeStateBytes > MAX_HARNESS_RESUME_STATE_BYTES) {
+      throw new Error(
+        `Harness resume state is ${resumeStateBytes} bytes; the maximum is ${MAX_HARNESS_RESUME_STATE_BYTES}`,
+      );
+    }
+    const existing = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    const value = {
+      accountId: accountId,
+      conversationKey: args.conversationKey,
+      harnessType: args.harnessType,
+      sessionId: args.sessionId,
+      resumeState: args.resumeState,
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      await ctx.db.replace(existing._id, value);
+    } else {
+      await ctx.db.insert("runtimeHarnessSessions", value);
+    }
+
+    return null;
+  },
+});
+
 /**
  * Clears one bounded batch of conversation events for the reset command.
  * @returns the deleted event count and whether more events remain
@@ -255,6 +353,13 @@ export const clearConversation = internalMutation({
       .take(CONVERSATION_CLEAR_BATCH_SIZE + 1);
     const batch = rows.slice(0, CONVERSATION_CLEAR_BATCH_SIZE);
     for (const row of batch) await ctx.db.delete(row._id);
+    const harnessSession = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    if (harnessSession) await ctx.db.delete(harnessSession._id);
 
     return {
       deleted: batch.length,
@@ -684,6 +789,7 @@ export const deleteAccountRuntimeData = internalMutation({
     asyncAgentResultDeleted: v.number(),
     asyncToolResultDeleted: v.number(),
     asyncToolGroupDeleted: v.number(),
+    harnessSessionDeleted: v.number(),
     sandboxReservationDeleted: v.number(),
     totalDeleted: v.number(),
   }),
@@ -712,6 +818,10 @@ export const deleteAccountRuntimeData = internalMutation({
       .query("runtimeAsyncAgentResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .take(100);
+    const harnessSessionRows = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(100);
     const toolRows = await ctx.db
       .query("runtimeAsyncToolResults")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
@@ -730,6 +840,7 @@ export const deleteAccountRuntimeData = internalMutation({
       ...coordinatorRows,
       ...ingressRows,
       ...applicationRows,
+      ...harnessSessionRows,
       ...agentRows,
       ...toolRows,
       ...groupRows,
@@ -747,6 +858,7 @@ export const deleteAccountRuntimeData = internalMutation({
       asyncAgentResultDeleted: agentRows.length,
       asyncToolResultDeleted: toolRows.length,
       asyncToolGroupDeleted: groupRows.length,
+      harnessSessionDeleted: harnessSessionRows.length,
       sandboxReservationDeleted: reservationRows.length,
       totalDeleted:
         conversationRows.length +
@@ -754,6 +866,7 @@ export const deleteAccountRuntimeData = internalMutation({
         coordinatorRows.length +
         ingressRows.length +
         applicationRows.length +
+        harnessSessionRows.length +
         agentRows.length +
         toolRows.length +
         groupRows.length +

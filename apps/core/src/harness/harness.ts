@@ -26,7 +26,9 @@ import {
   type ToolApprovalRequestOutput,
   type ToolCallPart,
   type ToolSet,
+  type UserModelMessage,
 } from "ai";
+import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
@@ -61,6 +63,11 @@ import {
   wrapToolsWithHooks,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
+import {
+  createConfiguredHarnessAgent,
+  openAiSdkHarnessSession,
+  parkAiSdkHarnessSession,
+} from "./ai-sdk-harness/index.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import {
   channelPolicyIdentity,
@@ -74,7 +81,10 @@ import {
   resolveConfiguredModel,
 } from "./provider.ts";
 import { stripReasoningFromMessages } from "./pruning.ts";
-import type { SandboxCpuSample } from "./sandbox/types.ts";
+import type {
+  SandboxCpuSample,
+  SandboxExecutorConfig,
+} from "./sandbox/types.ts";
 import {
   stripEnvelopeFieldsFromMessages,
   type ConversationIngressEvent,
@@ -88,6 +98,7 @@ import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+const HARNESS_LEASE_RENEWAL_FAILURE_LIMIT = 3;
 /** Thrown when an owner is stopped; callers match on it to skip result delivery. */
 export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
@@ -785,6 +796,9 @@ export async function runAgentLoop(
     applyAgentStartedMutation(turnContext, mutation);
   }
 
+  let activeHarnessSession: HarnessAgentSession | undefined;
+  let stopHarnessLeaseMonitor: (() => void) | undefined;
+
   logInfo(
     `Agent loop started: ${configuredModel.providerName}/${agentConfig.model?.modelId ?? "unknown"} with ${turnContext.messages.length} message(s), ${Object.keys(tools).length} tool(s)`,
     {
@@ -795,7 +809,7 @@ export async function runAgentLoop(
     },
   );
 
-  const stream = streamText({
+  const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
     model: configuredModel.model,
@@ -1543,7 +1557,126 @@ export async function runAgentLoop(
         );
       }
     },
-  });
+  };
+  let harnessRuntime:
+    ReturnType<typeof createConfiguredHarnessAgent> | undefined;
+  let harnessLeaseAbort: AbortController | undefined;
+  let stream: ReturnType<typeof streamText>;
+  const usesAiSdkHarness = agentConfig.harness !== undefined;
+  try {
+    if (usesAiSdkHarness) {
+      if (policyToolApproval) {
+        throw new Error(
+          "config.policy is not supported with config.harness because the upstream harness accepts only static host-tool approvals",
+        );
+      }
+      await applyHarnessSteeringBeforeTurn(session, turnContext);
+    }
+    harnessRuntime = usesAiSdkHarness
+      ? createConfiguredHarnessAgent({
+          agentConfig: agentConfig,
+          compute: requireHarnessSandbox(statelessSandbox),
+          id: session.agentId,
+          instructions: turnContext.system
+            .map((message) => message.content)
+            .join("\n\n"),
+          reservationKey: session.conversationKey,
+          skills: await session.loadHarnessSkills(),
+          toolApproval:
+            configuredApprovals.size > 0
+              ? Object.fromEntries(
+                  [...configuredApprovals.keys()].map((name) => [
+                    name,
+                    "user-approval" as const,
+                  ]),
+                )
+              : undefined,
+          tools: tools,
+        })
+      : undefined;
+    if (harnessRuntime) {
+      harnessLeaseAbort = new AbortController();
+      activeHarnessSession = await openAiSdkHarnessSession({
+        abortSignal: harnessLeaseAbort.signal,
+        agent: harnessRuntime.agent,
+        broodsSession: session,
+        type: agentConfig.harness!.type,
+      });
+      stopHarnessLeaseMonitor = startHarnessLeaseMonitor(
+        session,
+        harnessLeaseAbort,
+      );
+    }
+    stream = harnessRuntime
+      ? await harnessRuntime.agent.stream({
+          messages: harnessPromptMessages(turnContext.messages),
+          session: activeHarnessSession!,
+          abortSignal: harnessLeaseAbort?.signal,
+        })
+      : streamText(streamOptions);
+  } catch (error) {
+    stopHarnessLeaseMonitor?.();
+    await activeHarnessSession?.destroy().catch(() => {});
+    didFail = true;
+    const message = errorMessage(error);
+    failureText = message;
+    terminalError = error instanceof Error ? error : new Error(message);
+    await lifecycle.emit("agent.failed", { error: message });
+    await reply?.onErrorText(message).catch(() => {});
+    await finalizeUsage(
+      "failed",
+      taskUsage,
+      taskStepCount,
+      toolCallSummaries.size,
+      Date.now() - runStartedAt,
+      terminalError,
+    );
+    throw terminalError;
+  }
+  let harnessStreamFinalized = false;
+  const finalizeHarnessStream = async (
+    streamError?: unknown,
+  ): Promise<void> => {
+    if (!activeHarnessSession || harnessStreamFinalized) {
+      return;
+    }
+    harnessStreamFinalized = true;
+    stopHarnessLeaseMonitor?.();
+    const abortError = harnessLeaseAbort?.signal.aborted
+      ? harnessLeaseAbort.signal.reason
+      : undefined;
+    let finalizationError = streamError ?? abortError;
+    try {
+      await parkAiSdkHarnessSession({
+        broodsSession: session,
+        nativeSession: activeHarnessSession,
+        successful: finalizationError === undefined,
+        type: agentConfig.harness!.type,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      finalizationError ??= error instanceof Error ? error : new Error(message);
+    } finally {
+      activeHarnessSession = undefined;
+    }
+    if (!finishObserved && finalizationError !== undefined) {
+      await streamOptions.onError?.({ error: finalizationError } as never);
+    } else if (!finishObserved) {
+      try {
+        await streamOptions.onEnd?.({
+          response: await stream.response,
+          text: await stream.text,
+          finishReason: await stream.finishReason,
+          rawFinishReason: await stream.rawFinishReason,
+          steps: await stream.steps,
+          toolCalls: await stream.toolCalls,
+          usage: await stream.usage,
+        } as never);
+      } catch (error) {
+        await streamOptions.onError?.({ error: error } as never);
+      }
+    }
+  };
 
   // Guarantee finalizeUsage runs even when onEnd/onError never fire. The AI SDK
   // skips onEnd when a run errors before any step completes (e.g. a usage-limit
@@ -1551,6 +1684,7 @@ export async function runAgentLoop(
   // the stream directly would never finalize and the task
   // span would spin "running" forever. Idempotent via usageFinalized.
   const ensureFinalized = async (): Promise<void> => {
+    await finalizeHarnessStream();
     if (usageFinalized) return;
     if (!finishObserved) {
       didFail = true;
@@ -1577,6 +1711,7 @@ export async function runAgentLoop(
     try {
       await originalConsumeStream();
     } catch (error) {
+      await finalizeHarnessStream(error);
       didFail = true;
       const errorText = errorMessage(error);
       failureText ??= errorText;
@@ -1627,6 +1762,130 @@ function errorMessage(error: unknown): string {
     );
   }
   return message;
+}
+
+async function applyHarnessSteeringBeforeTurn(
+  session: Session,
+  turnContext: TurnContextSnapshot,
+): Promise<void> {
+  let steeringEventCount = 0;
+  for (;;) {
+    const steering = await session.applySteeringIngress();
+    if (!steering) {
+      break;
+    }
+    const events = steering.events as ConversationIngressEvent[];
+    const ephemeralSystem = await session.appendIngressEvents(events);
+    turnContext.ephemeralSystem.push(...ephemeralSystem);
+    turnContext.messages.push(
+      ...stripEnvelopeFieldsFromMessages(
+        events.filter(
+          (
+            event,
+          ): event is Exclude<ConversationIngressEvent, SystemModelMessage> =>
+            event.role !== "system",
+        ),
+      ),
+    );
+    steeringEventCount += steering.contributingEventIds.length;
+  }
+  if (steeringEventCount === 0) {
+    return;
+  }
+  const refreshed = await session.loadRefreshedSystemPromptParts({
+    systemContextSnapshot: turnContext.systemContextSnapshot,
+    ephemeralSystem: turnContext.ephemeralSystem,
+  });
+  turnContext.system = refreshed.system;
+  turnContext.systemContextSnapshot = refreshed.systemContextSnapshot;
+  logInfo("Steering ingress applied before HarnessAgent turn", {
+    eventId: session.eventId,
+    conversationKey: session.conversationKey,
+    steeringEventCount: steeringEventCount,
+  });
+}
+
+function harnessPromptMessages(messages: ModelMessage[]): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "tool") {
+    const assistantIndex = messages.findLastIndex(
+      (message, index) =>
+        index < messages.length - 1 && message.role === "assistant",
+    );
+    if (assistantIndex >= 0) {
+      return [messages[assistantIndex]!, lastMessage];
+    }
+
+    return [lastMessage];
+  }
+  const lastAssistantIndex = messages.findLastIndex(
+    (message) => message.role === "assistant",
+  );
+  const userMessages = messages
+    .slice(lastAssistantIndex + 1)
+    .filter((message): message is UserModelMessage => message.role === "user");
+  if (userMessages.length === 0) {
+    throw new Error(
+      "AI SDK Harness turn requires a new user message or an unfinished tool continuation",
+    );
+  }
+  if (userMessages.length === 1) {
+    return userMessages;
+  }
+  const content = userMessages.flatMap((message) =>
+    typeof message.content === "string"
+      ? [{ type: "text" as const, text: message.content }]
+      : message.content,
+  );
+
+  return [{ role: "user", content: content }];
+}
+
+function requireHarnessSandbox(
+  sandbox: SandboxExecutorConfig | undefined,
+): SandboxExecutorConfig {
+  if (!sandbox) {
+    throw new Error(
+      "config.harness requires an agent-level persistent sandbox reference",
+    );
+  }
+
+  return sandbox;
+}
+
+function startHarnessLeaseMonitor(
+  session: Session,
+  abortController: AbortController,
+): () => void {
+  let checking = false;
+  let consecutiveFailures = 0;
+  const timer = setInterval(async () => {
+    if (checking || abortController.signal.aborted) {
+      return;
+    }
+    checking = true;
+    try {
+      const renewal = await session.renewConversationLease();
+      consecutiveFailures = 0;
+      if (renewal === "stopped") {
+        abortController.abort(new Error(USER_STOP_MESSAGE));
+      } else if (renewal === "stale") {
+        abortController.abort(
+          new Error("Conversation ownership changed during HarnessAgent turn"),
+        );
+      }
+    } catch (error) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= HARNESS_LEASE_RENEWAL_FAILURE_LIMIT) {
+        abortController.abort(error);
+      }
+    } finally {
+      checking = false;
+    }
+  }, 1_000);
+  timer.unref();
+
+  return () => clearInterval(timer);
 }
 
 // Generated-content stream parts that count toward per-step streaming windows

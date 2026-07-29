@@ -89,7 +89,8 @@ export type CliResourceKind =
   | "cron"
   | "skill"
   | "tool"
-  | "policy";
+  | "policy"
+  | "channelRecord";
 
 // Manifest wire types come from the backend's canonical leaf module so the
 // CLI/SDK can't silently drift from the server contract.

@@ -16,6 +16,7 @@ import {
 } from "./_generated/server";
 import { ensureEnvironmentDeployment } from "./agentDeployments";
 import { normalizePolicyDocument } from "./agentPolicies";
+import { normalizeChannelRecordConfig } from "./model/channelRules";
 import {
   auditDetailsJson,
   insertConfigAuditEvent,
@@ -50,6 +51,7 @@ const resourceValidator = v.object({
     v.literal("tool"),
     v.literal("hook"),
     v.literal("policy"),
+    v.literal("channelRecord"),
   ),
   name: v.string(),
   description: v.optional(v.string()),
@@ -72,6 +74,7 @@ const idsValidator = v.object({
   tools: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
+  channelRecords: v.record(v.string(), v.string()),
 });
 
 /**
@@ -272,10 +275,25 @@ export const syncManifestBySecretHash = internalMutation({
       missingPolicies: missingPolicies,
     });
 
+    const channelRecordIds = await syncChannelRecordResources(ctx, {
+      accountId: account._id,
+      projectId: projectDoc._id,
+      environmentId: environmentDoc._id,
+      resources: manifest.resources,
+      agentIds: agentIds,
+      workspaceIds: workspaceIds,
+      policyIds: policyIds,
+    });
+
     if (prune === true) {
       await pruneAgents(
         ctx,
         projectDoc._id,
+        environmentDoc._id,
+        manifest.resources,
+      );
+      await pruneChannelRecordResources(
+        ctx,
         environmentDoc._id,
         manifest.resources,
       );
@@ -307,6 +325,7 @@ export const syncManifestBySecretHash = internalMutation({
       tools: externalIds.tools,
       hooks: externalIds.hooks,
       policies: policyIds,
+      channelRecords: channelRecordIds,
     };
     const resources = await resourcesForEnvironment(
       ctx,
@@ -1385,6 +1404,259 @@ async function syncPolicyResources(
 }
 
 /**
+ * Channel records name agents, workspaces and policies by resource name, so this
+ * runs after those are synced and their ids are known. A record is unique per
+ * `(account, platform, externalId)` because the inbound webhook looks it up that
+ * way — so two environments cannot both claim one Slack channel, and trying is
+ * an error rather than a silent last-writer-wins.
+ */
+async function syncChannelRecordResources(
+  ctx: MutationCtx,
+  options: {
+    accountId: Id<"accounts">;
+    projectId: Id<"projects">;
+    environmentId: Id<"environments">;
+    resources: CliResource[];
+    agentIds: Record<string, string>;
+    workspaceIds: Record<string, string>;
+    policyIds: Record<string, string>;
+  },
+): Promise<Record<string, string>> {
+  const ids: Record<string, string> = {};
+  const records = options.resources.filter(
+    (entry) => entry.kind === "channelRecord",
+  );
+  if (records.length === 0) return ids;
+
+  const existing = await ctx.db
+    .query("channelRecords")
+    .withIndex("by_environmentId_and_name", (q) =>
+      q.eq("environmentId", options.environmentId),
+    )
+    .collect();
+
+  for (const resource of records) {
+    const name = resourceName(resource.name);
+    const input = resolveChannelRecordRefs(resource.config, options);
+    const platform = requireChannelRecordString(input.platform, "platform");
+    const externalId = requireChannelRecordString(
+      input.externalId,
+      "externalId",
+    );
+    // Same validation the CRUD route runs: a malformed manifest record must fail
+    // the deploy, not reach the webhook resolver at runtime.
+    const config = normalizeChannelRecordConfig(input.config);
+    await assertChannelRecordPlaceIsFree(ctx, {
+      accountId: options.accountId,
+      environmentId: options.environmentId,
+      platform: platform,
+      externalId: externalId,
+      name: name,
+    });
+
+    const current = existing.find((entry) => entry.name === name);
+    const patch = {
+      accountId: options.accountId,
+      projectId: options.projectId,
+      environmentId: options.environmentId,
+      platform: platform,
+      externalId: externalId,
+      ...(typeof input.workspaceRef === "string"
+        ? { workspaceRef: input.workspaceRef }
+        : { workspaceRef: undefined }),
+      name: name,
+      description: resource.description,
+      config: config,
+      status: "active" as const,
+      managedBy: "cli" as const,
+      updatedAt: Date.now(),
+      deletedAt: undefined,
+    };
+    if (current) {
+      await ctx.db.patch(current._id, patch);
+      ids[name] = current._id;
+      continue;
+    }
+    const now = Date.now();
+    ids[name] = await ctx.db.insert("channelRecords", {
+      ...patch,
+      createdAt: now,
+    });
+  }
+
+  return ids;
+}
+
+/**
+ * Inverse of `resolveChannelRecordRefs`: ids back to resource names, and the
+ * place columns folded back into the config the manifest declares. It must land
+ * exactly where the local manifest normalizes, or `broods dev` reports a diff
+ * that never settles.
+ */
+function channelRecordManifestConfig(
+  record: Doc<"channelRecords">,
+  names: {
+    agentNames: Record<string, string>;
+    policyNames: Record<string, string>;
+    workspaceNames: Record<string, string>;
+  },
+): Record<string, unknown> {
+  const config = isPlainObject(record.config)
+    ? (record.config as Record<string, unknown>)
+    : {};
+  const { agentBindings, policyIds, workspaces, ...rest } = config;
+
+  return {
+    platform: record.platform,
+    externalId: record.externalId,
+    ...(record.workspaceRef ? { workspaceRef: record.workspaceRef } : {}),
+    agents: (Array.isArray(agentBindings) ? agentBindings : []).map((entry) =>
+      isPlainObject(entry) && typeof entry.agentId === "string"
+        ? (names.agentNames[entry.agentId] ?? entry.agentId)
+        : entry,
+    ),
+    ...rest,
+    ...(Array.isArray(policyIds)
+      ? {
+          policies: policyIds.map((entry) =>
+            typeof entry === "string"
+              ? (names.policyNames[entry] ?? entry)
+              : entry,
+          ),
+        }
+      : {}),
+    ...(Array.isArray(workspaces)
+      ? {
+          workspaces: workspaces.map((entry) =>
+            isPlainObject(entry) && typeof entry.workspaceId === "string"
+              ? {
+                  ...entry,
+                  workspaceId:
+                    names.workspaceNames[entry.workspaceId] ??
+                    entry.workspaceId,
+                }
+              : entry,
+          ),
+        }
+      : {}),
+  };
+}
+
+/** A record's agents, workspaces and policies are written as resource names. */
+function resolveChannelRecordRefs(
+  raw: unknown,
+  ids: {
+    agentIds: Record<string, string>;
+    workspaceIds: Record<string, string>;
+    policyIds: Record<string, string>;
+  },
+): {
+  platform: unknown;
+  externalId: unknown;
+  workspaceRef: unknown;
+  config: unknown;
+} {
+  if (!isPlainObject(raw)) {
+    throw new Error("channelRecord config must be an object");
+  }
+  const {
+    platform,
+    externalId,
+    workspaceRef,
+    agents,
+    policies,
+    workspaces,
+    ...rest
+  } = raw as Record<string, unknown>;
+  const agentBindings = (Array.isArray(agents) ? agents : []).map(
+    (entry, index) => {
+      const agentName = typeof entry === "string" ? entry : "";
+      const agentId = ids.agentIds[agentName] ?? agentName;
+
+      return { agentId: agentId, ...(index === 0 ? { isDefault: true } : {}) };
+    },
+  );
+
+  return {
+    platform: platform,
+    externalId: externalId,
+    workspaceRef: workspaceRef,
+    config: {
+      ...rest,
+      agentBindings: agentBindings,
+      ...(Array.isArray(policies)
+        ? {
+            policyIds: policies.map((entry) =>
+              typeof entry === "string"
+                ? (ids.policyIds[entry] ?? entry)
+                : entry,
+            ),
+          }
+        : {}),
+      ...(Array.isArray(workspaces)
+        ? {
+            workspaces: workspaces.map((entry) =>
+              isPlainObject(entry) && typeof entry.workspaceId === "string"
+                ? {
+                    ...entry,
+                    workspaceId:
+                      ids.workspaceIds[entry.workspaceId] ?? entry.workspaceId,
+                  }
+                : entry,
+            ),
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * The webhook resolves a place account-wide, so one `(platform, externalId)` can
+ * belong to exactly one record. Reject a second claim instead of overwriting.
+ */
+async function assertChannelRecordPlaceIsFree(
+  ctx: MutationCtx,
+  options: {
+    accountId: Id<"accounts">;
+    environmentId: Id<"environments">;
+    platform: string;
+    externalId: string;
+    name: string;
+  },
+): Promise<void> {
+  const rows = await ctx.db
+    .query("channelRecords")
+    .withIndex("by_accountId_platform_external", (q) =>
+      q
+        .eq("accountId", options.accountId)
+        .eq("platform", options.platform)
+        .eq("externalId", options.externalId),
+    )
+    .collect();
+  const conflict = rows.find(
+    (row) =>
+      row.status === "active" &&
+      !(
+        row.environmentId === options.environmentId && row.name === options.name
+      ),
+  );
+  if (!conflict) return;
+
+  throw new Error(
+    `channelRecord "${options.name}" claims ${options.platform}:${options.externalId}, ` +
+      `which record "${conflict.name}" already owns. One place binds to one record.`,
+  );
+}
+
+function requireChannelRecordString(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`channelRecord ${field} must be a non-empty string`);
+  }
+
+  return value;
+}
+
+/**
  * Fail loudly when an old account-scoped runtime resource would shadow the new
  * environment-scoped row. Operators must migrate or delete that row explicitly.
  */
@@ -2152,6 +2424,33 @@ async function prunePolicyResources(
   }
 }
 
+async function pruneChannelRecordResources(
+  ctx: MutationCtx,
+  environmentId: Id<"environments">,
+  resources: CliResource[],
+): Promise<void> {
+  const declared = new Set(
+    resources
+      .filter((entry) => entry.kind === "channelRecord")
+      .map((entry) => resourceName(entry.name)),
+  );
+  const existing = await ctx.db
+    .query("channelRecords")
+    .withIndex("by_environmentId_and_name", (q) =>
+      q.eq("environmentId", environmentId),
+    )
+    .collect();
+  for (const record of existing) {
+    if (record.managedBy === "cli" && !declared.has(record.name)) {
+      await ctx.db.patch(record._id, {
+        status: "deleted",
+        deletedAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    }
+  }
+}
+
 async function pruneWorkspaceResources(
   ctx: MutationCtx,
   environmentId: Id<"environments">,
@@ -2297,6 +2596,12 @@ async function resourcesForEnvironment(
       q.eq("environmentId", environmentId),
     )
     .collect();
+  const channelRecords = await ctx.db
+    .query("channelRecords")
+    .withIndex("by_environmentId_and_name", (q) =>
+      q.eq("environmentId", environmentId),
+    )
+    .collect();
   const agentIds = agents.flatMap((entry) =>
     entry.agentId ? [entry.agentId] : [],
   );
@@ -2421,6 +2726,22 @@ async function resourcesForEnvironment(
           config: policy.document,
         }),
       ),
+    ...channelRecords
+      .filter(
+        (record) => record.managedBy === "cli" && record.status === "active",
+      )
+      .map(
+        (record): CliResource => ({
+          kind: "channelRecord",
+          name: record.name,
+          description: record.description,
+          config: channelRecordManifestConfig(record, {
+            agentNames: agentNames,
+            policyNames: policyNames,
+            workspaceNames: workspaceNames,
+          }),
+        }),
+      ),
     ...externalResources.map(
       (resource): CliResource => ({
         kind: resource.kind,
@@ -2496,6 +2817,12 @@ async function idsForEnvironment(
       q.eq("environmentId", environmentId),
     )
     .collect();
+  const channelRecords = await ctx.db
+    .query("channelRecords")
+    .withIndex("by_environmentId_and_name", (q) =>
+      q.eq("environmentId", environmentId),
+    )
+    .collect();
   const agentIds = new Set(
     agents.flatMap((entry) => (entry.agentId ? [entry.agentId] : [])),
   );
@@ -2545,6 +2872,13 @@ async function idsForEnvironment(
     hooks: externalIds.hooks,
     policies: Object.fromEntries(
       policies
+        .filter(
+          (entry) => entry.managedBy === "cli" && entry.status === "active",
+        )
+        .map((entry) => [entry.name, entry._id]),
+    ),
+    channelRecords: Object.fromEntries(
+      channelRecords
         .filter(
           (entry) => entry.managedBy === "cli" && entry.status === "active",
         )

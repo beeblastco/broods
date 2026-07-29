@@ -7,10 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createBroodsSandbox } from "@broods/ai-sdk-sandbox";
-import {
-  createWorkdirHarnessAgent,
-  type WorkdirHarnessKind,
-} from "../src/harness/harness-agent-runtime.ts";
+import { createWorkdirHarnessAgent } from "../src/harness/ai-sdk-harness/index.ts";
 import { createSandboxExecutor } from "../src/harness/sandbox/index.ts";
 import { createWorkdirHarnessDriver } from "../src/harness/sandbox/workdir-harness-driver.ts";
 import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
@@ -137,12 +134,12 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
 
   it.each(["claude-code", "codex"] as const)(
     "bootstraps and connects the real %s Harness bridge",
-    async (harness) => {
+    async (type) => {
       const compute = liveCompute();
       const created = createWorkdirHarnessAgent({
-        harness,
-        reservationKey: `broods-harness-${harness}-${randomUUID()}`,
-        compute,
+        type: type,
+        reservationKey: `broods-harness-${type}-${randomUUID()}`,
+        compute: compute,
         harnessSettings: { startupTimeoutMs: 180_000 },
       });
       let session: Awaited<
@@ -151,9 +148,9 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
 
       try {
         session = await created.agent.createSession({
-          sessionId: `live-${harness}-${randomUUID()}`,
+          sessionId: `live-${type}-${randomUUID()}`,
         });
-        expect(session.sessionId).toStartWith(`live-${harness}-`);
+        expect(session.sessionId).toStartWith(`live-${type}-`);
       } finally {
         if (session) {
           await session.destroy();
