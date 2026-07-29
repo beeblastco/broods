@@ -49,10 +49,10 @@ const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
 // Absolute write targets, by construct: redirection, tee, dd, and the file-producing
 // commands whose destination is an argument. `path` is the captured destination.
 const ABSOLUTE_WRITE_PATTERNS = [
-  /(?:^|[\s;&|()])\d*>>?\s*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])\d*>>?\|?\s*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])tee\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])dd\s[^;&|]*\bof=(?<path>\/[^\s"'`;&|)<>]*)/g,
-  /(?:^|[\s;&|()])(?:cp|mv|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
+  /(?:^|[\s;&|()])(?:cp|mv|ln|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
   /(?:^|[\s;&|()])(?:mkdir|touch|rm|rmdir|truncate|unlink)\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])sed\s+[^;&|]*-i[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)/g,
   // Fetch and unpack: the destination is a flag argument, not a redirection.
@@ -551,7 +551,7 @@ export function outsideWorkspaceCommand(
   command: string,
   options: { persistentOwnSandbox?: boolean } = {},
 ): string | undefined {
-  const scanned = stripHereDocBodies(command);
+  const scanned = unescapeShellChars(stripHereDocBodies(command));
   // Traversal is a containment concern, not a durability one: read/write/edit reject
   // `..` too, and bash must not become the way around them.
   if (PARENT_TRAVERSAL.test(scanned)) {
@@ -627,8 +627,10 @@ export function boundedInteger(
 // The first absolute path the command would write to, ignoring roots that are
 // ephemeral by convention. Shell semantics are not parseable with a regex, so this
 // covers the constructs that actually lose an agent's work — redirections and the
-// common file-producing commands. Anything it misses is caught by the durability
-// rule stated in the bash tool description, not by this guard.
+// common file-producing commands. Three classes are knowingly out of reach and are
+// left to the durability rule in the bash tool description: interpreter writes
+// (`python -c "open(...)"`), a write through a symlink, and the open-ended tail of
+// package-manager install prefixes. Adding one of those is not a bug fix.
 function absoluteWriteTarget(command: string): string | undefined {
   for (const pattern of ABSOLUTE_WRITE_PATTERNS) {
     for (const match of command.matchAll(pattern)) {
@@ -661,6 +663,12 @@ function invokesCommand(command: string, names: string[]): boolean {
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
+}
+
+// Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
+// matched — otherwise the two dots are never adjacent and no pattern can see them.
+function unescapeShellChars(command: string): string {
+  return command.replace(/\\(.)/g, "$1");
 }
 
 function stripHereDocBodies(command: string): string {

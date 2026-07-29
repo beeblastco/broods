@@ -386,6 +386,8 @@ describe("sandbox tool set", () => {
       "echo pwned > sub/../../../srv/out.txt",
       "cd /mnt/workspaces/x/../../ && ls",
       'cd "dir/.."',
+      // bash reads this as `../secrets.env`, so the escapes must come off first.
+      "cat \\.\\./secrets.env",
     ]) {
       await expect(bash.execute({ command: command })).resolves.toEqual({
         type: "error-text",
@@ -447,6 +449,8 @@ describe("sandbox tool set", () => {
       "tar -xzf a.tgz -C /srv",
       "unzip a.zip -d /srv",
       "git clone https://github.com/a/b /srv/b",
+      "echo x >| /srv/f",
+      "ln -s target /srv/link",
     ]) {
       const blocked = await bash.execute({ command: command });
       expect(blocked.type).toBe("error-text");
