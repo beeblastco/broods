@@ -675,7 +675,7 @@ async function route(options: {
   type FetchInput = Parameters<typeof fetch>[0];
   globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
-    if (url.includes("api.telegram.org")) {
+    if (new URL(url).hostname === "api.telegram.org") {
       const body = init?.body;
       if (typeof body === "string") {
         const parsed = JSON.parse(body) as {
