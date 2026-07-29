@@ -12,6 +12,7 @@ import {
   setSystemTime,
 } from "bun:test";
 import { createHmac } from "node:crypto";
+import type { ChannelAdapter } from "../src/shared/channels.ts";
 import {
   createSlackChannel,
   toSlackStream,
@@ -726,7 +727,91 @@ describe("slack channel adapter", () => {
       userId: "U1",
     });
   });
+
+  // Threading a group reply is the default, so `inline` is the value that has
+  // to change something — without it the record field decides nothing.
+  it("posts to the channel under inline, and opens a thread under always-thread", async () => {
+    const adapter = createTestSlackChannel(null);
+
+    const parsed = await parseChannelMention(adapter);
+    expect(parsed.source.threadTs).toBe("1713916800.000030");
+
+    expect(adapter.applyThreadPolicy?.(parsed.source, "inline")).toMatchObject({
+      threadTs: undefined,
+    });
+    expect(
+      adapter.applyThreadPolicy?.(parsed.source, "always-thread"),
+    ).toMatchObject({ threadTs: "1713916800.000030" });
+  });
+
+  it("keeps a reply in the thread it was asked in under either policy", async () => {
+    const adapter = createTestSlackChannel(null);
+
+    const parsed = await parseChannelMention(adapter, "1713916800.000020");
+
+    expect(adapter.applyThreadPolicy?.(parsed.source, "inline")).toMatchObject({
+      threadTs: "1713916800.000020",
+    });
+    expect(
+      adapter.applyThreadPolicy?.(parsed.source, "always-thread"),
+    ).toMatchObject({ threadTs: "1713916800.000020" });
+  });
+
+  it("threads a direct message only when the policy asks for it", async () => {
+    const adapter = createTestSlackChannel(null);
+
+    const parsed = await adapter.parse(
+      createEventRequest({
+        type: "event_callback",
+        event_id: "evt-dm-policy",
+        team_id: "T1",
+        event: {
+          type: "message",
+          text: "hello dm",
+          channel: "D1",
+          channel_type: "im",
+          user: "U1",
+          ts: "1713916800.000040",
+        },
+      }),
+    );
+    if (parsed.kind !== "message") {
+      throw new Error("Expected Slack DM message to be accepted");
+    }
+
+    expect(
+      adapter.applyThreadPolicy?.(parsed.message.source, "inline"),
+    ).toMatchObject({ threadTs: undefined });
+    expect(
+      adapter.applyThreadPolicy?.(parsed.message.source, "always-thread"),
+    ).toMatchObject({ threadTs: "1713916800.000040" });
+  });
 });
+
+async function parseChannelMention(adapter: ChannelAdapter, threadTs?: string) {
+  const parsed = await adapter.parse(
+    createEventRequest({
+      type: "event_callback",
+      authorizations: [{ user_id: "BOT", is_bot: true }],
+      event_id: `evt-policy-${threadTs ?? "root"}`,
+      team_id: "T1",
+      event: {
+        type: "app_mention",
+        text: "<@BOT> status?",
+        channel: "C1",
+        channel_type: "channel",
+        user: "U1",
+        ...(threadTs ? { thread_ts: threadTs } : {}),
+        ts: "1713916800.000030",
+      },
+    }),
+  );
+  if (parsed.kind !== "message") {
+    throw new Error("Expected Slack mention to be accepted");
+  }
+
+  return parsed.message;
+}
 
 function createTestSlackChannel(allowedChannelIds: Set<string> | null) {
   const users = new Map([

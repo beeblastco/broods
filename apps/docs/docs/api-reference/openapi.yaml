@@ -3149,6 +3149,12 @@ components:
         threadPolicy:
           type: string
           enum: [always-thread, inline]
+          description: >-
+            Where the reply lands. always-thread opens a thread on the message;
+            inline answers in the channel, and only threads when the message
+            itself arrived in one. Slack only — no other provider gives the
+            runtime a choice of place. Defaults to always-thread in a channel
+            and inline in a DM.
         workspaceScope:
           oneOf:
             - type: object

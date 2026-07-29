@@ -175,6 +175,11 @@ export interface ChannelRecordConfig {
    * cannot name. Narrowing only; unknown names are ignored.
    */
   denyTools?: string[];
+  /**
+   * Where the reply lands. `inline` answers in the channel and threads only
+   * when the message already did. Slack only — no other provider gives the
+   * runtime a second place to reply.
+   */
   threadPolicy?: "always-thread" | "inline";
   workspaceScope?: AgentChannelWorkspaceScope;
   /** Images the agent may stand a sandbox up from for a thread here. */

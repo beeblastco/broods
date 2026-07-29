@@ -5,9 +5,11 @@
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { StreamOptions } from "chat";
+import type { ChannelThreadPolicy } from "./domain/channel-record.ts";
 
 export type ChannelIngressEvent =
-  UserModelMessage | (SystemModelMessage & { persist?: false });
+  | UserModelMessage
+  | (SystemModelMessage & { persist?: false });
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
@@ -106,6 +108,15 @@ export interface ChannelAdapter {
    */
   parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
   actions(msg: InboundMessage): ChannelActions;
+  /**
+   * Rewrite the reply routing a channel record's `threadPolicy` asks for.
+   * Only providers where the runtime chooses between a thread and the channel
+   * implement it; the rest have one place to reply and omit it.
+   */
+  applyThreadPolicy?(
+    source: Record<string, unknown>,
+    policy: ChannelThreadPolicy,
+  ): Record<string, unknown>;
 }
 
 export function extractText(content: UserContent): string {
