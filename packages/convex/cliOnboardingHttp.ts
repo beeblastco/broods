@@ -10,6 +10,7 @@ export const handle = httpAction(async (ctx, req) => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
+
       return json({ error: "Authorization Bearer token is required" }, 401);
     }
 
@@ -63,8 +64,12 @@ export const handle = httpAction(async (ctx, req) => {
     return json({ error: "Method not allowed" }, 405);
   } catch (error) {
     console.error("CLI onboarding request failed", error);
+    if (error instanceof SyntaxError) {
 
-    return json({ error: "Onboarding request failed" }, 400);
+      return json({ error: "Request body must be valid JSON" }, 400);
+    }
+
+    return json({ error: "Onboarding request failed" }, 500);
   }
 });
 
@@ -73,7 +78,10 @@ async function bearerAuth(
 ): Promise<{ secretHash: string } | null> {
   const header = req.headers.get("Authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) return null;
+  if (!match?.[1]) {
+
+    return null;
+  }
 
   return {
     secretHash: await sha256Hex(match[1]),

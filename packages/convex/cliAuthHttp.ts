@@ -10,12 +10,20 @@ export const exchange = httpAction(async (ctx, req) => {
     return json({ error: "Method not allowed" }, 405);
   }
 
+  let body: { code?: unknown };
   try {
-    const body = (await req.json()) as { code?: unknown };
-    if (typeof body.code !== "string" || !body.code.trim()) {
-      return json({ error: "Request body must include code" }, 400);
-    }
+    body = (await req.json()) as { code?: unknown };
+  } catch {
 
+    return json({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  if (typeof body.code !== "string" || !body.code.trim()) {
+
+    return json({ error: "Request body must include code" }, 400);
+  }
+
+  try {
     const result: Record<string, unknown> = await ctx.runMutation(
       internal.cliAuth.exchangeLoginCode,
       {
@@ -26,8 +34,15 @@ export const exchange = httpAction(async (ctx, req) => {
     return json(result);
   } catch (error) {
     console.error("CLI login exchange failed", error);
+    if (
+      error instanceof Error &&
+      error.message.includes("CLI login code is invalid or expired")
+    ) {
 
-    return json({ error: "Login code is invalid or expired" }, 400);
+      return json({ error: "Login code is invalid or expired" }, 400);
+    }
+
+    return json({ error: "Login exchange failed" }, 500);
   }
 });
 
