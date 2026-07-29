@@ -1950,7 +1950,7 @@ type CanvasEdge = {
 };
 
 type CanvasCliResource = CliResource & {
-  kind: "agent" | "workspace" | "sandbox" | "skill";
+  kind: "agent" | "workspace" | "sandbox" | "skill" | "tool";
 };
 
 async function syncCanvasLayoutForManifest(
@@ -2005,13 +2005,29 @@ async function syncCanvasLayoutForManifest(
   const agentConfigByName = new Map(
     agentConfigs.map((entry) => [entry.name, entry]),
   );
+  // Tools resolve by name here: the manifest reaching this mutation already had
+  // its `config.tools` keys rewritten to ids, so the node needs the row to map back.
+  const toolsByName = new Map(
+    (
+      await ctx.db
+        .query("accountTools")
+        .withIndex("by_environmentId_and_status", (q) =>
+          q.eq("environmentId", environmentId).eq("status", "active"),
+        )
+        .collect()
+    ).map((entry) => [entry.name, entry]),
+  );
+  const toolNameById = new Map(
+    [...toolsByName.values()].map((entry) => [entry._id as string, entry.name]),
+  );
   const desiredResources: CanvasCliResource[] = resources
     .filter(
       (entry): entry is CanvasCliResource =>
         entry.kind === "agent" ||
         entry.kind === "workspace" ||
         entry.kind === "sandbox" ||
-        entry.kind === "skill",
+        entry.kind === "skill" ||
+        entry.kind === "tool",
     )
     .map((entry) => ({ ...entry, name: resourceName(entry.name) }));
   const desiredNodeKeys = new Set(
@@ -2025,12 +2041,14 @@ async function syncCanvasLayoutForManifest(
     sandbox: 340,
     workspace: 600,
     skill: 860,
+    tool: 1120,
   } as const;
   const rowY = {
     agent: 80,
     sandbox: 80,
     workspace: 80,
     skill: 80,
+    tool: 80,
   };
   const nextPosition = (kind: keyof typeof columnX) => {
     const position = { x: columnX[kind], y: rowY[kind] };
@@ -2040,7 +2058,13 @@ async function syncCanvasLayoutForManifest(
   };
 
   const ordered = [...desiredResources].sort((a, b) => {
-    const rank = { agent: 0, sandbox: 1, workspace: 2, skill: 3 } as const;
+    const rank = {
+      agent: 0,
+      sandbox: 1,
+      workspace: 2,
+      skill: 3,
+      tool: 4,
+    } as const;
     return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
   });
   ordered.forEach((resource) => {
@@ -2089,6 +2113,33 @@ async function syncCanvasLayoutForManifest(
         },
       });
       nodeIdByKindName.set(`skill:${resource.name}`, node.id);
+      return;
+    }
+
+    if (resource.kind === "tool") {
+      const record = toolsByName.get(resource.name);
+      if (!record) return;
+      const node = upsertCanvasNode({
+        nextById,
+        existingById,
+        preferred: existingByResourceId.get(record._id),
+        kind: "tool",
+        name: resource.name,
+        position: nextPosition("tool"),
+        data: {
+          label: resource.name,
+          status: "idle",
+          resourceId: record._id,
+          description: record.description,
+          config: {
+            runtime: record.runtime ?? "sandbox",
+            sha256: record.sha256,
+          },
+          managedBy: "cli",
+          cliResourceKey: `tool:${resource.name}`,
+        },
+      });
+      nodeIdByKindName.set(`tool:${resource.name}`, node.id);
       return;
     }
 
@@ -2202,6 +2253,20 @@ async function syncCanvasLayoutForManifest(
         const skillNodeId = skillNodeIdForReference(nodeIdByKindName, entry);
         if (skillNodeId)
           addDesiredDefaultEdge(desiredEdges, agentId, skillNodeId);
+      }
+    }
+
+    // `config.tools` is keyed by tool id; provider tool keys have no node and
+    // are skipped by the lookup.
+    const agentTools = agent.config.tools;
+    if (isPlainObject(agentTools)) {
+      for (const [toolId, toolConfig] of Object.entries(agentTools)) {
+        const name = toolNameById.get(toolId);
+        if (!name) continue;
+        if (isPlainObject(toolConfig) && toolConfig.enabled === false) continue;
+        const toolNodeId = nodeIdByKindName.get(`tool:${name}`);
+        if (toolNodeId)
+          addDesiredDefaultEdge(desiredEdges, agentId, toolNodeId);
       }
     }
   }

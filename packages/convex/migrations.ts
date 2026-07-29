@@ -64,3 +64,54 @@ export const deleteLegacyAgentDeployments = internalMutation({
     return { deleted: deleted };
   },
 });
+
+/**
+ * Drop custom tools that no environment owns. Tools became environment-scoped
+ * resources, so a row with no `environmentId` (written by the old account-scoped
+ * REST API or CLI sync) is unreachable — nothing lists it and nothing can clone
+ * or delete it. Soft-deleted rows go too, along with rows whose environment has
+ * since been deleted. Bundles in S3 are content-addressed and swept separately.
+ * Run with `dryRun: true` first to see the counts.
+ * @returns counts of rows deleted, by reason
+ */
+export const deleteOrphanedTools = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    unscoped: v.number(),
+    softDeleted: v.number(),
+    danglingEnvironment: v.number(),
+    kept: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("accountTools").collect();
+    let unscoped = 0;
+    let softDeleted = 0;
+    let danglingEnvironment = 0;
+    let kept = 0;
+
+    for (const row of rows) {
+      let reason: "unscoped" | "softDeleted" | "danglingEnvironment" | null =
+        null;
+      if (row.status === "deleted") reason = "softDeleted";
+      else if (!row.environmentId || !row.projectId) reason = "unscoped";
+      else if (!(await ctx.db.get(row.environmentId)))
+        reason = "danglingEnvironment";
+
+      if (!reason) {
+        kept += 1;
+        continue;
+      }
+      if (reason === "unscoped") unscoped += 1;
+      if (reason === "softDeleted") softDeleted += 1;
+      if (reason === "danglingEnvironment") danglingEnvironment += 1;
+      if (args.dryRun !== true) await ctx.db.delete(row._id);
+    }
+
+    return {
+      unscoped: unscoped,
+      softDeleted: softDeleted,
+      danglingEnvironment: danglingEnvironment,
+      kept: kept,
+    };
+  },
+});
