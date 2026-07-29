@@ -377,6 +377,39 @@ describe("sandbox tool set", () => {
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
+  // `..` after a separator escapes just as effectively as a leading one, and the
+  // redirection case writes outside the mount rather than only reading.
+  it("bash rejects traversal embedded mid-path", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "cat ./../../etc/os-release",
+      "echo pwned > sub/../../../srv/out.txt",
+      "cd /mnt/workspaces/x/../../ && ls",
+      'cd "dir/.."',
+    ]) {
+      await expect(bash.execute({ command: command })).resolves.toEqual({
+        type: "error-text",
+        value: "Error: parent directory traversal is not allowed",
+      });
+    }
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  // Matching `..` after a separator must not swallow the many non-path uses of two
+  // dots, or ordinary git and brace-expansion commands start failing.
+  it("bash leaves non-path uses of .. alone", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "echo {1..10}",
+      "git diff main..dev",
+      "git log HEAD~2...HEAD",
+      'echo "loading..."',
+    ]) {
+      const result = await bash.execute({ command: command });
+      expect(result.type).toBe("text");
+    }
+  });
+
   // A sandbox is a whole machine and reading it risks nothing, so the guard is about
   // durability only. Blocking reads used to send the model hunting for a way around
   // the check instead of getting on with the task.
@@ -408,6 +441,12 @@ describe("sandbox tool set", () => {
       "mkdir /data/out",
       "sed -i 's/a/b/' /etc/hosts",
       "dd if=in.bin of=/mnt/other/out.bin",
+      // Destinations that arrive as a flag argument rather than a redirection.
+      "curl -o /srv/report.json https://x",
+      "wget -O /srv/a.bin https://x",
+      "tar -xzf a.tgz -C /srv",
+      "unzip a.zip -d /srv",
+      "git clone https://github.com/a/b /srv/b",
     ]) {
       const blocked = await bash.execute({ command: command });
       expect(blocked.type).toBe("error-text");
@@ -430,6 +469,8 @@ describe("sandbox tool set", () => {
       "curl https://x -o /tmp/out.txt",
       "echo hi > /var/tmp/note",
       "python3 script.py 2>/dev/null",
+      "tar -xzf a.tgz -C /tmp/work",
+      "git clone https://github.com/a/b ./b",
     ]) {
       const scratch = await bash.execute({ command: command });
       expect(scratch.type).toBe("text");
@@ -448,7 +489,14 @@ describe("sandbox tool set", () => {
       command: "echo report > /srv/report.txt",
     });
     expect(result.type).toBe("text");
-    // Containment is a separate concern from durability, so `..` stays blocked.
+    // Containment is a separate concern from durability, so `..` stays blocked —
+    // including embedded, where relaxing the write guard would otherwise expose it.
+    await expect(
+      bash.execute({ command: "cat sub/../../../etc/shadow" }),
+    ).resolves.toEqual({
+      type: "error-text",
+      value: "Error: parent directory traversal is not allowed",
+    });
     await expect(
       bash.execute({ command: "cat ../secrets.env" }),
     ).resolves.toEqual({

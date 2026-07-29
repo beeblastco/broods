@@ -42,6 +42,10 @@ const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
 // no workspace has claimed wins, so a workspace called "sandbox" keeps its own name.
 const AGENT_SANDBOX_TARGETS = ["sandbox", "agent-sandbox"];
 
+// `..` as a whole path segment. The separator before it counts, so `a/../b` is caught
+// as surely as `../b`; word characters do not, so `{1..10}` and `main..dev` are left alone.
+const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
+
 // Absolute write targets, by construct: redirection, tee, dd, and the file-producing
 // commands whose destination is an argument. `path` is the captured destination.
 const ABSOLUTE_WRITE_PATTERNS = [
@@ -51,6 +55,10 @@ const ABSOLUTE_WRITE_PATTERNS = [
   /(?:^|[\s;&|()])(?:cp|mv|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
   /(?:^|[\s;&|()])(?:mkdir|touch|rm|rmdir|truncate|unlink)\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
   /(?:^|[\s;&|()])sed\s+[^;&|]*-i[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)/g,
+  // Fetch and unpack: the destination is a flag argument, not a redirection.
+  /(?:^|[\s;&|()])(?:curl|wget|tar|unzip)\s(?:[^;&|]*?\s)?-(?:o|O|C|d|-output|-directory|-output-document)[\s=]+(?<path>\/[^\s"'`;&|)<>]*)/g,
+  // git clone's destination is its last positional argument.
+  /(?:^|[\s;&|()])git\s+clone\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
 ];
 
 // Model-facing tool result shape (matches the AI SDK toModelOutput contract).
@@ -546,7 +554,7 @@ export function outsideWorkspaceCommand(
   const scanned = stripHereDocBodies(command);
   // Traversal is a containment concern, not a durability one: read/write/edit reject
   // `..` too, and bash must not become the way around them.
-  if (/(^|[\s"'=:{([<>,])\.\.(?:[\/\s;&|)]|$)/.test(scanned)) {
+  if (PARENT_TRAVERSAL.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
   }
   // A reserved sandbox the agent owns keeps its whole filesystem between calls, so
