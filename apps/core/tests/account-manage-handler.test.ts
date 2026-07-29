@@ -533,6 +533,12 @@ function createFakeStorage(overrides: Record<string, unknown>) {
       },
       ...(overrides.accountTools as Record<string, unknown> | undefined),
     },
+    channelRecords: {
+      async removeAllForAccount() {
+        return 0;
+      },
+      ...(overrides.channelRecords as Record<string, unknown> | undefined),
+    },
     accountHooks: {
       async removeAllForAccount() {
         return 0;
@@ -581,6 +587,7 @@ function successfulDeletionResponse() {
       cronsDeleted: 0,
       accountToolsDeleted: 0,
       accountHooksDeleted: 0,
+      channelRecordsDeleted: 0,
     },
   };
 }

@@ -54,7 +54,7 @@ flowchart TD
   Admin["Admin"] -->|"Bearer AdminAccountSecret<br/>POST /accounts"| Gateway
   Direct["Direct API client"] -->|"Bearer account secret<br/>POST / or /async"| Gateway
   Status["Status poller"] -->|"Bearer account secret<br/>GET /status/\{eventId\}"| Gateway
-  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Gateway
+  Provider["Telegram / GitHub / Slack / Discord / Pancake / Zalo"] -->|"/webhooks/\{accountId\}/\{channel\}"| Gateway
   WSClient["WebSocket client"] <-->|"wss://gateway"| WSGateway["WebSocket Gateway<br/>(caller's service)"]
   Gateway --> Core["Bun core container"]
   WSGateway --> Gateway
@@ -110,10 +110,10 @@ flowchart TD
   Hash --> Lookup["AccountConfig GSI<br/>SecretHashIndex"]
   Lookup --> Account["active AccountRecord"]
 
-  Webhook["POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"] --> Load["load account by accountId"]
-  Load --> AgentLookup["load agent by agentId"]
+  Webhook["POST /webhooks/\{accountId\}/\{channel\}"] --> Load["load account by accountId"]
+  Load --> AgentLookup["scan the account's agents<br/>that configure \{channel\}"]
   AgentLookup --> ChannelConfig["read encrypted agent config<br/>channels.\{channel\}"]
-  ChannelConfig --> Verify["verify provider-native signature/secret"]
+  ChannelConfig --> Verify["verify provider-native signature/secret<br/>first match is the receiving agent"]
   Verify --> Account
 
   Account --> Namespace["prefix event/conversation keys<br/>acct:\{accountId\}:..."]
@@ -121,7 +121,7 @@ flowchart TD
 
 A third auth path exists for trusted platform services: when `SERVICE_AUTH_SECRET` is configured, a request bearing that secret plus an `X-Account-Id` header acts on behalf of that account without knowing its account secret. It is used by the dashboard backend for server-side calls.
 
-Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId`, `agentId`, and channel name.
+Root provider webhooks are not accepted. Provider webhook URLs must include the `accountId` and the channel name. They never name an agent: the credentials that verify the request pick the receiving agent, and a [channel record](channels/channel-records.md) binds each place to the agent that answers there.
 
 ## Account Management
 
@@ -239,7 +239,7 @@ Developers who need custom chaining, cleanup, polling, or external workflow beha
 
 ```mermaid
 flowchart TD
-  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{agentId\}/\{channel\}"| Url["gateway/core URL"]
+  Provider["Provider webhook"] -->|"POST /webhooks/\{accountId\}/\{channel\}"| Url["gateway/core URL"]
   Url --> Load["load account + agent config"]
   Load --> Adapter["build channel adapter from agent config"]
   Adapter --> Auth["verify provider-native auth"]

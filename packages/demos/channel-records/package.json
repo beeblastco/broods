@@ -1,0 +1,15 @@
+{
+  "name": "@broods/demo-channel-records",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "tsc --noEmit",
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "broods": "file:../../broods"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14"
+  }
+}

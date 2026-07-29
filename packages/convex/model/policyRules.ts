@@ -8,6 +8,9 @@ import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 export const AGENT_POLICY_ACTIONS = [
+  // Gates the turn itself, before any tool runs: "may this person address the
+  // agent here?". Everything below gates one action inside an admitted turn.
+  "agent.invoke",
   "tool.call",
   "workspace.read",
   "workspace.write",

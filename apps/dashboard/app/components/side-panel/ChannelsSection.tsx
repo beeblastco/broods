@@ -146,6 +146,18 @@ const CHANNELS: ChannelKind[] = [
       { key: "botToken", label: "Bot token", type: "secret", required: true },
       { key: "publicKey", label: "Public key", type: "text", required: true },
       {
+        key: "botUserId",
+        label: "Bot user ID (answer only when mentioned)",
+        type: "text",
+        placeholder: "Answers every message if left empty",
+      },
+      {
+        key: "mentionRoleIds",
+        label: "Roles that count as a mention",
+        type: "stringList",
+        placeholder: "123, …",
+      },
+      {
         key: "allowedGuildIds",
         label: "Allowed guild IDs",
         type: "stringList",

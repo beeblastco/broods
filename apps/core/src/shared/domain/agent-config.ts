@@ -106,6 +106,12 @@ export interface AgentConfig {
   hooks?: AgentHooksConfig;
   channels?: AgentChannelsConfig;
   tools?: AgentToolsConfig;
+  /**
+   * Tool names withheld for this run, applied after the tool set is built.
+   * Set by a channel record; a channel can take a tool away, never add one.
+   * Names that are not present are simply ignored.
+   */
+  denyTools?: string[];
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   policy?: AgentPolicyConfig;
@@ -435,6 +441,10 @@ export interface AgentDiscordChannelConfig {
   botToken?: string;
   publicKey?: string;
   allowedGuildIds?: string[];
+  /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
+  botUserId?: string;
+  /** Role ids that count as mentioning the agent, e.g. an on-call role. */
+  mentionRoleIds?: string[];
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -478,6 +488,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     session,
     hooks,
     tools,
+    denyTools,
     skills,
     subagent,
     policy,
@@ -493,6 +504,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(session !== undefined ? { session } : {}),
     ...(hooks !== undefined ? { hooks } : {}),
     ...(tools !== undefined ? { tools } : {}),
+    ...(denyTools !== undefined ? { denyTools } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(subagent !== undefined ? { subagent } : {}),
     ...(policy !== undefined ? { policy } : {}),
@@ -554,6 +566,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
+  assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   const policy = normalizeAgentPolicyConfig(config.policy);
@@ -1211,6 +1224,11 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalStringArray(
     config.allowedGuildIds,
     "config.channels.discord.allowedGuildIds",
+  );
+  assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
+  assertOptionalStringArray(
+    config.mentionRoleIds,
+    "config.channels.discord.mentionRoleIds",
   );
 }
 

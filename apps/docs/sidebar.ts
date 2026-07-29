@@ -179,6 +179,11 @@ const sidebars: SidebarsConfig = {
           items: [
             {
               type: "doc",
+              id: "channels/channel-records",
+              label: "Channel Records",
+            },
+            {
+              type: "doc",
               id: "channels/telegram",
               label: "Telegram",
             },

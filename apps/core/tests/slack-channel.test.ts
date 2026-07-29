@@ -271,6 +271,35 @@ describe("slack channel adapter", () => {
     });
   });
 
+  it("keeps a mentioned command bare so its leading token still parses", async () => {
+    const adapter = createTestSlackChannel(new Set(["C1"]));
+
+    const parsed = await adapter.parse(
+      createEventRequest({
+        type: "event_callback",
+        authorizations: [{ user_id: "BOT", is_bot: true }],
+        event_id: "evt-command",
+        team_id: "T1",
+        event: {
+          type: "app_mention",
+          text: "<@BOT> /new",
+          channel: "C1",
+          channel_type: "channel",
+          user: "U1",
+          ts: "1713916800.000009",
+        },
+      }),
+    );
+
+    if (parsed.kind !== "message") {
+      throw new Error("Expected Slack app mention to be accepted");
+    }
+
+    // "Alex: /new" would make the first token "Alex:" and the command would
+    // reach the model as ordinary text instead of clearing the thread.
+    expect(parsed.message.content).toEqual([{ type: "text", text: "/new" }]);
+  });
+
   it("deduplicates app_mention and message events with the same ts", async () => {
     const adapter = createTestSlackChannel(new Set(["C1"]));
 

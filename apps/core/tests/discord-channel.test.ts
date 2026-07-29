@@ -129,7 +129,7 @@ describe("discord channel adapter", () => {
     expect(parsed.message.eventId).toBe("discord:message-1");
     expect(parsed.message.conversationKey).toBe("discord:guild-1:channel-1");
     expect(parsed.message.content).toEqual([
-      { type: "text", text: "what is the weather?" },
+      { type: "text", text: "ada: what is the weather?" },
     ]);
     expect(parsed.message.source).toMatchObject({
       applicationId: "broods-discord-gateway",
@@ -139,6 +139,248 @@ describe("discord channel adapter", () => {
       userId: "user-1",
     });
     expect(parsed.message.source.commandToken).toBeUndefined();
+  });
+
+  it("keys a slash command inside a thread to the same key as a gateway message", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
+
+    const interaction = await adapter.parse(
+      createRequest({
+        id: "interaction-4",
+        type: 2,
+        token: "token-4",
+        application_id: "app-1",
+        guild_id: "guild-1",
+        channel_id: "thread-1",
+        channel: { id: "thread-1", type: 11, parent_id: "channel-1" },
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
+    const gateway = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-2",
+          channel_id: "thread-1",
+          content: "still broken",
+          guild_id: "guild-1",
+          thread: { id: "thread-1", parent_id: "channel-1" },
+          mentions: [],
+          mention_roles: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+
+    if (interaction.kind !== "message" || gateway.kind !== "message") {
+      throw new Error("Expected both thread events to be accepted");
+    }
+
+    expect(interaction.message.conversationKey).toBe(
+      "discord:guild-1:channel-1:thread-1",
+    );
+    expect(gateway.message.conversationKey).toBe(
+      interaction.message.conversationKey,
+    );
+    expect(interaction.message.source.channelId).toBe("channel-1");
+    expect(interaction.message.source.threadId).toBe(
+      "discord:guild-1:channel-1:thread-1",
+    );
+  });
+
+  it("keys a slash command outside a thread to the channel", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+    );
+
+    const parsed = await adapter.parse(
+      createRequest({
+        id: "interaction-5",
+        type: 2,
+        token: "token-5",
+        application_id: "app-1",
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        channel: { id: "channel-1", type: 0, parent_id: "category-1" },
+        data: { name: "new" },
+        member: { user: { id: "user-1" } },
+      }),
+    );
+
+    if (parsed.kind !== "message") {
+      throw new Error("Expected channel interaction to be accepted");
+    }
+
+    // parent_id on a normal text channel is its category, never a thread parent.
+    expect(parsed.message.conversationKey).toBe("discord:guild-1:channel-1");
+    expect(parsed.message.source.threadId).toBeUndefined();
+  });
+
+  it("runs the agent only when it is mentioned once botUserId is configured", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+      undefined,
+      { botUserId: "bot-9" },
+    );
+
+    const mentioned = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-3",
+          channel_id: "channel-1",
+          content: "<@bot-9> ship the fix",
+          guild_id: "guild-1",
+          mentions: [{ id: "bot-9", username: "nhi" }],
+          mention_roles: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+    const overheard = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-4",
+          channel_id: "channel-1",
+          content: "deploys are frozen until the postmortem",
+          guild_id: "guild-1",
+          mentions: [],
+          mention_roles: [],
+          author: { id: "user-2", username: "minh", bot: false },
+        },
+      }),
+    );
+
+    expect(mentioned.kind).toBe("message");
+    expect(overheard.kind).toBe("context");
+    if (mentioned.kind !== "message" || overheard.kind !== "context") {
+      throw new Error("Expected one run and one stored context event");
+    }
+
+    // The bot's own mention is stripped; the sender is prefixed either way.
+    expect(mentioned.message.content).toEqual([
+      { type: "text", text: "ada: ship the fix" },
+    ]);
+    expect(overheard.message.content).toEqual([
+      { type: "text", text: "minh: deploys are frozen until the postmortem" },
+    ]);
+    expect(overheard.ack?.statusCode).toBe(200);
+  });
+
+  it("treats a configured mention role as addressing the agent", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+      undefined,
+      { botUserId: "bot-9", mentionRoleIds: ["role-oncall"] },
+    );
+
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-5",
+          channel_id: "channel-1",
+          content: "<@&role-oncall> who is on this?",
+          guild_id: "guild-1",
+          mentions: [],
+          mention_roles: ["role-oncall"],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("resolves other members' mentions to names and keeps commands bare", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+      undefined,
+      { botUserId: "bot-9" },
+    );
+
+    const mention = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-6",
+          channel_id: "channel-1",
+          content: "<@bot-9> ask <@user-2> about the rollback",
+          guild_id: "guild-1",
+          mentions: [
+            { id: "bot-9", username: "nhi" },
+            { id: "user-2", username: "minh" },
+          ],
+          mention_roles: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+    const command = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-7",
+          channel_id: "channel-1",
+          content: "<@bot-9> /new",
+          guild_id: "guild-1",
+          mentions: [{ id: "bot-9", username: "nhi" }],
+          mention_roles: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+
+    if (mention.kind !== "message" || command.kind !== "message") {
+      throw new Error("Expected both mentions to be accepted");
+    }
+
+    expect(mention.message.content).toEqual([
+      { type: "text", text: "ada: ask @minh about the rollback" },
+    ]);
+    // Attribution would push the token off the front and break /new.
+    expect(command.message.content).toEqual([{ type: "text", text: "/new" }]);
+  });
+
+  it("ignores a message that is only a mention of the agent", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["guild-1"]),
+      undefined,
+      { botUserId: "bot-9" },
+    );
+
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-8",
+          channel_id: "channel-1",
+          content: "<@bot-9>",
+          guild_id: "guild-1",
+          mentions: [{ id: "bot-9", username: "nhi" }],
+          mention_roles: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("ignore");
   });
 
   it("authenticates gateway-forwarded events with the SDK gateway token header", async () => {

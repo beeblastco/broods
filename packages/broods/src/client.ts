@@ -158,6 +158,20 @@ export class BroodsClient {
     return `${this.baseUrl}${ref.webhookPath.startsWith("/") ? "" : "/"}${ref.webhookPath}`;
   }
 
+  /**
+   * Return the provider webhook URL for an account's channel. The URL names no
+   * agent — every channel of one type in an account shares it — so this is what
+   * to paste into the provider when several agents sit behind the same app.
+   */
+  accountWebhookUrl(
+    accountId: string,
+    channelType: ChannelReference["type"],
+  ): string {
+    const segments = [accountId, channelType].map(encodeURIComponent);
+
+    return `${this.baseUrl}/webhooks/${segments.join("/")}`;
+  }
+
   agent<const Name extends string>(ref: AgentReference<Name>): AgentHandle;
   agent(name: string, agentId: string): AgentHandle;
   agent(refOrName: AgentReference | string, agentId?: string): AgentHandle {
