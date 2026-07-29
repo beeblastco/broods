@@ -26,19 +26,17 @@ import { defineAgent } from "broods";
 
 export const agent = defineAgent({
   name: "guarded-agent",
-  config: {
-    model: { provider: "minimax", modelId: "MiniMax-M3" },
-    hooks: {
-      onStart: (ctx, event) => ({
-        system: `${event.system}\n\nNever reveal internal IDs.`,
-      }),
-      onToolCall: (ctx, event) =>
-        event.toolName === "bash"
-          ? { decision: "deny", denyReason: "shell disabled" }
-          : { decision: "allow" },
-      onMessageReceived: (ctx, event) =>
-        event.text.includes("spam") ? { drop: true } : undefined,
-    },
+  model: { provider: "minimax", modelId: "MiniMax-M3" },
+  hooks: {
+    onStart: (ctx, event) => ({
+      system: `${event.system}\n\nNever reveal internal IDs.`,
+    }),
+    onToolCall: (ctx, event) =>
+      event.toolName === "bash"
+        ? { decision: "deny", denyReason: "shell disabled" }
+        : { decision: "allow" },
+    onMessageReceived: (ctx, event) =>
+      event.text.includes("spam") ? { drop: true } : undefined,
   },
 });
 ```

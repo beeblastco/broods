@@ -137,12 +137,18 @@ export interface SandboxRunResult {
   cpuUsec?: number;
 }
 
+// The uploaded-tool runner is its own compute type, not one of the agent sandbox
+// providers — metering it as "lambda" would file it under the agent's sandbox.
+export type ToolComputeProvider = "custom-tool-sandbox";
+
 /** One sandbox exec's CPU, tagged by sandbox type and role for usage metering. */
 export interface SandboxCpuSample {
-  type: SandboxProvider;
+  type: SandboxProvider | ToolComputeProvider;
   role: "agent" | "tool";
   /** The custom tool that ran, when role is "tool". */
   toolName?: string;
+  /** The AI SDK call this CPU belongs to, so a trace span can carry its cost. */
+  toolCallId?: string;
   cpuUsec: number;
 }
 

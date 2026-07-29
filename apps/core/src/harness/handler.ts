@@ -48,6 +48,7 @@ import {
   type ChannelContextEvent,
   type ChannelInboundEvent,
   type DirectInboundEvent,
+  type IngressDispatchScope,
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
@@ -547,6 +548,9 @@ async function handleDirectRequest(
         ...(directStatusUrl(event)
           ? { statusUrl: directStatusUrl(event)! }
           : {}),
+        ...(event.publicDeploymentIngress
+          ? { publicDeploymentIngress: event.publicDeploymentIngress }
+          : {}),
       }
     : {
         kind: "http",
@@ -554,6 +558,9 @@ async function handleDirectRequest(
         publicConversationKey: event.publicConversationKey,
         ...(directStatusUrl(event)
           ? { statusUrl: directStatusUrl(event)! }
+          : {}),
+        ...(event.publicDeploymentIngress
+          ? { publicDeploymentIngress: event.publicDeploymentIngress }
           : {}),
       };
   const admission = await acceptIngress({
@@ -671,6 +678,9 @@ async function handleAsyncRequest(
       publicEventId: event.publicEventId,
       publicConversationKey: event.publicConversationKey,
       statusUrl: event.statusUrl,
+      ...(event.publicDeploymentIngress
+        ? { publicDeploymentIngress: event.publicDeploymentIngress }
+        : {}),
     },
     agentConfig: event.agentConfig,
     ...(event.ephemeralSystem
@@ -959,6 +969,7 @@ async function handleNatsWorkerRequest(
         session,
         event.agentConfig,
         waitUntilMs(context),
+        { dispatchNextIngress: dispatchNextIngress },
       );
       // Define the async tool mode application map.
       const asyncToolCoordinator = new AsyncToolCoordinator(
@@ -1673,7 +1684,7 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
 /** Transfers the fenced owner to the next durable FIFO application and schedules it. */
 async function dispatchNextIngress(
   session: Session,
-  previous: DirectInboundEvent,
+  previous: IngressDispatchScope,
 ): Promise<boolean> {
   const next = await session.takeNextIngress();
   if (!next) return false;
@@ -1688,17 +1699,7 @@ async function dispatchNextIngress(
  * request never inherits a previous request's overrides.
  */
 async function dispatchAppliedIngress(
-  base: Pick<
-    DirectInboundEvent,
-    | "accountId"
-    | "agentId"
-    | "agentConfig"
-    | "conversationKey"
-    | "publicConversationKey"
-    | "endpointId"
-    | "projectSlug"
-    | "environmentSlug"
-  >,
+  base: IngressDispatchScope,
   next: AppliedIngress,
 ): Promise<void> {
   const delivery = next.delivery;
@@ -2148,6 +2149,7 @@ function createDirectContinuationSseBody(
           session,
           event.agentConfig,
           waitUntilMs(context),
+          { dispatchNextIngress: dispatchNextIngress },
         );
         const asyncToolCoordinator = new AsyncToolCoordinator(
           session,
@@ -2259,6 +2261,7 @@ async function runAgentLoopUntilSubagentsIdle(
     session,
     agentConfig,
     waitUntilMs(context),
+    { dispatchNextIngress: dispatchNextIngress },
   );
   const asyncToolCoordinator = new AsyncToolCoordinator(
     session,

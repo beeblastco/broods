@@ -30,6 +30,17 @@ const SERVICE_AUTH_SECRET = requiredEnv("SERVICE_AUTH_SECRET");
 // container reads the same value at runtime for callbacks/status URLs.
 const PUBLIC_BASE_URL = requiredEnv("PUBLIC_BASE_URL");
 
+// How long to let a freshly created IAM role's trust policy propagate before another
+// AWS service is asked to assume it. Measured: the connector create failed 8s after the
+// role appeared and only succeeded ~4.5 min later on the provider's own retry.
+const IAM_PROPAGATION_SECONDS = 45;
+
+// Resolved `AWS::Lambda::NetworkConnector` Cloud Control properties. `Arn` is the type
+// schema's primaryIdentifier, so it is always present once the resource exists.
+interface NetworkConnectorProperties {
+  Arn: string;
+}
+
 function awsRegion(): string {
   const region = process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION;
   if (region) {
@@ -172,6 +183,8 @@ export default $config({
       protect: isProductionStage(stage),
       home: "aws",
       providers: {
+        // Only for the IAM-propagation wait in front of the MicroVM egress connector.
+        command: "1.0.1",
         aws: {
           region,
           version: "7.30.0",
@@ -190,6 +203,7 @@ export default $config({
 
   async run() {
     const aws = await import("@pulumi/aws");
+    const command = await import("@pulumi/command");
     const stage = $app.stage;
     const region = awsRegion();
     const isProduction = isProductionStage(stage);
@@ -213,6 +227,8 @@ export default $config({
       ),
       microvmBuildRole: resourceName("microvm-build", stage, region),
       microvmExecutionRole: resourceName("microvm-execution", stage, region),
+      // The connector name is createOnly and capped at 64 chars by the type schema.
+      microvmEgressConnector: resourceName("microvm-egress", stage, region),
     };
 
     const filesystemBucketArn = `arn:aws:s3:::${names.filesystem}`;
@@ -403,19 +419,221 @@ export default $config({
       });
     }
 
-    // No sandbox VPC. The MicroVM `lambda` provider runs on default INTERNET_EGRESS and
-    // mounts S3 with mount-s3 (Mountpoint-for-S3 + scoped STS creds) over that egress, so
-    // the common path needs no VPC. The old S3 Files NFS mount targets and the 4-stage
-    // sandbox Lambdas (the only former consumers) were removed in the MicroVM cutover.
-    //
-    // The previous `sst.aws.Vpc.v1("SandboxNetwork")` was dead-but-billable: it had no
-    // consumers, yet Vpc.v1 always provisions a managed NAT gateway + EIP per AZ (~$65/mo
-    // each, ~$130/mo per stage) with no way to opt out. Removing it deletes those NATs.
-    //
-    // When restricted/deny-all egress is actually implemented (lambda-core
-    // create-network-connector), reintroduce a purpose-built VPC then: `sst.aws.Vpc` (v2,
-    // NAT-less by default) plus a *free* S3 Gateway VPC Endpoint for the mount-s3 path —
-    // deny-all needs no egress at all, and restricted-to-S3 does not need a NAT.
+    // Sandbox egress network, used only by the MicroVM `deny-all` / `restricted` modes.
+    // `allow-all` never reaches it: that mode runs on the service default INTERNET_EGRESS
+    // with no connector at all. Deliberately NAT-less — the only outbound a restricted
+    // sandbox still needs is the workspace S3 mount, which the free S3 Gateway VPC Endpoint
+    // below serves off the private route tables. A NAT would cost ~$35/mo per AZ (the old
+    // Vpc.v1 billed ~$130/mo per stage for exactly this) and hand back the internet access
+    // these modes exist to remove. The component's public subnets + IGW go unused but free.
+    const sandboxNetwork = enableMicrovmPrereqs
+      ? new sst.aws.Vpc("SandboxNetwork", { az: 2 })
+      : null;
+
+    // Scoped to the managed workspace bucket, so a `deny-all` sandbox on a
+    // bring-your-own-bucket workspace cannot reach its mount. Widen this policy before
+    // offering those two together (see the lambda provider docs).
+    if (sandboxNetwork) {
+      new aws.ec2.VpcEndpoint("SandboxS3Endpoint", {
+        vpcId: sandboxNetwork.id,
+        serviceName: `com.amazonaws.${region}.s3`,
+        vpcEndpointType: "Gateway",
+        policy: JSON.stringify({
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Effect: "Allow",
+              Principal: "*",
+              Action: "s3:*",
+              Resource: [filesystemBucketArn, `${filesystemBucketArn}/*`],
+            },
+          ],
+        }),
+        routeTableIds: sandboxNetwork.nodes.privateRouteTables.apply(
+          (routeTables) => routeTables.map((routeTable) => routeTable.id),
+        ),
+      });
+    }
+
+    // The connector's only egress rule. `deny-all` therefore means "no internet, workspace
+    // S3 only" — an empty rule set would break the mount-s3 workspace every sandbox needs.
+    const sandboxEgressSecurityGroup = sandboxNetwork
+      ? new aws.ec2.SecurityGroup("SandboxEgressSecurityGroup", {
+          name: resourceName("microvm-egress-sg", stage, region),
+          description: "MicroVM sandbox egress: workspace S3 only",
+          vpcId: sandboxNetwork.id,
+          egress: [
+            {
+              description: "Workspace S3 over the gateway endpoint",
+              protocol: "tcp",
+              fromPort: 443,
+              toPort: 443,
+              prefixListIds: [
+                aws.ec2.getManagedPrefixListOutput({
+                  name: `com.amazonaws.${region}.s3`,
+                }).id,
+              ],
+            },
+          ],
+        })
+      : null;
+
+    // Lambda assumes this to manage the connector's ENIs in the sandbox VPC. Network
+    // Connector assume-role calls do not include SourceArn/SourceAccount context, so the
+    // usual confused-deputy conditions would deny every call. What bounds it instead is
+    // the policy below: ENIs only in these subnets, only with this security group.
+    const sandboxConnectorRole = sandboxNetwork
+      ? new aws.iam.Role("SandboxConnectorOperatorRole", {
+          name: resourceName("microvm-connector", stage, region),
+          assumeRolePolicy: JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [
+              {
+                Effect: "Allow",
+                Principal: { Service: "lambda.amazonaws.com" },
+                Action: "sts:AssumeRole",
+              },
+            ],
+          }),
+        })
+      : null;
+
+    const sandboxConnectorRolePolicy =
+      sandboxNetwork && sandboxEgressSecurityGroup && sandboxConnectorRole
+        ? new aws.iam.RolePolicy("SandboxConnectorOperatorRolePolicy", {
+            role: sandboxConnectorRole.id,
+            policy: $jsonStringify({
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Sid: "CreateConnectorNetworkInterfaceInSubnets",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: $resolve({
+                    subnetIds: sandboxNetwork.privateSubnets,
+                  }).apply(({ subnetIds }) =>
+                    subnetIds.map(
+                      (subnetId) =>
+                        `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:subnet/${subnetId}`,
+                    ),
+                  ),
+                },
+                {
+                  Sid: "CreateConnectorNetworkInterfaceWithSecurityGroup",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: [
+                    $interpolate`arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:security-group/${sandboxEgressSecurityGroup.id}`,
+                  ],
+                },
+                {
+                  Sid: "CreateTaggedConnectorNetworkInterface",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: [
+                    `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
+                  ],
+                  Condition: {
+                    "ForAllValues:StringEquals": {
+                      "aws:TagKeys": [
+                        "aws:lambda:networkConnectorName",
+                        "aws:lambda:networkConnectorId",
+                      ],
+                    },
+                  },
+                },
+                {
+                  Sid: "TagConnectorNetworkInterfaces",
+                  Effect: "Allow",
+                  Action: ["ec2:CreateTags"],
+                  Resource: [
+                    `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
+                  ],
+                  Condition: {
+                    StringEquals: {
+                      "ec2:CreateAction": "CreateNetworkInterface",
+                      "ec2:ManagedResourceOperator":
+                        "network-connectors.lambda.amazonaws.com",
+                    },
+                  },
+                },
+              ],
+            }),
+          })
+        : null;
+
+    // IAM is eventually consistent, so a role is not assumable the instant it exists:
+    // creating the connector straight after the role fails with "unable to assume the
+    // provided NetworkConnectorOperatorRole" until the trust policy propagates. Gate the
+    // connector behind a wait that only runs when the role or its policy actually changes.
+    const sandboxConnectorRoleReady =
+      sandboxConnectorRole && sandboxConnectorRolePolicy
+        ? new command.local.Command(
+            "SandboxConnectorRoleReady",
+            {
+              create: `sleep ${IAM_PROPAGATION_SECONDS}`,
+              triggers: [
+                sandboxConnectorRole.arn,
+                sandboxConnectorRolePolicy.id,
+              ],
+            },
+            { dependsOn: [sandboxConnectorRole, sandboxConnectorRolePolicy] },
+          )
+        : null;
+
+    // No Pulumi/Terraform resource exists for lambda-core network connectors, but the
+    // CloudFormation type does — Cloud Control gives real create/update/delete plus the
+    // PENDING → ACTIVE wait (ENI provisioning takes up to ~10 min on the first deploy).
+    const sandboxEgressConnector =
+      sandboxNetwork &&
+      sandboxEgressSecurityGroup &&
+      sandboxConnectorRole &&
+      sandboxConnectorRolePolicy &&
+      sandboxConnectorRoleReady
+        ? new aws.cloudcontrol.Resource(
+            "SandboxEgressConnector",
+            {
+              typeName: "AWS::Lambda::NetworkConnector",
+              desiredState: $jsonStringify({
+                Name: names.microvmEgressConnector,
+                OperatorRole: sandboxConnectorRole.arn,
+                Configuration: {
+                  VpcEgressConfiguration: {
+                    SubnetIds: sandboxNetwork.privateSubnets,
+                    SecurityGroupIds: [sandboxEgressSecurityGroup.id],
+                    NetworkProtocol: "IPv4",
+                    AssociatedComputeResourceTypes: ["MicroVm"],
+                  },
+                },
+              }),
+            },
+            // The ENI policy must exist before Lambda assumes the role, or the connector
+            // creates with no permission to build its interfaces. Nothing in desiredState
+            // references the policy, so without this the two race.
+            {
+              dependsOn: [
+                sandboxConnectorRolePolicy,
+                sandboxConnectorRoleReady,
+              ],
+            },
+          )
+        : null;
+
+    // Core reads this as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN; without it the executor
+    // fails closed rather than launching deny-all on the default internet egress.
+    const microvmEgressConnectorArn = sandboxEgressConnector
+      ? sandboxEgressConnector.properties.apply((properties) => {
+          const arn = (JSON.parse(properties) as NetworkConnectorProperties)
+            .Arn;
+          if (typeof arn !== "string" || arn.trim() === "") {
+            throw new Error(
+              "AWS::Lambda::NetworkConnector returned no connector ARN",
+            );
+          }
+
+          return arn;
+        })
+      : undefined;
 
     // Scoped credentials for provider sandboxes that mount S3 with mount-s3
     // (daytona, workdir, and the lambda MicroVM via its /run hook). The harness assumes
@@ -526,9 +744,36 @@ export default $config({
       }),
     });
 
+    // Sandbox-tier runner: runs inline uploaded bundles in a scrubbed child process.
+    // No VPC gives internet egress; core invokes it via TOOL_RUNNER_FUNCTION_NAME.
+    const toolRunnerFn = new sst.aws.Function("ToolRunner", {
+      handler: "../lambda/handler.handler",
+      runtime: "nodejs22.x",
+      architecture: "arm64",
+      timeout: "35 seconds",
+      // 1769 MB is the one-full-vCPU step. Below it Lambda hands out a fraction
+      // of a core, and this function's cost is almost all CPU — Node startup in
+      // the child plus parsing a bundle — so a smaller size bills roughly the
+      // same GB-ms while taking several times longer.
+      memory: "1769 MB",
+      copyFiles: [
+        {
+          from: "../lambda/child-runner.mjs",
+          to: "child-runner.mjs",
+        },
+      ],
+      transform: {
+        function: { name: resourceName("tool-runner", stage, region) },
+      },
+    });
+
     // Harness-side permissions for the container runtime user (CoreRuntimeUser
     // below); the account-manage set follows further down.
     const harnessPermissions = [
+      {
+        actions: ["lambda:InvokeFunction"],
+        resources: [toolRunnerFn.arn],
+      },
       {
         actions: ["sts:AssumeRole"],
         resources: [sandboxS3MountRole.arn],
@@ -924,9 +1169,13 @@ export default $config({
       filesystemBucketName: filesystemBucket.name,
       skillsBucketName: skillsBucket.name,
       toolBundlesBucketName: toolBundlesBucket.name,
+      toolRunnerFunctionName: toolRunnerFn.name,
       microvmArtifactsBucketName: microvmArtifactsBucket?.name,
       microvmBuildRoleArn: microvmBuildRole?.arn,
       microvmExecutionRoleArn: microvmExecutionRole?.arn,
+      // Set on the core pods as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN (infra repo Helm
+      // values); deny-all / restricted sandboxes cannot launch without it.
+      microvmEgressNetworkConnectorArn: microvmEgressConnectorArn,
       coreRuntimeUserName: coreRuntimeUser.name,
       convexAwsRoleArn: convexAwsRole.arn,
       convexBootstrapUserName: convexBootstrapUser.name,

@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
@@ -92,7 +92,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { isolate: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/tools/custom-tool-executor.ts");
+      await import("../src/harness/bundles/executor.ts");
     const outputs: unknown[] = [];
     for await (const output of streamAccountTool({
       accountId: "acct_test",
@@ -108,12 +108,87 @@ describe("streamAccountTool dispatcher", () => {
     expect(isolateExecutor).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects sandbox-runtime tools with a deferred (#82) error", async () => {
+  // The sandbox tier is a process that can measure itself, and its CPU is what
+  // the usage panel's custom-tool sandbox series is fed from.
+  it("meters the sandbox run's CPU as custom-tool-sandbox compute", async () => {
+    process.env.TOOL_RUNNER_FUNCTION_NAME = "tool-runner-test";
+    process.env.TOOL_BUNDLES_BUCKET_NAME = "tool-bundles-test";
+    const { streamInLambda } =
+      await import("../src/harness/bundles/executor.ts");
+    const samples: unknown[] = [];
+    const client = {
+      send: async () => ({
+        EventStream: [
+          {
+            PayloadChunk: {
+              Payload: new TextEncoder().encode(
+                `${JSON.stringify({ t: "final", result: { ok: true }, cpuUsec: 41_000 })}\n`,
+              ),
+            },
+          },
+        ],
+      }),
+    };
+
+    const outputs: unknown[] = [];
+    for await (const output of streamInLambda(
+      {
+        accountId: "acct_test",
+        tool: accountToolRecord("sandbox"),
+        input: {},
+        config: {},
+        options: { toolCallId: "call_cpu" },
+        onSandboxCpu: (sample) => samples.push(sample),
+      },
+      client as never,
+    )) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ ok: true }]);
+    expect(samples).toEqual([
+      {
+        type: "custom-tool-sandbox",
+        role: "tool",
+        toolName: "test_tool",
+        toolCallId: "call_cpu",
+        cpuUsec: 41_000,
+      },
+    ]);
+  });
+
+  it("routes sandbox tools to the sandbox (lambda) path", async () => {
     const isolateExecutor = mock(async function* () {
       yield { isolate: true };
     });
+    const sandboxExecutor = mock(async function* () {
+      yield { sandbox: true };
+    });
     const { streamAccountTool } =
-      await import("../src/harness/tools/custom-tool-executor.ts");
+      await import("../src/harness/bundles/executor.ts");
+    const outputs: unknown[] = [];
+    for await (const output of streamAccountTool({
+      accountId: "acct_test",
+      tool: accountToolRecord("sandbox"),
+      input: {},
+      config: {},
+      isolateExecutor,
+      sandboxExecutor,
+    })) {
+      outputs.push(output);
+    }
+
+    expect(outputs).toEqual([{ sandbox: true }]);
+    expect(sandboxExecutor).toHaveBeenCalledTimes(1);
+    expect(isolateExecutor).not.toHaveBeenCalled();
+  });
+
+  it("still rejects detached-async sandbox tools before dispatch", async () => {
+    const sandboxExecutor = mock(async function* () {
+      yield { sandbox: true };
+    });
+    const { streamAccountTool } =
+      await import("../src/harness/bundles/executor.ts");
 
     await expect(
       drain(
@@ -122,11 +197,19 @@ describe("streamAccountTool dispatcher", () => {
           tool: accountToolRecord("sandbox"),
           input: {},
           config: {},
-          isolateExecutor,
+          options: {
+            asyncTool: {
+              resultId: "async_tool_1",
+              detached: true,
+              completePath: "/async-tools/async_tool_1/complete",
+              completionToken: "tok_123",
+            },
+          },
+          sandboxExecutor,
         }),
       ),
     ).rejects.toThrow(/not yet supported off Lambda/);
-    expect(isolateExecutor).not.toHaveBeenCalled();
+    expect(sandboxExecutor).not.toHaveBeenCalled();
   });
 
   it("rejects detached-async tools with a deferred (#82) error", async () => {
@@ -134,7 +217,7 @@ describe("streamAccountTool dispatcher", () => {
       yield { isolate: true };
     });
     const { streamAccountTool } =
-      await import("../src/harness/tools/custom-tool-executor.ts");
+      await import("../src/harness/bundles/executor.ts");
 
     await expect(
       drain(
@@ -198,6 +281,42 @@ describe("isolate runner", () => {
     },
   );
 
+  // Parity with the sandbox tier: a bundle sees the AI SDK's own options, and
+  // ctx no longer advertises the env/asyncTool fields that were always empty.
+  realRunnerIt("passes the full AI SDK execution options through", async () => {
+    const result = await runRealRunner(
+      `export default { name: 'opts', execute(input, options) {
+         return {
+           callId: options.toolCallId,
+           roles: options.messages.map((m) => m.role),
+           ctxKeys: Object.keys(options.context).sort(),
+           experimental: options.experimental_context,
+         };
+       } };`,
+      {
+        toolName: "opts",
+        toolCallId: "call_123",
+        messages: [
+          { role: "user", content: "first" },
+          { role: "assistant", content: "second" },
+        ],
+        experimentalContext: { tenant: "acct_1" },
+      },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          callId: "call_123",
+          roles: ["user", "assistant"],
+          ctxKeys: ["config", "fetch", "state"],
+          experimental: { tenant: "acct_1" },
+        },
+      },
+    ]);
+  });
+
   realRunnerIt("surfaces thrown tool errors", async () => {
     const result = await runRealRunner(
       "export default { name: 'boom', execute() { throw new Error('boom'); } };",
@@ -243,6 +362,84 @@ describe("isolate runner", () => {
     });
     expect(result.exitCode).toBe(1);
   });
+
+  realRunnerIt("provides the web globals a bare V8 isolate lacks", async () => {
+    // A zod-shaped bundle reaches for TextDecoder and URL at import time, so
+    // these are what stands between the isolate tier and a ReferenceError.
+    const result = await runRealRunner(
+      `export default { name: "web_globals", execute() {
+          const url = new URL("/a?x=1#f", "https://Example.com:8443");
+          url.searchParams.set("y", "a b");
+          const decoder = new TextDecoder();
+          const bytes = new TextEncoder().encode("héllo 🌍");
+          return {
+            href: url.href,
+            origin: url.origin,
+            invalid: (() => { try { new URL("nope"); return "no-throw"; } catch (error) { return error.name; } })(),
+            roundTrip: decoder.decode(bytes),
+            // Split mid-codepoint: a streaming decoder must hold the tail back.
+            streamed: decoder.decode(bytes.slice(0, 3), { stream: true }) + decoder.decode(bytes.slice(3)),
+            base64: atob(btoa("abc")),
+            uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(crypto.randomUUID()),
+            random: crypto.getRandomValues(new Uint8Array(8)).length,
+          };
+        } };`,
+      { toolName: "web_globals", input: {} },
+    );
+
+    expect(result.frames).toEqual([
+      {
+        t: "final",
+        result: {
+          href: "https://example.com:8443/a?x=1&y=a+b#f",
+          origin: "https://example.com:8443",
+          invalid: "TypeError",
+          roundTrip: "héllo 🌍",
+          streamed: "héllo 🌍",
+          base64: "abc",
+          uuid: true,
+          random: 8,
+        },
+      },
+    ]);
+  });
+
+  realRunnerIt(
+    "reports a truncated encodeInto and refuses an oversized random buffer",
+    async () => {
+      // Both silent-corruption shapes: encodeInto claiming it consumed input it
+      // did not write, and getRandomValues zero-filling past the host's quota.
+      const result = await runRealRunner(
+        `export default { name: "edges", execute() {
+          const encoder = new TextEncoder();
+          const small = new Uint8Array(4);
+          const partial = encoder.encodeInto("ab🌍cd", small);
+          const exact = encoder.encodeInto("ab", new Uint8Array(8));
+          let quota = "no-throw";
+          try { crypto.getRandomValues(new Uint8Array(65537)); } catch (error) { quota = error.name; }
+          let floats = "no-throw";
+          try { crypto.getRandomValues(new Float64Array(4)); } catch (error) { floats = error.name; }
+          return { partial: partial, exact: exact, quota: quota, floats: floats };
+        } };`,
+        { toolName: "edges", input: {} },
+      );
+
+      expect(result.frames).toEqual([
+        {
+          t: "final",
+          result: {
+            // "ab" fits; the 4-byte emoji does not, so read stops at 2 units.
+            partial: { read: 2, written: 2 },
+            exact: { read: 2, written: 2 },
+            quota: "QuotaExceededError",
+            // Raw bytes in a float array are not uniform values, so the spec
+            // rejects the view rather than hand back misleading numbers.
+            floats: "TypeMismatchError",
+          },
+        },
+      ]);
+    },
+  );
 
   realRunnerIt(
     "provides timers, console, and a global fetch to the bundle",
@@ -504,7 +701,7 @@ describe("streamIsolatePayload cross-process abort", () => {
       ].join("\n"),
       "utf8",
     );
-    delete process.env.ISOLATE_POOL; // exercise the one-shot path
+    process.env.ISOLATE_POOL = "0"; // exercise the one-shot fallback path
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
     const { streamIsolatePayload } =
@@ -528,6 +725,185 @@ describe("streamIsolatePayload cross-process abort", () => {
     }
 
     expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("forwards the abortSignal on the pooled path too", async () => {
+    // The pooled path is the default, so this is the forwarding that runs in
+    // production; the worker is checked out of the shared pool, not spawned here.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-stub-"));
+    created.push(dir);
+    const stubPath = join(dir, "stub-pool-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let callId;",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  for (const line of chunk.split('\\n')) {",
+        "    if (!line.trim()) continue;",
+        "    try { callId = JSON.parse(line).callId; } catch {}",
+        "  }",
+        "});",
+        "process.on('SIGUSR2', () => {",
+        "  process.stdout.write(JSON.stringify({ t: 'final', callId, result: { aborted: true } }) + '\\n');",
+        "  process.exit(0);",
+        "});",
+        "setTimeout(() => process.exit(3), 5000);",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 150);
+
+    const outputs: unknown[] = [];
+    try {
+      for await (const output of streamIsolatePayload(
+        "acct_pooled",
+        {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        },
+        { abortSignal: controller.signal },
+      )) {
+        outputs.push(output);
+      }
+    } finally {
+      // A stub worker surviving the abort would hold a child process for the
+      // rest of the run: the pool outlives this file.
+      shutdownIsolatePool();
+    }
+
+    expect(outputs).toEqual([{ aborted: true }]);
+  });
+
+  it("serves sequential calls from one worker instead of filling the pool", async () => {
+    // What makes the pool safe to have on by default: core's pod budgets memory
+    // for one process, not for ISOLATE_WORKER_POOL_SIZE resident Node runtimes.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-count-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "counting-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n');",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      for (let call = 0; call < 3; call += 1) {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload("acct_count", {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+        expect(outputs).toEqual([{ ok: true }]);
+      }
+
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(1);
+    } finally {
+      shutdownIsolatePool();
+    }
+  });
+
+  it("queues past the pool cap instead of spawning past it", async () => {
+    // The cap is what keeps resident memory bounded, so concurrent demand above
+    // it has to wait for a worker rather than grow the pool or fail.
+    const dir = await mkdtemp(join(tmpdir(), "broods-pool-cap-"));
+    created.push(dir);
+    const marker = join(dir, "spawns.txt");
+    const stubPath = join(dir, "slow-runner.mjs");
+    await writeFile(
+      stubPath,
+      [
+        `import { appendFileSync } from "node:fs";`,
+        `appendFileSync(${JSON.stringify(marker)}, process.pid + "\\n");`,
+        "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
+        "let buffer = '';",
+        "process.stdin.setEncoding('utf8');",
+        "process.stdin.on('data', (chunk) => {",
+        "  buffer += chunk;",
+        "  let index;",
+        "  while ((index = buffer.indexOf('\\n')) >= 0) {",
+        "    const line = buffer.slice(0, index);",
+        "    buffer = buffer.slice(index + 1);",
+        "    if (!line.trim()) continue;",
+        "    const request = JSON.parse(line);",
+        "    setTimeout(() => process.stdout.write(JSON.stringify({ t: 'final', callId: request.callId, result: { ok: true } }) + '\\n'), 120);",
+        "  }",
+        "});",
+      ].join("\n"),
+      "utf8",
+    );
+    delete process.env.ISOLATE_POOL;
+    process.env.ISOLATE_WORKER_POOL_SIZE = "2";
+    process.env.ISOLATE_RUNNER_PATH = stubPath;
+
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
+    shutdownIsolatePool();
+    try {
+      const call = async (tenant: string): Promise<unknown[]> => {
+        const outputs: unknown[] = [];
+        for await (const output of streamIsolatePayload(tenant, {
+          bundleSourceB64: Buffer.from("export default {};").toString("base64"),
+          expectedSha256: sha256("export default {};"),
+          toolName: "stub",
+          input: {},
+          config: {},
+        })) {
+          outputs.push(output);
+        }
+
+        return outputs;
+      };
+      const results = await Promise.all(
+        ["a", "b", "c", "d", "e"].map((tenant) => call(`acct_${tenant}`)),
+      );
+
+      expect(results).toEqual(Array.from({ length: 5 }, () => [{ ok: true }]));
+      const spawned = (await readFile(marker, "utf8")).trim().split("\n");
+      expect(spawned).toHaveLength(2);
+    } finally {
+      delete process.env.ISOLATE_WORKER_POOL_SIZE;
+      shutdownIsolatePool();
+    }
   });
 });
 
@@ -626,6 +1002,8 @@ async function runRealRunner(
     env?: Record<string, string>;
     config?: Record<string, unknown>;
     toolCallId?: string;
+    messages?: unknown[];
+    experimentalContext?: unknown;
     abortAfterMs?: number;
   },
 ): Promise<{ frames: unknown[]; exitCode: number | null; stderr: string }> {
@@ -656,6 +1034,10 @@ async function runRealRunner(
       config: options.config ?? {},
       ...(options.toolCallId !== undefined
         ? { toolCallId: options.toolCallId }
+        : {}),
+      ...(options.messages !== undefined ? { messages: options.messages } : {}),
+      ...(options.experimentalContext !== undefined
+        ? { experimentalContext: options.experimentalContext }
         : {}),
     }) + "\n",
   );

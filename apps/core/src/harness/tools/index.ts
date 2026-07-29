@@ -14,6 +14,7 @@ import type { ToolSet } from "ai";
 import { isAccountToolId } from "../../shared/domain/account-tools.ts";
 import {
   isProviderToolName,
+  resolveSubagentMode,
   type AccountModelProviderName,
   type AgentConfig,
   type AgentToolConfig,
@@ -34,7 +35,7 @@ import type {
   SandboxExecutorConfig,
 } from "../sandbox/types.ts";
 import type { Session } from "../session.ts";
-import accountTool from "./account-tool.tool.ts";
+import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import editTool from "./edit.tool.ts";
@@ -202,7 +203,7 @@ export async function createTools(
       tools,
       runSubagentTool({
         dispatchSubagents: context.dispatchSubagents,
-        mode: agentConfig.subagent.mode,
+        mode: resolveSubagentMode(agentConfig),
       }),
     );
   }

@@ -1,7 +1,8 @@
 "use node";
 
 /**
- * Node-runtime S3 bundle writers for Convex config-plane resources.
+ * Node-runtime S3 bundle writers for Convex config-plane resources. Bundles
+ * arrive by storage id, never as an argument — see model/bundles.ts for why.
  */
 
 import { v } from "convex/values";
@@ -14,17 +15,17 @@ import { writeS3Object } from "./model/s3";
  * Store a custom tool bundle in the account tool bundles bucket.
  * @param accountId account id owning the tool
  * @param sha256 hex sha256 of the already-normalized bundle contents
- * @param bundle JavaScript module source to store
+ * @param storageId Convex storage id holding the JavaScript module source
  * @returns the S3 object key written
  */
 export const putToolBundle = internalAction({
   args: {
     accountId: v.id("accounts"),
     sha256: v.string(),
-    bundle: v.string(),
+    storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
     if (!bucket) {
       throw new Error(
@@ -33,7 +34,7 @@ export const putToolBundle = internalAction({
     }
 
     const key = accountToolBundleStorageKey(args.accountId, args.sha256);
-    await writeS3Object(bucket, key, args.bundle, {
+    await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
       contentType: "application/javascript",
       executable: false,
     });
@@ -46,17 +47,17 @@ export const putToolBundle = internalAction({
  * Store a code hook bundle in the account tool bundles bucket.
  * @param accountId account id owning the hook
  * @param sha256 hex sha256 of the already-normalized bundle contents
- * @param bundle JavaScript module source to store
+ * @param storageId Convex storage id holding the JavaScript module source
  * @returns the S3 object key written
  */
 export const putHookBundle = internalAction({
   args: {
     accountId: v.id("accounts"),
     sha256: v.string(),
-    bundle: v.string(),
+    storageId: v.id("_storage"),
   },
   returns: v.string(),
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
     if (!bucket) {
       throw new Error(
@@ -65,7 +66,7 @@ export const putHookBundle = internalAction({
     }
 
     const key = accountHookBundleStorageKey(args.accountId, args.sha256);
-    await writeS3Object(bucket, key, args.bundle, {
+    await writeS3Object(bucket, key, await bundleSource(ctx, args.storageId), {
       contentType: "application/javascript",
       executable: false,
     });
@@ -73,3 +74,13 @@ export const putHookBundle = internalAction({
     return key;
   },
 });
+
+async function bundleSource(
+  ctx: { storage: { get: (id: string) => Promise<Blob | null> } },
+  storageId: string,
+): Promise<string> {
+  const blob = await ctx.storage.get(storageId);
+  if (!blob) throw new Error("bundle is missing from Convex storage");
+
+  return await blob.text();
+}

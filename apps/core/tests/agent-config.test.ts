@@ -2,9 +2,53 @@ import { describe, expect, it } from "bun:test";
 import {
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
+  resolveSubagentMode,
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
+  it("defaults subagents to persistent and only opts out on explicit ephemeral", () => {
+    expect(resolveSubagentMode({})).toBe("persistent");
+    expect(resolveSubagentMode({ subagent: { enabled: true } })).toBe(
+      "persistent",
+    );
+    expect(resolveSubagentMode({ subagent: { mode: "persistent" } })).toBe(
+      "persistent",
+    );
+    expect(resolveSubagentMode({ subagent: { mode: "ephemeral" } })).toBe(
+      "ephemeral",
+    );
+  });
+
+  it("keeps subagent event streaming opt-in and validates the flag", () => {
+    expect(normalizeAgentConfig({ subagent: { enabled: true } })).toEqual({
+      subagent: { enabled: true },
+    });
+    expect(
+      normalizeAgentConfig({
+        subagent: { enabled: true, stream: true },
+      }),
+    ).toEqual({
+      subagent: { enabled: true, stream: true },
+    });
+    expect(
+      normalizeAgentConfigPatch({
+        subagent: { stream: true },
+      }),
+    ).toEqual({
+      subagent: { stream: true },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        subagent: { stream: "yes" },
+      }),
+    ).toThrow("config.subagent.stream must be a boolean");
+    expect(() =>
+      normalizeAgentConfigPatch({
+        subagent: { stream: "yes" },
+      }),
+    ).toThrow("config.subagent.stream must be a boolean");
+  });
+
   it("uses one non-empty string-array policy for config and patches", () => {
     expect(() => normalizeAgentConfig({ skills: { allowed: [""] } })).toThrow(
       "config.skills.allowed must be an array of non-empty strings",

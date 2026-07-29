@@ -88,7 +88,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           # Reconcile each stage against ITS branch (see matrix `ref` above):
           # dev←dev, production-*←main. Never deploy dev's HEAD to production.
@@ -100,7 +100,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c
         with:
           aws-region: ${{ matrix.region }}
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload drift plan
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: drift-plan-${{ matrix.stage }}
           path: /tmp/drift-${{ matrix.stage }}/*.log

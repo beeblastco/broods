@@ -5,9 +5,16 @@ Small runnable examples for the declarative `broods` SDK and deployed service.
 Run demos from their own folder:
 
 ```bash
+bun run --filter broods build   # from the repo root, once
+bun install                     # in the demo folder
 bun run dev
 bun run start
 ```
+
+Each demo depends on `broods` as `file:../../broods`, whose entrypoint is
+`dist/`. Installing before that build produces a linked package with no
+entrypoint and `Cannot find package 'broods'` at runtime — build first, and
+re-run `bun install` in the demo if you built afterwards.
 
 Use `.env.local` for local runtime settings. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
@@ -42,7 +49,7 @@ to `gateway.broods.app`), so this swaps only the base URL — see
 - `cron`: create a scheduled agent run with the SDK cron helper.
 - `websocket`: stream a deployed endpoint and steer its active run with a correlated control message.
 - `channel-telegram`, `channel-github`, `channel-slack`, `channel-discord`, `channel-pancake`, `channel-zalo`: declare provider channels and receive generated webhook URLs.
-- `tool-custom-stream`: upload and stream an isolated custom tool.
+- `tool-custom-stream`: upload an async-generator custom tool and receive its final yield.
 - `tool-custom-async-sse`: upload a detached asynchronous custom tool.
 - `policy-enforcement-lambda`: compare OPA policy `audit` vs `enforce` behavior against the AWS Lambda MicroVM sandbox using Bedrock MiniMax.
 

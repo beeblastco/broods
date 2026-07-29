@@ -30,6 +30,10 @@ export type SandboxInstanceStatus =
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
  * it live. No-op outside convex mode or when the config carries no control-plane
  * identity (synthetic/stateless configs). Idempotent — safe on reconnect.
+ *
+ * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
+ * it is flagged uncontrollable for the dashboard and skips the audit event a real
+ * reservation writes (one per bash call would drown the sandbox's own history).
  */
 export async function upsertSandboxInstance(
   controlPlane: SandboxControlPlane | undefined,
@@ -37,6 +41,7 @@ export async function upsertSandboxInstance(
   reservationKey: string,
   externalId: string,
   metadata?: SandboxRunMetadata,
+  options?: { ephemeral?: boolean },
 ): Promise<void> {
   if (!controlPlane || !convexEnabled()) return;
   try {
@@ -80,7 +85,9 @@ export async function upsertSandboxInstance(
         ? { workspaceName: metadata.workspaceName }
         : {}),
       ...(metadata?.workspaceId ? { workspaceId: metadata.workspaceId } : {}),
+      ...(options?.ephemeral ? { ephemeral: true } : {}),
     });
+    if (options?.ephemeral) return;
     await recordSandboxAuditEvent({
       accountId: controlPlane.accountId,
       ...(controlPlane.sandboxConfigId

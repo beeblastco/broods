@@ -170,10 +170,8 @@ import { defineWorkspace } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    isolation: true,
-  },
+  storage: { provider: "s3" },
+  isolation: true,
 });
 ```
 

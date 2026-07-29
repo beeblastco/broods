@@ -260,7 +260,10 @@ export class BroodsAccountClient {
       throw new Error(
         "BroodsAccountClient requires an accountSecret (or BROODS_ACCOUNT_SECRET).",
       );
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    let baseUrlEnd = baseUrl.length;
+    while (baseUrlEnd > 0 && baseUrl.charCodeAt(baseUrlEnd - 1) === 47)
+      baseUrlEnd -= 1;
+    this.baseUrl = baseUrl.slice(0, baseUrlEnd);
     this.accountSecret = accountSecret;
     this.fetchImpl = options.fetch ?? fetch;
   }

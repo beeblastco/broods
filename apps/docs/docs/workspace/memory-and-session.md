@@ -79,17 +79,13 @@ import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    sandbox: lambdaSandbox,
-    workspaces: [notes],
-  },
+  sandbox: lambdaSandbox,
+  workspaces: [notes],
 });
 ```
 
@@ -101,35 +97,31 @@ import { defineWorkspace, defineAgent, defineSandbox } from "broods";
 
 export const personal = defineWorkspace({
   name: "personal",
-  config: { storage: { provider: "s3" } },
+  storage: { provider: "s3" },
 });
 export const team = defineWorkspace({
   name: "team",
-  config: { storage: { provider: "s3" } },
+  storage: { provider: "s3" },
 });
 export const docs = defineWorkspace({
   name: "docs",
-  config: { storage: { provider: "s3" } },
+  storage: { provider: "s3" },
 });
 export const lockedDown = defineSandbox({
   name: "locked-down",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "ask",
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "ask",
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    sandbox: lambdaSandbox,
-    workspaces: [
-      personal, // inherit agent sandbox
-      { workspace: team, sandbox: lockedDown }, // per-workspace override
-      { workspace: docs, sandbox: null }, // read-only S3 access
-    ],
-  },
+  sandbox: lambdaSandbox,
+  workspaces: [
+    personal, // inherit agent sandbox
+    { workspace: team, sandbox: lockedDown }, // per-workspace override
+    { workspace: docs, sandbox: null }, // read-only S3 access
+  ],
 });
 ```
 
@@ -173,9 +165,7 @@ import { defineWorkspace } from "broods";
 // `enabled: true` is redundant and normalizes away to this same form.
 export const notes = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 ```
 
@@ -184,10 +174,8 @@ Opt out of memory entirely (no `memory_save`, no `<memory>` guidance, and the in
 ```ts
 export const notesNoMemory = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { memory: { enabled: false } },
-  },
+  storage: { provider: "s3" },
+  harness: { memory: { enabled: false } },
 });
 ```
 
@@ -196,10 +184,8 @@ Suppress only the workspace guidance prompt while keeping structured memory:
 ```ts
 export const notesBare = defineWorkspace({
   name: "notes",
-  config: {
-    storage: { provider: "s3" },
-    harness: { workspace: { enabled: false } },
-  },
+  storage: { provider: "s3" },
+  harness: { workspace: { enabled: false } },
 });
 ```
 

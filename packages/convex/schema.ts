@@ -451,6 +451,13 @@ export const sandboxInstancesFields = {
   workspaceId: v.optional(v.string()),
   suspendedAt: v.optional(v.number()),
   terminatedAt: v.optional(v.number()),
+  /**
+   * Set for a create-and-destroy instance that only exists for the length of one
+   * call (its `reservationKey` is the provider id, not a reconnect key). It is shown
+   * so live compute is visible, but nothing can suspend/resume/terminate it — broods
+   * drops the row itself when the call ends.
+   */
+  ephemeral: v.optional(v.boolean()),
 };
 
 /**
@@ -966,10 +973,10 @@ export const taskUsageFields = {
   runtimeMemoryMb: v.number(),
   /**
    * CPU consumed in sandboxes during the task, one entry per sandbox context:
-   * the agent's own sandbox (role "agent") and any per-tool sandbox (role
-   * "tool"), tagged by provider `type` ("sandbox", "lambda", …). cpuUsec is
-   * recorded for the self-hosted providers (sandbox via the workdir exec report,
-   * lambda via the MicroVM image's getrusage report); others store 0.
+   * the agent's own sandbox (role "agent") and the uploaded-tool runner (role
+   * "tool"), tagged by compute `type` ("sandbox", "lambda", "custom-tool-sandbox").
+   * cpuUsec comes from the workdir exec report, the MicroVM getrusage report, and
+   * the tool child's own cpuUsage respectively; others store 0.
    */
   sandboxUsage: v.array(
     v.object({

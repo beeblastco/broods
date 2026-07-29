@@ -110,7 +110,10 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
   const [commandPending, setCommandPending] = useState(false);
   const [terminalEntries, setTerminalEntries] = useState<TerminalEntry[]>([]);
 
-  const controllable = Boolean(instance.sandboxConfigId);
+  // An ephemeral instance lives only for the call that created it, so broods has
+  // already dropped it by the time an action here could reach the provider.
+  const controllable =
+    Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
   const commandRunnable = controllable && instance.status !== "terminating";
   // The self-hosted workdir `sandbox` provider exposes an in-guest PTY WebSocket
   // and AWS MicroVM (`lambda`) exposes its native shell endpoint; the third-party
@@ -453,14 +456,17 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
 
             {!controllable && (
               <p className="mt-3 text-xs text-muted-foreground">
-                This instance predates the config link, so it can be viewed but
-                not controlled here.
+                {instance.ephemeral
+                  ? "This instance exists only for the call that created it, so it can be watched but not controlled here. Make the sandbox persistent to reserve one you can suspend, resume, and shell into."
+                  : "This instance predates the config link, so it can be viewed but not controlled here."}
               </p>
             )}
           </TabsContent>
 
           <TabsContent value="terminal" className="mt-4">
-            {supportsLiveTerminal && instance.sandboxConfigId ? (
+            {supportsLiveTerminal &&
+            controllable &&
+            instance.sandboxConfigId ? (
               <LiveSandboxTerminal
                 sandboxId={instance.sandboxConfigId}
                 reservationKey={instance.reservationKey}

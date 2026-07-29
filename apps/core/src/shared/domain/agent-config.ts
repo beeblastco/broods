@@ -175,6 +175,11 @@ export interface AgentSubagentConfig {
   context?: "new" | "inherited";
   mode?: "ephemeral" | "persistent";
   /**
+   * Publishes child reasoning, text, and tool stream parts to the existing
+   * WebSocket/JetStream response path. Off by default.
+   */
+  stream?: boolean;
+  /**
    * Controls what the parent agent sees from a finished subagent (AI SDK
    * "controlling what the model sees"): `full` = the child's whole transcript,
    * `result` = only its final result (default), `none` = nothing. A
@@ -347,11 +352,47 @@ export type AgentChannelWorkspaceScope =
   | { level: "channel"; alias?: never }
   | { level: "conversation"; alias: string };
 
+// The adapter credential fields are spelled out rather than indexed off the
+// adapter configs so the published SDK types resolve without those packages;
+// ChannelCredentialDrift below fails the build if an upstream shape moves.
+type Exactly<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
+    ? true
+    : false;
+
+type AssertAllExact<T extends readonly true[]> = T;
+
+type ChannelCredentialDrift = AssertAllExact<
+  [
+    Exactly<TelegramAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<TelegramAdapterConfig["botToken"], string | undefined>,
+    Exactly<TelegramAdapterConfig["secretToken"], string | undefined>,
+    Exactly<
+      Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"],
+      string | undefined
+    >,
+    Exactly<
+      Extract<GitHubAdapterConfig, { appId: string }>["webhookSecret"],
+      string | undefined
+    >,
+    Exactly<Extract<GitHubAdapterConfig, { appId: string }>["appId"], string>,
+    Exactly<
+      Extract<GitHubAdapterConfig, { appId: string }>["privateKey"],
+      string
+    >,
+    Exactly<SlackAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<SlackAdapterConfig["signingSecret"], string | undefined>,
+    Exactly<DiscordAdapterConfig["apiUrl"], string | undefined>,
+    Exactly<DiscordAdapterConfig["botToken"], string | undefined>,
+    Exactly<DiscordAdapterConfig["publicKey"], string | undefined>,
+  ]
+>;
+
 export interface AgentTelegramChannelConfig {
   id?: string;
-  apiUrl?: TelegramAdapterConfig["apiUrl"];
-  botToken?: TelegramAdapterConfig["botToken"];
-  webhookSecret?: TelegramAdapterConfig["secretToken"];
+  apiUrl?: string;
+  botToken?: string;
+  webhookSecret?: string;
   allowedChatIds?: number[];
   reactionEmoji?: string;
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -360,13 +401,10 @@ export interface AgentTelegramChannelConfig {
 
 export interface AgentGitHubChannelConfig {
   id?: string;
-  apiUrl?: Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"];
-  webhookSecret?: Extract<
-    GitHubAdapterConfig,
-    { appId: string }
-  >["webhookSecret"];
-  appId?: Extract<GitHubAdapterConfig, { appId: string }>["appId"];
-  privateKey?: Extract<GitHubAdapterConfig, { appId: string }>["privateKey"];
+  apiUrl?: string;
+  webhookSecret?: string;
+  appId?: string;
+  privateKey?: string;
   allowedRepos?: string[];
   /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
   userName?: string;
@@ -382,9 +420,9 @@ export interface AgentGitHubChannelConfig {
 
 export interface AgentSlackChannelConfig {
   id?: string;
-  apiUrl?: SlackAdapterConfig["apiUrl"];
+  apiUrl?: string;
   botToken?: string;
-  signingSecret?: SlackAdapterConfig["signingSecret"];
+  signingSecret?: string;
   allowedChannelIds?: string[];
   reactionEmoji?: string;
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -393,9 +431,9 @@ export interface AgentSlackChannelConfig {
 
 export interface AgentDiscordChannelConfig {
   id?: string;
-  apiUrl?: DiscordAdapterConfig["apiUrl"];
-  botToken?: DiscordAdapterConfig["botToken"];
-  publicKey?: DiscordAdapterConfig["publicKey"];
+  apiUrl?: string;
+  botToken?: string;
+  publicKey?: string;
   allowedGuildIds?: string[];
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
@@ -487,6 +525,14 @@ export function isProviderToolName(toolName: string): boolean {
     !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
     !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
   );
+}
+
+// Persistent is the default so a child owns a durable conversation that can be
+// resumed and controlled; only an explicit "ephemeral" opts out.
+export function resolveSubagentMode(
+  config: AgentConfig,
+): "ephemeral" | "persistent" {
+  return config.subagent?.mode === "ephemeral" ? "ephemeral" : "persistent";
 }
 
 export function normalizeAgentConfig(value: unknown): AgentConfig {
@@ -1025,6 +1071,7 @@ function normalizeSubagentConfig(value: unknown): void {
     "ephemeral",
     "persistent",
   ]);
+  assertOptionalBoolean(config.stream, "config.subagent.stream");
   assertOptionalEnum(config.visibility, "config.subagent.visibility", [
     "full",
     "result",

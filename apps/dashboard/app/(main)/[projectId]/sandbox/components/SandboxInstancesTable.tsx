@@ -113,7 +113,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
   );
   const hasFilters = search.trim() !== "" || status !== "all";
   const refreshKey = pageRows
-    .filter((instance) => instance.sandboxConfigId)
+    .filter(controllable)
     .map((instance) => `${instance.sandboxConfigId}:${instance.reservationKey}`)
     .join("|");
 
@@ -123,7 +123,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
     instance: Doc<"sandboxInstances">,
     nextRunning: boolean,
   ) {
-    if (!instance.sandboxConfigId) return;
+    if (!controllable(instance)) return;
     setPendingId(instance._id);
     setError(null);
     try {
@@ -141,7 +141,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
   }
 
   async function refreshVisible() {
-    const targets = pageRows.filter((instance) => instance.sandboxConfigId);
+    const targets = pageRows.filter(controllable);
     if (targets.length === 0) return;
     setRefreshing(true);
     setError(null);
@@ -149,7 +149,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
       await Promise.all(
         targets.map((instance) =>
           refresh({
-            sandboxId: instance.sandboxConfigId!,
+            sandboxId: instance.sandboxConfigId,
             reservationKey: instance.reservationKey,
           }),
         ),
@@ -194,8 +194,8 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
       <div className="rounded-lg border border-border bg-card px-4 py-10 text-center">
         <p className="text-sm text-foreground">No running sandbox instances.</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Reserve a persistent sandbox from an agent run and it appears here
-          live.
+          Run an agent against a sandbox and it appears here live — per-call
+          instances for the length of the call, reserved ones until suspended.
         </p>
       </div>
     );
@@ -241,10 +241,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
           variant="outline"
           size="sm"
           onClick={refreshVisible}
-          disabled={
-            refreshing ||
-            pageRows.every((instance) => !instance.sandboxConfigId)
-          }
+          disabled={refreshing || !pageRows.some(controllable)}
           className="cursor-pointer disabled:cursor-not-allowed"
         >
           <RefreshCw
@@ -291,7 +288,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
             {pageRows.map((instance) => {
               const running = instance.status === "running";
               const toggleable =
-                Boolean(instance.sandboxConfigId) &&
+                controllable(instance) &&
                 (instance.status === "running" ||
                   instance.status === "suspended") &&
                 pendingId !== instance._id;
@@ -310,7 +307,11 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
                       {instance.externalId}
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 text-xs">{instance.provider}</td>
+                  <td className="px-4 py-2.5 text-xs">
+                    {instance.ephemeral
+                      ? `${instance.provider} · per-call`
+                      : instance.provider}
+                  </td>
                   <td className="px-4 py-2.5">
                     {instanceStatusBadge(instance.status)}
                   </td>
@@ -420,10 +421,10 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
 
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
 
-      {!instances.some((i) => i.sandboxConfigId) && (
+      {!instances.some(controllable) && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Instances reserved before the registry linked their config can be
-          viewed but not controlled here.
+          Per-call instances, and instances reserved before the registry linked
+          their config, can be viewed but not controlled here.
         </p>
       )}
 
@@ -474,4 +475,13 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
       )}
     </>
   );
+}
+
+/** Lifecycle actions apply only to reserved, non-ephemeral instances. */
+function controllable(
+  instance: Doc<"sandboxInstances">,
+): instance is Doc<"sandboxInstances"> & {
+  sandboxConfigId: Id<"sandboxConfigs">;
+} {
+  return Boolean(instance.sandboxConfigId) && instance.ephemeral !== true;
 }

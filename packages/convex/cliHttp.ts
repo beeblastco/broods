@@ -11,6 +11,7 @@ import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
+import { putHookBundle, putToolBundle } from "./model/bundles";
 
 type RouteParts =
   | { kind: "manifest"; project: string; environment: string }
@@ -45,6 +46,11 @@ type DesiredCron = Omit<CronResponse, "cronId"> & {
 export const handle = httpAction(async (ctx, req) => {
   try {
     const auth = await bearerAuth(req);
+    if (!auth) {
+
+      return json({ error: "Authorization Bearer token is required" }, 401);
+    }
+
     const route = parseRoute(new URL(req.url).pathname);
     if (!route) return json({ error: "Not found" }, 404);
 
@@ -314,13 +320,13 @@ export const handle = httpAction(async (ctx, req) => {
 
     return json({ error: "Method not allowed" }, 405);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const status =
-      message.includes("Authorization") || message.includes("token")
-        ? 401
-        : 400;
+    console.error("CLI request failed", error);
+    if (error instanceof SyntaxError || error instanceof URIError) {
 
-    return json({ error: message }, status);
+      return json({ error: "Request body or path is invalid" }, 400);
+    }
+
+    return json({ error: "CLI request failed" }, 500);
   }
 });
 
@@ -510,13 +516,15 @@ function base64ArrayBuffer(value: string): ArrayBuffer {
 
 async function bearerAuth(
   req: Request,
-): Promise<{ token: string; secretHash: string }> {
+): Promise<{ secretHash: string } | null> {
   const header = req.headers.get("Authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
-  if (!match?.[1]) throw new Error("Authorization Bearer token is required");
+  if (!match?.[1]) {
+
+    return null;
+  }
 
   return {
-    token: match[1],
     secretHash: await sha256Hex(match[1]),
   };
 }
@@ -650,7 +658,7 @@ async function syncToolResources(
     const bundleStorageKey =
       current?.sha256 === upload.sha256
         ? current.bundleStorageKey
-        : await ctx.runAction(internal.awsBundles.putToolBundle, {
+        : await putToolBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,
@@ -742,7 +750,7 @@ async function syncHookResources(
     const bundleStorageKey =
       current?.sha256 === upload.sha256
         ? current.bundleStorageKey
-        : await ctx.runAction(internal.awsBundles.putHookBundle, {
+        : await putHookBundle(ctx, {
             accountId: accountId,
             sha256: upload.sha256,
             bundle: upload.bundle,

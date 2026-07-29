@@ -2,76 +2,64 @@ import { defineAgent, defineSandbox, defineWorkspace, env } from "broods";
 
 export const defaultSandbox = defineSandbox({
   name: "default-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  timeout: 60,
 });
 
 export const secureSandbox = defineSandbox({
   name: "secure-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "deny-all" },
-    permissionMode: "bypass",
-    timeout: 60,
-  },
+  provider: "lambda",
+  network: { mode: "deny-all" },
+  permissionMode: "bypass",
+  timeout: 60,
 });
 
 export const scratchWorkspace = defineWorkspace({
   name: "scratch",
   description: "Inherits the agent default sandbox",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const secureWorkspace = defineWorkspace({
   name: "secure",
   description: "Pinned to the deny-all network sandbox",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const referenceWorkspace = defineWorkspace({
   name: "reference",
   description: "Forced read-only via sandbox: null",
-  config: {
-    storage: { provider: "s3" },
-  },
+  storage: { provider: "s3" },
 });
 
 export const overrideAgent = defineAgent({
   name: "override-agent",
-  config: {
-    provider: {
-      custom: {
-        apiKey: env.AI_API_KEY,
-        base_url: env.AI_BASE_URL,
-      },
+  provider: {
+    custom: {
+      apiKey: env("AI_API_KEY"),
+      base_url: env("AI_BASE_URL"),
     },
-    model: {
-      provider: "custom",
-      modelId: "Qwen3.6-27B",
-    },
-    agent: {
-      system: [
-        "You have three workspaces with different sandbox bindings.",
-        "scratch: full read/write via the default sandbox.",
-        "secure: full read/write via a deny-all network sandbox.",
-        "reference: read-only (read/glob only) — write/edit are not available there.",
-        "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
-      ].join("\n"),
-    },
-    sandbox: defaultSandbox,
-    workspaces: [
-      { workspace: scratchWorkspace },
-      { workspace: secureWorkspace, sandbox: secureSandbox },
-      { workspace: referenceWorkspace, sandbox: null },
-    ],
-    publicAccess: true,
   },
+  model: {
+    provider: "custom",
+    modelId: "Qwen3.6-27B",
+  },
+  agent: {
+    system: [
+      "You have three workspaces with different sandbox bindings.",
+      "scratch: full read/write via the default sandbox.",
+      "secure: full read/write via a deny-all network sandbox.",
+      "reference: read-only (read/glob only) — write/edit are not available there.",
+      "Always pass the matching `workspace` name to each file tool. Report errors verbatim.",
+    ].join("\n"),
+  },
+  sandbox: defaultSandbox,
+  workspaces: [
+    { workspace: scratchWorkspace },
+    { workspace: secureWorkspace, sandbox: secureSandbox },
+    { workspace: referenceWorkspace, sandbox: null },
+  ],
+  publicAccess: true,
 });

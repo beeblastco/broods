@@ -55,78 +55,70 @@ export const github = defineGitHubChannel({
 
 export const hubSpotSkill = defineSkill({
   name: "hubspot",
-  config: {
-    path: "./skills/hubspot",
-  },
+  path: "./skills/hubspot",
 });
 
 export const sandbox = defineSandbox({
   name: "lambda-sandbox",
-  config: {
-    provider: "lambda",
-    network: { mode: "allow-all" },
-    permissionMode: "bypass",
-    persistent: true,
-    lifecycle: {
-      idleTimeoutSeconds: 900,
-      maxLifetimeSeconds: 3600,
-    },
-    onCreate: [setupGitDevEnvironment],
-    onResume: [setupGitDevEnvironment],
-    envVars: {
-      HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
-      HUBSPOT_BASE_URL: "https://api.hubapi.com",
-      GITHUB_APP_ID: env("GITHUB_APP_ID"),
-      GITHUB_PRIVATE_KEY: env("GITHUB_PRIVATE_KEY"),
-      GITHUB_API_URL: "https://api.github.com",
-      GITHUB_GIT_USER_NAME: githubGitUserName,
-      GITHUB_GIT_USER_EMAIL: githubGitUserEmail,
-      GIT_TERMINAL_PROMPT: "0",
-      ...optionalSandboxGithubEnv,
-    },
+  provider: "lambda",
+  network: { mode: "allow-all" },
+  permissionMode: "bypass",
+  persistent: true,
+  lifecycle: {
+    idleTimeoutSeconds: 900,
+    maxLifetimeSeconds: 3600,
+  },
+  onCreate: [setupGitDevEnvironment],
+  onResume: [setupGitDevEnvironment],
+  envVars: {
+    HUBSPOT_API_TOKEN: env("HUBSPOT_API_TOKEN"),
+    HUBSPOT_BASE_URL: "https://api.hubapi.com",
+    GITHUB_APP_ID: env("GITHUB_APP_ID"),
+    GITHUB_PRIVATE_KEY: env("GITHUB_PRIVATE_KEY"),
+    GITHUB_API_URL: "https://api.github.com",
+    GITHUB_GIT_USER_NAME: githubGitUserName,
+    GITHUB_GIT_USER_EMAIL: githubGitUserEmail,
+    GIT_TERMINAL_PROMPT: "0",
+    ...optionalSandboxGithubEnv,
   },
 });
 
 export const workspace = defineWorkspace({
   name: "workspace",
-  config: {
-    storage: { provider: "s3" },
-    isolation: true,
-  },
+  storage: { provider: "s3" },
+  isolation: true,
 });
 
 export const agent = defineAgent({
   name: "slack-channel-agent",
-  config: {
-    provider: {
+  provider: {
+    bedrock: {
+      region: "us-east-1",
+      apiKey: env("BEDROCK_API_KEY"),
+    },
+  },
+  model: {
+    provider: "bedrock",
+    modelId: "minimax.minimax-m2.5",
+    providerOptions: {
       bedrock: {
-        region: "us-east-1",
-        apiKey: env("BEDROCK_API_KEY"),
+        reasoningConfig: { type: "enabled", budgetTokens: 16000 },
       },
     },
-    model: {
-      provider: "bedrock",
-      modelId: "minimax.minimax-m2.5",
-      providerOptions: {
-        bedrock: {
-          reasoningConfig: { type: "enabled", budgetTokens: 16000 },
-        },
-      },
-    },
-    agent: {
-      system: instructions,
-      maxTurn: 100,
-    },
-    channels: [slack, telegram, github],
-    sandbox: sandbox,
-    workspaces: [workspace],
-    subagent: {
-      enabled: true,
-    },
-    publicAccess: true,
-    skills: {
-      enabled: true,
-      allowed: [hubSpotSkill],
-    },
+  },
+  agent: {
+    system: instructions,
+    maxTurn: 100,
+  },
+  channels: [slack, telegram, github],
+  sandbox: sandbox,
+  workspaces: [workspace],
+  subagent: {
+    enabled: true,
+  },
+  publicAccess: true,
+  skills: {
+    enabled: true,
+    allowed: [hubSpotSkill],
   },
 });

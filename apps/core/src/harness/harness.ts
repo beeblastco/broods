@@ -80,12 +80,15 @@ import {
   type Session,
   type TurnContextSnapshot,
 } from "./session.ts";
+import { wrapToolsWithOwnerFence } from "./tool-execute.ts";
 import { createTools } from "./tools/index.ts";
 import type { RunSubagentDispatch } from "./tools/run-subagent.tool.ts";
 import { extractCacheWriteTokens, usageTokenTotals } from "./usage-metering.ts";
 
 // Default max agent iterations to prevent looping or too long execution.
 const MAX_AGENT_ITERATIONS = 30;
+/** Thrown when an owner is stopped; callers match on it to skip result delivery. */
+export const USER_STOP_MESSAGE = "Stopped by user at the model boundary";
 // Per-attribute cap on serialized trace payloads. Generous so reasoning / tool
 // I/O show in full on the dashboard (delivered full-fidelity over the live
 // JetStream path); still well under the NATS 1MB max-payload ceiling. Tempo may
@@ -105,28 +108,6 @@ type TrackedSpan = {
   startTimeMs: number;
   attributes: Record<string, string | number | boolean>;
 };
-
-/** Revalidates the fencing token immediately before any executable tool starts. */
-function wrapToolsWithOwnerFence(tools: ToolSet, session: Session): ToolSet {
-  const wrapped: ToolSet = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    const originalExecute = tool.execute;
-    if (typeof originalExecute !== "function") {
-      wrapped[name] = tool;
-      continue;
-    }
-    wrapped[name] = {
-      ...tool,
-      execute: async (input: unknown, options: unknown) => {
-        await session.assertCurrentOwner?.();
-        return (
-          originalExecute as (value: unknown, execution: unknown) => unknown
-        )(input, options);
-      },
-    } as ToolSet[string];
-  }
-  return wrapped;
-}
 
 /** Publish a span update to the live traces subject. Best-effort, non-blocking. */
 // Returns once the span's bytes have been handed to the NATS client; callers that
@@ -225,8 +206,23 @@ export async function runAgentLoop(
   // Accumulate sandbox CPU per (type, role, tool); each bucket becomes one
   // sandboxUsage row at finalize. CPU only arrives for sandbox/lambda execs.
   const sandboxUsageByKey = new Map<string, SandboxCpuSample>();
+  // Per-call compute, so the tool.call span can report what that one call cost.
+  // Keyed by call id and consumed once the span closes; usage rows stay aggregated.
+  const toolComputeByCallId = new Map<
+    string,
+    { type: string; cpuUsec: number }
+  >();
   const recordSandboxCpu = (sample: SandboxCpuSample): void => {
     if (!(sample.cpuUsec > 0)) return;
+    if (sample.role === "tool" && sample.toolCallId !== undefined) {
+      const call = toolComputeByCallId.get(sample.toolCallId);
+      if (call) call.cpuUsec += sample.cpuUsec;
+      else
+        toolComputeByCallId.set(sample.toolCallId, {
+          type: sample.type,
+          cpuUsec: sample.cpuUsec,
+        });
+    }
     const key = `${sample.type}|${sample.role}|${sample.toolName ?? ""}`;
     const existing = sandboxUsageByKey.get(key);
     if (existing) {
@@ -816,7 +812,7 @@ export async function runAgentLoop(
     prepareStep: async ({ messages }) => {
       const renewal = await session.renewConversationLease();
       if (renewal === "stopped") {
-        throw new Error("Stopped by user at the model boundary");
+        throw new Error(USER_STOP_MESSAGE);
       }
       if (renewal === "stale") {
         throw new Error(
@@ -977,18 +973,24 @@ export async function runAgentLoop(
     onToolExecutionEnd: async ({ toolCall, toolExecutionMs, toolOutput }) => {
       const stepNumber = toolStepNumbers.get(toolCall.toolCallId);
       toolStepNumbers.delete(toolCall.toolCallId);
-      const durationMs = toolExecutionMs;
       const output =
         toolOutput.type === "tool-result" ? toolOutput.output : undefined;
       const error =
         toolOutput.type === "tool-error" ? toolOutput.error : undefined;
-      // Close the tool.call span.
+      // Normalize the SDK's duration once, here: it is used as a timestamp and
+      // reported on every surface, so a NaN or negative one must not get through.
       const toolEndMs = Date.now();
+      const openSpan = toolSpans.get(toolCall.toolCallId);
+      const toolDurationMs = toolSpanDurationMs(
+        openSpan?.startTimeMs ?? toolEndMs,
+        toolEndMs,
+        toolExecutionMs,
+      );
       const tracked =
-        toolSpans.get(toolCall.toolCallId) ??
+        openSpan ??
         startTrackedSpan(
           "tool.call",
-          toolEndMs - (durationMs ?? 0),
+          toolEndMs - toolDurationMs,
           rootOtelContext,
           rootSpanId,
           {
@@ -996,7 +998,7 @@ export async function runAgentLoop(
             "tool.call_id": toolCall.toolCallId,
           },
         );
-      const toolDurationMs = toolEndMs - tracked.startTimeMs;
+      const toolSpanEndMs = tracked.startTimeMs + toolDurationMs;
       const outputErrorText = toolOutputErrorText(output);
       const toolSucceeded =
         toolOutput.type === "tool-result" && !outputErrorText;
@@ -1006,11 +1008,22 @@ export async function runAgentLoop(
             outputErrorText ?? errorMessage(error),
             getObservabilityContext()?.secretValues,
           );
+      // Compute is present only for tools that ran off-process, so the pair also
+      // tells a reader which runtime served the call.
+      const compute = toolComputeByCallId.get(toolCall.toolCallId);
+      toolComputeByCallId.delete(toolCall.toolCallId);
+      const computeAttributes = compute
+        ? {
+            "tool.compute.type": compute.type,
+            "tool.compute.cpu_usec": compute.cpuUsec,
+          }
+        : {};
       tracked.otelSpan.setAttributes({
         "tool.duration_ms": toolDurationMs,
         "tool.success": toolSucceeded,
         "tool.state": toolSucceeded ? "completed" : "failed",
         "tool.input": traceAttribute(toolCall.input),
+        ...computeAttributes,
         ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
       });
       if (toolSucceeded) {
@@ -1023,7 +1036,7 @@ export async function runAgentLoop(
           message: errorText,
         });
       }
-      tracked.otelSpan.end(toolEndMs);
+      tracked.otelSpan.end(toolSpanEndMs);
       const toolSpanRow: ObservabilitySpanRow = {
         traceId: tracked.traceId,
         spanId: tracked.spanId,
@@ -1031,7 +1044,7 @@ export async function runAgentLoop(
         name: "tool.call",
         kind: "tool.call",
         startTimeMs: tracked.startTimeMs,
-        endTimeMs: toolEndMs,
+        endTimeMs: toolSpanEndMs,
         durationMs: toolDurationMs,
         status: toolSucceeded ? "ok" : "error",
         endpointId: session.endpointId,
@@ -1042,6 +1055,7 @@ export async function runAgentLoop(
           "tool.call_id": toolCall.toolCallId,
           "tool.state": toolSucceeded ? "completed" : "failed",
           "tool.input": traceAttribute(toolCall.input),
+          ...computeAttributes,
           ...(toolSucceeded ? { "tool.output": traceAttribute(output) } : {}),
           ...(stepNumber !== undefined
             ? { "agent.step_number": stepNumber }
@@ -1052,15 +1066,17 @@ export async function runAgentLoop(
       publishSpan(toolSpanRow);
       toolSpans.delete(toolCall.toolCallId);
 
+      // Every surface quotes the same normalized number the span does, so a
+      // trace and its event log can never disagree about how long a tool took.
       recordToolCallSummary(toolCallSummaries, toolCall, {
         stepNumber,
-        durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
       });
       await lifecycle.emit("tool.call.finished", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
         success: toolSucceeded,
         ...(toolSucceeded ? {} : { error: errorText ?? errorMessage(error) }),
       });
@@ -1070,19 +1086,19 @@ export async function runAgentLoop(
         stepNumber: stepNumber,
         toolName: toolCall.toolName,
         toolCallId: toolCall.toolCallId,
-        durationMs: durationMs,
+        durationMs: toolDurationMs,
       };
 
       if (toolSucceeded) {
         logInfo(
-          `Tool call finished: ${toolCall.toolName} in ${formatDuration(durationMs)}`,
+          `Tool call finished: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}`,
           details,
         );
         return;
       }
 
       logError(
-        `Tool call failed: ${toolCall.toolName} in ${formatDuration(durationMs)}${errorText ? `: ${errorText}` : ""}`,
+        `Tool call failed: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}${errorText ? `: ${errorText}` : ""}`,
         {
           ...details,
           error: errorText ?? errorMessage(error),
@@ -1639,6 +1655,20 @@ function formatDuration(durationMs: number | undefined): string {
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
+}
+
+// The SDK measures execute() directly, so it wins; the handler clock is only a
+// fallback, and it overstates parallel calls by the model's own time.
+export function toolSpanDurationMs(
+  startTimeMs: number,
+  handlerNowMs: number,
+  toolExecutionMs: number | undefined,
+): number {
+  if (typeof toolExecutionMs === "number" && Number.isFinite(toolExecutionMs)) {
+    return Math.max(0, toolExecutionMs);
+  }
+
+  return Math.max(0, handlerNowMs - startTimeMs);
 }
 
 function toolOutputErrorText(output: unknown): string | undefined {

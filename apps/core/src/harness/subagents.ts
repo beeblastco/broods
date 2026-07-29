@@ -9,11 +9,16 @@ import type {
   SystemModelMessage,
   UserModelMessage,
 } from "ai";
-import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  resolveSubagentMode,
+  type AgentConfig,
+} from "../shared/domain/agent-config.ts";
 import type { AgentRecord } from "../shared/domain/agents.ts";
 import { logError, logInfo } from "../shared/log.ts";
+import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { getObservabilityContext } from "../shared/otel.ts";
 import {
+  createSubagentTaskId,
   scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
@@ -23,15 +28,22 @@ import {
   markAsyncAgentResultCompleted,
   markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
-import { runAgentLoop, type SubagentParentContext } from "./harness.ts";
+import {
+  runAgentLoop,
+  USER_STOP_MESSAGE,
+  type SubagentParentContext,
+} from "./harness.ts";
 import {
   createAgentHookDispatcher,
   type HookDispatcher,
 } from "./hook-dispatcher.ts";
+import { acceptIngress } from "./ingress.ts";
+import type { IngressDispatchScope } from "./integrations.ts";
 import {
   createAgentLifecycleEmitter,
   toLifecycleValue,
   type AgentLifecycleEmitter,
+  type AgentLifecycleEventPayload,
 } from "./lifecycle.ts";
 import { Session } from "./session.ts";
 import type {
@@ -47,6 +59,7 @@ const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 interface SubagentCompletion {
   taskId: string;
+  eventId: string;
   agentId: string;
   description?: string;
   conversationKey: string;
@@ -74,6 +87,27 @@ interface ResolvedSubagentTask {
   resuming: boolean;
 }
 
+interface SubagentStreamState {
+  emittedError: boolean;
+}
+
+type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
+type SubagentPublisherFactory = (
+  task: ResolvedSubagentTask,
+) => NatsPublisher | undefined;
+type SubagentIngressDispatcher = (
+  session: Session,
+  scope: IngressDispatchScope,
+) => Promise<boolean>;
+
+// Collaborators the handler owns. Every one has a working default, so tests and
+// non-handler callers override only what they exercise.
+interface SubagentCoordinatorDependencies {
+  lifecycle?: AgentLifecycleEmitter;
+  publisherFactory?: SubagentPublisherFactory;
+  dispatchNextIngress?: SubagentIngressDispatcher;
+}
+
 export class SubagentCoordinator {
   private readonly completions: SubagentCompletion[] = [];
   private readonly pending = new Map<string, Promise<void>>();
@@ -84,19 +118,31 @@ export class SubagentCoordinator {
   private readonly waiters = new Set<() => void>();
   private hooksPromise?: Promise<HookDispatcher>;
 
+  private readonly lifecycle: AgentLifecycleEmitter;
+  private readonly publisherFactory: SubagentPublisherFactory;
+  private readonly dispatchNextIngress: SubagentIngressDispatcher;
+
   constructor(
     private readonly parentSession: Session,
     private readonly parentAgentConfig: AgentConfig,
     private readonly waitUntilMs: number = Date.now() +
       DEFAULT_SUBAGENT_WAIT_BUDGET_MS,
-    private readonly lifecycle: AgentLifecycleEmitter = createAgentLifecycleEmitter(
-      parentSession,
-      parentAgentConfig,
-    ),
-  ) {}
+    dependencies: SubagentCoordinatorDependencies = {},
+  ) {
+    this.lifecycle =
+      dependencies.lifecycle ??
+      createAgentLifecycleEmitter(parentSession, parentAgentConfig);
+    this.publisherFactory =
+      dependencies.publisherFactory ??
+      ((task) => createSubagentPublisher(parentSession, task));
+    // Defaulting to "no envelope transferred" releases the child lease rather
+    // than stranding it when a caller builds a coordinator without a dispatcher.
+    this.dispatchNextIngress =
+      dependencies.dispatchNextIngress ?? (async () => false);
+  }
 
   private get isPersistentMode(): boolean {
-    return this.parentAgentConfig.subagent?.mode === "persistent";
+    return resolveSubagentMode(this.parentAgentConfig) === "persistent";
   }
 
   dispatch: RunSubagentDispatch = async (
@@ -209,6 +255,7 @@ export class SubagentCoordinator {
         const metadata = this.pendingMetadata.get(taskId);
         return {
           taskId: metadata?.taskId ?? taskId,
+          eventId: metadata?.eventId ?? taskId,
           agentId: metadata?.agentId ?? "unknown",
           ...(metadata?.description
             ? { description: metadata.description }
@@ -236,13 +283,13 @@ export class SubagentCoordinator {
     parentEphemeralSystem: SystemModelMessage[],
   ): Promise<ResolvedSubagentTask> {
     const accountId = requireParentAccountId(this.parentSession);
-    const taskId = `subagent_${crypto.randomUUID()}`;
     const persistent = this.isPersistentMode;
     if (!persistent && task.conversationKey !== undefined) {
       throw new Error(
         "Subagent conversationKey is only supported in persistent mode",
       );
     }
+    const taskId = createSubagentTaskId(this.parentSession.eventId);
     const resuming = persistent && task.conversationKey !== undefined;
     const publicConversationKey =
       task.conversationKey ??
@@ -324,18 +371,37 @@ export class SubagentCoordinator {
     task: ResolvedSubagentTask,
     subagentParent?: SubagentParentContext,
   ): void {
-    const promise = this.runTask(task, subagentParent)
-      .catch((error) =>
-        this.completeTask({
+    const publisher = this.createPublisher(task);
+    const streamState: SubagentStreamState = { emittedError: false };
+    const trackedPublisher = publisher
+      ? bestEffortSubagentPublisher(publisher, streamState, task.taskId)
+      : undefined;
+    const promise = this.runTask(task, subagentParent, trackedPublisher)
+      .then(async () => {
+        await trackedPublisher?.publish({ type: "done" });
+      })
+      .catch(async (error) => {
+        const errorText =
+          error instanceof Error ? error.message : String(error);
+        await this.completeTask({
           taskId: task.taskId,
+          eventId: task.eventId,
           agentId: task.agentId,
           ...(task.description ? { description: task.description } : {}),
           conversationKey: task.publicConversationKey,
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      )
-      .finally(() => {
+          error: errorText,
+        });
+        if (!streamState.emittedError) {
+          await trackedPublisher?.publish({
+            type: "error",
+            error: errorText,
+          });
+        }
+        await trackedPublisher?.publish({ type: "done" });
+      })
+      .finally(async () => {
+        await trackedPublisher?.close();
         this.pending.delete(task.taskId);
         this.pendingMetadata.delete(task.taskId);
         this.notifyCompletion();
@@ -344,10 +410,29 @@ export class SubagentCoordinator {
     this.pending.set(task.taskId, promise);
     this.pendingMetadata.set(task.taskId, {
       taskId: task.taskId,
+      eventId: task.eventId,
       agentId: task.agentId,
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
     });
+  }
+
+  private createPublisher(
+    task: ResolvedSubagentTask,
+  ): NatsPublisher | undefined {
+    if (this.parentAgentConfig.subagent?.stream !== true) {
+      return undefined;
+    }
+
+    try {
+      return this.publisherFactory(task);
+    } catch (error) {
+      logError("Failed to create best-effort subagent stream publisher", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
   }
 
   /**
@@ -360,6 +445,10 @@ export class SubagentCoordinator {
   private async runTask(
     task: ResolvedSubagentTask,
     subagentParent?: SubagentParentContext,
+    publisher?: NatsPublisher,
+    // Set when this turn continues a queued envelope the child already owns, so
+    // it reuses that fencing token instead of admitting the conversation again.
+    preOwned?: { ownerGeneration: number; events: ModelMessage[] },
   ): Promise<void> {
     logInfo("Subagent task started", {
       parentEventId: this.parentSession.eventId,
@@ -371,6 +460,19 @@ export class SubagentCoordinator {
       resuming: task.resuming,
     });
 
+    const promptMessage: UserModelMessage = {
+      role: "user",
+      content: [{ type: "text", text: task.prompt }],
+    };
+    const incoming = preOwned?.events ?? [promptMessage];
+    // Persistent children run through the same conversation coordinator as
+    // top-level runs. Without an owner generation every steer and stop the
+    // session exposes is a silent no-op.
+    const ownerGeneration = preOwned
+      ? preOwned.ownerGeneration
+      : task.persistent
+        ? await this.admitChildConversation(task, promptMessage)
+        : undefined;
     // Initialize an isolated child session using the generated conversation key.
     // Inherit the parent's deployment scope (endpoint/project/environment) so the
     // child's spans and logs publish to the same live dashboard subscription and
@@ -385,81 +487,285 @@ export class SubagentCoordinator {
       this.parentSession.endpointId,
       this.parentSession.projectSlug,
       this.parentSession.environmentSlug,
-    );
-    const promptMessage: UserModelMessage = {
-      role: "user",
-      content: [{ type: "text", text: task.prompt }],
-    };
-    // `persistent` controls whether the child uses a real persisted Session or
-    // the in-memory wrapper. Persistent mode writes the task prompt first so
-    // the child model response and any tool messages append to that conversation.
-    const turnContext = await this.createChildTurnContext(
-      childSession,
-      task,
-      promptMessage,
+      ownerGeneration,
     );
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
-
-    const session = task.persistent
-      ? childSession
-      : createEphemeralChildSession(childSession, turnContext.system);
-    const stream = await runAgentLoop(
-      session,
-      turnContext,
-      task.agentConfig,
-      {
-        onFinalText: async (response) => {
-          finalResponse = response;
+    try {
+      // Persistent mode writes the task prompt first so the child model response
+      // and tool messages append to that conversation.
+      const turnContext = await this.createChildTurnContext(
+        childSession,
+        task,
+        incoming,
+      );
+      const session = task.persistent
+        ? childSession
+        : createEphemeralChildSession(childSession, turnContext.system);
+      const stream = await runAgentLoop(
+        session,
+        turnContext,
+        task.agentConfig,
+        {
+          onFinalText: async (response) => {
+            finalResponse = response;
+          },
+          onErrorText: async (error) => {
+            throw new Error(error);
+          },
+          onApprovalRequired: async () => {
+            approvalRequested = true;
+          },
         },
-        onErrorText: async (error) => {
-          throw new Error(error);
-        },
-        onApprovalRequired: async () => {
-          approvalRequested = true;
-        },
-      },
-      subagentParent ? { subagentParent } : {},
-    );
+        subagentParent ? { subagentParent } : {},
+      );
 
-    await stream.consumeStream();
-    if (approvalRequested) {
-      throw new Error("Subagent task stopped for tool approval");
-    }
-    if (stream.didFail()) {
-      throw new Error(stream.failureText() ?? "Subagent task failed");
-    }
-    if (finalResponse === undefined) {
-      throw new Error("Subagent task returned an empty response");
-    }
+      if (publisher) {
+        await pipeSubagentNatsStream(stream, publisher);
+      } else {
+        await stream.consumeStream();
+      }
+      if (approvalRequested) {
+        throw new Error("Subagent task stopped for tool approval");
+      }
+      if (stream.didFail()) {
+        throw new Error(stream.failureText() ?? "Subagent task failed");
+      }
+      if (finalResponse === undefined) {
+        throw new Error("Subagent task returned an empty response");
+      }
 
+      await this.completeSuccessfulRun(
+        childSession,
+        task,
+        finalResponse,
+        subagentParent,
+        publisher,
+      );
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      await childSession
+        .settleIngress("failed", { error: errorText })
+        .catch((settlementError) => {
+          logError("Failed to settle subagent ingress failure", {
+            taskId: task.taskId,
+            error:
+              settlementError instanceof Error
+                ? settlementError.message
+                : String(settlementError),
+          });
+        });
+      await this.drainChildConversation(
+        childSession,
+        task,
+        subagentParent,
+        publisher,
+      ).catch((drainError) => {
+        logError("Failed to drain subagent conversation after failure", {
+          taskId: task.taskId,
+          error:
+            drainError instanceof Error
+              ? drainError.message
+              : String(drainError),
+        });
+      });
+      throw error;
+    }
+  }
+
+  private async completeSuccessfulRun(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    finalResponse: JSONValue,
+    subagentParent?: SubagentParentContext,
+    publisher?: NatsPublisher,
+  ): Promise<void> {
     await markAsyncAgentResultCompleted({
       eventId: task.eventId,
       response: finalResponse,
     });
     await this.completeTask({
       taskId: task.taskId,
+      eventId: task.eventId,
       agentId: task.agentId,
       ...(task.description ? { description: task.description } : {}),
       conversationKey: task.publicConversationKey,
       status: "completed",
       response: finalResponse,
     });
+    // The durable result is authoritative. Settlement and queued-drain failures
+    // must not turn this completed task into a second failed completion.
+    await childSession
+      .settleIngress("completed", { result: finalResponse })
+      .catch((error) => {
+        logError("Failed to settle completed subagent ingress", {
+          taskId: task.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    await this.drainChildConversation(
+      childSession,
+      task,
+      subagentParent,
+      publisher,
+    ).catch((error) => {
+      logError("Failed to drain completed subagent conversation", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  /**
+   * Transfers ownership to the next queued envelope for this child, or releases
+   * the lease when nothing is waiting. Ephemeral children never own a
+   * generation, so both calls are no-ops for them.
+   */
+  private async drainChildConversation(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+    subagentParent?: SubagentParentContext,
+    publisher?: NatsPublisher,
+  ): Promise<void> {
+    // Past the parent's wait budget there is no live parent turn left to inject
+    // into, so hand the envelope to a standalone worker instead of running it
+    // here and dropping the answer.
+    if (Date.now() >= this.waitUntilMs) {
+      await this.transferChildConversation(childSession, task);
+
+      return;
+    }
+    const next = await childSession.takeNextIngress().catch((error) => {
+      logError("Subagent queued ingress read failed", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return null;
+    });
+    if (!next) {
+      await childSession.releaseConversationLease().catch(() => {});
+
+      return;
+    }
+
+    // Run the queued envelope as another turn of the same child task, so its
+    // result reaches the parent through the normal completion path.
+    try {
+      await this.runTask(
+        {
+          ...task,
+          eventId: next.eventId,
+          resuming: true,
+          inheritedContext: false,
+          ...(next.agentConfig ? { agentConfig: next.agentConfig } : {}),
+        },
+        subagentParent,
+        publisher,
+        {
+          ownerGeneration: next.ownerGeneration,
+          events: next.events as ModelMessage[],
+        },
+      );
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      await this.completeTask({
+        taskId: task.taskId,
+        eventId: next.eventId,
+        agentId: task.agentId,
+        ...(task.description ? { description: task.description } : {}),
+        conversationKey: task.publicConversationKey,
+        status: "failed",
+        error: errorText,
+      }).catch((completionError) => {
+        logError("Failed to record queued subagent failure", {
+          taskId: task.taskId,
+          error:
+            completionError instanceof Error
+              ? completionError.message
+              : String(completionError),
+        });
+      });
+      throw error;
+    }
+  }
+
+  /** Hands the next queued envelope to its own worker and drops the lease. */
+  private async transferChildConversation(
+    childSession: Session,
+    task: ResolvedSubagentTask,
+  ): Promise<void> {
+    const transferred = await this.dispatchNextIngress(childSession, {
+      accountId: requireParentAccountId(this.parentSession),
+      agentId: task.agentId,
+      agentConfig: task.agentConfig,
+      conversationKey: task.conversationKey,
+      publicConversationKey: task.publicConversationKey,
+      endpointId: this.parentSession.endpointId,
+      projectSlug: this.parentSession.projectSlug,
+      environmentSlug: this.parentSession.environmentSlug,
+    }).catch((error) => {
+      logError("Subagent queued ingress dispatch failed", {
+        taskId: task.taskId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    });
+    if (!transferred) {
+      await childSession.releaseConversationLease().catch(() => {});
+    }
+  }
+
+  /**
+   * Admits one persistent child conversation into the durable coordinator and
+   * returns its fencing token. A busy conversation is refused rather than
+   * queued so the parent sees the conflict instead of stalling on a dispatch.
+   */
+  private async admitChildConversation(
+    task: ResolvedSubagentTask,
+    promptMessage: UserModelMessage,
+  ): Promise<number> {
+    const admission = await acceptIngress({
+      accountId: requireParentAccountId(this.parentSession),
+      agentId: task.agentId,
+      eventId: task.eventId,
+      conversationKey: task.conversationKey,
+      events: [promptMessage],
+      requestedMode: "reject",
+      idempotencyKey: task.eventId,
+      delivery: {
+        kind: "async",
+        publicEventId: task.taskId,
+        publicConversationKey: task.publicConversationKey,
+        statusUrl: subagentStatusPath(task),
+      },
+      agentConfig: task.agentConfig,
+    });
+    if (
+      admission.outcome !== "owner" ||
+      admission.ownerGeneration === undefined
+    ) {
+      throw new Error(
+        `Subagent conversation is not available: ${admission.outcome}`,
+      );
+    }
+
+    return admission.ownerGeneration;
   }
 
   private async createChildTurnContext(
     childSession: Session,
     task: ResolvedSubagentTask,
-    promptMessage: UserModelMessage,
+    incoming: ModelMessage[],
   ) {
     if (!task.persistent) {
       return childSession.createEphemeralTurnContext(
-        [...(task.inheritedContext ? task.parentMessages : []), promptMessage],
+        [...(task.inheritedContext ? task.parentMessages : []), ...incoming],
         task.parentEphemeralSystem,
       );
     }
 
-    await childSession.persistModelMessages([promptMessage]);
+    await childSession.persistModelMessages(incoming);
     // `resuming` means the caller supplied an existing public conversationKey.
     // That is enough to load prior child history; when omitted, this is a new
     // persistent child conversation with a generated public key.
@@ -468,7 +774,7 @@ export class SubagentCoordinator {
     }
 
     return childSession.createEphemeralTurnContext(
-      [...task.parentMessages, promptMessage],
+      [...task.parentMessages, ...incoming],
       task.parentEphemeralSystem,
     );
   }
@@ -478,11 +784,7 @@ export class SubagentCoordinator {
 
     if (completion.status === "failed") {
       await markAsyncAgentResultFailed({
-        eventId: scopedDirectEventId(
-          requireParentAccountId(this.parentSession),
-          completion.agentId,
-          completion.taskId,
-        ),
+        eventId: completion.eventId,
         error: completion.error ?? "Subagent task failed",
       }).catch((error) => {
         logError("Failed to mark subagent task failed", {
@@ -496,11 +798,42 @@ export class SubagentCoordinator {
       return;
     }
 
+    // A stopped child was cancelled on purpose, so its partial progress is not
+    // an answer the parent asked for. Record it, but keep it out of the transcript.
+    if (completion.error === USER_STOP_MESSAGE) {
+      this.notifyCompletion();
+      logInfo("Subagent task stopped", {
+        parentEventId: this.parentSession.eventId,
+        taskId: completion.taskId,
+        agentId: completion.agentId,
+      });
+      await this.emitTaskFinished({
+        taskId: completion.taskId,
+        agentId: completion.agentId,
+        conversationKey: completion.conversationKey,
+        status: "failed",
+        error: completion.error,
+      });
+
+      return;
+    }
+
     // Decide what the parent sees from this child: an onSubagentFinish hook wins;
     // otherwise subagent.visibility ("none" hides it, "result"/"full" show it).
     let inject = true;
     if (completion.status === "completed") {
-      const hookVisible = await this.runSubagentFinishHook(completion);
+      // The durable result is already written, so a hook that cannot load or
+      // that throws only loses its override — it never fails the child.
+      const hookVisible = await this.runSubagentFinishHook(completion).catch(
+        (error) => {
+          logError("Subagent finish hook failed", {
+            taskId: completion.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+
+          return undefined;
+        },
+      );
       if (hookVisible !== undefined) {
         completion.visibleResult = hookVisible;
       } else if (
@@ -519,7 +852,7 @@ export class SubagentCoordinator {
       agentId: completion.agentId,
       status: completion.status,
     });
-    await this.lifecycle.emit("subagent.task.finished", {
+    await this.emitTaskFinished({
       taskId: completion.taskId,
       agentId: completion.agentId,
       conversationKey: completion.conversationKey,
@@ -529,6 +862,21 @@ export class SubagentCoordinator {
         : {}),
       ...(completion.error ? { error: completion.error } : {}),
     });
+  }
+
+  // Presentation only, and it runs after the durable result is recorded, so a
+  // webhook failure must never propagate into the run's terminal status.
+  private async emitTaskFinished(
+    payload: AgentLifecycleEventPayload,
+  ): Promise<void> {
+    await this.lifecycle
+      .emit("subagent.task.finished", payload)
+      .catch((error) => {
+        logError("Failed to emit subagent lifecycle event", {
+          taskId: payload.taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   /** Share the request's hook dispatcher so onSubagentFinish sees the same ctx.state as the loop hooks. */
@@ -574,6 +922,33 @@ export class SubagentCoordinator {
       waiter();
     }
     this.waiters.clear();
+  }
+}
+
+export async function pipeSubagentNatsStream(
+  stream: AgentLoopStream,
+  publisher: NatsPublisher,
+): Promise<void> {
+  const reader = stream.stream.getReader();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      await publisher.publish(value as Record<string, unknown>);
+    }
+  } finally {
+    await stream.ensureFinalized();
+  }
+
+  const finalResponse = stream.finalResponse();
+  if (stream.hasStructuredOutput() && finalResponse !== undefined) {
+    await publisher.publish({
+      type: "structured-output",
+      output: finalResponse,
+    });
   }
 }
 
@@ -632,9 +1007,13 @@ function toDispatch(task: ResolvedSubagentTask): RunSubagentTaskDispatch {
     agentId: task.agentId,
     ...(task.description ? { description: task.description } : {}),
     conversationKey: task.publicConversationKey,
-    statusPath: `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`,
+    statusPath: subagentStatusPath(task),
     status: "running",
   };
+}
+
+function subagentStatusPath(task: ResolvedSubagentTask): string {
+  return `/status/${encodeURIComponent(task.taskId)}?agentId=${encodeURIComponent(task.agentId)}`;
 }
 
 function completionToParentMessage(
@@ -668,6 +1047,28 @@ function completionToParentMessage(
   };
 }
 
+function createSubagentPublisher(
+  parentSession: Session,
+  task: ResolvedSubagentTask,
+): NatsPublisher | undefined {
+  const natsUrl = process.env.NATS_URL?.trim();
+  if (!natsUrl) {
+    return undefined;
+  }
+
+  return new LiveNatsPublisher(
+    natsUrl,
+    {
+      accountId: requireParentAccountId(parentSession),
+      agentId: task.agentId,
+      conversationKey: task.publicConversationKey,
+      eventId: task.taskId,
+      connectionId: task.taskId,
+    },
+    process.env.NATS_TOKEN?.trim() || undefined,
+  );
+}
+
 function formatModelValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -677,6 +1078,34 @@ function formatModelValue(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function bestEffortSubagentPublisher(
+  publisher: NatsPublisher,
+  state: SubagentStreamState,
+  taskId: string,
+): NatsPublisher {
+  return {
+    publish: async (data) => {
+      if (data.type === "error") {
+        state.emittedError = true;
+      }
+      await publisher.publish(data).catch((error) => {
+        logError("Best-effort subagent stream publish failed", {
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
+    close: async () => {
+      await publisher.close().catch((error) => {
+        logError("Best-effort subagent stream flush failed", {
+          taskId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    },
+  };
 }
 
 function withoutNestedSubagents(config: AgentConfig): AgentConfig {

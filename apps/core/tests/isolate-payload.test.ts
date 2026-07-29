@@ -1,11 +1,12 @@
 /**
- * Isolate payload plumbing tests (isolate/payload.ts): runner payload building,
+ * Custom-tool payload plumbing tests (bundles/payload.ts): runner payload building,
  * config merge, the AI SDK option extractors, and the NDJSON frame protocol. The
  * tool dispatcher's runtime routing (isolate vs. deferred sandbox rejection) and
  * real isolate execution are covered in isolate-executor.test.ts.
  */
 
 import { describe, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
@@ -27,12 +28,13 @@ mock.module("../src/shared/s3.ts", () => ({
 describe("createRunnerPayload", () => {
   it("inlines the bundle and merges default + agent config", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/isolate/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
       input: { message: "hi" },
       config: { config: { agentKey: "agent" } },
+      bundleTransport: "inline",
     });
 
     expect(payload).toEqual({
@@ -44,14 +46,39 @@ describe("createRunnerPayload", () => {
     });
   });
 
+  it("reads a bundle from S3 once no matter how many calls want it", async () => {
+    // Content-addressed, so a hit is the same bytes by definition. The two
+    // concurrent calls are the shape that matters: an unmemoized cache would
+    // let both miss, both fetch, and both charge the byte ledger for one entry.
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+    const tool = { ...accountToolRecord(), sha256: "dedupe-me" };
+    const build = (): Promise<unknown> =>
+      createRunnerPayload({
+        bucket: "tool-bundles",
+        tool: tool,
+        input: {},
+        config: {},
+        bundleTransport: "inline",
+      });
+    readS3BytesMock.mockClear();
+
+    const [first, second] = await Promise.all([build(), build()]);
+    await build();
+
+    expect(readS3BytesMock).toHaveBeenCalledTimes(1);
+    expect(first).toEqual(second);
+  });
+
   it("lets agent config override the tool default config", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/isolate/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const payload = await createRunnerPayload({
       bucket: "tool-bundles",
       tool: accountToolRecord(),
       input: {},
       config: { config: { fromDefault: "overridden" } },
+      bundleTransport: "inline",
     });
 
     expect(payload.config).toEqual({ fromDefault: "overridden" });
@@ -59,7 +86,7 @@ describe("createRunnerPayload", () => {
 
   it("includes toolCallId only when the AI SDK options carry one", async () => {
     const { createRunnerPayload } =
-      await import("../src/harness/isolate/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
 
     const withId = await createRunnerPayload({
       bucket: "tool-bundles",
@@ -67,6 +94,7 @@ describe("createRunnerPayload", () => {
       input: {},
       config: {},
       toolCallId: "call_abc",
+      bundleTransport: "inline",
     });
     expect(withId.toolCallId).toBe("call_abc");
 
@@ -75,15 +103,59 @@ describe("createRunnerPayload", () => {
       tool: accountToolRecord(),
       input: {},
       config: {},
+      bundleTransport: "inline",
     });
     expect("toolCallId" in withoutId).toBe(false);
+  });
+
+  // The whole conversation would otherwise ride every invoke against Lambda's
+  // 6 MB quota, so the recent end survives and older turns are dropped.
+  it("forwards the newest messages that fit the size bound", async () => {
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+    const messages: ModelMessage[] = Array.from({ length: 16 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" : "assistant",
+      content: `${index}`.padStart(64 * 1024, "x"),
+    }));
+
+    const payload = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+      messages: messages,
+      experimentalContext: { tenant: "acct_1" },
+      bundleTransport: "inline",
+    });
+
+    const kept = payload.messages ?? [];
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(messages.length);
+    expect(kept.at(-1)).toEqual(messages.at(-1)!);
+    expect(payload.experimentalContext).toEqual({ tenant: "acct_1" });
+  });
+
+  it("omits messages and experimentalContext when the options carry none", async () => {
+    const { createRunnerPayload } =
+      await import("../src/harness/bundles/payload.ts");
+
+    const payload = await createRunnerPayload({
+      bucket: "tool-bundles",
+      tool: accountToolRecord(),
+      input: {},
+      config: {},
+      bundleTransport: "inline",
+    });
+
+    expect("messages" in payload).toBe(false);
+    expect("experimentalContext" in payload).toBe(false);
   });
 });
 
 describe("AI SDK options extraction", () => {
   it("reads toolCallId and abortSignal, ignoring wrong shapes", async () => {
     const { toolCallIdFromOptions, abortSignalFromOptions } =
-      await import("../src/harness/isolate/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
     const controller = new AbortController();
 
     expect(
@@ -101,12 +173,29 @@ describe("AI SDK options extraction", () => {
     expect(abortSignalFromOptions({ abortSignal: "nope" })).toBeUndefined();
     expect(abortSignalFromOptions(undefined)).toBeUndefined();
   });
+
+  it("reads messages and experimental_context, ignoring wrong shapes", async () => {
+    const { experimentalContextFromOptions, messagesFromOptions } =
+      await import("../src/harness/bundles/payload.ts");
+
+    expect(
+      messagesFromOptions({ messages: [{ role: "user", content: "hi" }] }),
+    ).toEqual([{ role: "user", content: "hi" }]);
+    expect(messagesFromOptions({ messages: "nope" })).toBeUndefined();
+    expect(messagesFromOptions(undefined)).toBeUndefined();
+
+    expect(
+      experimentalContextFromOptions({ experimental_context: { a: 1 } }),
+    ).toEqual({ a: 1 });
+    expect(experimentalContextFromOptions({})).toBeUndefined();
+    expect(experimentalContextFromOptions(undefined)).toBeUndefined();
+  });
 });
 
 describe("runner frame protocol", () => {
   it("parses NDJSON frames and rejects non-protocol lines", async () => {
     const { parseToolRunnerFrame } =
-      await import("../src/harness/isolate/payload.ts");
+      await import("../src/harness/bundles/payload.ts");
 
     expect(parseToolRunnerFrame('{"t":"chunk","output":{"n":1}}')).toEqual({
       t: "chunk",
@@ -123,7 +212,7 @@ describe("runner frame protocol", () => {
   });
 
   it("FrameQueue yields whole frames as lines arrive, then flushes on close", async () => {
-    const { FrameQueue } = await import("../src/harness/isolate/payload.ts");
+    const { FrameQueue } = await import("../src/harness/bundles/payload.ts");
     const queue = new FrameQueue();
     const collected: unknown[] = [];
     const consume = (async () => {

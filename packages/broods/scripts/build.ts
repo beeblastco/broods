@@ -6,10 +6,12 @@ await rm(".dts-temp", { recursive: true, force: true });
 const result = await Bun.build({
   entrypoints: ["src/index.ts", "src/account.ts", "src/cli/index.ts"],
   outdir: "dist",
-  target: "bun",
+  target: "node",
   format: "esm",
-  splitting: false,
+  splitting: true,
+  minify: true,
   sourcemap: "none",
+  external: ["esbuild"],
 });
 
 if (!result.success) {
@@ -22,6 +24,6 @@ if (!result.success) {
 const cliPath = "dist/cli/index.js";
 const cliSource = await readFile(cliPath, "utf8");
 if (!cliSource.startsWith("#!")) {
-  await writeFile(cliPath, `#!/usr/bin/env bun\n${cliSource}`, "utf8");
+  await writeFile(cliPath, `#!/usr/bin/env node\n${cliSource}`, "utf8");
 }
 await chmod(cliPath, 0o755);

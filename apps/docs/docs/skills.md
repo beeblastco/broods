@@ -104,16 +104,14 @@ import { defineAgent, defineSkill } from "broods";
 
 export const supportFlow = defineSkill({
   name: "support-flow",
-  config: { path: "support-flow" },
+  path: "support-flow",
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    skills: {
-      enabled: true,
-      allowed: [supportFlow],
-    },
+  skills: {
+    enabled: true,
+    allowed: [supportFlow],
   },
 });
 ```
@@ -133,16 +131,14 @@ import { defineAgent, defineSkill } from "broods";
 
 export const supportFlow = defineSkill({
   name: "support-flow",
-  config: { path: "support-flow" },
+  path: "support-flow",
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  config: {
-    skills: {
-      enabled: true,
-      allowed: [supportFlow],
-    },
+  skills: {
+    enabled: true,
+    allowed: [supportFlow],
   },
 });
 ```

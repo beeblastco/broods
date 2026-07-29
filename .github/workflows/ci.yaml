@@ -33,7 +33,7 @@ jobs:
       PROJECT_OWNER_EMAIL: ${{ vars.PROJECT_OWNER_EMAIL }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
@@ -55,7 +55,9 @@ jobs:
         # native addon built (Bun cannot load it; the tests spawn node).
         run: |
           mkdir -p /tmp/broods-ivm-test
-          cp apps/core/src/harness/isolate/runner/runner.mjs apps/core/src/harness/isolate/runner/pinned-fetch.mjs /tmp/broods-ivm-test/
+          # Whole directory, not a file list: the runner imports its siblings, and
+          # naming them here means a new one silently fails every isolate test.
+          cp apps/core/src/harness/isolate/runner/*.mjs /tmp/broods-ivm-test/
           npm install --prefix /tmp/broods-ivm-test isolated-vm@7.0.0
           echo "BROODS_TEST_ISOLATE_RUNNER_PATH=/tmp/broods-ivm-test/runner.mjs" >> "$GITHUB_ENV"
 
@@ -75,7 +77,7 @@ jobs:
       NEXT_PUBLIC_BROODS_BASE_URL: https://gateway.broods.app
     steps:
       - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
