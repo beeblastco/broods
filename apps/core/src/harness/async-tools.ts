@@ -6,10 +6,10 @@
 import type { ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
-  createPendingAsyncToolResult,
-  markAsyncToolResultCompleted,
-  markAsyncToolResultFailed,
-  type AsyncToolDelivery,
+    createPendingAsyncToolResult,
+    markAsyncToolResultCompleted,
+    markAsyncToolResultFailed,
+    type AsyncToolDelivery,
 } from "./async-tool-result.ts";
 import type { Session } from "./session.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
