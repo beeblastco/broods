@@ -137,6 +137,7 @@ export async function compileProject(
     }));
   const resources = resourceExports.map((entry) => entry.resource);
   assertUniqueResources(resources);
+  assertExportedHarnessSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
@@ -592,6 +593,29 @@ function sandboxProvider(sandbox: SandboxResource): string {
   return typeof sandbox.config.provider === "string"
     ? sandbox.config.provider
     : "sandbox";
+}
+
+function assertExportedHarnessSandboxes(resources: AnyResource[]): void {
+  const exportedSandboxNames = new Set(
+    resources
+      .filter(
+        (resource): resource is SandboxResource => resource.kind === "sandbox",
+      )
+      .map((sandbox) => sandbox.name),
+  );
+  for (const resource of resources) {
+    if (resource.kind !== "agent") continue;
+    const sandbox = resource.config.harness?.sandbox;
+    if (
+      isResource(sandbox) &&
+      sandbox.kind === "sandbox" &&
+      !exportedSandboxNames.has(sandbox.name)
+    ) {
+      throw new Error(
+        `Agent "${resource.name}" harness references sandbox "${sandbox.name}", but that sandbox is not exported from broods/`,
+      );
+    }
+  }
 }
 
 function assertUniqueResources(resources: AnyResource[]): void {
