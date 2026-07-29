@@ -1,0 +1,111 @@
+# Dependency watch.
+# Reports upstream releases for the dependencies whose types the repo builds on
+# — the AI SDK family plus esbuild — into one rolling issue.
+#
+# Why this is not Dependabot/Renovate:
+#   The AI SDK packages pin `ai` at an exact version inside their own manifests
+#   (`@ai-sdk/otel` depends on `ai@7.0.41`, `@ai-sdk/policy-opa` peers on it).
+#   A per-package bot opens one PR per package, and each of those installs a
+#   second copy of `ai` on its own — which breaks type identity and stops core
+#   typechecking. scripts/dependency-watch.ts reports the family as a single
+#   coherent upgrade instead, and refuses to name a target when the pins
+#   disagree.
+#
+# Trigger:
+#   - schedule: 0 6 * * 1 (Mondays 06:00 UTC; upstream ships most weekdays)
+#   - workflow_dispatch: ad-hoc run
+#
+# Output:
+#   One open issue labelled `dependency-watch`, rewritten in place each run so
+#   the schedule never accumulates duplicates. Closed when nothing is stale.
+
+name: Dependency Watch
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: dependency-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          # Only `gh` needs the token, via GH_TOKEN; no authenticated git here.
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Check for upstream releases
+        id: check
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          report=$(bun scripts/dependency-watch.ts)
+          exit_code=$?
+
+          {
+            echo "report<<REPORT_EOF"
+            echo "$report"
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "stale=$([ "$exit_code" -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          # Exit 1 is "updates found", not a failure; anything else is a real error.
+          if [[ "$exit_code" -ne 0 && "$exit_code" -ne 1 ]]; then
+            echo "dependency-watch failed with status $exit_code" >&2
+            exit "$exit_code"
+          fi
+
+      - name: Open or update the watch issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STALE: ${{ steps.check.outputs.stale }}
+          REPORT: ${{ steps.check.outputs.report }}
+          TITLE: "Dependency watch: upstream releases available"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The label has to exist before `issue create --label` will accept it.
+          gh label create dependency-watch --repo "$GITHUB_REPOSITORY" \
+            --color 0E8A16 --description "Upstream releases for watched dependencies" \
+            --force >/dev/null
+
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label dependency-watch --state open --limit 1 --json number \
+            --jq '.[0].number // empty')
+
+          if [[ "$STALE" != "true" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+                --comment "All watched dependencies are current."
+            fi
+            exit 0
+          fi
+
+          body=$(printf '%s\n\n%s\n' "$REPORT" \
+            "Run \`bun scripts/dependency-watch.ts\` locally to reproduce. Upgrade the AI SDK family in one commit, then \`bun install\` and \`bun run check\`.")
+
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --label dependency-watch --body "$body"
+          fi

@@ -5,6 +5,7 @@
     "": {
       "name": "filthy-panty",
       "devDependencies": {
+        "@types/bun": "^1.3.14",
         "typescript": "^7.0.2",
       },
     },
