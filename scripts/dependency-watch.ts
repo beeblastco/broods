@@ -1,7 +1,6 @@
 /**
- * Reports upstream releases for the dependencies whose types we build on.
- * The AI SDK family pins `ai` at an exact version inside its own packages, so
- * bumping one without the rest installs a second copy and breaks type identity.
+ * Reports upstream releases for the dependencies whose types the repo builds on.
+ * Exits 0 when current, 1 when a release is available, 2 when the check failed.
  */
 
 import { readFile } from "node:fs/promises";
@@ -19,6 +18,12 @@ const WORKSPACES = [
   "packages/convex",
 ];
 
+interface Install {
+  workspace: string;
+  /** Undefined when the workspace has no resolvable copy on disk. */
+  version: string | undefined;
+}
+
 interface PackageManifest {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
@@ -28,22 +33,25 @@ interface PackageManifest {
 
 interface WatchedPackage {
   name: string;
-  installed: string | undefined;
-  latest: string | undefined;
+  latest: string;
   /** Exact `ai` the latest release pins, when it pins one. */
   pinnedAi: string | undefined;
-  workspaces: string[];
+  installs: Install[];
 }
 
-const packages = await collectWatched();
-const report = renderReport(packages);
+try {
+  const packages = await collectWatched();
 
-console.log(report);
-// A non-zero exit is the signal the workflow acts on, so keep it last.
-process.exit(hasUpdates(packages) ? 1 : 0);
+  console.log(renderReport(packages));
+  process.exit(packages.some(isStale) ? 1 : 0);
+} catch (error) {
+  // Exit 2 keeps a registry outage from reading as "everything is current".
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 
 async function collectWatched(): Promise<WatchedPackage[]> {
-  const seen = new Map<string, Set<string>>();
+  const declaredIn = new Map<string, Set<string>>();
 
   for (const workspace of WORKSPACES) {
     const manifest = await readManifest(`${workspace}/package.json`);
@@ -55,27 +63,30 @@ async function collectWatched(): Promise<WatchedPackage[]> {
     };
     for (const name of Object.keys(declared)) {
       if (!isWatched(name)) continue;
-      const workspaces = seen.get(name) ?? new Set<string>();
+      const workspaces = declaredIn.get(name) ?? new Set<string>();
       workspaces.add(workspace);
-      seen.set(name, workspaces);
+      declaredIn.set(name, workspaces);
     }
   }
 
-  const names = [...seen.keys()].sort();
   const resolved = await Promise.all(
-    names.map(async (name) => {
-      const workspaces = [...(seen.get(name) ?? [])].sort();
-      const [installed, latest] = await Promise.all([
-        readInstalledVersion(name, workspaces),
+    [...declaredIn.keys()].sort().map(async (name) => {
+      const workspaces = [...(declaredIn.get(name) ?? [])].sort();
+      const [installs, latest] = await Promise.all([
+        Promise.all(
+          workspaces.map(async (workspace) => ({
+            workspace: workspace,
+            version: await readInstalledVersion(name, workspace),
+          })),
+        ),
         readLatest(name),
       ]);
 
       return {
         name: name,
-        installed: installed,
-        latest: latest?.version,
-        pinnedAi: latest?.pinnedAi,
-        workspaces: workspaces,
+        latest: latest.version,
+        pinnedAi: latest.pinnedAi,
+        installs: installs,
       };
     }),
   );
@@ -83,12 +94,12 @@ async function collectWatched(): Promise<WatchedPackage[]> {
   return resolved;
 }
 
-/** Bun installs per workspace here, so the root copy is only a fallback. */
+/** Bun installs per workspace here, so each one is checked independently. */
 async function readInstalledVersion(
   name: string,
-  workspaces: string[],
+  workspace: string,
 ): Promise<string | undefined> {
-  for (const prefix of [...workspaces.map((w) => `${w}/`), ""]) {
+  for (const prefix of [`${workspace}/`, ""]) {
     const manifest = await readManifest(
       `${prefix}node_modules/${name}/package.json`,
     );
@@ -100,15 +111,19 @@ async function readInstalledVersion(
 
 async function readLatest(
   name: string,
-): Promise<{ version: string; pinnedAi: string | undefined } | undefined> {
+): Promise<{ version: string; pinnedAi: string | undefined }> {
   const response = await fetch(
     `${REGISTRY}/${name.replace("/", "%2F")}/latest`,
     { headers: { accept: "application/json" } },
   );
-  if (!response.ok) return undefined;
-  const manifest = (await response.json()) as PackageManifest & {
-    version: string;
-  };
+  if (!response.ok) {
+    throw new Error(`${name}: registry returned ${response.status}`);
+  }
+
+  const manifest: unknown = await response.json();
+  if (!isManifestWithVersion(manifest)) {
+    throw new Error(`${name}: registry response has no version`);
+  }
   const pinnedAi =
     manifest.dependencies?.["ai"] ?? manifest.peerDependencies?.["ai"];
 
@@ -128,47 +143,36 @@ async function readManifest(
   }
 }
 
-function hasUpdates(packages: WatchedPackage[]): boolean {
-  return packages.some(
-    (entry) =>
-      entry.latest !== undefined &&
-      entry.installed !== undefined &&
-      entry.latest !== entry.installed,
-  );
-}
-
 function isExact(range: string | undefined): range is string {
   return range !== undefined && /^\d+\.\d+\.\d+$/.test(range);
 }
 
-function isWatched(name: string): boolean {
-  return name === "ai" || name.startsWith("@ai-sdk/") ||
-    EXTRA_WATCHED.includes(name);
+function isManifestWithVersion(
+  value: unknown,
+): value is PackageManifest & { version: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { version?: unknown }).version === "string"
+  );
 }
 
-function renderReport(packages: WatchedPackage[]): string {
-  const stale = packages.filter(
-    (entry) => entry.latest !== entry.installed && entry.latest !== undefined,
+/** The one predicate the table and the exit status both read from. */
+function isStale(entry: WatchedPackage): boolean {
+  return entry.installs.some((install) => install.version !== entry.latest);
+}
+
+function isWatched(name: string): boolean {
+  return (
+    name === "ai" ||
+    name.startsWith("@ai-sdk/") ||
+    EXTRA_WATCHED.includes(name)
   );
-  if (stale.length === 0) return "All watched dependencies are current.";
-
-  const lines = [
-    "| Package | Installed | Latest | Pins `ai` | Workspaces |",
-    "| --- | --- | --- | --- | --- |",
-  ];
-  for (const entry of stale) {
-    lines.push(
-      `| \`${entry.name}\` | ${entry.installed ?? "—"} | ${entry.latest} | ` +
-        `${entry.pinnedAi ?? "—"} | ${entry.workspaces.join(", ")} |`,
-    );
-  }
-
-  return [...lines, "", renderLockstep(packages)].join("\n");
 }
 
 /**
- * The family only installs one copy of `ai` when every pin agrees, so name the
- * single target version rather than leaving N independent bumps to guess at.
+ * The family installs one copy of `ai` only when every pin agrees, so name the
+ * single target rather than leaving N independent bumps to guess at.
  */
 function renderLockstep(packages: WatchedPackage[]): string {
   const pins = new Map<string, string[]>();
@@ -176,7 +180,9 @@ function renderLockstep(packages: WatchedPackage[]): string {
     if (entry.pinnedAi === undefined) continue;
     pins.set(entry.pinnedAi, [...(pins.get(entry.pinnedAi) ?? []), entry.name]);
   }
-  if (pins.size === 0) return "No AI SDK package pins `ai` at an exact version.";
+  if (pins.size === 0) {
+    return "No AI SDK package pins `ai` at an exact version.";
+  }
 
   const targets = [...pins.entries()];
   if (targets.length === 1) {
@@ -194,4 +200,28 @@ function renderLockstep(packages: WatchedPackage[]): string {
     .join(" vs ");
 
   return `**Conflict:** the latest releases disagree on \`ai\`: ${conflict}. Hold the upgrade until they converge.`;
+}
+
+function renderReport(packages: WatchedPackage[]): string {
+  const stale = packages.filter(isStale);
+  if (stale.length === 0) {
+    return "All watched dependencies are current.";
+  }
+
+  const lines = [
+    "| Package | Workspace | Installed | Latest | Pins `ai` |",
+    "| --- | --- | --- | --- | --- |",
+  ];
+  for (const entry of stale) {
+    for (const install of entry.installs) {
+      if (install.version === entry.latest) continue;
+      lines.push(
+        `| \`${entry.name}\` | ${install.workspace} | ` +
+          `${install.version ?? "not installed"} | ${entry.latest} | ` +
+          `${entry.pinnedAi ?? "—"} |`,
+      );
+    }
+  }
+
+  return [...lines, "", renderLockstep(packages)].join("\n");
 }
