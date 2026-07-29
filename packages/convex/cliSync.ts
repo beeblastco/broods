@@ -2771,9 +2771,8 @@ function rewriteResourceRefs(
       ),
     };
   }
-  // `config.tools` is keyed by account tool id at rest; a key left as a name is
-  // read at runtime as a provider tool and kills the run. Unknown keys stay put
-  // — those are provider-defined tools (googleSearch), not uploads.
+  // `config.tools` is keyed by account tool id at rest: a key left as a name is
+  // read at runtime as a provider tool. Unknown keys are provider tools, so stay.
   if (isPlainObject(result.tools)) {
     result.tools = Object.fromEntries(
       Object.entries(result.tools).map(([key, value]) => [

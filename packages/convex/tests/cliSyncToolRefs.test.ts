@@ -1,8 +1,5 @@
 /// <reference types="vite/client" />
-/**
- * `config.tools` keys at rest. An uploaded tool is stored by account tool id;
- * only the model-facing name the agent sees and calls stays the tool's name.
- */
+/** `config.tools` is keyed by account tool id at rest, never by tool name. */
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -16,9 +13,6 @@ const PROJECT = "tool-custom-sandbox";
 const ENVIRONMENT = "development";
 const SECRET_HASH = "hash-tool-refs";
 const TOOL_NAME = "system_report";
-
-const t = () => convexTest(schema, modules);
-type T = ReturnType<typeof t>;
 
 const toolResource = {
   kind: "tool" as const,
@@ -34,15 +28,8 @@ const toolResource = {
   },
 };
 
-const agentResource = (tools: Record<string, unknown>) => ({
-  kind: "agent" as const,
-  name: "sandbox-tool-agent",
-  config: {
-    model: { provider: "custom", modelId: "Qwen3.6-27B" },
-    agent: { system: "Call system_report when asked." },
-    tools: tools,
-  },
-});
+const t = () => convexTest(schema, modules);
+type T = ReturnType<typeof t>;
 
 /** Seeds the org, account and owner membership a CLI sync writes against. */
 async function seedAccount(tt: T): Promise<Id<"accounts">> {
@@ -111,16 +98,15 @@ async function seedUploadedTool(
   return toolId;
 }
 
-const syncTools = (tt: T, tools: Record<string, unknown>) =>
-  tt.mutation(internal.cliSync.syncManifestBySecretHash, {
-    secretHash: SECRET_HASH,
-    manifest: {
-      version: 1 as const,
-      project: PROJECT,
-      environment: ENVIRONMENT,
-      resources: [toolResource, agentResource(tools)],
-    },
-  });
+const agentResource = (tools: Record<string, unknown>) => ({
+  kind: "agent" as const,
+  name: "sandbox-tool-agent",
+  config: {
+    model: { provider: "custom", modelId: "Qwen3.6-27B" },
+    agent: { system: "Call system_report when asked." },
+    tools: tools,
+  },
+});
 
 const storedTools = (tt: T) =>
   tt.run(async (ctx) => {
@@ -130,6 +116,17 @@ const storedTools = (tt: T) =>
       | undefined;
 
     return extra?.tools ?? {};
+  });
+
+const syncTools = (tt: T, tools: Record<string, unknown>) =>
+  tt.mutation(internal.cliSync.syncManifestBySecretHash, {
+    secretHash: SECRET_HASH,
+    manifest: {
+      version: 1 as const,
+      project: PROJECT,
+      environment: ENVIRONMENT,
+      resources: [toolResource, agentResource(tools)],
+    },
   });
 
 describe("cli sync rewrites config.tools names to account tool ids", () => {
