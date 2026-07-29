@@ -51,6 +51,7 @@ const resourceValidator = v.object({
     v.literal("tool"),
     v.literal("hook"),
     v.literal("policy"),
+    v.literal("channelRecord"),
   ),
   name: v.string(),
   description: v.optional(v.string()),
@@ -73,6 +74,7 @@ const idsValidator = v.object({
   tools: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
+  channelRecords: v.record(v.string(), v.string()),
 });
 
 /**

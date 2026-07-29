@@ -788,11 +788,15 @@ async function findChannelCredentialHolder(
     return { kind: "unavailable" };
   }
   // Cap the agents that actually configure this channel, not the raw list — an
-  // account whose 30th agent owns the Slack app must still be reachable.
+  // account whose 30th agent owns the Slack app must still be reachable. Sort
+  // first: the cap is applied while scanning, so ordering it afterwards would
+  // still leave *which* agents were considered up to the lister.
   const candidates: Array<{ agent: AgentRecord; adapter: ChannelAdapter }> = [];
   let configured = false;
   let truncated = false;
-  for (const candidate of listed) {
+  for (const candidate of [...listed].sort((left, right) =>
+    left.agentId.localeCompare(right.agentId),
+  )) {
     if (candidate.status !== "active") continue;
     // Cheap key check before building any adapter: an unauthenticated caller
     // should not make us instantiate SDK clients for every agent in the account.
