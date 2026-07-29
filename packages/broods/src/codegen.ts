@@ -61,6 +61,7 @@ function idsForManifest(
     skills: namesForKind(manifest, "skill"),
     tools: namesForKind(manifest, "tool"),
     policies: namesForKind(manifest, "policy"),
+    channelRecords: namesForKind(manifest, "channelRecord"),
   };
 
   return {
@@ -72,6 +73,7 @@ function idsForManifest(
     tools: pickIds(ids.tools, namesByKind.tools),
     hooks: {},
     policies: pickIds(ids.policies, namesByKind.policies),
+    channelRecords: pickIds(ids.channelRecords, namesByKind.channelRecords),
   };
 }
 

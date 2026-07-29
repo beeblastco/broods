@@ -1155,7 +1155,8 @@ export default defineSchema({
       "accountId",
       "platform",
       "externalId",
-    ]),
+    ])
+    .index("by_environmentId_and_name", ["environmentId", "name"]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])

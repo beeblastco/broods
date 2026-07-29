@@ -1826,6 +1826,56 @@ export const echoTool = defineTool({
   expect(result).toEqual({ echo: { q: "hi" }, cfgSeen: { a: 1 } });
 });
 
+// A channel record is the one resource that binds a place to an agent rather
+// than describing the agent, so its refs must survive compilation by name — the
+// backend resolves them to ids, and a raw agent name reaching Convex would bind
+// to nothing.
+test("compileProject emits channel records with their agent and policy refs by name", async () => {
+  const cwd = await fixtureProject(
+    undefined,
+    `
+import { defineAgent, defineChannelRecord, definePolicy } from "${RESOURCES_MODULE}";
+
+export const opsOnly = definePolicy({
+  name: "ops-only",
+  rules: [{ id: "r1", effect: "deny", actions: ["agent.invoke"] }],
+});
+
+export const desk = defineAgent({
+  name: "desk",
+  model: { provider: "openai", modelId: "gpt-5-mini" },
+});
+
+export const productEng = defineChannelRecord({
+  name: "product-eng",
+  platform: "slack",
+  externalId: "C042PRODENG",
+  workspaceRef: "T09BEEBLAST",
+  agents: [desk],
+  policies: [opsOnly],
+  instructions: "Escalate billing to #finance.",
+  threadPolicy: "always-thread",
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const record = manifest.resources.find(
+    (resource) => resource.kind === "channelRecord",
+  );
+
+  expect(record?.name).toBe("product-eng");
+  expect(record?.config).toEqual({
+    platform: "slack",
+    externalId: "C042PRODENG",
+    workspaceRef: "T09BEEBLAST",
+    agents: ["desk"],
+    policies: ["ops-only"],
+    instructions: "Escalate billing to #finance.",
+    threadPolicy: "always-thread",
+  });
+});
+
 async function fixtureProject(
   configSource?: string,
   resourcesSource?: string,
