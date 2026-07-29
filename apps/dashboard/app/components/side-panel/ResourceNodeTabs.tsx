@@ -22,6 +22,7 @@ import {
 } from "@/app/components/ui/select";
 import { Separator } from "@/app/components/ui/separator";
 import { isPlainObject } from "@/app/lib/utils";
+import { useState } from "react";
 
 type UpdateNodeData = (patch: Partial<BaseNodeData>) => void;
 
@@ -56,8 +57,17 @@ export function WorkspaceResourceDetailsTab({
     ? config.storage
     : { provider: "s3" };
   const auth = isPlainObject(storage.auth) ? storage.auth : {};
-  const ownBucket =
+  // Local toggle: switching it on reveals empty fields and persists nothing until a
+  // bucket is typed, so a purely derived switch would snap straight back off and the
+  // fields could never be reached. Resync when the saved config changes elsewhere.
+  const savedOwnBucket =
     auth.type === "assumeRole" || typeof storage.bucket === "string";
+  const [ownBucket, setOwnBucket] = useState(savedOwnBucket);
+  const [lastSavedOwnBucket, setLastSavedOwnBucket] = useState(savedOwnBucket);
+  if (savedOwnBucket !== lastSavedOwnBucket) {
+    setLastSavedOwnBucket(savedOwnBucket);
+    setOwnBucket(savedOwnBucket);
+  }
   const harnessFeatureEnabled = (key: "workspace" | "memory") => {
     const feature = isPlainObject(harness[key])
       ? (harness[key] as Record<string, unknown>)
@@ -139,13 +149,14 @@ export function WorkspaceResourceDetailsTab({
           label="Bring your own bucket"
           description="Mount your S3 bucket instead of the managed one."
           checked={ownBucket}
-          onCheckedChange={(own) =>
-            setConfig({
-              storage: own
-                ? { ...storage, provider: "s3" }
-                : { provider: "s3" },
-            })
-          }
+          onCheckedChange={(own) => {
+            setOwnBucket(own);
+            // Only switching off writes: it clears the bucket back to managed.
+            // Switching on just reveals the fields — each one saves as it is typed.
+            if (!own) {
+              setConfig({ storage: { provider: "s3" } });
+            }
+          }}
         />
         {ownBucket && (
           <ExpandBlock>
