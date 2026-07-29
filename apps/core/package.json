@@ -62,6 +62,7 @@
     "@opentelemetry/sdk-logs": "0.221.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@pulumi/aws": "7.39.0",
+    "@pulumi/command": "1.0.1",
     "@pulumi/pulumi": "3.254.0",
     "@smithy/fetch-http-handler": "^5.6.11",
     "@vercel/sandbox": "^2.9.0",

@@ -30,6 +30,11 @@ const SERVICE_AUTH_SECRET = requiredEnv("SERVICE_AUTH_SECRET");
 // container reads the same value at runtime for callbacks/status URLs.
 const PUBLIC_BASE_URL = requiredEnv("PUBLIC_BASE_URL");
 
+// How long to let a freshly created IAM role's trust policy propagate before another
+// AWS service is asked to assume it. Measured: the connector create failed 8s after the
+// role appeared and only succeeded ~4.5 min later on the provider's own retry.
+const IAM_PROPAGATION_SECONDS = 45;
+
 // Resolved `AWS::Lambda::NetworkConnector` Cloud Control properties. `Arn` is the type
 // schema's primaryIdentifier, so it is always present once the resource exists.
 interface NetworkConnectorProperties {
@@ -178,6 +183,8 @@ export default $config({
       protect: isProductionStage(stage),
       home: "aws",
       providers: {
+        // Only for the IAM-propagation wait in front of the MicroVM egress connector.
+        command: "1.0.1",
         aws: {
           region,
           version: "7.30.0",
@@ -196,6 +203,7 @@ export default $config({
 
   async run() {
     const aws = await import("@pulumi/aws");
+    const command = await import("@pulumi/command");
     const stage = $app.stage;
     const region = awsRegion();
     const isProduction = isProductionStage(stage);
@@ -490,89 +498,125 @@ export default $config({
         })
       : null;
 
-    if (sandboxNetwork && sandboxEgressSecurityGroup && sandboxConnectorRole) {
-      new aws.iam.RolePolicy("SandboxConnectorOperatorRolePolicy", {
-        role: sandboxConnectorRole.id,
-        policy: $jsonStringify({
-          Version: "2012-10-17",
-          Statement: [
-            {
-              Sid: "CreateConnectorNetworkInterfaceInSubnets",
-              Effect: "Allow",
-              Action: "ec2:CreateNetworkInterface",
-              Resource: $resolve({
-                subnetIds: sandboxNetwork.privateSubnets,
-              }).apply(({ subnetIds }) =>
-                subnetIds.map(
-                  (subnetId) =>
-                    `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:subnet/${subnetId}`,
-                ),
-              ),
-            },
-            {
-              Sid: "CreateConnectorNetworkInterfaceWithSecurityGroup",
-              Effect: "Allow",
-              Action: "ec2:CreateNetworkInterface",
-              Resource: [
-                $interpolate`arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:security-group/${sandboxEgressSecurityGroup.id}`,
-              ],
-            },
-            {
-              Sid: "CreateTaggedConnectorNetworkInterface",
-              Effect: "Allow",
-              Action: "ec2:CreateNetworkInterface",
-              Resource: [
-                `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
-              ],
-              Condition: {
-                "ForAllValues:StringEquals": {
-                  "aws:TagKeys": [
-                    "aws:lambda:networkConnectorName",
-                    "aws:lambda:networkConnectorId",
+    const sandboxConnectorRolePolicy =
+      sandboxNetwork && sandboxEgressSecurityGroup && sandboxConnectorRole
+        ? new aws.iam.RolePolicy("SandboxConnectorOperatorRolePolicy", {
+            role: sandboxConnectorRole.id,
+            policy: $jsonStringify({
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Sid: "CreateConnectorNetworkInterfaceInSubnets",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: $resolve({
+                    subnetIds: sandboxNetwork.privateSubnets,
+                  }).apply(({ subnetIds }) =>
+                    subnetIds.map(
+                      (subnetId) =>
+                        `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:subnet/${subnetId}`,
+                    ),
+                  ),
+                },
+                {
+                  Sid: "CreateConnectorNetworkInterfaceWithSecurityGroup",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: [
+                    $interpolate`arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:security-group/${sandboxEgressSecurityGroup.id}`,
                   ],
                 },
-              },
-            },
-            {
-              Sid: "TagConnectorNetworkInterfaces",
-              Effect: "Allow",
-              Action: ["ec2:CreateTags"],
-              Resource: [
-                `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
-              ],
-              Condition: {
-                StringEquals: {
-                  "ec2:CreateAction": "CreateNetworkInterface",
-                  "ec2:ManagedResourceOperator":
-                    "network-connectors.lambda.amazonaws.com",
+                {
+                  Sid: "CreateTaggedConnectorNetworkInterface",
+                  Effect: "Allow",
+                  Action: "ec2:CreateNetworkInterface",
+                  Resource: [
+                    `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
+                  ],
+                  Condition: {
+                    "ForAllValues:StringEquals": {
+                      "aws:TagKeys": [
+                        "aws:lambda:networkConnectorName",
+                        "aws:lambda:networkConnectorId",
+                      ],
+                    },
+                  },
                 },
-              },
+                {
+                  Sid: "TagConnectorNetworkInterfaces",
+                  Effect: "Allow",
+                  Action: ["ec2:CreateTags"],
+                  Resource: [
+                    `arn:aws:ec2:${region}:${AWS_ACCOUNT_ID}:network-interface/*`,
+                  ],
+                  Condition: {
+                    StringEquals: {
+                      "ec2:CreateAction": "CreateNetworkInterface",
+                      "ec2:ManagedResourceOperator":
+                        "network-connectors.lambda.amazonaws.com",
+                    },
+                  },
+                },
+              ],
+            }),
+          })
+        : null;
+
+    // IAM is eventually consistent, so a role is not assumable the instant it exists:
+    // creating the connector straight after the role fails with "unable to assume the
+    // provided NetworkConnectorOperatorRole" until the trust policy propagates. Gate the
+    // connector behind a wait that only runs when the role or its policy actually changes.
+    const sandboxConnectorRoleReady =
+      sandboxConnectorRole && sandboxConnectorRolePolicy
+        ? new command.local.Command(
+            "SandboxConnectorRoleReady",
+            {
+              create: `sleep ${IAM_PROPAGATION_SECONDS}`,
+              triggers: [
+                sandboxConnectorRole.arn,
+                sandboxConnectorRolePolicy.id,
+              ],
             },
-          ],
-        }),
-      });
-    }
+            { dependsOn: [sandboxConnectorRole, sandboxConnectorRolePolicy] },
+          )
+        : null;
 
     // No Pulumi/Terraform resource exists for lambda-core network connectors, but the
     // CloudFormation type does — Cloud Control gives real create/update/delete plus the
     // PENDING → ACTIVE wait (ENI provisioning takes up to ~10 min on the first deploy).
     const sandboxEgressConnector =
-      sandboxNetwork && sandboxEgressSecurityGroup && sandboxConnectorRole
-        ? new aws.cloudcontrol.Resource("SandboxEgressConnector", {
-            typeName: "AWS::Lambda::NetworkConnector",
-            desiredState: $jsonStringify({
-              Name: names.microvmEgressConnector,
-              OperatorRole: sandboxConnectorRole.arn,
-              Configuration: {
-                VpcEgressConfiguration: {
-                  SubnetIds: sandboxNetwork.privateSubnets,
-                  SecurityGroupIds: [sandboxEgressSecurityGroup.id],
-                  NetworkProtocol: "IPv4",
-                  AssociatedComputeResourceTypes: ["MicroVm"],
+      sandboxNetwork &&
+      sandboxEgressSecurityGroup &&
+      sandboxConnectorRole &&
+      sandboxConnectorRolePolicy &&
+      sandboxConnectorRoleReady
+        ? new aws.cloudcontrol.Resource(
+            "SandboxEgressConnector",
+            {
+              typeName: "AWS::Lambda::NetworkConnector",
+              desiredState: $jsonStringify({
+                Name: names.microvmEgressConnector,
+                OperatorRole: sandboxConnectorRole.arn,
+                Configuration: {
+                  VpcEgressConfiguration: {
+                    SubnetIds: sandboxNetwork.privateSubnets,
+                    SecurityGroupIds: [sandboxEgressSecurityGroup.id],
+                    NetworkProtocol: "IPv4",
+                    AssociatedComputeResourceTypes: ["MicroVm"],
+                  },
                 },
-              },
-            }),
-          })
+              }),
+            },
+            // The ENI policy must exist before Lambda assumes the role, or the connector
+            // creates with no permission to build its interfaces. Nothing in desiredState
+            // references the policy, so without this the two race.
+            {
+              dependsOn: [
+                sandboxConnectorRolePolicy,
+                sandboxConnectorRoleReady,
+              ],
+            },
+          )
         : null;
 
     // Core reads this as MICROVM_EGRESS_NETWORK_CONNECTOR_ARN; without it the executor
