@@ -297,6 +297,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "hooks",
   "channels",
   "tools",
+  "denyTools",
   "sandbox",
   "workspaces",
   "subagent",

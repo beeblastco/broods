@@ -76,7 +76,7 @@ const idsValidator = v.object({
 
 /**
  * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
- * names referenced via `env.NAME` in agent config but not yet stored for the
+ * names referenced via `env("NAME")` in agent config but not yet stored for the
  * environment, so the operator can run `broods env set <NAME>`.
  * `missingPolicies` lists `policy.policyIds` refs that did not resolve to a
  * policy resource in this deploy, so a typo cannot silently weaken the
@@ -1217,7 +1217,7 @@ async function syncSandboxResources(
 
   for (const resource of sandboxes) {
     const name = resourceName(resource.name);
-    // Resolve `env.NAME` refs to their stored values before encrypting, the
+    // Resolve `env("NAME")` refs to their stored values before encrypting, the
     // same way agent configs are resolved at sync time — core reads the
     // sandbox blob verbatim and has no placeholder substitution of its own.
     // Missing names surface as a deploy warning instead of leaking a literal
@@ -1490,7 +1490,7 @@ async function syncAgentResources(
       toolIds,
     );
     const flat = fromNestedAgentConfig(nested);
-    // Names referenced via `env.NAME` but not yet stored for this environment.
+    // Names referenced via `env("NAME")` but not yet stored for this environment.
     // Surfaced as a deploy warning so a typo/rename can't silently no-op into
     // an unresolved `${NAME}` placeholder at run time.
     for (const envNameEntry of envNames) {

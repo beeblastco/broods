@@ -45,6 +45,10 @@ tags:
     description: Account-uploaded custom tool bundles.
   - name: Policies
     description: Account-owned reusable runtime authorization policies.
+  - name: Channels
+    description: >-
+      Account-owned channel records. One row per real place a team talks, binding
+      it to an agent with its own instructions, workspaces, policies and roles.
 
 paths:
   /:
@@ -463,19 +467,14 @@ paths:
         "404":
           description: Unknown resultId or invalid token
 
-  /webhooks/{accountId}/{agentId}/{channelName}:
+  /webhooks/{accountId}/{channelName}:
     post:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: agentId
           in: path
           required: true
           schema:
@@ -492,7 +491,7 @@ paths:
         "401":
           description: Provider authentication failed
         "404":
-          description: Unknown account, agent, or channel
+          description: Unknown account or channel, or no agent holds credentials for it
 
   /accounts:
     post:
@@ -1822,6 +1821,103 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/channels:
+    post:
+      tags: [Channels]
+      summary: Create channel record
+      description: >-
+        Bind one real chat channel — a Slack channel, a Discord channel, a
+        repository — to an agent. One active record per `(platform, externalId)`.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelRecordCreate"
+      responses:
+        "201":
+          description: Channel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelRecord"
+    get:
+      tags: [Channels]
+      summary: List channel records
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Channel list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChannelRecord"
+
+  /v1/channels/{channelId}:
+    get:
+      tags: [Channels]
+      summary: Get channel record
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      responses:
+        "200":
+          description: Channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelRecord"
+        "404": { description: Not found }
+    patch:
+      tags: [Channels]
+      summary: Update channel record
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelRecordUpdate"
+      responses:
+        "200":
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelRecord"
+        "404": { description: Not found }
+    delete:
+      tags: [Channels]
+      summary: Delete channel record
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: channelId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found }
+
   /v1/skills:
     post:
       tags:
@@ -2903,6 +2999,7 @@ components:
             type: string
             enum:
               [
+                agent.invoke,
                 tool.call,
                 workspace.read,
                 workspace.write,
@@ -2910,6 +3007,10 @@ components:
                 subagent.run,
                 skill.load,
               ]
+            description: >-
+              agent.invoke gates the turn itself before any tool runs — "may this
+              person address the agent here?". The rest gate one action inside an
+              admitted turn.
         resources:
           $ref: "#/components/schemas/AgentPolicyResourceSelector"
         conditions:
@@ -2934,7 +3035,13 @@ components:
       properties:
         attribute:
           type: string
-          description: Trusted runtime attribute or dotted path. Examples include accountId, project, environment, agentId, channel, toolName, toolId, filePath, workspaceName, sandboxPermissionMode, tool.input.command, tool.input.file_path, and tool.inputKeys.
+          description: >-
+            Trusted runtime attribute or dotted path. Examples include accountId,
+            project, environment, agentId, channel, channelId, threadId, actorId,
+            actorName, actorRoles, toolName, toolId, filePath, workspaceName,
+            sandboxPermissionMode, tool.input.command, tool.input.file_path, and
+            tool.inputKeys. On an array attribute such as actorRoles, `contains`
+            means membership and `in`/`notIn` test overlap.
         operator:
           type: string
           enum: [equals, notEquals, in, notIn, prefix, contains]
@@ -2949,6 +3056,130 @@ components:
                   - type: string
                   - type: number
                   - type: boolean
+
+    ChannelRecordConfig:
+      type: object
+      required: [agentBindings]
+      description: >-
+        A channel record narrows and adds; it never grants capability the agent
+        lacks. Provider, model and credentials stay on the agent.
+      properties:
+        instructions:
+          type: string
+          description: Appended after the agent's own system prompt.
+        agentBindings:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [agentId]
+            properties:
+              agentId: { type: string }
+              isDefault: { type: boolean }
+          description: At most one binding may be marked default.
+        workspaces:
+          type: array
+          items:
+            type: object
+            required: [name, workspaceId]
+            properties:
+              name: { type: string }
+              workspaceId: { type: string }
+        policyIds:
+          type: array
+          items: { type: string }
+        policyMode:
+          type: string
+          enum: [enforce, audit]
+          description: Enforcement stage here. Falls back to the agent's mode.
+        denyTools:
+          type: array
+          items: { type: string }
+          description: >-
+            Tool names withheld in this channel, applied after the tool set is
+            built — so it also covers sandbox tools (bash, read, …) that
+            config.tools cannot name. Narrowing only; unknown names are ignored.
+        threadPolicy:
+          type: string
+          enum: [always-thread, inline]
+        workspaceScope:
+          oneOf:
+            - type: object
+              required: [level]
+              # alias is only meaningful on a conversation scope; the API rejects
+              # it here, so the schema must too or clients validate what 400s.
+              not: { required: [alias] }
+              properties:
+                level: { type: string, enum: [channel] }
+            - type: object
+              required: [level, alias]
+              properties:
+                level: { type: string, enum: [conversation] }
+                alias: { type: string }
+        sandboxImages:
+          type: array
+          items: { type: string }
+        tagRoles:
+          type: array
+          items:
+            type: object
+            required: [roleId]
+            properties:
+              roleId: { type: string }
+              actorIds: { type: array, items: { type: string } }
+          description: Named groups of people, readable from policy as actorRoles.
+
+    ChannelRecordCreate:
+      type: object
+      required: [platform, externalId, name, config]
+      properties:
+        platform:
+          type: string
+          description: Adapter name, e.g. slack, discord, telegram, github, pancake, zalo.
+        externalId:
+          type: string
+          description: Provider id of the place — a Slack channel id, or an owner/repo.
+        workspaceRef:
+          type: string
+          description: Team or guild the place sits in, when the provider has one.
+        name:
+          type: string
+        description:
+          type: string
+        config:
+          $ref: "#/components/schemas/ChannelRecordConfig"
+
+    ChannelRecordUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: [string, "null"]
+        workspaceRef:
+          type: [string, "null"]
+        config:
+          $ref: "#/components/schemas/ChannelRecordConfig"
+        status:
+          type: string
+          enum: [active, deleted]
+
+    ChannelRecord:
+      allOf:
+        - $ref: "#/components/schemas/ChannelRecordCreate"
+        - type: object
+          properties:
+            accountId:
+              type: string
+            channelId:
+              type: string
+            status:
+              type: string
+              enum: [active, deleted]
+            createdAt:
+              type: string
+            updatedAt:
+              type: string
 
     AgentPolicyCreate:
       type: object
@@ -3349,7 +3580,7 @@ components:
 
     ChannelsConfig:
       type: object
-      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{agentId}/{channel}`.
+      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{channel}`.
       properties:
         telegram:
           type: object

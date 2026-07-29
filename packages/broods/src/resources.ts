@@ -248,7 +248,12 @@ export type DiscordChannelInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentDiscordChannelConfig,
-      "apiUrl" | "botToken" | "publicKey" | "allowedGuildIds"
+      | "apiUrl"
+      | "botToken"
+      | "publicKey"
+      | "allowedGuildIds"
+      | "botUserId"
+      | "mentionRoleIds"
     >,
     "botToken" | "publicKey"
   >

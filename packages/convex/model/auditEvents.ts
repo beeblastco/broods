@@ -33,6 +33,7 @@ export type ConfigAuditResource = {
     | "cron"
     | "sandbox"
     | "policy"
+    | "channel"
     | "environmentVariable"
     | "deployment"
     | "webhook"

@@ -63,6 +63,7 @@ import {
 } from "./hook-dispatcher.ts";
 import { createAgentLifecycleEmitter, toLifecycleValue } from "./lifecycle.ts";
 import {
+  channelPolicyIdentity,
   createPolicyToolApproval,
   createRuntimeToolApproval,
 } from "./policy.ts";
@@ -502,6 +503,9 @@ export async function runAgentLoop(
         session.delivery?.kind === "channel"
           ? session.delivery.channelName
           : undefined,
+      ...(session.delivery?.kind === "channel"
+        ? channelPolicyIdentity(session.delivery.identity)
+        : {}),
     },
     resolvedWorkspaces,
     { toolIdsByName: policyToolIdsByName },

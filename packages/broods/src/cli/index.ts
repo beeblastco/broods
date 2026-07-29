@@ -804,20 +804,20 @@ function printChannelEndpoints(
   const deployment = result.deployment;
   if (!deployment || channels.length === 0) return;
   const client = new BroodsClient();
+  // The URL carries no agent, so every channel of one type shares it. Print it
+  // once with the aliases behind it rather than the same line N times.
+  const aliasesByType = new Map<(typeof channels)[number]["type"], string[]>();
   for (const channel of channels) {
-    const agentId = result.ids.agents[channel.agentName];
-    if (!agentId) continue;
-    const webhookPath = `/webhooks/${encodeURIComponent(deployment.accountId)}/${encodeURIComponent(agentId)}/${encodeURIComponent(channel.type)}`;
-    const url = client.channelWebhookUrl({
-      kind: "channel",
-      type: channel.type,
-      agentName: channel.agentName,
-      agentId,
-      accountId: deployment.accountId,
-      webhookPath,
-    });
+    if (!result.ids.agents[channel.agentName]) continue;
+    const aliases = aliasesByType.get(channel.type) ?? [];
+    aliases.push(channel.alias);
+    aliasesByType.set(channel.type, aliases);
+  }
+
+  for (const [type, aliases] of aliasesByType) {
+    const url = client.accountWebhookUrl(deployment.accountId, type);
     console.log(
-      `Channel ${channel.alias} (${channel.type}): ${url}${channel.type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`,
+      `Channel ${aliases.join(", ")} (${type}): ${url}${type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`,
     );
   }
 }

@@ -80,6 +80,16 @@ export function createTelegramChannel(
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
           content: parsed.text,
+          identity: {
+            channelId: String(message.chat.id),
+            ...(message.message_thread_id !== undefined
+              ? { threadId: String(message.message_thread_id) }
+              : {}),
+            ...(message.from?.id ? { actorId: String(message.from.id) } : {}),
+            ...(message.from?.username
+              ? { actorName: message.from.username }
+              : {}),
+          },
           source: {
             chatId: message.chat.id,
             messageId: parsed.id,

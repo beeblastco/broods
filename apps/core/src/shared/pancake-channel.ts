@@ -202,6 +202,16 @@ function parsePancakeWebhook(
       conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
       content: [{ type: "text", text }],
+      identity: {
+        workspaceRef: pageId,
+        channelId: conversation.id,
+        ...((message.from?.id ?? conversation.from?.id)
+          ? { actorId: message.from?.id ?? conversation.from?.id }
+          : {}),
+        ...((message.from?.name ?? conversation.from?.name)
+          ? { actorName: message.from?.name ?? conversation.from?.name }
+          : {}),
+      },
       source: {
         pageId,
         conversationId: conversation.id,

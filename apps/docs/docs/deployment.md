@@ -115,12 +115,12 @@ Store the returned `secret` securely.
 Provider webhooks use the deployed gateway URL:
 
 ```text
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/telegram
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/github
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/slack
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/discord
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/pancake
-{BROODS_BASE_URL}/webhooks/{accountId}/{agentId}/zalo
+{BROODS_BASE_URL}/webhooks/{accountId}/telegram
+{BROODS_BASE_URL}/webhooks/{accountId}/github
+{BROODS_BASE_URL}/webhooks/{accountId}/slack
+{BROODS_BASE_URL}/webhooks/{accountId}/discord
+{BROODS_BASE_URL}/webhooks/{accountId}/pancake
+{BROODS_BASE_URL}/webhooks/{accountId}/zalo
 ```
 
 Reference the [API Reference](/api-reference) for the complete agent config shape.

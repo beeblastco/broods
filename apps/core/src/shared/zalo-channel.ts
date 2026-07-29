@@ -113,6 +113,15 @@ export function createZaloChannel(
           conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
           channelName: "zalo",
           content: text,
+          identity: {
+            channelId: chatId,
+            ...(senderId ? { actorId: senderId } : {}),
+            ...((message.from?.display_name ?? message.from?.name)
+              ? {
+                  actorName: message.from?.display_name ?? message.from?.name,
+                }
+              : {}),
+          },
           source: {
             chatId,
             chatType,

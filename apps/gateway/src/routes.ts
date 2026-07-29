@@ -36,6 +36,7 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
     /^\/v1\/workspaces(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/sandboxes(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/policies(?:\/[^/]+)?$/.test(pathname) ||
+    /^\/v1\/channels(?:\/[^/]+)?$/.test(pathname) ||
     /^\/v1\/crons(?:\/[^/]+(?:\/runs)?)?$/.test(pathname)
   );
 }
