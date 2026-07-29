@@ -60,7 +60,7 @@ reading an agent still tells you its ceiling.
 | Field            | Effect                                                            |
 | ---------------- | ----------------------------------------------------------------- |
 | `instructions`   | Appended after the agent's own system prompt                      |
-| `workspaces`     | Unioned; the agent's own ref wins on a mount-name clash           |
+| `workspaces`     | Selects from the agent's own; one it does not attach is ignored   |
 | `policyIds`      | Unioned with the agent's                                          |
 | `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
 | `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
@@ -70,6 +70,11 @@ reading an agent still tells you its ceiling.
 | `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
 
 Provider, model and credentials stay on the agent and are never touched.
+
+A workspace is capability, not configuration: attaching one is what materialises
+the sandbox file tools. So a record may only name a workspace the agent already
+attaches — it can mount that workspace under a channel-specific name, but a
+`workspaceId` the agent does not carry is dropped and logged.
 
 `denyTools` is applied to the finished tool set rather than to `config.tools`,
 so it reaches every tool the agent ended up with: built-ins, [custom
@@ -93,6 +98,7 @@ await client.createChannel({
   config: {
     agentBindings: [{ agentId: "agent_nhi", isDefault: true }],
     instructions: "Escalate billing questions to #finance.",
+    // `agent_nhi` must already attach ws_incidents; this mounts it as "incidents" here.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
     workspaceScope: { alias: "eng", level: "conversation" },
     threadPolicy: "always-thread",

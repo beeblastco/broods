@@ -105,12 +105,17 @@ condition_match(condition) if {
   actual != condition.value
 }
 
+# `in`/`notIn` compare against a set. A scalar is read as the one-element set:
+# otherwise it satisfies no branch at all, and a notIn deny silently never fires.
+condition_values(condition) := condition.value if is_array(condition.value)
+
+condition_values(condition) := [condition.value] if not is_array(condition.value)
+
 condition_match(condition) if {
   condition.operator == "in"
   actual := condition_attribute_value(condition.attribute)
   not is_array(actual)
-  is_array(condition.value)
-  value_in_collection(condition.value, actual)
+  value_in_collection(condition_values(condition), actual)
 }
 
 # Array-valued attributes (actorRoles) match `in` on any overlap, so a rule can
@@ -119,8 +124,7 @@ condition_match(condition) if {
   condition.operator == "in"
   actual := condition_attribute_value(condition.attribute)
   is_array(actual)
-  is_array(condition.value)
-  actual[_] == condition.value[_]
+  actual[_] == condition_values(condition)[_]
 }
 
 condition_match(condition) if {
@@ -128,8 +132,7 @@ condition_match(condition) if {
   actual := condition_attribute_value(condition.attribute)
   actual != null
   not is_array(actual)
-  is_array(condition.value)
-  not value_in_collection(condition.value, actual)
+  not value_in_collection(condition_values(condition), actual)
 }
 
 # An array attribute is "not in" the set only when nothing overlaps; without
@@ -138,8 +141,7 @@ condition_match(condition) if {
   condition.operator == "notIn"
   actual := condition_attribute_value(condition.attribute)
   is_array(actual)
-  is_array(condition.value)
-  not arrays_overlap(condition.value, actual)
+  not arrays_overlap(condition_values(condition), actual)
 }
 
 condition_match(condition) if {

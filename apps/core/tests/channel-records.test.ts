@@ -283,7 +283,10 @@ describe("channel record resolution", () => {
     expect(runs[0]!.agentId).toBe("agent_support");
   });
 
-  it("layers the record's instructions, workspaces and policies onto the run", async () => {
+  // The bound agent attaches no workspace, so the record naming one is the
+  // escalation case: it must reach the run with instructions and policies
+  // layered on but no filesystem it did not already have.
+  it("layers the record's instructions and policies, but not a workspace the agent lacks", async () => {
     const runs: ChannelInboundEvent[] = [];
     await route({
       records: {
@@ -304,7 +307,7 @@ describe("channel record resolution", () => {
     expect(config.agent?.system).toEqual([
       { role: "system", content: "Answer as the sales desk." },
     ]);
-    expect(config.workspaces).toEqual([{ name: "crm", workspaceId: "ws_crm" }]);
+    expect(config.workspaces).toBeUndefined();
     expect(config.policy?.policyIds).toEqual(["policy_sales"]);
   });
 
@@ -405,7 +408,26 @@ describe("channel record layering", () => {
     ]);
   });
 
-  it("unions workspaces and policies without dropping the agent's own", () => {
+  it("unions policies without dropping the agent's own", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          policyIds: ["policy_base", "policy_channel"],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.policy?.policyIds).toEqual(["policy_base", "policy_channel"]);
+  });
+
+  // A workspace is what materialises the sandbox file tools, so a record naming
+  // one the agent does not attach would hand out filesystem access the agent
+  // never had — reading the agent must still tell you its ceiling.
+  it("ignores a record workspace the agent does not attach", () => {
     const merged = applyChannelRecord(
       base,
       channelRecord({
@@ -413,7 +435,6 @@ describe("channel record layering", () => {
         config: {
           agentBindings: [{ agentId: "a" }],
           workspaces: [{ name: "incidents", workspaceId: "ws_inc" }],
-          policyIds: ["policy_base", "policy_channel"],
         },
       }),
       "slack",
@@ -421,9 +442,26 @@ describe("channel record layering", () => {
 
     expect(merged.workspaces).toEqual([
       { name: "docs", workspaceId: "ws_docs" },
-      { name: "incidents", workspaceId: "ws_inc" },
     ]);
-    expect(merged.policy?.policyIds).toEqual(["policy_base", "policy_channel"]);
+  });
+
+  it("keeps a record workspace the agent already attaches", () => {
+    const merged = applyChannelRecord(
+      base,
+      channelRecord({
+        platform: "slack",
+        config: {
+          agentBindings: [{ agentId: "a" }],
+          workspaces: [{ name: "incidents", workspaceId: "ws_docs" }],
+        },
+      }),
+      "slack",
+    );
+
+    expect(merged.workspaces).toEqual([
+      { name: "docs", workspaceId: "ws_docs" },
+      { name: "incidents", workspaceId: "ws_docs" },
+    ]);
   });
 
   it("keeps the agent's workspace when the record reuses its mount name", () => {

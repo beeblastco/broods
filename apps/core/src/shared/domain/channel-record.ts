@@ -7,6 +7,7 @@
  */
 
 import type { SystemModelMessage } from "ai";
+import { logWarn } from "../log.ts";
 import { isPlainObject } from "../object.ts";
 import type {
   AgentBehaviorConfig,
@@ -48,6 +49,7 @@ export interface ChannelRecordConfig {
   /** Appended after the agent's own system prompt, never replacing it. */
   instructions?: string;
   agentBindings: ChannelAgentBinding[];
+  /** Narrowing only: entries the agent does not already attach are ignored. */
   workspaces?: AgentWorkspaceRef[];
   policyIds?: string[];
   /**
@@ -134,9 +136,7 @@ export function channelActorRoles(
 
 /**
  * Layer a channel record over the agent's runtime config for one turn.
- * Instructions append, workspaces and policies union, `denyTools` withholds —
- * a channel can take capability away but never hand any out, so reading the
- * agent still tells you its ceiling.
+ * Instructions append and policies union; workspaces and tools only narrow.
  */
 export function applyChannelRecord(
   config: AgentConfig,
@@ -313,18 +313,31 @@ function appendSystemInstructions(
   return Array.isArray(system) ? [...system, appended] : [system, appended];
 }
 
-/** Channel workspaces are added under their own names; the agent's ref wins on a clash. */
+// A workspace is capability, not configuration: attaching one is what materialises
+// the sandbox file tools. So a record may only name a workspace the agent already
+// attaches — anything else would hand out filesystem access the agent lacks.
 function mergeWorkspaceRefs(
   agentRefs: AgentWorkspaceRef[] | undefined,
   channelRefs: AgentWorkspaceRef[] | undefined,
 ): AgentWorkspaceRef[] | undefined {
   if (!channelRefs?.length) return undefined;
   const taken = new Set((agentRefs ?? []).map((ref) => ref.name));
+  const attached = new Set((agentRefs ?? []).map((ref) => ref.workspaceId));
+  const allowed = channelRefs.filter(
+    (ref) => !taken.has(ref.name) && attached.has(ref.workspaceId),
+  );
+  for (const ref of channelRefs) {
+    if (!attached.has(ref.workspaceId)) {
+      logWarn("Channel record workspace ignored: agent does not attach it", {
+        name: ref.name,
+        workspaceId: ref.workspaceId,
+      });
+    }
+  }
 
-  return [
-    ...(agentRefs ?? []),
-    ...channelRefs.filter((ref) => !taken.has(ref.name)),
-  ];
+  const merged = [...(agentRefs ?? []), ...allowed];
+
+  return merged.length > 0 ? merged : undefined;
 }
 
 function normalizeAgentBindings(value: unknown): ChannelAgentBinding[] {
