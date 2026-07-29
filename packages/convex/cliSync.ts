@@ -238,6 +238,11 @@ export const syncManifestBySecretHash = internalMutation({
       environmentDoc._id,
       manifest.resources,
     );
+    const externalIds = await externalIdsForEnvironment(
+      ctx,
+      projectDoc._id,
+      environmentDoc._id,
+    );
     const envValues = await loadEnvironmentVariableValues(
       ctx,
       projectDoc._id,
@@ -261,6 +266,7 @@ export const syncManifestBySecretHash = internalMutation({
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
       policyIds: policyIds,
+      toolIds: externalIds.tools,
       envValues: envValues,
       missingEnv: missingEnv,
       missingPolicies: missingPolicies,
@@ -291,12 +297,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
     });
 
-    await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
-    const externalIds = await externalIdsForEnvironment(
-      ctx,
-      projectDoc._id,
-      environmentDoc._id,
-    );
+     await ctx.db.patch(projectDoc._id, { updatedAt: Date.now() });
     const ids: Ids = {
       agents: agentIds,
       workspaces: workspaceIds,
@@ -1420,6 +1421,7 @@ async function syncAgentResources(
     workspaceIds: Record<string, string>;
     sandboxIds: Record<string, string>;
     policyIds: Record<string, string>;
+    toolIds: Record<string, string>;
     envValues: Record<string, string>;
     missingEnv: Set<string>;
     missingPolicies: Set<string>;
@@ -1433,6 +1435,7 @@ async function syncAgentResources(
     workspaceIds,
     sandboxIds,
     policyIds,
+    toolIds,
     envValues,
     missingEnv,
     missingPolicies,
@@ -1484,6 +1487,7 @@ async function syncAgentResources(
       workspaceIds,
       sandboxIds,
       policyIds,
+      toolIds,
     );
     const flat = fromNestedAgentConfig(nested);
     // Names referenced via `env.NAME` but not yet stored for this environment.
