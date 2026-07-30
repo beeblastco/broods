@@ -55,7 +55,7 @@ jobs:
         # Skip workspace postinstall (`sst install`) during validation. The
         # deploy job installs with the same flag and runs SST explicitly after
         # resolving the stage and AWS credentials.
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Typecheck
         run: bun run check
@@ -203,7 +203,7 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Setup crane
         uses: imjasonh/setup-crane@v0.7

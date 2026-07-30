@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "filthy-panty",
+      "name": "broods",
       "devDependencies": {
         "@types/bun": "^1.3.14",
         "typescript": "^7.0.2",
@@ -194,9 +194,6 @@
       "peerDependencies": {
         "ai": "^7.0.40",
       },
-      "optionalPeers": [
-        "ai",
-      ],
     },
     "packages/convex": {
       "name": "@broods/convex",

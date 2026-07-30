@@ -299,6 +299,30 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   expect(await client.deleteTool("qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
 });
 
+test("tools: list carries the environment scope and encodes it", async () => {
+  const { client, calls } = mockClient([
+    { status: 200, body: { tools: [{ toolId: "tool_1", name: "sum" }] } },
+  ]);
+
+  expect(
+    (await client.listTools({ project: "acme", environment: "My Env" }))[0]
+      ?.toolId,
+  ).toBe("tool_1");
+  expect(calls[0]?.url).toBe(
+    "https://gateway.example.com/v1/tools?project=acme&environment=My+Env",
+  );
+});
+
+test("tools: list throws on an unresolvable scope instead of returning empty", async () => {
+  const { client } = mockClient([
+    { status: 404, body: { error: "Environment not found" } },
+  ]);
+
+  expect(
+    client.listTools({ project: "acme", environment: "typo" }),
+  ).rejects.toThrow();
+});
+
 test("policies: list/create unwrap and get returns null on 404", async () => {
   const { client } = mockClient([
     { status: 200, body: { policies: [{ policyId: "pol_1", name: "guard" }] } },

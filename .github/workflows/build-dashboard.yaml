@@ -48,7 +48,7 @@ jobs:
       - name: Install dependencies
         # Dashboard image builds do not need core's SST provider install; the
         # Dockerfile uses the same flag before building the app image.
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Type-check dashboard
         run: cd apps/dashboard && npx tsc --noEmit

@@ -53,12 +53,14 @@ export const getByNode = query({
     );
     if (!environment || environment.projectId !== projectId) return null;
 
-    return await ctx.db
+    const tool = await ctx.db
       .query("accountTools")
       .withIndex("by_environmentId_and_nodeId", (q) =>
         q.eq("environmentId", environmentId).eq("nodeId", nodeId),
       )
       .first();
+
+    return tool?.status === "active" ? tool : null;
   },
 });
 
@@ -126,8 +128,13 @@ export const saveForNode = action({
       nodeId: args.nodeId,
     });
 
-    // Only re-upload when the source actually changed; the key is the digest.
+    // A first save with no source would bundle the empty string, so the tool
+    // would exist in config and fail the moment an agent called it.
     const sourceCode = args.sourceCode ?? context.existing?.sourceCode ?? "";
+    if (!sourceCode.trim()) {
+      throw new Error("Write the tool source before saving it.");
+    }
+    // Only re-upload when the source actually changed; the key is the digest.
     const sha256 = await digest(sourceCode);
     const bundleStorageKey =
       context.existing && context.existing.sha256 === sha256
@@ -317,7 +324,12 @@ export const upsertForNode = internalMutation({
       .first();
 
     if (existing) {
+      // Carry the scope and revive the row: a legacy or tombstoned match is
+      // still this node's tool, and the index holds only one row per node.
       await ctx.db.patch(existing._id, {
+        projectId: args.projectId,
+        status: "active",
+        deletedAt: undefined,
         name: toolName(args.name) || existing.name,
         sourceCode: args.sourceCode,
         sha256: args.sha256,

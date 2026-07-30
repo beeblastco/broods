@@ -54,8 +54,9 @@ jobs:
 
       - name: Install dependencies
         if: steps.bump.outputs.bump != 'none'
-        # Frozen: proves the bumped workspace version and bun.lock still agree.
-        run: bun install --frozen-lockfile --ignore-scripts
+        # Saves on purpose: this is the one job that must write the bumped
+        # workspace version into bun.lock, which the commit step then lands.
+        run: bun install --ignore-scripts
 
       - name: Typecheck SDK
         if: steps.bump.outputs.bump != 'none'

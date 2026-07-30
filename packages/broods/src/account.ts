@@ -765,11 +765,13 @@ export class BroodsAccountClient {
 
   /** Tools live in one environment, so the collection routes need a scope. Both fields are required. */
   async listTools(scope: ToolScope): Promise<AccountTool[]> {
-    const result = await this.request<{ tools: AccountTool[] }>(
-      "GET",
-      `/v1/tools${toolScopeQuery(scope)}`,
-    );
-    return result?.tools ?? [];
+    // A 404 here means the scope does not resolve, which is not an empty
+    // environment — collapsing the two would hide a typo in the scope.
+    const path = `/v1/tools${toolScopeQuery(scope)}`;
+    const result = await this.request<{ tools: AccountTool[] }>("GET", path);
+    if (!result) throw new BroodsAccountApiError("GET", path, 404, "Not found");
+
+    return result.tools ?? [];
   }
 
   async createTool(

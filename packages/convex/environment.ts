@@ -338,10 +338,12 @@ async function hasEnvironmentContents(
     .first();
   if (layout) return true;
 
+  // Tombstones do not count: a tombstone-only environment is still empty, and
+  // treating it as occupied silently skips the clone into production.
   const tool = await ctx.db
     .query("accountTools")
     .withIndex("by_environmentId_and_status", (q) =>
-      q.eq("environmentId", environmentId),
+      q.eq("environmentId", environmentId).eq("status", "active"),
     )
     .first();
   if (tool) return true;
