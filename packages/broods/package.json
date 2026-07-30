@@ -55,11 +55,6 @@
   "peerDependencies": {
     "ai": "^7.0.40"
   },
-  "peerDependenciesMeta": {
-    "ai": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "@ai-sdk/tui": "^1.0.41",
     "ai": "^7.0.40",

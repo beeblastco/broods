@@ -15,6 +15,10 @@ npm install broods
 bun add broods
 ```
 
+`ai` is a peer dependency that npm and bun pull in automatically. On a package
+manager that does not auto-install peers, add it yourself — the SDK types import
+from it, so without it a valid agent config fails to compile.
+
 ## Authentication
 
 Runtime calls use the **environment runtime API key** (not your dashboard login token). After your first `broods deploy`, the CLI writes `BROODS_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:

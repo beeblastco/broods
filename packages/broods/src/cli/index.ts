@@ -176,6 +176,7 @@ async function init(args: string[]): Promise<void> {
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
     force: force,
   });
+  await ensureModuleType();
   console.log(`Created ${PROJECT_DIR}/`);
 }
 
@@ -290,6 +291,7 @@ async function deploy(args: string[]): Promise<void> {
     channels,
   );
   await ensureGitIgnore();
+  await ensureModuleType();
   console.log(
     `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`,
   );
@@ -746,6 +748,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     channels,
   );
   await ensureGitIgnore();
+  await ensureModuleType();
 
   const declined = await loadDeclinedDeletes();
   const deletes = diff.filter((entry) => entry.operation === "delete");
@@ -1498,6 +1501,25 @@ async function ensureGitIgnore(): Promise<void> {
     ? existing.trimEnd() + "\n" + missing.join("\n") + "\n"
     : missing.join("\n") + "\n";
   await writeFile(path, body, "utf8");
+}
+
+/**
+ * Node warns (MODULE_TYPELESS_PACKAGE_JSON) and reparses every project file when
+ * the host package.json declares no module type. Our project files are ESM.
+ */
+async function ensureModuleType(): Promise<void> {
+  const path = resolve(process.cwd(), "package.json");
+  const existing = await readTextIfExists(path);
+  if (!existing) return;
+  let manifest: { type?: string };
+  try {
+    manifest = JSON.parse(existing) as { type?: string };
+  } catch {
+    return;
+  }
+  if (manifest.type) return;
+  manifest.type = "module";
+  await writeFile(path, JSON.stringify(manifest, null, 2) + "\n", "utf8");
 }
 
 async function writeLocalEnvDefaults(options: {

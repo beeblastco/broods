@@ -17,13 +17,15 @@ bun add -g broods
 broods dev
 ```
 
-`ai` is an optional peer dependency. The CLI and the SDK both run without it —
-it is only needed to resolve the AI SDK types the SDK re-exports, so add it when
-you consume those types from TypeScript:
+`ai` is a peer dependency. npm and bun install it for you; add it explicitly on
+package managers that do not auto-install peers:
 
 ```bash
 npm install ai
 ```
+
+The published types import from `ai` directly, so without it `defineAgent`'s
+model options resolve to error types and a valid agent config fails to compile.
 
 ## Invoke an Agent
 
