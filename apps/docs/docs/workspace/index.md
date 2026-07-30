@@ -145,11 +145,14 @@ workspace's effective sandbox **is the one the agent itself references**:
 | Arrangement                                                 | What the agent gets                                                                                                                                                             |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.              |
-| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                 |
+| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                 |
 | `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace is mounted there, so nothing reaches durable storage. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
-resolves both to the same record, so both land in the first row.
+resolves both to the same record, so both land in the first row. An agent that references
+the very sandbox its workspace runs on lands there too — identity is the sandbox record, so
+`config.sandbox: sb_b` + workspace on `sb_b` is the agent's own machine, not a borrowed one.
+Row two is only reached when the agent references **no** sandbox of its own.
 
 `workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
 own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths

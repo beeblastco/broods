@@ -44,10 +44,8 @@ export interface FlatAgentConfig {
 
 export type NestedAgentConfig = Record<string, unknown>;
 
-// Removed branches, kept only to answer with a pointer instead of dropping the
-// value silently. `workspace` (singular) was the pre-records shape: a namespace,
-// a map of named workspaces, and an inline sandbox. Nothing has read it since
-// workspaces became account-scoped records referenced by id.
+// Removed branches, kept only so a write answers with a pointer instead of dropping
+// the value silently. `workspace` (singular) is the pre-records shape.
 const REMOVED_BRANCH_HINTS: Record<string, string> = {
   workspace:
     'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',

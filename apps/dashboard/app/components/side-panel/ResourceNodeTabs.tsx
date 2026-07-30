@@ -93,23 +93,15 @@ export function WorkspaceResourceDetailsTab({
   });
 
   function setConfig(patch: Record<string, unknown>) {
-    onUpdateNodeData({ config: { ...config, ...patch } });
+    onUpdateNodeData({ config: mergeDropping(config, patch) });
   }
 
   // Storage merges rather than replaces: a bring-your-own bucket lives here, and
   // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
-  // A cleared field is deleted rather than set to undefined — this object is
-  // persisted, and an `undefined` key survives as a key on the way through.
   function setStorage(patch: Record<string, unknown>) {
-    const next: Record<string, unknown> = { ...storage, provider: "s3" };
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) {
-        delete next[key];
-      } else {
-        next[key] = value;
-      }
-    }
-    setConfig({ storage: next });
+    setConfig({
+      storage: mergeDropping({ ...storage, provider: "s3" }, patch),
+    });
   }
 
   return (
@@ -463,6 +455,24 @@ function ResourceNameFields({
       />
     </div>
   );
+}
+
+// Merge a patch, treating undefined as "remove this key". These objects are
+// persisted, so an `undefined` value would otherwise ride along as a real key.
+function mergeDropping(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+  }
+
+  return next;
 }
 
 function TextField({
