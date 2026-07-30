@@ -281,7 +281,7 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   ]);
 
   const created = await client.createTool(
-    { project: "acme", environment: "Production" },
+    { project: "demo", environment: "development" },
     {
       name: "sum",
       description: "adds",
@@ -291,7 +291,7 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   );
   expect(created.toolId).toBe("qs78zwc4z4q5ysxm74fgrhd13s88xxt");
   expect(calls[0]?.url).toBe(
-    "https://gateway.example.com/v1/tools?project=acme&environment=Production",
+    "https://gateway.example.com/v1/tools?project=demo&environment=development",
   );
   expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
   expect(JSON.parse(calls[0]?.body ?? "{}").bundle).toBe("export default {}");

@@ -3783,6 +3783,20 @@ components:
               type: array
               items:
                 type: string
+            botUserId:
+              type: string
+              description: >-
+                The bot's own Discord user id. Set it to answer only when
+                actually mentioned; every other message in an allowed guild is
+                stored as context instead. Unset, the agent replies to every
+                non-bot message in the guild.
+            mentionRoleIds:
+              type: array
+              items:
+                type: string
+              description: >-
+                Role ids that also count as a mention, so tagging @oncall
+                reaches the agent without naming it directly.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."

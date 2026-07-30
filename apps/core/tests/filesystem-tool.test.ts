@@ -6,9 +6,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { runtime } from "../src/shared/convex/runtime.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_FETCH = globalThis.fetch;
+const ORIGINAL_RUNTIME_QUERY = runtime.query;
+const ORIGINAL_RUNTIME_MUTATE = runtime.mutate;
 
 // The sandbox now runs as an AWS Lambda MicroVM: control-plane calls go through the
 // SDK client, and the exec request is an HTTPS POST to the VM endpoint. Echo the
@@ -80,8 +83,8 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     Boolean(
       error &&
-      typeof error === "object" &&
-      (error as { name?: string }).name === "NoSuchKey",
+        typeof error === "object" &&
+        (error as { name?: string }).name === "NoSuchKey",
     ),
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -103,6 +106,10 @@ beforeEach(() => {
     "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
   process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
+  // Reserving a sandbox goes through the Convex reservation registry. Answer "no
+  // reservation yet, you won the claim" so a persistent run reaches the VM.
+  runtime.query = (async () => null) as typeof runtime.query;
+  runtime.mutate = (async () => true) as typeof runtime.mutate;
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   readS3TextMock.mockClear();
@@ -112,6 +119,8 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   globalThis.fetch = ORIGINAL_FETCH;
+  runtime.query = ORIGINAL_RUNTIME_QUERY;
+  runtime.mutate = ORIGINAL_RUNTIME_MUTATE;
 });
 
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
@@ -139,12 +148,63 @@ function workspaceCtx(sandboxOverrides: Record<string, unknown> = {}) {
 function statelessCtx(sandboxOverrides: Record<string, unknown> = {}) {
   return {
     workspaces: [],
-    statelessSandbox: {
+    agentSandbox: {
       provider: "lambda",
       network: { mode: "allow-all" },
       ...sandboxOverrides,
     },
-    statelessPermissionMode: "ask",
+    agentSandboxPermissionMode: "ask",
+  } as never;
+}
+
+// The workspace is mounted in the agent's OWN sandbox — same record, whether the ref
+// named it or inherited it. The agent has the run of that machine.
+function ownSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
+  const sandbox = {
+    provider: "lambda",
+    network: { mode: "allow-all" },
+    controlPlane: { sandboxConfigId: "sb_own" },
+    ...sandboxOverrides,
+  };
+  return {
+    workspaces: [
+      {
+        name: "notes",
+        workspaceId: "ws_a",
+        namespace: NS,
+        config: { storage: { provider: "s3" } },
+        sandbox: sandbox,
+      },
+    ],
+    agentSandbox: sandbox,
+    agentSandboxPermissionMode: "ask",
+  } as never;
+}
+
+// The workspace borrows a different sandbox as its execution layer; the agent's own
+// sandbox stays beside it, mounted by nothing.
+function borrowedSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
+  return {
+    workspaces: [
+      {
+        name: "notes",
+        workspaceId: "ws_a",
+        namespace: NS,
+        config: { storage: { provider: "s3" } },
+        sandbox: {
+          provider: "lambda",
+          network: { mode: "allow-all" },
+          controlPlane: { sandboxConfigId: "sb_borrowed" },
+          ...sandboxOverrides,
+        },
+      },
+    ],
+    agentSandbox: {
+      provider: "lambda",
+      network: { mode: "allow-all" },
+      controlPlane: { sandboxConfigId: "sb_own" },
+    },
+    agentSandboxPermissionMode: "ask",
   } as never;
 }
 
@@ -183,20 +243,19 @@ async function approvalStatus(
   input: Record<string, unknown>,
   ctx: {
     workspaces?: unknown[];
-    statelessSandbox?: unknown;
-    statelessPermissionMode?: unknown;
+    agentSandbox?: unknown;
+    agentSandboxPermissionMode?: unknown;
   },
 ) {
-  const { compatibilityApprovalStatus } =
-    await import("../src/harness/policy.ts");
+  const { compatibilityApprovalStatus } = await import(
+    "../src/harness/policy.ts"
+  );
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.statelessSandbox
-      ? { statelessSandbox: ctx.statelessSandbox as never }
-      : {}),
-    ...(typeof ctx.statelessPermissionMode === "string"
-      ? { statelessPermissionMode: ctx.statelessPermissionMode as never }
+    ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
+    ...(typeof ctx.agentSandboxPermissionMode === "string"
+      ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
       : {}),
   });
 }
@@ -215,6 +274,8 @@ async function tool(
 ) {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
   return mod.default(ctx)[name] as {
+    description: string;
+    inputSchema: unknown;
     execute(
       input: Record<string, unknown>,
     ): Promise<{ type: string; value: string }>;
@@ -285,8 +346,9 @@ describe("sandbox tool set", () => {
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { sandboxSupportsBackgroundJobs } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     expect(
       sandboxSupportsBackgroundJobs({
         provider: "lambda",
@@ -305,29 +367,104 @@ describe("sandbox tool set", () => {
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("bash rejects obvious attempts to leave the workspace", async () => {
+  it("bash rejects parent directory traversal", async () => {
     const bash = await tool("bash", workspaceCtx());
     await expect(bash.execute({ command: "cd .. && ls" })).resolves.toEqual({
       type: "error-text",
-      value: "Error: bash commands must stay in the workspace directory",
+      value: "Error: parent directory traversal is not allowed",
     });
-    await expect(bash.execute({ command: "cat /etc/passwd" })).resolves.toEqual(
-      {
-        type: "error-text",
-        value:
-          "Error: absolute paths are not allowed in workspace bash commands: /etc/passwd",
-      },
-    );
     await expect(
-      bash.execute({ command: "find / -maxdepth 1" }),
+      bash.execute({ command: "cat ../secrets.env" }),
     ).resolves.toEqual({
       type: "error-text",
-      value: "Error: bash commands must stay in the workspace directory",
+      value: "Error: parent directory traversal is not allowed",
     });
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
-  it("bash allows URL scheme separators while still blocking absolute paths", async () => {
+  // `..` after a separator escapes just as effectively as a leading one, and the
+  // redirection case writes outside the mount rather than only reading.
+  it("bash rejects traversal embedded mid-path", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "cat ./../../etc/os-release",
+      "echo pwned > sub/../../../srv/out.txt",
+      "cd /mnt/workspaces/x/../../ && ls",
+      'cd "dir/.."',
+      // bash reads this as `../secrets.env`, so the escapes must come off first.
+      "cat \\.\\./secrets.env",
+    ]) {
+      await expect(bash.execute({ command: command })).resolves.toEqual({
+        type: "error-text",
+        value: "Error: parent directory traversal is not allowed",
+      });
+    }
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  // Matching `..` after a separator must not swallow the many non-path uses of two
+  // dots, or ordinary git and brace-expansion commands start failing.
+  it("bash leaves non-path uses of .. alone", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "echo {1..10}",
+      "git diff main..dev",
+      "git log HEAD~2...HEAD",
+      'echo "loading..."',
+    ]) {
+      const result = await bash.execute({ command: command });
+      expect(result.type).toBe("text");
+    }
+  });
+
+  // A sandbox is a whole machine and reading it risks nothing, so the guard is about
+  // durability only. Blocking reads used to send the model hunting for a way around
+  // the check instead of getting on with the task.
+  it("bash reads outside the workspace without complaint", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    for (const command of [
+      "cat /etc/os-release",
+      "python3 -c \"print(open('/proc/version').read())\"",
+      "ls -la /usr/lib",
+    ]) {
+      const result = await bash.execute({ command: command });
+      expect(result.type).toBe("text");
+    }
+    expect(microvmFetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("bash rejects writes that would be lost, naming a workspace path to use", async () => {
+    const bash = await tool("bash", workspaceCtx());
+    const result = await bash.execute({
+      command: "echo report > /srv/report.txt",
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("/srv/report.txt is outside the workspace");
+    expect(result.value).toContain("./report.txt");
+
+    for (const command of [
+      "cp result.json /opt/result.json",
+      "tee /var/log/run.log",
+      "mkdir /data/out",
+      "sed -i 's/a/b/' /etc/hosts",
+      "dd if=in.bin of=/mnt/other/out.bin",
+      // Destinations that arrive as a flag argument rather than a redirection.
+      "curl -o /srv/report.json https://x",
+      "wget -O /srv/a.bin https://x",
+      "tar -xzf a.tgz -C /srv",
+      "unzip a.zip -d /srv",
+      "git clone https://github.com/a/b /srv/b",
+      "echo x >| /srv/f",
+      "ln -s target /srv/link",
+    ]) {
+      const blocked = await bash.execute({ command: command });
+      expect(blocked.type).toBe("error-text");
+      expect(blocked.value).toContain("outside the workspace");
+    }
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("bash allows scratch writes to /tmp and keeps URL schemes working", async () => {
     const bash = await tool("bash", workspaceCtx());
     const ok = await bash.execute({
       command: "curl -sS https://api.github.com/zen -o out.txt",
@@ -336,14 +473,143 @@ describe("sandbox tool set", () => {
     expect(lastSandboxExec().payload.code).toContain(
       "https://api.github.com/zen",
     );
-    // A bare absolute path stays rejected; only the scheme `://` is exempt.
+    // /tmp is declared scratch: writing there is a deliberate "this is throwaway".
+    for (const command of [
+      "curl https://x -o /tmp/out.txt",
+      "echo hi > /var/tmp/note",
+      "python3 script.py 2>/dev/null",
+      "tar -xzf a.tgz -C /tmp/work",
+      "git clone https://github.com/a/b ./b",
+    ]) {
+      const scratch = await bash.execute({ command: command });
+      expect(scratch.type).toBe("text");
+    }
+  });
+
+  it("bash lets the agent write anywhere on its own reserved sandbox", async () => {
+    const bash = await tool(
+      "bash",
+      ownSandboxCtx({
+        persistent: true,
+        controlPlane: { accountId: "acct_1", sandboxConfigId: "sb_own" },
+      }),
+    );
+    const result = await bash.execute({
+      command: "echo report > /srv/report.txt",
+    });
+    expect(result.type).toBe("text");
+    // Containment is a separate concern from durability, so `..` stays blocked —
+    // including embedded, where relaxing the write guard would otherwise expose it.
     await expect(
-      bash.execute({ command: "curl https://x -o /tmp/out.txt" }),
+      bash.execute({ command: "cat sub/../../../etc/shadow" }),
     ).resolves.toEqual({
       type: "error-text",
-      value:
-        "Error: absolute paths are not allowed in workspace bash commands: /tmp/out.txt",
+      value: "Error: parent directory traversal is not allowed",
     });
+    await expect(
+      bash.execute({ command: "cat ../secrets.env" }),
+    ).resolves.toEqual({
+      type: "error-text",
+      value: "Error: parent directory traversal is not allowed",
+    });
+  });
+
+  it("bash still guards an own sandbox that is not reserved", async () => {
+    // Nothing outside the mount survives the call, so the write is still a loss.
+    const bash = await tool("bash", ownSandboxCtx());
+    const result = await bash.execute({
+      command: "echo report > /srv/report.txt",
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("outside the workspace");
+  });
+
+  it("bash guards a workspace that borrows someone else's sandbox", async () => {
+    // The sandbox is the workspace's execution layer, not the agent's machine —
+    // reserved or not, the workspace is all the agent gets to keep.
+    const bash = await tool("bash", borrowedSandboxCtx());
+    const result = await bash.execute({
+      command: "echo report > /srv/report.txt",
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("outside the workspace");
+  });
+
+  it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
+    // A run with no workspace has no namespace to key a reservation on, so
+    // `persistent` alone is not enough — claiming otherwise tells the model its
+    // files survive when index.ts is logging that those runs are ephemeral.
+    const bare = await tool("bash", borrowedSandboxCtx());
+    expect(bare.description).toContain("reaches durable storage");
+    expect(bare.description).not.toContain("That sandbox is reserved");
+
+    const ctx = borrowedSandboxCtx() as unknown as {
+      agentSandbox: Record<string, unknown>;
+    };
+    ctx.agentSandbox.persistent = true;
+    const unkeyed = await tool("bash", ctx as never);
+    expect(unkeyed.description).not.toContain("That sandbox is reserved");
+
+    ctx.agentSandbox.options = { reservationKey: "agent-scratch" };
+    const keyed = await tool("bash", ctx as never);
+    expect(keyed.description).toContain("That sandbox is reserved");
+    expect(keyed.description).toContain("only the workspace outlives it");
+  });
+
+  it("bash describes the write guard only where it actually applies", async () => {
+    const reserved = {
+      persistent: true,
+      controlPlane: { accountId: "acct_1", sandboxConfigId: "sb_own" },
+    };
+    // Own + reserved: the guard steps aside, so promising a rejection would be a
+    // lie the model then works around instead of trusting the tool.
+    const own = await tool("bash", ownSandboxCtx(reserved));
+    expect(own.description).not.toContain(
+      "absolute path elsewhere are rejected",
+    );
+    expect(own.description).toContain(
+      "writing outside the workspace directory",
+    );
+
+    // Own but ephemeral: nothing outside the mount survives the call.
+    const ephemeral = await tool("bash", ownSandboxCtx());
+    expect(ephemeral.description).toContain(
+      "Writes to an absolute path elsewhere are rejected",
+    );
+
+    // Borrowed: the filesystem does survive between calls, and the description has
+    // to say so — the durability bullet is about outliving the reservation.
+    const borrowed = await tool(
+      "bash",
+      borrowedSandboxCtx({ persistent: true }),
+    );
+    expect(borrowed.description).toContain(
+      "absolute path elsewhere are rejected",
+    );
+    expect(borrowed.description).toContain("survive across calls");
+  });
+
+  it("bash offers the standalone sandbox flag only when it is unmounted", async () => {
+    const borrowed = await tool("bash", borrowedSandboxCtx());
+    const schema = borrowed.inputSchema as unknown as {
+      jsonSchema: { properties: { sandbox?: unknown } };
+    };
+    expect(schema.jsonSchema.properties.sandbox).toBeDefined();
+
+    // Asking for it runs with no workspace mounted, so no namespace is sent.
+    const result = await borrowed.execute({
+      command: "echo hi",
+      sandbox: true,
+    });
+    expect(result.type).toBe("text");
+    expect(lastSandboxExec().payload.namespace).toBeUndefined();
+
+    // When a workspace already mounts that sandbox, the workspace is the way in.
+    const own = await tool("bash", ownSandboxCtx());
+    const ownSchema = own.inputSchema as unknown as {
+      jsonSchema: { properties: { sandbox?: unknown } };
+    };
+    expect(ownSchema.jsonSchema.properties.sandbox).toBeUndefined();
   });
 
   it("bash allows relative workspace commands and heredoc bodies", async () => {
@@ -553,6 +819,92 @@ describe("write/edit approval policy", () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  // A workspace-scoped policy must not authorize a run that never touches that
+  // workspace. Policy input has to name the same target execution picked.
+  it("policy input drops workspace identity when the run is on the agent sandbox", async () => {
+    const { policyInputForTool } = await import("../src/harness/policy.ts");
+    const ctx = borrowedSandboxCtx() as unknown as {
+      workspaces: never;
+      agentSandbox: never;
+    };
+    const onSandbox = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: true },
+      ctx.workspaces,
+      { agentSandbox: ctx.agentSandbox },
+    );
+    expect(onSandbox.workspaceId).toBeUndefined();
+    expect(onSandbox.workspaceName).toBeUndefined();
+    expect(onSandbox.sandboxPermissionMode).toBeUndefined();
+
+    // A real workspace run still reports it, or workspace-scoped rules stop working.
+    const onWorkspace = policyInputForTool(
+      "bash",
+      { command: "ls", workspace: "notes" },
+      ctx.workspaces,
+      { agentSandbox: ctx.agentSandbox },
+    );
+    expect(onWorkspace.workspaceName).toBe("notes");
+
+    // The flag only redirects when a standalone sandbox exists; when the workspace
+    // already mounts the agent's sandbox, the run IS the workspace.
+    const own = ownSandboxCtx() as unknown as {
+      workspaces: never;
+      agentSandbox: never;
+    };
+    const mounted = policyInputForTool(
+      "bash",
+      { command: "ls", sandbox: true },
+      own.workspaces,
+      { agentSandbox: own.agentSandbox },
+    );
+    expect(mounted.workspaceName).toBe("notes");
+  });
+
+  it("bash refuses a selection that names both a workspace and the sandbox", async () => {
+    const bash = await tool("bash", borrowedSandboxCtx());
+    const result = await bash.execute({
+      command: "echo hi",
+      workspace: "notes",
+      sandbox: true,
+    });
+    expect(result.type).toBe("error-text");
+    expect(result.value).toContain("not both");
+    expect(microvmFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("the standalone sandbox target follows the agent sandbox's own mode", async () => {
+    const ctx = borrowedSandboxCtx() as unknown as {
+      workspaces: unknown[];
+      agentSandbox: unknown;
+      agentSandboxPermissionMode: string;
+    };
+    await expect(
+      approvalStatus("bash", { command: "ls", sandbox: true }, ctx),
+    ).resolves.toBe("user-approval");
+    await expect(
+      approvalStatus(
+        "bash",
+        { command: "ls", sandbox: true },
+        {
+          ...ctx,
+          agentSandboxPermissionMode: "bypass",
+        },
+      ),
+    ).resolves.toBeUndefined();
+    // The workspace keeps its own mode; the agent's bypass does not leak into it.
+    await expect(
+      approvalStatus(
+        "bash",
+        { command: "ls", workspace: "notes" },
+        {
+          ...ctx,
+          agentSandboxPermissionMode: "bypass",
+        },
+      ),
+    ).resolves.toBe("user-approval");
+  });
 });
 
 describe("memory tool", () => {
@@ -686,8 +1038,9 @@ describe("memory tool", () => {
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -696,8 +1049,9 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } =
-      await import("../src/harness/tools/filesystem-utils.ts");
+    const { toWorkspaceRelative } = await import(
+      "../src/harness/tools/filesystem-utils.ts"
+    );
     for (const path of [
       "../etc/passwd",
       "a/../../b",

@@ -34,6 +34,30 @@ import type {
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
+// Writing here is a deliberate "this does not need to survive", so it is left alone.
+// Everything else outside the workspace mount looks like work about to be lost.
+const EPHEMERAL_WRITE_ROOTS = ["/tmp/", "/var/tmp/", "/dev/"];
+
+// `..` as a whole path segment, in the literal text only (see outsideWorkspaceCommand
+// for what that does not cover). The separator before it counts, so `a/../b` is caught
+// as surely as `../b`; word characters do not, so `{1..10}` and `main..dev` are left alone.
+const PARENT_TRAVERSAL = /(?:^|[\s"'=:{([<>,/])\.\.(?=[/\s;&|)"'\]}>,]|$)/;
+
+// Absolute write targets, by construct: redirection, tee, dd, and the file-producing
+// commands whose destination is an argument. `path` is the captured destination.
+const ABSOLUTE_WRITE_PATTERNS = [
+  /(?:^|[\s;&|()])\d*>>?\|?\s*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])tee\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])dd\s[^;&|]*\bof=(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])(?:cp|mv|ln|install|rsync)\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
+  /(?:^|[\s;&|()])(?:mkdir|touch|rm|rmdir|truncate|unlink)\s+(?:-\S+\s+)*(?<path>\/[^\s"'`;&|)<>]*)/g,
+  /(?:^|[\s;&|()])sed\s+[^;&|]*-i[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)/g,
+  // Fetch and unpack: the destination is a flag argument, not a redirection.
+  /(?:^|[\s;&|()])(?:curl|wget|tar|unzip)\s(?:[^;&|]*?\s)?-(?:o|O|C|d|-output|-directory|-output-document)[\s=]+(?<path>\/[^\s"'`;&|)<>]*)/g,
+  // git clone's destination is its last positional argument.
+  /(?:^|[\s;&|()])git\s+clone\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
+];
+
 // Model-facing tool result shape (matches the AI SDK toModelOutput contract).
 export type ToolModelResult = Awaited<
   ReturnType<
@@ -62,13 +86,21 @@ function isFatalSandboxSetupError(value: string): boolean {
   );
 }
 
+// What a bash call picked to run on. The two are orthogonal, not two spellings of
+// one field: `workspace` names a mount, `sandbox` says "no mount, my own machine".
+export interface BashTarget {
+  workspace?: string;
+  sandbox?: boolean;
+}
+
 // Per-tool runtime context. `workspaces` is the (registry-filtered) set this tool
-// may operate on. `statelessSandbox` is only set for `bash` when there are no
-// workspaces, so it runs ephemerally on the agent-level sandbox.
+// may operate on. `agentSandbox` is the agent's own sandbox (`config.sandbox`): it
+// backs `bash` outright when no workspace is attached, and stays separately
+// reachable when workspaces are — see hasStandaloneSandbox.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
-  statelessSandbox?: SandboxExecutorConfig;
-  statelessPermissionMode?: SandboxPermissionMode;
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
   // Set when the parent session can track background jobs: bash exposes a
   // `background` flag for persistent workspaces and records each job as an
   // AsyncToolResult keyed by these ids so `async_status` can find it. `delivery`
@@ -102,6 +134,40 @@ function statelessReservationKeyFor(
   return typeof reservationKey === "string" && reservationKey.trim()
     ? reservationKey.trim()
     : undefined;
+}
+
+/**
+ * Whether the agent's own sandbox needs a way in of its own. It does not when there
+ * are no workspaces (bash already runs there), nor when a workspace mounts that same
+ * sandbox — the workspace IS the way in, and reaches the same machine with storage.
+ */
+export function hasStandaloneSandbox(
+  workspaces: ResolvedWorkspace[],
+  agentSandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  if (!agentSandbox || workspaces.length === 0) {
+    return false;
+  }
+
+  return !workspaces.some((workspace) =>
+    isAgentOwnSandbox(workspace, agentSandbox),
+  );
+}
+
+/**
+ * Whether this workspace is mounted in the agent's OWN sandbox rather than
+ * borrowing a different one. Identity is the sandbox record, so a workspace that
+ * inherits the agent default and one that names it explicitly are the same case.
+ */
+export function isAgentOwnSandbox(
+  workspace: ResolvedWorkspace,
+  agentSandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  const owned = agentSandbox?.controlPlane?.sandboxConfigId;
+
+  return Boolean(
+    owned && workspace.sandbox?.controlPlane?.sandboxConfigId === owned,
+  );
 }
 
 export function sandboxSupportsBackgroundJobs(
@@ -278,11 +344,14 @@ export function editNeedsApproval(
 
 export function bashNeedsApproval(
   context: SandboxToolContext,
-  requested?: string,
+  selection: BashTarget = {},
 ): boolean {
   try {
-    if (context.workspaces.length > 0) {
-      const workspace = resolveWorkspace(context.workspaces, requested);
+    if (!targetsAgentSandbox(context, selection)) {
+      const workspace = resolveWorkspace(
+        context.workspaces,
+        selection.workspace,
+      );
       // Read-only workspace (no sandbox): nothing to approve. Skip the gate so the
       // call falls through to the tool's clean "no sandbox available" rejection.
       if (workspace && !workspace.sandbox) {
@@ -290,10 +359,29 @@ export function bashNeedsApproval(
       }
       return permissionModeFor(workspace) !== "bypass";
     }
-    return (context.statelessPermissionMode ?? "ask") !== "bypass";
+    return (context.agentSandboxPermissionMode ?? "ask") !== "bypass";
   } catch {
     return true;
   }
+}
+
+/**
+ * Whether this call runs on the agent's own sandbox with no workspace mounted:
+ * either the agent has no workspaces at all, or it asked for the sandbox and one
+ * is standalone. `sandbox` wins over `workspace`; the two never both apply.
+ */
+export function targetsAgentSandbox(
+  context: SandboxToolContext,
+  selection: BashTarget = {},
+): boolean {
+  if (context.workspaces.length === 0) {
+    return true;
+  }
+
+  return (
+    selection.sandbox === true &&
+    hasStandaloneSandbox(context.workspaces, context.agentSandbox)
+  );
 }
 
 function permissionModeFor(
@@ -452,34 +540,54 @@ export function disallowedRuntimeCommand(
   return undefined;
 }
 
-export function outsideWorkspaceCommand(command: string): string | undefined {
-  const scanned = stripHereDocBodies(command);
-  if (
-    /(^|[\s;&|()])cd\s+(?:--\s+)?(?:\.\.(?:[\/\s;&|)]|$)|\/(?!dev\/null(?:\s|$)))/.test(
-      scanned,
-    )
-  ) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
-  if (/(^|[\s;&|()])(?:pushd|popd)\b/.test(scanned)) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
-  if (/(^|[\s;&|()])(?:find|du|tree)\s+\/(?:\s|$)/.test(scanned)) {
-    return "Error: bash commands must stay in the workspace directory";
-  }
-  if (/(^|[\s"'=:{([<>,])\.\.(?:[\/\s;&|)]|$)/.test(scanned)) {
+// The workspace mount is the only storage that outlives the sandbox; the rest of the
+// filesystem dies with the VM, or with the reservation when there is one. So writes
+// are what this guard is about — reading a sandbox's own system files risks nothing
+// and is often how a task gets done.
+export function outsideWorkspaceCommand(
+  command: string,
+  options: { persistentOwnSandbox?: boolean } = {},
+): string | undefined {
+  const scanned = unescapeShellChars(stripHereDocBodies(command));
+  // Traversal is a containment concern, not a durability one: read/write/edit reject
+  // `..`, and bash should not be the trivial way around them. This only sees the
+  // literal text — bash expands `$'\x2e\x2e'`, `$(printf ..)` and variables after
+  // this runs, so it is a guardrail, not a boundary. The boundary is the VM plus the
+  // prefix-scoped mount credentials, which no amount of traversal escapes.
+  if (PARENT_TRAVERSAL.test(scanned)) {
     return "Error: parent directory traversal is not allowed";
   }
-
-  // A leading `:` still flags `host:/abs/path`, but a `:` followed by `//` is a
-  // URL scheme separator (https://...), not an absolute path, so it is exempt.
-  const absolutePath = scanned.match(
-    /(?:^|[\s"'={([<>,]|:(?!\/\/))\/(?!dev\/null(?:\s|$)|[>\s]|$)[^\s"'`;&|)]*/,
-  );
-  if (absolutePath) {
-    return `Error: absolute paths are not allowed in workspace bash commands: ${absolutePath[0].trim()}`;
+  // A reserved sandbox the agent owns keeps its whole filesystem between calls, so
+  // writing outside the mount there loses nothing until the reservation ends.
+  if (options.persistentOwnSandbox === true) {
+    return undefined;
   }
+
+  const target = absoluteWriteTarget(scanned);
+  if (target) {
+    return (
+      `Error: ${target} is outside the workspace, so anything written there is lost when the sandbox stops. ` +
+      `Write to a workspace-relative path instead (e.g. ${workspaceRelativeSuggestion(target)}), ` +
+      `or use /tmp when the file is genuinely throwaway.`
+    );
+  }
+
   return undefined;
+}
+
+/**
+ * Whether the write guard steps aside for this workspace. One predicate for both
+ * callers on purpose: the bash description promises exactly what the guard enforces,
+ * and two copies of this condition would drift into the tool lying to the model.
+ */
+export function writesOutsideAllowed(
+  workspace: ResolvedWorkspace,
+  agentSandbox: SandboxExecutorConfig | undefined,
+): boolean {
+  return (
+    workspace.sandbox?.persistent === true &&
+    isAgentOwnSandbox(workspace, agentSandbox)
+  );
 }
 
 /**
@@ -531,11 +639,51 @@ export function boundedInteger(
   return value;
 }
 
+// The first absolute path the command would write to, ignoring roots that are
+// ephemeral by convention. Shell semantics are not parseable with a regex, so this
+// covers the constructs that actually lose an agent's work — redirections and the
+// common file-producing commands. Three classes are knowingly out of reach and are
+// left to the durability rule in the bash tool description: interpreter writes
+// (`python -c "open(...)"`), a write through a symlink, and the open-ended tail of
+// package-manager install prefixes. Adding one of those is not a bug fix.
+function absoluteWriteTarget(command: string): string | undefined {
+  for (const pattern of ABSOLUTE_WRITE_PATTERNS) {
+    for (const match of command.matchAll(pattern)) {
+      const path = match.groups?.path?.trim();
+      if (path && !isEphemeralPath(path)) {
+        return path;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function isEphemeralPath(path: string): boolean {
+  return EPHEMERAL_WRITE_ROOTS.some(
+    (root) => path === root.slice(0, -1) || path.startsWith(root),
+  );
+}
+
+// Name a concrete relative path in the error so the retry is obvious rather than
+// something the model has to invent.
+function workspaceRelativeSuggestion(target: string): string {
+  const basename = target.split("/").filter(Boolean).pop();
+
+  return basename ? `./${basename}` : "./output";
+}
+
 function invokesCommand(command: string, names: string[]): boolean {
   const escaped = names
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
+}
+
+// Bash reads `\.\./x` as `../x`, so the escapes have to come off before anything is
+// matched — otherwise the two dots are never adjacent and no pattern can see them.
+function unescapeShellChars(command: string): string {
+  return command.replace(/\\(.)/g, "$1");
 }
 
 function stripHereDocBodies(command: string): string {

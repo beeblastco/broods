@@ -54,21 +54,21 @@ export const getByExternalId = internalQuery({
   },
   returns: v.union(channelRecordDoc, v.null()),
   handler: async (ctx, args) => {
-    // Deleting a record leaves the row in place, and creating a replacement is
-    // then allowed — so this place can hold a deleted row *and* an active one.
-    // `.first()` would hand back whichever the index reaches first and resolve
-    // to null; pick the active row explicitly.
-    const docs = await ctx.db
+    // Deleting a record leaves the row in place, so a place that has been
+    // rebound a few times holds one active row and a pile of dead ones.
+    // `status` is in the index key rather than a filter: this runs on every
+    // inbound message, and reading the whole history to discard it would make
+    // the hot path cost grow with how often the channel has changed hands.
+    return await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId_platform_external", (q) =>
         q
           .eq("accountId", args.accountId)
           .eq("platform", args.platform)
-          .eq("externalId", args.externalId),
+          .eq("externalId", args.externalId)
+          .eq("status", "active"),
       )
-      .collect();
-
-    return docs.find((doc) => doc.status === "active") ?? null;
+      .first();
   },
 });
 

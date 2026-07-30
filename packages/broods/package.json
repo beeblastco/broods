@@ -1,6 +1,6 @@
 {
   "name": "broods",
-  "version": "0.5.2",
+  "version": "0.6.1",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "MIT",
@@ -54,11 +54,6 @@
   },
   "peerDependencies": {
     "ai": "^7.0.40"
-  },
-  "peerDependenciesMeta": {
-    "ai": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@ai-sdk/tui": "^1.0.41",
