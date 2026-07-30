@@ -113,7 +113,7 @@ export function ToolTestTab({
 
       return;
     }
-    if (toolService.status !== "enabled") {
+    if (toolService.disabled === true) {
       setRunError("Tool is disabled. Enable it in Config before running.");
 
       return;
@@ -212,7 +212,7 @@ export function ToolTestTab({
         <Button
           size="sm"
           className="h-8 text-xs"
-          disabled={isRunning || toolService.status !== "enabled"}
+          disabled={isRunning || toolService.disabled === true}
           onClick={handleRun}
         >
           {isRunning ? (

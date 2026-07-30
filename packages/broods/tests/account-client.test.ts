@@ -280,17 +280,37 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
     { status: 200, body: { deleted: true } },
   ]);
 
-  const created = await client.createTool({
-    name: "sum",
-    description: "adds",
-    inputSchema: {},
-    bundle: "export default {}",
-  });
+  const created = await client.createTool(
+    { project: "acme", environment: "Production" },
+    {
+      name: "sum",
+      description: "adds",
+      inputSchema: {},
+      bundle: "export default {}",
+    },
+  );
   expect(created.toolId).toBe("qs78zwc4z4q5ysxm74fgrhd13s88xxt");
+  expect(calls[0]?.url).toBe(
+    "https://gateway.example.com/v1/tools?project=acme&environment=Production",
+  );
   expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
   expect(JSON.parse(calls[0]?.body ?? "{}").bundle).toBe("export default {}");
 
   expect(await client.deleteTool("qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
+});
+
+test("tools: list carries the environment scope and encodes it", async () => {
+  const { client, calls } = mockClient([
+    { status: 200, body: { tools: [{ toolId: "tool_1", name: "sum" }] } },
+  ]);
+
+  expect(
+    (await client.listTools({ project: "acme", environment: "My Env" }))[0]
+      ?.toolId,
+  ).toBe("tool_1");
+  expect(calls[0]?.url).toBe(
+    "https://gateway.example.com/v1/tools?project=acme&environment=My+Env",
+  );
 });
 
 test("policies: list/create unwrap and get returns null on 404", async () => {
