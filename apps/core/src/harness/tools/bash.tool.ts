@@ -201,21 +201,8 @@ function ownSandboxNote(context: SandboxToolContext): string {
 - Your own reserved sandbox backs ${names.join(", ")}: the whole filesystem there is yours and survives between calls, so writing outside the workspace directory is allowed. It still dies with the reservation — keep anything that must outlive it in the workspace directory.`;
 }
 
-// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
-// only way onto it is to ask for it. Whether that machine keeps anything between
-// calls is a second question — see reservedStandaloneNote.
-function sandboxTargetNote(context: SandboxToolContext): string {
-  if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
-    return "";
-  }
-
-  return `
-- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
-}
-
-// A run with no workspace has no namespace to key a reservation on, so `persistent`
-// alone changes nothing — it also needs an explicit options.reservationKey. With both,
-// the machine is the same one next call, which is worth telling the model.
+// A workspace-less run has no namespace to key a reservation on, so `persistent`
+// alone changes nothing — it needs an explicit options.reservationKey too.
 function reservedStandaloneNote(context: SandboxToolContext): string {
   const options = isPlainObject(context.agentSandbox?.options)
     ? context.agentSandbox.options
@@ -224,11 +211,23 @@ function reservedStandaloneNote(context: SandboxToolContext): string {
     context.agentSandbox?.persistent === true &&
     typeof options.reservationKey === "string" &&
     options.reservationKey.trim().length > 0;
+
   if (!reserved) {
     return "";
   }
 
   return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
+}
+
+// Scenario note: the agent's own sandbox is not mounted by any workspace, so the
+// only way onto it is to ask for it. What it keeps is reservedStandaloneNote's job.
+function sandboxTargetNote(context: SandboxToolContext): string {
+  if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
+    return "";
+  }
+
+  return `
+- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
 }
 
 async function dispatchBackground(
