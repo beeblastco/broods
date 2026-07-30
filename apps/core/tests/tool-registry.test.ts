@@ -830,8 +830,8 @@ function sandboxContext(
   return {
     accountId: "acct_test",
     conversationKey: "conversation",
-    statelessSandbox: { provider: "lambda" },
-    statelessPermissionMode: permissionMode,
+    agentSandbox: { provider: "lambda" },
+    agentSandboxPermissionMode: permissionMode,
     // Each workspace carries its own effective sandbox (its permissionMode lives on it).
     workspaces: workspaces.map((workspace) => ({
       ...workspace,
@@ -848,8 +848,8 @@ async function approvalStatus(
   input: Record<string, unknown>,
   ctx: {
     workspaces?: unknown[];
-    statelessSandbox?: unknown;
-    statelessPermissionMode?: unknown;
+    agentSandbox?: unknown;
+    agentSandboxPermissionMode?: unknown;
     approvalRequirements?: Map<string, true>;
   },
 ) {
@@ -858,11 +858,11 @@ async function approvalStatus(
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.statelessSandbox
-      ? { statelessSandbox: ctx.statelessSandbox as never }
+    ...(ctx.agentSandbox
+      ? { agentSandbox: ctx.agentSandbox as never }
       : {}),
-    ...(typeof ctx.statelessPermissionMode === "string"
-      ? { statelessPermissionMode: ctx.statelessPermissionMode as never }
+    ...(typeof ctx.agentSandboxPermissionMode === "string"
+      ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
       : {}),
   });
 }

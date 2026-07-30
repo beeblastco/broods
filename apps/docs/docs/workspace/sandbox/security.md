@@ -26,10 +26,29 @@ and **workspace scoping** (a run can only touch its own files).
 - File tools (`read`/`write`/`edit`/`glob`/`grep`) **normalize paths to the workspace and
   reject directory traversal** (`..`, absolute paths, whole-filesystem scans) before the
   command reaches a provider.
-- Workspace-backed `bash` likewise rejects obvious attempts to use absolute paths, parent
-  traversal, or whole-filesystem scans. This is a guardrail on a general VM, **not** a hard
-  cross-workspace filesystem boundary — the kernel-grade isolation is the sandbox itself
-  (Firecracker for `lambda`/`sandbox`).
+- Workspace-backed `bash` rejects parent traversal (`..`) so it is not the trivial way
+  around the file tools. Treat this as a **guardrail, not a boundary**: it inspects the
+  literal command text, and a shell expands `$'\x2e\x2e'`, `$(printf ..)`, or a variable
+  after that check runs. What actually contains a run is the sandbox itself (Firecracker
+  for `lambda`/`sandbox`) plus the prefix-scoped mount credentials — no amount of traversal
+  reaches another workspace's files. `bash` does **not** restrict reads elsewhere in the
+  sandbox: a run reading its own machine's system files crosses no boundary.
+- What `bash` does gate is **durability**, not access: the workspace mount is the only
+  storage that outlives the sandbox, so writes to an absolute path outside it are rejected
+  with the workspace path to use instead. `/tmp` and `/var/tmp` are exempt — writing there
+  is a deliberate "this is throwaway". The gate also steps aside when the workspace runs on
+  the agent's **own** `persistent` sandbox, because that filesystem survives between calls
+  (see [Whose sandbox is it?](../index.md)). A `persistent` sandbox the workspace only
+  **borrows** keeps its filesystem between calls too, but stays gated — it is an execution
+  layer, not the agent's machine.
+  Two lifetimes are in play and they are not the same: a single **call** ends when the
+  command returns, while a **reservation** spans many calls and ends on idle expiry or
+  release. `persistent` is what makes the filesystem outlive the call; nothing makes it
+  outlive the reservation. So the mount is still the only storage that survives the sandbox
+  itself — the gate is about that, not about how long the machine happens to stick around.
+  (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so there
+  `persistent` also needs an explicit `options.reservationKey` to mean anything.)
+  See [Network](./lambda.md) for the egress boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 
 ## Runtime allow-list

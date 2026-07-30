@@ -54,20 +54,46 @@ describe("agent config codec", () => {
         },
       }),
     ).toThrow("config.model.options is not supported");
+  });
 
-    expect(() =>
-      toNestedAgentConfig({
-        extraConfig: { workspace: { filesystem: { enabled: true } } },
-      }),
-    ).toThrow("config.workspace.filesystem is not supported");
-
-    expect(() =>
+  test("drops the removed workspace branch on read, rejects it on write", () => {
+    // Rows saved before the branch was removed still carry the blob. Reading one
+    // has to work, or an old agent cannot be opened to be fixed.
+    expect(
       toNestedAgentConfig({
         extraConfig: {
-          workspace: { sandbox: { filesystem: { enabled: true } } },
+          workspace: { namespace: "legacy", workspaces: { a: {} } },
+          workspaces: [{ name: "notes", workspaceId: "ws_a" }],
         },
       }),
-    ).toThrow("config.workspace.sandbox.filesystem is not supported");
+    ).toEqual({ workspaces: [{ name: "notes", workspaceId: "ws_a" }] });
+
+    // Writing it is a mistake worth naming: nothing reads it, so a silent drop
+    // would look like it saved.
+    expect(() =>
+      fromNestedAgentConfig({ workspace: { namespace: "legacy" } }),
+    ).toThrow("config.workspace is no longer supported");
+  });
+
+  test("an old row clears its dead workspace branch on the next save", () => {
+    // The path a stale agent actually takes: read drops the branch, so writing the
+    // read output back is what removes it from storage. Without this the codec only
+    // claims to be self-cleaning.
+    const stale = {
+      extraConfig: {
+        workspace: { namespace: "legacy" },
+        workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+        skills: { research: { enabled: true } },
+      },
+    };
+    const saved = fromNestedAgentConfig(toNestedAgentConfig(stale));
+
+    expect(saved.extraConfig).not.toHaveProperty("workspace");
+    // Unrelated branches must survive the trip, or "self-cleaning" means data loss.
+    expect(saved.extraConfig).toEqual({
+      workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+      skills: { research: { enabled: true } },
+    });
   });
 });
 

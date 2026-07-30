@@ -23,7 +23,9 @@ sandboxes, and lets a single workspace be **read-only**. A read-only workspace r
 a service-managed read-only mount by default (so it sees committed writes immediately);
 `sandbox: null` opts out of that mount and reads straight from S3 (no Lambda, cheapest, but
 reads lag mount writes — see [Lambda](sandbox/lambda.md)). `config.sandbox` also powers
-stateless `bash` when there is no workspace at all.
+stateless `bash` when there is no workspace at all, and stays directly reachable when
+every attached workspace borrows a different sandbox — see
+[Whose sandbox is it?](#whose-sandbox-is-it) below.
 
 ```mermaid
 flowchart LR
@@ -115,10 +117,11 @@ union across its workspaces:
 
 Plus the agent-level cases:
 
-| Agent references              | Tools exposed                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------------ |
-| sandbox, **no** workspace     | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
-| neither sandbox nor workspace | none                                                                           |
+| Agent references                                         | Tools exposed                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| sandbox, **no** workspace                                | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)            |
+| neither sandbox nor workspace                            | none                                                                           |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
@@ -132,6 +135,36 @@ implementation details for logs and debugging.
 > `write`/`edit`/`grep` returns a clean "workspace is read-only" error, and `bash` reports
 > "no sandbox available for this command" — in both cases with **no approval prompt**,
 > because a workspace with no sandbox has no `permissionMode` to ask against.
+
+## Whose sandbox is it?
+
+Two agents can reach the same workspace through very different arrangements, and the
+difference decides how much of the machine the agent gets. What matters is whether the
+workspace's effective sandbox **is the one the agent itself references**:
+
+| Arrangement                                                 | What the agent gets                                                                                                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.              |
+| `workspaces[].sandbox: sb_b`, **no** `config.sandbox`       | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                 |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace is mounted there, so nothing reaches durable storage. |
+
+Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
+resolves both to the same record, so both land in the first row. An agent that references
+the very sandbox its workspace runs on lands there too — identity is the sandbox record, so
+`config.sandbox: sb_b` + workspace on `sb_b` is the agent's own machine, not a borrowed one.
+Row two is only reached when the agent references **no** sandbox of its own.
+
+`workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
+own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
+keep landing in durable storage unless the model deliberately passes `sandbox: true`.
+
+"Nothing reaches durable storage" is about the **mount**, not about the machine. A
+`sandbox: true` run gets a fresh container each call — unless that sandbox is `persistent`
+**and** carries an `options.reservationKey`, which is what lets a run with no workspace
+namespace reconnect to the same reserved instance. With both set, its filesystem does
+survive between calls, until the reservation ends. Without the key, `persistent` alone
+changes nothing for these runs and the harness logs a warning saying so. Either way the
+workspace mount is the only storage that outlives the sandbox.
 
 ## permissionMode
 
@@ -305,6 +338,29 @@ If the workspace root already contains `fileA`, `MEMORY.md`, and `TASKS.md`, Git
 `#123` will not see them. GitHub issue `#123` sees its own child folder under `support/`.
 GitHub issue `#456` sees another child folder under `support/`. All three runs use the same
 workspace name, but each scope is backed by a different folder.
+
+### When an isolated folder is reclaimed
+
+A conversation-scoped folder is not permanent. When the channel reports that the
+conversation is over, the harness deletes that folder's S3 prefix and releases any
+reserved sandbox bound to it. This is what keeps per-ticket isolation from turning into
+unbounded storage growth.
+
+| Channel                                 | End-of-conversation signal | Folder reclaimed |
+| --------------------------------------- | -------------------------- | ---------------- |
+| GitHub issue                            | issue `closed`             | yes              |
+| GitHub pull request                     | PR `closed`                | yes              |
+| Slack, Discord, Telegram, Pancake, Zalo | none — a thread never ends | **no**           |
+
+Only `level: "conversation"` folders are reclaimed; a `level: "channel"` scope mounts the
+workspace root, which is never deleted automatically. Reclaim is fire-and-forget after the
+webhook is acknowledged, so a closed issue's folder disappears shortly after, not
+synchronously.
+
+The chat platforms have no equivalent of "closed", so a `conversation`-scoped folder there
+accumulates one prefix per thread for as long as the workspace exists. If you scope a chat
+channel per conversation, plan to prune it yourself — through the workspace Files view or
+the workspace-files API — or scope it at `level: "channel"` instead.
 
 The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`

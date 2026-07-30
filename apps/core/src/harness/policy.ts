@@ -32,6 +32,7 @@ import {
   bashNeedsApproval,
   editNeedsApproval,
   resolveWorkspace,
+  targetsAgentSandbox,
 } from "./tools/filesystem-utils.ts";
 import { MEMORY_DIR, memorySlug } from "./tools/memory.tool.ts";
 
@@ -67,7 +68,10 @@ export async function createPolicyToolApproval(
   agentConfig: AgentConfig,
   baseInput: Omit<PolicyDecisionInput, "action">,
   workspaces: ResolvedWorkspace[],
-  options: { toolIdsByName?: ReadonlyMap<string, string> } = {},
+  options: {
+    toolIdsByName?: ReadonlyMap<string, string>;
+    agentSandbox?: SandboxExecutorConfig;
+  } = {},
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
   const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
@@ -223,14 +227,14 @@ export function policyDecisionLogMessage(input: {
 export function createRuntimeToolApproval(options: {
   configuredApprovals: ReadonlyMap<string, true>;
   workspaces: ResolvedWorkspace[];
-  statelessSandbox?: SandboxExecutorConfig;
-  statelessPermissionMode?: SandboxPermissionMode;
+  agentSandbox?: SandboxExecutorConfig;
+  agentSandboxPermissionMode?: SandboxPermissionMode;
   policyApproval?: RuntimeToolApproval;
 }): RuntimeToolApproval | undefined {
   const hasCompatibilityApprovals =
     options.configuredApprovals.size > 0 ||
     options.workspaces.some((workspace) => workspace.sandbox) ||
-    Boolean(options.statelessSandbox);
+    Boolean(options.agentSandbox);
 
   if (!hasCompatibilityApprovals && !options.policyApproval) return undefined;
 
@@ -251,8 +255,8 @@ export function compatibilityApprovalStatus(
   options: {
     configuredApprovals: ReadonlyMap<string, true>;
     workspaces: ResolvedWorkspace[];
-    statelessSandbox?: SandboxExecutorConfig;
-    statelessPermissionMode?: SandboxPermissionMode;
+    agentSandbox?: SandboxExecutorConfig;
+    agentSandboxPermissionMode?: SandboxPermissionMode;
   },
 ): ToolApprovalStatus {
   const record =
@@ -261,19 +265,21 @@ export function compatibilityApprovalStatus(
       : {};
   const workspace =
     typeof record.workspace === "string" ? record.workspace : undefined;
+  const onSandbox = record.sandbox === true;
 
   if (toolName === "bash") {
     return bashNeedsApproval(
       {
         workspaces: options.workspaces,
-        ...(options.statelessSandbox
-          ? { statelessSandbox: options.statelessSandbox }
-          : {}),
-        ...(options.statelessPermissionMode
-          ? { statelessPermissionMode: options.statelessPermissionMode }
+        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+        ...(options.agentSandboxPermissionMode
+          ? { agentSandboxPermissionMode: options.agentSandboxPermissionMode }
           : {}),
       },
-      workspace,
+      {
+        ...(workspace ? { workspace: workspace } : {}),
+        ...(onSandbox ? { sandbox: true } : {}),
+      },
     )
       ? "user-approval"
       : undefined;
@@ -300,7 +306,10 @@ export function policyInputForTool(
   toolName: string,
   input: unknown,
   workspaces: ResolvedWorkspace[],
-  options: { toolIdsByName?: ReadonlyMap<string, string> } = {},
+  options: {
+    toolIdsByName?: ReadonlyMap<string, string>;
+    agentSandbox?: SandboxExecutorConfig;
+  } = {},
 ): Pick<
   PolicyDecisionInput,
   | "action"
@@ -318,10 +327,29 @@ export function policyInputForTool(
     input && typeof input === "object"
       ? (input as Record<string, unknown>)
       : {};
-  const workspace = resolveWorkspaceForPolicy(
-    workspaces,
-    typeof record.workspace === "string" ? record.workspace : undefined,
-  );
+  // A bash call that runs on the standalone sandbox touches no workspace, so it must
+  // not be described to the policy as if it did — a workspace-scoped rule would then
+  // authorize a run that never lands there. Resolve the same target execution will.
+  const onAgentSandbox =
+    toolName === "bash" &&
+    targetsAgentSandbox(
+      {
+        workspaces: workspaces,
+        ...(options.agentSandbox ? { agentSandbox: options.agentSandbox } : {}),
+      },
+      {
+        ...(typeof record.workspace === "string"
+          ? { workspace: record.workspace }
+          : {}),
+        ...(record.sandbox === true ? { sandbox: true } : {}),
+      },
+    );
+  const workspace = onAgentSandbox
+    ? undefined
+    : resolveWorkspaceForPolicy(
+        workspaces,
+        typeof record.workspace === "string" ? record.workspace : undefined,
+      );
   const filePath =
     typeof record.file_path === "string"
       ? record.file_path
