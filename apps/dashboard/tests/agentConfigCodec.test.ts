@@ -74,6 +74,27 @@ describe("agent config codec", () => {
       fromNestedAgentConfig({ workspace: { namespace: "legacy" } }),
     ).toThrow("config.workspace is no longer supported");
   });
+
+  test("an old row clears its dead workspace branch on the next save", () => {
+    // The path a stale agent actually takes: read drops the branch, so writing the
+    // read output back is what removes it from storage. Without this the codec only
+    // claims to be self-cleaning.
+    const stale = {
+      extraConfig: {
+        workspace: { namespace: "legacy" },
+        workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+        skills: { research: { enabled: true } },
+      },
+    };
+    const saved = fromNestedAgentConfig(toNestedAgentConfig(stale));
+
+    expect(saved.extraConfig).not.toHaveProperty("workspace");
+    // Unrelated branches must survive the trip, or "self-cleaning" means data loss.
+    expect(saved.extraConfig).toEqual({
+      workspaces: [{ name: "notes", workspaceId: "ws_a" }],
+      skills: { research: { enabled: true } },
+    });
+  });
 });
 
 describe("model reasoning codec", () => {
