@@ -525,9 +525,9 @@ export async function runAgentLoop(
     },
   );
   const toolApproval = createRuntimeToolApproval({
-    configuredApprovals,
+    configuredApprovals: configuredApprovals,
     workspaces: resolvedWorkspaces,
-    ...(agentSandbox ? { agentSandbox } : {}),
+    ...(agentSandbox ? { agentSandbox: agentSandbox } : {}),
     agentSandboxPermissionMode: session.agentSandboxPermissionMode(),
     ...(policyToolApproval ? { policyApproval: policyToolApproval } : {}),
   });

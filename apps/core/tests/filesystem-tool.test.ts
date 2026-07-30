@@ -535,6 +535,27 @@ describe("sandbox tool set", () => {
     expect(result.value).toContain("outside the workspace");
   });
 
+  it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
+    // A run with no workspace has no namespace to key a reservation on, so
+    // `persistent` alone is not enough — claiming otherwise tells the model its
+    // files survive when index.ts is logging that those runs are ephemeral.
+    const bare = await tool("bash", borrowedSandboxCtx());
+    expect(bare.description).toContain("reaches durable storage");
+    expect(bare.description).not.toContain("That sandbox is reserved");
+
+    const ctx = borrowedSandboxCtx() as unknown as {
+      agentSandbox: Record<string, unknown>;
+    };
+    ctx.agentSandbox.persistent = true;
+    const unkeyed = await tool("bash", ctx as never);
+    expect(unkeyed.description).not.toContain("That sandbox is reserved");
+
+    ctx.agentSandbox.options = { reservationKey: "agent-scratch" };
+    const keyed = await tool("bash", ctx as never);
+    expect(keyed.description).toContain("That sandbox is reserved");
+    expect(keyed.description).toContain("only the workspace outlives it");
+  });
+
   it("bash describes the write guard only where it actually applies", async () => {
     const reserved = {
       persistent: true,

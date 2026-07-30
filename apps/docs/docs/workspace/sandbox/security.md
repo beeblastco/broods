@@ -40,9 +40,15 @@ and **workspace scoping** (a run can only touch its own files).
   the agent's **own** `persistent` sandbox, because that filesystem survives between calls
   (see [Whose sandbox is it?](../index.md)). A `persistent` sandbox the workspace only
   **borrows** keeps its filesystem between calls too, but stays gated — it is an execution
-  layer, not the agent's machine. Either way the reservation ends eventually, so the mount
-  is still the only storage that outlives it. See [Network](./lambda.md) for the egress
-  boundary, which is a genuine security control.
+  layer, not the agent's machine.
+  Two lifetimes are in play and they are not the same: a single **call** ends when the
+  command returns, while a **reservation** spans many calls and ends on idle expiry or
+  release. `persistent` is what makes the filesystem outlive the call; nothing makes it
+  outlive the reservation. So the mount is still the only storage that survives the sandbox
+  itself — the gate is about that, not about how long the machine happens to stick around.
+  (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so there
+  `persistent` also needs an explicit `options.reservationKey` to mean anything.)
+  See [Network](./lambda.md) for the egress boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 
 ## Runtime allow-list

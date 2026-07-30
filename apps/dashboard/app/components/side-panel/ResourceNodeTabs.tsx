@@ -35,6 +35,11 @@ const SANDBOX_DEFAULT_CONFIG = {
   permissionMode: "ask",
 };
 
+// Every field that only means anything on a bring-your-own bucket. The toggle is
+// derived from all of them, not just `bucket`: a workspace carrying only a prefix
+// would otherwise show the switch off and hide the value it already has.
+const OWN_BUCKET_FIELDS = ["bucket", "region", "endpoint", "prefix"] as const;
+
 // What the default harness gives every workspace. Always on; turning one off is a
 // deliberate code-only choice, so these are reported here and never edited here.
 const HARNESS_FEATURES = [
@@ -68,7 +73,8 @@ export function WorkspaceResourceDetailsTab({
   // bucket is typed, so a purely derived switch would snap straight back off and the
   // fields could never be reached. Resync when the saved config changes elsewhere.
   const savedOwnBucket =
-    auth.type === "assumeRole" || typeof storage.bucket === "string";
+    auth.type === "assumeRole" ||
+    OWN_BUCKET_FIELDS.some((field) => typeof storage[field] === "string");
   const [ownBucket, setOwnBucket] = useState(savedOwnBucket);
   const [lastSavedOwnBucket, setLastSavedOwnBucket] = useState(savedOwnBucket);
   if (savedOwnBucket !== lastSavedOwnBucket) {
@@ -92,8 +98,18 @@ export function WorkspaceResourceDetailsTab({
 
   // Storage merges rather than replaces: a bring-your-own bucket lives here, and
   // rewriting it as { provider: "s3" } on every unrelated edit silently dropped it.
+  // A cleared field is deleted rather than set to undefined — this object is
+  // persisted, and an `undefined` key survives as a key on the way through.
   function setStorage(patch: Record<string, unknown>) {
-    setConfig({ storage: { ...storage, provider: "s3", ...patch } });
+    const next: Record<string, unknown> = { ...storage, provider: "s3" };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+    }
+    setConfig({ storage: next });
   }
 
   return (
@@ -260,8 +276,9 @@ export function WorkspaceResourceDetailsTab({
           <p className="text-[11px] text-muted-foreground">
             {disabledFeatures.map((feature) => feature.label).join(" and ")}{" "}
             {disabledFeatures.length > 1 ? "are" : "is"} switched off in code
-            for this workspace. Both are on by default and can only be changed
-            through the CLI or SDK.
+            for this workspace. {disabledFeatures.length > 1 ? "Both" : "It"}{" "}
+            {disabledFeatures.length > 1 ? "are" : "is"} on by default and can
+            only be changed through the CLI or SDK.
           </p>
         )}
       </div>

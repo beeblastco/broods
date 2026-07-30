@@ -8,6 +8,7 @@
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { getHarnessPublicUrl } from "../../shared/env.ts";
 import { logInfo } from "../../shared/log.ts";
+import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   createPendingAsyncToolResult,
@@ -86,7 +87,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
             sandbox: {
               type: "boolean",
               description:
-                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there is kept, so use it for throwaway work. Mutually exclusive with `workspace`.",
+                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
             } as JSONSchema7,
           }
         : {}),
@@ -201,14 +202,33 @@ function ownSandboxNote(context: SandboxToolContext): string {
 }
 
 // Scenario note: the agent's own sandbox is not mounted by any workspace, so the
-// only way onto it is to ask for it.
+// only way onto it is to ask for it. Whether that machine keeps anything between
+// calls is a second question — see reservedStandaloneNote.
 function sandboxTargetNote(context: SandboxToolContext): string {
   if (!hasStandaloneSandbox(context.workspaces, context.agentSandbox)) {
     return "";
   }
 
   return `
-- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there is kept, so use it for throwaway work and a workspace for anything that must survive.`;
+- sandbox:true runs on your own sandbox instead, with no workspace mounted. Nothing written there reaches durable storage, so use it for throwaway work and a workspace for anything that must survive.${reservedStandaloneNote(context)}`;
+}
+
+// A run with no workspace has no namespace to key a reservation on, so `persistent`
+// alone changes nothing — it also needs an explicit options.reservationKey. With both,
+// the machine is the same one next call, which is worth telling the model.
+function reservedStandaloneNote(context: SandboxToolContext): string {
+  const options = isPlainObject(context.agentSandbox?.options)
+    ? context.agentSandbox.options
+    : {};
+  const reserved =
+    context.agentSandbox?.persistent === true &&
+    typeof options.reservationKey === "string" &&
+    options.reservationKey.trim().length > 0;
+  if (!reserved) {
+    return "";
+  }
+
+  return ` That sandbox is reserved, so its own filesystem does survive between calls until the reservation ends — but only the workspace outlives it.`;
 }
 
 async function dispatchBackground(

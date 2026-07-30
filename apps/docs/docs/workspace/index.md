@@ -142,11 +142,11 @@ Two agents can reach the same workspace through very different arrangements, and
 difference decides how much of the machine the agent gets. What matters is whether the
 workspace's effective sandbox **is the one the agent itself references**:
 
-| Arrangement                                                 | What the agent gets                                                                                                                                                |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount. |
-| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).    |
-| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace mounted, so nothing is kept.             |
+| Arrangement                                                 | What the agent gets                                                                                                                                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `config.sandbox: sb_a` + workspace on `sb_a` (or inherited) | The sandbox is the agent's **own machine** with the workspace mounted in it. If that sandbox is `persistent`, `bash` may write anywhere on it, not just the mount.              |
+| workspace on `sb_b`, agent references `sb_b` or nothing     | The sandbox is only the workspace's **execution layer**. `bash` is scoped to the workspace: writes elsewhere are refused (see [Security](sandbox/security.md)).                 |
+| `config.sandbox: sb_a` + workspace on `sb_b`                | Both at once. The workspace is scoped as above, and `sb_a` stays reachable via `bash` with `sandbox: true` — no workspace is mounted there, so nothing reaches durable storage. |
 
 Inheriting the agent sandbox and naming it explicitly are the same case: the cascade
 resolves both to the same record, so both land in the first row.
@@ -154,6 +154,14 @@ resolves both to the same record, so both land in the first row.
 `workspace` and `sandbox` are orthogonal: one names a mount, the other says "no mount, my
 own machine". `workspace` keeps defaulting to the **default workspace**, so relative paths
 keep landing in durable storage unless the model deliberately passes `sandbox: true`.
+
+"Nothing reaches durable storage" is about the **mount**, not about the machine. A
+`sandbox: true` run gets a fresh container each call — unless that sandbox is `persistent`
+**and** carries an `options.reservationKey`, which is what lets a run with no workspace
+namespace reconnect to the same reserved instance. With both set, its filesystem does
+survive between calls, until the reservation ends. Without the key, `persistent` alone
+changes nothing for these runs and the harness logs a warning saying so. Either way the
+workspace mount is the only storage that outlives the sandbox.
 
 ## permissionMode
 
