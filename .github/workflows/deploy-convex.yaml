@@ -37,7 +37,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Deploy Convex
         working-directory: packages/convex

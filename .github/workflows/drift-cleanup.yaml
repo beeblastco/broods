@@ -108,7 +108,7 @@ jobs:
       - name: Install dependencies (skip sst postinstall)
         # --ignore-scripts keeps `sst install` from running here; sst is
         # invoked via bunx below.
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Detect drift (refresh + diff)
         id: detect

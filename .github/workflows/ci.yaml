@@ -44,7 +44,12 @@ jobs:
         # Skip workspace postinstall (`sst install`). This validation job does
         # not deploy infrastructure, and `bun run check` / `bun run build`
         # regenerate the prompt artifacts they need.
-        run: bun install --frozen-lockfile --ignore-scripts
+        #
+        # --no-save, not --frozen-lockfile: `.bun-version` floats on `canary`,
+        # and a canary whose frozen check rejects even the lockfile it just
+        # wrote takes every runner job down at once. Resolutions still come
+        # from bun.lock; the Dockerfiles pin bun by digest and stay frozen.
+        run: bun install --ignore-scripts --no-save
 
       - name: Typecheck
         run: bun run check
@@ -85,7 +90,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: bun install --ignore-scripts --no-save
 
       - name: Check gateway
         run: bun run --filter @broods/gateway check
