@@ -194,9 +194,6 @@
       "peerDependencies": {
         "ai": "^7.0.40",
       },
-      "optionalPeers": [
-        "ai",
-      ],
     },
     "packages/convex": {
       "name": "@broods/convex",

@@ -52,8 +52,10 @@ export function ToolDetailsTab({
   const isEnabled = toolService?.disabled !== true;
   const functionName = toolService?.name ?? "generated_on_save";
   const language = "javascript";
+  // `null` means the node has never been saved, so there is no source to
+  // toggle; only a saved tool can be enabled or disabled.
   const switchDisabled =
-    isSavingStatus || !projectId || !environmentId || toolService === undefined;
+    isSavingStatus || !projectId || !environmentId || !toolService;
 
   async function handleEnabledChange(nextEnabled: boolean) {
     if (!projectId || !environmentId) {

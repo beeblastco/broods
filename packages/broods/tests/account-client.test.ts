@@ -313,6 +313,16 @@ test("tools: list carries the environment scope and encodes it", async () => {
   );
 });
 
+test("tools: list throws on an unresolvable scope instead of returning empty", async () => {
+  const { client } = mockClient([
+    { status: 404, body: { error: "Environment not found" } },
+  ]);
+
+  expect(
+    client.listTools({ project: "acme", environment: "typo" }),
+  ).rejects.toThrow();
+});
+
 test("policies: list/create unwrap and get returns null on 404", async () => {
   const { client } = mockClient([
     { status: 200, body: { policies: [{ policyId: "pol_1", name: "guard" }] } },

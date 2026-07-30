@@ -2077,7 +2077,7 @@ async function handleToolRoute(
       toolId: toolId,
     });
 
-    return record && record.status === "active"
+    return isAddressableTool(record)
       ? json(toPublicAccountTool(record))
       : json({ error: "Tool not found" }, 404);
   }
@@ -2086,7 +2086,7 @@ async function handleToolRoute(
       accountId: accountId,
       toolId: toolId,
     });
-    if (!existing || existing.status !== "active")
+    if (!isAddressableTool(existing))
       return json({ error: "Tool not found" }, 404);
     const upload = await normalizeAccountToolUpload(await req.json(), {
       requireBundle: false,
@@ -2145,7 +2145,7 @@ async function handleToolRoute(
       accountId: accountId,
       toolId: toolId,
     });
-    if (!existing || existing.status !== "active")
+    if (!isAddressableTool(existing))
       return json({ error: "Tool not found" }, 404);
     await ctx.runMutation(internal.accountTools.remove, {
       accountId: accountId,
@@ -2594,6 +2594,20 @@ async function handleCronRoute(
  * @param record the accountTools document
  * @returns the public record with toolId and ISO timestamps
  */
+// The scoped API only addresses scoped rows: an unscoped legacy row is a
+// migration-cleanup candidate, and serializing it would drop the scope fields
+// the SDK and the OpenAPI schema both declare required.
+function isAddressableTool(
+  record: Doc<"accountTools"> | null,
+): record is Doc<"accountTools"> {
+  return Boolean(
+    record &&
+      record.status === "active" &&
+      record.projectId &&
+      record.environmentId,
+  );
+}
+
 function toPublicAccountTool(
   record: Doc<"accountTools">,
 ): Record<string, unknown> {
