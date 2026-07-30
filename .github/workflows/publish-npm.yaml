@@ -22,7 +22,8 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      # contents: write tags the published commit and cuts the GitHub release.
+      contents: write
       id-token: write
     steps:
       - name: Checkout repository
@@ -84,3 +85,27 @@ jobs:
         if: steps.npm-version.outputs.exists == 'false'
         working-directory: packages/broods
         run: npm publish
+
+      # Tag prefixed, not a bare `v0.6.0`: this monorepo publishes one package
+      # today but the tag namespace has to survive a second one.
+      - name: Tag and release
+        if: steps.npm-version.outputs.exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          TAG="broods-v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG already released; nothing to do."
+            exit 0
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "broods $VERSION" \
+            --generate-notes
+          echo "Published and released **broods $VERSION** ([npm](https://www.npmjs.com/package/broods/v/$VERSION))." >> "$GITHUB_STEP_SUMMARY"
