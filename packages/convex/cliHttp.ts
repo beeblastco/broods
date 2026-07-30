@@ -12,6 +12,7 @@ import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
+import type { ProjectEnvironmentScope } from "./model/projectScope";
 
 type RouteParts =
   | { kind: "manifest"; project: string; environment: string }
@@ -555,16 +556,10 @@ function json(body: unknown, status = 200): Response {
 
 type ExternalIds = Pick<GeneratedIds, "skills" | "tools" | "hooks">;
 
-/** The project/environment a sync writes into, resolved before any upload. */
-type SyncScope = {
-  projectId: Id<"projects">;
-  environmentId: Id<"environments">;
-};
-
 async function syncExternalResources(
   ctx: ActionCtx,
   accountId: string,
-  scope: SyncScope,
+  scope: ProjectEnvironmentScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<ExternalIds> {
@@ -623,7 +618,7 @@ async function syncSkillResources(
 async function syncToolResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  scope: SyncScope,
+  scope: ProjectEnvironmentScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<Record<string, string>> {

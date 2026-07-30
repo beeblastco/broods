@@ -109,13 +109,13 @@ describe("custom tools are scoped to an environment", () => {
     expect(listed.map((row) => row._id)).toEqual([firstId]);
   });
 
-  test("create refuses an environment from another project", async () => {
+  test("create refuses a project outside the account's org", async () => {
     const tt = t();
     const scope = await seedScope(tt);
-    const otherProjectId = await tt.run(
+    const foreignProjectId = await tt.run(
       async (ctx) =>
         await ctx.db.insert("projects", {
-          authId: "auth_owner@example.com",
+          authId: "auth_other@example.com",
           name: "other",
           slug: "other",
           updatedAt: Date.now(),
@@ -125,7 +125,37 @@ describe("custom tools are scoped to an environment", () => {
     await expect(
       tt.mutation(internal.accountTools.create, {
         accountId: scope.accountId,
-        projectId: otherProjectId,
+        projectId: foreignProjectId,
+        environmentId: scope.environmentId,
+        name: TOOL_NAME,
+        description: "d",
+        inputSchema: {},
+        bundleStorageKey: "k",
+        sha256: "b".repeat(64),
+      }),
+    ).rejects.toThrow(/Project not found/);
+  });
+
+  test("create refuses an environment from another project", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const sibling = await tt.run(async (ctx) => {
+      const account = await ctx.db.get(scope.accountId);
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner@example.com",
+        orgId: ctx.db.normalizeId("orgs", account!.orgId)!,
+        name: "sibling",
+        slug: "sibling",
+        updatedAt: Date.now(),
+      });
+
+      return projectId;
+    });
+
+    await expect(
+      tt.mutation(internal.accountTools.create, {
+        accountId: scope.accountId,
+        projectId: sibling,
         environmentId: scope.environmentId,
         name: TOOL_NAME,
         description: "d",
@@ -218,6 +248,33 @@ describe("migrations.deleteOrphanedTools", () => {
     const scope = await seedScope(tt);
     await seedTool(tt, scope);
     await tt.run(async (ctx) => await ctx.db.delete(scope.environmentId));
+
+    expect(
+      await tt.mutation(internal.migrations.deleteOrphanedTools, {}),
+    ).toEqual({
+      unscoped: 0,
+      softDeleted: 0,
+      danglingEnvironment: 1,
+      kept: 0,
+    });
+  });
+
+  test("drops rows whose environment sits under another project", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const toolId = await seedTool(tt, scope);
+    // `create` rejects this pair, so only a hand-edited row can hold it.
+    await tt.run(async (ctx) => {
+      const account = await ctx.db.get(scope.accountId);
+      const strayProjectId = await ctx.db.insert("projects", {
+        authId: "auth_owner@example.com",
+        orgId: ctx.db.normalizeId("orgs", account!.orgId)!,
+        name: "stray",
+        slug: "stray",
+        updatedAt: Date.now(),
+      });
+      await ctx.db.patch(toolId, { projectId: strayProjectId });
+    });
 
     expect(
       await tt.mutation(internal.migrations.deleteOrphanedTools, {}),

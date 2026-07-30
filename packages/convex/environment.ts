@@ -85,8 +85,7 @@ async function duplicateEnvironmentContents(
   now: number,
 ): Promise<void> {
   // 1. Clone custom tools first: agent configs key `extraConfig.tools` by tool
-  // id, so the clones need the new ids before step 2 remaps them. The bundle is
-  // immutable and content-addressed by sha256, so both rows share one S3 object.
+  // id, so the clones need the new ids before step 2 remaps them.
   const sourceCustomTools = await ctx.db
     .query("accountTools")
     .withIndex("by_environmentId_and_status", (q) =>

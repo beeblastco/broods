@@ -39,7 +39,10 @@ import {
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
-import { environmentNameEquals } from "./model/projectScope";
+import {
+  environmentNameEquals,
+  resolveProjectEnvironment,
+} from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -113,7 +116,7 @@ export const getManifestBySecretHash = internalQuery({
     const { secretHash, project, environment } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) return null;
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -182,7 +185,7 @@ export const resolveCliAuth = internalQuery({
     const keyAccount = await ctx.db.get(deployKey.accountId);
     if (!keyAccount || keyAccount.status !== "active") return null;
 
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       keyAccount,
       project,
@@ -385,7 +388,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) return null;
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       args.project,
@@ -436,11 +439,8 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   },
 });
 
-/**
- * Resolve (and create) the project/environment a sync targets. The HTTP action
- * needs these ids before it uploads tools, so tool rows land in the right
- * environment instead of being matched by name across the whole account.
- */
+// The HTTP action needs these ids before it uploads tools, so tool rows land in
+// the right environment instead of matching by name across the whole account.
 export const ensureScopeBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
@@ -579,7 +579,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       args.project,
@@ -639,7 +639,7 @@ export const deleteResourceBySecretHash = internalMutation({
     const { secretHash, project, environment, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -762,7 +762,7 @@ export const listEnvBySecretHash = internalQuery({
     const { secretHash, project, environment } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -809,7 +809,7 @@ export const getEnvBySecretHash = internalMutation({
     const { secretHash, project, environment, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -875,7 +875,7 @@ export const removeEnvBySecretHash = internalMutation({
     const { secretHash, project, environment, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -925,37 +925,6 @@ async function accountFromSecretHash(
   if (!account || account.status !== "active") return null;
 
   return account;
-}
-
-async function getProjectEnvironment(
-  ctx: QueryCtx | MutationCtx,
-  account: Doc<"accounts">,
-  project: string,
-  environment: string,
-) {
-  const orgId = ctx.db.normalizeId("orgs", account.orgId);
-  if (!orgId) return null;
-  const projects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .collect();
-  const normalizedProject = resourceName(project);
-  const projectDoc = projects.find(
-    (entry) =>
-      entry.name === normalizedProject || entry.slug === normalizedProject,
-  );
-  if (!projectDoc) return null;
-  const environments = await ctx.db
-    .query("environments")
-    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
-    .collect();
-  const normalizedEnvironment = resourceName(environment);
-  const environmentDoc = environments.find((entry) =>
-    environmentNameEquals(entry.name, normalizedEnvironment),
-  );
-  if (!environmentDoc) return null;
-
-  return { projectDoc: projectDoc, environmentDoc: environmentDoc };
 }
 
 async function ensureProject(

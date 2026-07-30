@@ -15,36 +15,39 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type Ctx = QueryCtx | MutationCtx;
 
+/** The (project, environment) pair every environment-scoped resource hangs off. */
+export type ProjectEnvironmentScope = {
+  projectId: Id<"projects">;
+  environmentId: Id<"environments">;
+};
+
 /** Environment names are matched case- and whitespace-insensitively everywhere. */
 export function environmentNameEquals(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
-/**
- * The (project, environment) an account-plane caller named by slug or display
- * name. Resolve-only: an unknown name yields null rather than creating a
- * project, which is what separates the REST API from the CLI's ensure path.
- */
+// Resolve-only: an unknown name yields null rather than creating a project,
+// which is what separates every read path from the CLI's ensure path.
 export async function resolveProjectEnvironment(
   ctx: Ctx,
-  accountId: Id<"accounts">,
+  account: Doc<"accounts">,
   project: string,
   environment: string,
 ): Promise<{
-  projectId: Id<"projects">;
-  environmentId: Id<"environments">;
+  projectDoc: Doc<"projects">;
+  environmentDoc: Doc<"environments">;
 } | null> {
-  const account = await ctx.db.get(accountId);
-  if (!account) return null;
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) return null;
+  const name = project.trim();
+  if (!name) return null;
 
   const projects = await ctx.db
     .query("projects")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
   const projectDoc = projects.find(
-    (entry) => entry.name === project || entry.slug === project,
+    (entry) => entry.name === name || entry.slug === name,
   );
   if (!projectDoc) return null;
 
@@ -58,8 +61,8 @@ export async function resolveProjectEnvironment(
   if (!environmentDoc) return null;
 
   return {
-    projectId: projectDoc._id,
-    environmentId: environmentDoc._id,
+    projectDoc: projectDoc,
+    environmentDoc: environmentDoc,
   };
 }
 

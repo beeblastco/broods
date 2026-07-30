@@ -47,11 +47,8 @@ export const list = internalQuery({
   },
 });
 
-/**
- * Resolve a project/environment slug pair the REST API was called with. Unlike
- * the CLI's `ensureScopeBySecretHash` this never creates: an unknown slug is a
- * client error, not a reason to spawn a project.
- */
+// Unlike the CLI's `ensureScopeBySecretHash` this never creates: an unknown
+// slug is a client error, not a reason to spawn a project.
 export const resolveScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -66,12 +63,20 @@ export const resolveScope = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    return await resolveProjectEnvironment(
+    const account = await ctx.db.get(args.accountId);
+    if (!account) return null;
+    const resolved = await resolveProjectEnvironment(
       ctx,
-      args.accountId,
+      account,
       args.project,
       args.environment,
     );
+    if (!resolved) return null;
+
+    return {
+      projectId: resolved.projectDoc._id,
+      environmentId: resolved.environmentDoc._id,
+    };
   },
 });
 
@@ -107,6 +112,15 @@ export const create = internalMutation({
     const account = await ctx.db.get(args.accountId);
     if (!account) {
       throw new Error(`Account not found: ${args.accountId}`);
+    }
+    // Every caller derives the scope from the same secret, but the project's
+    // org is what actually ties a tool to this account. Check it here.
+    const project = await ctx.db.get(args.projectId);
+    if (
+      !project ||
+      project.orgId !== ctx.db.normalizeId("orgs", account.orgId)
+    ) {
+      throw new Error(`Project not found: ${args.projectId}`);
     }
     const environment = await ctx.db.get(args.environmentId);
     if (!environment || environment.projectId !== args.projectId) {

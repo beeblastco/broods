@@ -59,6 +59,7 @@ import {
   type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
+import type { ProjectEnvironmentScope } from "./model/projectScope";
 import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 
 export const handle = httpAction(async (ctx, req) => {
@@ -2010,8 +2011,6 @@ async function handleToolRoute(
 ): Promise<Response> {
   if (!toolId) {
     // Tools belong to one environment, so the collection routes need a scope.
-    // Without it a create would write a row no project owns, which the cleanup
-    // migration then deletes out from under the caller.
     const scope = await resolveToolScope(ctx, req, accountId);
     if (!scope.ok) return scope.response;
 
@@ -2601,6 +2600,8 @@ function toPublicAccountTool(
   return {
     accountId: record.accountId,
     toolId: record._id,
+    projectId: record.projectId,
+    environmentId: record.environmentId,
     name: record.name,
     description: record.description,
     inputSchema: record.inputSchema,
@@ -2968,10 +2969,9 @@ function json(body: unknown, status = 200): Response {
 }
 
 type ToolScope =
-  | { ok: true; projectId: Id<"projects">; environmentId: Id<"environments"> }
+  | ({ ok: true } & ProjectEnvironmentScope)
   | { ok: false; response: Response };
 
-/** Reads and resolves the `project` / `environment` query pair tool routes require. */
 async function resolveToolScope(
   ctx: ActionCtx,
   req: Request,

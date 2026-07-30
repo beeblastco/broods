@@ -203,13 +203,8 @@ export const cliExternalResourcesFields = {
 /** Project-scoped custom tool metadata; bundle bytes live in S3. */
 export const accountToolsFields = {
   accountId: v.id("accounts"),
-  /**
-   * Environment scope, matching `sandboxConfigsFields`. Optional only so the
-   * widened schema deploys against rows written before tools were scoped; every
-   * write sets both, and `migrations:deleteOrphanedTools` drops what is left.
-   * The runtime resolves tools by `_id`, so a per-environment row already
-   * yields a per-environment tool.
-   */
+  // Optional only so the widened schema deploys against rows written before
+  // tools were scoped; `migrations:deleteOrphanedTools` drops what is left.
   projectId: v.optional(v.id("projects")),
   environmentId: v.optional(v.id("environments")),
   /** Inline source for dashboard-authored tools; CLI tools bundle locally instead. */

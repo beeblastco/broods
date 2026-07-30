@@ -65,15 +65,8 @@ export const deleteLegacyAgentDeployments = internalMutation({
   },
 });
 
-/**
- * Drop custom tools that no environment owns. Tools became environment-scoped
- * resources, so a row with no `environmentId` (written by the old account-scoped
- * REST API or CLI sync) is unreachable — nothing lists it and nothing can clone
- * or delete it. Soft-deleted rows go too, along with rows whose environment has
- * since been deleted. Bundles in S3 are content-addressed and swept separately.
- * Run with `dryRun: true` first to see the counts.
- * @returns counts of rows deleted, by reason
- */
+// Drop custom tools no environment owns: unscoped rows from the old
+// account-scoped path, tombstones, and rows whose environment is gone.
 export const deleteOrphanedTools = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   returns: v.object({
@@ -94,8 +87,13 @@ export const deleteOrphanedTools = internalMutation({
         null;
       if (row.status === "deleted") reason = "softDeleted";
       else if (!row.environmentId || !row.projectId) reason = "unscoped";
-      else if (!(await ctx.db.get(row.environmentId)))
-        reason = "danglingEnvironment";
+      else {
+        // `create` rejects a pair whose environment sits under another project;
+        // a row that holds one anyway is scope corruption, not a live tool.
+        const environment = await ctx.db.get(row.environmentId);
+        if (!environment || environment.projectId !== row.projectId)
+          reason = "danglingEnvironment";
+      }
 
       if (!reason) {
         kept += 1;

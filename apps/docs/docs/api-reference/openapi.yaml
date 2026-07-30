@@ -1668,8 +1668,19 @@ paths:
     post:
       tags: [Tools]
       summary: Create uploaded custom tool
-      description: Upload an already-bundled JavaScript tool bundle and model-facing manifest.
+      description: >-
+        Upload an already-bundled JavaScript tool bundle and model-facing manifest.
+        A tool belongs to one project environment, so `project` and `environment`
+        are required; two environments may each define a tool of the same name.
       security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: project, in: query, required: true, schema: { type: string } }
+        - {
+            name: environment,
+            in: query,
+            required: true,
+            schema: { type: string },
+          }
       requestBody:
         required: true
         content:
@@ -1683,10 +1694,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccountTool"
+        "400": { description: Missing project or environment }
+        "404": { description: Project or environment not found }
     get:
       tags: [Tools]
       summary: List uploaded custom tools
+      description: Lists the tools of one project environment. Both query parameters are required.
       security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: project, in: query, required: true, schema: { type: string } }
+        - {
+            name: environment,
+            in: query,
+            required: true,
+            schema: { type: string },
+          }
       responses:
         "200":
           description: Tool list
@@ -1699,6 +1721,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AccountTool"
+        "400": { description: Missing project or environment }
+        "404": { description: Project or environment not found }
 
   /v1/tools/{toolId}:
     get:
@@ -3567,6 +3591,10 @@ components:
         toolId:
           type: string
           example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
+        projectId:
+          type: string
+        environmentId:
+          type: string
         name:
           type: string
         description:
