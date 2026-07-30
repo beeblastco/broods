@@ -5,10 +5,9 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Switch } from "@/app/components/ui/switch";
 import { toErrorMessage } from "@/app/lib/errors";
-import { applyToolServiceUpsert } from "@/app/lib/toolServiceOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { useState } from "react";
 
 export function ToolDetailsTab({
@@ -43,16 +42,16 @@ export function ToolDetailsTab({
         }
       : "skip",
   );
-  const upsertToolService = useMutation(
-    api.toolService.upsertForNode,
-  ).withOptimisticUpdate(applyToolServiceUpsert);
+  // Saving bundles the source to S3, so this is an action and cannot carry an
+  // optimistic update; the switch stays disabled until the write lands.
+  const upsertToolService = useAction(api.toolService.saveForNode);
 
   const [isSavingStatus, setIsSavingStatus] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
 
-  const isEnabled = toolService?.status !== "disabled";
-  const functionName = toolService?.nodeLabel ?? "generated_on_save";
-  const language = toolService?.language ?? "javascript";
+  const isEnabled = toolService?.disabled !== true;
+  const functionName = toolService?.name ?? "generated_on_save";
+  const language = "javascript";
   const switchDisabled =
     isSavingStatus || !projectId || !environmentId || toolService === undefined;
 
@@ -71,7 +70,7 @@ export function ToolDetailsTab({
         environmentId: environmentId,
         nodeId: nodeId,
         nodeLabel: nodeLabel,
-        status: nextEnabled ? "enabled" : "disabled",
+        disabled: !nextEnabled,
       });
     } catch (error) {
       setStatusError(toErrorMessage(error));

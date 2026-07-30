@@ -64,3 +64,52 @@ export const deleteLegacyAgentDeployments = internalMutation({
     return { deleted: deleted };
   },
 });
+
+// Drop custom tools no environment owns: unscoped rows from the old
+// account-scoped path, tombstones, and rows whose environment is gone.
+export const deleteOrphanedTools = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    unscoped: v.number(),
+    softDeleted: v.number(),
+    danglingEnvironment: v.number(),
+    kept: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("accountTools").collect();
+    let unscoped = 0;
+    let softDeleted = 0;
+    let danglingEnvironment = 0;
+    let kept = 0;
+
+    for (const row of rows) {
+      let reason: "unscoped" | "softDeleted" | "danglingEnvironment" | null =
+        null;
+      if (row.status === "deleted") reason = "softDeleted";
+      else if (!row.environmentId || !row.projectId) reason = "unscoped";
+      else {
+        // `create` rejects a pair whose environment sits under another project;
+        // a row that holds one anyway is scope corruption, not a live tool.
+        const environment = await ctx.db.get(row.environmentId);
+        if (!environment || environment.projectId !== row.projectId)
+          reason = "danglingEnvironment";
+      }
+
+      if (!reason) {
+        kept += 1;
+        continue;
+      }
+      if (reason === "unscoped") unscoped += 1;
+      if (reason === "softDeleted") softDeleted += 1;
+      if (reason === "danglingEnvironment") danglingEnvironment += 1;
+      if (args.dryRun !== true) await ctx.db.delete(row._id);
+    }
+
+    return {
+      unscoped: unscoped,
+      softDeleted: softDeleted,
+      danglingEnvironment: danglingEnvironment,
+      kept: kept,
+    };
+  },
+});

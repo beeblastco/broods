@@ -15,6 +15,57 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type Ctx = QueryCtx | MutationCtx;
 
+/** The (project, environment) pair every environment-scoped resource hangs off. */
+export type ProjectEnvironmentScope = {
+  projectId: Id<"projects">;
+  environmentId: Id<"environments">;
+};
+
+/** Environment names are matched case- and whitespace-insensitively everywhere. */
+export function environmentNameEquals(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+// Resolve-only: an unknown name yields null rather than creating a project,
+// which is what separates every read path from the CLI's ensure path.
+export async function resolveProjectEnvironment(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  project: string,
+  environment: string,
+): Promise<{
+  projectDoc: Doc<"projects">;
+  environmentDoc: Doc<"environments">;
+} | null> {
+  const orgId = ctx.db.normalizeId("orgs", account.orgId);
+  if (!orgId) return null;
+  const name = project.trim();
+  if (!name) return null;
+
+  const projects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
+  const projectDoc = projects.find(
+    (entry) => entry.name === name || entry.slug === name,
+  );
+  if (!projectDoc) return null;
+
+  const environments = await ctx.db
+    .query("environments")
+    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+    .collect();
+  const environmentDoc = environments.find((entry) =>
+    environmentNameEquals(entry.name, environment),
+  );
+  if (!environmentDoc) return null;
+
+  return {
+    projectDoc: projectDoc,
+    environmentDoc: environmentDoc,
+  };
+}
+
 /**
  * The agents that `accountId` owns and that belong to `projectId`, across
  * every environment.

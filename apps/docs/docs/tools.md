@@ -279,12 +279,25 @@ Bundle size is capped per tier: **1 MB** on the isolate tier, **10 MB** on the s
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 
+A tool belongs to one project environment. Two environments may each define a tool
+of the same name without colliding, and an environment only ever sees its own — so
+the collection endpoints require `?project=<slug>&environment=<name>`. Omitting
+either is a `400`; naming one that does not exist is a `404`.
+
 Tool management endpoints (raw API):
 
-- `GET /v1/tools`
+- `GET /v1/tools?project=<slug>&environment=<name>`
+- `POST /v1/tools?project=<slug>&environment=<name>`
 - `GET /v1/tools/{toolId}`
 - `PATCH /v1/tools/{toolId}`
 - `DELETE /v1/tools/{toolId}`
+
+```ts
+const tools = await account.listTools({
+  project: "acme",
+  environment: "Production",
+});
+```
 
 ## Add a Built-In Tool
 

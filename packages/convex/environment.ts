@@ -84,7 +84,25 @@ async function duplicateEnvironmentContents(
   targetEnvironmentId: Id<"environments">,
   now: number,
 ): Promise<void> {
-  // 1. Clone agent configs and provision their agents rows, tracking id remaps.
+  // 1. Clone custom tools first: agent configs key `extraConfig.tools` by tool
+  // id, so the clones need the new ids before step 2 remaps them.
+  const sourceCustomTools = await ctx.db
+    .query("accountTools")
+    .withIndex("by_environmentId_and_status", (q) =>
+      q.eq("environmentId", sourceEnvironmentId).eq("status", "active"),
+    )
+    .collect();
+  const toolIdMap = new Map<string, string>();
+  for (const tool of sourceCustomTools) {
+    const newToolId = await ctx.db.insert("accountTools", {
+      ...stripSystemFields(tool),
+      environmentId: targetEnvironmentId,
+      updatedAt: now,
+    });
+    toolIdMap.set(tool._id, newToolId);
+  }
+
+  // 2. Clone agent configs and provision their agents rows, tracking id remaps.
   const sourceConfigs = await ctx.db
     .query("agentConfigs")
     .withIndex("by_projectId_and_environmentId", (q) =>
@@ -108,23 +126,42 @@ async function duplicateEnvironmentContents(
       agentIdMap.set(source.agentId, newAgentId);
   }
 
-  // 2. Remap each clone's subagent allow-list onto the new agents, then push config.
+  // 3. Remap each clone's subagent allow-list and tool ids onto the cloned
+  // resources, then push config.
   for (const newConfigId of configIdMap.values()) {
     const clone = await ctx.db.get(newConfigId);
     if (!clone) continue;
 
     const extraConfig = asRecord(clone.extraConfig);
+    const nextExtra = { ...extraConfig };
+    let changed = false;
+
     const subagent = asRecord(extraConfig.subagent);
     if (Array.isArray(subagent.allowed)) {
       const remapped = (subagent.allowed as string[])
         .map((agentId) => agentIdMap.get(agentId))
         .filter((agentId): agentId is string => !!agentId);
-      const nextExtra = { ...extraConfig };
       if (remapped.length > 0) {
         nextExtra.subagent = { ...subagent, allowed: remapped, enabled: true };
       } else {
         delete nextExtra.subagent;
       }
+      changed = true;
+    }
+
+    // Keys the map doesn't know are provider tools (`googleSearch`), so they stay.
+    const tools = asRecord(extraConfig.tools);
+    if (Object.keys(tools).length > 0 && toolIdMap.size > 0) {
+      nextExtra.tools = Object.fromEntries(
+        Object.entries(tools).map(([key, value]) => [
+          toolIdMap.get(key) ?? key,
+          value,
+        ]),
+      );
+      changed = true;
+    }
+
+    if (changed) {
       await ctx.db.patch(newConfigId, {
         extraConfig: nextExtra,
         updatedAt: now,
@@ -134,7 +171,7 @@ async function duplicateEnvironmentContents(
     await pushEncryptedConfigToAgentRow(ctx, newConfigId);
   }
 
-  // 3. Clone the canvas layout, repointing agent nodes at the cloned configs.
+  // 4. Clone the canvas layout, repointing agent and tool nodes at the clones.
   const sourceLayout = await ctx.db
     .query("canvasLayouts")
     .withIndex("by_projectId_and_environmentId", (q) =>
@@ -150,9 +187,17 @@ async function duplicateEnvironmentContents(
       const newConfigId = oldConfigId
         ? configIdMap.get(oldConfigId)
         : undefined;
+      if (newConfigId)
+        return { ...node, data: { ...data, agentConfigId: newConfigId } };
 
-      return newConfigId
-        ? { ...node, data: { ...data, agentConfigId: newConfigId } }
+      // Tool nodes point at their row through `resourceId`.
+      const newToolId =
+        typeof data.resourceId === "string"
+          ? toolIdMap.get(data.resourceId)
+          : undefined;
+
+      return newToolId
+        ? { ...node, data: { ...data, resourceId: newToolId } }
         : node;
     });
     await ctx.db.insert("canvasLayouts", {
@@ -161,21 +206,6 @@ async function duplicateEnvironmentContents(
       environmentId: targetEnvironmentId,
       nodes: remappedNodes,
       edges: sourceLayout.edges,
-      updatedAt: now,
-    });
-  }
-
-  // 4. Clone tool services.
-  const sourceTools = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", sourceEnvironmentId),
-    )
-    .collect();
-  for (const tool of sourceTools) {
-    await ctx.db.insert("toolServices", {
-      ...stripSystemFields(tool),
-      environmentId: targetEnvironmentId,
       updatedAt: now,
     });
   }
@@ -252,13 +282,15 @@ export async function deleteEnvironmentContents(
     .collect();
   for (const layout of layouts) await ctx.db.delete(layout._id);
 
-  const tools = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+  // Custom tools are environment-scoped resources, so they go with it. The S3
+  // bundle is left to the account-level sweep; nothing else references it.
+  const customTools = await ctx.db
+    .query("accountTools")
+    .withIndex("by_environmentId_and_status", (q) =>
+      q.eq("environmentId", environmentId),
     )
     .collect();
-  for (const tool of tools) await ctx.db.delete(tool._id);
+  for (const tool of customTools) await ctx.db.delete(tool._id);
 
   const variables = await ctx.db
     .query("environmentVariables")
@@ -307,9 +339,9 @@ async function hasEnvironmentContents(
   if (layout) return true;
 
   const tool = await ctx.db
-    .query("toolServices")
-    .withIndex("by_projectId_environmentId_and_nodeId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .query("accountTools")
+    .withIndex("by_environmentId_and_status", (q) =>
+      q.eq("environmentId", environmentId),
     )
     .first();
   if (tool) return true;

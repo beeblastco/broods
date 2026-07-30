@@ -188,10 +188,18 @@ export interface ChannelRecordConfig {
   tagRoles?: Array<{ roleId: string; actorIds: string[] }>;
 }
 
+/** The environment a tool belongs to. Tools with the same name in two environments are two tools. */
+export interface ToolScope {
+  project: string;
+  environment: string;
+}
+
 /** Public uploaded-tool record returned by the tools routes. */
 export interface AccountTool {
   accountId: string;
   toolId: string;
+  projectId: string;
+  environmentId: string;
   name: string;
   description: string;
   inputSchema: unknown;
@@ -286,6 +294,15 @@ declare const process: { env?: Record<string, string | undefined> } | undefined;
 
 function envVar(name: string): string | undefined {
   return typeof process !== "undefined" ? process?.env?.[name] : undefined;
+}
+
+function toolScopeQuery(scope: ToolScope): string {
+  const query = new URLSearchParams({
+    project: scope.project,
+    environment: scope.environment,
+  });
+
+  return `?${query.toString()}`;
 }
 
 /**
@@ -746,18 +763,23 @@ export class BroodsAccountClient {
     );
   }
 
-  async listTools(): Promise<AccountTool[]> {
+  /** Tools live in one environment, so the collection routes need a scope. Both fields are required. */
+  async listTools(scope: ToolScope): Promise<AccountTool[]> {
     const result = await this.request<{ tools: AccountTool[] }>(
       "GET",
-      "/v1/tools",
+      `/v1/tools${toolScopeQuery(scope)}`,
     );
     return result?.tools ?? [];
   }
 
-  async createTool(input: CreateToolInput): Promise<AccountTool> {
-    const result = await this.request<AccountTool>("POST", "/v1/tools", input);
+  async createTool(
+    scope: ToolScope,
+    input: CreateToolInput,
+  ): Promise<AccountTool> {
+    const path = `/v1/tools${toolScopeQuery(scope)}`;
+    const result = await this.request<AccountTool>("POST", path, input);
     if (!result)
-      throw new BroodsAccountApiError("POST", "/v1/tools", 404, "Not found");
+      throw new BroodsAccountApiError("POST", path, 404, "Not found");
     return result;
   }
 

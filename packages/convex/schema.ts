@@ -200,21 +200,23 @@ export const cliExternalResourcesFields = {
   updatedAt: v.number(),
 };
 
-export const toolServicesFields = {
-  authId: v.string(),
-  projectId: v.id("projects"),
-  environmentId: v.id("environments"),
-  nodeId: v.string(),
-  nodeLabel: v.string(),
-  language: v.union(v.literal("javascript"), v.literal("python")),
-  sourceCode: v.string(),
-  status: v.union(v.literal("enabled"), v.literal("disabled")),
-  updatedAt: v.number(),
-};
-
-/** Account-owned custom tool metadata; bundle bytes live in S3. */
+/** Project-scoped custom tool metadata; bundle bytes live in S3. */
 export const accountToolsFields = {
   accountId: v.id("accounts"),
+  // Optional only so the widened schema deploys against rows written before
+  // tools were scoped; `migrations:deleteOrphanedTools` drops what is left.
+  projectId: v.optional(v.id("projects")),
+  environmentId: v.optional(v.id("environments")),
+  /** Inline source for dashboard-authored tools; CLI tools bundle locally instead. */
+  sourceCode: v.optional(v.string()),
+  /**
+   * Canvas node this tool was authored on. Set for dashboard-authored tools,
+   * which are created by dropping a node before they have a name; CLI tools
+   * derive their node from the manifest name instead.
+   */
+  nodeId: v.optional(v.string()),
+  /** Dashboard enable/disable toggle. `status` is lifecycle, this is intent. */
+  disabled: v.optional(v.boolean()),
   name: v.string(),
   description: v.string(),
   inputSchema: v.any(),
@@ -1105,10 +1107,6 @@ export default defineSchema({
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
     .index("by_authId", ["authId"]),
-  toolServices: defineTable(toolServicesFields).index(
-    "by_projectId_environmentId_and_nodeId",
-    ["projectId", "environmentId", "nodeId"],
-  ),
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
     .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
@@ -1139,7 +1137,10 @@ export default defineSchema({
     .index("by_accountId_and_name", ["accountId", "name"]),
   accountTools: defineTable(accountToolsFields)
     .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_status", ["accountId", "status"]),
+    .index("by_accountId_and_status", ["accountId", "status"])
+    .index("by_environmentId_and_status", ["environmentId", "status"])
+    .index("by_environmentId_and_name", ["environmentId", "name"])
+    .index("by_environmentId_and_nodeId", ["environmentId", "nodeId"]),
   accountHooks: defineTable(accountHooksFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),

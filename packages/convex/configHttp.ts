@@ -59,6 +59,7 @@ import {
   type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
+import type { ProjectEnvironmentScope } from "./model/projectScope";
 import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 
 export const handle = httpAction(async (ctx, req) => {
@@ -2009,10 +2010,15 @@ async function handleToolRoute(
   toolId?: string,
 ): Promise<Response> {
   if (!toolId) {
+    // Tools belong to one environment, so the collection routes need a scope.
+    const scope = await resolveToolScope(ctx, req, accountId);
+    if (!scope.ok) return scope.response;
+
     if (req.method === "GET") {
-      const records = await ctx.runQuery(internal.accountTools.list, {
-        accountId: accountId,
-      });
+      const records = await ctx.runQuery(
+        internal.accountTools.listForEnvironment,
+        { environmentId: scope.environmentId },
+      );
 
       return json({
         tools: records.map((record) => toPublicAccountTool(record)),
@@ -2029,6 +2035,8 @@ async function handleToolRoute(
       });
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
+        projectId: scope.projectId,
+        environmentId: scope.environmentId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
@@ -2592,6 +2600,8 @@ function toPublicAccountTool(
   return {
     accountId: record.accountId,
     toolId: record._id,
+    projectId: record.projectId,
+    environmentId: record.environmentId,
     name: record.name,
     description: record.description,
     inputSchema: record.inputSchema,
@@ -2956,4 +2966,48 @@ function json(body: unknown, status = 200): Response {
     status: status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+type ToolScope =
+  | ({ ok: true } & ProjectEnvironmentScope)
+  | { ok: false; response: Response };
+
+async function resolveToolScope(
+  ctx: ActionCtx,
+  req: Request,
+  accountId: Id<"accounts">,
+): Promise<ToolScope> {
+  const params = new URL(req.url).searchParams;
+  const project = params.get("project")?.trim();
+  const environment = params.get("environment")?.trim();
+  if (!project || !environment) {
+    return {
+      ok: false,
+      response: json(
+        {
+          error:
+            "Tools are scoped to an environment: pass ?project=<slug>&environment=<name>",
+        },
+        400,
+      ),
+    };
+  }
+
+  const scope = await ctx.runQuery(internal.accountTools.resolveScope, {
+    accountId: accountId,
+    project: project,
+    environment: environment,
+  });
+  if (!scope) {
+    return {
+      ok: false,
+      response: json({ error: "Project or environment not found" }, 404),
+    };
+  }
+
+  return {
+    ok: true,
+    projectId: scope.projectId,
+    environmentId: scope.environmentId,
+  };
 }

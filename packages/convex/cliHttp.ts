@@ -12,6 +12,7 @@ import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
+import type { ProjectEnvironmentScope } from "./model/projectScope";
 
 type RouteParts =
   | { kind: "manifest"; project: string; environment: string }
@@ -47,7 +48,6 @@ export const handle = httpAction(async (ctx, req) => {
   try {
     const auth = await bearerAuth(req);
     if (!auth) {
-
       return json({ error: "Authorization Bearer token is required" }, 401);
     }
 
@@ -150,9 +150,18 @@ export const handle = httpAction(async (ctx, req) => {
         );
       }
       const originalManifest = manifest as CliManifest;
+      const scope = await ctx.runMutation(
+        internal.cliSync.ensureScopeBySecretHash,
+        {
+          secretHash: secretHash,
+          project: route.project,
+          environment: route.environment,
+        },
+      );
       const externalIds = await syncExternalResources(
         ctx,
         accountId,
+        scope,
         originalManifest,
         body.prune === true,
       );
@@ -322,7 +331,6 @@ export const handle = httpAction(async (ctx, req) => {
   } catch (error) {
     console.error("CLI request failed", error);
     if (error instanceof SyntaxError || error instanceof URIError) {
-
       return json({ error: "Request body or path is invalid" }, 400);
     }
 
@@ -520,7 +528,6 @@ async function bearerAuth(
   const header = req.headers.get("Authorization") ?? "";
   const match = header.match(/^Bearer\s+(.+)$/i);
   if (!match?.[1]) {
-
     return null;
   }
 
@@ -552,6 +559,7 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "tools" | "hooks">;
 async function syncExternalResources(
   ctx: ActionCtx,
   accountId: string,
+  scope: ProjectEnvironmentScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<ExternalIds> {
@@ -569,6 +577,7 @@ async function syncExternalResources(
   const tools = await syncToolResources(
     ctx,
     accountId as Id<"accounts">,
+    scope,
     manifest,
     prune,
   );
@@ -609,14 +618,18 @@ async function syncSkillResources(
 async function syncToolResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
+  scope: ProjectEnvironmentScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<Record<string, string>> {
   const desired = manifest.resources.filter((entry) => entry.kind === "tool");
   if (desired.length === 0) return {};
-  const existingTools = await ctx.runQuery(internal.accountTools.list, {
-    accountId: accountId,
-  });
+  // Scoped to the environment, not the account: two projects may each define a
+  // tool called `system_report` without overwriting one another.
+  const existingTools = await ctx.runQuery(
+    internal.accountTools.listForEnvironment,
+    { environmentId: scope.environmentId },
+  );
   const existing = new Map(existingTools.map((tool) => [tool.name, tool]));
   const desiredNames = new Set(desired.map((resource) => resource.name));
   const ids: Record<string, string> = {};
@@ -681,6 +694,8 @@ async function syncToolResources(
     } else {
       const toolId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
+        projectId: scope.projectId,
+        environmentId: scope.environmentId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,

@@ -39,6 +39,10 @@ import {
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
+import {
+  environmentNameEquals,
+  resolveProjectEnvironment,
+} from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -112,7 +116,7 @@ export const getManifestBySecretHash = internalQuery({
     const { secretHash, project, environment } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) return null;
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -181,7 +185,7 @@ export const resolveCliAuth = internalQuery({
     const keyAccount = await ctx.db.get(deployKey.accountId);
     if (!keyAccount || keyAccount.status !== "active") return null;
 
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       keyAccount,
       project,
@@ -384,7 +388,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) return null;
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       args.project,
@@ -431,6 +435,35 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       environmentSlug: result.environmentSlug,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
+    };
+  },
+});
+
+// The HTTP action needs these ids before it uploads tools, so tool rows land in
+// the right environment instead of matching by name across the whole account.
+export const ensureScopeBySecretHash = internalMutation({
+  args: {
+    secretHash: v.string(),
+    project: v.string(),
+    environment: v.string(),
+  },
+  returns: v.object({
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+  }),
+  handler: async (ctx, args) => {
+    const account = await accountFromSecretHash(ctx, args.secretHash);
+    if (!account) throw new Error("Invalid Broods token");
+    const projectDoc = await ensureProject(ctx, account, args.project);
+    const environmentDoc = await ensureEnvironment(
+      ctx,
+      projectDoc,
+      args.environment,
+    );
+
+    return {
+      projectId: projectDoc._id,
+      environmentId: environmentDoc._id,
     };
   },
 });
@@ -546,7 +579,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       args.project,
@@ -606,7 +639,7 @@ export const deleteResourceBySecretHash = internalMutation({
     const { secretHash, project, environment, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -729,7 +762,7 @@ export const listEnvBySecretHash = internalQuery({
     const { secretHash, project, environment } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -776,7 +809,7 @@ export const getEnvBySecretHash = internalMutation({
     const { secretHash, project, environment, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -842,7 +875,7 @@ export const removeEnvBySecretHash = internalMutation({
     const { secretHash, project, environment, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await getProjectEnvironment(
+    const resolved = await resolveProjectEnvironment(
       ctx,
       account,
       project,
@@ -892,37 +925,6 @@ async function accountFromSecretHash(
   if (!account || account.status !== "active") return null;
 
   return account;
-}
-
-async function getProjectEnvironment(
-  ctx: QueryCtx | MutationCtx,
-  account: Doc<"accounts">,
-  project: string,
-  environment: string,
-) {
-  const orgId = ctx.db.normalizeId("orgs", account.orgId);
-  if (!orgId) return null;
-  const projects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .collect();
-  const normalizedProject = resourceName(project);
-  const projectDoc = projects.find(
-    (entry) =>
-      entry.name === normalizedProject || entry.slug === normalizedProject,
-  );
-  if (!projectDoc) return null;
-  const environments = await ctx.db
-    .query("environments")
-    .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
-    .collect();
-  const normalizedEnvironment = resourceName(environment);
-  const environmentDoc = environments.find((entry) =>
-    environmentNameEquals(entry.name, normalizedEnvironment),
-  );
-  if (!environmentDoc) return null;
-
-  return { projectDoc: projectDoc, environmentDoc: environmentDoc };
 }
 
 async function ensureProject(
@@ -1917,7 +1919,7 @@ type CanvasEdge = {
 };
 
 type CanvasCliResource = CliResource & {
-  kind: "agent" | "workspace" | "sandbox" | "skill";
+  kind: "agent" | "workspace" | "sandbox" | "skill" | "tool";
 };
 
 async function syncCanvasLayoutForManifest(
@@ -1972,13 +1974,29 @@ async function syncCanvasLayoutForManifest(
   const agentConfigByName = new Map(
     agentConfigs.map((entry) => [entry.name, entry]),
   );
+  // Tools resolve by name here: the manifest reaching this mutation already had
+  // its `config.tools` keys rewritten to ids, so the node needs the row to map back.
+  const toolsByName = new Map(
+    (
+      await ctx.db
+        .query("accountTools")
+        .withIndex("by_environmentId_and_status", (q) =>
+          q.eq("environmentId", environmentId).eq("status", "active"),
+        )
+        .collect()
+    ).map((entry) => [entry.name, entry]),
+  );
+  const toolNameById = new Map(
+    [...toolsByName.values()].map((entry) => [entry._id as string, entry.name]),
+  );
   const desiredResources: CanvasCliResource[] = resources
     .filter(
       (entry): entry is CanvasCliResource =>
         entry.kind === "agent" ||
         entry.kind === "workspace" ||
         entry.kind === "sandbox" ||
-        entry.kind === "skill",
+        entry.kind === "skill" ||
+        entry.kind === "tool",
     )
     .map((entry) => ({ ...entry, name: resourceName(entry.name) }));
   const desiredNodeKeys = new Set(
@@ -1992,12 +2010,14 @@ async function syncCanvasLayoutForManifest(
     sandbox: 340,
     workspace: 600,
     skill: 860,
+    tool: 1120,
   } as const;
   const rowY = {
     agent: 80,
     sandbox: 80,
     workspace: 80,
     skill: 80,
+    tool: 80,
   };
   const nextPosition = (kind: keyof typeof columnX) => {
     const position = { x: columnX[kind], y: rowY[kind] };
@@ -2007,7 +2027,13 @@ async function syncCanvasLayoutForManifest(
   };
 
   const ordered = [...desiredResources].sort((a, b) => {
-    const rank = { agent: 0, sandbox: 1, workspace: 2, skill: 3 } as const;
+    const rank = {
+      agent: 0,
+      sandbox: 1,
+      workspace: 2,
+      skill: 3,
+      tool: 4,
+    } as const;
     return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
   });
   ordered.forEach((resource) => {
@@ -2056,6 +2082,33 @@ async function syncCanvasLayoutForManifest(
         },
       });
       nodeIdByKindName.set(`skill:${resource.name}`, node.id);
+      return;
+    }
+
+    if (resource.kind === "tool") {
+      const record = toolsByName.get(resource.name);
+      if (!record) return;
+      const node = upsertCanvasNode({
+        nextById,
+        existingById,
+        preferred: existingByResourceId.get(record._id),
+        kind: "tool",
+        name: resource.name,
+        position: nextPosition("tool"),
+        data: {
+          label: resource.name,
+          status: "idle",
+          resourceId: record._id,
+          description: record.description,
+          config: {
+            runtime: record.runtime ?? "sandbox",
+            sha256: record.sha256,
+          },
+          managedBy: "cli",
+          cliResourceKey: `tool:${resource.name}`,
+        },
+      });
+      nodeIdByKindName.set(`tool:${resource.name}`, node.id);
       return;
     }
 
@@ -2169,6 +2222,20 @@ async function syncCanvasLayoutForManifest(
         const skillNodeId = skillNodeIdForReference(nodeIdByKindName, entry);
         if (skillNodeId)
           addDesiredDefaultEdge(desiredEdges, agentId, skillNodeId);
+      }
+    }
+
+    // `config.tools` is keyed by tool id; provider tool keys have no node and
+    // are skipped by the lookup.
+    const agentTools = agent.config.tools;
+    if (isPlainObject(agentTools)) {
+      for (const [toolId, toolConfig] of Object.entries(agentTools)) {
+        const name = toolNameById.get(toolId);
+        if (!name) continue;
+        if (isPlainObject(toolConfig) && toolConfig.enabled === false) continue;
+        const toolNodeId = nodeIdByKindName.get(`tool:${name}`);
+        if (toolNodeId)
+          addDesiredDefaultEdge(desiredEdges, agentId, toolNodeId);
       }
     }
   }
@@ -3251,10 +3318,6 @@ function resourceName(value: string): string {
   if (!trimmed) throw new Error("Resource name is required");
 
   return trimmed;
-}
-
-function environmentNameEquals(left: string, right: string): boolean {
-  return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
 function environmentKindForName(
