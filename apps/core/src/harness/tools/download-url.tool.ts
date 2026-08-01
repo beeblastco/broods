@@ -96,8 +96,15 @@ function expirySeconds(
   requested: number | undefined,
   credentialsExpireAt?: Date,
 ): number {
+  // The model supplies `requested`; a non-finite one would carry NaN all the way to
+  // the presigner, and NaN passes every comparison the caller makes afterwards.
   const bounded = Math.min(
-    Math.max(Math.trunc(requested ?? DEFAULT_EXPIRES_SECONDS), 1),
+    Math.max(
+      Number.isFinite(requested)
+        ? Math.trunc(requested as number)
+        : DEFAULT_EXPIRES_SECONDS,
+      1,
+    ),
     MAX_EXPIRES_SECONDS,
   );
   if (!credentialsExpireAt) return bounded;
