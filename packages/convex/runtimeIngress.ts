@@ -1022,6 +1022,13 @@ export const clearConversation = internalMutation({
       .take(CLEAR_BATCH_SIZE + 1);
     const batch = rows.slice(0, CLEAR_BATCH_SIZE);
     for (const row of batch) await ctx.db.delete(row._id);
+    const harnessSession = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    if (harnessSession) await ctx.db.delete(harnessSession._id);
 
     return {
       deleted: batch.length,
