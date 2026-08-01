@@ -41,6 +41,9 @@ export interface S3MountCredentials {
   AWS_ACCESS_KEY_ID: string;
   AWS_SECRET_ACCESS_KEY: string;
   AWS_SESSION_TOKEN: string;
+  // RFC3339 expiry. A sandbox that serves these to mountpoint-s3 needs it to know
+  // when to re-fetch; without it the session reads as non-expiring.
+  AWS_CREDENTIAL_EXPIRATION?: string;
 }
 
 export interface S3MountContext {
@@ -229,6 +232,9 @@ export async function assumeScopedMountCredentials(params: {
     AWS_ACCESS_KEY_ID: credentials.AccessKeyId,
     AWS_SECRET_ACCESS_KEY: credentials.SecretAccessKey,
     AWS_SESSION_TOKEN: credentials.SessionToken,
+    ...(credentials.Expiration
+      ? { AWS_CREDENTIAL_EXPIRATION: credentials.Expiration.toISOString() }
+      : {}),
   };
 }
 

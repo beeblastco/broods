@@ -17,6 +17,7 @@ import {
   renameWorkspacePath,
   uploadWorkspaceFile,
   workspaceFileDownloadUrl,
+  type WorkspaceFsRef,
 } from "./model/workspaceFs";
 
 const fileEntry = v.object({
@@ -27,7 +28,7 @@ const fileEntry = v.object({
   updatedAt: v.optional(v.string()),
 });
 
-type RuntimeWorkspace = {
+type RuntimeWorkspace = WorkspaceFsRef & {
   accountId: Id<"accounts">;
   workspaceId: Id<"workspaceConfigs">;
 };
@@ -64,15 +65,8 @@ export const migrateLegacy = action({
         nodeId: args.nodeId,
       },
     );
-    if (legacyFiles.length === 0)
-      return await listWorkspaceFiles(
-        workspace.accountId,
-        workspace.workspaceId,
-      );
-    const current = await listWorkspaceFiles(
-      workspace.accountId,
-      workspace.workspaceId,
-    );
+    if (legacyFiles.length === 0) return await listWorkspaceFiles(workspace);
+    const current = await listWorkspaceFiles(workspace);
     const existingPaths = new Set(current.map((file) => file.path));
     let changed = false;
 
@@ -92,7 +86,7 @@ export const migrateLegacy = action({
         if (!response.ok) continue;
         const bytes = new Uint8Array(await response.arrayBuffer());
         if (bytes.byteLength > MAX_WORKSPACE_FILE_BYTES) continue;
-        await uploadWorkspaceFile(workspace.accountId, workspace.workspaceId, {
+        await uploadWorkspaceFile(workspace, {
           path: file.path,
           contentBase64: Buffer.from(bytes).toString("base64"),
           contentType: response.headers.get("content-type") ?? undefined,
@@ -108,9 +102,7 @@ export const migrateLegacy = action({
       );
     }
 
-    return changed
-      ? await listWorkspaceFiles(workspace.accountId, workspace.workspaceId)
-      : current;
+    return changed ? await listWorkspaceFiles(workspace) : current;
   },
 });
 
@@ -121,7 +113,7 @@ export const list = action({
   handler: async (ctx, args) => {
     const workspace = await resolveWorkspace(ctx, args);
 
-    return await listWorkspaceFiles(workspace.accountId, workspace.workspaceId);
+    return await listWorkspaceFiles(workspace);
   },
 });
 
@@ -138,15 +130,11 @@ export const upload = action({
   handler: async (ctx, args) => {
     const workspace = await resolveWorkspace(ctx, args);
 
-    return await uploadWorkspaceFile(
-      workspace.accountId,
-      workspace.workspaceId,
-      {
-        path: args.path,
-        contentBase64: args.contentBase64,
-        contentType: args.contentType,
-      },
-    );
+    return await uploadWorkspaceFile(workspace, {
+      path: args.path,
+      contentBase64: args.contentBase64,
+      contentType: args.contentType,
+    });
   },
 });
 
@@ -160,11 +148,7 @@ export const remove = action({
   returns: v.null(),
   handler: async (ctx, args) => {
     const workspace = await resolveWorkspace(ctx, args);
-    await deleteWorkspacePath(
-      workspace.accountId,
-      workspace.workspaceId,
-      args.path,
-    );
+    await deleteWorkspacePath(workspace, args.path);
 
     return null;
   },
@@ -181,12 +165,7 @@ export const rename = action({
   returns: v.null(),
   handler: async (ctx, args) => {
     const workspace = await resolveWorkspace(ctx, args);
-    await renameWorkspacePath(
-      workspace.accountId,
-      workspace.workspaceId,
-      args.path,
-      args.newPath,
-    );
+    await renameWorkspacePath(workspace, args.path, args.newPath);
 
     return null;
   },
@@ -203,11 +182,7 @@ export const getDownloadUrl = action({
   handler: async (ctx, args) => {
     const workspace = await resolveWorkspace(ctx, args);
 
-    return await workspaceFileDownloadUrl(
-      workspace.accountId,
-      workspace.workspaceId,
-      args.path,
-    );
+    return await workspaceFileDownloadUrl(workspace, args.path);
   },
 });
 

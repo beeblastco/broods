@@ -60,10 +60,10 @@ export async function readS3Text(
 export async function getS3ObjectUrl(
   bucket: string,
   key: string,
-  options: { expiresInSeconds?: number } = {},
+  options: { expiresInSeconds?: number; access?: S3Access } = {},
 ): Promise<string> {
   return getSignedUrl(
-    awsClient(),
+    awsClient(options.access),
     new GetObjectCommand({ Bucket: bucket, Key: key }),
     { expiresIn: options.expiresInSeconds ?? 300 },
   );
@@ -184,10 +184,11 @@ export async function ensureS3DirectoryMarkers(
 export async function s3ObjectExists(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<boolean> {
   logInfo("s3.exists start", { bucket, key });
   try {
-    await awsClient().send(
+    await awsClient(access).send(
       new HeadObjectCommand({
         Bucket: bucket,
         Key: key,

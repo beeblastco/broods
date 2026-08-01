@@ -11,7 +11,6 @@ import { runtime } from "../src/shared/convex/runtime.ts";
 
 const originalAdminSecret = process.env.ADMIN_ACCOUNT_SECRET;
 const originalServiceSecret = process.env.SERVICE_AUTH_SECRET;
-const originalCronsTable = process.env.CRONS_TABLE_NAME;
 const originalSchedulerRoleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
 const originalSchedulerTargetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
 const originalSchedulerGroupName = process.env.CRON_SCHEDULER_GROUP_NAME;
@@ -30,11 +29,6 @@ afterEach(() => {
     delete process.env.SERVICE_AUTH_SECRET;
   } else {
     process.env.SERVICE_AUTH_SECRET = originalServiceSecret;
-  }
-  if (originalCronsTable === undefined) {
-    delete process.env.CRONS_TABLE_NAME;
-  } else {
-    process.env.CRONS_TABLE_NAME = originalCronsTable;
   }
   if (originalSchedulerRoleArn === undefined) {
     delete process.env.CRON_SCHEDULER_ROLE_ARN;

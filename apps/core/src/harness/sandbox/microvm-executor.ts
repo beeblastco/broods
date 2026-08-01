@@ -75,6 +75,7 @@ import type {
 import {
   configString,
   sandboxReservationKey,
+  shellQuote,
   stringRecord,
   stripTrailingSlashes,
   truncateText,
@@ -111,6 +112,21 @@ const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
+
+// A reservation whose VM cannot be reconnected because it reached a terminal state.
+// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
+// separates "recreate it" from a transient control-plane failure.
+class MicrovmGoneError extends Error {}
+
+// The sandbox serves these to mountpoint-s3, which re-fetches as its session ages.
+// Sessions last an hour and a persistent VM outlives that, so refresh on this
+// interval — comfortably inside the hour, and cheap (one STS call per VM per cycle).
+const MOUNT_CREDENTIAL_REFRESH_MS = 30 * 60_000;
+const MOUNT_CREDENTIALS_PATH = "/workspace/credentials";
+
+// When each reservation's mount credentials were last pushed. Module scope for the
+// same reason as the token cache: an executor is constructed per request.
+const mountCredentialRefreshes = new Map<string, number>();
 
 // Minted tokens are per-MicroVM and valid for AUTH_TOKEN_TTL_MINUTES, so minting one
 // per exec burns a control-plane round trip on every call. Cached at module scope
@@ -275,19 +291,30 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     // turns out to be dead. Ephemeral runs never cache: they have no reservation.
     const cached = persistent ? this.#cachedTarget(request) : null;
     if (cached) {
+      await this.#refreshMountCredentials(
+        request,
+        cached.microvmId,
+        cached.endpoint,
+      );
       const response = await this.#execReserved(cached, request, payload);
       if (response) return sandboxResult(request, response, startedAt);
     }
-    const { microvmId, endpoint, ephemeralMirror } =
+    const { microvmId, endpoint, ephemeralMirror, isFirstCreate } =
       await this.#acquire(request);
 
     try {
-      if (persistent)
-        await this.#runLifecycle(
-          microvmId,
-          endpoint,
-          this.#workDir(this.#workspaceKey(request)),
-        );
+      if (persistent) {
+        const workDir = this.#workDir(this.#workspaceKey(request));
+        if (isFirstCreate && request.namespace) {
+          // The `/run` payload just delivered fresh credentials, so the endpoint is
+          // already stocked — start the refresh clock instead of pushing again.
+          this.#markMountCredentialsFresh(request);
+          await this.#assertWorkspaceMounted(microvmId, endpoint, workDir);
+        } else {
+          await this.#refreshMountCredentials(request, microvmId, endpoint);
+        }
+        await this.#runLifecycle(microvmId, endpoint, workDir);
+      }
 
       return sandboxResult(
         request,
@@ -401,7 +428,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
       return { externalId: microvmId, state: mapMicrovmState(info.state) };
     } catch (error) {
-      if (isMicrovmNotFound(error)) {
+      if (isMicrovmGone(error)) {
         return null;
       }
       return { externalId: microvmId, state: "unknown" };
@@ -559,11 +586,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           isFirstCreate: false,
         };
       } catch (error) {
-        // Recreate only when the provider says the VM no longer exists. A slow
-        // resume or transient control-plane error must propagate instead: replacing
-        // a still-allocated (e.g. suspended) VM leaks it and burns the account's
-        // MicroVM memory quota until nothing can launch.
-        if (!isMicrovmNotFound(error)) throw error;
+        // Recreate only when the VM is unusable for good — unknown to the provider,
+        // or terminal. A slow resume or transient control-plane error must propagate
+        // instead: replacing a still-allocated (e.g. suspended) VM leaks it and burns
+        // the account's MicroVM memory quota until nothing can launch.
+        if (!isMicrovmGone(error)) throw error;
         await deleteSandboxInstance(
           PROVIDER,
           key,
@@ -643,6 +670,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     let info = await this.#client.send(
       new GetMicrovmCommand({ microvmIdentifier: microvmId }),
     );
+    // A terminal VM is not coming back, and it still exists as far as GetMicrovm is
+    // concerned, so the caller has to be told to recreate rather than retry forever.
+    if (info.state === "TERMINATED" || info.state === "TERMINATING") {
+      throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
+    }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {
       await this.#client.send(
         new ResumeMicrovmCommand({ microvmIdentifier: microvmId }),
@@ -998,6 +1030,78 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
+  // Refuse to hand back a workspace VM whose S3 mount never came up. The `/run` hook
+  // establishes it, but a hook failure leaves the mount point as a plain directory on
+  // the VM's own disk — writes look fine and are lost when the VM goes. Checked once,
+  // on the create that runs the hook, so the warm path stays a single round trip.
+  async #assertWorkspaceMounted(
+    microvmId: string,
+    endpoint: string,
+    workDir: string,
+  ): Promise<void> {
+    const result = await this.#shell(
+      microvmId,
+      endpoint,
+      `mountpoint -q ${shellQuote(workDir)}`,
+      30,
+    );
+    if (result.exitCode === 0) return;
+
+    throw new Error(
+      `MicroVM workspace mount is not live at ${workDir}; the sandbox would write to local disk instead of S3`,
+    );
+  }
+
+  #markMountCredentialsFresh(request: SandboxRunRequest): void {
+    const key = sandboxReservationKey(request);
+    if (key) mountCredentialRefreshes.set(key, Date.now());
+  }
+
+  // Keep the sandbox's credential endpoint stocked so its mount survives past the
+  // one-hour STS session the `/run` payload was minted with. Best-effort: a failed
+  // push is retried on the next call, well inside the session's remaining life, and
+  // must never fail the exec the caller is actually waiting on.
+  async #refreshMountCredentials(
+    request: SandboxRunRequest,
+    microvmId: string,
+    endpoint: string,
+  ): Promise<void> {
+    if (!request.namespace) return;
+    const key = sandboxReservationKey(request);
+    if (!key) return;
+    const refreshedAt = mountCredentialRefreshes.get(key);
+    if (refreshedAt && Date.now() - refreshedAt < MOUNT_CREDENTIAL_REFRESH_MS) {
+      return;
+    }
+    try {
+      const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+      if (!mount.credentials) return;
+      const token = await this.#authToken(microvmId);
+      const res = await fetch(
+        `https://${endpoint.replace(/^https?:\/\//, "")}${MOUNT_CREDENTIALS_PATH}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-aws-proxy-auth": token,
+            "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
+          },
+          body: JSON.stringify(mount.credentials),
+        },
+      );
+      // A 404 is an older image with no credential endpoint: it mounted with static
+      // keys and there is nothing to refresh, so stop asking on every call.
+      if (res.ok || res.status === 404) {
+        mountCredentialRefreshes.set(key, Date.now());
+      }
+    } catch (error) {
+      logWarn("failed to refresh MicroVM mount credentials", {
+        namespace: request.namespace,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // onCreate (once, marker-guarded) / onResume (every acquire) hooks in the reserved
   // VM, mirroring the daytona/workdir persistent lifecycle.
   async #runLifecycle(
@@ -1161,7 +1265,8 @@ function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }
 
-function isMicrovmNotFound(error: unknown): boolean {
+function isMicrovmGone(error: unknown): boolean {
+  if (error instanceof MicrovmGoneError) return true;
   const name =
     error && typeof error === "object"
       ? (error as { name?: unknown }).name

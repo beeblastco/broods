@@ -50,6 +50,7 @@ import {
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
+  normalizeWorkspaceConfig,
   toPublicWorkspaceConfigResponse,
   workspaceNamespace,
 } from "./model/workspaceRules";
@@ -2334,7 +2335,11 @@ async function handleWorkspaceFilesRoute(
     workspaceId: workspaceId,
   });
   if (!workspace) return json({ error: "Workspace not found" }, 404);
-  const target = { accountId: accountId, workspaceId: workspace._id };
+  const target = {
+    accountId: accountId,
+    workspaceId: workspace._id,
+    storage: normalizeWorkspaceConfig(workspace.config).storage,
+  };
 
   if (req.method === "GET") {
     const path = new URL(req.url).searchParams.get("path");

@@ -232,8 +232,7 @@ async function* streamOf(
   client: LambdaClient,
   options?: unknown,
 ): AsyncGenerator<unknown, void, void> {
-  const { streamInLambda } =
-    await import("../src/harness/bundles/executor.ts");
+  const { streamInLambda } = await import("../src/harness/bundles/executor.ts");
   yield* streamInLambda(
     {
       accountId: "acct_test",

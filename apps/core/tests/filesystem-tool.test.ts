@@ -83,8 +83,8 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     Boolean(
       error &&
-        typeof error === "object" &&
-        (error as { name?: string }).name === "NoSuchKey",
+      typeof error === "object" &&
+      (error as { name?: string }).name === "NoSuchKey",
     ),
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -104,7 +104,6 @@ beforeEach(() => {
     "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
   process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN =
     "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
-  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
   // Reserving a sandbox goes through the Convex reservation registry. Answer "no
   // reservation yet, you won the claim" so a persistent run reaches the VM.
@@ -247,9 +246,8 @@ async function approvalStatus(
     agentSandboxPermissionMode?: unknown;
   },
 ) {
-  const { compatibilityApprovalStatus } = await import(
-    "../src/harness/policy.ts"
-  );
+  const { compatibilityApprovalStatus } =
+    await import("../src/harness/policy.ts");
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
@@ -263,8 +261,7 @@ async function approvalStatus(
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
-    | [string, { body: string }]
-    | undefined;
+    [string, { body: string }] | undefined;
   return { payload: JSON.parse(call![1].body) };
 }
 
@@ -346,9 +343,8 @@ describe("sandbox tool set", () => {
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { sandboxSupportsBackgroundJobs } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     expect(
       sandboxSupportsBackgroundJobs({
         provider: "lambda",
@@ -1038,9 +1034,8 @@ describe("memory tool", () => {
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -1049,9 +1044,8 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     for (const path of [
       "../etc/passwd",
       "a/../../b",

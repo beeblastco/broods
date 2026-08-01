@@ -86,6 +86,7 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
+  "download_url",
   "edit",
   "glob",
   "grep",

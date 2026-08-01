@@ -114,7 +114,10 @@ describe("subagent task correlation", () => {
       ),
     ).toThrow("account and agent scoped");
     expect(() =>
-      createSubagentTaskId("acct:acct_1:agent:agent_parent:api:event_1", "nope"),
+      createSubagentTaskId(
+        "acct:acct_1:agent:agent_parent:api:event_1",
+        "nope",
+      ),
     ).toThrow("must be a UUID");
   });
 
@@ -126,16 +129,19 @@ describe("subagent task correlation", () => {
     const nonce = "019833ce-7f5d-7000-8000-000000000001";
     // An alias spelling: still [A-Za-z0-9_-], still decodes to the same parent,
     // but re-encodes differently because its final character carries slack bits.
-    const alias = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-      .split("")
-      .map((character) => canonical.slice(0, -1) + character)
-      .find(
-        (candidate) =>
-          candidate !== canonical &&
-          Buffer.from(candidate, "base64url").toString("utf8") === parent,
-      );
+    const alias =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        .split("")
+        .map((character) => canonical.slice(0, -1) + character)
+        .find(
+          (candidate) =>
+            candidate !== canonical &&
+            Buffer.from(candidate, "base64url").toString("utf8") === parent,
+        );
 
-    expect(subagentParentEventId(`subagent~${canonical}~${nonce}`)).toBe(parent);
+    expect(subagentParentEventId(`subagent~${canonical}~${nonce}`)).toBe(
+      parent,
+    );
     expect(alias).toBeDefined();
     // Without the round-trip guard one parent would have several task-id spellings.
     expect(subagentParentEventId(`subagent~${alias}~${nonce}`)).toBeNull();
