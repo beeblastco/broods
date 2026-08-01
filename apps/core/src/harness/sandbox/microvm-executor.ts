@@ -309,7 +309,16 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           // The `/run` payload just delivered fresh credentials, so the endpoint is
           // already stocked — start the refresh clock instead of pushing again.
           this.#markMountCredentialsFresh(request);
-          await this.#assertWorkspaceMounted(microvmId, endpoint, workDir);
+          try {
+            await this.#assertWorkspaceMounted(microvmId, endpoint, workDir);
+          } catch (error) {
+            // The VM is already claimed and cached by now, and the assertion only
+            // runs on a create — so leaving it reserved would hand every later call
+            // a VM writing to local disk, exactly the failure this check exists to
+            // catch. Drop the reservation so the next call builds a fresh one.
+            await this.release(request).catch(() => {});
+            throw error;
+          }
         } else {
           await this.#refreshMountCredentials(request, microvmId, endpoint);
         }
@@ -439,6 +448,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     if (!key) return;
     reservedEndpoints.delete(key);
+    mountCredentialRefreshes.delete(key);
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
     await deleteSandboxInstance(
@@ -1075,7 +1085,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     }
     try {
       const mount = await resolveS3Mount(this.#s3Context(request.namespace));
-      if (!mount.credentials) return;
+      // No credentials means no mount role, so there is nothing to rotate — start
+      // the clock anyway instead of re-resolving the mount on every single exec.
+      if (!mount.credentials) {
+        mountCredentialRefreshes.set(key, Date.now());
+
+        return;
+      }
       const token = await this.#authToken(microvmId);
       const res = await fetch(
         `https://${endpoint.replace(/^https?:\/\//, "")}${MOUNT_CREDENTIALS_PATH}`,

@@ -195,6 +195,13 @@ export async function purgeWorkspaceFilesystem(
   ref: WorkspaceFsRef,
 ): Promise<number> {
   const target = await resolveTarget(ref);
+  // A bring-your-own bucket with no prefix resolves to the whole bucket, and this
+  // is a recursive delete. Refuse rather than trust every future caller to check.
+  if (!target.prefix) {
+    throw new Error(
+      "Refusing to purge a workspace bucket without a key prefix",
+    );
+  }
 
   return await deleteS3Prefix(target.bucket, target.prefix, target.access);
 }

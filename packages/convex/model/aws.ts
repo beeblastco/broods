@@ -140,7 +140,11 @@ export async function s3Client(access?: S3Access): Promise<S3Client> {
   return new S3Client({
     region: access?.region ?? config.region,
     credentials: access?.credentials ?? (await assumeCredentials()),
-    ...(access?.endpoint ? { endpoint: access.endpoint } : {}),
+    // Path style with a custom endpoint, matching core's awsClient: a non-AWS S3
+    // endpoint rarely resolves virtual-hosted bucket subdomains.
+    ...(access?.endpoint
+      ? { endpoint: access.endpoint, forcePathStyle: true }
+      : {}),
   });
 }
 

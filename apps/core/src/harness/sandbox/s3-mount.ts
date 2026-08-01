@@ -110,10 +110,13 @@ function joinPrefix(
 
 // Where a harness-side read of a workspace lands: the bucket + key prefix, plus the
 // S3 access for a bring-your-own bucket (undefined => default client / managed bucket).
+// `credentialsExpireAt` is set only for an assumed session — a presigned URL cannot
+// outlive the credentials that signed it, so a caller minting one must clamp to it.
 export interface S3ReadTarget {
   bucket: string;
   prefix: string;
   access?: S3Access;
+  credentialsExpireAt?: Date;
 }
 
 // Build the resolver context for a harness-side read of a workspace's storage,
@@ -155,7 +158,13 @@ export async function resolveS3ReadTarget(
     ...(mount.region ? { region: mount.region } : {}),
     ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
   };
-  return { bucket: mount.bucket, prefix: mount.prefix, access };
+  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+  return {
+    bucket: mount.bucket,
+    prefix: mount.prefix,
+    access,
+    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
+  };
 }
 
 export async function resolveS3Mount(

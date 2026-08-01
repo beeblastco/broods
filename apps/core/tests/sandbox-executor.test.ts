@@ -159,6 +159,7 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
   }
 });
 const originalFetch = globalThis.fetch;
+let microvmMountLive = true;
 const microvmFetchMock = mock(async (_url: string, init?: unknown) => {
   // The create-time mount assertion is infrastructure every workspace run pays for,
   // so it answers "mounted" here and tests keep asserting on their own exec payload.
@@ -168,7 +169,11 @@ const microvmFetchMock = mock(async (_url: string, init?: unknown) => {
   return new Response(
     JSON.stringify(
       mounted
-        ? { ...microvmExecPayload, ok: true, exit_code: 0 }
+        ? {
+            ...microvmExecPayload,
+            ok: microvmMountLive,
+            exit_code: microvmMountLive ? 0 : 1,
+          }
         : microvmExecPayload,
     ),
     { status: 200, headers: { "content-type": "application/json" } },
@@ -296,6 +301,7 @@ beforeEach(() => {
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
+  microvmMountLive = true;
   microvmExecPayload = {
     ok: true,
     runtime: "bash",
@@ -927,6 +933,38 @@ describe("createSandboxExecutor", () => {
       undefined,
       "microvm-gone",
     );
+  });
+
+  it("releases the reservation when the create-time mount check fails", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    microvmMountLive = false;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await expect(
+      executor.run({
+        code: "echo ok",
+        namespace: ns,
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toThrow("mount is not live");
+
+    // A VM that never mounted must not stay reserved: the next call would take the
+    // cached endpoint and write to its local disk instead of S3.
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).toContain("TerminateMicrovm");
+    expect(deleteSandboxInstanceMock).toHaveBeenCalled();
+    expect(storedSandboxExternalId).toBeNull();
   });
 
   it("recreates the reserved MicroVM when its reservation points at a terminated one", async () => {

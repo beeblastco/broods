@@ -30,26 +30,9 @@ interface DownloadUrlInput {
 // channel stops working well before it becomes a durable, unauthenticated handle.
 const DEFAULT_EXPIRES_SECONDS = 900;
 const MAX_EXPIRES_SECONDS = 3600;
-
-function inputSchema(context: SandboxToolContext): JSONSchema7 {
-  const workspaceProp = workspaceParamSchema(context.workspaces);
-  return {
-    type: "object",
-    properties: {
-      file_path: {
-        type: "string",
-        description: "Path to the file, relative to the workspace root.",
-      },
-      expires_in: {
-        type: "integer",
-        description: `Seconds the link stays valid (default ${DEFAULT_EXPIRES_SECONDS}, max ${MAX_EXPIRES_SECONDS}).`,
-      },
-      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
-    },
-    required: ["file_path"],
-    additionalProperties: false,
-  };
-}
+// A presigned URL dies with the credentials that signed it, so a link is never
+// promised past the assumed session, minus a margin for the clock and the round trip.
+const CREDENTIAL_EXPIRY_MARGIN_SECONDS = 60;
 
 export default function downloadUrlTool(context: SandboxToolContext): ToolSet {
   return {
@@ -80,10 +63,15 @@ Usage notes:
           if (!(await s3ObjectExists(target.bucket, key, target.access))) {
             return toolError(`Error: file not found: ${rel}`);
           }
-          const expiresInSeconds = Math.min(
-            Math.max(Math.trunc(expires_in ?? DEFAULT_EXPIRES_SECONDS), 1),
-            MAX_EXPIRES_SECONDS,
+          const expiresInSeconds = expirySeconds(
+            expires_in,
+            target.credentialsExpireAt,
           );
+          if (expiresInSeconds < 1) {
+            return toolError(
+              "Error: the workspace credentials are about to expire; retry in a moment",
+            );
+          }
           const url = await getS3ObjectUrl(target.bucket, key, {
             expiresInSeconds: expiresInSeconds,
             ...(target.access ? { access: target.access } : {}),
@@ -99,5 +87,45 @@ Usage notes:
         }
       },
     }),
+  };
+}
+
+// The requested lifetime, bounded by the tool's own cap and by whatever is left of
+// the signing session — a link outliving its credentials just 403s when clicked.
+function expirySeconds(
+  requested: number | undefined,
+  credentialsExpireAt?: Date,
+): number {
+  const bounded = Math.min(
+    Math.max(Math.trunc(requested ?? DEFAULT_EXPIRES_SECONDS), 1),
+    MAX_EXPIRES_SECONDS,
+  );
+  if (!credentialsExpireAt) return bounded;
+  const remaining = Math.trunc(
+    (credentialsExpireAt.getTime() - Date.now()) / 1000 -
+      CREDENTIAL_EXPIRY_MARGIN_SECONDS,
+  );
+
+  return Math.min(bounded, remaining);
+}
+
+function inputSchema(context: SandboxToolContext): JSONSchema7 {
+  const workspaceProp = workspaceParamSchema(context.workspaces);
+
+  return {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "Path to the file, relative to the workspace root.",
+      },
+      expires_in: {
+        type: "integer",
+        description: `Seconds the link stays valid (default ${DEFAULT_EXPIRES_SECONDS}, max ${MAX_EXPIRES_SECONDS}).`,
+      },
+      ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
+    },
+    required: ["file_path"],
+    additionalProperties: false,
   };
 }
