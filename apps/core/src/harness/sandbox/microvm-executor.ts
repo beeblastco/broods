@@ -306,23 +306,15 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     try {
       if (persistent) {
         const workDir = this.#workDir(this.#workspaceKey(request));
-        if (isFirstCreate && request.namespace) {
-          // The `/run` payload just delivered fresh credentials, so the endpoint is
-          // already stocked — start the refresh clock instead of pushing again.
-          this.#markMountCredentialsFresh(request);
-          try {
-            await this.#assertWorkspaceMounted(microvmId, endpoint, workDir);
-          } catch (error) {
-            // The VM is already claimed and cached by now, and the assertion only
-            // runs on a create — so leaving it reserved would hand every later call
-            // a VM writing to local disk, exactly the failure this check exists to
-            // catch. Drop the reservation so the next call builds a fresh one.
-            await this.release(request).catch(() => {});
-            throw error;
-          }
-        } else {
-          await this.#refreshMountCredentials(request, microvmId, endpoint);
-        }
+        await this.#prepareWorkspaceMount(
+          request,
+          {
+            microvmId: microvmId,
+            endpoint: endpoint,
+            isFirstCreate: isFirstCreate,
+          },
+          workDir,
+        );
         await this.#runLifecycle(microvmId, endpoint, workDir);
       }
 
@@ -349,8 +341,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // snapshotted/restored with the VM across suspend/resume (same boot id).
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const key = this.#requirePersistent(request);
-    const { microvmId, endpoint } = await this.#acquire(request);
+    const acquired = await this.#acquire(request);
+    const { microvmId, endpoint } = acquired;
     const workDir = this.#workDir(this.#workspaceKey(request));
+    await this.#prepareWorkspaceMount(request, acquired, workDir);
     await this.#runLifecycle(microvmId, endpoint, workDir);
     const jobId = request.jobId ?? generateJobId();
     const script = launchScript(
@@ -681,24 +675,29 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     let info = await this.#client.send(
       new GetMicrovmCommand({ microvmIdentifier: microvmId }),
     );
-    // A terminal VM is not coming back, and it still exists as far as GetMicrovm is
-    // concerned, so the caller has to be told to recreate rather than retry forever.
-    if (info.state === "TERMINATED" || info.state === "TERMINATING") {
-      throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
-    }
     if (info.state === "SUSPENDED" || info.state === "SUSPENDING") {
       await this.#client.send(
         new ResumeMicrovmCommand({ microvmIdentifier: microvmId }),
       );
       const deadline = Date.now() + WARMUP_BUDGET_MS;
       let wait = WARMUP_RETRY_MIN_DELAY_MS;
-      while (!info.endpoint && Date.now() < deadline) {
+      while (
+        !info.endpoint &&
+        !isTerminalMicrovmState(info.state) &&
+        Date.now() < deadline
+      ) {
         await delay(wait);
         wait = Math.min(wait * 2, WARMUP_RETRY_MAX_DELAY_MS);
         info = await this.#client.send(
           new GetMicrovmCommand({ microvmIdentifier: microvmId }),
         );
       }
+    }
+    // A terminal VM is not coming back, and GetMicrovm still answers for one, so the
+    // caller has to be told to recreate rather than retry this id forever. Checked
+    // after the resume too: a VM can reach a terminal state while we wait on it.
+    if (isTerminalMicrovmState(info.state)) {
+      throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
     return { microvmId, endpoint: info.endpoint };
@@ -1068,6 +1067,43 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (key) markMountCredentialsFresh(key);
   }
 
+  // Everything a persistent workspace VM owes the caller before any work lands on
+  // it: a mount proven live on the create that established it, and fresh scoped
+  // credentials on every later acquire. Both entry points go through here — a
+  // background job on a degraded mount writes to local disk just as silently.
+  async #prepareWorkspaceMount(
+    request: SandboxRunRequest,
+    acquired: { microvmId: string; endpoint: string; isFirstCreate: boolean },
+    workDir: string,
+  ): Promise<void> {
+    if (!acquired.isFirstCreate || !request.namespace) {
+      await this.#refreshMountCredentials(
+        request,
+        acquired.microvmId,
+        acquired.endpoint,
+      );
+
+      return;
+    }
+    // The `/run` payload just delivered fresh credentials, so the endpoint is
+    // already stocked — start the refresh clock instead of pushing again.
+    this.#markMountCredentialsFresh(request);
+    try {
+      await this.#assertWorkspaceMounted(
+        acquired.microvmId,
+        acquired.endpoint,
+        workDir,
+      );
+    } catch (error) {
+      // The VM is already claimed and cached by now, and the assertion only runs on
+      // a create — so leaving it reserved would hand every later call a VM writing
+      // to local disk, exactly the failure this check exists to catch. Drop the
+      // reservation so the next call builds a fresh one.
+      await this.release(request).catch(() => {});
+      throw error;
+    }
+  }
+
   // Keep the sandbox's credential endpoint stocked so its mount survives past the
   // one-hour STS session the `/run` payload was minted with. Best-effort: a failed
   // push is retried on the next call, well inside the session's remaining life, and
@@ -1286,6 +1322,10 @@ function markMountCredentialsFresh(key: string): void {
   mountCredentialRefreshes.set(key, {
     expiresAt: now + MOUNT_CREDENTIAL_REFRESH_MS,
   });
+}
+
+function isTerminalMicrovmState(state: MicrovmState | undefined): boolean {
+  return state === "TERMINATED" || state === "TERMINATING";
 }
 
 function isMicrovmGone(error: unknown): boolean {

@@ -188,6 +188,17 @@ function microvmCommand(type: string) {
     }
   };
 }
+// The `code` of every /exec POST, in order. Skips the credential-refresh POST,
+// which carries scoped keys rather than a script.
+const execBodies = (): string[] =>
+  microvmFetchMock.mock.calls
+    .map(
+      (call) =>
+        JSON.parse((call[1] as { body: string }).body).code as
+          | string
+          | undefined,
+    )
+    .filter((code): code is string => typeof code === "string");
 const microvmRunInput = (): Record<string, unknown> => {
   const call = microvmSendMock.mock.calls.find(
     (c) => (c[0] as { _type?: string })?._type === "RunMicrovm",
@@ -1110,12 +1121,43 @@ describe("createSandboxExecutor", () => {
 
     expect(handle.jobId).toBe("job_test");
     // The launch script is POSTed to the VM /exec as a detached setsid session; the
-    // marker files live beside the workspace mount (not under the S3 mount).
-    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
-    const launched = JSON.parse(init.body).code as string;
+    // marker files live beside the workspace mount (not under the S3 mount). It is
+    // not necessarily the first POST — a reconnect pushes mount credentials first.
+    const launched = execBodies().find((code) => code.includes("setsid bash"))!;
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
     expect(launched).toContain(`.fp-jobs/${ns}`);
+  });
+
+  it("asserts the workspace mount before launching a background job on a new MicroVM", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await executor.runBackground({
+      code: "uv run train.py",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+      jobId: "job_mounted",
+    });
+
+    // Background work used to skip this check, so a create whose mount never came up
+    // ran the job against the VM's own disk and lost every byte it wrote.
+    const bodies = execBodies();
+    const assertion = bodies.findIndex((code) =>
+      code.includes("mountpoint -q "),
+    );
+    const launch = bodies.findIndex((code) => code.includes("setsid bash"));
+    expect(assertion).toBeGreaterThanOrEqual(0);
+    expect(assertion).toBeLessThan(launch);
   });
 
   it("passes the egress network connector for a restricted MicroVM network", async () => {
