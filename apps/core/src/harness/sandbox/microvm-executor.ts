@@ -75,6 +75,7 @@ import type {
 import {
   configString,
   sandboxReservationKey,
+  shellQuote,
   stringRecord,
   stripTrailingSlashes,
   truncateText,
@@ -111,6 +112,22 @@ const MAX_MICROVM_DURATION_SECONDS = 28_800;
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
 const PROVIDER = "lambda" as const;
+
+// A reservation whose VM cannot be reconnected because it reached a terminal state.
+// GetMicrovm still answers for a TERMINATED VM, so this is the only signal that
+// separates "recreate it" from a transient control-plane failure.
+class MicrovmGoneError extends Error {}
+
+// The sandbox serves these to mountpoint-s3, which re-fetches as its session ages.
+// Sessions last an hour and a persistent VM outlives that, so refresh on this
+// interval — comfortably inside the hour, and cheap (one STS call per VM per cycle).
+const MOUNT_CREDENTIAL_REFRESH_MS = 30 * 60_000;
+const MOUNT_CREDENTIALS_PATH = "/workspace/credentials";
+
+// When each reservation's mount credentials next need pushing. Module scope for the
+// same reason as the token cache, and capped the same way: a reservation that ends
+// without release() would otherwise leave its entry here for the life of the pod.
+const mountCredentialRefreshes = new Map<string, { expiresAt: number }>();
 
 // Minted tokens are per-MicroVM and valid for AUTH_TOKEN_TTL_MINUTES, so minting one
 // per exec burns a control-plane round trip on every call. Cached at module scope
@@ -275,19 +292,31 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     // turns out to be dead. Ephemeral runs never cache: they have no reservation.
     const cached = persistent ? this.#cachedTarget(request) : null;
     if (cached) {
+      await this.#refreshMountCredentials(
+        request,
+        cached.microvmId,
+        cached.endpoint,
+      );
       const response = await this.#execReserved(cached, request, payload);
       if (response) return sandboxResult(request, response, startedAt);
     }
-    const { microvmId, endpoint, ephemeralMirror } =
+    const { microvmId, endpoint, ephemeralMirror, isFirstCreate } =
       await this.#acquire(request);
 
     try {
-      if (persistent)
-        await this.#runLifecycle(
-          microvmId,
-          endpoint,
-          this.#workDir(this.#workspaceKey(request)),
+      if (persistent) {
+        const workDir = this.#workDir(this.#workspaceKey(request));
+        await this.#prepareWorkspaceMount(
+          request,
+          {
+            microvmId: microvmId,
+            endpoint: endpoint,
+            isFirstCreate: isFirstCreate,
+          },
+          workDir,
         );
+        await this.#runLifecycle(microvmId, endpoint, workDir);
+      }
 
       return sandboxResult(
         request,
@@ -312,8 +341,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   // snapshotted/restored with the VM across suspend/resume (same boot id).
   async runBackground(request: SandboxRunRequest): Promise<SandboxJobHandle> {
     const key = this.#requirePersistent(request);
-    const { microvmId, endpoint } = await this.#acquire(request);
+    const acquired = await this.#acquire(request);
+    const { microvmId, endpoint } = acquired;
     const workDir = this.#workDir(this.#workspaceKey(request));
+    await this.#prepareWorkspaceMount(request, acquired, workDir);
     await this.#runLifecycle(microvmId, endpoint, workDir);
     const jobId = request.jobId ?? generateJobId();
     const script = launchScript(
@@ -401,7 +432,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
       return { externalId: microvmId, state: mapMicrovmState(info.state) };
     } catch (error) {
-      if (isMicrovmNotFound(error)) {
+      if (isMicrovmGone(error)) {
         return null;
       }
       return { externalId: microvmId, state: "unknown" };
@@ -412,6 +443,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const key = sandboxReservationKey(request);
     if (!key) return;
     reservedEndpoints.delete(key);
+    mountCredentialRefreshes.delete(key);
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (microvmId) await this.#terminate(microvmId);
     await deleteSandboxInstance(
@@ -559,11 +591,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           isFirstCreate: false,
         };
       } catch (error) {
-        // Recreate only when the provider says the VM no longer exists. A slow
-        // resume or transient control-plane error must propagate instead: replacing
-        // a still-allocated (e.g. suspended) VM leaks it and burns the account's
-        // MicroVM memory quota until nothing can launch.
-        if (!isMicrovmNotFound(error)) throw error;
+        // Recreate only when the VM is unusable for good — unknown to the provider,
+        // or terminal. A slow resume or transient control-plane error must propagate
+        // instead: replacing a still-allocated (e.g. suspended) VM leaks it and burns
+        // the account's MicroVM memory quota until nothing can launch.
+        if (!isMicrovmGone(error)) throw error;
         await deleteSandboxInstance(
           PROVIDER,
           key,
@@ -649,13 +681,23 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
       const deadline = Date.now() + WARMUP_BUDGET_MS;
       let wait = WARMUP_RETRY_MIN_DELAY_MS;
-      while (!info.endpoint && Date.now() < deadline) {
+      while (
+        !info.endpoint &&
+        !isTerminalMicrovmState(info.state) &&
+        Date.now() < deadline
+      ) {
         await delay(wait);
         wait = Math.min(wait * 2, WARMUP_RETRY_MAX_DELAY_MS);
         info = await this.#client.send(
           new GetMicrovmCommand({ microvmIdentifier: microvmId }),
         );
       }
+    }
+    // A terminal VM is not coming back, and GetMicrovm still answers for one, so the
+    // caller has to be told to recreate rather than retry this id forever. Checked
+    // after the resume too: a VM can reach a terminal state while we wait on it.
+    if (isTerminalMicrovmState(info.state)) {
+      throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
     return { microvmId, endpoint: info.endpoint };
@@ -998,6 +1040,119 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     };
   }
 
+  // Refuse to hand back a workspace VM whose S3 mount never came up. The `/run` hook
+  // establishes it, but a hook failure leaves the mount point as a plain directory on
+  // the VM's own disk — writes look fine and are lost when the VM goes. Checked once,
+  // on the create that runs the hook, so the warm path stays a single round trip.
+  async #assertWorkspaceMounted(
+    microvmId: string,
+    endpoint: string,
+    workDir: string,
+  ): Promise<void> {
+    const result = await this.#shell(
+      microvmId,
+      endpoint,
+      `mountpoint -q ${shellQuote(workDir)}`,
+      30,
+    );
+    if (result.exitCode === 0) return;
+
+    throw new Error(
+      `MicroVM workspace mount is not live at ${workDir}; the sandbox would write to local disk instead of S3`,
+    );
+  }
+
+  #markMountCredentialsFresh(request: SandboxRunRequest): void {
+    const key = sandboxReservationKey(request);
+    if (key) markMountCredentialsFresh(key);
+  }
+
+  // Everything a persistent workspace VM owes the caller before any work lands on
+  // it: a mount proven live on the create that established it, and fresh scoped
+  // credentials on every later acquire. Both entry points go through here — a
+  // background job on a degraded mount writes to local disk just as silently.
+  async #prepareWorkspaceMount(
+    request: SandboxRunRequest,
+    acquired: { microvmId: string; endpoint: string; isFirstCreate: boolean },
+    workDir: string,
+  ): Promise<void> {
+    if (!acquired.isFirstCreate || !request.namespace) {
+      await this.#refreshMountCredentials(
+        request,
+        acquired.microvmId,
+        acquired.endpoint,
+      );
+
+      return;
+    }
+    // The `/run` payload just delivered fresh credentials, so the endpoint is
+    // already stocked — start the refresh clock instead of pushing again.
+    this.#markMountCredentialsFresh(request);
+    try {
+      await this.#assertWorkspaceMounted(
+        acquired.microvmId,
+        acquired.endpoint,
+        workDir,
+      );
+    } catch (error) {
+      // The VM is already claimed and cached by now, and the assertion only runs on
+      // a create — so leaving it reserved would hand every later call a VM writing
+      // to local disk, exactly the failure this check exists to catch. Drop the
+      // reservation so the next call builds a fresh one.
+      await this.release(request).catch(() => {});
+      throw error;
+    }
+  }
+
+  // Keep the sandbox's credential endpoint stocked so its mount survives past the
+  // one-hour STS session the `/run` payload was minted with. Best-effort: a failed
+  // push is retried on the next call, well inside the session's remaining life, and
+  // must never fail the exec the caller is actually waiting on.
+  async #refreshMountCredentials(
+    request: SandboxRunRequest,
+    microvmId: string,
+    endpoint: string,
+  ): Promise<void> {
+    if (!request.namespace) return;
+    const key = sandboxReservationKey(request);
+    if (!key) return;
+    const refreshed = mountCredentialRefreshes.get(key);
+    if (refreshed && refreshed.expiresAt > Date.now()) return;
+    try {
+      const mount = await resolveS3Mount(this.#s3Context(request.namespace));
+      // No credentials means no mount role, so there is nothing to rotate — start
+      // the clock anyway instead of re-resolving the mount on every single exec.
+      if (!mount.credentials) {
+        markMountCredentialsFresh(key);
+
+        return;
+      }
+      const token = await this.#authToken(microvmId);
+      const res = await fetch(
+        `https://${endpoint.replace(/^https?:\/\//, "")}${MOUNT_CREDENTIALS_PATH}`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "X-aws-proxy-auth": token,
+            "X-aws-proxy-port": String(MICROVM_PROXY_PORT),
+          },
+          body: JSON.stringify(mount.credentials),
+        },
+      );
+      // A 404 is an older image with no credential endpoint: it mounted with static
+      // keys and there is nothing to refresh, so stop asking on every call.
+      if (res.ok || res.status === 404) {
+        markMountCredentialsFresh(key);
+      }
+    } catch (error) {
+      logWarn("failed to refresh MicroVM mount credentials", {
+        namespace: request.namespace,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // onCreate (once, marker-guarded) / onResume (every acquire) hooks in the reserved
   // VM, mirroring the daytona/workdir persistent lifecycle.
   async #runLifecycle(
@@ -1161,7 +1316,20 @@ function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
 }
 
-function isMicrovmNotFound(error: unknown): boolean {
+function markMountCredentialsFresh(key: string): void {
+  const now = Date.now();
+  evictToCap(mountCredentialRefreshes, now);
+  mountCredentialRefreshes.set(key, {
+    expiresAt: now + MOUNT_CREDENTIAL_REFRESH_MS,
+  });
+}
+
+function isTerminalMicrovmState(state: MicrovmState | undefined): boolean {
+  return state === "TERMINATED" || state === "TERMINATING";
+}
+
+function isMicrovmGone(error: unknown): boolean {
+  if (error instanceof MicrovmGoneError) return true;
   const name =
     error && typeof error === "object"
       ? (error as { name?: unknown }).name

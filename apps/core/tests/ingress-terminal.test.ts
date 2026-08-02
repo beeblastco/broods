@@ -11,11 +11,6 @@ type TerminalSession = Pick<
   "releaseConversationLease" | "settleIngress"
 >;
 
-process.env.CONVERSATIONS_TABLE_NAME ??= "conversations";
-process.env.PROCESSED_EVENTS_TABLE_NAME ??= "processed-events";
-process.env.ASYNC_AGENT_RESULT_TABLE_NAME ??= "async-agent-result";
-process.env.ASYNC_TOOL_RESULT_TABLE_NAME ??= "async-tool-result";
-
 const { settleFailedIngressAndDrain } =
   await import("../src/harness/handler.ts");
 

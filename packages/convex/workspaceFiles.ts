@@ -12,6 +12,30 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedProject } from "./model/ownership/project";
+import { normalizeWorkspaceConfig } from "./model/workspaceRules";
+
+/**
+ * A workspace's storage block, shaped as `WorkspaceStorageConfig`. Carried
+ * alongside the workspace ids so file operations reach the bucket the sandbox
+ * actually mounts instead of always assuming the managed one.
+ */
+export const workspaceStorageValidator = v.object({
+  provider: v.literal("s3"),
+  bucket: v.optional(v.string()),
+  region: v.optional(v.string()),
+  endpoint: v.optional(v.string()),
+  prefix: v.optional(v.string()),
+  auth: v.optional(
+    v.union(
+      v.object({ type: v.literal("managed") }),
+      v.object({
+        type: v.literal("assumeRole"),
+        roleArn: v.string(),
+        externalId: v.optional(v.string()),
+      }),
+    ),
+  ),
+});
 
 function pathPrefixUpperBound(path: string): string {
   return `${path}\uffff`;
@@ -82,6 +106,7 @@ export const resolveRuntimeWorkspace = query({
     v.object({
       accountId: v.id("accounts"),
       workspaceId: v.id("workspaceConfigs"),
+      storage: workspaceStorageValidator,
     }),
     v.null(),
   ),
@@ -102,7 +127,11 @@ export const resolveRuntimeWorkspace = query({
     const workspace = await ctx.db.get(workspaceId);
     if (!workspace || workspace.projectId !== args.projectId) return null;
 
-    return { accountId: workspace.accountId, workspaceId: workspace._id };
+    return {
+      accountId: workspace.accountId,
+      workspaceId: workspace._id,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+    };
   },
 });
 
@@ -123,6 +152,7 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     v.object({
       accountId: v.id("accounts"),
       workspaceId: v.id("workspaceConfigs"),
+      storage: workspaceStorageValidator,
     }),
     v.null(),
   ),
@@ -137,7 +167,11 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     const workspace = await ctx.db.get(workspaceId);
     if (!workspace || workspace.projectId !== args.projectId) return null;
 
-    return { accountId: workspace.accountId, workspaceId: workspace._id };
+    return {
+      accountId: workspace.accountId,
+      workspaceId: workspace._id,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+    };
   },
 });
 

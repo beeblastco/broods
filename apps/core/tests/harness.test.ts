@@ -2260,7 +2260,6 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
 function installHarnessEnv(): void {
   process.env.MAX_AGENT_ITERATIONS = "3";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
 }
 
 describe("tool.call span duration", () => {

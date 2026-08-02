@@ -118,8 +118,6 @@ afterAll(() => {
 
 describe("session system context", () => {
   it("uses only developer-provided system context", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
@@ -141,8 +139,6 @@ describe("session system context", () => {
   });
 
   it("preserves agent-level system message events", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
@@ -173,8 +169,6 @@ describe("session system context", () => {
   });
 
   it("tells the model to use matching predefined subagent ids", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const { Session } = await import("../src/harness/session.ts");
     const session = new Session("event", "conversation", "acct", "agent", {
@@ -203,8 +197,6 @@ describe("session system context", () => {
   });
 
   it("loads existing workspace memory separately from optional harness guidance", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Remember stable project facts.");
     const { Session } = await import("../src/harness/session.ts");
@@ -248,8 +240,6 @@ describe("session system context", () => {
   });
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const { Session } = await import("../src/harness/session.ts");
 
@@ -346,8 +336,6 @@ describe("session system context", () => {
   });
 
   it("allows disabling workspace harness guidance without disabling MEMORY.md loading", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Keep this in context.");
     workspaceHarnessEnabled = false;
@@ -537,8 +525,7 @@ describe("session compaction", () => {
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
+      { messages: Array<{ content: string }> } | undefined;
     const compactionPrompt = options?.messages[0]?.content;
     expect(compactionPrompt).toContain("Earlier summary.");
     expect(compactionPrompt).toContain("new assistant content");
@@ -567,16 +554,13 @@ describe("session compaction", () => {
     });
 
     const options = generateTextMock.mock.calls[0]?.[0] as
-      | { messages: Array<{ content: string }> }
-      | undefined;
+      { messages: Array<{ content: string }> } | undefined;
     const compactionPrompt = options?.messages[0]?.content;
     expect(compactionPrompt).not.toContain("private scratch work");
     expect(compactionPrompt).toContain("visible assistant answer");
   });
 
   it("keeps approval requests with approval responses after compaction", async () => {
-    process.env.CONVERSATIONS_TABLE_NAME = "conversations";
-    process.env.PROCESSED_EVENTS_TABLE_NAME = "processed-events";
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     const { selectPostCompactionPendingMessages } =
       await import("../src/harness/session.ts");

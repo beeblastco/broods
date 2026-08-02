@@ -41,6 +41,9 @@ export interface S3MountCredentials {
   AWS_ACCESS_KEY_ID: string;
   AWS_SECRET_ACCESS_KEY: string;
   AWS_SESSION_TOKEN: string;
+  // RFC3339 expiry. A sandbox that serves these to mountpoint-s3 needs it to know
+  // when to re-fetch; without it the session reads as non-expiring.
+  AWS_CREDENTIAL_EXPIRATION?: string;
 }
 
 export interface S3MountContext {
@@ -107,10 +110,13 @@ function joinPrefix(
 
 // Where a harness-side read of a workspace lands: the bucket + key prefix, plus the
 // S3 access for a bring-your-own bucket (undefined => default client / managed bucket).
+// `credentialsExpireAt` is set only for an assumed session — a presigned URL cannot
+// outlive the credentials that signed it, so a caller minting one must clamp to it.
 export interface S3ReadTarget {
   bucket: string;
   prefix: string;
   access?: S3Access;
+  credentialsExpireAt?: Date;
 }
 
 // Build the resolver context for a harness-side read of a workspace's storage,
@@ -152,7 +158,14 @@ export async function resolveS3ReadTarget(
     ...(mount.region ? { region: mount.region } : {}),
     ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
   };
-  return { bucket: mount.bucket, prefix: mount.prefix, access };
+  const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+
+  return {
+    bucket: mount.bucket,
+    prefix: mount.prefix,
+    access: access,
+    ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
+  };
 }
 
 export async function resolveS3Mount(
@@ -229,6 +242,9 @@ export async function assumeScopedMountCredentials(params: {
     AWS_ACCESS_KEY_ID: credentials.AccessKeyId,
     AWS_SECRET_ACCESS_KEY: credentials.SecretAccessKey,
     AWS_SESSION_TOKEN: credentials.SessionToken,
+    ...(credentials.Expiration
+      ? { AWS_CREDENTIAL_EXPIRATION: credentials.Expiration.toISOString() }
+      : {}),
   };
 }
 

@@ -244,10 +244,12 @@ describe("agent policy validation", () => {
         },
       ],
     });
-    expect(() => normalizeAgentPolicyDocument(documentWith("notIn", "oncall")))
-      .toThrow("must be an array when operator is notIn");
-    expect(() => normalizeAgentPolicyDocument(documentWith("in", "oncall")))
-      .toThrow("must be an array when operator is in");
+    expect(() =>
+      normalizeAgentPolicyDocument(documentWith("notIn", "oncall")),
+    ).toThrow("must be an array when operator is notIn");
+    expect(() =>
+      normalizeAgentPolicyDocument(documentWith("in", "oncall")),
+    ).toThrow("must be an array when operator is in");
     expect(() =>
       normalizeAgentPolicyDocument(documentWith("notIn", ["oncall"])),
     ).not.toThrow();

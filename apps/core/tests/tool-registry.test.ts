@@ -18,7 +18,6 @@ const urlContextMock = mock((options: unknown) => ({
 
 beforeEach(() => {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  process.env.ASYNC_TOOL_RESULT_TABLE_NAME = "async-tool-results";
   urlContextMock.mockClear();
   resetStorageForTests();
 });
@@ -174,6 +173,7 @@ describe("createTools", () => {
 
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
+      "download_url",
       "edit",
       "glob",
       "grep",
@@ -202,6 +202,7 @@ describe("createTools", () => {
 
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
+      "download_url",
       "edit",
       "glob",
       "grep",
@@ -256,7 +257,7 @@ describe("createTools", () => {
       {},
     );
 
-    expect(Object.keys(tools).sort()).toEqual(["glob", "read"]);
+    expect(Object.keys(tools).sort()).toEqual(["download_url", "glob", "read"]);
     expect(await needsApproval(tools.read)).toBe(false);
     expect(await needsApproval(tools.glob)).toBe(false);
   });
@@ -288,9 +289,11 @@ describe("createTools", () => {
       {},
     );
 
-    // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace; read/glob span both.
+    // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace;
+    // read/glob/download_url span both.
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
+      "download_url",
       "edit",
       "glob",
       "grep",
@@ -858,9 +861,7 @@ async function approvalStatus(
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
-    ...(ctx.agentSandbox
-      ? { agentSandbox: ctx.agentSandbox as never }
-      : {}),
+    ...(ctx.agentSandbox ? { agentSandbox: ctx.agentSandbox as never } : {}),
     ...(typeof ctx.agentSandboxPermissionMode === "string"
       ? { agentSandboxPermissionMode: ctx.agentSandboxPermissionMode as never }
       : {}),

@@ -15,7 +15,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { s3Client } from "./aws";
+import { s3Client, type S3Access } from "./aws";
 
 /**
  * A single S3 object's listing metadata.
@@ -60,6 +60,7 @@ function posixMetadata(
  * @param key object key
  * @param body string or bytes to store
  * @param options content type and executable flag
+ * @param access optional overrides for a bring-your-own bucket
  * @returns the byte size written
  */
 export async function writeS3Object(
@@ -67,9 +68,10 @@ export async function writeS3Object(
   key: string,
   body: string | Uint8Array,
   options: { contentType?: string; executable?: boolean } = {},
+  access?: S3Access,
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
-  const client = await s3Client();
+  const client = await s3Client(access);
   await client.send(
     new PutObjectCommand({
       Bucket: bucket,
@@ -93,6 +95,7 @@ export async function writeS3Object(
  * @param destinationBucket destination bucket
  * @param destinationKey destination object key
  * @param options content type and executable flag
+ * @param access optional overrides for a bring-your-own bucket
  */
 export async function copyS3Object(
   sourceBucket: string,
@@ -100,8 +103,9 @@ export async function copyS3Object(
   destinationBucket: string,
   destinationKey: string,
   options: { contentType?: string; executable?: boolean } = {},
+  access?: S3Access,
 ): Promise<void> {
-  const client = await s3Client();
+  const client = await s3Client(access);
   await client.send(
     new CopyObjectCommand({
       Bucket: destinationBucket,
@@ -121,10 +125,12 @@ export async function copyS3Object(
  * Ensure S3 directory marker objects exist for every parent directory of a key.
  * @param bucket target bucket
  * @param key file key whose parent directories should exist
+ * @param access optional overrides for a bring-your-own bucket
  */
 export async function ensureS3DirectoryMarkers(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<void> {
   const parts = key.split("/").filter(Boolean);
   parts.pop();
@@ -132,9 +138,13 @@ export async function ensureS3DirectoryMarkers(
   let prefix = "";
   for (const part of parts) {
     prefix = prefix ? `${prefix}/${part}` : part;
-    await writeS3Object(bucket, `${prefix}/`, "", {
-      contentType: "application/x-directory",
-    });
+    await writeS3Object(
+      bucket,
+      `${prefix}/`,
+      "",
+      { contentType: "application/x-directory" },
+      access,
+    );
   }
 }
 
@@ -183,14 +193,16 @@ export async function readS3Text(bucket: string, key: string): Promise<string> {
  * @param bucket source bucket
  * @param key object key
  * @param options expiry in seconds (default 300)
+ * @param access optional overrides for a bring-your-own bucket
  * @returns a presigned download URL
  */
 export async function getS3ObjectUrl(
   bucket: string,
   key: string,
   options: { expiresInSeconds?: number } = {},
+  access?: S3Access,
 ): Promise<string> {
-  const client = await s3Client();
+  const client = await s3Client(access);
 
   return getSignedUrl(
     client,
@@ -205,14 +217,16 @@ export async function getS3ObjectUrl(
  * Check whether an object exists.
  * @param bucket source bucket
  * @param key object key
+ * @param access optional overrides for a bring-your-own bucket
  * @returns true when the object exists
  * @throws on non-404 S3 errors
  */
 export async function s3ObjectExists(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<boolean> {
-  const client = await s3Client();
+  const client = await s3Client(access);
   try {
     await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
 
@@ -229,13 +243,15 @@ export async function s3ObjectExists(
  * List every object under a prefix, following pagination.
  * @param bucket source bucket
  * @param prefix key prefix
+ * @param access optional overrides for a bring-your-own bucket
  * @returns the objects found
  */
 export async function listS3Prefix(
   bucket: string,
   prefix: string,
+  access?: S3Access,
 ): Promise<S3ObjectInfo[]> {
-  const client = await s3Client();
+  const client = await s3Client(access);
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
@@ -275,12 +291,14 @@ export async function listS3Prefix(
  * Delete a single object.
  * @param bucket target bucket
  * @param key object key
+ * @param access optional overrides for a bring-your-own bucket
  */
 export async function deleteS3Object(
   bucket: string,
   key: string,
+  access?: S3Access,
 ): Promise<void> {
-  const client = await s3Client();
+  const client = await s3Client(access);
   await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
@@ -288,15 +306,17 @@ export async function deleteS3Object(
  * Delete every object under a prefix.
  * @param bucket target bucket
  * @param prefix key prefix
+ * @param access optional overrides for a bring-your-own bucket
  * @returns the number of objects deleted
  */
 export async function deleteS3Prefix(
   bucket: string,
   prefix: string,
+  access?: S3Access,
 ): Promise<number> {
-  const objects = await listS3Prefix(bucket, prefix);
+  const objects = await listS3Prefix(bucket, prefix, access);
   await Promise.all(
-    objects.map((object) => deleteS3Object(bucket, object.key)),
+    objects.map((object) => deleteS3Object(bucket, object.key, access)),
   );
 
   return objects.length;

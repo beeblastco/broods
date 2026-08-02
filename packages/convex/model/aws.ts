@@ -15,6 +15,21 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { SchedulerClient } from "@aws-sdk/client-scheduler";
 
 /**
+ * Overrides for reaching a bucket the config plane does not own. Mirrors core's
+ * `S3Access` (apps/core `src/shared/s3.ts`) so a bring-your-own-bucket workspace
+ * reads the same objects here and in the harness.
+ */
+export interface S3Access {
+  credentials?: {
+    accessKeyId: string;
+    secretAccessKey: string;
+    sessionToken: string;
+  };
+  region?: string;
+  endpoint?: string;
+}
+
+/**
  * Resolved AWS access configuration from the Convex deployment environment.
  */
 interface AwsAccess {
@@ -114,16 +129,89 @@ async function assumeCredentials(): Promise<AssumedCredentials> {
 }
 
 /**
- * Build an S3 client authenticated as the Convex config plane.
- * @returns an S3 client with assumed-role credentials
+ * Build an S3 client authenticated as the Convex config plane, or as the scoped
+ * session a bring-your-own bucket supplies.
+ * @param access optional credentials/region/endpoint overrides for a foreign bucket
+ * @returns an S3 client
  */
-export async function s3Client(): Promise<S3Client> {
-  const access = awsAccess();
+export async function s3Client(access?: S3Access): Promise<S3Client> {
+  const config = awsAccess();
 
   return new S3Client({
+    region: access?.region ?? config.region,
+    credentials: access?.credentials ?? (await assumeCredentials()),
+    // Path style with a custom endpoint, matching core's awsClient: a non-AWS S3
+    // endpoint rarely resolves virtual-hosted bucket subdomains.
+    ...(access?.endpoint
+      ? { endpoint: access.endpoint, forcePathStyle: true }
+      : {}),
+  });
+}
+
+/**
+ * Assume a workspace's own storage role with a session policy narrowed to
+ * `bucket/prefix*`. A faithful port of core's `assumeScopedMountCredentials`, so
+ * the config plane never holds broader access to a tenant bucket than the mount.
+ * @param params role to assume, the bucket/prefix to scope to, optional external id
+ * @returns short-lived credentials for that bucket prefix
+ * @throws when STS returns no credentials
+ */
+export async function assumeScopedS3Credentials(params: {
+  roleArn: string;
+  bucket: string;
+  prefix: string;
+  externalId?: string;
+}): Promise<NonNullable<S3Access["credentials"]>> {
+  const access = awsAccess();
+  const objectResource = `arn:aws:s3:::${params.bucket}/${params.prefix}*`;
+  const statements = [
+    {
+      Effect: "Allow",
+      Action: [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+      ],
+      Resource: [objectResource],
+    },
+    {
+      Effect: "Allow",
+      Action: ["s3:ListBucket"],
+      Resource: [`arn:aws:s3:::${params.bucket}`],
+      // Scope the listing to the prefix; an empty prefix lists the whole bucket.
+      ...(params.prefix
+        ? { Condition: { StringLike: { "s3:prefix": [`${params.prefix}*`] } } }
+        : {}),
+    },
+  ];
+  const sts = new STSClient({
     region: access.region,
     credentials: await assumeCredentials(),
   });
+  const result = await sts.send(
+    new AssumeRoleCommand({
+      RoleArn: params.roleArn,
+      RoleSessionName: "broods-convex-workspace",
+      DurationSeconds: 3600,
+      Policy: JSON.stringify({ Version: "2012-10-17", Statement: statements }),
+      ...(params.externalId ? { ExternalId: params.externalId } : {}),
+    }),
+  );
+  const credentials = result.Credentials;
+  if (
+    !credentials?.AccessKeyId ||
+    !credentials.SecretAccessKey ||
+    !credentials.SessionToken
+  ) {
+    throw new Error("Failed to assume the workspace S3 storage role");
+  }
+
+  return {
+    accessKeyId: credentials.AccessKeyId,
+    secretAccessKey: credentials.SecretAccessKey,
+    sessionToken: credentials.SessionToken,
+  };
 }
 
 /**

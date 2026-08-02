@@ -159,13 +159,26 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
   }
 });
 const originalFetch = globalThis.fetch;
-const microvmFetchMock = mock(
-  async (_url: string, _init?: unknown) =>
-    new Response(JSON.stringify(microvmExecPayload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
-);
+let microvmMountLive = true;
+const microvmFetchMock = mock(async (_url: string, init?: unknown) => {
+  // The create-time mount assertion is infrastructure every workspace run pays for,
+  // so it answers "mounted" here and tests keep asserting on their own exec payload.
+  const body = (init as { body?: string } | undefined)?.body;
+  const mounted = typeof body === "string" && body.includes("mountpoint -q ");
+
+  return new Response(
+    JSON.stringify(
+      mounted
+        ? {
+            ...microvmExecPayload,
+            ok: microvmMountLive,
+            exit_code: microvmMountLive ? 0 : 1,
+          }
+        : microvmExecPayload,
+    ),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+});
 function microvmCommand(type: string) {
   return class {
     input: unknown;
@@ -175,6 +188,17 @@ function microvmCommand(type: string) {
     }
   };
 }
+// The `code` of every /exec POST, in order. Skips the credential-refresh POST,
+// which carries scoped keys rather than a script.
+const execBodies = (): string[] =>
+  microvmFetchMock.mock.calls
+    .map(
+      (call) =>
+        JSON.parse((call[1] as { body: string }).body).code as
+          | string
+          | undefined,
+    )
+    .filter((code): code is string => typeof code === "string");
 const microvmRunInput = (): Record<string, unknown> => {
   const call = microvmSendMock.mock.calls.find(
     (c) => (c[0] as { _type?: string })?._type === "RunMicrovm",
@@ -253,8 +277,7 @@ beforeEach(() => {
     "arn:aws:iam::123456789012:role/sandbox-s3mount";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
-  process.env.PERSISTENT_SANDBOX_INSTANCE_TABLE_NAME =
-    "persistent-sandbox-instance";
+  ("persistent-sandbox-instance");
   process.env.MICROVM_IMAGE_IDENTIFIER =
     "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
   process.env.MICROVM_EXECUTION_ROLE_ARN =
@@ -289,6 +312,7 @@ beforeEach(() => {
   microvmSendMock.mockClear();
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
+  microvmMountLive = true;
   microvmExecPayload = {
     ok: true,
     runtime: "bash",
@@ -468,7 +492,14 @@ describe("createSandboxExecutor", () => {
       bucket: "workspace-bucket",
       prefix: `${CHILD_NS}/`,
     });
-    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
+    // A fresh workspace VM is checked for a live mount before it runs anything, so
+    // a failed `/run` hook can never pass as a working workspace.
+    const calls = microvmFetchMock.mock.calls;
+    const assertion = calls[0]![1] as { body: string };
+    expect(JSON.parse(assertion.body).code).toBe(
+      `mountpoint -q '/mnt/workspaces/${NS}'`,
+    );
+    const init = calls[calls.length - 1]![1] as { body: string };
     expect(JSON.parse(init.body)).toMatchObject({
       namespace: NS,
       workspace_root: "/mnt/workspaces",
@@ -745,7 +776,8 @@ describe("createSandboxExecutor", () => {
     const types = microvmSendMock.mock.calls.map(
       (c) => (c[0] as { _type?: string })?._type,
     );
-    expect(microvmFetchMock).toHaveBeenCalledTimes(2);
+    // Two execs plus the one-off mount assertion the create paid for.
+    expect(microvmFetchMock).toHaveBeenCalledTimes(3);
     expect(
       types.filter((type) => type === "CreateMicrovmAuthToken"),
     ).toHaveLength(1);
@@ -807,13 +839,15 @@ describe("createSandboxExecutor", () => {
     // A second executor: the caches are module-scoped because one is built per request.
     const controlPlaneCalls = microvmSendMock.mock.calls.length;
     const lookups = getSandboxExternalIdMock.mock.calls.length;
+    const posts = microvmFetchMock.mock.calls.length;
     await createSandboxExecutor({ provider: "lambda", persistent: true }).run(
       request,
     );
 
     // The whole point of the cache: the second call's only network operation is the
     // POST that runs the code. No reservation lookup, no GetMicrovm, no token mint.
-    expect(microvmFetchMock).toHaveBeenCalledTimes(2);
+    // (The first call also paid for the create-time mount assertion.)
+    expect(microvmFetchMock.mock.calls.length - posts).toBe(1);
     expect(microvmSendMock.mock.calls.length).toBe(controlPlaneCalls);
     expect(getSandboxExternalIdMock.mock.calls.length).toBe(lookups);
     // ...and the first call is what paid for it: lookup + GetMicrovm + token mint.
@@ -909,6 +943,73 @@ describe("createSandboxExecutor", () => {
       ns,
       undefined,
       "microvm-gone",
+    );
+  });
+
+  it("releases the reservation when the create-time mount check fails", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    microvmMountLive = false;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await expect(
+      executor.run({
+        code: "echo ok",
+        namespace: ns,
+        workspaceRoot: "/mnt/workspaces",
+        timeoutSeconds: 30,
+        outputLimitBytes: 4096,
+      }),
+    ).rejects.toThrow("mount is not live");
+
+    // A VM that never mounted must not stay reserved: the next call would take the
+    // cached endpoint and write to its local disk instead of S3.
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).toContain("TerminateMicrovm");
+    expect(deleteSandboxInstanceMock).toHaveBeenCalled();
+    expect(storedSandboxExternalId).toBeNull();
+  });
+
+  it("recreates the reserved MicroVM when its reservation points at a terminated one", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = "microvm-dead";
+    // GetMicrovm still answers for a TERMINATED VM, so "not found" never fires and
+    // the reservation used to 502 forever instead of being replaced.
+    microvmGetResponses = [{ microvmId: "microvm-dead", state: "TERMINATED" }];
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    const result = await executor.run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).toContain("RunMicrovm");
+    expect(deleteSandboxInstanceMock).toHaveBeenCalledWith(
+      "lambda",
+      ns,
+      undefined,
+      "microvm-dead",
     );
   });
 
@@ -1020,12 +1121,43 @@ describe("createSandboxExecutor", () => {
 
     expect(handle.jobId).toBe("job_test");
     // The launch script is POSTed to the VM /exec as a detached setsid session; the
-    // marker files live beside the workspace mount (not under the S3 mount).
-    const init = microvmFetchMock.mock.calls[0]![1] as { body: string };
-    const launched = JSON.parse(init.body).code as string;
+    // marker files live beside the workspace mount (not under the S3 mount). It is
+    // not necessarily the first POST — a reconnect pushes mount credentials first.
+    const launched = execBodies().find((code) => code.includes("setsid bash"))!;
     expect(launched).toContain("setsid bash");
     expect(launched).toContain("job_test.running");
     expect(launched).toContain(`.fp-jobs/${ns}`);
+  });
+
+  it("asserts the workspace mount before launching a background job on a new MicroVM", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    await executor.runBackground({
+      code: "uv run train.py",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+      jobId: "job_mounted",
+    });
+
+    // Background work used to skip this check, so a create whose mount never came up
+    // ran the job against the VM's own disk and lost every byte it wrote.
+    const bodies = execBodies();
+    const assertion = bodies.findIndex((code) =>
+      code.includes("mountpoint -q "),
+    );
+    const launch = bodies.findIndex((code) => code.includes("setsid bash"));
+    expect(assertion).toBeGreaterThanOrEqual(0);
+    expect(assertion).toBeLessThan(launch);
   });
 
   it("passes the egress network connector for a restricted MicroVM network", async () => {
@@ -1149,8 +1281,9 @@ describe("createSandboxExecutor", () => {
   });
 
   it("launches persistent E2B background jobs with the native command API", async () => {
-    const { E2BSandboxExecutor } =
-      await import("../src/harness/sandbox/e2b-executor.ts");
+    const { E2BSandboxExecutor } = await import(
+      "../src/harness/sandbox/e2b-executor.ts"
+    );
     const executor = new E2BSandboxExecutor({
       provider: "e2b",
       persistent: true,
@@ -1436,8 +1569,9 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {
-    const { VercelSandboxExecutor } =
-      await import("../src/harness/sandbox/vercel-executor.ts");
+    const { VercelSandboxExecutor } = await import(
+      "../src/harness/sandbox/vercel-executor.ts"
+    );
     const executor = new VercelSandboxExecutor({
       provider: "vercel",
       persistent: true,
@@ -1472,8 +1606,9 @@ describe("createSandboxExecutor", () => {
 
 describe("background job scripts", () => {
   it("builds a detached launch script with markers, a job cap, and parses status output", async () => {
-    const { launchScript, statusScript, parseJobStatus } =
-      await import("../src/harness/sandbox/jobs.ts");
+    const { launchScript, statusScript, parseJobStatus } = await import(
+      "../src/harness/sandbox/jobs.ts"
+    );
     const launch = launchScript(
       "/home/node/.jobs",
       "job_x",
@@ -1548,8 +1683,9 @@ describe("background job scripts", () => {
 
 describe("isSandboxGoneError", () => {
   it("treats not-found / gone errors as terminal (drop the instance row)", async () => {
-    const { isSandboxGoneError } =
-      await import("../src/harness/sandbox/utils.ts");
+    const { isSandboxGoneError } = await import(
+      "../src/harness/sandbox/utils.ts"
+    );
     expect(isSandboxGoneError({ statusCode: 404 })).toBe(true);
     expect(isSandboxGoneError({ status: 410 })).toBe(true);
     expect(isSandboxGoneError(new Error("Sandbox not found"))).toBe(true);
@@ -1557,8 +1693,9 @@ describe("isSandboxGoneError", () => {
   });
 
   it("treats auth / transient errors as non-terminal (keep the row, try next config)", async () => {
-    const { isSandboxGoneError } =
-      await import("../src/harness/sandbox/utils.ts");
+    const { isSandboxGoneError } = await import(
+      "../src/harness/sandbox/utils.ts"
+    );
     expect(isSandboxGoneError({ statusCode: 401 })).toBe(false);
     expect(isSandboxGoneError({ statusCode: 403 })).toBe(false);
     expect(isSandboxGoneError(new Error("connection reset"))).toBe(false);
@@ -1568,8 +1705,9 @@ describe("isSandboxGoneError", () => {
 
 describe("isNoRunnersError", () => {
   it("matches provider capacity / no-runner errors", async () => {
-    const { isNoRunnersError } =
-      await import("../src/harness/sandbox/utils.ts");
+    const { isNoRunnersError } = await import(
+      "../src/harness/sandbox/utils.ts"
+    );
     expect(isNoRunnersError(new Error("No available runners"))).toBe(true);
     expect(isNoRunnersError(new Error("no runner found for snapshot"))).toBe(
       true,
@@ -1578,8 +1716,9 @@ describe("isNoRunnersError", () => {
   });
 
   it("does not match unrelated errors", async () => {
-    const { isNoRunnersError } =
-      await import("../src/harness/sandbox/utils.ts");
+    const { isNoRunnersError } = await import(
+      "../src/harness/sandbox/utils.ts"
+    );
     expect(isNoRunnersError(new Error("connection reset"))).toBe(false);
     expect(isNoRunnersError({ statusCode: 404 })).toBe(false);
     expect(isNoRunnersError(undefined)).toBe(false);
@@ -1588,8 +1727,9 @@ describe("isNoRunnersError", () => {
 
 describe("classifyVercelError", () => {
   it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
-    const { classifyVercelError } =
-      await import("../src/harness/sandbox/vercel-executor.ts");
+    const { classifyVercelError } = await import(
+      "../src/harness/sandbox/vercel-executor.ts"
+    );
     // The SDK's documented bare-string form.
     expect(
       classifyVercelError(new Error("Status code 403 is not ok")).message,
@@ -1604,8 +1744,9 @@ describe("classifyVercelError", () => {
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {
-    const { classifyVercelError } =
-      await import("../src/harness/sandbox/vercel-executor.ts");
+    const { classifyVercelError } = await import(
+      "../src/harness/sandbox/vercel-executor.ts"
+    );
     const stray = classifyVercelError(
       new Error("operation failed after 403 attempts"),
     );
@@ -1619,8 +1760,9 @@ describe("classifyVercelError", () => {
 
 describe("workspaceNamespacePrefix", () => {
   it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
-    const { workspaceNamespacePrefix } =
-      await import("../src/shared/sandbox.ts");
+    const { workspaceNamespacePrefix } = await import(
+      "../src/shared/sandbox.ts"
+    );
     // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
     expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });
