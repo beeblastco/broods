@@ -159,10 +159,11 @@ export async function resolveS3ReadTarget(
     ...(mount.endpoint ? { endpoint: mount.endpoint } : {}),
   };
   const expiration = mount.credentials?.AWS_CREDENTIAL_EXPIRATION;
+
   return {
     bucket: mount.bucket,
     prefix: mount.prefix,
-    access,
+    access: access,
     ...(expiration ? { credentialsExpireAt: new Date(expiration) } : {}),
   };
 }

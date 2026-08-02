@@ -124,9 +124,10 @@ class MicrovmGoneError extends Error {}
 const MOUNT_CREDENTIAL_REFRESH_MS = 30 * 60_000;
 const MOUNT_CREDENTIALS_PATH = "/workspace/credentials";
 
-// When each reservation's mount credentials were last pushed. Module scope for the
-// same reason as the token cache: an executor is constructed per request.
-const mountCredentialRefreshes = new Map<string, number>();
+// When each reservation's mount credentials next need pushing. Module scope for the
+// same reason as the token cache, and capped the same way: a reservation that ends
+// without release() would otherwise leave its entry here for the life of the pod.
+const mountCredentialRefreshes = new Map<string, { expiresAt: number }>();
 
 // Minted tokens are per-MicroVM and valid for AUTH_TOKEN_TTL_MINUTES, so minting one
 // per exec burns a control-plane round trip on every call. Cached at module scope
@@ -1064,7 +1065,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   #markMountCredentialsFresh(request: SandboxRunRequest): void {
     const key = sandboxReservationKey(request);
-    if (key) mountCredentialRefreshes.set(key, Date.now());
+    if (key) markMountCredentialsFresh(key);
   }
 
   // Keep the sandbox's credential endpoint stocked so its mount survives past the
@@ -1079,16 +1080,14 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!request.namespace) return;
     const key = sandboxReservationKey(request);
     if (!key) return;
-    const refreshedAt = mountCredentialRefreshes.get(key);
-    if (refreshedAt && Date.now() - refreshedAt < MOUNT_CREDENTIAL_REFRESH_MS) {
-      return;
-    }
+    const refreshed = mountCredentialRefreshes.get(key);
+    if (refreshed && refreshed.expiresAt > Date.now()) return;
     try {
       const mount = await resolveS3Mount(this.#s3Context(request.namespace));
       // No credentials means no mount role, so there is nothing to rotate — start
       // the clock anyway instead of re-resolving the mount on every single exec.
       if (!mount.credentials) {
-        mountCredentialRefreshes.set(key, Date.now());
+        markMountCredentialsFresh(key);
 
         return;
       }
@@ -1108,7 +1107,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       // A 404 is an older image with no credential endpoint: it mounted with static
       // keys and there is nothing to refresh, so stop asking on every call.
       if (res.ok || res.status === 404) {
-        mountCredentialRefreshes.set(key, Date.now());
+        markMountCredentialsFresh(key);
       }
     } catch (error) {
       logWarn("failed to refresh MicroVM mount credentials", {
@@ -1279,6 +1278,14 @@ function evictToCap<T extends { expiresAt: number }>(
 
 function microvmLocalNamespace(namespace: string): string {
   return namespace.split("/")[0] ?? namespace;
+}
+
+function markMountCredentialsFresh(key: string): void {
+  const now = Date.now();
+  evictToCap(mountCredentialRefreshes, now);
+  mountCredentialRefreshes.set(key, {
+    expiresAt: now + MOUNT_CREDENTIAL_REFRESH_MS,
+  });
 }
 
 function isMicrovmGone(error: unknown): boolean {
