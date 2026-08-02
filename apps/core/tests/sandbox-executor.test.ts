@@ -160,19 +160,27 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
 });
 const originalFetch = globalThis.fetch;
 let microvmMountLive = true;
+// Checks that must report "not mounted" before the mount comes up, mirroring a VM
+// that answers /exec while its `/run` hook is still mounting.
+let microvmMountPendingChecks = 0;
 const microvmFetchMock = mock(async (_url: string, init?: unknown) => {
   // The create-time mount assertion is infrastructure every workspace run pays for,
   // so it answers "mounted" here and tests keep asserting on their own exec payload.
   const body = (init as { body?: string } | undefined)?.body;
   const mounted = typeof body === "string" && body.includes("mountpoint -q ");
+  let live = microvmMountLive;
+  if (mounted && microvmMountPendingChecks > 0) {
+    microvmMountPendingChecks -= 1;
+    live = false;
+  }
 
   return new Response(
     JSON.stringify(
       mounted
         ? {
             ...microvmExecPayload,
-            ok: microvmMountLive,
-            exit_code: microvmMountLive ? 0 : 1,
+            ok: live,
+            exit_code: live ? 0 : 1,
           }
         : microvmExecPayload,
     ),
@@ -313,6 +321,7 @@ beforeEach(() => {
   microvmFetchMock.mockClear();
   microvmGetResponses = [];
   microvmMountLive = true;
+  microvmMountPendingChecks = 0;
   microvmExecPayload = {
     ok: true,
     runtime: "bash",
@@ -946,6 +955,36 @@ describe("createSandboxExecutor", () => {
     );
   });
 
+  it("waits for a mount the /run hook is still establishing", async () => {
+    const ns = microvmNamespace();
+    storedSandboxExternalId = null;
+    // The VM answers /exec the moment it boots, well before mount-s3 has finished,
+    // so the first checks legitimately report an unmounted directory.
+    microvmMountPendingChecks = 3;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "lambda",
+      persistent: true,
+    });
+
+    const result = await executor.run({
+      code: "echo ok",
+      namespace: ns,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    expect(microvmMountPendingChecks).toBe(0);
+    const types = microvmSendMock.mock.calls.map(
+      (c) => (c[0] as { _type?: string })?._type,
+    );
+    expect(types).not.toContain("TerminateMicrovm");
+  });
+
   it("releases the reservation when the create-time mount check fails", async () => {
     const ns = microvmNamespace();
     storedSandboxExternalId = null;
@@ -976,7 +1015,8 @@ describe("createSandboxExecutor", () => {
     expect(types).toContain("TerminateMicrovm");
     expect(deleteSandboxInstanceMock).toHaveBeenCalled();
     expect(storedSandboxExternalId).toBeNull();
-  });
+    // Giving up costs the hook's whole budget, so this one test outruns the default.
+  }, 45_000);
 
   it("recreates the reserved MicroVM when its reservation points at a terminated one", async () => {
     const ns = microvmNamespace();

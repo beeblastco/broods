@@ -124,6 +124,12 @@ class MicrovmGoneError extends Error {}
 const MOUNT_CREDENTIAL_REFRESH_MS = 30 * 60_000;
 const MOUNT_CREDENTIALS_PATH = "/workspace/credentials";
 
+// The `/run` hook's own budget in the published image. A mount still missing after
+// this is one the hook has already given up on, not one still being established.
+const MOUNT_ASSERT_BUDGET_MS = 30_000;
+const MOUNT_ASSERT_MIN_DELAY_MS = 250;
+const MOUNT_ASSERT_MAX_DELAY_MS = 2_000;
+
 // When each reservation's mount credentials next need pushing. Module scope for the
 // same reason as the token cache, and capped the same way: a reservation that ends
 // without release() would otherwise leave its entry here for the life of the pod.
@@ -1042,20 +1048,32 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   // Refuse to hand back a workspace VM whose S3 mount never came up. The `/run` hook
   // establishes it, but a hook failure leaves the mount point as a plain directory on
-  // the VM's own disk — writes look fine and are lost when the VM goes. Checked once,
-  // on the create that runs the hook, so the warm path stays a single round trip.
+  // the VM's own disk — writes look fine and are lost when the VM goes. Only on the
+  // create that runs the hook, so the warm path never pays for it.
+  //
+  // The VM answers /exec as soon as it boots, which is before `/run` has finished
+  // mounting, so a single immediate check reports every healthy workspace as broken.
+  // Poll instead, up to the hook's own timeout — past that the hook itself has given
+  // up and the mount is never coming.
   async #assertWorkspaceMounted(
     microvmId: string,
     endpoint: string,
     workDir: string,
   ): Promise<void> {
-    const result = await this.#shell(
-      microvmId,
-      endpoint,
-      `mountpoint -q ${shellQuote(workDir)}`,
-      30,
-    );
-    if (result.exitCode === 0) return;
+    const deadline = Date.now() + MOUNT_ASSERT_BUDGET_MS;
+    let wait = MOUNT_ASSERT_MIN_DELAY_MS;
+    for (;;) {
+      const result = await this.#shell(
+        microvmId,
+        endpoint,
+        `mountpoint -q ${shellQuote(workDir)}`,
+        30,
+      );
+      if (result.exitCode === 0) return;
+      if (Date.now() >= deadline) break;
+      await delay(wait);
+      wait = Math.min(wait * 2, MOUNT_ASSERT_MAX_DELAY_MS);
+    }
 
     throw new Error(
       `MicroVM workspace mount is not live at ${workDir}; the sandbox would write to local disk instead of S3`,
