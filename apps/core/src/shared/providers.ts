@@ -8,7 +8,7 @@ export const ACCOUNT_MODEL_PROVIDERS = {
   openai: true,
   anthropic: true,
   bedrock: true,
-  gateway: true,
+  vercel: true,
   minimax: true,
   custom: true,
 } as const;

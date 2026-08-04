@@ -114,7 +114,7 @@ export function resolveModelTokenRates(
 ): ModelTokenRates | null {
   let normalizedProvider = canonicalModelProvider(provider);
   let normalizedModel = modelId.toLowerCase();
-  if (normalizedProvider === "gateway" && normalizedModel.includes("/")) {
+  if (normalizedProvider === "vercel" && normalizedModel.includes("/")) {
     const separator = normalizedModel.indexOf("/");
     normalizedProvider = canonicalModelProvider(
       normalizedModel.slice(0, separator),

@@ -49,7 +49,7 @@ const bedrockModelMock = mock((modelId: string) => ({
 }));
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({
-  provider: "gateway",
+  provider: "vercel",
   modelId,
 }));
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
@@ -2158,7 +2158,7 @@ describe("runAgentLoop", () => {
     ).rejects.toThrow("config.provider.openai.apiKey is required");
   });
 
-  it("creates Bedrock and Gateway providers from agent provider config", async () => {
+  it("creates Bedrock and Vercel providers from agent provider config", async () => {
     installHarnessEnv();
     const { runAgentLoop } = await import("../src/harness/harness.ts");
 
@@ -2206,12 +2206,12 @@ describe("runAgentLoop", () => {
 
     const gatewayStream = await runAgentLoop(baseSession, turn, {
       provider: {
-        gateway: {
+        vercel: {
           apiKey: "gateway-key",
         },
       },
       model: {
-        provider: "gateway",
+        provider: "vercel",
         modelId: "openai/gpt-5.4",
         providerOptions: {
           openai: {
@@ -2227,7 +2227,7 @@ describe("runAgentLoop", () => {
     });
     expect(gatewayModelMock).toHaveBeenCalledWith("openai/gpt-5.4");
     expect(streamTextMock.mock.calls[0]?.[0]).toMatchObject({
-      model: { provider: "gateway", modelId: "openai/gpt-5.4" },
+      model: { provider: "vercel", modelId: "openai/gpt-5.4" },
       providerOptions: {
         openai: {
           reasoningEffort: "low",

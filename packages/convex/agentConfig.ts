@@ -29,7 +29,7 @@ const agentProviderValidator = v.union(
   v.literal("bedrock"),
   v.literal("anthropic"),
   v.literal("minimax"),
-  v.literal("gateway"),
+  v.literal("vercel"),
   v.literal("custom"),
 );
 
