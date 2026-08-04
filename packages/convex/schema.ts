@@ -11,7 +11,12 @@ export const usersFields = {
   name: v.string(),
   avatarUrl: v.optional(v.string()),
   accountHandle: v.optional(v.string()),
-  plan: v.union(v.literal("free"), v.literal("pro"), v.literal("enterprise")),
+  plan: v.union(
+    v.literal("free"),
+    v.literal("basic"),
+    v.literal("pro"),
+    v.literal("enterprise"),
+  ),
   deletionScheduledFor: v.optional(v.number()),
   /** Set when a WorkOS deletion webhook has queued irreversible teardown. */
   workosDeletionRequestedAt: v.optional(v.number()),

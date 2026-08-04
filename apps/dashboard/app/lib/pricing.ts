@@ -4,10 +4,10 @@
  */
 
 /** Valid plan tier identifiers stored in the database. */
-export type PlanTier = "hobby" | "developer" | "pro" | "free";
+export type PlanTier = "hobby" | "basic" | "developer" | "pro" | "free";
 
 /** Plan tiers that have display configs (excludes "free" which maps to "hobby"). */
-export type ConfiguredPlanTier = "hobby" | "developer" | "pro";
+export type ConfiguredPlanTier = "hobby" | "basic" | "developer" | "pro";
 
 /** Metadata for a single pricing tier. */
 export interface PlanConfig {
@@ -38,18 +38,25 @@ export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
     order: 0,
     badgeClass: "bg-secondary text-secondary-foreground",
   },
+  basic: {
+    key: "basic",
+    label: "Basic",
+    description: "One-time purchase unlocking the core paid features",
+    order: 1,
+    badgeClass: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  },
   developer: {
     key: "developer",
     label: "Developer",
     description: "For individual developers shipping to production",
-    order: 1,
+    order: 2,
     badgeClass: "bg-blue-500/15 text-blue-700 dark:text-blue-400",
   },
   pro: {
     key: "pro",
     label: "Pro",
     description: "For teams and advanced workloads",
-    order: 2,
+    order: 3,
     badgeClass: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
   },
 };

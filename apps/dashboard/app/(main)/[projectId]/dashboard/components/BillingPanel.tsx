@@ -7,6 +7,14 @@
 import { Section } from "@/app/components/Section";
 import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { toErrorMessage } from "@/app/lib/errors";
 import type { ConfiguredPlanTier, PlanTier } from "@/app/lib/pricing";
 import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
@@ -16,10 +24,26 @@ import { useAction, useQuery } from "convex/react";
 import {
   AlertTriangle,
   ArrowUpRight,
+  CheckCircle2,
   CreditCard,
   ExternalLink,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useState } from "react";
+
+/** Query param Stripe returns with after a successful one-time Basic purchase. */
+const CHECKOUT_PARAM = "checkout";
+const CHECKOUT_BASIC_VALUE = "basic";
+
+/** Features unlocked by the one-time Basic purchase. */
+const BASIC_FEATURES: string[] = [
+  "Unlimited projects",
+  "Higher agent concurrency",
+  "Email support",
+  "One-time payment, no subscription",
+];
 
 interface Props {
   projectId: Id<"projects">;
@@ -36,11 +60,19 @@ function formatPeriodEnd(epochSeconds: number): string {
 
 export function BillingPanel({ projectId }: Props) {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [basicLoading, setBasicLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const currentUser = useQuery(api.user.getCurrent);
   const billingInfo = useQuery(api.stripe.getBillingInfo);
+  const createBasicCheckoutSession = useAction(
+    api.stripe.createBasicCheckoutSession,
+  );
   const createCheckoutSession = useAction(api.stripe.createCheckoutSession);
   const createPortalSession = useAction(api.stripe.createPortalSession);
 
@@ -49,9 +81,40 @@ export function BillingPanel({ projectId }: Props) {
   );
   const planConfig = PLAN_CONFIGS[userPlan];
   const onMaxPlan = isMaxPlan(userPlan);
+  const onBasicPlan = userPlan === "basic";
 
   const isSubscribed =
     billingInfo?.status === "active" || billingInfo?.status === "trialing";
+
+  // Stripe bounces back here right after payment; the webhook that flips the
+  // plan may still be in flight, so the dialog waits on the live query.
+  const showPurchaseDialog =
+    searchParams.get(CHECKOUT_PARAM) === CHECKOUT_BASIC_VALUE;
+  const purchaseConfirmed = onBasicPlan || onMaxPlan;
+
+  const dismissPurchaseDialog = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete(CHECKOUT_PARAM);
+
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  async function handleBuyBasic() {
+    setBasicLoading(true);
+    setActionError(null);
+    try {
+      const origin = window.location.origin;
+      const returnPath = `/${projectId}/dashboard?tab=billing`;
+      const { url } = await createBasicCheckoutSession({
+        successUrl: `${origin}${returnPath}&${CHECKOUT_PARAM}=${CHECKOUT_BASIC_VALUE}`,
+        cancelUrl: `${origin}${returnPath}`,
+      });
+      window.location.href = url;
+    } catch (err) {
+      setActionError(toErrorMessage(err));
+      setBasicLoading(false);
+    }
+  }
 
   async function handleUpgrade() {
     setCheckoutLoading(true);
@@ -224,6 +287,34 @@ export function BillingPanel({ projectId }: Props) {
         </div>
       </Section>
 
+      {/* One-time Basic purchase */}
+      {!onBasicPlan && !onMaxPlan && (
+        <Section
+          title="Basic Plan"
+          description="A single one-time payment. No recurring subscription."
+        >
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="grid gap-2 mb-4">
+              {BASIC_FEATURES.map((feature) => (
+                <div key={feature} className="flex items-center gap-2">
+                  <div className="size-1.5 rounded-full bg-primary shrink-0" />
+                  <span className="text-sm text-foreground">{feature}</span>
+                </div>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              className="cursor-pointer gap-1.5"
+              onClick={handleBuyBasic}
+              disabled={basicLoading}
+            >
+              <Sparkles className="size-3.5" />
+              {basicLoading ? "Redirecting…" : "Buy Basic"}
+            </Button>
+          </div>
+        </Section>
+      )}
+
       {/* Upgrade prompt for free users */}
       {!onMaxPlan && (
         <Section
@@ -296,6 +387,45 @@ export function BillingPanel({ projectId }: Props) {
           </div>
         </Section>
       )}
+
+      <Dialog
+        open={showPurchaseDialog}
+        onOpenChange={(open) => {
+          if (!open) dismissPurchaseDialog();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              {purchaseConfirmed ? (
+                <CheckCircle2 className="size-5 text-emerald-500" />
+              ) : (
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              )}
+              <DialogTitle>
+                {purchaseConfirmed
+                  ? "You're on the Basic plan"
+                  : "Confirming your payment…"}
+              </DialogTitle>
+            </div>
+            <DialogDescription>
+              {purchaseConfirmed
+                ? "Payment complete. Your account has been upgraded to Basic and the new limits are active now."
+                : "Stripe has taken the payment. We're waiting on confirmation to unlock your Basic plan — this usually takes a few seconds."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              size="sm"
+              className="cursor-pointer"
+              onClick={dismissPurchaseDialog}
+              disabled={!purchaseConfirmed}
+            >
+              {purchaseConfirmed ? "Get started" : "Waiting…"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

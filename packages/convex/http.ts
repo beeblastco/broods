@@ -17,6 +17,21 @@ authKit.registerRoutes(http);
 
 registerRoutes(http, components.stripe, {
   events: {
+    // One-time Basic purchase. `metadata` carries the user for API-created
+    // sessions; `client_reference_id` covers the hosted payment link.
+    "checkout.session.completed": async (ctx, event) => {
+      const session = event.data.object;
+      if (session.mode !== "payment" || session.payment_status !== "paid") {
+        return;
+      }
+
+      const authId = session.metadata?.authId ?? session.client_reference_id;
+      if (!authId) return;
+
+      await ctx.runMutation(internal.stripe.grantBasicPlanInternal, {
+        authId: authId,
+      });
+    },
     "customer.subscription.updated": async (ctx, event) => {
       const sub = event.data.object;
       const authId = sub.metadata?.authId;

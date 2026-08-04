@@ -10,6 +10,9 @@ import { authKit } from "./auth";
 
 export const stripeClient = new StripeSubscriptions(components.stripe);
 
+/** Marks a one-time Checkout Session as the Basic purchase so the webhook knows what to grant. */
+export const BASIC_PLAN_METADATA_VALUE = "basic";
+
 /** Returns the configured dashboard origin, with localhost fallback for dev. */
 function allowedDashboardOrigin(): string | null {
   const explicit = process.env.DASHBOARD_ORIGIN?.trim();
@@ -53,6 +56,48 @@ export const getBillingInfo = query({
     );
 
     return subs[0] ?? null;
+  },
+});
+
+export const createBasicCheckoutSession = action({
+  args: { successUrl: v.string(), cancelUrl: v.string() },
+  returns: v.object({ url: v.string() }),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const priceId = process.env.STRIPE_BASIC_PRICE_ID;
+    if (!priceId) throw new Error("STRIPE_BASIC_PRICE_ID is not configured");
+
+    const { customerId } = await stripeClient.getOrCreateCustomer(ctx, {
+      userId: authUser.id,
+      email: authUser.email ?? undefined,
+    });
+
+    // One-time purchase, so the grant rides on checkout.session.completed
+    // rather than the subscription events.
+    const session = await stripeClient.createCheckoutSession(ctx, {
+      priceId: priceId,
+      customerId: customerId,
+      mode: "payment",
+      successUrl: safeDashboardUrl(args.successUrl, "successUrl"),
+      cancelUrl: safeDashboardUrl(args.cancelUrl, "cancelUrl"),
+      metadata: {
+        authId: authUser.id,
+        plan: BASIC_PLAN_METADATA_VALUE,
+      },
+      paymentIntentMetadata: {
+        authId: authUser.id,
+        plan: BASIC_PLAN_METADATA_VALUE,
+      },
+    });
+
+    if (!session.url) throw new Error("No checkout URL returned");
+
+    return { url: session.url };
   },
 });
 
@@ -105,6 +150,26 @@ export const createPortalSession = action({
   },
 });
 
+export const grantBasicPlanInternal = internalMutation({
+  args: { authId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_authId", (q) => q.eq("authId", args.authId))
+      .first();
+
+    if (!user) return null;
+
+    // Never step on a higher paid tier when a Basic purchase lands late.
+    if (user.plan === "pro" || user.plan === "enterprise") return null;
+
+    await ctx.db.patch(user._id, { plan: "basic" });
+
+    return null;
+  },
+});
+
 export const syncPlanInternal = internalMutation({
   args: { authId: v.string(), status: v.string() },
   returns: v.null(),
@@ -116,11 +181,13 @@ export const syncPlanInternal = internalMutation({
 
     if (!user) return null;
 
-    const plan =
-      args.status === "active" || args.status === "trialing"
-        ? ("pro" as const)
-        : ("free" as const);
-    await ctx.db.patch(user._id, { plan: plan });
+    const subscribed = args.status === "active" || args.status === "trialing";
+    // A lapsed subscription must not erase a standalone Basic purchase.
+    const lapsedPlan =
+      user.plan === "basic" ? ("basic" as const) : ("free" as const);
+    await ctx.db.patch(user._id, {
+      plan: subscribed ? ("pro" as const) : lapsedPlan,
+    });
 
     return null;
   },
