@@ -15,11 +15,12 @@ mock.module("../src/shared/convex/download-artifacts.ts", () => ({
   createDownloadArtifact: mock(async () => {}),
   downloadArtifactsAvailable: () => true,
 }));
+const getS3ObjectUrlMock = mock(
+  async (bucket: string, key: string, options: Record<string, unknown>) =>
+    `https://s3.test/${bucket}/${key}?v=${String(options.versionId)}&n=${String(options.downloadFilename)}`,
+);
 mock.module("../src/shared/s3.ts", () => ({
-  getS3ObjectUrl: mock(
-    async (bucket: string, key: string, options: Record<string, unknown>) =>
-      `https://s3.test/${bucket}/${key}?v=${String(options.versionId)}&n=${String(options.downloadFilename)}`,
-  ),
+  getS3ObjectUrl: getS3ObjectUrlMock,
 }));
 
 import {
@@ -191,6 +192,8 @@ describe("waitUntil drain", () => {
 describe("handleDownloadRoute", () => {
   it("redirects to the pinned object version with a download filename", async () => {
     storedArtifact = {
+      accountId: "acct_1",
+      path: "reports/q3.xlsx",
       bucket: "fs-bucket",
       key: "fs-abc/reports/q3.xlsx",
       versionId: "v-1",
@@ -205,6 +208,33 @@ describe("handleDownloadRoute", () => {
     expect(location).toContain("n=q3.xlsx");
     // A redirect that a proxy cached would outlive the presigned target.
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("presigns a bring-your-own bucket with the workspace's own credentials", async () => {
+    storedArtifact = {
+      accountId: "acct_1",
+      workspaceId: "ws_1",
+      path: "out.pdf",
+      bucket: "tenant-bucket",
+      key: "tenant/out.pdf",
+      filename: "out.pdf",
+    };
+    getS3ObjectUrlMock.mockClear();
+    // Stands in for the real resolver, which re-reads the workspace's storage
+    // config and assumes its role.
+    await handleDownloadRoute("tok_byo", async (artifact) => ({
+      bucket: "tenant-bucket",
+      key: `tenant/${artifact.path}`,
+      access: { credentials: { accessKeyId: "assumed" } },
+    }));
+
+    // Core's own role cannot read a tenant bucket, so a link that presigned
+    // without the assumed session would 403 on every click.
+    const options = getS3ObjectUrlMock.mock.calls[0]![2] as Record<
+      string,
+      unknown
+    >;
+    expect(options.access).toEqual({ credentials: { accessKeyId: "assumed" } });
   });
 
   it("404s an unknown token without leaking whether it ever existed", async () => {

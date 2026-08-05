@@ -28,7 +28,10 @@ const inFlight = new Set<Promise<void>>();
  * by design — the token is the capability, like any share link — so it must leak
  * nothing about a token that does not exist beyond the 404.
  */
-export async function handleDownloadRoute(token: string): Promise<Response> {
+export async function handleDownloadRoute(
+  token: string,
+  resolveTarget: ArtifactTargetResolver = resolveArtifactTarget,
+): Promise<Response> {
   const { getDownloadArtifact, recordDownloadArtifactHit } = await import(
     "./shared/convex/download-artifacts.ts"
   );
@@ -37,10 +40,16 @@ export async function handleDownloadRoute(token: string): Promise<Response> {
     return new Response("Not found", { status: 404 });
   }
   const { getS3ObjectUrl } = await import("./shared/s3.ts");
-  const url = await getS3ObjectUrl(artifact.bucket, artifact.key, {
+  // A bring-your-own bucket is reachable only through credentials assumed per
+  // read, which expire long before the link does — so resolve the workspace's
+  // storage again now rather than trying to store access on the row. The
+  // managed bucket resolves to the same key with no STS call.
+  const target = await resolveTarget(artifact);
+  const url = await getS3ObjectUrl(target.bucket, target.key, {
     expiresInSeconds: DOWNLOAD_REDIRECT_SECONDS,
     downloadFilename: artifact.filename,
     ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
+    ...(target.access ? { access: target.access } : {}),
   });
   void recordDownloadArtifactHit(token);
 
@@ -48,6 +57,55 @@ export async function handleDownloadRoute(token: string): Promise<Response> {
     status: 302,
     headers: { location: url, "cache-control": "no-store" },
   });
+}
+
+export interface ArtifactRef {
+  accountId: string;
+  workspaceId?: string;
+  path: string;
+  bucket: string;
+  key: string;
+}
+
+export type ArtifactTargetResolver = (
+  artifact: ArtifactRef,
+) => Promise<{ bucket: string; key: string; access?: unknown }>;
+
+// Where an artifact's bytes are reachable from right now. Falls back to the key
+// recorded at mint time when the workspace is gone or was never recorded, which
+// is correct for the managed bucket and the only thing left to try otherwise.
+async function resolveArtifactTarget(
+  artifact: ArtifactRef,
+): Promise<{ bucket: string; key: string; access?: unknown }> {
+  if (!artifact.workspaceId) {
+    return { bucket: artifact.bucket, key: artifact.key };
+  }
+  try {
+    const { getStorage } = await import("./shared/storage.ts");
+    const record = await getStorage().workspaceConfigs.getById(
+      artifact.accountId,
+      artifact.workspaceId,
+    );
+    if (!record) return { bucket: artifact.bucket, key: artifact.key };
+    const { resolveS3ReadTarget, workspaceReadContext } = await import(
+      "./harness/sandbox/s3-mount.ts"
+    );
+    const { workspaceNamespace } = await import("./shared/workspaces.ts");
+    const target = await resolveS3ReadTarget(
+      workspaceReadContext(
+        record.config.storage,
+        workspaceNamespace(artifact.accountId, artifact.workspaceId),
+      ),
+    );
+
+    return {
+      bucket: target.bucket,
+      key: `${target.prefix}${artifact.path}`,
+      ...(target.access ? { access: target.access } : {}),
+    };
+  } catch {
+    return { bucket: artifact.bucket, key: artifact.key };
+  }
 }
 
 export function routesToAccountManage(

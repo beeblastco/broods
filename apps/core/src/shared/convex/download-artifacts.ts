@@ -10,6 +10,9 @@ import { logError } from "../log.ts";
 import { getConvexClient } from "./client.ts";
 
 export interface DownloadArtifact {
+  accountId: string;
+  workspaceId?: string;
+  path: string;
   bucket: string;
   key: string;
   versionId?: string;

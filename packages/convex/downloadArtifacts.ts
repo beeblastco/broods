@@ -9,6 +9,12 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { downloadArtifactsFields } from "./schema";
 
 const artifact = v.object({
+  accountId: v.id("accounts"),
+  // Present => re-resolve the workspace's storage at click time, which is the
+  // only way a bring-your-own bucket can be reached (its credentials are
+  // assumed per read and expire long before the link does).
+  workspaceId: v.optional(v.id("workspaceConfigs")),
+  path: v.string(),
   bucket: v.string(),
   key: v.string(),
   versionId: v.optional(v.string()),
@@ -66,6 +72,9 @@ export const getByToken = internalQuery({
     if (!row) return null;
 
     return {
+      accountId: row.accountId,
+      ...(row.workspaceId ? { workspaceId: row.workspaceId } : {}),
+      path: row.path,
       bucket: row.bucket,
       key: row.key,
       ...(row.versionId ? { versionId: row.versionId } : {}),
