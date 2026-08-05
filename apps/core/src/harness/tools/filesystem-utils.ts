@@ -99,6 +99,11 @@ export interface BashTarget {
 // reachable when workspaces are — see hasStandaloneSandbox.
 export interface SandboxToolContext {
   workspaces: ResolvedWorkspace[];
+  // Identity a durable artifact is filed under, so a download link can be traced
+  // back to the account, agent and conversation that produced it.
+  accountId?: string;
+  agentId?: string;
+  conversationKey?: string;
   agentSandbox?: SandboxExecutorConfig;
   agentSandboxPermissionMode?: SandboxPermissionMode;
   // Set when the parent session can track background jobs: bash exposes a

@@ -498,6 +498,38 @@ export const sandboxInstancesFields = {
  * (Daytona-aligned) build model mapped from AWS MicroVM image versions and
  * workdir images; broods owns the build pipeline and dual-writes status here.
  */
+/**
+ * A file the agent handed the user a download link for. The row pins the S3
+ * object *version*, so the link keeps serving the bytes as of the moment it was
+ * minted even after the workspace file is overwritten — the user can come back
+ * to v1 after the agent has written v2.
+ *
+ * `token` is the whole access check: 128 bits of randomness, possession-based
+ * and long-lived, the same posture as a "anyone with the link" share. It is
+ * never logged, and the row carries no credentials.
+ */
+export const downloadArtifactsFields = {
+  accountId: v.id("accounts"),
+  workspaceId: v.optional(v.id("workspaceConfigs")),
+  /** Unguessable public handle; the only thing the link carries. */
+  token: v.string(),
+  bucket: v.string(),
+  key: v.string(),
+  /** Absent when the bucket has no versioning (then the link follows the key). */
+  versionId: v.optional(v.string()),
+  /** Workspace-relative path, and the name the browser saves it as. */
+  path: v.string(),
+  filename: v.string(),
+  contentType: v.optional(v.string()),
+  sizeBytes: v.optional(v.number()),
+  /** Provenance, so a future UI can list what a conversation produced. */
+  agentId: v.optional(v.string()),
+  conversationKey: v.optional(v.string()),
+  createdAt: v.number(),
+  lastDownloadedAt: v.optional(v.number()),
+  downloadCount: v.number(),
+};
+
 export const sandboxSnapshotsFields = {
   accountId: v.id("accounts"),
   name: v.string(),
@@ -1180,6 +1212,10 @@ export default defineSchema({
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"]),
+  downloadArtifacts: defineTable(downloadArtifactsFields)
+    .index("by_token", ["token"])
+    .index("by_accountId", ["accountId"])
+    .index("by_accountId_and_workspaceId", ["accountId", "workspaceId"]),
   sandboxAuditEvents: defineTable(sandboxAuditEventsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_reservationKey_and_createdAt", [

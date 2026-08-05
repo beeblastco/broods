@@ -16,7 +16,39 @@ const DEFAULT_REQUEST_BUDGET_MS = 10 * 60 * 1000;
 const ACCOUNT_RESOURCE_PATTERNS: RegExp[] = [
   /^\/v1\/sandboxes\/[^/]+\/(?:suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
 ];
+// Durable download links minted by the download_url tool. Deliberately outside
+// /v1: the whole point is a link short enough to survive being retyped.
+const DOWNLOAD_PATTERN = /^\/d\/([A-Za-z0-9_-]{16,64})$/;
+// The redirect target is minted per click, so it only has to outlive the hop.
+const DOWNLOAD_REDIRECT_SECONDS = 300;
 const inFlight = new Set<Promise<void>>();
+
+/**
+ * Resolve a download token to its pinned S3 object and redirect. Unauthenticated
+ * by design — the token is the capability, like any share link — so it must leak
+ * nothing about a token that does not exist beyond the 404.
+ */
+export async function handleDownloadRoute(token: string): Promise<Response> {
+  const { getDownloadArtifact, recordDownloadArtifactHit } = await import(
+    "./shared/convex/download-artifacts.ts"
+  );
+  const artifact = await getDownloadArtifact(token);
+  if (!artifact) {
+    return new Response("Not found", { status: 404 });
+  }
+  const { getS3ObjectUrl } = await import("./shared/s3.ts");
+  const url = await getS3ObjectUrl(artifact.bucket, artifact.key, {
+    expiresInSeconds: DOWNLOAD_REDIRECT_SECONDS,
+    downloadFilename: artifact.filename,
+    ...(artifact.versionId ? { versionId: artifact.versionId } : {}),
+  });
+  void recordDownloadArtifactHit(token);
+
+  return new Response(null, {
+    status: 302,
+    headers: { location: url, "cache-control": "no-store" },
+  });
+}
 
 export function routesToAccountManage(
   method: string,
@@ -107,10 +139,12 @@ if (import.meta.main) {
     DEFAULT_REQUEST_BUDGET_MS,
   );
   const { handler: accountHandler } = await import("./accounts/handler.ts");
-  const { drainInProcessWorkers, handler: harnessHandler } =
-    await import("./harness/handler.ts");
-  const { prewarmIsolatePool, shutdownIsolatePool } =
-    await import("./harness/isolate/executor.ts");
+  const { drainInProcessWorkers, handler: harnessHandler } = await import(
+    "./harness/handler.ts"
+  );
+  const { prewarmIsolatePool, shutdownIsolatePool } = await import(
+    "./harness/isolate/executor.ts"
+  );
 
   initOtel();
   // One warm isolate worker so the first uploaded-tool call does not pay Node
@@ -126,6 +160,20 @@ if (import.meta.main) {
       const url = new URL(request.url);
       if (url.pathname === "/healthz" && request.method === "GET") {
         return Response.json({ status: "ok" });
+      }
+      // Answered before the handlers: a download link carries no account header
+      // and no auth, so it must not reach anything that expects them.
+      const download =
+        request.method === "GET" ? DOWNLOAD_PATTERN.exec(url.pathname) : null;
+      if (download) {
+        try {
+          return await handleDownloadRoute(download[1]!);
+        } catch (err) {
+          logError("Download link failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return new Response("Download unavailable", { status: 500 });
+        }
       }
 
       const coreRequest = await toCoreRequest(

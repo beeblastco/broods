@@ -38,6 +38,7 @@ import type * as cron from "../cron.js";
 import type * as cronPublic from "../cronPublic.js";
 import type * as crons from "../crons.js";
 import type * as deployKeys from "../deployKeys.js";
+import type * as downloadArtifacts from "../downloadArtifacts.js";
 import type * as environment from "../environment.js";
 import type * as environmentVariables from "../environmentVariables.js";
 import type * as http from "../http.js";
@@ -138,6 +139,7 @@ declare const fullApi: ApiFromModules<{
   cronPublic: typeof cronPublic;
   crons: typeof crons;
   deployKeys: typeof deployKeys;
+  downloadArtifacts: typeof downloadArtifacts;
   environment: typeof environment;
   environmentVariables: typeof environmentVariables;
   http: typeof http;

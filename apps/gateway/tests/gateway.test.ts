@@ -362,7 +362,11 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
       { replay: false, type: "text-delta" },
       { replay: false, type: "done" },
     ]);
-    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      100,
+      () => "consumer close",
+    );
     expect(
       sent.filter(
         (message) =>
@@ -460,7 +464,11 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         (message) => message.type === "done" || message.type === "error",
       ),
     ).toHaveLength(0);
-    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      100,
+      () => "consumer close",
+    );
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
@@ -682,7 +690,11 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
-    await waitForCondition(() => consumerClosed, 700, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      700,
+      () => "consumer close",
+    );
     expect(
       sent.filter(
         (message) =>
@@ -1071,6 +1083,8 @@ test("proxies runtime HTTP paths used by the SDK", () => {
   expect(isCoreHttpRoute("/accounts")).toBe(true);
   expect(isCoreHttpRoute("/async")).toBe(true);
   expect(isCoreHttpRoute("/status/request-1")).toBe(true);
+  // Durable download links: unauthenticated, and core owns the token lookup.
+  expect(isCoreHttpRoute("/d/AbC123xyz789")).toBe(true);
   // The one webhook shape reaches core, and so does a retired agent-scoped URL:
   // core answers that with a 404 naming the right one, which it cannot do if
   // the gateway swallows the path first.

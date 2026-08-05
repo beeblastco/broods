@@ -77,13 +77,27 @@ const listS3PrefixMock = mock(
     [] as Array<{ key: string; lastModified?: string }>,
 );
 
-// download_url presigns through these two, so they answer per-test.
+// download_url heads the object, then either records an artifact or presigns.
 let s3ObjectPresent = true;
 const s3ObjectExistsMock = mock(async () => s3ObjectPresent);
+const headS3ObjectMock = mock(async () =>
+  s3ObjectPresent
+    ? { versionId: "v-1", contentType: "application/pdf", sizeBytes: 12 }
+    : undefined,
+);
 const getS3ObjectUrlMock = mock(
   async (_bucket: string, key: string, _options?: unknown) =>
     `https://example.test/${key}`,
 );
+const createDownloadArtifactMock = mock(async (_artifact: unknown) => {});
+let downloadArtifactsOn = false;
+
+mock.module("../src/shared/convex/download-artifacts.ts", () => ({
+  createDownloadArtifact: createDownloadArtifactMock,
+  downloadArtifactsAvailable: () => downloadArtifactsOn,
+  getDownloadArtifact: mock(async () => null),
+  recordDownloadArtifactHit: mock(async () => {}),
+}));
 
 mock.module("../src/shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
@@ -103,6 +117,7 @@ mock.module("../src/shared/s3.ts", () => ({
   copyS3Object: mock(async () => {}),
   ensureS3DirectoryMarkers: mock(async () => {}),
   getS3ObjectUrl: getS3ObjectUrlMock,
+  headS3Object: headS3ObjectMock,
 }));
 
 beforeEach(() => {
@@ -114,8 +129,12 @@ beforeEach(() => {
     "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
   s3ObjectPresent = true;
+  downloadArtifactsOn = false;
+  delete process.env.PUBLIC_BASE_URL;
   s3ObjectExistsMock.mockClear();
+  headS3ObjectMock.mockClear();
   getS3ObjectUrlMock.mockClear();
+  createDownloadArtifactMock.mockClear();
   // Reserving a sandbox goes through the Convex reservation registry. Answer "no
   // reservation yet, you won the claim" so a persistent run reaches the VM.
   runtime.query = (async () => null) as typeof runtime.query;
@@ -1047,46 +1066,84 @@ describe("memory tool", () => {
 });
 
 describe("download_url", () => {
-  it("presigns from the workspace prefix and reports the default expiry", async () => {
+  function artifactCtx() {
+    downloadArtifactsOn = true;
+    process.env.PUBLIC_BASE_URL = "https://gateway.test";
+
+    return {
+      ...(readonlyCtx() as object),
+      accountId: "acct_1",
+      conversationKey: "conv_1",
+    } as never;
+  }
+
+  it("returns a short durable link and pins the object version", async () => {
+    const download = await tool("download-url", artifactCtx());
+    const result = await download.execute({ file_path: "reports/q3.xlsx" });
+
+    const artifact = createDownloadArtifactMock.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(artifact).toMatchObject({
+      accountId: "acct_1",
+      bucket: "filesystem-bucket",
+      key: `${NS}/reports/q3.xlsx`,
+      // The pin is the whole point: writing the file again must not change what
+      // an already-shared link downloads.
+      versionId: "v-1",
+      path: "reports/q3.xlsx",
+      filename: "q3.xlsx",
+      conversationKey: "conv_1",
+    });
+    const token = String(artifact.token);
+    expect(token.length).toBeGreaterThanOrEqual(16);
+    expect(result.value).toContain(`https://gateway.test/d/${token}`);
+    // No presigned URL is handed to the model at all, so there is nothing long
+    // enough for it to mistype.
+    expect(result.value).not.toContain("X-Amz-");
+    expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
+  });
+
+  it("mints a link short enough to survive being retyped", async () => {
+    const download = await tool("download-url", artifactCtx());
+    const result = await download.execute({ file_path: "a.txt" });
+    const link = /https:\/\/\S+/.exec(String(result.value))![0];
+
+    expect(link.length).toBeLessThan(80);
+  });
+
+  it("falls back to a presigned URL with no config plane to record into", async () => {
     const download = await tool("download-url", readonlyCtx());
     const result = await download.execute({ file_path: "reports/q3.xlsx" });
 
+    expect(createDownloadArtifactMock).not.toHaveBeenCalled();
     expect(getS3ObjectUrlMock).toHaveBeenCalledWith(
       "filesystem-bucket",
       `${NS}/reports/q3.xlsx`,
-      { expiresInSeconds: 900 },
+      expect.objectContaining({ downloadFilename: "q3.xlsx" }),
     );
-    expect(result.value).toContain("expires in 900 seconds");
     expect(result.value).toContain(
       `https://example.test/${NS}/reports/q3.xlsx`,
     );
   });
 
-  it("clamps a requested expiry to the one-hour cap", async () => {
-    const download = await tool("download-url", readonlyCtx());
-    await download.execute({ file_path: "a.txt", expires_in: 99_999 });
-
-    expect(getS3ObjectUrlMock).toHaveBeenCalledWith(
-      "filesystem-bucket",
-      `${NS}/a.txt`,
-      { expiresInSeconds: 3600 },
-    );
-  });
-
   it("refuses a file that is not in the workspace", async () => {
     s3ObjectPresent = false;
-    const download = await tool("download-url", readonlyCtx());
+    const download = await tool("download-url", artifactCtx());
     const result = await download.execute({ file_path: "missing.txt" });
 
     expect(result.value).toBe("Error: file not found: missing.txt");
+    expect(createDownloadArtifactMock).not.toHaveBeenCalled();
     expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
   });
 
   it("refuses to presign a path that escapes the workspace", async () => {
-    const download = await tool("download-url", readonlyCtx());
+    const download = await tool("download-url", artifactCtx());
     const result = await download.execute({ file_path: "../../etc/passwd" });
 
     expect(result.value).toContain("directory traversal not allowed");
+    expect(createDownloadArtifactMock).not.toHaveBeenCalled();
     expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
   });
 

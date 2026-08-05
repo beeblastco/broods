@@ -5,9 +5,26 @@
  * which are covered here without starting a server.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
+
+let storedArtifact: Record<string, unknown> | null = null;
+const recordHitMock = mock(async () => {});
+mock.module("../src/shared/convex/download-artifacts.ts", () => ({
+  getDownloadArtifact: mock(async () => storedArtifact),
+  recordDownloadArtifactHit: recordHitMock,
+  createDownloadArtifact: mock(async () => {}),
+  downloadArtifactsAvailable: () => true,
+}));
+mock.module("../src/shared/s3.ts", () => ({
+  getS3ObjectUrl: mock(
+    async (bucket: string, key: string, options: Record<string, unknown>) =>
+      `https://s3.test/${bucket}/${key}?v=${String(options.versionId)}&n=${String(options.downloadFilename)}`,
+  ),
+}));
+
 import {
   drainInFlight,
+  handleDownloadRoute,
   routesToAccountManage,
   toCoreRequest,
   waitUntil,
@@ -168,5 +185,33 @@ describe("waitUntil drain", () => {
     release();
     await drained;
     expect(afterDone).toBe(true);
+  });
+});
+
+describe("handleDownloadRoute", () => {
+  it("redirects to the pinned object version with a download filename", async () => {
+    storedArtifact = {
+      bucket: "fs-bucket",
+      key: "fs-abc/reports/q3.xlsx",
+      versionId: "v-1",
+      filename: "q3.xlsx",
+    };
+    const response = await handleDownloadRoute("tok_123");
+
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location")!;
+    // The pin is what lets an old link keep serving the bytes it was minted for.
+    expect(location).toContain("v=v-1");
+    expect(location).toContain("n=q3.xlsx");
+    // A redirect that a proxy cached would outlive the presigned target.
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("404s an unknown token without leaking whether it ever existed", async () => {
+    storedArtifact = null;
+    const response = await handleDownloadRoute("tok_missing");
+
+    expect(response.status).toBe(404);
+    expect(await response.text()).toBe("Not found");
   });
 });

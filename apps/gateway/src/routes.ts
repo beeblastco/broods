@@ -77,6 +77,9 @@ export function isCoreHttpRoute(pathname: string): boolean {
     pathname === "/" ||
     pathname === "/async" ||
     pathname.startsWith("/status/") ||
+    // Durable download links. Public and unauthenticated: the token is the
+    // capability, and core resolves it to a fresh presigned S3 redirect.
+    pathname.startsWith("/d/") ||
     pathname === "/accounts" ||
     pathname.startsWith("/accounts/") ||
     pathname.startsWith("/webhooks/") ||

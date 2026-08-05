@@ -171,7 +171,14 @@ export async function createTools(
       sandboxTools,
       readTool({ workspaces }),
       globTool({ workspaces }),
-      downloadUrlTool({ workspaces }),
+      downloadUrlTool({
+        workspaces: workspaces,
+        ...(context.accountId ? { accountId: context.accountId } : {}),
+        conversationKey: context.conversationKey,
+        ...(context.sandboxMetadata?.agentId
+          ? { agentId: context.sandboxMetadata.agentId }
+          : {}),
+      }),
     );
   }
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace

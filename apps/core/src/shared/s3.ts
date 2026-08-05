@@ -60,13 +60,60 @@ export async function readS3Text(
 export async function getS3ObjectUrl(
   bucket: string,
   key: string,
-  options: { expiresInSeconds?: number; access?: S3Access } = {},
+  options: {
+    expiresInSeconds?: number;
+    access?: S3Access;
+    // Pin a specific object version, so a link keeps serving the bytes it was
+    // minted for even after the same key is overwritten.
+    versionId?: string;
+    // Names the file the browser saves, rather than letting it infer one from
+    // the key (which is the hashed namespace path).
+    downloadFilename?: string;
+  } = {},
 ): Promise<string> {
   return getSignedUrl(
     awsClient(options.access),
-    new GetObjectCommand({ Bucket: bucket, Key: key }),
+    new GetObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ...(options.versionId ? { VersionId: options.versionId } : {}),
+      ...(options.downloadFilename
+        ? {
+            ResponseContentDisposition: `attachment; filename="${options.downloadFilename.replace(/["\\]/g, "")}"`,
+          }
+        : {}),
+    }),
     { expiresIn: options.expiresInSeconds ?? 300 },
   );
+}
+
+// Head an object for the facts a durable download link has to capture at mint
+// time: the version to pin, plus what to tell the browser when it is fetched.
+export async function headS3Object(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<
+  { versionId?: string; contentType?: string; sizeBytes?: number } | undefined
+> {
+  try {
+    const result = await awsClient(access).send(
+      new HeadObjectCommand({ Bucket: bucket, Key: key }),
+    );
+
+    return {
+      ...(result.VersionId && result.VersionId !== "null"
+        ? { versionId: result.VersionId }
+        : {}),
+      ...(result.ContentType ? { contentType: result.ContentType } : {}),
+      ...(typeof result.ContentLength === "number"
+        ? { sizeBytes: result.ContentLength }
+        : {}),
+    };
+  } catch (err) {
+    if (isMissingS3Error(err)) return undefined;
+    throw err;
+  }
 }
 
 export async function readS3Bytes(
