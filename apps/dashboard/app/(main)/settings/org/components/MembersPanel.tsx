@@ -164,6 +164,7 @@ export function MembersPanel({ org }: Props) {
                   className="flex-1"
                 />
                 <Select
+                  items={ROLE_LABEL}
                   value={inviteRole}
                   onValueChange={(v) =>
                     setInviteRole(v as Exclude<Role, "owner">)
@@ -250,6 +251,7 @@ export function MembersPanel({ org }: Props) {
                       </Badge>
                     ) : (
                       <Select
+                        items={ROLE_LABEL}
                         value={m.role}
                         onValueChange={(v) =>
                           handleRoleChange(m.membershipId, v as Role)

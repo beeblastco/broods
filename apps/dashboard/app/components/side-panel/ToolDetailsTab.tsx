@@ -84,7 +84,7 @@ export function ToolDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Name
         </span>
         <div className="flex items-center gap-2">
@@ -111,14 +111,14 @@ export function ToolDetailsTab({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Tool Function Name
         </span>
         <code className="text-xs text-foreground">{functionName}</code>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Language
         </span>
         <code className="text-xs text-foreground">{language}</code>

@@ -13,12 +13,7 @@ import { isMaxPlan, PLAN_CONFIGS, resolvePlan } from "@/app/lib/pricing";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
-import {
-  AlertTriangle,
-  ArrowUpRight,
-  CreditCard,
-  ExternalLink,
-} from "lucide-react";
+import { ArrowUpRight, CreditCard, ExternalLink } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
@@ -85,32 +80,19 @@ export function BillingPanel({ projectId }: Props) {
     }
   }
 
-  const RATE_LIMITS: Array<{
-    label: string;
-    current: number;
-    limit: number;
-    unit: string;
-  }> =
+  // Ceilings only. Live consumption is not tracked here yet, and rendering a
+  // meter against a hardcoded 0 read as real telemetry on a billing surface.
+  const RATE_LIMITS: Array<{ label: string; limit: number; unit: string }> =
     userPlan === "pro"
       ? [
-          { label: "Requests per minute", current: 0, limit: 500, unit: "rpm" },
-          {
-            label: "Tokens per minute",
-            current: 0,
-            limit: 200000,
-            unit: "tpm",
-          },
-          {
-            label: "Concurrent agents",
-            current: 0,
-            limit: 100,
-            unit: "agents",
-          },
+          { label: "Requests per minute", limit: 500, unit: "rpm" },
+          { label: "Tokens per minute", limit: 200000, unit: "tpm" },
+          { label: "Concurrent agents", limit: 100, unit: "agents" },
         ]
       : [
-          { label: "Requests per minute", current: 0, limit: 60, unit: "rpm" },
-          { label: "Tokens per minute", current: 0, limit: 40000, unit: "tpm" },
-          { label: "Concurrent agents", current: 0, limit: 5, unit: "agents" },
+          { label: "Requests per minute", limit: 60, unit: "rpm" },
+          { label: "Tokens per minute", limit: 40000, unit: "tpm" },
+          { label: "Concurrent agents", limit: 5, unit: "agents" },
         ];
 
   return (
@@ -194,33 +176,17 @@ export function BillingPanel({ projectId }: Props) {
         description="Resource limits for your current plan tier."
       >
         <div className="grid gap-3">
-          {RATE_LIMITS.map((limit) => {
-            const pct =
-              limit.limit > 0
-                ? Math.round((limit.current / limit.limit) * 100)
-                : 0;
-            const isWarning = pct >= 80;
-            return (
-              <div
-                key={limit.label}
-                className="rounded-lg border border-border bg-card px-4 py-3"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-foreground">{limit.label}</span>
-                  <span className="text-sm font-mono text-muted-foreground">
-                    {limit.current.toLocaleString()} /{" "}
-                    {limit.limit.toLocaleString()} {limit.unit}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${isWarning ? "bg-amber-500" : "bg-primary"}`}
-                    style={{ width: `${Math.max(pct, 1)}%` }}
-                  />
-                </div>
-              </div>
-            );
-          })}
+          {RATE_LIMITS.map((limit) => (
+            <div
+              key={limit.label}
+              className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
+            >
+              <span className="text-sm text-foreground">{limit.label}</span>
+              <span className="font-mono text-sm text-muted-foreground">
+                {limit.limit.toLocaleString()} {limit.unit}
+              </span>
+            </div>
+          ))}
         </div>
       </Section>
 
@@ -258,40 +224,18 @@ export function BillingPanel({ projectId }: Props) {
                 size="sm"
                 variant="ghost"
                 className="cursor-pointer gap-1.5"
-                asChild
+                nativeButton={false}
+                render={
+                  <a
+                    href="https://broods.app/pricing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
               >
-                <a
-                  href="https://broods.app/pricing"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink className="size-3.5" />
-                  View pricing
-                </a>
+                <ExternalLink className="size-3.5" />
+                View pricing
               </Button>
-            </div>
-          </div>
-        </Section>
-      )}
-
-      {/* Warning for approaching limits (placeholder — hook up real usage when tracked) */}
-      {false && (
-        <Section
-          title="Usage Alerts"
-          description="Notifications about usage thresholds."
-        >
-          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="size-4 text-amber-500 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-foreground">
-                  Approaching token limit
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Your token usage is approaching the monthly limit. Consider
-                  upgrading.
-                </p>
-              </div>
             </div>
           </div>
         </Section>

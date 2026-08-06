@@ -1071,7 +1071,7 @@ export function TokensUsagePanel({
                 <tr>
                   <td
                     colSpan={11}
-                    className="px-3 py-6 text-center text-muted-foreground/60"
+                    className="px-3 py-6 text-center text-muted-foreground"
                   >
                     Waiting for model activity…
                   </td>

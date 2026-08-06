@@ -365,13 +365,13 @@ export function SkillFilesTab({
       {skillMeta && (
         <div className="flex shrink-0 flex-col gap-0.5 border-b border-border bg-muted/20 px-3 py-2">
           <div className="flex items-center gap-1.5">
-            <BookOpen className="size-3 text-muted-foreground/60" />
+            <BookOpen className="size-3 text-muted-foreground" />
             <span className="font-mono text-[12px] font-medium text-foreground/80">
               {skillMeta.name ?? "—"}
             </span>
           </div>
           {skillMeta.description && (
-            <p className="text-[10px] text-muted-foreground/70">
+            <p className="text-[10px] text-muted-foreground">
               {skillMeta.description}
             </p>
           )}

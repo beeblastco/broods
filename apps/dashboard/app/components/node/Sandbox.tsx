@@ -24,7 +24,7 @@ export function SandboxNode({ id, data }: NodeProps) {
       id={id}
       nodeType="sandbox"
       data={nodeData}
-      icon={<Box className="h-3.5 w-3.5" />}
+      icon={<Box className="size-3.5" />}
       featureRows={featureRows}
       showSideHandles={true}
     />

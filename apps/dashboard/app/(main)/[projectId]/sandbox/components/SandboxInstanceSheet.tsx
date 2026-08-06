@@ -79,11 +79,15 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 /** Inline link button that deep-links to a trace in the dashboard. */
 function TraceLink({ traceId, href }: { traceId: string; href: string }) {
   return (
-    <Button asChild variant="outline" size="xs" className="cursor-pointer">
-      <Link href={href}>
-        <code className="max-w-45 truncate font-mono">{traceId}</code>
-        <ExternalLink className="size-3" />
-      </Link>
+    <Button
+      nativeButton={false}
+      render={<Link href={href} />}
+      variant="outline"
+      size="xs"
+      className="cursor-pointer"
+    >
+      <code className="max-w-45 truncate font-mono">{traceId}</code>
+      <ExternalLink className="size-3" />
     </Button>
   );
 }
@@ -473,7 +477,7 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                 disabled={!commandRunnable}
               />
             ) : (
-              <div className="space-y-3">
+              <div className="flex flex-col gap-3">
                 <div className="rounded-lg border border-border bg-card p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
                     <Terminal className="size-4" />
@@ -512,7 +516,7 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                   )}
                 </div>
 
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
                   {terminalEntries.length === 0 ? (
                     <div className="rounded-lg border border-border bg-muted/30 px-3 py-8 text-center text-xs text-muted-foreground">
                       Run a command to see stdout, stderr, and exit status here.

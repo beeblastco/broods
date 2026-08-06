@@ -122,6 +122,7 @@ const NODE_TEMPLATES = [
 const FIT_VIEW_OPTIONS = { maxZoom: 1.5, padding: 1 } as const;
 const PRO_OPTIONS = { hideAttribution: true } as const;
 type FlowPosition = { x: number; y: number };
+type CanvasSaveState = "idle" | "saving" | "saved" | "error";
 
 function hydrateEncodedHandleEdge(
   edge: Edge,
@@ -390,6 +391,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [deleteRequestToken, setDeleteRequestToken] = useState(0);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
@@ -434,6 +436,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       if (!environmentId) return;
+      setSaveState("saving");
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
       saveLayoutMutation({
@@ -442,7 +445,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
-            "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
+            | "agent"
+            | "database"
+            | "sandbox"
+            | "workspace"
+            | "tool"
+            | "skill",
           position: n.position,
           data: n.data as {
             label: string;
@@ -519,8 +527,15 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             }),
           );
         })
-        .finally(() => {
+        .then(() => {
+          // Only the success path may clear the dirty flag. Clearing it in
+          // `finally` let a failed write be overwritten by the next DB sync,
+          // losing the edit with no message.
           hasLocalChanges.current = false;
+          setSaveState("saved");
+        })
+        .catch(() => {
+          setSaveState("error");
         });
     }, 500);
   }, [
@@ -1029,8 +1044,33 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           size={1.5}
           color={isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}
         />
-        <Panel position="top-left">
+        <Panel position="top-left" className="flex flex-col gap-2">
           <CanvasControls />
+          {saveState !== "idle" && (
+            <div
+              aria-live="polite"
+              className="rounded-lg border border-border bg-card/80 px-2 py-1 text-xs backdrop-blur-md"
+            >
+              {saveState === "saving" && (
+                <span className="text-muted-foreground">Saving…</span>
+              )}
+              {saveState === "saved" && (
+                <span className="text-muted-foreground">Saved</span>
+              )}
+              {saveState === "error" && (
+                <span className="flex items-center gap-2 text-destructive">
+                  Couldn&apos;t save
+                  <button
+                    type="button"
+                    className="cursor-pointer underline underline-offset-2"
+                    onClick={scheduleSave}
+                  >
+                    Retry
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
         </Panel>
       </ReactFlow>
     </InfraAnalysisProvider>
@@ -1042,43 +1082,42 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         ref={canvasContainerRef}
         className="relative h-full min-w-0 flex-1 overflow-hidden"
       >
-        {isEmpty ? (
-          <div className="size-full">{flow}</div>
-        ) : (
-          <ContextMenu>
-            <ContextMenuTrigger asChild>
-              <div className="size-full" onContextMenu={onContextMenu}>
-                {flow}
-              </div>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
-              <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
-                Add service
-              </ContextMenuLabel>
-              {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
-                <Fragment key={type}>
-                  {index === NODE_TEMPLATES.length - 1 && (
-                    <ContextMenuSeparator />
-                  )}
-                  <ContextMenuItem
-                    onClick={() =>
-                      type === "agent"
-                        ? onOpenSourcePicker()
-                        : type === "tool"
-                          ? setToolPickerOpen(true)
-                          : type === "skill"
-                            ? setSkillPickerOpen(true)
-                            : addNode(type, label)
-                    }
-                  >
-                    <Icon />
-                    {label}
-                  </ContextMenuItem>
-                </Fragment>
-              ))}
-            </ContextMenuContent>
-          </ContextMenu>
-        )}
+        {/* The context menu wraps the flow even when the canvas is empty: an
+            empty project is exactly when right-click-to-add needs to work. */}
+        <ContextMenu>
+          <ContextMenuTrigger
+            className="size-full"
+            onContextMenu={onContextMenu}
+          >
+            {flow}
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
+            <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
+              Add service
+            </ContextMenuLabel>
+            {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
+              <Fragment key={type}>
+                {index === NODE_TEMPLATES.length - 1 && (
+                  <ContextMenuSeparator />
+                )}
+                <ContextMenuItem
+                  onClick={() =>
+                    type === "agent"
+                      ? onOpenSourcePicker()
+                      : type === "tool"
+                        ? setToolPickerOpen(true)
+                        : type === "skill"
+                          ? setSkillPickerOpen(true)
+                          : addNode(type, label)
+                  }
+                >
+                  <Icon />
+                  {label}
+                </ContextMenuItem>
+              </Fragment>
+            ))}
+          </ContextMenuContent>
+        </ContextMenu>
 
         {isEmpty && (
           <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />

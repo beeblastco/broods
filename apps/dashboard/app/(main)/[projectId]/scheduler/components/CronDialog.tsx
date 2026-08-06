@@ -39,6 +39,11 @@ const PRESETS: Array<{ label: string; value: string }> = [
   { label: "Every 15 minutes", value: "rate(15 minutes)" },
 ];
 
+const STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  paused: "Paused",
+};
+
 type Mode = "create" | "edit";
 
 /** Extracts the editable text from a stored events list (first user text message). */
@@ -197,7 +202,18 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
                 No agents available. Create one before scheduling jobs.
               </p>
             ) : (
-              <Select value={agentId} onValueChange={setAgentId}>
+              <Select
+                items={agents.map((agent) => ({
+                  label: agent.name,
+                  value: agent._id,
+                }))}
+                value={agentId}
+                onValueChange={(value) => {
+                  if (value !== null) {
+                    setAgentId(value);
+                  }
+                }}
+              >
                 <SelectTrigger id="cj-agent" className="w-full cursor-pointer">
                   <SelectValue placeholder="Pick an agent" />
                 </SelectTrigger>
@@ -300,6 +316,7 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
                 Status
               </Label>
               <Select
+                items={STATUS_LABELS}
                 value={status}
                 onValueChange={(v) => setStatus(v as "active" | "paused")}
               >

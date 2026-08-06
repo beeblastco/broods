@@ -835,7 +835,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
           )}
         </div>
         <Button variant="ghost" size="icon-xs" onClick={onClose}>
-          <X className="h-4 w-4" />
+          <X className="size-4" />
         </Button>
       </div>
 
@@ -1116,7 +1116,7 @@ function ServiceDetailsTab({
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Name
         </span>
         <div className="flex items-center gap-2">

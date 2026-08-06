@@ -7,6 +7,14 @@ import {
   ToggleRow,
 } from "@/app/components/side-panel/ConfigControls";
 import { Button } from "@/app/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/app/components/ui/dialog";
 import { Input } from "@/app/components/ui/input";
 import {
   Select,
@@ -80,6 +88,19 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
   { value: "custom", label: "Custom OpenAI-compatible" },
 ];
 
+const REASONING_EFFORT_LABELS: Record<string, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+};
+
+const POLICY_MODE_LABELS: Record<string, string> = {
+  enforce: "Enforce",
+  audit: "Audit",
+};
+
 const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: true,
@@ -148,6 +169,7 @@ export function DetailsTab({
   ) => Promise<void>;
 }) {
   const [showApiKey, setShowApiKey] = useState(false);
+  const [rotateOpen, setRotateOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   // Reveal a freshly generated/rotated key the moment it arrives (render-time
   // sync, not an effect); hide again once the plaintext is cleared.
@@ -415,7 +437,7 @@ export function DetailsTab({
     <div className="flex flex-1 flex-col gap-5 p-4">
       {/* Editable name — auto-saves on blur / Enter */}
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Name
         </span>
         <Input
@@ -434,7 +456,7 @@ export function DetailsTab({
         <>
           {agentConfig.description && (
             <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                 Description
               </span>
               <p className="text-xs text-foreground">
@@ -443,10 +465,11 @@ export function DetailsTab({
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Provider & Model
             </span>
             <Select
+              items={providerOptions}
               value={editProvider}
               onValueChange={(value) => {
                 const nextProvider = value as AgentProvider;
@@ -530,7 +553,7 @@ export function DetailsTab({
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[11px] text-muted-foreground">
                       Budget tokens{" "}
-                      <span className="text-muted-foreground/50">
+                      <span className="text-muted-foreground">
                         (Anthropic / MiniMax / Google)
                       </span>
                     </span>
@@ -555,14 +578,15 @@ export function DetailsTab({
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-[11px] text-muted-foreground">
                       Effort{" "}
-                      <span className="text-muted-foreground/50">
+                      <span className="text-muted-foreground">
                         (OpenAI / Anthropic)
                       </span>
                     </span>
                     <Select
+                      items={REASONING_EFFORT_LABELS}
                       value={reasoningEffort || "none"}
                       onValueChange={(v) => {
-                        const effort = v === "none" ? undefined : v;
+                        const effort = !v || v === "none" ? undefined : v;
                         const n = parseInt(reasoningBudgetText, 10);
                         const budget =
                           Number.isFinite(n) && n > 0 ? n : undefined;
@@ -576,15 +600,17 @@ export function DetailsTab({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
-                        <SelectItem value="minimal">Minimal</SelectItem>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="high">High</SelectItem>
+                        {Object.entries(REASONING_EFFORT_LABELS).map(
+                          ([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ),
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
-                  <p className="text-[11px] text-muted-foreground/60">
+                  <p className="text-[11px] text-muted-foreground">
                     Set budget for Anthropic/MiniMax/Google, effort for OpenAI.
                     Anthropic honors either.
                   </p>
@@ -600,12 +626,13 @@ export function DetailsTab({
       {onUpdatePolicyConfig && (
         <>
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Runtime Policy
             </span>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[11px] text-muted-foreground">Mode</span>
               <Select
+                items={POLICY_MODE_LABELS}
                 value={policyMode}
                 onValueChange={(value) =>
                   updatePolicy({
@@ -619,8 +646,11 @@ export function DetailsTab({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="enforce">Enforce</SelectItem>
-                  <SelectItem value="audit">Audit</SelectItem>
+                  {Object.entries(POLICY_MODE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -659,7 +689,7 @@ export function DetailsTab({
 
       {/* Public access controls */}
       <div className="flex flex-col gap-3">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Public API
         </span>
         {onUpdatePublicAccess && (
@@ -713,7 +743,7 @@ export function DetailsTab({
             ) : (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     Endpoint URL (HTTP/SSE)
                   </span>
                   <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
@@ -736,7 +766,7 @@ export function DetailsTab({
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                  <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
                     <Wifi className="size-3" />
                     WebSocket URL
                   </span>
@@ -763,7 +793,7 @@ export function DetailsTab({
 
             {agentConfig?.agentId && (
               <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                   Agent ID
                 </span>
                 <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
@@ -785,7 +815,7 @@ export function DetailsTab({
                     )}
                   </Button>
                 </div>
-                <span className="text-[11px] text-muted-foreground/60">
+                <span className="text-[11px] text-muted-foreground">
                   Pass this as <code>agentId</code> in the invoke payload.
                 </span>
               </div>
@@ -793,7 +823,7 @@ export function DetailsTab({
 
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                   API Key (environment-wide)
                 </span>
                 <Button
@@ -801,7 +831,7 @@ export function DetailsTab({
                   size="sm"
                   className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
                   disabled={isSavingKey}
-                  onClick={() => void onRotateKey?.()}
+                  onClick={() => setRotateOpen(true)}
                 >
                   <RefreshCw
                     className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
@@ -855,7 +885,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Provider Tools
             </span>
 
@@ -899,7 +929,7 @@ export function DetailsTab({
         <>
           <Separator />
           <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Output Format
             </span>
             <div className="flex items-center justify-between">
@@ -983,6 +1013,33 @@ export function DetailsTab({
           />
         </>
       )}
+
+      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rotate the environment API key?</DialogTitle>
+            <DialogDescription>
+              This key is environment-wide. Every agent, channel webhook, and
+              SDK client authenticating with the current key stops working the
+              moment it is rotated, until you redeploy them with the new one.
+              The old key cannot be recovered.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter showCloseButton>
+            <Button
+              variant="destructive"
+              className="cursor-pointer disabled:cursor-not-allowed"
+              disabled={isSavingKey}
+              onClick={async () => {
+                await onRotateKey?.();
+                setRotateOpen(false);
+              }}
+            >
+              {isSavingKey ? "Rotating…" : "Rotate key"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

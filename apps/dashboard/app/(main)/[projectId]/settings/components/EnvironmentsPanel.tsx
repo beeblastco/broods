@@ -208,7 +208,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
               className={cn(
                 "shrink-0",
                 !name.trim() || busy
-                  ? "cursor-not-allowed text-muted-foreground/50"
+                  ? "cursor-not-allowed text-muted-foreground"
                   : "cursor-pointer text-muted-foreground hover:text-foreground",
               )}
               disabled={!name.trim() || busy}

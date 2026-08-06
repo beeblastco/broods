@@ -161,6 +161,7 @@ export function CreateAgentConfigDialog({
             <div className="grid gap-2">
               <Label htmlFor="agent-provider">Provider</Label>
               <Select
+                items={providerOptions}
                 value={provider}
                 onValueChange={(value) => setProvider(value as AgentProvider)}
               >

@@ -16,9 +16,9 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@convex-dev/stripe": "^0.1.6",
     "@convex-dev/workos-authkit": "^0.2.7",
-    "@radix-ui/react-collapsible": "^1.1.20",
     "@workos-inc/authkit-nextjs": "^4.3.0",
     "@workos-inc/node": "^10.8.0",
     "@xterm/addon-fit": "^0.11.0",
@@ -33,7 +33,6 @@
     "lucide-react": "^1.27.0",
     "next": "16.2.12",
     "next-themes": "^0.4.6",
-    "radix-ui": "^1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-file-icon": "^1.6.0",

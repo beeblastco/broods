@@ -215,7 +215,15 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
           />
         </div>
 
-        <Select value={status} onValueChange={setStatusAndReset}>
+        <Select
+          items={STATUS_FILTERS}
+          value={status}
+          onValueChange={(value) => {
+            if (value !== null) {
+              setStatusAndReset(value);
+            }
+          }}
+        >
           <SelectTrigger
             size="sm"
             aria-label="Filter by status"
@@ -327,20 +335,21 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
                   >
                     {instance.lastUsedTraceId || instance.createdByTraceId ? (
                       <Button
-                        asChild
+                        nativeButton={false}
+                        render={
+                          <Link
+                            href={traceHref(
+                              instance.lastUsedTraceId ??
+                                instance.createdByTraceId!,
+                            )}
+                          />
+                        }
                         variant="outline"
                         size="xs"
                         className="cursor-pointer"
                       >
-                        <Link
-                          href={traceHref(
-                            instance.lastUsedTraceId ??
-                              instance.createdByTraceId!,
-                          )}
-                        >
-                          <ExternalLink className="size-3" />
-                          Trace
-                        </Link>
+                        <ExternalLink className="size-3" />
+                        Trace
                       </Button>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>

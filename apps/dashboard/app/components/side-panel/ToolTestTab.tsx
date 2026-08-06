@@ -195,7 +195,7 @@ export function ToolTestTab({
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Test Input (JSON)
         </span>
         <Textarea
@@ -225,7 +225,7 @@ export function ToolTestTab({
       </div>
 
       <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2">
-        <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-muted-foreground">
           <span>Execution Time</span>
           <span>{isRunning ? "Running" : "Last Run"}</span>
         </div>
@@ -239,7 +239,7 @@ export function ToolTestTab({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
           Output
         </span>
         <pre className="max-h-64 overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs text-foreground whitespace-pre-wrap wrap-break-word">

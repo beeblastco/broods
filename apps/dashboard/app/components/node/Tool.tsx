@@ -30,7 +30,7 @@ export function ToolNode({ id, data }: NodeProps) {
       id={id}
       nodeType="tool"
       data={data as BaseNodeData}
-      icon={<Wrench className="h-3.5 w-3.5" />}
+      icon={<Wrench className="size-3.5" />}
       toolMeta={{
         language: "javascript",
         status: toolService?.disabled === true ? "disabled" : "enabled",
