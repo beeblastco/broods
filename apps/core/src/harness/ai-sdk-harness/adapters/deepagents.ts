@@ -13,7 +13,7 @@ import {
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
-  resolveAnthropicOrGatewayAuth,
+  resolveAnthropicOrVercelAuth,
 } from "../provider.ts";
 
 export const DEEPAGENTS_HARNESS_VERSION = VERSION;
@@ -24,15 +24,15 @@ export function createConfiguredDeepAgentsAdapter(
   const harness = agentConfig.harness!;
   const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
-  if (providerName !== "anthropic" && providerName !== "gateway") {
+  if (providerName !== "anthropic" && providerName !== "vercel") {
     throw new Error(
-      "config.harness.type deepagents requires the anthropic or gateway model provider",
+      "config.harness.type deepagents requires the anthropic or vercel model provider",
     );
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createDeepAgents({
-    auth: resolveAnthropicOrGatewayAuth(providerName, provider),
+    auth: resolveAnthropicOrVercelAuth(providerName, provider),
     model: model,
     recursionLimit: agentConfig.agent?.maxTurn,
     startupTimeoutMs: harness.startupTimeoutMs,

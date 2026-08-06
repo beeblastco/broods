@@ -3341,9 +3341,9 @@ components:
               type: string
             sessionToken:
               type: string
-        gateway:
+        vercel:
           type: object
-          description: Gateway provider
+          description: Vercel AI Gateway provider
           properties:
             apiKey:
               type: string

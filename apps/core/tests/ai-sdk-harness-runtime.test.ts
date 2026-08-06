@@ -192,7 +192,7 @@ describe("createConfiguredHarnessAgent", () => {
     `);
 
     expect(result).toBe(
-      "config.harness.type deepagents requires the anthropic or gateway model provider",
+      "config.harness.type deepagents requires the anthropic or vercel model provider",
     );
   });
 

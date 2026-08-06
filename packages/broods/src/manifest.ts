@@ -828,7 +828,7 @@ const KNOWN_PROVIDER_NAMES = [
   "openai",
   "anthropic",
   "bedrock",
-  "gateway",
+  "vercel",
   "minimax",
   "custom",
 ] as const;

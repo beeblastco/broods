@@ -22,7 +22,7 @@ export function createConfiguredPiAdapter(
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
   const baseUrl = resolveHarnessProviderBaseUrl(provider);
   const prefix =
-    providerName === "gateway"
+    providerName === "vercel"
       ? "AI_GATEWAY"
       : providerName === "custom"
         ? (provider.name ?? "custom")
@@ -30,7 +30,7 @@ export function createConfiguredPiAdapter(
             .toUpperCase()
         : providerName.toUpperCase();
   const auth =
-    providerName === "gateway"
+    providerName === "vercel"
       ? {
           gateway: {
             apiKey: provider.apiKey!,

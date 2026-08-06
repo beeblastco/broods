@@ -16,7 +16,7 @@ export type AccountModelProviderName =
   | "openai"
   | "anthropic"
   | "bedrock"
-  | "gateway"
+  | "vercel"
   | "minimax"
   | "custom";
 
@@ -90,7 +90,7 @@ const ACCOUNT_MODEL_PROVIDER_NAMES = [
   "openai",
   "anthropic",
   "bedrock",
-  "gateway",
+  "vercel",
   "minimax",
   "custom",
 ] as const;

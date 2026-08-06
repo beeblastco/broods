@@ -13,7 +13,7 @@ import {
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
-  resolveAnthropicOrGatewayAuth,
+  resolveAnthropicOrVercelAuth,
 } from "../provider.ts";
 
 export const CLAUDE_CODE_HARNESS_VERSION = VERSION;
@@ -30,15 +30,15 @@ export function createConfiguredClaudeCodeAdapter(
   const harness = agentConfig.harness!;
   const model = requireHarnessModelId(agentConfig);
   const providerName = requireHarnessProviderName(agentConfig);
-  if (providerName !== "anthropic" && providerName !== "gateway") {
+  if (providerName !== "anthropic" && providerName !== "vercel") {
     throw new Error(
-      "config.harness.type claude-code requires the anthropic or gateway model provider",
+      "config.harness.type claude-code requires the anthropic or vercel model provider",
     );
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);
 
   return createClaudeCode({
-    auth: resolveAnthropicOrGatewayAuth(providerName, provider),
+    auth: resolveAnthropicOrVercelAuth(providerName, provider),
     maxTurns: agentConfig.agent?.maxTurn,
     model: model,
     startupTimeoutMs: harness.startupTimeoutMs,

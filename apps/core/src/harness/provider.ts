@@ -76,7 +76,7 @@ export function resolveConfiguredModel(
         createAmazonBedrock(providerConfig as never),
         modelId,
       );
-    case "gateway":
+    case "vercel":
       return resolveProviderModel(
         providerName,
         createGateway(providerConfig as never),
