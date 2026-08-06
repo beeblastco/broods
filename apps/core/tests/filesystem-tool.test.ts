@@ -77,14 +77,6 @@ const listS3PrefixMock = mock(
     [] as Array<{ key: string; lastModified?: string }>,
 );
 
-// download_url presigns through these two, so they answer per-test.
-let s3ObjectPresent = true;
-const s3ObjectExistsMock = mock(async () => s3ObjectPresent);
-const getS3ObjectUrlMock = mock(
-  async (_bucket: string, key: string, _options?: unknown) =>
-    `https://example.test/${key}`,
-);
-
 mock.module("../src/shared/s3.ts", () => ({
   readS3Text: readS3TextMock,
   listS3Prefix: listS3PrefixMock,
@@ -97,12 +89,12 @@ mock.module("../src/shared/s3.ts", () => ({
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
   writeS3Object: mock(async () => 0),
-  s3ObjectExists: s3ObjectExistsMock,
+  s3ObjectExists: mock(async () => true),
   deleteS3Object: mock(async () => {}),
   deleteS3Prefix: mock(async () => 0),
   copyS3Object: mock(async () => {}),
   ensureS3DirectoryMarkers: mock(async () => {}),
-  getS3ObjectUrl: getS3ObjectUrlMock,
+  getS3ObjectUrl: mock(async () => "https://example.test/signed"),
 }));
 
 beforeEach(() => {
@@ -113,9 +105,6 @@ beforeEach(() => {
   process.env.MICROVM_EGRESS_NETWORK_CONNECTOR_ARN =
     "arn:aws:lambda:us-east-1:123456789012:network-connector:vpc-egress";
   globalThis.fetch = microvmFetchMock as unknown as typeof fetch;
-  s3ObjectPresent = true;
-  s3ObjectExistsMock.mockClear();
-  getS3ObjectUrlMock.mockClear();
   // Reserving a sandbox goes through the Convex reservation registry. Answer "no
   // reservation yet, you won the claim" so a persistent run reaches the VM.
   runtime.query = (async () => null) as typeof runtime.query;
@@ -279,7 +268,7 @@ function lastSandboxExec() {
 }
 
 async function tool(
-  name: "bash" | "read" | "write" | "edit" | "glob" | "grep" | "download-url",
+  name: "bash" | "read" | "write" | "edit" | "glob" | "grep",
   ctx: never,
 ) {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
@@ -1043,59 +1032,6 @@ describe("memory tool", () => {
       type: "error-text",
       value: "Error: title must not be empty",
     });
-  });
-});
-
-describe("download_url", () => {
-  it("presigns from the workspace prefix and reports the default expiry", async () => {
-    const download = await tool("download-url", readonlyCtx());
-    const result = await download.execute({ file_path: "reports/q3.xlsx" });
-
-    expect(getS3ObjectUrlMock).toHaveBeenCalledWith(
-      "filesystem-bucket",
-      `${NS}/reports/q3.xlsx`,
-      { expiresInSeconds: 900 },
-    );
-    expect(result.value).toContain("expires in 900 seconds");
-    expect(result.value).toContain(
-      `https://example.test/${NS}/reports/q3.xlsx`,
-    );
-  });
-
-  it("clamps a requested expiry to the one-hour cap", async () => {
-    const download = await tool("download-url", readonlyCtx());
-    await download.execute({ file_path: "a.txt", expires_in: 99_999 });
-
-    expect(getS3ObjectUrlMock).toHaveBeenCalledWith(
-      "filesystem-bucket",
-      `${NS}/a.txt`,
-      { expiresInSeconds: 3600 },
-    );
-  });
-
-  it("refuses a file that is not in the workspace", async () => {
-    s3ObjectPresent = false;
-    const download = await tool("download-url", readonlyCtx());
-    const result = await download.execute({ file_path: "missing.txt" });
-
-    expect(result.value).toBe("Error: file not found: missing.txt");
-    expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
-  });
-
-  it("refuses to presign a path that escapes the workspace", async () => {
-    const download = await tool("download-url", readonlyCtx());
-    const result = await download.execute({ file_path: "../../etc/passwd" });
-
-    expect(result.value).toContain("directory traversal not allowed");
-    expect(getS3ObjectUrlMock).not.toHaveBeenCalled();
-  });
-
-  it("works on a sandbox-backed workspace without touching the sandbox", async () => {
-    const download = await tool("download-url", workspaceCtx());
-    const result = await download.execute({ file_path: "out.pdf" });
-
-    expect(result.value).toContain("Download link for out.pdf");
-    expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
 

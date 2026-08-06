@@ -38,7 +38,6 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import downloadUrlTool from "./download-url.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
   hasStandaloneSandbox,
@@ -171,7 +170,6 @@ export async function createTools(
       sandboxTools,
       readTool({ workspaces }),
       globTool({ workspaces }),
-      downloadUrlTool({ workspaces }),
     );
   }
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace
