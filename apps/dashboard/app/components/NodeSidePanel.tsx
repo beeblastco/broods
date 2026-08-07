@@ -648,7 +648,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // the key is rotated again. `rotate` also lands here via `handleRotateKey`.
   const ensureRuntimeKey = useCallback(
     async (rotate: boolean) => {
-      if (!isAgent || !projectId || !environmentId) return;
+      // Returns whether the key was actually minted. The caller needs to tell a
+      // real rotation apart from this early return, or a no-op reads as success
+      // and the user redeploys with a key that never changed.
+      if (!isAgent || !projectId || !environmentId) return false;
 
       setIsSavingKey(true);
       try {
@@ -664,6 +667,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         if (result?.rawApiKey) {
           setDeploymentApiKey(result.rawApiKey);
         }
+
+        return true;
       } finally {
         setIsSavingKey(false);
       }

@@ -318,7 +318,10 @@ export function CronDialog({ mode, cron, agents, onClose }: Props) {
               <Select
                 items={STATUS_LABELS}
                 value={status}
-                onValueChange={(v) => setStatus(v as "active" | "paused")}
+                onValueChange={(v) => {
+                  if (v === null) return;
+                  setStatus(v as "active" | "paused");
+                }}
               >
                 <SelectTrigger id="cj-status" className="w-full cursor-pointer">
                   <SelectValue />

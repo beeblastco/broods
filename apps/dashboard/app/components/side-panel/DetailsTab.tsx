@@ -32,6 +32,7 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
+import { toErrorMessage } from "@/app/lib/errors";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -141,8 +142,8 @@ export function DetailsTab({
   setEditName: (name: string) => void;
   onSaveName: () => void;
   onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
-  onGenerateKey?: () => Promise<void> | void;
-  onRotateKey?: () => Promise<void> | void;
+  onGenerateKey?: () => Promise<boolean>;
+  onRotateKey?: () => Promise<boolean>;
   isSavingKey?: boolean;
   selectedProvider: AgentProvider;
   runtimeVariables: RuntimeVariable[];
@@ -170,6 +171,7 @@ export function DetailsTab({
 }) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   // Reveal a freshly generated/rotated key the moment it arrives (render-time
   // sync, not an effect); hide again once the plaintext is cleared.
@@ -472,6 +474,7 @@ export function DetailsTab({
               items={providerOptions}
               value={editProvider}
               onValueChange={(value) => {
+                if (value === null) return;
                 const nextProvider = value as AgentProvider;
                 setEditProvider(nextProvider);
                 saveModel(nextProvider, editModelId, editCustomBaseUrl);
@@ -634,13 +637,14 @@ export function DetailsTab({
               <Select
                 items={POLICY_MODE_LABELS}
                 value={policyMode}
-                onValueChange={(value) =>
+                onValueChange={(value) => {
+                  if (value === null) return;
                   updatePolicy({
                     ...policyConfig,
                     policyIds: assignedPolicyIds,
                     mode: value,
-                  })
-                }
+                  });
+                }}
               >
                 <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
                   <SelectValue />
@@ -1014,7 +1018,13 @@ export function DetailsTab({
         </>
       )}
 
-      <Dialog open={rotateOpen} onOpenChange={setRotateOpen}>
+      <Dialog
+        open={rotateOpen}
+        onOpenChange={(open) => {
+          setRotateOpen(open);
+          if (!open) setRotateError(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Rotate the environment API key?</DialogTitle>
@@ -1025,14 +1035,34 @@ export function DetailsTab({
               The old key cannot be recovered.
             </DialogDescription>
           </DialogHeader>
+          {rotateError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+              {rotateError}
+            </p>
+          )}
           <DialogFooter showCloseButton>
             <Button
               variant="destructive"
               className="cursor-pointer disabled:cursor-not-allowed"
               disabled={isSavingKey}
               onClick={async () => {
-                await onRotateKey?.();
-                setRotateOpen(false);
+                setRotateError(null);
+                try {
+                  // Close only on a confirmed rotation. A rejected mutation or
+                  // an unconfigured environment must not read as success — the
+                  // user would redeploy against a key that never changed.
+                  const rotated = await onRotateKey?.();
+                  if (rotated === false) {
+                    setRotateError(
+                      "This environment is not ready to issue a key yet. Save the agent first, then rotate.",
+                    );
+
+                    return;
+                  }
+                  setRotateOpen(false);
+                } catch (err) {
+                  setRotateError(toErrorMessage(err));
+                }
               }}
             >
               {isSavingKey ? "Rotating…" : "Rotate key"}

@@ -427,15 +427,21 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const updateSubagentRefs = useMutation(api.agentConfig.updateSubagentRefs);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLocalChanges = useRef(false);
+  // Bumped on every edit. A save that resolves against an older generation must
+  // not clear the dirty flag — the sync effect would then overwrite the newer
+  // local state with the snapshot that write was built from.
+  const editGeneration = useRef(0);
   const lastRuntimeRefs = useRef(new Map<string, string>());
   const lastSubagentRefs = useRef(new Map<string, string>());
 
   /** Debounced save — writes current local state to the database after 500ms of inactivity. */
   const scheduleSave = useCallback(() => {
     hasLocalChanges.current = true;
+    editGeneration.current += 1;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       if (!environmentId) return;
+      const generation = editGeneration.current;
       setSaveState("saving");
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
@@ -528,9 +534,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           );
         })
         .then(() => {
-          // Only the success path may clear the dirty flag. Clearing it in
-          // `finally` let a failed write be overwritten by the next DB sync,
-          // losing the edit with no message.
+          // Only the success path may clear the dirty flag, and only when no
+          // edit landed while this write was in flight. Clearing it in
+          // `finally` let a failed write be overwritten by the next DB sync;
+          // clearing it after a stale success let that sync overwrite the
+          // newer local state. Either way the edit vanished with no message.
+          if (editGeneration.current !== generation) return;
           hasLocalChanges.current = false;
           setSaveState("saved");
         })

@@ -163,7 +163,10 @@ export function CreateAgentConfigDialog({
               <Select
                 items={providerOptions}
                 value={provider}
-                onValueChange={(value) => setProvider(value as AgentProvider)}
+                onValueChange={(value) => {
+                  if (value === null) return;
+                  setProvider(value as AgentProvider);
+                }}
               >
                 <SelectTrigger id="agent-provider" className="w-full">
                   <SelectValue />
