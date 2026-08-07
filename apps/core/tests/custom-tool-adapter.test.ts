@@ -6,11 +6,12 @@
  * how uploaded tools once returned `{}` without ever running the bundle.
  */
 
-import { describe, expect, it, mock } from "bun:test";
+import { afterAll, describe, expect, it, mock } from "bun:test";
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import { executeTool } from "@ai-sdk/provider-utils";
 import { generateText, stepCountIs, type ToolSet } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
+import * as bundlesExecutor from "../src/harness/bundles/executor.ts";
 import type { ExecuteAccountToolOptions } from "../src/harness/bundles/payload.ts";
 import {
   wrapToolsWithHooks,
@@ -19,6 +20,8 @@ import {
 import { wrapToolsWithOwnerFence } from "../src/harness/tool-execute.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
+const EXECUTOR_MODULE = "../src/harness/bundles/executor.ts";
+
 const streamAccountTool = mock(async function* (
   _options: ExecuteAccountToolOptions,
 ): AsyncGenerator<unknown> {
@@ -26,9 +29,17 @@ const streamAccountTool = mock(async function* (
   yield { done: true };
 });
 
-mock.module("../src/harness/bundles/executor.ts", () => ({
+// mock.module is process-global and permanent. Dropping the module's other
+// exports, then never restoring it, followed this stub into whichever file ran
+// next — isolate-executor.test.ts saw {step:1},{done:true} from its dispatcher.
+mock.module(EXECUTOR_MODULE, () => ({
+  ...bundlesExecutor,
   streamAccountTool: streamAccountTool,
 }));
+
+afterAll(() => {
+  mock.module(EXECUTOR_MODULE, () => bundlesExecutor);
+});
 
 describe("accountTool adapter", () => {
   it("streams every yield as a preliminary result, then the last as final", async () => {
