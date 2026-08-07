@@ -681,6 +681,12 @@ describe("streamIsolatePayload cross-process abort", () => {
     else process.env.ISOLATE_RUNNER_PATH = savedRunnerPath;
     if (savedPool === undefined) delete process.env.ISOLATE_POOL;
     else process.env.ISOLATE_POOL = savedPool;
+    // Never hand a worker spawned against this file's stub runner to whatever
+    // runs next: the pool outlives the file that filled it.
+    const { shutdownIsolatePool } = await import(
+      "../src/harness/isolate/executor.ts"
+    );
+    shutdownIsolatePool();
     for (const dir of created.splice(0))
       await rm(dir, { recursive: true, force: true });
   });
@@ -766,6 +772,11 @@ describe("streamIsolatePayload cross-process abort", () => {
 
     const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
+    // The pool is module-global and acquireWorker takes any idle worker, but
+    // ISOLATE_RUNNER_PATH is only read when one is spawned. Without this, a
+    // worker some earlier test left behind serves the call on the real runner,
+    // which rejects this stub bundle instead of answering the abort.
+    shutdownIsolatePool();
     const controller = new AbortController();
     const aborted = abortWhenReady(readyPath, controller);
 
