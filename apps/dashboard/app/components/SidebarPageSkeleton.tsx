@@ -1,4 +1,5 @@
 /** Sidebar-shaped loading skeleton matching the dashboard/settings page layout. */
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { cn } from "@/app/lib/utils";
 
 /**
@@ -26,10 +27,7 @@ export function SidebarPageSkeleton({
         </div>
         <nav className="flex flex-col gap-0.5 px-3">
           {Array.from({ length: tabCount }).map((_, i) => (
-            <div
-              key={i}
-              className="h-8 w-full animate-pulse rounded-md bg-muted/60"
-            />
+            <Skeleton key={i} className="h-8 w-full bg-muted/60" />
           ))}
         </nav>
       </aside>
@@ -42,13 +40,16 @@ export function SidebarPageSkeleton({
             contentMaxWidth,
           )}
         >
-          <div className="h-7 w-40 animate-pulse rounded-md bg-muted/60" />
+          <Skeleton className="h-7 w-40 bg-muted/60" />
         </div>
         <div
-          className={cn("mx-auto w-full space-y-4 px-8 pb-12", contentMaxWidth)}
+          className={cn(
+            "mx-auto flex w-full flex-col gap-4 px-8 pb-12",
+            contentMaxWidth,
+          )}
         >
-          <div className="h-24 w-full animate-pulse rounded-lg bg-muted/40" />
-          <div className="h-40 w-full animate-pulse rounded-lg bg-muted/40" />
+          <Skeleton className="h-24 w-full rounded-lg bg-muted/40" />
+          <Skeleton className="h-40 w-full rounded-lg bg-muted/40" />
         </div>
       </div>
     </div>

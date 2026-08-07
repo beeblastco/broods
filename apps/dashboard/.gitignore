@@ -43,3 +43,7 @@ service/**/.env
 next-env.d.ts
 .claude
 .agents
+
+# local tooling output
+.migration
+.impeccable

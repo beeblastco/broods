@@ -30,7 +30,7 @@ export function LockedEdgeBadge({
       title="Managed by broods/ code — connection is defined in code"
     >
       <div className="flex cursor-not-allowed items-center justify-center rounded-md border bg-card p-1 text-muted-foreground opacity-0 shadow-sm transition-all group-hover:opacity-100">
-        <Lock className="h-3.5 w-3.5" />
+        <Lock className="size-3.5" />
       </div>
     </div>
   );

@@ -208,12 +208,12 @@ export function ToolConfigTab({
           }}
         />
       ) : (
-        <p className="text-[11px] text-muted-foreground/70">
+        <p className="text-[11px] text-muted-foreground">
           Wire this tool to an agent to edit its options.
         </p>
       )}
 
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
         Source Code
       </span>
       <p className="text-xs text-muted-foreground">

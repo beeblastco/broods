@@ -13,6 +13,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -236,52 +237,56 @@ export function EnvironmentSelector() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
-          >
-            <EnvironmentDot kind={selectedKind} />
-            {selectedEnv?.name ?? "Environment"}
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          </Button>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+            />
+          }
+        >
+          <EnvironmentDot kind={selectedKind} />
+          {selectedEnv?.name ?? "Environment"}
+          <ChevronDown className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
 
         <DropdownMenuContent
           align="start"
           sideOffset={8}
-          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-56 flex-col overflow-hidden"
+          className="flex max-h-[min(24rem,var(--available-height))] w-56 flex-col overflow-hidden"
         >
-          <DropdownMenuLabel>Environments</DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col">
+            <DropdownMenuLabel>Environments</DropdownMenuLabel>
+            <DropdownMenuSeparator />
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {environments.map((env: Doc<"environments">) => (
-              <DropdownMenuItem
-                key={env._id}
-                className={cn(
-                  "gap-2 cursor-pointer",
-                  env._id === environmentId
-                    ? "bg-accent text-accent-foreground"
-                    : "",
-                )}
-                onClick={() => handleSelectEnvironment(env)}
-              >
-                <EnvironmentDot kind={environmentKind(env)} />
-                {env.name}
-              </DropdownMenuItem>
-            ))}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {environments.map((env: Doc<"environments">) => (
+                <DropdownMenuItem
+                  key={env._id}
+                  className={cn(
+                    "gap-2 cursor-pointer",
+                    env._id === environmentId
+                      ? "bg-accent text-accent-foreground"
+                      : "",
+                  )}
+                  onClick={() => handleSelectEnvironment(env)}
+                >
+                  <EnvironmentDot kind={environmentKind(env)} />
+                  {env.name}
+                </DropdownMenuItem>
+              ))}
 
-            {!productionEnv && (
-              <DropdownMenuItem
-                className="gap-2 cursor-pointer"
-                onClick={handleSelectProductionTarget}
-              >
-                <EnvironmentDot kind="production" />
-                Production
-              </DropdownMenuItem>
-            )}
-          </div>
+              {!productionEnv && (
+                <DropdownMenuItem
+                  className="gap-2 cursor-pointer"
+                  onClick={handleSelectProductionTarget}
+                >
+                  <EnvironmentDot kind="production" />
+                  Production
+                </DropdownMenuItem>
+              )}
+            </div>
+          </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -370,6 +375,10 @@ export function EnvironmentSelector() {
                 <div className="grid gap-2">
                   <Label htmlFor="dup-source">Copy from</Label>
                   <Select
+                    items={environments.map((env: Doc<"environments">) => ({
+                      label: env.name,
+                      value: env._id,
+                    }))}
                     value={duplicateFromId ?? ""}
                     onValueChange={(val) =>
                       setDuplicateFromId(

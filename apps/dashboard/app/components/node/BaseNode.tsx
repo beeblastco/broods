@@ -291,7 +291,7 @@ export function BaseNode({
                 className={`size-3.5 ${isOn ? "text-emerald-500" : "text-muted-foreground"}`}
               />
               {!isOn && (
-                <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground/80" />
+                <Slash className="pointer-events-none absolute size-3.5 text-muted-foreground" />
               )}
             </span>
           );
@@ -341,7 +341,7 @@ export function BaseNode({
                   key={row.key}
                   className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
                 >
-                  <span className="text-muted-foreground/60">+</span>
+                  <span className="text-muted-foreground">+</span>
                   {row.icon}
                   <span>{row.label}</span>
                 </div>
@@ -366,20 +366,20 @@ export function BaseNode({
                   >
                     {workspaceState.sandboxLabels.join(", ")}
                   </span>
-                  <span className="shrink-0 text-muted-foreground/60">
+                  <span className="shrink-0 text-muted-foreground">
                     · mounted
                   </span>
                 </>
               ) : (
                 <>
-                  <CornerDownRight className="size-3 shrink-0 text-muted-foreground/70" />
+                  <CornerDownRight className="size-3 shrink-0 text-muted-foreground" />
                   <span
                     className="truncate text-muted-foreground"
                     title={workspaceState.sandboxLabel}
                   >
                     {workspaceState.sandboxLabel}
                   </span>
-                  <span className="shrink-0 text-muted-foreground/60">
+                  <span className="shrink-0 text-muted-foreground">
                     · inherited
                   </span>
                 </>
@@ -399,7 +399,7 @@ export function BaseNode({
 
       {showStatus && (
         <div className="mt-auto px-3 pt-2 pb-2.5 flex items-center gap-1.5">
-          <div className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />
+          <div className={`size-1.5 rounded-full ${statusColor}`} />
           <span className="text-[11px] text-muted-foreground">
             {statusText}
           </span>

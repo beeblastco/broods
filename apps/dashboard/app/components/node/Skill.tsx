@@ -35,7 +35,7 @@ export function SkillNode({ id, data }: NodeProps) {
       id={id}
       nodeType="skill"
       data={baseData}
-      icon={<Sparkles className="h-3.5 w-3.5" />}
+      icon={<Sparkles className="size-3.5" />}
       cardStatus={agentConfig ? { enabled: enabled } : undefined}
     />
   );

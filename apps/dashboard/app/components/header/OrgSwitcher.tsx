@@ -18,6 +18,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -92,46 +93,46 @@ export function OrgSwitcher() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex select-none items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground cursor-pointer">
-            <Building2 className="size-3.5 text-muted-foreground" />
-            <span className="max-w-40 truncate">{label}</span>
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          </button>
+        <DropdownMenuTrigger className="flex select-none items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground cursor-pointer">
+          <Building2 className="size-3.5 text-muted-foreground" />
+          <span className="max-w-40 truncate">{label}</span>
+          <ChevronDown className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"
           sideOffset={8}
-          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-64 flex-col overflow-hidden"
+          className="flex max-h-[min(24rem,var(--available-height))] w-64 flex-col overflow-hidden"
         >
-          <DropdownMenuLabel className="text-xs text-muted-foreground">
-            Organizations
-          </DropdownMenuLabel>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {orgs === undefined ? (
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                Loading...
-              </div>
-            ) : orgs.length === 0 ? (
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                No organizations yet.
-              </div>
-            ) : (
-              orgs.map((org) => (
-                <DropdownMenuItem
-                  key={org._id}
-                  className="cursor-pointer"
-                  onClick={() => handleSwitch(org._id)}
-                >
-                  <Building2 />
-                  <span className="flex-1 truncate">{org.name}</span>
-                  {active?._id === org._id && (
-                    <Check className="size-3.5 text-muted-foreground" />
-                  )}
-                </DropdownMenuItem>
-              ))
-            )}
-          </div>
+          <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col">
+            <DropdownMenuLabel className="text-xs text-muted-foreground">
+              Organizations
+            </DropdownMenuLabel>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {orgs === undefined ? (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Loading...
+                </div>
+              ) : orgs.length === 0 ? (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                  No organizations yet.
+                </div>
+              ) : (
+                orgs.map((org) => (
+                  <DropdownMenuItem
+                    key={org._id}
+                    className="cursor-pointer"
+                    onClick={() => handleSwitch(org._id)}
+                  >
+                    <Building2 />
+                    <span className="flex-1 truncate">{org.name}</span>
+                    {active?._id === org._id && (
+                      <Check className="size-3.5 text-muted-foreground" />
+                    )}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </div>
+          </DropdownMenuGroup>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             className="cursor-pointer"

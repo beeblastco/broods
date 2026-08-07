@@ -75,7 +75,7 @@ export function BranchEditor({
 
   return (
     <div className="flex flex-col gap-2">
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
         {title}
       </span>
       <Textarea

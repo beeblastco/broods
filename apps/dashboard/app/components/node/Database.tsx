@@ -11,7 +11,7 @@ export function DatabaseNode({ id, data }: NodeProps) {
       id={id}
       nodeType="database"
       data={data as BaseNodeData}
-      icon={<Database className="h-3.5 w-3.5" />}
+      icon={<Database className="size-3.5" />}
       subtitle={
         <span className="text-[11px] text-muted-foreground">
           Conversation store

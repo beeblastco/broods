@@ -164,10 +164,12 @@ export function MembersPanel({ org }: Props) {
                   className="flex-1"
                 />
                 <Select
+                  items={ROLE_LABEL}
                   value={inviteRole}
-                  onValueChange={(v) =>
-                    setInviteRole(v as Exclude<Role, "owner">)
-                  }
+                  onValueChange={(v) => {
+                    if (v === null) return;
+                    setInviteRole(v as Exclude<Role, "owner">);
+                  }}
                 >
                   <SelectTrigger className="w-28 cursor-pointer">
                     <SelectValue />
@@ -250,10 +252,12 @@ export function MembersPanel({ org }: Props) {
                       </Badge>
                     ) : (
                       <Select
+                        items={ROLE_LABEL}
                         value={m.role}
-                        onValueChange={(v) =>
-                          handleRoleChange(m.membershipId, v as Role)
-                        }
+                        onValueChange={(v) => {
+                          if (v === null) return;
+                          handleRoleChange(m.membershipId, v as Role);
+                        }}
                       >
                         <SelectTrigger className="w-28 cursor-pointer">
                           <SelectValue />

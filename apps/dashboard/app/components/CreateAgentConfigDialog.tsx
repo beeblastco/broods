@@ -161,8 +161,12 @@ export function CreateAgentConfigDialog({
             <div className="grid gap-2">
               <Label htmlFor="agent-provider">Provider</Label>
               <Select
+                items={providerOptions}
                 value={provider}
-                onValueChange={(value) => setProvider(value as AgentProvider)}
+                onValueChange={(value) => {
+                  if (value === null) return;
+                  setProvider(value as AgentProvider);
+                }}
               >
                 <SelectTrigger id="agent-provider" className="w-full">
                   <SelectValue />

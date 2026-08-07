@@ -108,7 +108,8 @@ export default function SettingsPage() {
             {TABS.filter((t) => !t.danger).map((t) => (
               <Button
                 key={t.id}
-                asChild
+                nativeButton={false}
+                render={<Link href={tabHref(t.id)} />}
                 variant="ghost"
                 size="sm"
                 className={cn(
@@ -118,7 +119,7 @@ export default function SettingsPage() {
                     : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
                 )}
               >
-                <Link href={tabHref(t.id)}>{t.label}</Link>
+                {t.label}
               </Button>
             ))}
           </div>
@@ -128,7 +129,8 @@ export default function SettingsPage() {
             {TABS.filter((t) => t.id === "danger").map((t) => (
               <Button
                 key={t.id}
-                asChild
+                nativeButton={false}
+                render={<Link href={tabHref(t.id)} />}
                 variant="ghost"
                 size="sm"
                 className={cn(
@@ -138,7 +140,7 @@ export default function SettingsPage() {
                     : "text-destructive/70 hover:text-destructive hover:bg-destructive/10 active:bg-destructive/10",
                 )}
               >
-                <Link href={tabHref(t.id)}>{t.label}</Link>
+                {t.label}
               </Button>
             ))}
           </div>

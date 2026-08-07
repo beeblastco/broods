@@ -95,11 +95,13 @@ function shortFunctionName(name: string): string {
   return name.replace(/-ap-[a-z]+-\d+-\d{6,}$/i, "").replace(/^broods-/, "");
 }
 
+// Both themes per level: the 400 shades only clear WCAG AA on the dark card,
+// the 700 shades only on the light one.
 /** Text color per log level — INFO is now distinctly colored, not muted. */
 function levelColor(level: ObservabilityLogEntry["level"]): string {
-  if (level === "ERROR") return "text-red-400";
-  if (level === "WARN") return "text-amber-400";
-  if (level === "INFO") return "text-sky-400";
+  if (level === "ERROR") return "text-red-700 dark:text-red-400";
+  if (level === "WARN") return "text-amber-700 dark:text-amber-400";
+  if (level === "INFO") return "text-sky-700 dark:text-sky-400";
 
   return "text-muted-foreground";
 }
@@ -137,7 +139,7 @@ function LogRow({
         )}
       >
         <td className="px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular-nums">
-          <span className="text-muted-foreground/60 mr-1">{date}</span>
+          <span className="text-muted-foreground mr-1">{date}</span>
           {time}
         </td>
         <td className="px-3 py-1.5 whitespace-nowrap">
@@ -158,7 +160,7 @@ function LogRow({
           </span>
         </td>
         <td
-          className="px-3 py-1.5 whitespace-nowrap text-muted-foreground/80 max-w-50 truncate"
+          className="px-3 py-1.5 whitespace-nowrap text-muted-foreground max-w-50 truncate"
           title={entry.endpointId}
         >
           {entry.service
@@ -184,7 +186,7 @@ function LogRow({
           <td colSpan={4} className="px-3 py-3">
             <div className="flex flex-col gap-2">
               {entry.traceId && (
-                <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground/70">
+                <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground">
                   <span>trace: {entry.traceId}</span>
                   <button
                     type="button"
@@ -192,7 +194,7 @@ function LogRow({
                       event.stopPropagation();
                       onViewTrace(entry.traceId!);
                     }}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-300 transition-colors hover:border-sky-500/40 hover:text-sky-200"
+                    className="inline-flex cursor-pointer items-center gap-1 rounded border border-border/70 bg-card px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-sky-700 transition-colors hover:border-sky-500/40 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-200"
                   >
                     View trace
                     <ArrowUpRight className="size-3" />
@@ -201,7 +203,7 @@ function LogRow({
               )}
               {entry.endpointId && (
                 <div
-                  className="text-[11px] text-muted-foreground/70 break-all"
+                  className="text-[11px] text-muted-foreground break-all"
                   title={entry.endpointId}
                 >
                   {entry.endpointId}
@@ -335,7 +337,7 @@ export function MonitoringPanel({
               <col />
             </colgroup>
             <thead className="sticky top-0 bg-card/95 backdrop-blur border-b border-border z-10">
-              <tr className="text-left text-muted-foreground/80 text-[11px] uppercase tracking-wide">
+              <tr className="text-left text-muted-foreground text-[11px] uppercase tracking-wide">
                 <th className="px-3 py-2 font-medium">Time</th>
                 <th className="px-3 py-2 font-medium">Level</th>
                 <th className="px-3 py-2 font-medium">Function</th>
@@ -358,7 +360,7 @@ export function MonitoringPanel({
                 <tr>
                   <td
                     colSpan={4}
-                    className="h-32 text-center text-xs text-muted-foreground/60"
+                    className="h-32 text-center text-xs text-muted-foreground"
                   >
                     {entries.length === 0
                       ? "Waiting for logs…"

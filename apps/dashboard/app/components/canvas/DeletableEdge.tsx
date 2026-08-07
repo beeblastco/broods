@@ -131,7 +131,7 @@ export function DeletableEdge({
         {/* Subtle "default" marker at the midpoint; hidden on hover so the delete button takes over */}
         {isDefaultSandbox && !hovered && (
           <div
-            className="nodrag nopan pointer-events-none absolute text-[8px] font-medium uppercase tracking-[0.08em] text-muted-foreground/50"
+            className="nodrag nopan pointer-events-none absolute text-[8px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
             style={{
               transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             }}

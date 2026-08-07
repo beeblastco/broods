@@ -261,7 +261,8 @@ export default function DashboardPage() {
           {TABS.map((t) => (
             <Button
               key={t.id}
-              asChild
+              nativeButton={false}
+              render={<Link href={tabHref(t.id)} />}
               variant="ghost"
               size="sm"
               className={cn(
@@ -271,7 +272,7 @@ export default function DashboardPage() {
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
               )}
             >
-              <Link href={tabHref(t.id)}>{t.label}</Link>
+              {t.label}
             </Button>
           ))}
         </nav>

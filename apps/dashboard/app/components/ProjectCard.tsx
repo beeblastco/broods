@@ -21,7 +21,7 @@ const CanvasPreview = dynamic(
   {
     loading: () => (
       <div className="flex h-full w-full items-center justify-center">
-        <p className="text-xs text-muted-foreground/40">Loading preview...</p>
+        <p className="text-xs text-muted-foreground">Loading preview...</p>
       </div>
     ),
   },

@@ -142,7 +142,7 @@ export function WorkspaceResourceDetailsTab({
         <SectionHeader>Workspace config</SectionHeader>
         <div className="flex items-center justify-between gap-3">
           <span className="text-xs font-medium text-foreground">Storage</span>
-          <Select value="s3" disabled>
+          <Select items={{ s3: "Amazon S3" }} value="s3" disabled>
             <SelectTrigger className="h-8 w-40 cursor-not-allowed text-xs">
               <SelectValue />
             </SelectTrigger>
@@ -519,7 +519,15 @@ function SelectField({
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-xs font-medium text-foreground">{label}</span>
-      <Select value={value} onValueChange={onValueChange}>
+      <Select
+        items={options}
+        value={value}
+        onValueChange={(next) => {
+          if (next !== null) {
+            onValueChange(next);
+          }
+        }}
+      >
         <SelectTrigger className="h-8 w-40 cursor-pointer text-xs">
           <SelectValue />
         </SelectTrigger>

@@ -59,7 +59,7 @@ export default function ProjectsPage() {
 
         {projects.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border py-20 text-center">
-            <Folder className="size-8 text-muted-foreground/50" />
+            <Folder className="size-8 text-muted-foreground" />
             <div className="flex flex-col gap-1">
               <p className="text-sm font-medium text-foreground">
                 No projects yet

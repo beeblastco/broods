@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
   experimental: {
-    optimizePackageImports: ["radix-ui", "@xyflow/react", "lucide-react"],
+    optimizePackageImports: ["@base-ui/react", "@xyflow/react", "lucide-react"],
   },
   async headers() {
     return [
