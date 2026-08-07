@@ -66,7 +66,7 @@ export type AgentProvider =
   | "bedrock"
   | "anthropic"
   | "minimax"
-  | "gateway"
+  | "vercel"
   | "custom";
 type RuntimeVariable = { key: string; value: string };
 
@@ -76,7 +76,7 @@ const providerOptions: Array<{ value: AgentProvider; label: string }> = [
   { value: "bedrock", label: "Bedrock" },
   { value: "anthropic", label: "Anthropic" },
   { value: "minimax", label: "MiniMax" },
-  { value: "gateway", label: "Gateway" },
+  { value: "vercel", label: "Vercel" },
   { value: "custom", label: "Custom OpenAI-compatible" },
 ];
 

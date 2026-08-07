@@ -50,8 +50,8 @@ export function requireHarnessProviderSettings(
   return settings;
 }
 
-export function resolveAnthropicOrGatewayAuth(
-  providerName: "anthropic" | "gateway",
+export function resolveAnthropicOrVercelAuth(
+  providerName: "anthropic" | "vercel",
   provider: AgentProviderSettings,
 ):
   | { anthropic: { apiKey: string; baseUrl?: string } }

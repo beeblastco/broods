@@ -39,7 +39,7 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "other" } }),
     ).toThrow(
-      "config.model.provider must be one of: google, openai, anthropic, bedrock, gateway, minimax, custom",
+      "config.model.provider must be one of: google, openai, anthropic, bedrock, vercel, minimax, custom",
     );
   });
 

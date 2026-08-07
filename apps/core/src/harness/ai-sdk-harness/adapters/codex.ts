@@ -33,10 +33,10 @@ export function createConfiguredCodexAdapter(
   if (
     providerName !== "custom" &&
     providerName !== "openai" &&
-    providerName !== "gateway"
+    providerName !== "vercel"
   ) {
     throw new Error(
-      "config.harness.type codex requires the custom, openai, or gateway model provider",
+      "config.harness.type codex requires the custom, openai, or vercel model provider",
     );
   }
   const provider = requireHarnessProviderSettings(agentConfig, providerName);

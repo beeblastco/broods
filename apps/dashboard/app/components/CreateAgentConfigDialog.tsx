@@ -30,7 +30,7 @@ type AgentProvider =
   | "bedrock"
   | "anthropic"
   | "minimax"
-  | "gateway"
+  | "vercel"
   | "custom";
 
 const providerOptions: Array<{
@@ -52,8 +52,8 @@ const providerOptions: Array<{
   },
   { value: "minimax", label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
   {
-    value: "gateway",
-    label: "Gateway",
+    value: "vercel",
+    label: "Vercel",
     modelPlaceholder: "openai/gpt-4.1-mini",
   },
   {

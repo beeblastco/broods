@@ -51,7 +51,7 @@ export function createConfiguredOpenCodeAdapter(
                 ...(baseUrl ? { baseUrl: baseUrl } : {}),
               },
             }
-          : providerName === "gateway"
+          : providerName === "vercel"
             ? {
                 gateway: {
                   apiKey: provider.apiKey!,
@@ -61,7 +61,7 @@ export function createConfiguredOpenCodeAdapter(
             : undefined;
   if (!auth) {
     throw new Error(
-      "config.harness.type opencode requires the anthropic, custom, gateway, or openai model provider",
+      "config.harness.type opencode requires the anthropic, custom, vercel, or openai model provider",
     );
   }
   const reasoning = agentConfig.model?.reasoning;
