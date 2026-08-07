@@ -21,6 +21,7 @@ import { WorkspaceNode } from "@/app/components/node/Workspace";
 import {
   ContextMenu,
   ContextMenuContent,
+  ContextMenuGroup,
   ContextMenuItem,
   ContextMenuLabel,
   ContextMenuSeparator,
@@ -1101,9 +1102,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             {flow}
           </ContextMenuTrigger>
           <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
-            <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
-              Add service
-            </ContextMenuLabel>
+            <ContextMenuGroup>
+              <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
+                Add service
+              </ContextMenuLabel>
+            </ContextMenuGroup>
             {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
               <Fragment key={type}>
                 {index === NODE_TEMPLATES.length - 1 && (
