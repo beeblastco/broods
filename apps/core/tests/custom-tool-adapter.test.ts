@@ -21,6 +21,10 @@ import { wrapToolsWithOwnerFence } from "../src/harness/tool-execute.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const EXECUTOR_MODULE = "../src/harness/bundles/executor.ts";
+// mock.module live-updates the imported namespace object, so reading it inside
+// the factory would spread the stub back over itself and restore nothing.
+// Snapshot the real exports now, while they are still the real ones.
+const realExecutor = { ...bundlesExecutor };
 
 const streamAccountTool = mock(async function* (
   _options: ExecuteAccountToolOptions,
@@ -33,12 +37,22 @@ const streamAccountTool = mock(async function* (
 // exports, then never restoring it, followed this stub into whichever file ran
 // next — isolate-executor.test.ts saw {step:1},{done:true} from its dispatcher.
 mock.module(EXECUTOR_MODULE, () => ({
-  ...bundlesExecutor,
+  ...realExecutor,
   streamAccountTool: streamAccountTool,
 }));
 
 afterAll(() => {
-  mock.module(EXECUTOR_MODULE, () => bundlesExecutor);
+  mock.module(EXECUTOR_MODULE, () => realExecutor);
+});
+
+// Guards the restore above. Snapshotting after the mock is installed captures
+// the stub, so afterAll puts the stub back and the leak silently survives.
+describe("executor module mock", () => {
+  it("snapshots the real exports before installing the stub", () => {
+    expect(realExecutor.streamAccountTool).not.toBe(streamAccountTool);
+    expect(typeof realExecutor.streamAccountTool).toBe("function");
+    expect(typeof realExecutor.streamInLambda).toBe("function");
+  });
 });
 
 describe("accountTool adapter", () => {
