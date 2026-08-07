@@ -56,7 +56,7 @@ export function UserMenu() {
     return (
       <button
         aria-label="Loading account"
-        className="relative flex size-6 items-center justify-center rounded-full ring-1 ring-white/10"
+        className="relative flex size-6 cursor-not-allowed items-center justify-center rounded-full ring-1 ring-white/10"
         disabled
         type="button"
       >
@@ -85,15 +85,13 @@ export function UserMenu() {
 
   return (
     <DropdownMenu onOpenChange={warmAccountRoutes}>
-      <DropdownMenuTrigger asChild>
-        <button className="relative flex size-6 items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-[state=open]:ring-2 data-[state=open]:ring-white/40">
-          <Avatar size="sm">
-            {picture && <AvatarImage src={picture} alt={name} />}
-            <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
-              {initials}
-            </AvatarFallback>
-          </Avatar>
-        </button>
+      <DropdownMenuTrigger className="relative flex size-6 cursor-pointer items-center justify-center rounded-full ring-1 ring-white/10 transition-all hover:ring-white/25 focus:outline-none data-popup-open:ring-2 data-popup-open:ring-white/40">
+        <Avatar size="sm">
+          {picture && <AvatarImage src={picture} alt={name} />}
+          <AvatarFallback className="bg-muted text-[10px] font-medium text-muted-foreground">
+            {initials}
+          </AvatarFallback>
+        </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={8} className="w-56">
         <DropdownMenuLabel className="font-normal">
@@ -108,7 +106,8 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem
-          onSelect={(e) => e.preventDefault()}
+          closeOnClick={false}
+          className="cursor-pointer"
           onClick={() => setTheme(isDark ? "light" : "dark")}
         >
           {isDark ? <Sun /> : <Moon />}
@@ -129,35 +128,44 @@ export function UserMenu() {
           Organization
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="cursor-pointer" asChild>
-          <a
-            href="https://docs.broods.app/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <FileText />
-            Documents
-          </a>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          render={
+            <a
+              href="https://docs.broods.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+        >
+          <FileText />
+          Documents
         </DropdownMenuItem>
-        <DropdownMenuItem className="cursor-pointer" asChild>
-          <a
-            href="https://broods.app/terms"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <ScrollText />
-            Terms of Service
-          </a>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          render={
+            <a
+              href="https://broods.app/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+        >
+          <ScrollText />
+          Terms of Service
         </DropdownMenuItem>
-        <DropdownMenuItem className="cursor-pointer" asChild>
-          <a
-            href="https://broods.app/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Shield />
-            Privacy Policy
-          </a>
+        <DropdownMenuItem
+          className="cursor-pointer"
+          render={
+            <a
+              href="https://broods.app/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+            />
+          }
+        >
+          <Shield />
+          Privacy Policy
         </DropdownMenuItem>
         <DropdownMenuItem>
           <HelpCircle />

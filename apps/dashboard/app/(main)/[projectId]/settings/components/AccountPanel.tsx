@@ -275,15 +275,19 @@ export function AccountPanel() {
                 {planConfig.label}
               </Badge>
               {showUpgrade && (
-                <Button size="xs" asChild>
-                  <a
-                    href={UPGRADE_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Upgrade
-                    <ArrowUpRight className="size-3" />
-                  </a>
+                <Button
+                  size="xs"
+                  nativeButton={false}
+                  render={
+                    <a
+                      href={UPGRADE_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  }
+                >
+                  Upgrade
+                  <ArrowUpRight className="size-3" />
                 </Button>
               )}
             </div>

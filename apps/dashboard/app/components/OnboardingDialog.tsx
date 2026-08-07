@@ -142,14 +142,12 @@ export function OnboardingDialog({ secret, onDone }: Props) {
   ];
 
   return (
-    <Dialog open>
-      <DialogContent
-        showCloseButton={false}
-        onEscapeKeyDown={(event) => event.preventDefault()}
-        onPointerDownOutside={(event) => event.preventDefault()}
-        onInteractOutside={(event) => event.preventDefault()}
-        className="sm:max-w-lg"
-      >
+    <Dialog
+      open
+      disablePointerDismissal
+      onOpenChange={(_open, eventDetails) => eventDetails.cancel()}
+    >
+      <DialogContent showCloseButton={false} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{titles[step]}</DialogTitle>
           <DialogDescription>{descriptions[step]}</DialogDescription>

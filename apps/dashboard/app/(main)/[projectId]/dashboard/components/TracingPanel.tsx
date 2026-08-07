@@ -136,22 +136,28 @@ function isStale(span: ObservabilitySpanRow, taskRunning: boolean): boolean {
   return span.status === "running" && !taskRunning;
 }
 
+// The hue carries meaning here, so each tone needs both themes: the 300/400
+// shades only clear WCAG AA on the dark card, the 700 shades only on the light.
 /** Text color per span status — shared cue with the logs panel. */
 function statusColor(status: ObservabilitySpanRow["status"]): string {
-  if (status === "running") return "text-sky-400";
-  if (status === "error") return "text-red-400";
+  if (status === "running") return "text-sky-700 dark:text-sky-400";
+  if (status === "error") return "text-red-700 dark:text-red-400";
 
-  return "text-emerald-400";
+  return "text-emerald-700 dark:text-emerald-400";
 }
 
 /** Pill style per span kind so the hierarchy reads at a glance. */
 function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
-  if (kind === "task") return "bg-violet-500/15 text-violet-300";
-  if (kind === "subtask") return "bg-fuchsia-500/15 text-fuchsia-300";
-  if (kind === "model.step") return "bg-sky-500/15 text-sky-300";
-  if (kind === "phase") return "bg-teal-500/15 text-teal-300";
+  if (kind === "task")
+    return "bg-violet-500/15 text-violet-700 dark:text-violet-300";
+  if (kind === "subtask")
+    return "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300";
+  if (kind === "model.step")
+    return "bg-sky-500/15 text-sky-700 dark:text-sky-300";
+  if (kind === "phase")
+    return "bg-teal-500/15 text-teal-700 dark:text-teal-300";
 
-  return "bg-amber-500/15 text-amber-300";
+  return "bg-amber-500/15 text-amber-700 dark:text-amber-300";
 }
 
 /** Solid waterfall-bar fill per kind; mirrors the badge hues. */
@@ -253,7 +259,7 @@ function SpanStatusIcon({
 }) {
   if (span.status === "running" && !isStale(span, taskRunning)) {
     return (
-      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-400" />
+      <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-700 dark:text-sky-400" />
     );
   }
 
@@ -415,7 +421,9 @@ function TimingChip({
   return (
     <span>
       {label}{" "}
-      <span className={tone ?? "text-sky-300"}>{formatDuration(ms)}</span>
+      <span className={tone ?? "text-sky-700 dark:text-sky-300"}>
+        {formatDuration(ms)}
+      </span>
     </span>
   );
 }
@@ -449,7 +457,7 @@ function SpanDetails({
       style={{ paddingLeft: depth * 18 + 28 }}
     >
       {span.kind === "task" && (
-        <div className="text-[11px] font-mono text-muted-foreground/70">
+        <div className="text-[11px] font-mono text-muted-foreground">
           trace: {span.traceId} · agent: {span.agentId ?? "unknown"} ·{" "}
           {span.conversationKey ?? "no conversation"}
         </div>
@@ -469,33 +477,33 @@ function SpanDetails({
                   ? toolWaitMs
                   : undefined
               }
-              tone="text-amber-300"
+              tone="text-amber-700 dark:text-amber-300"
             />
           </div>
           {(reasoningMs > 0 || textMs > 0 || toolInputMs > 0) && (
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground/70">
-              <span className="text-muted-foreground/50">streamed:</span>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+              <span className="text-muted-foreground">streamed:</span>
               <TimingChip
                 label="reasoning"
                 ms={reasoningMs > 0 ? reasoningMs : undefined}
-                tone="text-teal-300"
+                tone="text-teal-700 dark:text-teal-300"
               />
               <TimingChip
                 label="text"
                 ms={textMs > 0 ? textMs : undefined}
-                tone="text-teal-300"
+                tone="text-teal-700 dark:text-teal-300"
               />
               <TimingChip
                 label="tool input"
                 ms={toolInputMs > 0 ? toolInputMs : undefined}
-                tone="text-teal-300"
+                tone="text-teal-700 dark:text-teal-300"
               />
             </div>
           )}
         </div>
       )}
       {span.error && (
-        <div className="rounded-md bg-red-950/20 px-3 py-2 text-xs text-red-400">
+        <div className="rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:bg-red-950/20 dark:text-red-400">
           {span.error}
         </div>
       )}
@@ -510,7 +518,7 @@ function SpanDetails({
                 <span className="flex-1 normal-case tracking-normal">
                   {label}
                 </span>
-                <span className="font-mono text-[10px] text-muted-foreground/60">
+                <span className="font-mono text-[10px] text-muted-foreground">
                   {value.length.toLocaleString()} chars
                 </span>
               </summary>
@@ -579,7 +587,7 @@ function SpanRow({
       )}
     >
       <td
-        className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80"
+        className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground"
         title={new Date(span.startTimeMs).toLocaleString()}
       >
         {formatDateTime(span.startTimeMs)}
@@ -605,7 +613,7 @@ function SpanRow({
                     {" · "}
                     <button
                       type="button"
-                      className="cursor-pointer text-fuchsia-300 hover:underline"
+                      className="cursor-pointer text-fuchsia-700 hover:underline dark:text-fuchsia-300"
                       onClick={(event) => {
                         event.stopPropagation();
                         onFocusTrace(parentTraceId);
@@ -634,12 +642,12 @@ function SpanRow({
       <td
         className={cn(
           "px-3 py-1.5 whitespace-nowrap font-medium",
-          stale ? "text-muted-foreground/60" : statusColor(span.status),
+          stale ? "text-muted-foreground" : statusColor(span.status),
         )}
       >
         {stale ? "ended" : span.status}
       </td>
-      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground/80">
+      <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-muted-foreground">
         {span.durationMs > 0 ? formatDuration(span.durationMs) : "—"}
       </td>
       <td className="px-3 py-1.5">
@@ -922,7 +930,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
               <col />
             </colgroup>
             <thead className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur">
-              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground/80">
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Started</th>
                 <th className="px-3 py-2 font-medium">Task / Span</th>
                 <th className="px-3 py-2 font-medium">Kind</th>
@@ -949,7 +957,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
                 <tr>
                   <td
                     colSpan={6}
-                    className="h-32 text-center text-xs text-muted-foreground/60"
+                    className="h-32 text-center text-xs text-muted-foreground"
                   >
                     {entries.length === 0
                       ? "Waiting for traces…"

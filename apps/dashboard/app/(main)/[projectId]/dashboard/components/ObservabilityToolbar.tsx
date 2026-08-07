@@ -72,7 +72,15 @@ export function ObservabilityToolbar({
         />
       </div>
 
-      <Select value={filterValue} onValueChange={onFilterChange}>
+      <Select
+        items={filterOptions}
+        value={filterValue}
+        onValueChange={(value) => {
+          if (value !== null) {
+            onFilterChange(value);
+          }
+        }}
+      >
         <SelectTrigger
           size="sm"
           aria-label={filterAriaLabel}

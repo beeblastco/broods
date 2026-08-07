@@ -434,7 +434,7 @@ const MessageBubble = memo(function MessageBubble({
   return (
     <div className="flex items-start gap-2">
       <AgentAvatar color={avatarColor} label={avatarLabel} />
-      <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         {subagentSpeaker && !panelPartInMessage && (
           <p className="text-xs font-medium text-muted-foreground">
             Subagent {subagentSpeaker.agentName}
@@ -557,8 +557,8 @@ function SubagentPanelBlock({
 
   return (
     <Collapsible open={open} onOpenChange={setUserOverride}>
-      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/5 px-2 py-1.5 text-xs hover:bg-cyan-500/10 transition-colors">
-        <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/5 px-2 py-1.5 text-xs hover:bg-cyan-500/10 transition-colors">
+        <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
         <Wrench className="size-3 shrink-0" />
         <span className="font-medium text-foreground">
           {agentName ? `Subagent ${agentName}` : "Subagent"}
@@ -577,11 +577,11 @@ function SubagentPanelBlock({
           className="ml-5 mt-1 max-h-40 space-y-2 overflow-y-auto overflow-x-auto rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2.5 py-2"
         >
           {events.length > 0 && (
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               {events.map((event, index) => (
                 <p
                   key={`subagent-event-${index}`}
-                  className="text-[11px] text-cyan-200/90 wrap-break-word"
+                  className="text-[11px] text-cyan-700 wrap-break-word dark:text-cyan-200/90"
                 >
                   {event.text}
                 </p>
@@ -623,8 +623,8 @@ function ReasoningBlock({
 
   return (
     <Collapsible open={open} onOpenChange={setUserOverride}>
-      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
-        <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted/50 transition-colors">
+        <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
         <span className="font-medium">
           {isStreaming ? "Thinking..." : "Thinking"}
         </span>
@@ -670,7 +670,7 @@ function ToolInvocationBlock({
   return (
     <Collapsible open={open} onOpenChange={setUserOverride}>
       <CollapsibleTrigger
-        className={`group flex w-full items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+        className={`group flex w-full cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors ${
           isError
             ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10"
             : hasOutput
@@ -678,7 +678,7 @@ function ToolInvocationBlock({
               : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10"
         }`}
       >
-        <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+        <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
         <Wrench className="size-3 shrink-0" />
         <span className="font-medium text-foreground">{toolName}</span>
         <span className="ml-auto flex items-center gap-1.5 text-muted-foreground">
@@ -693,10 +693,10 @@ function ToolInvocationBlock({
         )}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="ml-5 mt-1 space-y-1.5">
+        <div className="ml-5 mt-1 flex flex-col gap-1.5">
           {/* Tool call request */}
           <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-2">
-            <p className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-blue-400">
+            <p className="mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-blue-700 dark:text-blue-400">
               <Terminal className="size-2.5" />
               Request
             </p>
@@ -716,7 +716,9 @@ function ToolInvocationBlock({
             >
               <p
                 className={`mb-1 flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider ${
-                  isError ? "text-red-400" : "text-emerald-400"
+                  isError
+                    ? "text-red-700 dark:text-red-400"
+                    : "text-emerald-700 dark:text-emerald-400"
                 }`}
               >
                 <Terminal className="size-2.5" />
@@ -741,9 +743,9 @@ function ThinkingIndicator({ nodeColor }: { nodeColor?: string }) {
       <div className="flex items-center gap-1 text-sm text-muted-foreground">
         <span className="animate-pulse">Thinking</span>
         <span className="inline-flex">
-          <span className="animate-bounce [animation-delay:0ms]">.</span>
-          <span className="animate-bounce [animation-delay:150ms]">.</span>
-          <span className="animate-bounce [animation-delay:300ms]">.</span>
+          <span className="animate-pulse [animation-delay:0ms]">.</span>
+          <span className="animate-pulse [animation-delay:150ms]">.</span>
+          <span className="animate-pulse [animation-delay:300ms]">.</span>
         </span>
       </div>
     </div>

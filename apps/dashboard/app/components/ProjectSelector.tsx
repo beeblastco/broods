@@ -6,6 +6,7 @@ import { Button } from "@/app/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -76,43 +77,49 @@ export function ProjectSelector() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-[state=open]:bg-accent data-[state=open]:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
-          >
-            <span className="truncate block">{displayName}</span>
-            <ChevronDown className="size-3.5 text-muted-foreground" />
-          </Button>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 data-popup-open:bg-accent data-popup-open:text-foreground focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+            />
+          }
+        >
+          <span className="truncate block">{displayName}</span>
+          <ChevronDown className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
 
         <DropdownMenuContent
           align="start"
           sideOffset={8}
-          className="flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-72 flex-col overflow-hidden"
+          className="flex max-h-[min(24rem,var(--available-height))] w-72 flex-col overflow-hidden"
         >
-          <DropdownMenuLabel>{projectsLabel}</DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col">
+            <DropdownMenuLabel>{projectsLabel}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {projects.map((project: Doc<"projects">) => (
-              <DropdownMenuItem
-                key={project._id}
-                onClick={() => router.push(`/${project._id}`)}
-                onMouseEnter={() => prefetchProject(project._id)}
-                onFocus={() => prefetchProject(project._id)}
-                className={cn(
-                  "cursor-pointer",
-                  project._id === currentProjectId
-                    ? "bg-accent text-accent-foreground"
-                    : "",
-                )}
-              >
-                <Folder className="size-4" />
-                <span className="truncate max-w-60 block">{project.name}</span>
-              </DropdownMenuItem>
-            ))}
-          </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {projects.map((project: Doc<"projects">) => (
+                <DropdownMenuItem
+                  key={project._id}
+                  onClick={() => router.push(`/${project._id}`)}
+                  onMouseEnter={() => prefetchProject(project._id)}
+                  onFocus={() => prefetchProject(project._id)}
+                  className={cn(
+                    "cursor-pointer",
+                    project._id === currentProjectId
+                      ? "bg-accent text-accent-foreground"
+                      : "",
+                  )}
+                >
+                  <Folder className="size-4" />
+                  <span className="truncate max-w-60 block">
+                    {project.name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+            </div>
+          </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setDialogOpen(true)}>

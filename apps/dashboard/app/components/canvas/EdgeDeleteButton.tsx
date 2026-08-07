@@ -41,7 +41,7 @@ export function EdgeDeleteButton({
         className="flex cursor-pointer items-center justify-center rounded-md border bg-card p-1 text-red-500 opacity-0 shadow-sm transition-all group-hover:opacity-100 hover:scale-110 hover:border-red-500/50"
         onClick={onDelete}
       >
-        <Trash2 className="h-4 w-4" />
+        <Trash2 className="size-4" />
       </button>
     </div>
   );

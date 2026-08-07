@@ -16,7 +16,7 @@ export function WorkspaceNode({ id, data }: NodeProps) {
       id={id}
       nodeType="workspace"
       data={nodeData}
-      icon={<FolderOpen className="h-3.5 w-3.5" />}
+      icon={<FolderOpen className="size-3.5" />}
       showSideHandles={true}
     />
   );

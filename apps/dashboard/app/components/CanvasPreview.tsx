@@ -100,7 +100,7 @@ export function CanvasPreview({
   if (!canvas || canvas.nodes.length === 0) {
     return (
       <div className="flex h-full w-full items-center justify-center">
-        <p className="text-xs text-muted-foreground/40">No architecture yet</p>
+        <p className="text-xs text-muted-foreground">No architecture yet</p>
       </div>
     );
   }

@@ -21,7 +21,7 @@ export function ObservabilityKeyPrompt({
       <div className="rounded-full border border-border bg-muted/40 p-3">
         <KeyRound className="size-5 text-muted-foreground" />
       </div>
-      <div className="space-y-1">
+      <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">Generate a viewing key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
           Streaming logs and traces needs this environment&apos;s runtime API

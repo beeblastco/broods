@@ -13,6 +13,7 @@ export function CanvasControls() {
         variant="ghost"
         size="icon-sm"
         className="size-7"
+        aria-label="Zoom in"
         onClick={() => zoomIn()}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -28,6 +29,7 @@ export function CanvasControls() {
         variant="ghost"
         size="icon-sm"
         className="size-7"
+        aria-label="Zoom out"
         onClick={() => zoomOut()}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -44,6 +46,7 @@ export function CanvasControls() {
         variant="ghost"
         size="icon-sm"
         className="size-7"
+        aria-label="Fit view"
         onClick={() => fitView()}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">

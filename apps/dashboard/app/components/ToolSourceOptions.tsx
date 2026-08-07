@@ -25,7 +25,7 @@ export function ToolSourceOptions({
           onClick={() => onSelect(key)}
           className="h-auto justify-start gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground"
         >
-          <Icon className="size-4 shrink-0 text-muted-foreground/60" />
+          <Icon className="size-4 shrink-0 text-muted-foreground" />
           {label}
         </Button>
       ))}

@@ -347,9 +347,9 @@ function TreeRow({
         {/* icon */}
         {node.isFolder ? (
           isExpanded ? (
-            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-400" />
+            <FolderOpen className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
           ) : (
-            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-400" />
+            <Folder className="mr-1.5 size-3.5 shrink-0 text-yellow-700 dark:text-yellow-400" />
           )
         ) : (
           <ExtIcon name={node.name} />
@@ -379,7 +379,7 @@ function TreeRow({
           node.sizeBytes !== undefined &&
           isSelected &&
           !isRenaming && (
-            <span className="mr-1 shrink-0 text-[10px] text-muted-foreground/60">
+            <span className="mr-1 shrink-0 text-[10px] text-muted-foreground">
               {formatBytes(node.sizeBytes)}
             </span>
           )}
@@ -393,7 +393,7 @@ function TreeRow({
             )}
           >
             {isUploading ? (
-              <Loader2 className="size-3.5 animate-spin text-muted-foreground/60" />
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
             ) : (
               <>
                 <Button
@@ -1004,18 +1004,18 @@ export function WorkspaceFilesTab({
       <div className="flex-1 overflow-y-auto">
         {files === undefined ? (
           <div className="flex items-center justify-center py-10">
-            <Loader2 className="size-4 animate-spin text-muted-foreground/50" />
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
           </div>
         ) : tree.length === 0 && uploading.size === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
             <div className="flex size-10 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
-              <Upload className="size-4 text-muted-foreground/50" />
+              <Upload className="size-4 text-muted-foreground" />
             </div>
             <div className="flex flex-col gap-1">
               <p className="text-[12px] font-medium text-foreground/70">
                 No files yet
               </p>
-              <p className="text-[11px] text-muted-foreground/60">
+              <p className="text-[11px] text-muted-foreground">
                 Drop files or folders here, or use the buttons above.
               </p>
             </div>
@@ -1049,7 +1049,7 @@ export function WorkspaceFilesTab({
               return (
                 <div
                   key={`uploading-${path}`}
-                  className="flex h-5.5 items-center gap-1.5 text-[12px] text-muted-foreground/60"
+                  className="flex h-5.5 items-center gap-1.5 text-[12px] text-muted-foreground"
                   style={{ paddingLeft: "20px" }}
                 >
                   <Loader2 className="size-3 animate-spin" />
