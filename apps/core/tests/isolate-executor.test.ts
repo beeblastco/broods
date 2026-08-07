@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it, mock } from "bun:test";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -688,15 +689,18 @@ describe("streamIsolatePayload cross-process abort", () => {
     const dir = await mkdtemp(join(tmpdir(), "broods-runner-stub-"));
     created.push(dir);
     const stubPath = join(dir, "stub-runner.mjs");
+    const readyPath = join(dir, "ready");
     await writeFile(
       stubPath,
       [
+        `import { writeFileSync } from "node:fs";`,
         "process.stdin.resume();",
         "process.stdin.on('data', () => {});",
         "process.on('SIGUSR2', () => {",
         "  process.stdout.write(JSON.stringify({ t: 'final', result: { aborted: true } }) + '\\n');",
         "  process.exit(0);",
         "});",
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
         "setTimeout(() => process.exit(3), 5000);",
       ].join("\n"),
       "utf8",
@@ -707,7 +711,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     const { streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 150);
+    const aborted = abortWhenReady(readyPath, controller);
 
     const outputs: unknown[] = [];
     for await (const output of streamIsolatePayload(
@@ -723,6 +727,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     )) {
       outputs.push(output);
     }
+    await aborted;
 
     expect(outputs).toEqual([{ aborted: true }]);
   });
@@ -733,9 +738,11 @@ describe("streamIsolatePayload cross-process abort", () => {
     const dir = await mkdtemp(join(tmpdir(), "broods-pool-stub-"));
     created.push(dir);
     const stubPath = join(dir, "stub-pool-runner.mjs");
+    const readyPath = join(dir, "ready");
     await writeFile(
       stubPath,
       [
+        `import { writeFileSync } from "node:fs";`,
         "process.stdout.write(JSON.stringify({ t: 'ready' }) + '\\n');",
         "let callId;",
         "process.stdin.setEncoding('utf8');",
@@ -749,6 +756,7 @@ describe("streamIsolatePayload cross-process abort", () => {
         "  process.stdout.write(JSON.stringify({ t: 'final', callId, result: { aborted: true } }) + '\\n');",
         "  process.exit(0);",
         "});",
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
         "setTimeout(() => process.exit(3), 5000);",
       ].join("\n"),
       "utf8",
@@ -759,7 +767,7 @@ describe("streamIsolatePayload cross-process abort", () => {
     const { shutdownIsolatePool, streamIsolatePayload } =
       await import("../src/harness/isolate/executor.ts");
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 150);
+    const aborted = abortWhenReady(readyPath, controller);
 
     const outputs: unknown[] = [];
     try {
@@ -781,6 +789,7 @@ describe("streamIsolatePayload cross-process abort", () => {
       // rest of the run: the pool outlives this file.
       shutdownIsolatePool();
     }
+    await aborted;
 
     expect(outputs).toEqual([{ aborted: true }]);
   });
@@ -906,6 +915,19 @@ describe("streamIsolatePayload cross-process abort", () => {
     }
   });
 });
+
+// A fixed timer here raced the runner's startup: abort before the stub installs
+// its SIGUSR2 handler and the default disposition kills it, so no final frame.
+async function abortWhenReady(
+  readyPath: string,
+  controller: AbortController,
+): Promise<void> {
+  const deadline = Date.now() + 4_000;
+  while (!existsSync(readyPath) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  controller.abort();
+}
 
 async function runPoolRunner(
   requests: Array<{
