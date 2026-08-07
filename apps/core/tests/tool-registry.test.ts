@@ -173,7 +173,6 @@ describe("createTools", () => {
 
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
-      "download_url",
       "edit",
       "glob",
       "grep",
@@ -202,7 +201,6 @@ describe("createTools", () => {
 
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
-      "download_url",
       "edit",
       "glob",
       "grep",
@@ -257,7 +255,7 @@ describe("createTools", () => {
       {},
     );
 
-    expect(Object.keys(tools).sort()).toEqual(["download_url", "glob", "read"]);
+    expect(Object.keys(tools).sort()).toEqual(["glob", "read"]);
     expect(await needsApproval(tools.read)).toBe(false);
     expect(await needsApproval(tools.glob)).toBe(false);
   });
@@ -290,10 +288,9 @@ describe("createTools", () => {
     );
 
     // bash/write/edit/grep/memory_save exist for the sandbox-backed workspace;
-    // read/glob/download_url span both.
+    // read/glob span both.
     expect(Object.keys(tools).sort()).toEqual([
       "bash",
-      "download_url",
       "edit",
       "glob",
       "grep",
