@@ -167,3 +167,43 @@ describe("bundle-size upload gate", () => {
     );
   });
 });
+
+describe("canvas save path", () => {
+  // The dashboard saves a partial upload, so it classifies the tier itself and
+  // passes it in. `requireBundle: false` never infers one — a save that stopped
+  // sending it would silently fall back to whatever the row already held.
+  it("returns the classified tier and hash for a partial upload", async () => {
+    const bundle =
+      "import fs from 'node:fs';\nexport default { execute: () => fs };";
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "canvas_tool",
+          bundle: bundle,
+          runtime: inferAccountToolRuntime(bundle),
+        },
+        { requireBundle: false },
+      ),
+    ).resolves.toMatchObject({
+      name: "canvas_tool",
+      runtime: "sandbox",
+      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+  });
+
+  it("bounds a partial upload by the tier it was classified onto", async () => {
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "canvas_tool",
+          bundle: bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1),
+          runtime: "isolate",
+        },
+        { requireBundle: false },
+      ),
+    ).rejects.toThrow(
+      `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
+    );
+  });
+});
