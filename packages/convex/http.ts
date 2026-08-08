@@ -197,6 +197,7 @@ async function handleStripeWebhook(
 
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
+
     return new Response("Missing Stripe signature", { status: 400 });
   }
 
@@ -218,6 +219,7 @@ async function handleStripeWebhook(
     event.data.object.object === "invoice" &&
     event.data.object.customer === null
   ) {
+
     return Response.json({ received: true });
   }
 
