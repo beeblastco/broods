@@ -14,6 +14,10 @@ import {
   query,
 } from "./_generated/server";
 import { authKit } from "./auth";
+import {
+  inferAccountToolRuntime,
+  normalizeAccountToolUpload,
+} from "./model/accountTools";
 import { putToolBundle } from "./model/bundles";
 import { getOwnedEnvironment } from "./model/ownership/environment";
 import { getOwnedProject } from "./model/ownership/project";
@@ -21,7 +25,6 @@ import { accountToolsFields } from "./schema";
 
 const MAX_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_INPUT_BYTES = 256 * 1024;
-const MAX_TOOL_SOURCE_BYTES = 256 * 1024;
 const MAX_TOOL_OUTPUT_BYTES = 1024 * 1024;
 
 const toolDoc = v.object({
@@ -112,16 +115,6 @@ export const saveForNode = action({
   },
   returns: v.id("accountTools"),
   handler: async (ctx, args): Promise<Id<"accountTools">> => {
-    if (
-      args.sourceCode &&
-      new TextEncoder().encode(args.sourceCode).byteLength >
-        MAX_TOOL_SOURCE_BYTES
-    ) {
-      throw new Error(
-        `Tool source code must be ${MAX_TOOL_SOURCE_BYTES} bytes or smaller.`,
-      );
-    }
-
     const context = await ctx.runQuery(internal.toolService.nodeContext, {
       projectId: args.projectId,
       environmentId: args.environmentId,
@@ -134,8 +127,30 @@ export const saveForNode = action({
     if (!sourceCode.trim()) {
       throw new Error("Write the tool source before saving it.");
     }
+
+    // The same gate the CLI upload runs, so a tool authored here is bound by the
+    // tier it will execute on. Left unclassified, canvas tools defaulted to the
+    // isolate and any node/npm source among them died on the agent's first call.
+    const upload = await normalizeAccountToolUpload(
+      {
+        name: toolName(args.nodeLabel),
+        bundle: sourceCode,
+        runtime: args.runtime ?? inferAccountToolRuntime(sourceCode),
+        ...(args.description !== undefined
+          ? { description: args.description }
+          : {}),
+        ...(args.inputSchema !== undefined
+          ? { inputSchema: args.inputSchema }
+          : {}),
+      },
+      {
+        requireBundle: false,
+        currentRuntime: context.existing?.runtime,
+      },
+    );
+    const sha256 = upload.sha256!;
+    const runtime = upload.runtime!;
     // Only re-upload when the source actually changed; the key is the digest.
-    const sha256 = await digest(sourceCode);
     const bundleStorageKey =
       context.existing && context.existing.sha256 === sha256
         ? context.existing.bundleStorageKey
@@ -154,13 +169,13 @@ export const saveForNode = action({
       sourceCode: sourceCode,
       sha256: sha256,
       bundleStorageKey: bundleStorageKey,
-      ...(args.description !== undefined
-        ? { description: args.description }
+      runtime: runtime,
+      ...(upload.description !== undefined
+        ? { description: upload.description }
         : {}),
-      ...(args.inputSchema !== undefined
-        ? { inputSchema: args.inputSchema }
+      ...(upload.inputSchema !== undefined
+        ? { inputSchema: upload.inputSchema }
         : {}),
-      ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
       ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
     });
   },
@@ -347,7 +362,9 @@ export const upsertForNode = internalMutation({
     bundleStorageKey: v.string(),
     description: v.optional(v.string()),
     inputSchema: v.optional(v.any()),
-    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+    // Required: the caller classifies the bundle, so there is no default tier
+    // left to guess wrong.
+    runtime: v.union(v.literal("isolate"), v.literal("sandbox")),
     disabled: v.optional(v.boolean()),
   },
   returns: v.id("accountTools"),
@@ -377,7 +394,7 @@ export const upsertForNode = internalMutation({
         ...(args.inputSchema !== undefined
           ? { inputSchema: args.inputSchema }
           : {}),
-        ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+        runtime: args.runtime,
         ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
         updatedAt: now,
       });
@@ -399,7 +416,7 @@ export const upsertForNode = internalMutation({
       bundleStorageKey: args.bundleStorageKey,
       sha256: args.sha256,
       sourceCode: args.sourceCode,
-      runtime: args.runtime ?? "isolate",
+      runtime: args.runtime,
       disabled: args.disabled,
       status: "active",
       createdAt: now,
@@ -427,17 +444,6 @@ export const removeForNode = internalMutation({
     return null;
   },
 });
-
-async function digest(source: string): Promise<string> {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(source),
-  );
-
-  return [...new Uint8Array(bytes)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** The model calls a tool by name, so a canvas label has to become an identifier. */
 function toolName(label: string): string {

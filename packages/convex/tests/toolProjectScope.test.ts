@@ -272,6 +272,7 @@ describe("migrations.deleteOrphanedTools", () => {
       sourceCode: "export default () => 1;",
       sha256: "b".repeat(64),
       bundleStorageKey: `tools/${TOOL_NAME}.mjs`,
+      runtime: "isolate" as const,
     });
     // A row the REST delete tombstoned, left unscoped by the old sync path.
     await tt.run(async (ctx) => {
@@ -292,6 +293,7 @@ describe("migrations.deleteOrphanedTools", () => {
         sourceCode: "export default () => 2;",
         sha256: "c".repeat(64),
         bundleStorageKey: `tools/${TOOL_NAME}.mjs`,
+        runtime: "isolate" as const,
       }),
     ).toEqual(toolId);
 

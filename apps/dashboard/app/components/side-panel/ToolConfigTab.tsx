@@ -33,6 +33,19 @@ const TOOL_OPTIONS_PLACEHOLDER = JSON.stringify(
   2,
 );
 
+const INPUT_SCHEMA_PLACEHOLDER = JSON.stringify(
+  {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "What to look up." },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  null,
+  2,
+);
+
 const DEFAULT_SOURCE = [
   "export async function handler(input) {",
   "  // Executor entrypoint: this function is called as handler(input).",
@@ -248,6 +261,26 @@ export function ToolConfigTab({
         </p>
       )}
 
+      {/* An uploaded tool carries the schema its project declared. Everything
+          else needs one here, or the model is offered a tool with no arguments. */}
+      {!isBundleManaged && (
+        <BranchEditor
+          title="Input Schema"
+          value={toolService?.inputSchema}
+          placeholder={INPUT_SCHEMA_PLACEHOLDER}
+          onSave={async (value) => {
+            if (!projectId || !environmentId) return;
+            await upsertToolService({
+              projectId: projectId,
+              environmentId: environmentId,
+              nodeId: nodeId,
+              nodeLabel: nodeLabel,
+              inputSchema: value ?? {},
+            });
+          }}
+        />
+      )}
+
       {isBundleManaged ? (
         <>
           <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -320,6 +353,15 @@ export function ToolConfigTab({
             </a>
             ).
           </p>
+          {toolService && (
+            <p className="text-[11px] text-muted-foreground">
+              Saved to the{" "}
+              <code className="text-foreground">{toolService.runtime}</code>{" "}
+              tier. Code reaching node builtins, <code>require</code>, or an npm
+              import runs in the sandbox; everything else runs in the V8
+              isolate.
+            </p>
+          )}
 
           <Textarea
             value={sourceCode}
