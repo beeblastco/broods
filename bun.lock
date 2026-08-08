@@ -205,6 +205,7 @@
         "@convex-dev/stripe": "^0.1.6",
         "@convex-dev/workos-authkit": "^0.2.7",
         "convex": "^1.42.3",
+        "stripe": "^22.2.1",
       },
       "devDependencies": {
         "@edge-runtime/vm": "^5.0.0",
