@@ -104,10 +104,22 @@ export function ToolConfigTab({
     return tools[toolKey] ?? {};
   }, [agentConfig, toolKey]);
 
+  const bundleUrlForNode = useAction(api.toolService.bundleUrlForNode);
+
   const [sourceCode, setSourceCode] = useState(DEFAULT_SOURCE);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedToastVisible, setSavedToastVisible] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  // The CLI bundles a tool locally and uploads the artifact, so an uploaded row
+  // carries no source. Editing here would bundle this tab's placeholder over
+  // the real tool, so the editor gives way to the bundle it actually runs.
+  const isBundleManaged =
+    toolService !== null &&
+    toolService !== undefined &&
+    toolService.sourceCode === undefined;
 
   const currentSource = toolService?.sourceCode ?? DEFAULT_SOURCE;
   const [syncedSource, setSyncedSource] = useState(currentSource);
@@ -120,6 +132,29 @@ export function ToolConfigTab({
   }
 
   const hasUnsavedChanges = sourceCode !== currentSource;
+
+  async function handleDownload() {
+    if (!projectId || !environmentId) {
+      setDownloadError("Select an environment before downloading this bundle.");
+
+      return;
+    }
+
+    setIsDownloading(true);
+    setDownloadError(null);
+    try {
+      const url = await bundleUrlForNode({
+        projectId: projectId,
+        environmentId: environmentId,
+        nodeId: nodeId,
+      });
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      setDownloadError(toErrorMessage(error));
+    } finally {
+      setIsDownloading(false);
+    }
+  }
 
   async function handleSave() {
     if (!projectId || !environmentId) {
@@ -213,57 +248,107 @@ export function ToolConfigTab({
         </p>
       )}
 
-      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-        Source Code
-      </span>
-      <p className="text-xs text-muted-foreground">
-        Return format is aligned with Vercel AI SDK tool outputs (
-        <a
-          href="https://ai-sdk.dev/docs/foundations/tools"
-          target="_blank"
-          rel="noreferrer"
-          className="underline underline-offset-2"
-        >
-          tools
-        </a>
-        {" / "}
-        <a
-          href="https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling"
-          target="_blank"
-          rel="noreferrer"
-          className="underline underline-offset-2"
-        >
-          tool calling
-        </a>
-        ).
-      </p>
-
-      <Textarea
-        value={sourceCode}
-        onChange={(e) => setSourceCode(e.target.value)}
-        spellCheck={false}
-        rows={18}
-        className="min-h-64 resize-y bg-muted/50 font-mono text-xs"
-      />
-
-      {saveError && <p className="text-xs text-destructive">{saveError}</p>}
-
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs"
-          disabled={isSaving || !hasUnsavedChanges}
-          onClick={handleSave}
-        >
-          {isSaving ? "Saving…" : "Save Source Code"}
-        </Button>
-        {savedToastVisible && (
-          <span className="flex items-center gap-1 text-xs text-emerald-500">
-            <Check className="size-3" /> Saved
+      {isBundleManaged ? (
+        <>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Bundle
           </span>
-        )}
-      </div>
+          <p className="text-xs text-muted-foreground">
+            This tool was uploaded by the CLI or SDK, which bundles it from your
+            project. The source stays with your code, so there is nothing to
+            edit here — run <code>broods dev</code> or{" "}
+            <code>broods deploy</code> to change it.
+          </p>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Runtime
+            </span>
+            <code className="text-xs text-foreground">
+              {toolService.runtime ?? "sandbox"}
+            </code>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Checksum
+            </span>
+            <code className="break-all text-xs text-foreground">
+              {toolService.sha256}
+            </code>
+          </div>
+
+          {downloadError && (
+            <p className="text-xs text-destructive">{downloadError}</p>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={isDownloading}
+              onClick={handleDownload}
+            >
+              {isDownloading ? "Preparing…" : "Download Bundle"}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Source Code
+          </span>
+          <p className="text-xs text-muted-foreground">
+            Return format is aligned with Vercel AI SDK tool outputs (
+            <a
+              href="https://ai-sdk.dev/docs/foundations/tools"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              tools
+            </a>
+            {" / "}
+            <a
+              href="https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              tool calling
+            </a>
+            ).
+          </p>
+
+          <Textarea
+            value={sourceCode}
+            onChange={(e) => setSourceCode(e.target.value)}
+            spellCheck={false}
+            rows={18}
+            className="min-h-64 resize-y bg-muted/50 font-mono text-xs"
+          />
+
+          {saveError && <p className="text-xs text-destructive">{saveError}</p>}
+
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={isSaving || !hasUnsavedChanges}
+              onClick={handleSave}
+            >
+              {isSaving ? "Saving…" : "Save Source Code"}
+            </Button>
+            {savedToastVisible && (
+              <span className="flex items-center gap-1 text-xs text-emerald-500">
+                <Check className="size-3" /> Saved
+              </span>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

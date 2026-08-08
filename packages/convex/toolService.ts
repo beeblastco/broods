@@ -167,6 +167,35 @@ export const saveForNode = action({
 });
 
 /**
+ * Presigned download for a tool whose code only exists as an uploaded bundle.
+ * A CLI tool keeps its source in the user's project, so the canvas can hand
+ * back the executed artifact and nothing else.
+ */
+export const bundleUrlForNode = action({
+  args: {
+    projectId: v.id("projects"),
+    environmentId: v.id("environments"),
+    nodeId: v.string(),
+  },
+  returns: v.string(),
+  handler: async (
+    ctx,
+    { projectId, environmentId, nodeId },
+  ): Promise<string> => {
+    const tool = await ctx.runQuery(api.toolService.getByNode, {
+      projectId: projectId,
+      environmentId: environmentId,
+      nodeId: nodeId,
+    });
+    if (!tool) throw new Error("Tool configuration not found.");
+
+    return await ctx.runAction(internal.awsBundles.toolBundleUrl, {
+      bundleStorageKey: tool.bundleStorageKey,
+    });
+  },
+});
+
+/**
  * Run a tool's source against the executor so the canvas can test it without a
  * full agent run. Reads the same row the runtime executes, so what passes here
  * is what the agent calls.
@@ -191,6 +220,14 @@ export const execute = action({
     });
     if (!tool) throw new Error("Tool configuration not found.");
     if (tool.disabled === true) throw new Error("Tool is disabled.");
+    // An uploaded tool has no inline source, and the executor takes source
+    // rather than a bundle key — running it here would execute an empty module
+    // and report the emptiness as the tool's own result.
+    if (!tool.sourceCode) {
+      throw new Error(
+        "This tool runs from an uploaded bundle. Test it from your project with the CLI.",
+      );
+    }
 
     const normalizedInput = input ?? {};
     const inputBytes = new TextEncoder().encode(
@@ -225,7 +262,7 @@ export const execute = action({
       },
       body: JSON.stringify({
         language: "javascript",
-        sourceCode: tool.sourceCode ?? "",
+        sourceCode: tool.sourceCode,
         input: normalizedInput,
         timeoutMs: boundedTimeoutMs,
       }),

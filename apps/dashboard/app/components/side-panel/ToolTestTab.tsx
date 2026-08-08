@@ -192,6 +192,20 @@ export function ToolTestTab({
     );
   }
 
+  // The executor takes source, not a bundle key, so an uploaded tool has
+  // nothing to hand it. Offering Run here would report an empty module's output
+  // as the tool's own result.
+  if (toolService.sourceCode === undefined) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-4">
+        <p className="text-center text-xs text-muted-foreground">
+          This tool runs from an uploaded bundle. Test it from your project with
+          the CLI.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
       <div className="flex flex-col gap-1.5">
