@@ -2005,6 +2005,7 @@ async function syncCanvasLayoutForManifest(
   const desiredEdges = new Map<string, CanvasEdge>();
   const nextById = new Map(existingNodes.map((node) => [node.id, node]));
   const nodeIdByKindName = new Map<string, string>();
+  const toolNodeIds = new Map<Id<"accountTools">, string>();
   const columnX = {
     agent: 80,
     sandbox: 340,
@@ -2109,6 +2110,7 @@ async function syncCanvasLayoutForManifest(
         },
       });
       nodeIdByKindName.set(`tool:${resource.name}`, node.id);
+      if (record.nodeId !== node.id) toolNodeIds.set(record._id, node.id);
       return;
     }
 
@@ -2137,6 +2139,14 @@ async function syncCanvasLayoutForManifest(
     });
     nodeIdByKindName.set(`${resource.kind}:${resource.name}`, node.id);
   });
+
+  // Point each tool row at the node the CLI just drew for it. Every tool panel
+  // resolves through `getByNode`, which reads `by_environmentId_and_nodeId` —
+  // so without this the CLI's own node never matched its row and the config,
+  // details and test tabs all opened empty on a tool that ran fine.
+  for (const [toolId, nodeId] of toolNodeIds) {
+    await ctx.db.patch(toolId, { nodeId: nodeId });
+  }
 
   // Track each workspace node's effective writability so we can flag read-only
   // workspaces for the canvas badge. The pure-canvas graph can't express
