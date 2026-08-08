@@ -2,7 +2,7 @@
 
 /** Protected layout that redirects unauthenticated users to /login. */
 import { Header } from "@/app/components/Header";
-import { OnboardingDialog } from "@/app/components/OnboardingDialog";
+import { PerfReporter } from "@/app/components/PerfReporter";
 import {
   clearOnboardingSecret,
   readOnboardingSecret,
@@ -11,8 +11,17 @@ import {
 import { api } from "@broods/convex/_generated/api";
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+
+// Shown once, on the first login of an account's life — it has no business
+// riding along in the layout chunk every other session loads.
+const OnboardingDialog = dynamic(() =>
+  import("@/app/components/OnboardingDialog").then(
+    (mod) => mod.OnboardingDialog,
+  ),
+);
 
 export default function MainLayout({
   children,
@@ -60,9 +69,12 @@ export default function MainLayout({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
+  // Mounted above the auth gates: LCP usually lands while this is still
+  // loading, and a reporter mounted after it would miss the metric entirely.
   if (isLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <PerfReporter />
         <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );
@@ -74,6 +86,7 @@ export default function MainLayout({
 
   return (
     <div className="flex h-screen w-screen flex-col bg-background">
+      <PerfReporter />
       <Header />
       {onboardingSecret && (
         <OnboardingDialog
