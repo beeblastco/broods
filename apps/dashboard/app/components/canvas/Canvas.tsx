@@ -28,6 +28,7 @@ import {
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { reportPerf } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
   defaultRuntimeNodeData,
@@ -35,6 +36,7 @@ import {
   deriveSubagentRefs,
   serializeRuntimeRefs,
   serializeSubagentRefs,
+  writeChangedRefs,
 } from "@/app/lib/canvasRuntimeRefs";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -338,6 +340,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
 
   const tagName = target.tagName;
+
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
@@ -392,6 +395,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const [nodes, setNodes, onNodesChange] = useNodesState([] as Node[]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([] as Edge[]);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedAt, setSelectedAt] = useState(0);
   const [saveState, setSaveState] = useState<CanvasSaveState>("idle");
   const [deleteRequestToken, setDeleteRequestToken] = useState(0);
   const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
@@ -444,6 +448,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       if (!environmentId) return;
       const generation = editGeneration.current;
       setSaveState("saving");
+      // The layout write is optimistic (withOptimisticUpdate above), so this
+      // latency and its outcome are what a rollback rate is computed from.
+      const startedAt = performance.now();
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
       saveLayoutMutation({
@@ -452,12 +459,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
-            | "agent"
-            | "database"
-            | "sandbox"
-            | "workspace"
-            | "tool"
-            | "skill",
+            "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
           position: n.position,
           data: n.data as {
             label: string;
@@ -502,36 +504,28 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             return changed ? next : current;
           });
 
-          const refs = deriveAgentRuntimeRefs(persistedNodes, currentEdges);
-          await Promise.all(
-            refs.map(async (ref) => {
-              const serialized = serializeRuntimeRefs(ref);
-              if (lastRuntimeRefs.current.get(ref.configId) === serialized) {
-                return;
-              }
-              lastRuntimeRefs.current.set(ref.configId, serialized);
-              await updateRuntimeRefs({
+          await writeChangedRefs(
+            deriveAgentRuntimeRefs(persistedNodes, currentEdges),
+            lastRuntimeRefs.current,
+            serializeRuntimeRefs,
+            (ref) =>
+              updateRuntimeRefs({
                 configId: ref.configId,
                 sandbox: ref.sandbox ?? null,
                 workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
-              });
-            }),
+              }),
           );
 
           // Persist agent→agent subagent allow-lists from the canvas edges.
-          const subagentRefs = deriveSubagentRefs(persistedNodes, currentEdges);
-          await Promise.all(
-            subagentRefs.map(async (ref) => {
-              const serialized = serializeSubagentRefs(ref);
-              if (lastSubagentRefs.current.get(ref.configId) === serialized) {
-                return;
-              }
-              lastSubagentRefs.current.set(ref.configId, serialized);
-              await updateSubagentRefs({
+          await writeChangedRefs(
+            deriveSubagentRefs(persistedNodes, currentEdges),
+            lastSubagentRefs.current,
+            serializeSubagentRefs,
+            (ref) =>
+              updateSubagentRefs({
                 configId: ref.configId,
                 calleeConfigIds: ref.calleeConfigIds,
-              });
-            }),
+              }),
           );
         })
         .then(() => {
@@ -540,11 +534,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           // `finally` let a failed write be overwritten by the next DB sync;
           // clearing it after a stale success let that sync overwrite the
           // newer local state. Either way the edit vanished with no message.
+          reportPerf("optimistic-save", performance.now() - startedAt, {
+            attributes: { outcome: "committed", nodes: currentNodes.length },
+          });
           if (editGeneration.current !== generation) return;
           hasLocalChanges.current = false;
           setSaveState("saved");
         })
         .catch(() => {
+          reportPerf("optimistic-save", performance.now() - startedAt, {
+            attributes: { outcome: "rolled-back", nodes: currentNodes.length },
+          });
           setSaveState("error");
         });
     }, 500);
@@ -822,6 +822,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, [scheduleSave]);
 
   const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
+    // Stamped here so the panel can report how long it took to appear — most of
+    // that window is its own dynamic import, not React.
+    setSelectedAt(performance.now());
     setSelectedNode(node);
   }, []);
 
@@ -925,6 +928,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       JSON.stringify({
         n: nodes.map((n) => {
           const d = n.data as BaseNodeData;
+
           return [
             n.id,
             n.type,
@@ -944,6 +948,24 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [infraKey],
   );
+
+  // Commit-to-paint for a topology change: measured from the effect to the next
+  // frame, so it covers ReactFlow's own layout, which is what scales with the
+  // graph. Timing the analysis inside the memo would be an impure render.
+  useEffect(() => {
+    const startedAt = performance.now();
+    const frame = requestAnimationFrame(() => {
+      reportPerf("canvas.render", performance.now() - startedAt, {
+        attributes: {
+          nodes: nodesRef.current.length,
+          edges: edgesRef.current.length,
+        },
+      });
+    });
+
+    return () => cancelAnimationFrame(frame);
+    // Keyed on the structural signature: a drag must not produce a sample.
+  }, [infraKey]);
 
   // C — focus mode: selecting any node dims everything it does not connect TO. We follow edges
   // "outward" only — default/subagent edges by direction (source→target), so a resource never
@@ -1024,7 +1046,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, [edges, focusedIds]);
 
   const flow = (
-    <InfraAnalysisProvider value={infraAnalysis}>
+    <>
       <ReactFlow
         nodes={displayNodes}
         edges={displayEdges}
@@ -1083,98 +1105,103 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
           )}
         </Panel>
       </ReactFlow>
-    </InfraAnalysisProvider>
+    </>
   );
 
+  // The provider spans the side panel too, so it reads the same traversal the
+  // node cards do instead of walking the graph again for the selected node.
   return (
-    <div className="flex size-full overflow-hidden">
-      <div
-        ref={canvasContainerRef}
-        className="relative h-full min-w-0 flex-1 overflow-hidden"
-      >
-        {/* The context menu wraps the flow even when the canvas is empty: an
+    <InfraAnalysisProvider value={infraAnalysis}>
+      <div className="flex size-full overflow-hidden">
+        <div
+          ref={canvasContainerRef}
+          className="relative h-full min-w-0 flex-1 overflow-hidden"
+        >
+          {/* The context menu wraps the flow even when the canvas is empty: an
             empty project is exactly when right-click-to-add needs to work. */}
-        <ContextMenu>
-          <ContextMenuTrigger
-            className="size-full"
-            onContextMenu={onContextMenu}
-          >
-            {flow}
-          </ContextMenuTrigger>
-          <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
-            <ContextMenuGroup>
-              <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
-                Add service
-              </ContextMenuLabel>
-            </ContextMenuGroup>
-            {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
-              <Fragment key={type}>
-                {index === NODE_TEMPLATES.length - 1 && (
-                  <ContextMenuSeparator />
-                )}
-                <ContextMenuItem
-                  onClick={() =>
-                    type === "agent"
-                      ? onOpenSourcePicker()
-                      : type === "tool"
-                        ? setToolPickerOpen(true)
-                        : type === "skill"
-                          ? setSkillPickerOpen(true)
-                          : addNode(type, label)
-                  }
-                >
-                  <Icon />
-                  {label}
-                </ContextMenuItem>
-              </Fragment>
-            ))}
-          </ContextMenuContent>
-        </ContextMenu>
+          <ContextMenu>
+            <ContextMenuTrigger
+              className="size-full"
+              onContextMenu={onContextMenu}
+            >
+              {flow}
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-48 rounded-lg border border-border bg-card/80 p-1 backdrop-blur-md">
+              <ContextMenuGroup>
+                <ContextMenuLabel className="text-xs tracking-wider text-muted-foreground pt-2!">
+                  Add service
+                </ContextMenuLabel>
+              </ContextMenuGroup>
+              {NODE_TEMPLATES.map(({ type, label, icon: Icon }, index) => (
+                <Fragment key={type}>
+                  {index === NODE_TEMPLATES.length - 1 && (
+                    <ContextMenuSeparator />
+                  )}
+                  <ContextMenuItem
+                    onClick={() =>
+                      type === "agent"
+                        ? onOpenSourcePicker()
+                        : type === "tool"
+                          ? setToolPickerOpen(true)
+                          : type === "skill"
+                            ? setSkillPickerOpen(true)
+                            : addNode(type, label)
+                    }
+                  >
+                    <Icon />
+                    {label}
+                  </ContextMenuItem>
+                </Fragment>
+              ))}
+            </ContextMenuContent>
+          </ContextMenu>
 
-        {isEmpty && (
-          <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />
-        )}
-      </div>
+          {isEmpty && (
+            <EmptyCanvasGuide onCreateConfig={() => onOpenCreateConfig()} />
+          )}
+        </div>
 
-      <div
-        className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
-      >
-        <NodeSidePanel
-          node={selectedNode}
-          deleteRequestToken={deleteRequestToken}
-          onClose={onPaneClick}
-          onRemoveNode={removeNode}
-          onUpdateNodeLabel={updateNodeLabel}
-          onUpdateNodeData={updateNodeData}
+        <div
+          className={`h-full shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${selectedNode ? "w-2/5" : "w-0"}`}
+        >
+          <NodeSidePanel
+            node={selectedNode}
+            selectedAt={selectedAt}
+            deleteRequestToken={deleteRequestToken}
+            onClose={onPaneClick}
+            onRemoveNode={removeNode}
+            onUpdateNodeLabel={updateNodeLabel}
+            onUpdateNodeData={updateNodeData}
+          />
+        </div>
+
+        <AgentSourcePickerDialog
+          open={sourcePickerOpen}
+          onOpenChange={setSourcePickerOpen}
+          onCreateNew={onCreateAgentFromPicker}
+        />
+
+        <CreateAgentConfigDialog
+          projectId={projectId}
+          environmentId={environmentId}
+          open={configDialogOpen}
+          onOpenChange={onConfigDialogOpenChange}
+          initialCanvasPosition={agentCreatePosition}
+        />
+
+        <ToolSourcePickerDialog
+          open={toolPickerOpen}
+          onOpenChange={setToolPickerOpen}
+          onSelect={onToolSelect}
+        />
+
+        <SkillSourcePickerDialog
+          open={skillPickerOpen}
+          onOpenChange={setSkillPickerOpen}
+          onSelect={onSkillSelect}
         />
       </div>
-
-      <AgentSourcePickerDialog
-        open={sourcePickerOpen}
-        onOpenChange={setSourcePickerOpen}
-        onCreateNew={onCreateAgentFromPicker}
-      />
-
-      <CreateAgentConfigDialog
-        projectId={projectId}
-        environmentId={environmentId}
-        open={configDialogOpen}
-        onOpenChange={onConfigDialogOpenChange}
-        initialCanvasPosition={agentCreatePosition}
-      />
-
-      <ToolSourcePickerDialog
-        open={toolPickerOpen}
-        onOpenChange={setToolPickerOpen}
-        onSelect={onToolSelect}
-      />
-
-      <SkillSourcePickerDialog
-        open={skillPickerOpen}
-        onOpenChange={setSkillPickerOpen}
-        onSelect={onSkillSelect}
-      />
-    </div>
+    </InfraAnalysisProvider>
   );
 }
 

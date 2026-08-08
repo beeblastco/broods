@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * CodeMirror editor for tool source: JavaScript highlighting, bracket matching
- * and Prettier. Prettier is imported on demand so its parser never rides along
- * in the side panel's first load.
+ * CodeMirror editor for tool source: JavaScript highlighting and bracket
+ * matching. Formatting lives in `@/app/lib/formatSource` so importing it does
+ * not drag CodeMirror in.
  */
 import { javascript } from "@codemirror/lang-javascript";
 import { oneDark } from "@codemirror/theme-one-dark";
@@ -12,20 +12,6 @@ import { useTheme } from "next-themes";
 import { useCallback, useMemo } from "react";
 
 const EXTENSIONS = [javascript()];
-
-/** Prettier over the tool source. Throws on a syntax error, so callers report it. */
-export async function formatSource(source: string): Promise<string> {
-  const [standalone, babel, estree] = await Promise.all([
-    import("prettier/standalone"),
-    import("prettier/plugins/babel"),
-    import("prettier/plugins/estree"),
-  ]);
-
-  return await standalone.format(source, {
-    parser: "babel",
-    plugins: [babel.default, estree.default],
-  });
-}
 
 export function CodeEditor({
   value,

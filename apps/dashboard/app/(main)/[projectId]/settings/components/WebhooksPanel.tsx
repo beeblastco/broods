@@ -13,6 +13,7 @@ import { Badge } from "@/app/components/ui/badge";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { cn } from "@/app/lib/utils";
+import { applyWebhookEnabledToggle } from "@/app/lib/webhooksOptimistic";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
@@ -53,8 +54,11 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
       : "skip",
   ) as AgentWebhooks[] | undefined;
 
-  const setEnabled = useMutation(api.webhooks.setAgentWebhookEnabled);
+  const setEnabled = useMutation(
+    api.webhooks.setAgentWebhookEnabled,
+  ).withOptimisticUpdate(applyWebhookEnabledToggle);
   const removeWebhook = useMutation(api.webhooks.removeAgentWebhook);
+  const [toggleError, setToggleError] = useState<string | null>(null);
 
   // `${agentConfigId}:${index}` of the webhook whose secret is currently revealed.
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -96,6 +100,12 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
           <p className="text-sm text-muted-foreground">
             No agents in this environment yet.
           </p>
+        )}
+
+        {/* The pill flips optimistically, so a rejected toggle snaps back on
+            its own — this says why it moved. */}
+        {toggleError && (
+          <p className="text-sm text-destructive">{toggleError}</p>
         )}
 
         <div className="grid gap-6">
@@ -150,13 +160,20 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
+                          setToggleError(null);
                           setEnabled({
                             agentConfigId: agent.agentConfigId,
                             index: webhook.index,
                             enabled: !webhook.enabled,
-                          })
-                        }
+                          }).catch((error: unknown) =>
+                            setToggleError(
+                              error instanceof Error
+                                ? error.message
+                                : "Could not change this webhook.",
+                            ),
+                          );
+                        }}
                         className={cn(
                           "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
                           webhook.enabled

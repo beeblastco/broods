@@ -11,6 +11,7 @@ import { createContext, useContext } from "react";
 const EMPTY_ANALYSIS: CanvasInfraAnalysis = {
   workspaceStates: {},
   agentRefCounts: {},
+  connectedToAgent: {},
 };
 
 const InfraAnalysisContext = createContext<CanvasInfraAnalysis>(EMPTY_ANALYSIS);

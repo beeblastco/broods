@@ -178,9 +178,9 @@ export const create = mutation({
       name: trimmedName,
       description: description?.trim() || undefined,
       agentId: undefined,
-      projectId,
-      environmentId,
-      provider,
+      projectId: projectId,
+      environmentId: environmentId,
+      provider: provider,
       modelId: modelId?.trim() || "gpt-4.1-mini",
       systemPrompt: systemPrompt?.trim() || undefined,
       ...(provider === "custom" && customBaseUrl?.trim()
@@ -213,7 +213,7 @@ export const create = mutation({
       const nextNode = {
         id: String(now),
         type: "agent" as const,
-        position,
+        position: position,
         data: {
           label: trimmedName,
           status: "idle" as const,
@@ -229,8 +229,8 @@ export const create = mutation({
       } else {
         await ctx.db.insert("canvasLayouts", {
           authId: authUser.id,
-          projectId,
-          environmentId,
+          projectId: projectId,
+          environmentId: environmentId,
           nodes: [nextNode],
           edges: [],
           updatedAt: now,
@@ -387,12 +387,23 @@ export const updateRuntimeRefs = mutation({
     // Old nested AgentWorkspaceConfig is no longer part of broods's runtime contract.
     delete extraConfig.workspace;
 
+    // Provisioning stays unconditional — a canvas save is where an agent whose
+    // org gained an account after the config was made first gets its row.
+    await ensureAgentsRowForConfig(ctx, configId, user.id);
+
+    // Skip the patch and encryption push when nothing changed. Every canvas
+    // save derives refs for all agents, so most calls land here.
+    if (
+      JSON.stringify(extraConfig) ===
+      JSON.stringify(asRecord(existing.extraConfig))
+    ) {
+      return configId;
+    }
+
     await ctx.db.patch(configId, {
       extraConfig: extraConfig,
       updatedAt: Date.now(),
     });
-
-    await ensureAgentsRowForConfig(ctx, configId, user.id);
     await pushEncryptedConfigToAgentRow(ctx, configId);
 
     return configId;

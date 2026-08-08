@@ -3,13 +3,14 @@
 /** Right-side navigation links for the header bar. */
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
+import Link from "next/link";
 import {
   useParams,
   usePathname,
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { Suspense, useCallback, useEffect } from "react";
+import { Suspense, useCallback } from "react";
 
 const NAV_ITEMS = [
   { segment: "", label: "Architecture" },
@@ -18,18 +19,6 @@ const NAV_ITEMS = [
   { segment: "/sandbox", label: "Sandbox" },
   { segment: "/settings", label: "Settings" },
 ] as const;
-type ProjectNavSegment = (typeof NAV_ITEMS)[number]["segment"];
-
-const ROUTE_MODULE_PRELOADERS: Record<
-  ProjectNavSegment,
-  () => Promise<unknown>
-> = {
-  "": () => import("@/app/components/canvas/Canvas"),
-  "/dashboard": () => import("@/app/(main)/[projectId]/dashboard/page"),
-  "/scheduler": () => import("@/app/(main)/[projectId]/scheduler/page"),
-  "/sandbox": () => import("@/app/(main)/[projectId]/sandbox/page"),
-  "/settings": () => import("@/app/(main)/[projectId]/settings/page"),
-};
 
 /** Inner nav links that read search params. */
 function NavLinksInner() {
@@ -39,41 +28,13 @@ function NavLinksInner() {
   const searchParams = useSearchParams();
   const projectId = params.projectId;
   const envParam = searchParams.get("env");
-  const withEnvironment = useCallback(
-    (path: string) => (envParam ? `${path}?env=${envParam}` : path),
-    [envParam],
-  );
+  // Link already queues the partial prefetch on viewport entry; intent to
+  // navigate upgrades it to the full tree. Eagerly importing every route module
+  // on idle downloaded all five pages just because the header rendered.
   const warmProjectRoute = useCallback(
-    (segment: ProjectNavSegment) => {
-      if (!projectId) return;
-
-      const href = withEnvironment(`/${projectId}${segment}`);
-      router.prefetch(href, FULL_ROUTE_PREFETCH);
-      void ROUTE_MODULE_PRELOADERS[segment]();
-    },
-    [projectId, router, withEnvironment],
+    (href: string) => router.prefetch(href, FULL_ROUTE_PREFETCH),
+    [router],
   );
-  useEffect(() => {
-    if (!projectId) return;
-
-    const warmAllRoutes = () => {
-      for (const { segment } of NAV_ITEMS) {
-        warmProjectRoute(segment);
-      }
-    };
-
-    if (typeof window !== "undefined" && window.requestIdleCallback) {
-      const idleId = window.requestIdleCallback(warmAllRoutes, {
-        timeout: 1500,
-      });
-
-      return () => window.cancelIdleCallback(idleId);
-    }
-
-    const timeoutId = window.setTimeout(warmAllRoutes, 120);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [projectId, warmProjectRoute]);
 
   return (
     <nav className="flex items-center gap-1">
@@ -86,12 +47,11 @@ function NavLinksInner() {
               : pathname.startsWith(`/${projectId}${segment}`);
 
           return (
-            <button
+            <Link
               key={segment}
-              type="button"
-              onClick={() => router.push(href)}
-              onMouseEnter={() => warmProjectRoute(segment)}
-              onFocus={() => warmProjectRoute(segment)}
+              href={href}
+              onMouseEnter={() => warmProjectRoute(href)}
+              onFocus={() => warmProjectRoute(href)}
               className={cn(
                 "cursor-pointer select-none rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors active:bg-accent/70",
                 isActive
@@ -100,7 +60,7 @@ function NavLinksInner() {
               )}
             >
               {label}
-            </button>
+            </Link>
           );
         })}
     </nav>

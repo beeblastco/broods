@@ -3,6 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 import {
   analyzeCanvasInfra,
   deriveSubagentRefs,
+  writeChangedRefs,
 } from "../app/lib/canvasRuntimeRefs";
 
 /** Minimal canvas node; `data` carries the same fields BaseNode reads. */
@@ -121,5 +122,142 @@ describe("deriveSubagentRefs", () => {
     const parent = refs.find((r) => r.configId === ("cfg_parent" as never));
 
     expect(parent?.calleeConfigIds).toEqual([]);
+  });
+});
+
+/** Minimal ref shape: `writeChangedRefs` only reads `configId`. */
+function ref(configId: string, value: string) {
+  return { configId: configId as never, value: value };
+}
+
+const serializeValue = (r: { value: string }) => r.value;
+
+describe("writeChangedRefs caching", () => {
+  test("skips a ref whose serialization is unchanged", async () => {
+    const cache = new Map([["cfg", "a"]]);
+    const written: string[] = [];
+
+    await writeChangedRefs(
+      [ref("cfg", "a")],
+      cache,
+      serializeValue,
+      async (r) => {
+        written.push(r.configId);
+      },
+    );
+
+    expect(written).toEqual([]);
+  });
+
+  test("a failed write stays uncached, so the retry writes it again", async () => {
+    const cache = new Map<string, string>();
+    let attempts = 0;
+    const write = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("mutation failed");
+    };
+
+    await expect(
+      writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write),
+    ).rejects.toThrow("mutation failed");
+    expect(cache.has("cfg")).toBe(false);
+
+    await writeChangedRefs([ref("cfg", "a")], cache, serializeValue, write);
+
+    expect(attempts).toBe(2);
+    expect(cache.get("cfg")).toBe("a");
+  });
+
+  test("a partial failure caches only the refs that landed", async () => {
+    const cache = new Map<string, string>();
+    const attempts: string[] = [];
+    const write = async (r: { configId: string }) => {
+      attempts.push(r.configId);
+      if (r.configId === "cfg_bad") throw new Error("mutation failed");
+    };
+
+    await expect(
+      writeChangedRefs(
+        [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
+        cache,
+        serializeValue,
+        write,
+      ),
+    ).rejects.toThrow("mutation failed");
+
+    // Both were attempted; only the successful one is remembered.
+    expect(attempts).toEqual(["cfg_ok", "cfg_bad"]);
+    expect(cache.get("cfg_ok")).toBe("a");
+    expect(cache.has("cfg_bad")).toBe(false);
+
+    await writeChangedRefs(
+      [ref("cfg_ok", "a"), ref("cfg_bad", "b")],
+      cache,
+      serializeValue,
+      async (r) => {
+        attempts.push(r.configId);
+      },
+    );
+
+    // The retry re-sends the failed ref only.
+    expect(attempts).toEqual(["cfg_ok", "cfg_bad", "cfg_bad"]);
+  });
+});
+
+describe("analyzeCanvasInfra agent reachability", () => {
+  test("an infra chain is wired when any member touches an agent", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("sb", "sandbox"),
+      node("ws", "workspace"),
+    ];
+    // The workspace only reaches the agent through the sandbox it mounts into.
+    const edges = [edge("agent", "sb"), edge("ws", "sb")];
+
+    const { connectedToAgent } = analyzeCanvasInfra(nodes, edges);
+
+    expect(connectedToAgent.ws).toBe(true);
+    expect(connectedToAgent.sb).toBe(true);
+    expect(connectedToAgent.agent).toBe(true);
+  });
+
+  test("an infra chain with no agent anywhere stays unwired", () => {
+    const nodes = [node("sb", "sandbox"), node("ws", "workspace")];
+
+    const { connectedToAgent } = analyzeCanvasInfra(nodes, [edge("ws", "sb")]);
+
+    expect(connectedToAgent.ws).toBe(false);
+    expect(connectedToAgent.sb).toBe(false);
+  });
+
+  test("non-infra nodes count only a direct agent edge", () => {
+    const nodes = [
+      node("agent", "agent", { agentConfigId: "cfg" }),
+      node("ws", "workspace"),
+      node("wired", "tool"),
+      node("indirect", "tool"),
+    ];
+    const edges = [
+      edge("agent", "ws"),
+      edge("agent", "wired"),
+      // A tool hanging off a wired workspace is still not wired to the agent.
+      edge("indirect", "ws"),
+    ];
+
+    const { connectedToAgent } = analyzeCanvasInfra(nodes, edges);
+
+    expect(connectedToAgent.wired).toBe(true);
+    expect(connectedToAgent.indirect).toBe(false);
+    expect(connectedToAgent.ws).toBe(true);
+  });
+
+  test("a node with no edges is unwired", () => {
+    const { connectedToAgent } = analyzeCanvasInfra(
+      [node("lonely", "workspace"), node("orphan", "skill")],
+      [],
+    );
+
+    expect(connectedToAgent.lonely).toBe(false);
+    expect(connectedToAgent.orphan).toBe(false);
   });
 });
