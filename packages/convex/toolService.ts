@@ -110,7 +110,6 @@ export const saveForNode = action({
     sourceCode: v.optional(v.string()),
     description: v.optional(v.string()),
     inputSchema: v.optional(v.any()),
-    runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
     disabled: v.optional(v.boolean()),
   },
   returns: v.id("accountTools"),
@@ -128,14 +127,22 @@ export const saveForNode = action({
       throw new Error("Write the tool source before saving it.");
     }
 
-    // The same gate the CLI upload runs, so a tool authored here is bound by the
-    // tier it will execute on. Left unclassified, canvas tools defaulted to the
-    // isolate and any node/npm source among them died on the agent's first call.
+    // The canvas stores what was typed — there is no bundler on this path, so a
+    // dependency or Node API cannot resolve at run time no matter which tier it
+    // lands on. Reject it here instead of saving a tool that fails when called.
+    if (inferAccountToolRuntime(sourceCode) === "sandbox") {
+      throw new Error(
+        "This tool needs packages or Node APIs that the editor cannot run. Build it in your broods project and deploy it with the CLI.",
+      );
+    }
+
+    // The same gate the CLI upload runs: name, input schema, bundle size bound
+    // and hash, all from the one implementation both paths share.
     const upload = await normalizeAccountToolUpload(
       {
         name: toolName(args.nodeLabel),
         bundle: sourceCode,
-        runtime: args.runtime ?? inferAccountToolRuntime(sourceCode),
+        runtime: "isolate",
         ...(args.description !== undefined
           ? { description: args.description }
           : {}),

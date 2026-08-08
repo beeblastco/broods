@@ -6,8 +6,8 @@
  * async, execution, env, tool-specific options) per broods AgentToolConfig.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
+import { formatSource } from "@/app/components/side-panel/CodeEditor";
 import { Button } from "@/app/components/ui/button";
-import { Textarea } from "@/app/components/ui/textarea";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import {
   readAgentBranch,
@@ -19,7 +19,20 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";
 import { Check } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
+
+// CodeMirror measures the DOM as it mounts, so it cannot be prerendered.
+const CodeEditor = dynamic(
+  () =>
+    import("@/app/components/side-panel/CodeEditor").then((m) => m.CodeEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[360px] rounded-md border border-input bg-muted/50" />
+    ),
+  },
+);
 
 const TOOL_OPTIONS_PLACEHOLDER = JSON.stringify(
   {
@@ -125,6 +138,7 @@ export function ToolConfigTab({
   const [savedToastVisible, setSavedToastVisible] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [isFormatting, setIsFormatting] = useState(false);
 
   // The CLI bundles a tool locally and uploads the artifact, so an uploaded row
   // carries no source. Editing here would bundle this tab's placeholder over
@@ -169,6 +183,18 @@ export function ToolConfigTab({
     }
   }
 
+  async function handleFormat() {
+    setIsFormatting(true);
+    setSaveError(null);
+    try {
+      setSourceCode(await formatSource(sourceCode));
+    } catch (error) {
+      setSaveError(toErrorMessage(error));
+    } finally {
+      setIsFormatting(false);
+    }
+  }
+
   async function handleSave() {
     if (!projectId || !environmentId) {
       setSaveError("Select an environment before editing this tool.");
@@ -184,12 +210,17 @@ export function ToolConfigTab({
     setIsSaving(true);
     setSaveError(null);
     try {
+      const draft = sourceCode.trim().length > 0 ? sourceCode : DEFAULT_SOURCE;
+      // Formatting on the way out keeps what is stored canonical, and a syntax
+      // error surfaces here rather than as a tool failure mid-run.
+      const formatted = await formatSource(draft);
+      setSourceCode(formatted);
       await upsertToolService({
         projectId: projectId,
         environmentId: environmentId,
         nodeId: nodeId,
         nodeLabel: nodeLabel,
-        sourceCode: sourceCode.trim().length > 0 ? sourceCode : DEFAULT_SOURCE,
+        sourceCode: formatted,
       });
       setSavedToastVisible(true);
       setTimeout(() => setSavedToastVisible(false), 2000);
@@ -296,15 +327,6 @@ export function ToolConfigTab({
 
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Runtime
-            </span>
-            <code className="text-xs text-foreground">
-              {toolService.runtime ?? "sandbox"}
-            </code>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Checksum
             </span>
             <code className="break-all text-xs text-foreground">
@@ -354,28 +376,21 @@ export function ToolConfigTab({
             </a>
             ).
           </p>
-          {toolService && (
-            <p className="text-[11px] text-muted-foreground">
-              Saved to the{" "}
-              <code className="text-foreground">{toolService.runtime}</code>{" "}
-              tier. Source that reaches outside the isolate runs in the sandbox
-              — <code>require</code>, a <code>node:</code> or npm import,{" "}
-              <code>process</code>, <code>Buffer</code>, <code>__dirname</code>,
-              or a Web Stream. Pure source runs in the V8 isolate.
-            </p>
-          )}
 
-          <Textarea
-            value={sourceCode}
-            onChange={(e) => setSourceCode(e.target.value)}
-            spellCheck={false}
-            rows={18}
-            className="min-h-64 resize-y bg-muted/50 font-mono text-xs"
-          />
+          <CodeEditor value={sourceCode} onChange={setSourceCode} />
 
           {saveError && <p className="text-xs text-destructive">{saveError}</p>}
 
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
+              disabled={isFormatting || isSaving}
+              onClick={handleFormat}
+            >
+              {isFormatting ? "Formatting…" : "Format"}
+            </Button>
             <Button
               size="sm"
               variant="outline"
