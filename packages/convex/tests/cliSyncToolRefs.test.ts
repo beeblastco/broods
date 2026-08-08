@@ -70,7 +70,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
 async function seedUploadedTool(
   tt: T,
   accountId: Id<"accounts">,
-): Promise<string> {
+): Promise<Id<"accountTools">> {
   const now = Date.now();
   const toolId = await tt.run(
     async (ctx) =>
@@ -96,6 +96,21 @@ async function seedUploadedTool(
   });
 
   return toolId;
+}
+
+/** Give a seeded tool the project/environment scope a real CLI upload has. */
+async function scopeToolToEnvironment(
+  tt: T,
+  toolId: Id<"accountTools">,
+): Promise<void> {
+  await tt.run(async (ctx) => {
+    const environment = await ctx.db.query("environments").first();
+    if (!environment) throw new Error("Environment not seeded");
+    await ctx.db.patch(toolId, {
+      projectId: environment.projectId,
+      environmentId: environment._id,
+    });
+  });
 }
 
 const agentResource = (tools: Record<string, unknown>) => ({
@@ -193,5 +208,37 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
       googleSearch: { enabled: true },
       urlContext: { enabled: true },
     });
+  });
+
+  test("points the tool row at the canvas node the sync drew for it", async () => {
+    const tt = t();
+    const accountId = await seedAccount(tt);
+    const toolId = await seedUploadedTool(tt, accountId);
+    // The shared helper writes the pre-scope row shape. A tool the CLI actually
+    // uploaded carries its environment, which is what the canvas reads.
+    await scopeToolToEnvironment(tt, toolId);
+
+    await syncTools(tt, { [TOOL_NAME]: { enabled: true } });
+
+    const layout = await tt.run(
+      async (ctx) => await ctx.db.query("canvasLayouts").first(),
+    );
+    // Matched on resourceId, not just type: the claim is that the row points at
+    // its own node, which a bare type match would not distinguish.
+    const toolNode = (
+      layout!.nodes as Array<{
+        id: string;
+        type: string;
+        data?: { resourceId?: string };
+      }>
+    ).find((node) => node.type === "tool" && node.data?.resourceId === toolId);
+    const tool = await tt.run(async (ctx) => await ctx.db.get(toolId));
+
+    // Every tool panel resolves through `getByNode`, which reads the
+    // `by_environmentId_and_nodeId` index. Without this link the CLI's own node
+    // never matched its row, so the config, details and test tabs opened empty
+    // on a tool the runtime executed fine.
+    expect(toolNode).toBeDefined();
+    expect(tool!.nodeId).toBe(toolNode!.id);
   });
 });

@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
 import { accountHookBundleStorageKey } from "./model/accountHooks";
 import { accountToolBundleStorageKey } from "./model/accountTools";
-import { writeS3Object } from "./model/s3";
+import { getS3ObjectUrl, writeS3Object } from "./model/s3";
 
 /**
  * Store a custom tool bundle in the account tool bundles bucket.
@@ -72,6 +72,28 @@ export const putHookBundle = internalAction({
     });
 
     return key;
+  },
+});
+
+/**
+ * Presign a download for a stored tool bundle.
+ * @param bundleStorageKey S3 object key held on the tool row
+ * @returns a presigned GET URL
+ */
+export const toolBundleUrl = internalAction({
+  args: {
+    bundleStorageKey: v.string(),
+  },
+  returns: v.string(),
+  handler: async (_ctx, args) => {
+    const bucket = process.env.TOOL_BUNDLES_BUCKET_NAME;
+    if (!bucket) {
+      throw new Error(
+        "TOOL_BUNDLES_BUCKET_NAME is required to read tool bundles",
+      );
+    }
+
+    return await getS3ObjectUrl(bucket, args.bundleStorageKey);
   },
 });
 
