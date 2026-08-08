@@ -262,14 +262,15 @@ export function ToolConfigTab({
       )}
 
       {/* An uploaded tool carries the schema its project declared. Everything
-          else needs one here, or the model is offered a tool with no arguments. */}
-      {!isBundleManaged && (
+          else needs one here, or the model is offered a tool with no arguments.
+          Only once the source exists: saving a schema alone has nothing to
+          bundle, so the tool has to be created below first. */}
+      {toolService && !isBundleManaged && (
         <BranchEditor
           title="Input Schema"
-          value={toolService?.inputSchema}
+          value={toolService.inputSchema}
           placeholder={INPUT_SCHEMA_PLACEHOLDER}
           onSave={async (value) => {
-            if (!projectId || !environmentId) return;
             await upsertToolService({
               projectId: projectId,
               environmentId: environmentId,
@@ -357,9 +358,10 @@ export function ToolConfigTab({
             <p className="text-[11px] text-muted-foreground">
               Saved to the{" "}
               <code className="text-foreground">{toolService.runtime}</code>{" "}
-              tier. Code reaching node builtins, <code>require</code>, or an npm
-              import runs in the sandbox; everything else runs in the V8
-              isolate.
+              tier. Source that reaches outside the isolate runs in the sandbox
+              — <code>require</code>, a <code>node:</code> or npm import,{" "}
+              <code>process</code>, <code>Buffer</code>, <code>__dirname</code>,
+              or a Web Stream. Pure source runs in the V8 isolate.
             </p>
           )}
 
