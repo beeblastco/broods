@@ -5,7 +5,7 @@
  * route-transition duration. App-specific marks (canvas render, side-panel
  * open, optimistic-save latency) call `reportPerf` from where they happen.
  */
-import { reportPerf } from "@/app/lib/perfReport";
+import { reportPerf, routePattern } from "@/app/lib/perfReport";
 import { useReportWebVitals } from "next/web-vitals";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
@@ -14,14 +14,12 @@ import { useEffect, useRef } from "react";
 // often enough during a drag to flood the buffer.
 const LONG_TASK_FLOOR_MS = 100;
 
+/** Derived from the hook rather than Next's internal compiled path. */
+type WebVitalsMetric = Parameters<Parameters<typeof useReportWebVitals>[0]>[0];
+
 // Hoisted so the callback identity never changes — a new function would make
 // useReportWebVitals replay every metric collected so far.
-function reportWebVital(metric: {
-  name: string;
-  value: number;
-  rating: string;
-  navigationType: string;
-}) {
+function reportWebVital(metric: WebVitalsMetric) {
   reportPerf(`web-vital.${metric.name}`, metric.value, {
     unit: metric.name === "CLS" ? "score" : "ms",
     attributes: {
@@ -42,7 +40,7 @@ export function PerfReporter() {
     if (!previous || previous.path === pathname) return;
 
     reportPerf("route.transition", performance.now() - previous.at, {
-      attributes: { from: previous.path },
+      attributes: { from: routePattern(previous.path) },
     });
   }, [pathname]);
 

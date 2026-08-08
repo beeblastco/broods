@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { Edge, Node } from "@xyflow/react";
 import {
   analyzeCanvasInfra,
@@ -104,10 +105,16 @@ describe("deriveSubagentRefs", () => {
     const edges = [edge("parent", "child", "subagent")];
 
     const refs = deriveSubagentRefs(nodes, edges);
-    const parent = refs.find((r) => r.configId === ("cfg_parent" as never));
-    const child = refs.find((r) => r.configId === ("cfg_child" as never));
+    const parent = refs.find(
+      (r) => r.configId === ("cfg_parent" as Id<"agentConfigs">),
+    );
+    const child = refs.find(
+      (r) => r.configId === ("cfg_child" as Id<"agentConfigs">),
+    );
 
-    expect(parent?.calleeConfigIds).toEqual(["cfg_child" as never]);
+    expect(parent?.calleeConfigIds).toEqual([
+      "cfg_child" as Id<"agentConfigs">,
+    ]);
     expect(child?.calleeConfigIds).toEqual([]);
   });
 
@@ -119,7 +126,9 @@ describe("deriveSubagentRefs", () => {
     const edges = [edge("parent", "child", "default")];
 
     const refs = deriveSubagentRefs(nodes, edges);
-    const parent = refs.find((r) => r.configId === ("cfg_parent" as never));
+    const parent = refs.find(
+      (r) => r.configId === ("cfg_parent" as Id<"agentConfigs">),
+    );
 
     expect(parent?.calleeConfigIds).toEqual([]);
   });
@@ -127,7 +136,7 @@ describe("deriveSubagentRefs", () => {
 
 /** Minimal ref shape: `writeChangedRefs` only reads `configId`. */
 function ref(configId: string, value: string) {
-  return { configId: configId as never, value: value };
+  return { configId: configId as Id<"agentConfigs">, value: value };
 }
 
 const serializeValue = (r: { value: string }) => r.value;

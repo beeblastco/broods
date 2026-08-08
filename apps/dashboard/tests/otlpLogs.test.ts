@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildOtlpLogPayload, parseOtlpHeaders } from "../app/lib/otlpLogs";
+import {
+  buildOtlpLogPayload,
+  parseBeaconEvents,
+  parseOtlpHeaders,
+} from "../app/lib/otlpLogs";
 import { routePattern, type PerfEvent } from "../app/lib/perfReport";
 
 function event(overrides: Partial<PerfEvent> = {}): PerfEvent {
@@ -140,5 +144,87 @@ describe("routePattern", () => {
 
   test("handles the root path", () => {
     expect(routePattern("/")).toBe("/");
+  });
+});
+
+describe("parseBeaconEvents", () => {
+  const valid = {
+    name: "web-vital.LCP",
+    value: 1200,
+    unit: "ms",
+    route: "/[projectId]",
+    at: 1_700_000_000_000,
+  };
+
+  test("accepts a well-formed event", () => {
+    expect(parseBeaconEvents({ events: [valid] })).toHaveLength(1);
+  });
+
+  test("rejects a non-array or missing events field", () => {
+    expect(parseBeaconEvents({})).toEqual([]);
+    expect(parseBeaconEvents({ events: "nope" })).toEqual([]);
+    expect(parseBeaconEvents(null)).toEqual([]);
+  });
+
+  test("drops events with a unit outside the allow-list", () => {
+    expect(
+      parseBeaconEvents({ events: [{ ...valid, unit: "bytes" }] }),
+    ).toEqual([]);
+  });
+
+  test("drops non-finite values and out-of-range timestamps", () => {
+    const bad = [
+      { ...valid, value: Number.NaN },
+      { ...valid, value: Number.POSITIVE_INFINITY },
+      { ...valid, at: 0 },
+      { ...valid, at: -1 },
+      { ...valid, at: Number.MAX_SAFE_INTEGER + 1 },
+    ];
+
+    // An unbounded `at` is what would render exponential in the timestamp.
+    expect(parseBeaconEvents({ events: bad })).toEqual([]);
+  });
+
+  test("caps the batch at 32 events", () => {
+    const events = Array.from({ length: 64 }, () => valid);
+
+    expect(parseBeaconEvents({ events: events })).toHaveLength(32);
+  });
+
+  test("truncates long strings and caps attribute count", () => {
+    const [parsed] = parseBeaconEvents({
+      events: [
+        {
+          ...valid,
+          name: "x".repeat(200),
+          route: "y".repeat(400),
+          attributes: {
+            ...Object.fromEntries(
+              Array.from({ length: 30 }, (_, i) => [`k${i}`, i]),
+            ),
+            long: "z".repeat(400),
+          },
+        },
+      ],
+    });
+
+    expect(parsed.name).toHaveLength(64);
+    expect(parsed.route).toHaveLength(128);
+    expect(Object.keys(parsed.attributes ?? {})).toHaveLength(12);
+  });
+
+  test("drops attribute values that are not string, number or boolean", () => {
+    const [parsed] = parseBeaconEvents({
+      events: [
+        { ...valid, attributes: { ok: "yes", nested: { a: 1 }, nil: null } },
+      ],
+    });
+
+    expect(parsed.attributes).toEqual({ ok: "yes" });
+  });
+
+  test("a huge timestamp cannot reach the serializer as exponential", () => {
+    // Guards the BigInt path in buildOtlpLogPayload from the parser's side.
+    expect(parseBeaconEvents({ events: [{ ...valid, at: 1e21 }] })).toEqual([]);
   });
 });

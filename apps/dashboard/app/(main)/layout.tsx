@@ -69,9 +69,12 @@ export default function MainLayout({
     });
   }, [currentUser, isAuthenticated, user, syncProfile]);
 
+  // Mounted above the auth gates: LCP usually lands while this is still
+  // loading, and a reporter mounted after it would miss the metric entirely.
   if (isLoading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <PerfReporter />
         <p className="text-sm text-muted-foreground">Loading...</p>
       </div>
     );

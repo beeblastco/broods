@@ -28,9 +28,8 @@ function NavLinksInner() {
   const searchParams = useSearchParams();
   const projectId = params.projectId;
   const envParam = searchParams.get("env");
-  // Link already queues the partial prefetch on viewport entry; intent to
-  // navigate upgrades it to the full tree. Eagerly importing every route module
-  // on idle downloaded all five pages just because the header rendered.
+  // Link queues the partial prefetch on viewport entry; navigation intent
+  // upgrades it to the full tree.
   const warmProjectRoute = useCallback(
     (href: string) => router.prefetch(href, FULL_ROUTE_PREFETCH),
     [router],

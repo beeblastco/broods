@@ -451,6 +451,9 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       // The layout write is optimistic (withOptimisticUpdate above), so this
       // latency and its outcome are what a rollback rate is computed from.
       const startedAt = performance.now();
+      // The layout write is optimistic; a reference write is not. Tracking them
+      // apart keeps the rollback rate from counting ref failures as rollbacks.
+      let refsFailed = false;
       const currentNodes = nodesRef.current;
       const currentEdges = edgesRef.current;
       saveLayoutMutation({
@@ -504,29 +507,36 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
             return changed ? next : current;
           });
 
-          await writeChangedRefs(
-            deriveAgentRuntimeRefs(persistedNodes, currentEdges),
-            lastRuntimeRefs.current,
-            serializeRuntimeRefs,
-            (ref) =>
-              updateRuntimeRefs({
-                configId: ref.configId,
-                sandbox: ref.sandbox ?? null,
-                workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
-              }),
-          );
-
-          // Persist agent→agent subagent allow-lists from the canvas edges.
-          await writeChangedRefs(
-            deriveSubagentRefs(persistedNodes, currentEdges),
-            lastSubagentRefs.current,
-            serializeSubagentRefs,
-            (ref) =>
-              updateSubagentRefs({
-                configId: ref.configId,
-                calleeConfigIds: ref.calleeConfigIds,
-              }),
-          );
+          // Both groups always run: awaiting them in sequence let one failed
+          // runtime-ref write skip every subagent allow-list in the same save.
+          const refWrites = await Promise.allSettled([
+            writeChangedRefs(
+              deriveAgentRuntimeRefs(persistedNodes, currentEdges),
+              lastRuntimeRefs.current,
+              serializeRuntimeRefs,
+              (ref) =>
+                updateRuntimeRefs({
+                  configId: ref.configId,
+                  sandbox: ref.sandbox ?? null,
+                  workspaces: ref.workspaces.length > 0 ? ref.workspaces : null,
+                }),
+            ),
+            writeChangedRefs(
+              deriveSubagentRefs(persistedNodes, currentEdges),
+              lastSubagentRefs.current,
+              serializeSubagentRefs,
+              (ref) =>
+                updateSubagentRefs({
+                  configId: ref.configId,
+                  calleeConfigIds: ref.calleeConfigIds,
+                }),
+            ),
+          ]);
+          const failed = refWrites.find((r) => r.status === "rejected");
+          if (failed?.status === "rejected") {
+            refsFailed = true;
+            throw failed.reason;
+          }
         })
         .then(() => {
           // Only the success path may clear the dirty flag, and only when no
@@ -543,7 +553,10 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         })
         .catch(() => {
           reportPerf("optimistic-save", performance.now() - startedAt, {
-            attributes: { outcome: "rolled-back", nodes: currentNodes.length },
+            attributes: {
+              outcome: refsFailed ? "refs-failed" : "rolled-back",
+              nodes: currentNodes.length,
+            },
           });
           setSaveState("error");
         });

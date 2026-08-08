@@ -31,6 +31,23 @@ export const PERF_BUDGETS: Record<string, number> = {
   "web-vital.TTFB": 800,
 };
 
+/** Every static path segment the dashboard routes to; anything else is an id. */
+const KNOWN_SEGMENTS = new Set([
+  "account",
+  "auth",
+  "callback",
+  "cli-auth",
+  "dashboard",
+  "healthz",
+  "org",
+  "projects",
+  "sandbox",
+  "scheduler",
+  "settings",
+  "sign-in",
+  "start",
+]);
+
 export type PerfUnit = "ms" | "score" | "count";
 
 export type PerfEvent = {
@@ -118,30 +135,19 @@ export function flushPerf(): void {
   }).catch(() => {});
 }
 
-/**
- * Collapse ids out of a pathname so the route is groupable: `/j97a.../dashboard`
- * becomes `/[projectId]/dashboard`. Sending raw ids would make every project its
- * own series for no analytical gain.
- */
+// Collapse ids out of a pathname (`/j97a.../dashboard` → `/[projectId]/dashboard`)
+// at any depth, so no raw tenant id ever reaches the collector.
 export function routePattern(pathname: string): string {
   const segments = pathname.split("/").filter(Boolean);
   if (segments.length === 0) return "/";
 
-  const known = new Set([
-    "dashboard",
-    "sandbox",
-    "scheduler",
-    "settings",
-    "projects",
-    "account",
-    "org",
-    "auth",
-    "cli-auth",
-  ]);
-
   return `/${segments
     .map((segment, index) =>
-      index === 0 && !known.has(segment) ? "[projectId]" : segment,
+      KNOWN_SEGMENTS.has(segment)
+        ? segment
+        : index === 0
+          ? "[projectId]"
+          : "[id]",
     )
     .join("/")}`;
 }

@@ -25,11 +25,8 @@ export type AgentRuntimeRefs = {
 
 type RuntimeNode = Node<BaseNodeData> & { type?: string };
 
-/**
- * Write every ref whose serialization changed, caching a config id only once its
- * write lands. Caching before the await marked a failed write as persisted, so
- * the next save skipped it and the edit was silently dropped.
- */
+// A config id is cached only once its write lands: caching before the await
+// marked a failed write as persisted, so the next save skipped it.
 export async function writeChangedRefs<
   Ref extends { configId: Id<"agentConfigs"> },
 >(
@@ -363,11 +360,8 @@ function neighbors(
   return [...(adjacency.get(nodeId) ?? [])];
 }
 
-/**
- * Resolve for every node at once whether an agent is reachable, replacing the
- * per-node graph walk each card used to run on every store update. Infra nodes
- * chain through other infra nodes; every other type counts a direct agent edge.
- */
+// Infra nodes chain through other infra nodes; every other type counts only a
+// direct agent edge.
 function resolveAgentReachability(
   nodes: RuntimeNode[],
   adjacency: Map<string, Set<string>>,

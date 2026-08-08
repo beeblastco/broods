@@ -389,13 +389,16 @@ export const updateRuntimeRefs = mutation({
 
     // Provisioning stays unconditional — a canvas save is where an agent whose
     // org gained an account after the config was made first gets its row.
-    await ensureAgentsRowForConfig(ctx, configId, user.id);
+    const agentRowId = await ensureAgentsRowForConfig(ctx, configId, user.id);
+    const provisionedNow = !existing.agentId && !!agentRowId;
 
-    // Skip the patch and encryption push when nothing changed. Every canvas
-    // save derives refs for all agents, so most calls land here.
+    // Skip the patch and encryption push when nothing changed — every canvas
+    // save derives refs for all agents, so most calls land here. A row created
+    // just above still needs the push, or it stays empty until the next edit.
     if (
+      !provisionedNow &&
       JSON.stringify(extraConfig) ===
-      JSON.stringify(asRecord(existing.extraConfig))
+        JSON.stringify(asRecord(existing.extraConfig))
     ) {
       return configId;
     }

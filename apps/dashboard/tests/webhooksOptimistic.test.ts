@@ -4,6 +4,9 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { applyWebhookEnabledToggle } from "../app/lib/webhooksOptimistic";
 
+const AGENT = "cfg_a" as Id<"agentConfigs">;
+const OTHER = "cfg_b" as Id<"agentConfigs">;
+
 type Listing = {
   agentConfigId: Id<"agentConfigs">;
   agentName: string;
@@ -16,16 +19,6 @@ type Listing = {
   }>;
 };
 
-function webhook(index: number, enabled: boolean) {
-  return {
-    index: index,
-    enabled: enabled,
-    url: `https://h/${index}`,
-    events: [],
-  };
-}
-
-/** Minimal OptimisticLocalStore over one cached `listAgentWebhooks` entry. */
 function localStore(
   value: Listing[],
   queryArgs: Record<string, unknown> = { env: "e1" },
@@ -41,8 +34,14 @@ function localStore(
   return { store: store, written: written };
 }
 
-const AGENT = "cfg_a" as Id<"agentConfigs">;
-const OTHER = "cfg_b" as Id<"agentConfigs">;
+function webhook(index: number, enabled: boolean) {
+  return {
+    index: index,
+    enabled: enabled,
+    url: `https://h/${index}`,
+    events: [],
+  };
+}
 
 describe("applyWebhookEnabledToggle", () => {
   test("flips only the targeted webhook", () => {

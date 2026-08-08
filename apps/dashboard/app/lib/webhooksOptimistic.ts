@@ -3,11 +3,8 @@ import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { OptimisticLocalStore } from "convex/browser";
 
-/**
- * Flips one webhook's `enabled` flag in the cached `listAgentWebhooks` result so
- * the pill switches on click instead of after the round-trip. Convex reverts this
- * on its own if the mutation fails, so the pill snaps back to the server's truth.
- */
+// Convex reverts this on its own when the mutation fails, so the pill snaps
+// back to the server's truth without a rollback path here.
 export function applyWebhookEnabledToggle(
   localStore: OptimisticLocalStore,
   args: {
@@ -23,18 +20,24 @@ export function applyWebhookEnabledToggle(
   )) {
     if (!value) continue;
 
-    const next = value.map((agent) =>
-      agent.agentConfigId !== args.agentConfigId
-        ? agent
-        : {
-            ...agent,
-            webhooks: agent.webhooks.map((webhook) =>
-              webhook.index === args.index
-                ? { ...webhook, enabled: args.enabled }
-                : webhook,
-            ),
-          },
-    );
+    let touched = false;
+    const next = value.map((agent) => {
+      if (agent.agentConfigId !== args.agentConfigId) return agent;
+
+      return {
+        ...agent,
+        webhooks: agent.webhooks.map((webhook) => {
+          if (webhook.index !== args.index) return webhook;
+          touched = true;
+
+          return { ...webhook, enabled: args.enabled };
+        }),
+      };
+    });
+
+    // A listing without this webhook must not be rewritten, or its observers
+    // re-render for a change that never touched them.
+    if (!touched) continue;
 
     localStore.setQuery(api.webhooks.listAgentWebhooks, queryArgs, next);
   }
