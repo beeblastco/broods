@@ -2,19 +2,84 @@
  * HTTP route registration for AuthKit and Stripe webhook handlers.
  */
 
+import { processEvent } from "@convex-dev/stripe";
 import { httpRouter } from "convex/server";
+import Stripe from "stripe";
+import { components, internal } from "./_generated/api";
+import { httpAction } from "./_generated/server";
 import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
 import { handle as configHttp } from "./configHttp";
-import { register as registerStripeWebhook } from "./stripeHttp";
 
 const http = httpRouter();
 
 authKit.registerRoutes(http);
 
-registerStripeWebhook(http);
+http.route({
+  path: "/stripe/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const secretKey = process.env.STRIPE_SECRET_KEY;
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!secretKey || !webhookSecret) {
+      console.error("Stripe webhook environment is not configured");
+
+      return new Response("Webhook not configured", { status: 500 });
+    }
+
+    const signature = request.headers.get("stripe-signature");
+    if (!signature) {
+      return new Response("Missing Stripe signature", { status: 400 });
+    }
+
+    const stripe = new Stripe(secretKey);
+    let event: Stripe.Event;
+    try {
+      event = await stripe.webhooks.constructEventAsync(
+        await request.text(),
+        signature,
+        webhookSecret,
+      );
+    } catch (error) {
+      console.error("Stripe webhook signature verification failed", error);
+
+      return new Response("Invalid Stripe signature", { status: 400 });
+    }
+
+    if (
+      event.data.object.object === "invoice" &&
+      event.data.object.customer === null
+    ) {
+      return Response.json({ received: true });
+    }
+
+    try {
+      await processEvent(ctx, components.stripe, event, stripe);
+
+      if (
+        event.type === "customer.subscription.updated" ||
+        event.type === "customer.subscription.deleted"
+      ) {
+        const subscription = event.data.object as Stripe.Subscription;
+        const authId = subscription.metadata.authId;
+        if (authId) {
+          await ctx.runMutation(internal.stripe.syncPlanInternal, {
+            authId: authId,
+            status: subscription.status,
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Stripe webhook processing failed", error);
+
+      return new Response("Webhook processing failed", { status: 500 });
+    }
+
+    return Response.json({ received: true });
+  }),
+});
 
 http.route({
   pathPrefix: "/v1/account/projects/",
