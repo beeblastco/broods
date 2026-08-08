@@ -169,27 +169,37 @@ describe("bundle-size upload gate", () => {
 });
 
 describe("canvas save path", () => {
-  // The dashboard saves a partial upload, so it classifies the tier itself and
-  // passes it in. `requireBundle: false` never infers one — a save that stopped
-  // sending it would silently fall back to whatever the row already held.
-  it("returns the classified tier and hash for a partial upload", async () => {
-    const bundle =
-      "import fs from 'node:fs';\nexport default { execute: () => fs };";
+  // The canvas has no bundler, so it stores isolate-only source and refuses the
+  // rest before this call. It still passes the tier explicitly, because
+  // `requireBundle: false` never infers one — a save that stopped sending it
+  // would silently keep whatever tier the row already held.
+  it("returns the tier and hash for the canvas upload shape", async () => {
+    const bundle = "export default { execute: (input) => input };";
+    expect(inferAccountToolRuntime(bundle)).toBe("isolate");
 
     await expect(
       normalizeAccountToolUpload(
-        {
-          name: "canvas_tool",
-          bundle: bundle,
-          runtime: inferAccountToolRuntime(bundle),
-        },
+        { name: "canvas_tool", bundle: bundle, runtime: "isolate" },
         { requireBundle: false },
       ),
     ).resolves.toMatchObject({
       name: "canvas_tool",
-      runtime: "sandbox",
+      runtime: "isolate",
       sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
+  });
+
+  // What the editor refuses. The classifier is covered above; this pins that the
+  // canvas guard reads it for the shapes someone actually types into the editor.
+  it("flags editor source that cannot resolve without a bundler", () => {
+    for (const source of [
+      "import axios from 'axios';\nexport default { execute: () => axios };",
+      "const fs = require('fs');",
+      "export default { execute: () => process.env.KEY };",
+      "export default { execute: () => __dirname };",
+    ]) {
+      expect(inferAccountToolRuntime(source)).toBe("sandbox");
+    }
   });
 
   it("bounds a partial upload by the tier it was classified onto", async () => {
