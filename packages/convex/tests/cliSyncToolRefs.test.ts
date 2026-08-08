@@ -70,7 +70,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
 async function seedUploadedTool(
   tt: T,
   accountId: Id<"accounts">,
-): Promise<string> {
+): Promise<Id<"accountTools">> {
   const now = Date.now();
   const toolId = await tt.run(
     async (ctx) =>
@@ -99,11 +99,14 @@ async function seedUploadedTool(
 }
 
 /** Give a seeded tool the project/environment scope a real CLI upload has. */
-async function scopeToolToEnvironment(tt: T, toolId: string): Promise<void> {
+async function scopeToolToEnvironment(
+  tt: T,
+  toolId: Id<"accountTools">,
+): Promise<void> {
   await tt.run(async (ctx) => {
     const environment = await ctx.db.query("environments").first();
     if (!environment) throw new Error("Environment not seeded");
-    await ctx.db.patch(toolId as Id<"accountTools">, {
+    await ctx.db.patch(toolId, {
       projectId: environment.projectId,
       environmentId: environment._id,
     });
@@ -220,9 +223,15 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     const layout = await tt.run(
       async (ctx) => await ctx.db.query("canvasLayouts").first(),
     );
+    // Matched on resourceId, not just type: the claim is that the row points at
+    // its own node, which a bare type match would not distinguish.
     const toolNode = (
-      layout!.nodes as Array<{ id: string; type: string }>
-    ).find((node) => node.type === "tool");
+      layout!.nodes as Array<{
+        id: string;
+        type: string;
+        data?: { resourceId?: string };
+      }>
+    ).find((node) => node.type === "tool" && node.data?.resourceId === toolId);
     const tool = await tt.run(async (ctx) => await ctx.db.get(toolId));
 
     // Every tool panel resolves through `getByNode`, which reads the
