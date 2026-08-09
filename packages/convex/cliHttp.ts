@@ -256,7 +256,7 @@ export const handle = httpAction(async (ctx, req) => {
         },
       );
 
-      return json({ variables });
+      return json({ variables: variables });
     }
 
     if (route.kind === "env" && req.method === "GET") {
@@ -440,6 +440,7 @@ function numberSearchParam(url: URL, name: string): number | undefined {
 function booleanSearchParam(url: URL, name: string): boolean | undefined {
   const raw = url.searchParams.get(name);
   if (raw === null) return undefined;
+
   return raw === "1" || raw === "true";
 }
 
@@ -588,7 +589,7 @@ async function syncExternalResources(
     prune,
   );
 
-  return { skills, tools, hooks };
+  return { skills: skills, tools: tools, hooks: hooks };
 }
 
 async function syncSkillResources(
@@ -820,6 +821,7 @@ function rewriteExternalResourceRefs(
     ...manifest,
     resources: manifest.resources.map((resource) => {
       if (resource.kind !== "agent") return resource;
+
       return {
         ...resource,
         config: rewriteExternalConfigRefs(
@@ -1010,6 +1012,7 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
 
 function asOptionalRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
   return value as Record<string, unknown>;
 }
 

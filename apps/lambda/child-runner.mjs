@@ -64,7 +64,7 @@ async function runToolRequest() {
     const payload = parsePayload(JSON.parse(request));
     const result = await runBundle(payload, bundle, controller.signal);
     clearTimeout(timeout);
-    emitTerminal({ t: "final", result }, 0);
+    emitTerminal({ t: "final", result: result }, 0);
   } catch (error) {
     clearTimeout(timeout);
     emitTerminal({ t: "error", error: errorMessage(error) }, 1);
@@ -104,7 +104,7 @@ async function runBundle(payload, bundle, abortSignal) {
       fetch: globalThis.fetch,
       state: {},
     },
-    abortSignal,
+    abortSignal: abortSignal,
     messages: payload.messages ?? [],
     experimental_context: payload.experimentalContext ?? undefined,
   };
@@ -116,10 +116,12 @@ async function runBundle(payload, bundle, abortSignal) {
       // the timeout's terminal frame.
       if (abortSignal.aborted) break;
       last = output;
-      writeFrame({ t: "chunk", output });
+      writeFrame({ t: "chunk", output: output });
     }
+
     return last;
   }
+
   return await value;
 }
 
@@ -127,6 +129,7 @@ async function readAllStdin() {
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) input += chunk;
+
   return input.trim();
 }
 
@@ -186,6 +189,7 @@ function parsePayload(payload) {
   if (typeof payload.toolName !== "string") {
     throw new Error("sandbox runner payload missing toolName");
   }
+
   return {
     expectedSha256: payload.expectedSha256,
     toolName: payload.toolName,
@@ -205,6 +209,7 @@ function runTimeoutMs() {
   const value = Number(process.env.TOOL_RUNNER_TIMEOUT_SECONDS);
   const seconds =
     Number.isFinite(value) && value > 0 ? value : DEFAULT_TIMEOUT_SECONDS;
+
   return seconds * 1000;
 }
 

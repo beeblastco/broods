@@ -6,7 +6,6 @@
  * async, execution, env, tool-specific options) per broods AgentToolConfig.
  */
 import { BranchEditor } from "@/app/components/side-panel/BranchEditor";
-import { formatSource } from "@/app/components/side-panel/CodeEditor";
 import { Button } from "@/app/components/ui/button";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
 import {
@@ -15,6 +14,7 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { toErrorMessage } from "@/app/lib/errors";
+import { formatSource } from "@/app/lib/formatSource";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useQuery } from "convex/react";

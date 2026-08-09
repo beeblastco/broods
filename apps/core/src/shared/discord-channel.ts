@@ -155,24 +155,24 @@ export function createDiscordChannel(
   options: DiscordChannelOptions = {},
 ): ChannelAdapter {
   const discord = new BroodsDiscordAdapter({
-    apiUrl,
+    apiUrl: apiUrl,
     applicationId: "broods-discord-webhook",
-    botToken,
-    publicKey,
+    botToken: botToken,
+    publicKey: publicKey,
     logger: new ConsoleLogger("error").child("discord"),
   });
 
   return {
     name: "discord",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return (
         "x-signature-ed25519" in req.headers ||
         "x-discord-gateway-token" in req.headers
       );
     },
 
-    authenticate(req) {
+    authenticate: function(req) {
       if ("x-discord-gateway-token" in req.headers) {
         return req.headers["x-discord-gateway-token"] === botToken;
       }
@@ -184,7 +184,7 @@ export function createDiscordChannel(
       );
     },
 
-    parse(req): ChannelParseResult {
+    parse: function(req): ChannelParseResult {
       const payload = JSON.parse(req.body) as DiscordInteractionPayload;
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
@@ -232,6 +232,7 @@ export function createDiscordChannel(
         logWarn("Discord DM interactions are disabled", {
           channelId: payload.channel_id,
         });
+
         return {
           kind: "response",
           response: {
@@ -253,6 +254,7 @@ export function createDiscordChannel(
         logWarn("Discord guild not in allow list", {
           guildId: payload.guild_id,
         });
+
         return {
           kind: "response",
           response: {
@@ -312,7 +314,7 @@ export function createDiscordChannel(
             interactionId: payload.id,
             guildId: payload.guild_id,
             channelId: thread.channelId,
-            ...(thread.threadId ? { threadId } : {}),
+            ...(thread.threadId ? { threadId: threadId } : {}),
             ...(resolvedCommand.commandToken
               ? { commandToken: resolvedCommand.commandToken }
               : {}),
@@ -322,7 +324,7 @@ export function createDiscordChannel(
       };
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createDiscordActions(
         botToken,
         publicKey,
@@ -340,10 +342,10 @@ function createDiscordActions(
   apiUrl?: string,
 ): ChannelActions {
   const discord = new BroodsDiscordAdapter({
-    apiUrl,
+    apiUrl: apiUrl,
     applicationId: source.applicationId,
-    botToken,
-    publicKey,
+    botToken: botToken,
+    publicKey: publicKey,
     logger: new ConsoleLogger("error").child("discord"),
   });
   const threadId =
@@ -355,9 +357,10 @@ function createDiscordActions(
     } satisfies DiscordThreadId);
 
   return {
-    async sendText(text) {
+    sendText: async function(text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
+
         return;
       }
 
@@ -373,24 +376,26 @@ function createDiscordActions(
       } catch (err) {
         if (source.channelId) {
           await discord.postMessage(threadId, { markdown: text });
+
           return;
         }
         throw err;
       }
     },
 
-    async sendTyping() {
+    sendTyping: async function() {
       if (!source.channelId) {
         return;
       }
       await discord.startTyping(threadId);
     },
 
-    async reactToMessage() {
+    reactToMessage: async function() {
       if (typeof source.messageId !== "string") {
         return;
       }
       await discord.addReaction(threadId, source.messageId, "eyes");
+
       return;
     },
   };
@@ -427,6 +432,7 @@ function parseForwardedGatewayEvent(
     logWarn("Discord DM gateway messages are disabled", {
       channelId: data.channel_id,
     });
+
     return {
       kind: "ignore",
       reason: "dm_disabled",
@@ -436,6 +442,7 @@ function parseForwardedGatewayEvent(
 
   if (allowedGuildIds && !allowedGuildIds.has(data.guild_id)) {
     logWarn("Discord guild not in allow list", { guildId: data.guild_id });
+
     return {
       kind: "ignore",
       reason: "guild_not_allowed",
@@ -477,7 +484,7 @@ function parseForwardedGatewayEvent(
       eventId: `${DISCORD_INTEGRATION_PREFIX}${data.id}`,
       conversationKey: threadId,
       channelName: "discord",
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: text }],
       identity: {
         workspaceRef: data.guild_id,
         channelId: thread.channelId,
@@ -491,7 +498,7 @@ function parseForwardedGatewayEvent(
         applicationId: "broods-discord-gateway",
         guildId: data.guild_id,
         channelId: thread.channelId,
-        ...(thread.threadId ? { threadId } : {}),
+        ...(thread.threadId ? { threadId: threadId } : {}),
         messageId: data.id,
         userId: data.author.id,
       } satisfies DiscordSource,
@@ -540,6 +547,7 @@ function formatDiscordMessageText(
     .replace(/<@!?([^>\s]+)>/g, (match, userId: string) => {
       if (omittedUserIds.has(userId)) return "";
       const name = names.get(userId);
+
       return name ? `@${name}` : match;
     })
     .replace(/[ \t]+([,.!?;:])/g, "$1")
@@ -594,7 +602,7 @@ function toDiscordInteractionThread(
 
   return {
     guildId: payload.guild_id ?? "@me",
-    channelId,
+    channelId: channelId,
   };
 }
 
@@ -662,10 +670,10 @@ function toDiscordSource(source: Record<string, unknown>): DiscordSource {
       typeof source.interactionToken === "string"
         ? source.interactionToken
         : undefined,
-    interactionId,
+    interactionId: interactionId,
     guildId: typeof source.guildId === "string" ? source.guildId : undefined,
-    channelId,
-    threadId,
+    channelId: channelId,
+    threadId: threadId,
     messageId:
       typeof source.messageId === "string" ? source.messageId : undefined,
     commandToken:

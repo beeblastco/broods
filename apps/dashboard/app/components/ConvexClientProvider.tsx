@@ -36,6 +36,7 @@ function useAuthAdapter() {
         return (await getAccessToken()) ?? null;
       } catch (error) {
         console.error("Failed to get access token:", error);
+
         return null;
       }
     },

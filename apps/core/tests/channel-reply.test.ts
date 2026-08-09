@@ -50,7 +50,7 @@ describe("sendChannelReply", () => {
     };
 
     await sendChannelReply({
-      config,
+      config: config,
       accountId: "acct-1",
       channelName: "telegram",
       source: { chatId: 555, messageId: "555:100", threadId: "telegram:555" },
@@ -86,15 +86,16 @@ function installFetchMock() {
   const responses: Response[] = [];
 
   globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
-    calls.push({ input, init });
+    calls.push({ input: input, init: init });
     const response = responses.shift();
     if (!response) {
       throw new Error(`Unexpected fetch: ${toUrl(input)}`);
     }
+
     return response;
   }) as unknown as typeof fetch;
 
-  return { calls, responses };
+  return { calls: calls, responses: responses };
 }
 
 function toUrl(input: FetchInput): string {
@@ -104,5 +105,6 @@ function toUrl(input: FetchInput): string {
   if (input instanceof URL) {
     return input.toString();
   }
+
   return input.url;
 }

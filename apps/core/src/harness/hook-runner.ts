@@ -84,18 +84,20 @@ export async function runCodeHook(
     const raw = (await runForResult(accountId, payload)) as
       | { result?: unknown; state?: unknown }
       | undefined;
+
     return {
       mutation: sanitizeHookResult(event, raw?.result),
       state: sanitizeHookState(raw?.state, incomingState),
     };
   } catch (error) {
     logError("Code hook execution failed", {
-      accountId,
+      accountId: accountId,
       hookId: record.hookId,
       hookName: record.name,
-      event,
+      event: event,
       error: error instanceof Error ? error.message : String(error),
     });
+
     return { mutation: undefined, state: incomingState };
   }
 }
@@ -106,6 +108,7 @@ async function createHookRunnerPayload(
 ): Promise<Record<string, unknown>> {
   const { record, event, payload, config } = params;
   const bytes = await readS3Bytes(toolBundlesBucket(), record.bundleStorageKey);
+
   return {
     bundleSourceB64: Buffer.from(bytes).toString("base64"),
     expectedSha256: record.sha256,
@@ -150,6 +153,7 @@ async function runForResult(
   for await (const value of streamIsolatePayload(accountId, payload)) {
     result = value;
   }
+
   return result;
 }
 
@@ -176,6 +180,7 @@ export function sanitizeHookResult(
   for (const key of allowed) {
     if (raw[key] !== undefined) result[key] = raw[key];
   }
+
   return Object.keys(result).length > 0 ? result : undefined;
 }
 

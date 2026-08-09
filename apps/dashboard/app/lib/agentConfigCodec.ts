@@ -202,7 +202,7 @@ export function readModelReasoning(modelBranch: Record<string, unknown>): {
         : undefined;
 
   return {
-    ...(budgetTokens !== undefined ? { budgetTokens } : {}),
-    ...(effort ? { effort } : {}),
+    ...(budgetTokens !== undefined ? { budgetTokens: budgetTokens } : {}),
+    ...(effort ? { effort: effort } : {}),
   };
 }

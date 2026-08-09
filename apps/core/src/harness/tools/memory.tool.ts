@@ -54,7 +54,7 @@ Usage notes:
 - Its metadata records the conversation scope it was learned in (originSessionId), so you can tell where a memory came from when reading it later.
 - Check the memory index already in your context first: saving an existing title updates that entry instead of duplicating it.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const { title, description, content, type, workspace } =
           input as MemorySaveInput;
         try {
@@ -138,6 +138,7 @@ Usage notes:
                 "Error: memory save failed",
             );
           }
+
           return toolText(result.stdout.trim());
         } catch (cause) {
           return toolError(
@@ -167,11 +168,13 @@ export function memorySlug(title: string): string {
     .update(title, "utf8")
     .digest("hex")
     .slice(0, 8);
+
   return slug.length > 0 ? `${slug}-${hash}` : `memory-${hash}`;
 }
 
 function inputSchema(context: MemoryToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {

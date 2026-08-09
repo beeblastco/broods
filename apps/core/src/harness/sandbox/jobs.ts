@@ -44,6 +44,7 @@ export function lifecycleScript(
 ): string | undefined {
   if (!onCreate?.length && !onResume?.length) return undefined;
   const marker = `${workDir}/.fp-setup-done`;
+
   return [
     "set -e",
     `mkdir -p ${shellQuote(workDir)}`,
@@ -88,6 +89,7 @@ export function launchScript(
     `rm -f ${f("running")}`,
   ].join("\n");
   const wrapperB64 = Buffer.from(wrapper, "utf8").toString("base64");
+
   return [
     `mkdir -p ${q(jobsDir)}`,
     `__running=$(ls ${q(jobsDir)}/*.running 2>/dev/null | wc -l)`,
@@ -100,6 +102,7 @@ export function launchScript(
 export function statusScript(jobsDir: string, jobId: string): string {
   assertSafeJobId(jobId);
   const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+
   // Exit recorded => terminal. Otherwise the job is "running" only if it was
   // launched in this boot AND its session leader is still alive; a boot-id
   // mismatch (sandbox recreated) or a dead pid with no exit means it was killed.
@@ -122,12 +125,14 @@ export function logsScript(
   bytes: number,
 ): string {
   assertSafeJobId(jobId);
+
   return `tail -c ${bytes} ${shellQuote(`${jobsDir}/${jobId}.log`)} 2>/dev/null || true`;
 }
 
 export function stopScript(jobsDir: string, jobId: string): string {
   assertSafeJobId(jobId);
   const f = (ext: string) => shellQuote(`${jobsDir}/${jobId}.${ext}`);
+
   return [
     `if [ -f ${f("pid")} ]; then kill -TERM -"$(cat ${f("pid")})" 2>/dev/null || true; sleep 1; kill -KILL -"$(cat ${f("pid")})" 2>/dev/null || true; fi`,
     `[ -f ${f("exit")} ] || echo 143 > ${f("exit")}`,
@@ -143,9 +148,11 @@ export function parseJobStatus(
   if (text.startsWith("done")) {
     const code = Number(text.split(/\s+/)[1]);
     const exitCode = Number.isFinite(code) ? code : null;
-    return { jobId, state: exitCode === 0 ? "completed" : "failed", exitCode };
+
+    return { jobId: jobId, state: exitCode === 0 ? "completed" : "failed", exitCode: exitCode };
   }
-  return { jobId, state: text === "running" ? "running" : "unknown" };
+
+  return { jobId: jobId, state: text === "running" ? "running" : "unknown" };
 }
 
 // POSTs the job's outcome back to the harness so the conversation resumes without
@@ -176,5 +183,6 @@ export function callbackSnippet(
     `try: urllib.request.urlopen(req,timeout=15)`,
     `except Exception: pass`,
   ].join("\n");
+
   return `${env} python3 - <<'__FPCB__' >/dev/null 2>&1 || true\n${py}\n__FPCB__`;
 }

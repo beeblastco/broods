@@ -41,6 +41,7 @@ function availableToolNames(
   factories: Record<string, ProviderToolFactory>,
 ): string {
   const names = Object.keys(factories).sort();
+
   return names.length > 0 ? names.join(", ") : "none";
 }
 
@@ -51,6 +52,7 @@ function providerToolArgs(
   if (typeof type === "string" && PROVIDER_TOOL_DESCRIPTOR_TYPES.has(type)) {
     return isPlainObject(args) ? (args as Record<string, unknown>) : {};
   }
+
   return config;
 }
 
@@ -67,6 +69,7 @@ function providerToolFactories(
   }
 
   const tools = (modelProvider as { tools?: unknown }).tools;
+
   return isPlainObject(tools)
     ? (tools as Record<string, ProviderToolFactory>)
     : {};

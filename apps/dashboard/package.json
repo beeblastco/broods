@@ -12,6 +12,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "check": "tsc --noEmit && eslint",
+    "format": "prettier --write \"**/*.{css,js,json,md,mjs,ts,tsx}\"",
     "lint": "eslint",
     "test": "bun test --pass-with-no-tests"
   },

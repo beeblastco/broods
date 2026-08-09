@@ -213,6 +213,7 @@
       "devDependencies": {
         "@edge-runtime/vm": "^5.0.0",
         "convex-test": "^0.0.54",
+        "prettier": "^3.9.6",
         "vite": "^8.1.5",
         "vitest": "^4.1.10",
       },
@@ -222,9 +223,6 @@
     "unrs-resolver",
     "sharp",
   ],
-  "patchedDependencies": {
-    "e2b@2.36.0": "patches/e2b@2.36.0.patch",
-  },
   "overrides": {
     "@types/node": "26.1.1",
     "tar": "7.5.22",

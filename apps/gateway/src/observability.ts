@@ -68,12 +68,14 @@ export async function handleObservabilityMessage(
 
   if (!isObservabilityClientMessage(parsed)) {
     sendObs(socket, { type: "error", error: "Invalid observability message" });
+
     return;
   }
 
   const msg = parsed as ObservabilityClientMessage;
   if (msg.type === "unsubscribe") {
     cleanupObservabilityStream(socket, msg.stream);
+
     return;
   }
 
@@ -106,7 +108,7 @@ export async function relayNatsMessages(
           if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
           if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel])
             continue;
-          sendObs(socket, { type: "log", entry });
+          sendObs(socket, { type: "log", entry: entry });
         } else {
           sendObs(socket, {
             type: "span",
@@ -170,7 +172,7 @@ export function lokiLogEntry(
 
   return {
     ts: Number.isFinite(parsedTime) ? parsedTime : fallbackTs,
-    level,
+    level: level,
     eventType: stringValue(record.eventType, metadata.eventType, "log"),
     message: stringValue(record.message, metadata.message, line),
     traceId: optionalString(
@@ -273,13 +275,13 @@ export function tempoTraceRowsFromResponse(
           status?.code === 2 || status?.code === "STATUS_CODE_ERROR";
 
         rows.push({
-          traceId,
-          spanId,
-          ...(parentSpanId ? { parentSpanId } : {}),
-          name,
+          traceId: traceId,
+          spanId: spanId,
+          ...(parentSpanId ? { parentSpanId: parentSpanId } : {}),
+          name: name,
           kind: spanKind(name),
-          startTimeMs,
-          endTimeMs,
+          startTimeMs: startTimeMs,
+          endTimeMs: endTimeMs,
           durationMs: Math.max(0, endTimeMs - startTimeMs),
           status: isError ? "error" : "ok",
           ...(typeof attributes.endpoint_id === "string"
@@ -291,7 +293,7 @@ export function tempoTraceRowsFromResponse(
           ...(typeof attributes.conversation_key === "string"
             ? { conversationKey: attributes.conversation_key }
             : {}),
-          attributes,
+          attributes: attributes,
           ...(isError && typeof status?.message === "string"
             ? { error: status.message }
             : {}),
@@ -331,6 +333,7 @@ async function handleObservabilitySubscribe(
       type: "error",
       error: "Live observability transport is unavailable.",
     });
+
     return;
   }
 
@@ -363,6 +366,7 @@ async function sendBackfill(
         entries: await fetchTempoBackfill(tempoUrl, scope, limit),
       });
     }
+
     return true;
   } catch {
     return false;
@@ -486,8 +490,8 @@ async function startLiveSubscription(
   try {
     const connection = await getNatsConnection();
     const messages = await readObservabilityStream({
-      connection,
-      stream,
+      connection: connection,
+      stream: stream,
       accountId: scope.accountId,
       project: scope.projectSlug,
       env: scope.environmentSlug,
@@ -504,6 +508,7 @@ async function startLiveSubscription(
     }
 
     void relayNatsMessages(socket, messages, stream, state);
+
     return true;
   } catch {
     return false;
@@ -562,6 +567,7 @@ function otelValue(value: OtelValue | undefined): unknown {
   if (value.doubleValue !== undefined) return value.doubleValue;
   if (value.boolValue !== undefined) return value.boolValue;
   if (value.arrayValue) return (value.arrayValue.values ?? []).map(otelValue);
+
   return undefined;
 }
 
@@ -581,5 +587,6 @@ function spanKind(name: string): ObservabilitySpanRow["kind"] {
   if (name === "tool.call") return "tool.call";
   if (name.startsWith("phase.")) return "phase";
   if (name === "agent.subtask") return "subtask";
+
   return "task";
 }

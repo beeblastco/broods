@@ -22,7 +22,7 @@ async function runDemo(
 ) {
   console.log(`\n=== ${label} ===\n`);
   for await (const chunk of client.stream(agent, {
-    input,
+    input: input,
     conversationKey: `${conversationKeyPrefix}-${Date.now()}`,
   })) {
     switch (chunk.type) {

@@ -168,15 +168,15 @@ export async function createTools(
   if (workspaces.length > 0) {
     Object.assign(
       sandboxTools,
-      readTool({ workspaces }),
-      globTool({ workspaces }),
+      readTool({ workspaces: workspaces }),
+      globTool({ workspaces: workspaces }),
     );
   }
   // write/edit/grep: require a sandbox at execution time. Pass the full workspace
   // list to preserve default-workspace semantics; read-only selections fail clearly.
   if (sandboxWorkspaces.length > 0) {
     const fsContext = {
-      workspaces,
+      workspaces: workspaces,
       ...(context.onSandboxCpu ? { onSandboxCpu: context.onSandboxCpu } : {}),
     };
     Object.assign(
@@ -286,7 +286,7 @@ export async function createTools(
       tools,
       accountTool(record, {
         ...context,
-        accountId,
+        accountId: accountId,
         config: externalToolRuntimeConfig(toolConfig),
       }),
     );
@@ -300,7 +300,7 @@ export async function createTools(
       tools,
       asyncStatusTool({
         conversationKey: context.conversationKey,
-        workspaces,
+        workspaces: workspaces,
         // logs/stop only apply when the background provider exposes live controls.
         supportsJobs: workspaces.some((workspace) =>
           sandboxSupportsJobControls(workspace.sandbox),

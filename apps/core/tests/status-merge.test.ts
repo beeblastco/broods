@@ -57,6 +57,7 @@ beforeEach(() => {
   runtime.query = (async (name: string) => {
     if (name === "getIngressStatus") return ingressRow;
     if (name === "getAsyncAgentResult") return asyncRow;
+
     return null;
   }) as never;
 });

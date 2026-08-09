@@ -30,6 +30,7 @@ const DEFAULT_LIMIT = 2000;
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {
@@ -63,7 +64,7 @@ Usage notes:
 - Lines are returned as \`<line_number>\\t<content>\`.
 - Prefer this over \`bash cat\` for reading files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const { file_path, offset, limit, workspace } = input as ReadInput;
         try {
           const ws = resolveWorkspace(context.workspaces, workspace);
@@ -94,6 +95,7 @@ Usage notes:
               `${result.stderr}${result.stdout}`.trim() || "Error: read failed",
             );
           }
+
           return toolText(result.stdout);
         } catch (cause) {
           return toolError(

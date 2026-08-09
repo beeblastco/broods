@@ -219,7 +219,7 @@ describe("agent policy validation", () => {
         {
           effect: "deny",
           actions: ["tool.call"],
-          conditions: [{ attribute: "environment", operator: "in", value }],
+          conditions: [{ attribute: "environment", operator: "in", value: value }],
         },
       ],
     });
@@ -240,7 +240,7 @@ describe("agent policy validation", () => {
         {
           effect: "deny",
           actions: ["agent.invoke"],
-          conditions: [{ attribute: "actorRoles", operator, value }],
+          conditions: [{ attribute: "actorRoles", operator: operator, value: value }],
         },
       ],
     });

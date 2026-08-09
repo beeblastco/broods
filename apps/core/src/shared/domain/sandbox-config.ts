@@ -236,18 +236,18 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
   }
 
   return {
-    provider,
-    network,
+    provider: provider,
+    network: network,
     permissionMode:
       (config.permissionMode as SandboxPermissionMode | undefined) ?? "ask",
     ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
-    ...(snapshot ? { snapshot } : {}),
+    ...(snapshot ? { snapshot: snapshot } : {}),
     ...(config.persistent !== undefined
       ? { persistent: config.persistent as boolean }
       : {}),
-    ...(lifecycle ? { lifecycle } : {}),
-    ...(onCreate ? { onCreate } : {}),
-    ...(onResume ? { onResume } : {}),
+    ...(lifecycle ? { lifecycle: lifecycle } : {}),
+    ...(onCreate ? { onCreate: onCreate } : {}),
+    ...(onResume ? { onResume: onResume } : {}),
     ...(config.runtimes !== undefined
       ? { runtimes: [...(config.runtimes as SandboxRuntimeName[])] }
       : {}),
@@ -276,7 +276,8 @@ export function normalizeCreateSandboxConfigInput(
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeSandboxConfig(value.config);
-  return { name, ...(description ? { description } : {}), config };
+
+  return { name: name, ...(description ? { description: description } : {}), config: config };
 }
 
 export function normalizeUpdateSandboxConfigInput(
@@ -304,7 +305,7 @@ export function normalizeUpdateSandboxConfigInput(
               : optionalString(value.description, "description"),
         }
       : {}),
-    config,
+    config: config,
   };
 }
 
@@ -323,11 +324,13 @@ function redactSandboxConfigSecrets(config: SandboxConfig): SandboxConfig {
       Object.keys(redacted.envVars).map((key) => [key, REDACTED_SECRET_VALUE]),
     );
   }
+
   return redacted;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
+
   return value;
 }
 
@@ -359,10 +362,11 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
       "config.network.allowDomains and config.network.allowCidrs are only valid when config.network.mode is restricted",
     );
   }
+
   return {
-    mode,
-    ...(allowDomains ? { allowDomains } : {}),
-    ...(allowCidrs ? { allowCidrs } : {}),
+    mode: mode,
+    ...(allowDomains ? { allowDomains: allowDomains } : {}),
+    ...(allowCidrs ? { allowCidrs: allowCidrs } : {}),
   };
 }
 
@@ -376,6 +380,7 @@ function normalizeHookList(value: unknown, name: string): string[] {
   if (commands.some((entry) => entry.length === 0)) {
     throw new Error(`${name} must be a non-empty array of non-empty strings`);
   }
+
   return commands;
 }
 
@@ -393,6 +398,7 @@ function normalizeOptionalStringList(
   if (entries.some((entry) => entry.length === 0)) {
     throw new Error(`${name} must be an array of non-empty strings`);
   }
+
   return entries;
 }
 
@@ -427,6 +433,7 @@ function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+
   return value.trim();
 }
 
@@ -434,6 +441,7 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
@@ -451,6 +459,7 @@ function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
     "config.lifecycle.maxLifetimeSeconds",
     MAX_LIFETIME_SECONDS,
   );
+
   return {
     ...(value.idleTimeoutSeconds !== undefined
       ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }

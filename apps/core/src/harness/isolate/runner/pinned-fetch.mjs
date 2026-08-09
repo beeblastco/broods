@@ -60,11 +60,13 @@ async function guardedFetchWithDeadline(url, init, state) {
   if (isRedirect(response.status)) {
     const location = response.headers.location;
     if (!location) throw new Error("fetch redirect missing location");
+
     return guardedFetchWithDeadline(new URL(location, parsed).toString(), init, {
       ...state,
       redirects: state.redirects + 1,
     });
   }
+
   return response;
 }
 
@@ -79,6 +81,7 @@ function validateHttpUrl(value) {
   if (!parsed.hostname) {
     throw new Error("ctx.fetch URL must include a hostname");
   }
+
   return parsed;
 }
 
@@ -94,6 +97,7 @@ async function resolveAllowedAddress(hostname, lookup) {
       throw new Error("ctx.fetch blocked private or metadata address");
     }
   }
+
   return normalized[0];
 }
 
@@ -110,7 +114,7 @@ function requestPinned(parsed, pinned, init, state) {
       port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
       method: init.method === undefined ? "GET" : String(init.method),
       path: `${parsed.pathname}${parsed.search}`,
-      headers,
+      headers: headers,
       servername: parsed.hostname,
       signal: state.signal,
       createConnection: state.createConnection,
@@ -145,6 +149,7 @@ function normalizeRequestHeaders(headers) {
     for (const [key, value] of headers.entries()) {
       if (key.toLowerCase() !== "host") result[key] = value;
     }
+
     return result;
   }
   if (Array.isArray(headers)) {
@@ -153,12 +158,14 @@ function normalizeRequestHeaders(headers) {
       const key = String(entry[0]);
       if (key.toLowerCase() !== "host") result[key] = String(entry[1]);
     }
+
     return result;
   }
   if (typeof headers === "object") {
     for (const [key, value] of Object.entries(headers)) {
       if (key.toLowerCase() !== "host" && value !== undefined) result[key] = String(value);
     }
+
     return result;
   }
   throw new Error("ctx.fetch init headers must be an object, array, or Headers");
@@ -170,24 +177,29 @@ function responseHeadersToRecord(headers) {
     if (value === undefined) continue;
     result[key] = Array.isArray(value) ? value.join(", ") : String(value);
   }
+
   return result;
 }
 
 function writeRequestBody(request, body) {
   if (body === undefined || body === null) {
     request.end();
+
     return;
   }
   if (typeof body === "string" || body instanceof Uint8Array) {
     request.end(body);
+
     return;
   }
   if (body instanceof ArrayBuffer) {
     request.end(new Uint8Array(body));
+
     return;
   }
   if (ArrayBuffer.isView(body)) {
     request.end(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+
     return;
   }
   throw new Error("ctx.fetch init body must be a string or bytes");
@@ -200,6 +212,7 @@ function isIpv6LinkLocal(normalized) {
   if (!firstGroup) return false;
   const value = Number.parseInt(firstGroup, 16);
   if (!Number.isFinite(value)) return false;
+
   // fe80 (0xfe80 = 65152) through febf (0xfebf = 65215)
   return value >= 0xfe80 && value <= 0xfebf;
 }
@@ -211,6 +224,7 @@ export function isDeniedAddress(address) {
     // evaluate the embedded v4 against the CIDR denylist instead.
     const mapped = normalized.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
     if (mapped) return isDeniedAddress(mapped[1]);
+
     return normalized === "::" ||
       normalized === "::1" ||
       isIpv6LinkLocal(normalized) ||
@@ -219,6 +233,7 @@ export function isDeniedAddress(address) {
   }
   const numeric = ipv4ToInt(address);
   if (numeric === null) return true;
+
   return DENY_CIDRS.some((cidr) => ipv4InCidr(numeric, cidr));
 }
 
@@ -231,6 +246,7 @@ function ipv4ToInt(address) {
     if (!Number.isInteger(octet) || octet < 0 || octet > 255) return null;
     value = (value << 8) + octet;
   }
+
   return value >>> 0;
 }
 
@@ -240,6 +256,7 @@ function ipv4InCidr(address, cidr) {
   const baseInt = ipv4ToInt(base);
   if (baseInt === null || !Number.isInteger(bits)) return false;
   const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+
   return (address & mask) === (baseInt & mask);
 }
 
@@ -258,6 +275,7 @@ async function readBodyText(response) {
     }
     chunks.push(bytes);
   }
+
   return new TextDecoder().decode(concatBytes(chunks, total));
 }
 
@@ -268,6 +286,7 @@ function concatBytes(chunks, total) {
     result.set(chunk, offset);
     offset += chunk.byteLength;
   }
+
   return result;
 }
 
@@ -280,6 +299,7 @@ function sanitizeFetchInit(init) {
   if (init.method !== undefined) result.method = String(init.method);
   if (init.headers !== undefined) result.headers = init.headers;
   if (init.body !== undefined) result.body = init.body;
+
   return result;
 }
 

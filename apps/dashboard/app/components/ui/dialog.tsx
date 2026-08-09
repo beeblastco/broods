@@ -7,24 +7,32 @@ import * as React from "react";
 import { cn } from "@/app/lib/utils";
 import { Button } from "@/app/components/ui/button";
 
-interface DialogOverlayProps
-  extends Omit<DialogPrimitive.Backdrop.Props, "className"> {
+interface DialogOverlayProps extends Omit<
+  DialogPrimitive.Backdrop.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface DialogContentProps
-  extends Omit<DialogPrimitive.Popup.Props, "className"> {
+interface DialogContentProps extends Omit<
+  DialogPrimitive.Popup.Props,
+  "className"
+> {
   className?: string;
   showCloseButton?: boolean;
 }
 
-interface DialogTitleProps
-  extends Omit<DialogPrimitive.Title.Props, "className"> {
+interface DialogTitleProps extends Omit<
+  DialogPrimitive.Title.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface DialogDescriptionProps
-  extends Omit<DialogPrimitive.Description.Props, "className"> {
+interface DialogDescriptionProps extends Omit<
+  DialogPrimitive.Description.Props,
+  "className"
+> {
   className?: string;
 }
 

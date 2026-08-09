@@ -93,16 +93,16 @@ export function normalizeChannelRecordConfig(
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
   return {
-    ...(instructions ? { instructions } : {}),
+    ...(instructions ? { instructions: instructions } : {}),
     agentBindings: normalizeAgentBindings(config.agentBindings),
-    ...(workspaces ? { workspaces } : {}),
-    ...(policyIds ? { policyIds } : {}),
-    ...(policyMode ? { policyMode } : {}),
-    ...(denyTools ? { denyTools } : {}),
-    ...(threadPolicy ? { threadPolicy } : {}),
-    ...(workspaceScope ? { workspaceScope } : {}),
-    ...(sandboxImages ? { sandboxImages } : {}),
-    ...(tagRoles ? { tagRoles } : {}),
+    ...(workspaces ? { workspaces: workspaces } : {}),
+    ...(policyIds ? { policyIds: policyIds } : {}),
+    ...(policyMode ? { policyMode: policyMode } : {}),
+    ...(denyTools ? { denyTools: denyTools } : {}),
+    ...(threadPolicy ? { threadPolicy: threadPolicy } : {}),
+    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+    ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
+    ...(tagRoles ? { tagRoles: tagRoles } : {}),
   };
 }
 
@@ -118,8 +118,8 @@ export function normalizeCreateChannelRecordInput(
     platform: requireString(input.platform, "platform"),
     externalId: requireString(input.externalId, "externalId"),
     name: requireString(input.name, "name"),
-    ...(workspaceRef ? { workspaceRef } : {}),
-    ...(description ? { description } : {}),
+    ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
+    ...(description ? { description: description } : {}),
     config: normalizeChannelRecordConfig(input.config),
   };
 }

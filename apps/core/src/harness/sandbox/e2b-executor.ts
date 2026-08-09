@@ -62,6 +62,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         [result.stderr, result.error].filter(Boolean).join("\n"),
         request.outputLimitBytes,
       );
+
       return {
         ok: (result.exitCode ?? null) === 0,
         runtime: request.runtime ?? "bash",
@@ -93,7 +94,8 @@ export class E2BSandboxExecutor implements SandboxExecutor {
       },
     );
     await handle.disconnect().catch(() => {});
-    return { jobId };
+
+    return { jobId: jobId };
   }
 
   async release(request: {
@@ -161,6 +163,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
           externalId,
           request.metadata,
         );
+
         return sandbox;
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
@@ -191,6 +194,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         created.sandboxId,
         request.metadata,
       );
+
       return created;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
@@ -201,6 +205,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     );
     if (!winner)
       throw new Error("failed to reserve e2b sandbox (lost create race)");
+
     return Sandbox.connect(winner, e2bApiOptions(this.#config));
   }
 }
@@ -217,6 +222,7 @@ function e2bBackgroundCommand(
   }
   const logFile = `/tmp/fp-e2b-job-${jobId}.log`;
   const codeB64 = Buffer.from(request.code, "utf8").toString("base64");
+
   return [
     `bash -lc "$(printf %s ${shellQuote(codeB64)} | base64 -d)" > ${shellQuote(logFile)} 2>&1`,
     `__rc=$?`,
@@ -229,8 +235,9 @@ function e2bBackgroundCommand(
 function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
+
   return {
-    ...(apiKey ? { apiKey } : {}),
+    ...(apiKey ? { apiKey: apiKey } : {}),
     timeoutMs:
       resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
   };
@@ -244,9 +251,10 @@ function e2bCreateOptions(
   const apiKey = configString(options.apiKey) ?? optionalEnv("E2B_API_KEY");
   const template =
     configString(options.template) ?? configString(options.templateId);
+
   return {
-    ...(apiKey ? { apiKey } : {}),
-    ...(template ? { template } : {}),
+    ...(apiKey ? { apiKey: apiKey } : {}),
+    ...(template ? { template: template } : {}),
     // Auto-pause on idle (instead of kill) so a reserved sandbox can be resumed.
     ...(persistent
       ? {

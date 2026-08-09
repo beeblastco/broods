@@ -29,6 +29,7 @@ export function getConvexClient(): ConvexHttpClient {
     deployKey,
   );
   cached = client;
+
   return client;
 }
 

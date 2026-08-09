@@ -141,7 +141,7 @@ describe("parseCommand", () => {
 describe("executeCommand", () => {
   it("executes /new and sends confirmation reply", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     await executeCommand("/new", ctx);
 
@@ -152,7 +152,7 @@ describe("executeCommand", () => {
 
   it("executes /help and lists executable commands", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     await executeCommand("/help", ctx);
 
@@ -174,7 +174,7 @@ describe("executeCommand", () => {
     const channel = createMockChannelActions();
     await executeCommand(
       "/stop",
-      createCommandContext({ channel, text: "/stop" }),
+      createCommandContext({ channel: channel, text: "/stop" }),
     );
 
     expect(mutationMock).toHaveBeenCalledWith("stopIngressOwner", {
@@ -189,14 +189,14 @@ describe("executeCommand", () => {
 
   it("shows queue message usage when no message reaches the handler", async () => {
     const channel = createMockChannelActions();
-    await executeCommand("/queue", createCommandContext({ channel }));
+    await executeCommand("/queue", createCommandContext({ channel: channel }));
 
     expect(channel.sendText).toHaveBeenCalledWith("Usage: /queue <message>");
   });
 
   it("does nothing for unknown command tokens", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     await executeCommand("/query", ctx);
 
@@ -205,7 +205,7 @@ describe("executeCommand", () => {
 
   it("also ignores bogus command tokens", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     await executeCommand("/bogus", ctx);
 
@@ -214,7 +214,7 @@ describe("executeCommand", () => {
 
   it("sends a generic error message when command execution fails", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     runtime.mutate = mock(() =>
       Promise.reject(new Error("Convex connection failed")),
@@ -229,7 +229,7 @@ describe("executeCommand", () => {
 
   it("handles non-Error exceptions during execution", async () => {
     const channel = createMockChannelActions();
-    const ctx = createCommandContext({ channel });
+    const ctx = createCommandContext({ channel: channel });
 
     runtime.mutate = mock(() => Promise.reject("string error")) as never;
 
@@ -431,19 +431,21 @@ describe("clearConversation via /new command", () => {
       if (name === "acquireIngressClear") return Promise.resolve(7);
       if (name === "clearFencedConversation") {
         clearCalls += 1;
+
         return Promise.resolve(
           clearCalls === 1
             ? { deleted: 100, hasMore: true }
             : { deleted: 2, hasMore: false },
         );
       }
+
       return Promise.resolve(null);
     });
     runtime.mutate = mutationMock as never;
     const channel = createMockChannelActions();
     await executeCommand(
       "/new",
-      createCommandContext({ conversationKey: "key-1", channel }),
+      createCommandContext({ conversationKey: "key-1", channel: channel }),
     );
     expect(mutationMock).toHaveBeenCalledTimes(4);
     expect(mutationMock).toHaveBeenCalledWith("clearFencedConversation", {
@@ -462,8 +464,10 @@ describe("clearConversation via /new command", () => {
       if (name === "acquireIngressClear") return Promise.resolve(1);
       if (name === "clearFencedConversation") {
         calls += 1;
+
         return Promise.resolve({ deleted: 100, hasMore: calls < 100 });
       }
+
       return Promise.resolve(null);
     });
     runtime.mutate = mutationMock as never;
@@ -471,7 +475,7 @@ describe("clearConversation via /new command", () => {
 
     await executeCommand(
       "/new",
-      createCommandContext({ conversationKey: "key-1", channel }),
+      createCommandContext({ conversationKey: "key-1", channel: channel }),
     );
     expect(mutationMock).toHaveBeenCalledTimes(102);
     expect(channel.sendText).toHaveBeenCalledWith(
@@ -497,7 +501,7 @@ describe("clearConversation via /new command", () => {
 
     await executeCommand(
       "/new",
-      createCommandContext({ conversationKey: "key-1", channel }),
+      createCommandContext({ conversationKey: "key-1", channel: channel }),
     );
     expect(mutationMock).toHaveBeenCalledTimes(102);
     expect(channel.sendText).toHaveBeenCalledWith(

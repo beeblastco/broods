@@ -184,16 +184,19 @@ async function handleRequest(
 
   if (isAsyncWorkerInvocation(event)) {
     await handleAsyncWorkerRequest(event.event, context);
+
     return new Response(null, { status: 204 });
   }
 
   if (isNatsWorkerInvocation(event)) {
     await handleNatsWorkerRequest(event.event, context);
+
     return new Response(null, { status: 204 });
   }
 
   if (isCronInvocation(event)) {
     await handleScheduledCron(event);
+
     return new Response(null, { status: 204 });
   }
 
@@ -206,13 +209,13 @@ async function handleRequest(
     {
       handleDirectRequest: (directEvent) =>
         handleDirectRequest(directEvent, context),
-      handleAsyncRequest,
-      handleStatusRequest,
-      handleAsyncToolCompletionRequest,
-      handleSandboxJobCompletionRequest,
+      handleAsyncRequest: handleAsyncRequest,
+      handleStatusRequest: handleStatusRequest,
+      handleAsyncToolCompletionRequest: handleAsyncToolCompletionRequest,
+      handleSandboxJobCompletionRequest: handleSandboxJobCompletionRequest,
       handleChannelRequest: (channelEvent) =>
         handleChannelRequest(channelEvent, context),
-      handleChannelContext,
+      handleChannelContext: handleChannelContext,
     },
     {
       directApiEnabled: ENABLE_DIRECT_API,
@@ -253,6 +256,7 @@ async function handleCronHttpRequest(request: CoreRequest): Promise<Response> {
   }
 
   await handleScheduledCron(payload);
+
   return new Response(null, { status: 204 });
 }
 
@@ -267,6 +271,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       accountId: event.accountId,
       cronId: event.cronId,
     });
+
     return;
   }
   if (job.status !== "active") {
@@ -274,6 +279,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       accountId: event.accountId,
       cronId: event.cronId,
     });
+
     return;
   }
 
@@ -295,7 +301,7 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       accountId: job.accountId,
       cronId: job.cronId,
       agentId: job.agentId,
-      error,
+      error: error,
     });
     await crons.markFailed(job.accountId, job.cronId, error);
     throw err;
@@ -466,7 +472,7 @@ async function continueAfterAsyncToolSettlement(
       scope.accountId,
       scope.agentId,
     ),
-    events,
+    events: events,
     requestedMode: "followup",
     idempotencyKey: asyncToolContinuationEventId(settled.parentEventId),
   } satisfies DirectInboundEvent;
@@ -513,6 +519,7 @@ function continuationResponse(
       invoked: false,
     });
   }
+
   return jsonResponse(202, {
     status: "accepted",
     resultId: settled.resultId,
@@ -623,6 +630,7 @@ async function handleDirectRequest(
         "Request did not produce pending model input",
         () => dispatchNextIngress(session, ownedEvent),
       );
+
       return emptySseResponse();
     }
 
@@ -744,6 +752,7 @@ async function handleAsyncWorkerRequest(
         error: "Request did not produce pending model input",
       });
       transferred = await dispatchNextIngress(session, event);
+
       return;
     }
 
@@ -815,15 +824,15 @@ async function handleAsyncWorkerRequest(
           await Promise.all(
             asyncResultEventIds(event).map((eventId) =>
               markAsyncAgentResultAwaitingApproval({
-                eventId,
-                approvals,
+                eventId: eventId,
+                approvals: approvals,
               }),
             ),
           );
           didSettle = true;
           terminalSettled = true;
           await session!.settleIngress("completed", {
-            result: { status: "awaiting_approval", approvals },
+            result: { status: "awaiting_approval", approvals: approvals },
           });
         },
       },
@@ -922,7 +931,7 @@ async function handleNatsWorkerRequest(
       agentId: event.agentId,
       conversationKey: event.publicConversationKey,
       eventId: event.publicEventId,
-      connectionId,
+      connectionId: connectionId,
     },
     natsToken,
   );
@@ -935,6 +944,7 @@ async function handleNatsWorkerRequest(
       // Both early returns skip the inner finally, so close the request-scoped
       // publisher here instead of leaking it.
       await publisher.close();
+
       return;
     }
 
@@ -954,6 +964,7 @@ async function handleNatsWorkerRequest(
         () => dispatchNextIngress(session!, event),
       );
       await publisher.close();
+
       return;
     }
 
@@ -970,7 +981,7 @@ async function handleNatsWorkerRequest(
         waitUntilMs(context),
         {
           kind: "nats",
-          connectionId,
+          connectionId: connectionId,
           publicEventId: event.publicEventId,
           publicConversationKey: event.publicConversationKey,
         },
@@ -984,14 +995,14 @@ async function handleNatsWorkerRequest(
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, fencedPublisher),
         onLoopErrorText: async (error) => {
-          fencedPublisher.publish({ type: "error", error }).catch(() => {});
+          fencedPublisher.publish({ type: "error", error: error }).catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
           // extract this data and do sth with it.
           // This is intentional (the user will receive the tool-approval-request event separately)
           fencedPublisher
-            .publish({ type: "tool-approval-request", approvals })
+            .publish({ type: "tool-approval-request", approvals: approvals })
             .catch(() => {});
         },
         onHeartbeat: (pendingCount) => {
@@ -999,7 +1010,7 @@ async function handleNatsWorkerRequest(
             .publish({
               type: "waiting",
               reason: "in-process-async-work",
-              pendingCount,
+              pendingCount: pendingCount,
             })
             .catch(() => {});
         },
@@ -1100,6 +1111,7 @@ async function handleChannelRequest(
       eventId: event.eventId,
       text: commandText(outcome.commandToken, extractText(event.content)),
     });
+
     return;
   }
   if (outcome.kind === "rewrite") {
@@ -1149,18 +1161,21 @@ async function handleChannelRequest(
   );
   if (admission.outcome === "rejected") {
     await event.channel.sendText(CONVERSATION_BUSY);
+
     return;
   }
   if (admission.outcome === "capacity") {
     await event.channel.sendText(
       "The conversation queue is full. Please try again later.",
     );
+
     return;
   }
   if (admission.outcome === "conflict") {
     await event.channel.sendText(
       "This message conflicts with an earlier delivery identity.",
     );
+
     return;
   }
   if (admission.outcome === "duplicate" || admission.outcome === "queued") {
@@ -1171,6 +1186,7 @@ async function handleChannelRequest(
       requestedMode: requestedMode,
       status: admission.status ?? "queued",
     });
+
     return;
   }
   if (admission.ownerGeneration === undefined) {
@@ -1314,6 +1330,7 @@ async function handleChannelRequest(
       if (!next) {
         await session.releaseConversationLease();
         released = true;
+
         return;
       }
       const source =
@@ -1350,6 +1367,7 @@ async function handleChannelRequest(
 
 function commandText(commandToken: string, content: string): string {
   const trimmed = content.trim();
+
   return trimmed.toLowerCase().startsWith(commandToken.toLowerCase())
     ? trimmed
     : `${commandToken} ${trimmed}`.trim();
@@ -1384,6 +1402,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
       eventId: session.eventId,
       conversationKey: session.conversationKey,
     });
+
     return;
   }
 
@@ -1504,7 +1523,8 @@ async function prepareDirectTurn(
       ephemeralSystem.push(...event.ephemeralSystem);
     }
     const turnContext = await session.createTurnContext(ephemeralSystem);
-    return { session, turnContext };
+
+    return { session: session, turnContext: turnContext };
   } catch (err) {
     await settleFailedIngressAndDrain(
       session,
@@ -1549,6 +1569,7 @@ async function failOwnedIngress(
 async function claimSession(session: Session): Promise<boolean> {
   if (!(await session.claim())) {
     logInfo("Duplicate event skipped", { eventId: session.eventId });
+
     return false;
   }
 
@@ -1562,8 +1583,8 @@ async function settleAsyncFailure(
   await Promise.all(
     asyncResultEventIds(event).map((eventId) =>
       markAsyncAgentResultFailed({
-        eventId,
-        error,
+        eventId: eventId,
+        error: error,
       }),
     ),
   );
@@ -1630,7 +1651,7 @@ async function pushReplyToChannel(
       accountId: event.accountId,
       channelName: event.replyTarget.channelName,
       source: event.replyTarget.source,
-      text,
+      text: text,
     });
   } catch (err) {
     logError("Background job channel reply failed", {
@@ -1648,7 +1669,7 @@ async function pushReplyToChannel(
 async function invokeAsyncWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker({
     kind: "direct-api-async-worker",
-    event,
+    event: event,
   } satisfies AsyncWorkerInvocation);
 }
 
@@ -1667,6 +1688,7 @@ async function invokeAsyncToolContinuationWorker(
       publicConversationKey: settled.delivery.publicConversationKey,
       connectionId: settled.delivery.connectionId,
     });
+
     return;
   }
 
@@ -1680,7 +1702,7 @@ async function invokeAsyncToolContinuationWorker(
 async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
   await invokeHarnessWorker({
     kind: "nats-worker",
-    event,
+    event: event,
   } satisfies NatsWorkerInvocation);
 }
 
@@ -1869,6 +1891,7 @@ export function dispatchInProcessWorker(
       throw new Error("In-process worker queue is full");
     }
     pendingWorkerPayloads.push([payload, run]);
+
     return;
   }
 
@@ -1959,7 +1982,7 @@ async function continueDetachedAsyncToolsIfReady(
 
   const continuationEvent = {
     ...event,
-    agentConfig,
+    agentConfig: agentConfig,
     eventId: asyncToolContinuationEventId(event.eventId),
     ownerGeneration: undefined,
     requestedMode: "followup",
@@ -1967,7 +1990,7 @@ async function continueDetachedAsyncToolsIfReady(
     ...(event.connectionId
       ? {}
       : { asyncResultEventId: event.asyncResultEventId ?? event.eventId }),
-    events,
+    events: events,
   } satisfies DirectInboundEvent;
 
   const ownedContinuation = await admitInternalContinuation(
@@ -1987,6 +2010,7 @@ async function continueDetachedAsyncToolsIfReady(
   } else {
     await invokeAsyncWorker(ownedContinuation);
   }
+
   return true;
 }
 
@@ -2048,18 +2072,19 @@ async function createCronDirectEvent(
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
+
   return {
     accountId: job.accountId,
     agentId: job.agentId,
     agentConfig: toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
-    publicEventId,
+    publicEventId: publicEventId,
     conversationKey: scopedDirectConversationKey(
       job.accountId,
       job.agentId,
       publicConversationKey,
     ),
-    publicConversationKey,
+    publicConversationKey: publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
     requestedMode: "reject",
     idempotencyKey: publicEventId,
@@ -2101,6 +2126,7 @@ async function listCurrentParentToolResults(
       }
 
       const latest = await getAsyncToolResult(result.resultId);
+
       return latest?.parentEventId === settled.parentEventId ? latest : result;
     }),
   );
@@ -2146,7 +2172,7 @@ function createDirectContinuationSseBody(
     // This callback runs during stream consumption, after handler() has already
     // returned and its observability scope has closed, so open a fresh one here
     // to keep the continuation's redaction/routing tenant-private.
-    start(controller) {
+    start: function(controller) {
       return runWithObservabilityScope(async () => {
         const subagentCoordinator = new SubagentCoordinator(
           session,
@@ -2213,7 +2239,7 @@ function createDirectContinuationSseBody(
           const error = err instanceof Error ? err.message : String(err);
           logError("Direct continuation stream failed", {
             eventId: event.eventId,
-            error,
+            error: error,
           });
           // Emit before draining: promoting queued work moves the owner
           // generation, so a later assertCurrentOwner() would drop this frame.
@@ -2222,7 +2248,7 @@ function createDirectContinuationSseBody(
             .then(() => {
               controller.enqueue(
                 textEncoder.encode(
-                  `data: ${JSON.stringify({ type: "error", error })}\n\n`,
+                  `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
                 ),
               );
             })
@@ -2277,7 +2303,7 @@ async function runAgentLoopUntilSubagentsIdle(
     asyncToolCoordinator: asyncToolCoordinator,
     initialTurnContext: initialTurnContext,
     agentConfig: agentConfig,
-    ...(hooks ? { hooks } : {}),
+    ...(hooks ? { hooks: hooks } : {}),
     consumeStream:
       reply.streamMessage ??
       (async (stream) => {
@@ -2291,10 +2317,11 @@ async function runAgentLoopUntilSubagentsIdle(
 
   if (result.approvals.length > 0) {
     await reply.onApprovalRequired?.(result.approvals);
+
     return {
       didFail: false,
       failureText: null,
-      hasDetachedCallbacks,
+      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2304,10 +2331,11 @@ async function runAgentLoopUntilSubagentsIdle(
       result.failureText ?? AGENT_PROCESSING_FAILED,
       result.traceId,
     );
+
     return {
       didFail: true,
       failureText: result.failureText,
-      hasDetachedCallbacks,
+      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2316,7 +2344,7 @@ async function runAgentLoopUntilSubagentsIdle(
     return {
       didFail: false,
       failureText: null,
-      hasDetachedCallbacks,
+      hasDetachedCallbacks: hasDetachedCallbacks,
       ...(result.traceId ? { traceId: result.traceId } : {}),
     };
   }
@@ -2328,7 +2356,7 @@ async function runAgentLoopUntilSubagentsIdle(
   return {
     didFail: false,
     failureText: null,
-    hasDetachedCallbacks,
+    hasDetachedCallbacks: hasDetachedCallbacks,
     ...(result.traceId ? { traceId: result.traceId } : {}),
   };
 }
@@ -2398,9 +2426,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse } : {}),
-        ...(traceId ? { traceId } : {}),
-        approvals,
+        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(traceId ? { traceId: traceId } : {}),
+        approvals: approvals,
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
@@ -2421,8 +2449,8 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: true,
         failureText: stream.failureText(),
-        ...(finalResponse !== undefined ? { finalResponse } : {}),
-        ...(traceId ? { traceId } : {}),
+        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -2440,8 +2468,8 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse } : {}),
-        ...(traceId ? { traceId } : {}),
+        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -2452,8 +2480,8 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse } : {}),
-        ...(traceId ? { traceId } : {}),
+        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
@@ -2487,6 +2515,7 @@ async function waitAndDrainAsyncWork(
       subagentCoordinator.drainCompletionsToParent(),
       asyncToolCoordinator.drainCompletionsToParent(),
     ]);
+
     return subagentCount + asyncToolCount;
   }
 
@@ -2510,6 +2539,7 @@ async function waitAndDrainAsyncWork(
       subagentCoordinator.drainCompletionsToParent(),
       asyncToolCoordinator.drainCompletionsToParent(),
     ]);
+
     return subagentCount + asyncToolCount;
   }
 
@@ -2521,6 +2551,7 @@ async function waitAndDrainAsyncWork(
       ? asyncToolCoordinator.drainCompletionsToParent()
       : asyncToolCoordinator.drainCompletionsAndTimeoutsToParent(),
   ]);
+
   return subagentCount + asyncToolCount;
 }
 
@@ -2641,7 +2672,7 @@ function isErrorStreamChunk(chunk: unknown): boolean {
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
-      start(controller) {
+      start: function(controller) {
         controller.close();
       },
     }),
@@ -2652,10 +2683,10 @@ function emptySseResponse(): Response {
 function errorSseResponse(error: string, statusCode = 200): Response {
   return new Response(
     new ReadableStream({
-      start(controller) {
+      start: function(controller) {
         controller.enqueue(
           textEncoder.encode(
-            `data: ${JSON.stringify({ type: "error", error })}\n\n`,
+            `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,
           ),
         );
         controller.close();
@@ -2727,6 +2758,7 @@ function publicEventIdForScope(
 ): string {
   if (!value) return fallback;
   const prefix = `acct:${accountId}:agent:${agentId}:api:`;
+
   return value.startsWith(prefix) ? value.slice(prefix.length) : fallback;
 }
 
@@ -2742,6 +2774,7 @@ function directAdmissionResponse(
   }
   if (admission.outcome === "capacity") {
     const message = "Conversation ingress queue is at capacity";
+
     return jsonOnly
       ? errorResponse(429, message, { code: "ingress_capacity" })
       : errorSseResponse(message, 429);
@@ -2749,6 +2782,7 @@ function directAdmissionResponse(
   if (admission.outcome === "conflict") {
     const message =
       "Idempotency key is already bound to a different ingress payload";
+
     return jsonOnly
       ? errorResponse(409, message, { code: "idempotency_conflict" })
       : errorSseResponse(message, 409);
@@ -2821,6 +2855,7 @@ function agentIdFromScopedKey(value: string, accountId: string): string | null {
 
   const rest = value.slice(prefix.length);
   const separator = rest.indexOf(":");
+
   return separator > 0 ? rest.slice(0, separator) : null;
 }
 
@@ -2836,6 +2871,7 @@ function parseAccountAgentFromScopedKey(
   value: string,
 ): { accountId: string; agentId: string } | null {
   const match = value.match(/^acct:([^:]+):agent:([^:]+):/);
+
   return match ? { accountId: match[1]!, agentId: match[2]! } : null;
 }
 

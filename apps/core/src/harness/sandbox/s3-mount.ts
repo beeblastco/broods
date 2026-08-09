@@ -85,16 +85,18 @@ export function resolveS3MountIdentity(ctx: S3MountContext): S3MountIdentity {
     : `${workspaceNamespacePrefix(ctx.namespace)}/`;
   const region = storage?.region ?? ctx.region;
   const endpoint = storage?.endpoint ?? ctx.endpoint;
+
   return {
-    bucket,
-    prefix,
-    ...(region ? { region } : {}),
-    ...(endpoint ? { endpoint } : {}),
+    bucket: bucket,
+    prefix: prefix,
+    ...(region ? { region: region } : {}),
+    ...(endpoint ? { endpoint: endpoint } : {}),
   };
 }
 
 function namespaceIsolationSuffix(namespace: string): string | undefined {
   const separator = namespace.indexOf("/");
+
   return separator >= 0 ? namespace.slice(separator + 1) : undefined;
 }
 
@@ -105,6 +107,7 @@ function joinPrefix(
   const normalizedPrefix = prefix?.replace(/^\/+|\/+$/g, "");
   const normalizedSuffix = suffix?.replace(/^\/+|\/+$/g, "");
   const joined = [normalizedPrefix, normalizedSuffix].filter(Boolean).join("/");
+
   return joined ? `${joined}/` : "";
 }
 
@@ -127,8 +130,8 @@ export function workspaceReadContext(
   namespace: string,
 ): S3MountContext {
   return {
-    storage,
-    namespace,
+    storage: storage,
+    namespace: namespace,
     managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
     region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
   };
@@ -179,13 +182,14 @@ export async function resolveS3Mount(
       : undefined;
   const credentials = roleArn
     ? await assumeScopedMountCredentials({
-        roleArn,
+        roleArn: roleArn,
         bucket: identity.bucket,
         prefix: identity.prefix,
-        externalId,
+        externalId: externalId,
       })
     : undefined;
-  return { ...identity, ...(credentials ? { credentials } : {}) };
+
+  return { ...identity, ...(credentials ? { credentials: credentials } : {}) };
 }
 
 // Assume `roleArn` with a session policy narrowed to `bucket/prefix*` (an empty
@@ -250,5 +254,6 @@ export async function assumeScopedMountCredentials(params: {
 
 function normalizePrefix(prefix: string | undefined): string {
   const trimmed = (prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+
   return trimmed.length > 0 ? `${trimmed}/` : "";
 }

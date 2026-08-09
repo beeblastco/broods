@@ -437,7 +437,7 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent",
   )!;
@@ -467,7 +467,7 @@ export const support = defineAgent({
     },
   });
   expect(
-    channels.map(({ alias, type, agentName }) => ({ alias, type, agentName })),
+    channels.map(({ alias, type, agentName }) => ({ alias: alias, type: type, agentName: agentName })),
   ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
@@ -494,7 +494,7 @@ export const second = defineAgent({ name: "second", channels: [github] });
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Channel github is already attached to agent "first" and cannot also attach to "second"',
   );
 });
@@ -510,7 +510,7 @@ export const support = defineAgent({ name: "support", channels: [one, two] });
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" cannot configure more than one github channel',
   );
 });
@@ -546,7 +546,7 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "support",
   );
@@ -566,10 +566,10 @@ export const support = defineAgent({
   });
   expect(
     channels.map(({ alias, type, id, agentName }) => ({
-      alias,
-      type,
-      id,
-      agentName,
+      alias: alias,
+      type: type,
+      id: id,
+      agentName: agentName,
     })),
   ).toEqual([
     { alias: "github", type: "github", id: "github", agentName: "support" },
@@ -590,7 +590,7 @@ export const repo = defineWorkspace({
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Workspace "repo" config.isolation no longer supports string modes; use isolation: true or omit it.',
   );
 });
@@ -611,7 +611,7 @@ export const support = defineAgent({ name: "support", channels: [slack], workspa
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "support",
   );
@@ -626,10 +626,10 @@ export const support = defineAgent({ name: "support", channels: [slack], workspa
   });
   expect(
     channels.map(({ alias, type, id, agentName }) => ({
-      alias,
-      type,
-      id,
-      agentName,
+      alias: alias,
+      type: type,
+      id: id,
+      agentName: agentName,
     })),
   ).toEqual([
     { alias: "slack", type: "slack", id: "slack", agentName: "support" },
@@ -652,7 +652,7 @@ export const support = defineAgent({ name: "support", channels: [slack], workspa
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens',
   );
 });
@@ -673,7 +673,7 @@ export const support = defineAgent({ name: "support", channels: [slack], workspa
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" workspaceScope.level must be one of: channel, conversation',
   );
 });
@@ -694,7 +694,7 @@ export const support = defineAgent({ name: "support", channels: [slack], workspa
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" channel "slack" defines workspaceScope, but no attached workspace has isolation: true.',
   );
 });
@@ -720,7 +720,7 @@ export const support = defineAgent({ name: "support", channels: [slack, github],
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" attaches isolated workspace "repo", but channel "github" does not define workspaceScope.',
   );
 });
@@ -749,7 +749,7 @@ export const support = defineAgent({ name: "support", channels: [slack, github],
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     "Duplicate channel id: support-channel",
   );
 });
@@ -766,7 +766,7 @@ export const support = defineAgent({
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     'Agent "support" config.channels must be an array of channel definitions',
   );
 });
@@ -799,7 +799,7 @@ export const support = defineAgent({
     "export default { execute: async (_ctx: unknown, input: { value?: string }) => ({ ok: true, value: input.value }) };\n",
   );
 
-  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const tool = manifest.resources.find((resource) => resource.kind === "tool");
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent",
@@ -839,7 +839,7 @@ export const support = defineAgent({
 `,
   );
 
-  await expect(compileProject({ cwd, command: "dev" })).rejects.toThrow(
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
     `Tool "helper" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config`,
   );
 });
@@ -869,7 +869,7 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent",
@@ -918,7 +918,7 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest } = await compileProject({ cwd, command: "dev" });
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
   const hook = manifest.resources.find((resource) => resource.kind === "hook");
   const bundle = (hook?.config as { bundle: string }).bundle;
   // Shorthand `onStart(ctx) {}` toString is not a valid expression on its own;
@@ -1671,7 +1671,7 @@ export const support = defineAgent({ name: "support", channels: [github] });
 `,
   );
   const { manifest, resourceAliases, channels } = await compileProject({
-    cwd,
+    cwd: cwd,
     command: "dev",
   });
   await writeGeneratedFiles(

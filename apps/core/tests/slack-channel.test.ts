@@ -836,12 +836,13 @@ function createEventRequest(
   timestamp: string = "1776988800",
 ) {
   const body = JSON.stringify(payload);
+
   return {
     method: "POST",
     rawPath: "/",
     rawQueryString: "",
     headers: createSlackHeaders(body, timestamp),
-    body,
+    body: body,
   };
 }
 
@@ -857,7 +858,7 @@ function createSlashCommandRequest(
       ...createSlackHeaders(body, timestamp),
       "content-type": "application/x-www-form-urlencoded",
     },
-    body,
+    body: body,
   };
 }
 
@@ -881,5 +882,6 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   for await (const value of iterable) {
     values.push(value);
   }
+
   return values;
 }

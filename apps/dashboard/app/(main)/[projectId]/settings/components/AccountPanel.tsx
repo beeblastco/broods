@@ -111,12 +111,14 @@ export function AccountPanel() {
     const trimmedName = name.trim();
     if (!trimmedName) {
       setSaveError("Display name is required.");
+
       return;
     }
     if (hasHandleError) {
       setSaveError(
         "Account handle must be 3-32 chars and use a-z, 0-9, '_' or '-'.",
       );
+
       return;
     }
     setIsSavingProfile(true);

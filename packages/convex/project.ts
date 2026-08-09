@@ -129,6 +129,7 @@ function randomProjectName(): string {
   const adj =
     RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
   const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
+
   return `${adj}-${noun}`;
 }
 
@@ -141,6 +142,7 @@ const projectDoc = v.object({
 async function requireAuth(ctx: Ctx) {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) throw new Error("User not found or not authenticated");
+
   return authUser;
 }
 
@@ -217,6 +219,7 @@ export const getOrCreateDefault = mutation({
           await ctx.db.patch(orgId, { onboardedAt: Date.now() });
         }
       }
+
       return existing._id;
     }
 
@@ -240,7 +243,7 @@ export const getOrCreateDefault = mutation({
 
     await ctx.db.insert("environments", {
       authId: authUser.id,
-      projectId,
+      projectId: projectId,
       name: "Development",
       kind: "development",
       isDefault: true,
@@ -306,6 +309,7 @@ export const getById = query({
   returns: v.union(v.null(), projectDoc),
   handler: async (ctx, { projectId }) => {
     const authUser = await requireAuth(ctx);
+
     return getOwnedProject(ctx, authUser.id, projectId);
   },
 });
@@ -378,7 +382,7 @@ export const create = mutation({
 
     await ctx.db.insert("environments", {
       authId: authUser.id,
-      projectId,
+      projectId: projectId,
       name: "Development",
       kind: "development",
       isDefault: true,
@@ -418,7 +422,7 @@ export const update = mutation({
     await ctx.db.patch(projectId, {
       name: trimmedName,
       description: description?.trim() || undefined,
-      slug,
+      slug: slug,
       updatedAt: Date.now(),
     });
 

@@ -50,7 +50,7 @@ export function jsonResponse(
   headers: Record<string, string> = {},
 ): Response {
   return new Response(JSON.stringify(body), {
-    status,
+    status: status,
     headers: {
       "content-type": "application/json",
       ...headers,
@@ -64,7 +64,7 @@ export function textResponse(
   headers: Record<string, string> = {},
 ): Response {
   return new Response(body, {
-    status,
+    status: status,
     headers: {
       "content-type": "text/plain; charset=utf-8",
       ...headers,
@@ -78,7 +78,7 @@ export function errorResponse(
   details: Record<string, unknown> = {},
   headers: Record<string, string> = {},
 ): Response {
-  return jsonResponse(status, { error, ...details }, headers);
+  return jsonResponse(status, { error: error, ...details }, headers);
 }
 
 export function parseJsonBody(request: Pick<CoreRequest, "body">): unknown {
@@ -118,6 +118,7 @@ export function assertPublicHttpsUrl(value: string, label: string): URL {
   if (isPrivateHostname(url.hostname)) {
     throw new Error(`${label} must not point to a private or internal address`);
   }
+
   return url;
 }
 
@@ -135,6 +136,7 @@ function isPrivateHostname(hostname: string): boolean {
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
     const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+
     return (
       a === 0 ||
       a === 10 ||

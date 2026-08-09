@@ -65,6 +65,7 @@ export async function releaseReservedSandboxes(
     await deleteSandboxInstance("vercel", namespace, accountId).catch(() => {});
     await removeSandboxInstance(accountId, namespace);
   }
+
   return released;
 }
 
@@ -90,6 +91,7 @@ export async function releaseSandboxConfigInstances(
       await removeSandboxInstance(accountId, namespace);
     }
   }
+
   return released;
 }
 
@@ -122,15 +124,17 @@ async function releaseFromConfigs(
               : provider === "e2b"
                 ? new E2BSandboxExecutor(config)
                 : new VercelSandboxExecutor(config);
-      await executor.release({ namespace });
+      await executor.release({ namespace: namespace });
+
       return true;
     } catch (error) {
       logWarn("Reserved sandbox release failed", {
-        provider,
-        namespace,
+        provider: provider,
+        namespace: namespace,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   }
+
   return false;
 }

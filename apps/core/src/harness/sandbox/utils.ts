@@ -46,6 +46,7 @@ export function stringRecord(value: unknown): Record<string, string> {
   if (!isPlainObject(value)) {
     return {};
   }
+
   return Object.fromEntries(
     Object.entries(value).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
@@ -61,6 +62,7 @@ export function workspacePath(
   if (!root) {
     return undefined;
   }
+
   return request.namespace ? `${root}/${request.namespace}` : root;
 }
 
@@ -82,6 +84,7 @@ function isPrivate172(host: string): boolean {
   const match = /^172\.(\d{1,3})\./.exec(host);
   if (!match) return false;
   const octet = Number(match[1]);
+
   return Number.isInteger(octet) && octet >= 16 && octet <= 31;
 }
 
@@ -121,6 +124,7 @@ export function shortHash(value: string): string {
   for (let i = 0; i < value.length; i++) {
     hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
   }
+
   return hash.toString(36).slice(0, 6);
 }
 
@@ -130,7 +134,7 @@ export function truncateText(
 ): { value: string; truncated: boolean } {
   const bytes = textEncoder.encode(value);
   if (bytes.byteLength <= limit) {
-    return { value, truncated: false };
+    return { value: value, truncated: false };
   }
 
   return {
@@ -160,6 +164,7 @@ export function isSandboxGoneError(error: unknown): boolean {
     return true;
   }
   const message = typeof error.message === "string" ? error.message : "";
+
   return /not ?found|does not exist|no such|already (deleted|destroyed)/i.test(
     message,
   );
@@ -177,5 +182,6 @@ export function isNoRunnersError(error: unknown): boolean {
       : typeof error === "string"
         ? error
         : "";
+
   return /no (available )?runners?/i.test(message);
 }

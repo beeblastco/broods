@@ -11,7 +11,9 @@ const policyWith = (operator: string, value: unknown) => ({
       {
         effect: "deny",
         actions: ["agent.invoke"],
-        conditions: [{ attribute: "actorRoles", operator: operator, value: value }],
+        conditions: [
+          { attribute: "actorRoles", operator: operator, value: value },
+        ],
       },
     ],
   },
@@ -22,12 +24,12 @@ const policyWith = (operator: string, value: unknown) => ({
 // silently does nothing — both copies must refuse it at write time.
 describe("normalizeCreateAgentPolicyInput", () => {
   it("rejects a scalar value for in and notIn", () => {
-    expect(() => normalizeCreateAgentPolicyInput(policyWith("notIn", "oncall"))).toThrow(
-      "must be an array when operator is notIn",
-    );
-    expect(() => normalizeCreateAgentPolicyInput(policyWith("in", "oncall"))).toThrow(
-      "must be an array when operator is in",
-    );
+    expect(() =>
+      normalizeCreateAgentPolicyInput(policyWith("notIn", "oncall")),
+    ).toThrow("must be an array when operator is notIn");
+    expect(() =>
+      normalizeCreateAgentPolicyInput(policyWith("in", "oncall")),
+    ).toThrow("must be an array when operator is in");
   });
 
   it("accepts an array value, and a scalar on a scalar operator", () => {

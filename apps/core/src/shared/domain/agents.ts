@@ -134,10 +134,11 @@ export async function normalizeCreateAgentInput(
   await validateAgentSkillPaths(accountId, config);
   await validateAgentSubagentIds(accountId, config);
   await validateAgentPolicyIds(accountId, config);
+
   return {
-    name,
-    ...(description ? { description } : {}),
-    config,
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
   };
 }
 
@@ -174,7 +175,7 @@ export async function normalizeUpdateAgentInput(
     ...(value.status !== undefined
       ? { status: requireAgentStatus(value.status) }
       : {}),
-    config,
+    config: config,
   };
 }
 
@@ -198,6 +199,7 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
 function requireAgentStatus(value: unknown): AgentStatus {
   if (!isAgentStatus(value))
     throw new Error("status must be one of: active, disabled");
+
   return value;
 }
 
@@ -205,6 +207,7 @@ function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+
   return value.trim();
 }
 
@@ -212,5 +215,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : undefined;
 }

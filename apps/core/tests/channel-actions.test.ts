@@ -651,7 +651,7 @@ function createMessage(source: Record<string, unknown>) {
     conversationKey: "conversation-1",
     channelName: "test",
     content: [],
-    source,
+    source: source,
   };
 }
 
@@ -660,15 +660,16 @@ function installFetchMock() {
   const responses: Response[] = [];
 
   globalThis.fetch = (async (input: FetchInput, init?: RequestInit) => {
-    calls.push({ input, init });
+    calls.push({ input: input, init: init });
     const response = responses.shift();
     if (!response) {
       throw new Error(`Unexpected fetch: ${toUrl(input)}`);
     }
+
     return response;
   }) as unknown as typeof fetch;
 
-  return { calls, responses };
+  return { calls: calls, responses: responses };
 }
 
 function toUrl(input: FetchInput): string {
@@ -685,7 +686,7 @@ function toUrl(input: FetchInput): string {
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
-    status,
+    status: status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -697,7 +698,7 @@ function telegramMessageResponse(messageId: number, text: string) {
       message_id: messageId,
       chat: { id: 123, type: "private" },
       date: 1_700_000_000,
-      text,
+      text: text,
     },
   });
 }

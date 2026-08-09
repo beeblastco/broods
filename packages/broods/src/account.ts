@@ -87,6 +87,7 @@ export function envPlaceholder(name: string): string {
       "envPlaceholder name must match /^[A-Z][A-Z0-9_]*$/ and be at most 64 characters.",
     );
   }
+
   return `\${${name}}`;
 }
 
@@ -346,6 +347,7 @@ export class BroodsAccountClient {
         404,
         "Account not found",
       );
+
     return result.account;
   }
 
@@ -359,6 +361,7 @@ export class BroodsAccountClient {
       "/v1/account",
       patch,
     );
+
     return result?.account ?? null;
   }
 
@@ -375,6 +378,7 @@ export class BroodsAccountClient {
         404,
         "Account not found",
       );
+
     return result;
   }
 
@@ -384,6 +388,7 @@ export class BroodsAccountClient {
       "DELETE",
       "/v1/account",
     );
+
     return result ?? { deleted: false };
   }
 
@@ -405,6 +410,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/agents",
     );
+
     return result?.agents ?? [];
   }
 
@@ -420,6 +426,7 @@ export class BroodsAccountClient {
     );
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/agents", 404, "Not found");
+
     return result;
   }
 
@@ -447,6 +454,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/agents/${encodeURIComponent(agentId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -456,6 +464,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/env",
     );
+
     return result?.env ?? [];
   }
 
@@ -474,11 +483,13 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/env/${encodeURIComponent(name)}`,
     );
+
     return result?.deleted ?? false;
   }
 
   async listCrons(): Promise<Cron[]> {
     const result = await this.request<{ crons: Cron[] }>("GET", "/v1/crons");
+
     return result?.crons ?? [];
   }
 
@@ -486,6 +497,7 @@ export class BroodsAccountClient {
     const result = await this.request<Cron>("POST", "/v1/crons", input);
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/crons", 404, "Not found");
+
     return result;
   }
 
@@ -512,6 +524,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/crons/${encodeURIComponent(cronId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -525,6 +538,7 @@ export class BroodsAccountClient {
       "GET",
       `/v1/crons/${encodeURIComponent(cronId)}/runs${query}`,
     );
+
     return result?.runs ?? [];
   }
 
@@ -533,6 +547,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/workspaces",
     );
+
     return result?.workspaces ?? [];
   }
 
@@ -553,6 +568,7 @@ export class BroodsAccountClient {
         404,
         "Not found",
       );
+
     return result;
   }
 
@@ -579,6 +595,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -588,6 +605,7 @@ export class BroodsAccountClient {
       "GET",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
     );
+
     return result?.files ?? [];
   }
 
@@ -601,6 +619,7 @@ export class BroodsAccountClient {
       "GET",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files${query}`,
     );
+
     return result?.url ?? null;
   }
 
@@ -617,6 +636,7 @@ export class BroodsAccountClient {
     );
     if (!result)
       throw new BroodsAccountApiError("POST", path, 404, "Workspace not found");
+
     return result.file;
   }
 
@@ -629,8 +649,9 @@ export class BroodsAccountClient {
     const result = await this.request<{ renamed: boolean }>(
       "PATCH",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
-      { path, newPath },
+      { path: path, newPath: newPath },
     );
+
     return result?.renamed ?? false;
   }
 
@@ -642,8 +663,9 @@ export class BroodsAccountClient {
     const result = await this.request<{ deleted: boolean }>(
       "DELETE",
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/files`,
-      { path },
+      { path: path },
     );
+
     return result?.deleted ?? false;
   }
 
@@ -652,6 +674,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/sandboxes",
     );
+
     return result?.sandboxes ?? [];
   }
 
@@ -672,6 +695,7 @@ export class BroodsAccountClient {
         404,
         "Not found",
       );
+
     return result;
   }
 
@@ -699,6 +723,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/sandboxes/${encodeURIComponent(sandboxId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -710,7 +735,7 @@ export class BroodsAccountClient {
     return await this.sandboxAction<SandboxLifecycleResult>(
       sandboxId,
       "suspend",
-      { reservationKey },
+      { reservationKey: reservationKey },
     );
   }
 
@@ -722,7 +747,7 @@ export class BroodsAccountClient {
     return await this.sandboxAction<SandboxLifecycleResult>(
       sandboxId,
       "resume",
-      { reservationKey },
+      { reservationKey: reservationKey },
     );
   }
 
@@ -734,7 +759,7 @@ export class BroodsAccountClient {
     return await this.sandboxAction<SandboxLifecycleResult>(
       sandboxId,
       "terminate",
-      { reservationKey },
+      { reservationKey: reservationKey },
     );
   }
 
@@ -747,7 +772,7 @@ export class BroodsAccountClient {
     return await this.sandboxAction<SandboxSnapshotResult>(
       sandboxId,
       "snapshot",
-      { reservationKey, name },
+      { reservationKey: reservationKey, name: name },
     );
   }
 
@@ -759,7 +784,7 @@ export class BroodsAccountClient {
     return await this.sandboxAction<SandboxTerminalTicket>(
       sandboxId,
       "terminal",
-      { reservationKey },
+      { reservationKey: reservationKey },
     );
   }
 
@@ -782,6 +807,7 @@ export class BroodsAccountClient {
     const result = await this.request<AccountTool>("POST", path, input);
     if (!result)
       throw new BroodsAccountApiError("POST", path, 404, "Not found");
+
     return result;
   }
 
@@ -809,6 +835,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/tools/${encodeURIComponent(toolId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -817,6 +844,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/policies",
     );
+
     return result?.policies ?? [];
   }
 
@@ -832,6 +860,7 @@ export class BroodsAccountClient {
     );
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/policies", 404, "Not found");
+
     return result;
   }
 
@@ -864,6 +893,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/policies/${encodeURIComponent(policyId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -872,6 +902,7 @@ export class BroodsAccountClient {
       "GET",
       "/v1/channels",
     );
+
     return result?.channels ?? [];
   }
 
@@ -891,6 +922,7 @@ export class BroodsAccountClient {
     );
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/channels", 404, "Not found");
+
     return result;
   }
 
@@ -924,12 +956,14 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/channels/${encodeURIComponent(channelId)}`,
     );
+
     return result?.deleted ?? false;
   }
 
   /** All skills for the account, each with its `<accountId>/<name>` path. */
   async listSkills(): Promise<Skill[]> {
     const result = await this.request<{ skills: Skill[] }>("GET", "/v1/skills");
+
     return result?.skills ?? [];
   }
 
@@ -938,6 +972,7 @@ export class BroodsAccountClient {
     const result = await this.request<Skill>("POST", "/v1/skills", input);
     if (!result)
       throw new BroodsAccountApiError("POST", "/v1/skills", 404, "Not found");
+
     return result;
   }
 
@@ -957,6 +992,7 @@ export class BroodsAccountClient {
     const result = await this.request<Skill>("PUT", path, input);
     if (!result)
       throw new BroodsAccountApiError("PUT", path, 404, "Skill not found");
+
     return result;
   }
 
@@ -965,6 +1001,7 @@ export class BroodsAccountClient {
       "DELETE",
       `/v1/skills/${encodeURIComponent(skillName)}`,
     );
+
     return result?.deleted ?? false;
   }
 
@@ -978,6 +1015,7 @@ export class BroodsAccountClient {
     const result = await this.request<T>("POST", path, body);
     if (!result)
       throw new BroodsAccountApiError("POST", path, 404, "Sandbox not found");
+
     return result;
   }
 
@@ -987,7 +1025,7 @@ export class BroodsAccountClient {
     body?: unknown,
   ): Promise<T | null> {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      method,
+      method: method,
       headers: {
         Authorization: `Bearer ${this.accountSecret}`,
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -1003,6 +1041,7 @@ export class BroodsAccountClient {
         await response.text(),
       );
     }
+
     return (await response.json()) as T;
   }
 }

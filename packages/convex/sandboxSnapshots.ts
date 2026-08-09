@@ -71,7 +71,7 @@ export const upsert = internalMutation({
         provider: args.provider,
         baseImage: args.baseImage,
         externalImageId: args.externalImageId,
-        status,
+        status: status,
         lastUsedAt: now,
       });
 
@@ -84,7 +84,7 @@ export const upsert = internalMutation({
       provider: args.provider,
       baseImage: args.baseImage,
       externalImageId: args.externalImageId,
-      status,
+      status: status,
       pulledCount: 0,
       createdAt: now,
       lastUsedAt: now,

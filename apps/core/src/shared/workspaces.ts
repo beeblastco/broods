@@ -78,6 +78,7 @@ export function workspaceNamespace(
   workspaceId: string,
 ): string {
   const scope = accountId ? `${accountId}:${workspaceId}` : workspaceId;
+
   return normalizeFilesystemNamespace(scope);
 }
 
@@ -110,6 +111,7 @@ export function isolatedWorkspaceNamespace(
       "Conversation workspace isolation requires an active conversation key",
     );
   }
+
   return `${baseNamespace}/${workspaceScope.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }
 
@@ -147,6 +149,7 @@ export async function resolveAgentRuntime(
       controlPlane: sandboxControlPlane(accountId, record),
     };
     sandboxCache.set(sandboxId, resolved);
+
     return resolved;
   }
 
@@ -211,11 +214,11 @@ export async function resolveAgentRuntime(
             },
           }
         : {}),
-      ...(readMount ? { readMount } : {}),
+      ...(readMount ? { readMount: readMount } : {}),
     });
   }
 
-  return { ...(sandbox ? { sandbox } : {}), workspaces };
+  return { ...(sandbox ? { sandbox: sandbox } : {}), workspaces: workspaces };
 }
 
 /**
@@ -228,7 +231,7 @@ function sandboxControlPlane(
   record: SandboxConfigRecord,
 ): SandboxControlPlane {
   return {
-    accountId,
+    accountId: accountId,
     ...(record.projectId ? { projectId: record.projectId } : {}),
     ...(record.environmentId ? { environmentId: record.environmentId } : {}),
     sandboxConfigId: record.sandboxId,

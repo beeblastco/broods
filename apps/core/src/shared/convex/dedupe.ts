@@ -10,11 +10,11 @@ export interface DedupeStore {
   ): Promise<boolean>;
 }
 const store: DedupeStore = {
-  claim(accountId, eventId, ttlSeconds = 86400) {
+  claim: function(accountId, eventId, ttlSeconds = 86400) {
     return runtime.mutate("claimEvent", {
-      accountId,
+      accountId: accountId,
       key: eventId,
-      ttlSeconds,
+      ttlSeconds: ttlSeconds,
     });
   },
 };

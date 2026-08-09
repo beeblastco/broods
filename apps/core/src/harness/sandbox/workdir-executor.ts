@@ -112,6 +112,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       throw error;
     }
     request.abortSignal?.throwIfAborted();
+
     return reservation;
   }
 
@@ -141,6 +142,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
     ).catch(() => {});
     request.abortSignal?.throwIfAborted();
+
     return sandbox;
   }
 
@@ -161,7 +163,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ? workspacePath(request, this.#workspaceRoot())
         : undefined;
       const result = await sandbox.exec(request.code, {
-        ...(cwd ? { cwd } : {}),
+        ...(cwd ? { cwd: cwd } : {}),
         env: {
           ...stringRecord(this.#config.envVars),
           ...(request.envVars ?? {}),
@@ -175,6 +177,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         result.stderr ?? "",
         request.outputLimitBytes,
       );
+
       return {
         ok: result.exit_code === 0,
         runtime: request.runtime ?? "bash",
@@ -218,11 +221,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         result.stderr || result.stdout || "failed to launch background job",
       );
     }
-    return { jobId };
+
+    return { jobId: jobId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
+
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
@@ -236,6 +241,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
+
     return {
       jobId: request.jobId,
       logs: logs.value,
@@ -246,6 +252,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
+
     // Report the real terminal state: a job that already finished keeps its own
     // exit code instead of being recorded as killed.
     return parseJobStatus(
@@ -287,7 +294,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (!snapshotId) throw new Error("workdir snapshot did not return an id");
     const externalImageId =
       configString(data.image_id) ?? configString(data.image);
-    return { snapshotId, ...(externalImageId ? { externalImageId } : {}) };
+
+    return { snapshotId: snapshotId, ...(externalImageId ? { externalImageId: externalImageId } : {}) };
   }
 
   async getInstanceInfo(
@@ -297,9 +305,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (!externalId) return null;
     try {
       const sandbox = await this.#client.sandboxes.get(externalId);
-      return { externalId, state: mapWorkdirState(sandbox.state) };
+
+      return { externalId: externalId, state: mapWorkdirState(sandbox.state) };
     } catch (err) {
-      if (isSandboxGoneError(err)) return { externalId, state: "terminating" };
+      if (isSandboxGoneError(err)) return { externalId: externalId, state: "terminating" };
       throw err;
     }
   }
@@ -346,6 +355,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         "background jobs require a persistent workdir sandbox reservation key",
       );
     }
+
     return sandboxReservationKey(request)!;
   }
 
@@ -381,6 +391,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   }): "none" | "exec" | "declarative" {
     if (!request.namespace && this.#options().mountAwsS3Buckets !== true)
       return "none";
+
     return mountRoleArn(this.#config.storage) ? "exec" : "declarative";
   }
 
@@ -393,6 +404,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       );
     }
     const options = this.#options();
+
     return {
       storage: this.#config.storage,
       namespace: request.namespace,
@@ -413,6 +425,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       /\/+$/,
       "",
     );
+
     return `${root}/${request.namespace}`;
   }
 
@@ -428,16 +441,17 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const { bucket, prefix, region, endpoint } = resolveS3MountIdentity(
       this.#s3Context(request),
     );
+
     return [
       {
         type: "s3",
-        bucket,
+        bucket: bucket,
         mount_path: this.#mountPath(request),
         // The agent reads AND writes; workdir defaults S3 mounts to read_only:true.
         read_only: false,
-        ...(prefix ? { prefix } : {}),
-        ...(region ? { region } : {}),
-        ...(endpoint ? { endpoint } : {}),
+        ...(prefix ? { prefix: prefix } : {}),
+        ...(region ? { region: region } : {}),
+        ...(endpoint ? { endpoint: endpoint } : {}),
       },
     ];
   }
@@ -463,11 +477,11 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       ...(workdirResources(this.#config)
         ? { resources: workdirResources(this.#config) }
         : {}),
-      ...(image ? { image } : {}),
+      ...(image ? { image: image } : {}),
       ...(configString(options.imageVersion)
         ? { image_version: configString(options.imageVersion) }
         : {}),
-      ...(mounts ? { mounts } : {}),
+      ...(mounts ? { mounts: mounts } : {}),
       ...(options.docker === true ? { docker: { enabled: true } } : {}),
       ...(persistent
         ? {
@@ -475,7 +489,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
               .idleTimeoutSeconds,
           }
         : {}),
-      ...(Object.keys(startup).length > 0 ? { startup } : {}),
+      ...(Object.keys(startup).length > 0 ? { startup: startup } : {}),
     };
   }
 
@@ -484,6 +498,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   ): Promise<string | undefined> {
     const key = sandboxReservationKey(request);
     if (!key) return undefined;
+
     return (await getSandboxExternalId("sandbox", key)) ?? undefined;
   }
 
@@ -491,6 +506,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     request: SandboxReservationRef,
   ): Promise<Sandbox | undefined> {
     const externalId = await this.#reservedId(request);
+
     return externalId ? this.#client.sandboxes.get(externalId) : undefined;
   }
 
@@ -531,7 +547,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           externalId,
           "metadata" in request ? request.metadata : undefined,
         );
-        return { sandbox, isFirstCreate: false };
+
+        return { sandbox: sandbox, isFirstCreate: false };
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
         // propagate or the still-live sandbox is orphaned at the provider. The
@@ -564,6 +581,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
           created.id,
           "metadata" in request ? request.metadata : undefined,
         );
+
         return { sandbox: created, isFirstCreate: true };
       }
     } catch (error) {
@@ -587,6 +605,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     await created.delete().catch(() => {});
     if (!winner)
       throw new Error("failed to reserve workdir sandbox (lost create race)");
+
     return {
       sandbox: await this.#reconnect(winner),
       isFirstCreate: false,
@@ -600,6 +619,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     if (sandbox.state === "stopped" || sandbox.state === "standby") {
       await sandbox.resume();
     }
+
     return sandbox;
   }
 
@@ -614,6 +634,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const externalId = await getSandboxExternalId("sandbox", key);
     if (!externalId)
       throw new Error("no reserved workdir sandbox for this workspace");
+
     return {
       sandbox: await this.#reconnect(externalId),
       jobsDir: this.#jobsDir(key),
@@ -713,7 +734,7 @@ export function workdirConnection(config: SandboxExecutorConfig): {
   }
 
   return {
-    baseUrl,
+    baseUrl: baseUrl,
     apiKey: customApiKey ?? optionalEnv("WORKDIR_API_KEY") ?? "",
   };
 }
@@ -729,6 +750,7 @@ export function workdirPtyUrl(baseUrl: string, externalId: string): string {
 
 function workdirClient(config: SandboxExecutorConfig): Client {
   const { baseUrl, apiKey } = workdirConnection(config);
+
   return new Client(baseUrl, apiKey);
 }
 
@@ -745,10 +767,11 @@ function workdirResources(
   const diskGb = numberOption(options.diskGb) ?? sized?.diskGb;
   if (cpu === undefined && memoryMb === undefined && diskGb === undefined)
     return undefined;
+
   return {
-    ...(cpu !== undefined ? { cpu } : {}),
-    ...(memoryMb !== undefined ? { memoryMb } : {}),
-    ...(diskGb !== undefined ? { diskGb } : {}),
+    ...(cpu !== undefined ? { cpu: cpu } : {}),
+    ...(memoryMb !== undefined ? { memoryMb: memoryMb } : {}),
+    ...(diskGb !== undefined ? { diskGb: diskGb } : {}),
   };
 }
 
@@ -769,11 +792,12 @@ function workdirNetwork(
   if (network.mode === "allow-all") return { egress: "default" };
   if (network.mode === "deny-all") return { egress: "none" };
   const allow = [
-    ...(network.allowDomains ?? []).map((value) => ({ type: "domain", value })),
+    ...(network.allowDomains ?? []).map((value) => ({ type: "domain", value: value })),
     ...(network.allowCidrs ?? []),
   ];
   if (allow.length === 0) return { egress: "none" };
-  return { egress: "allowlist", allow };
+
+  return { egress: "allowlist", allow: allow };
 }
 
 function mapWorkdirState(state: unknown): SandboxInstanceInfo["state"] {
@@ -804,5 +828,6 @@ function s3SecretNames(options: Record<string, unknown>): string[] {
     );
     if (list.length > 0) return list;
   }
+
   return DEFAULT_S3_SECRET_NAMES;
 }

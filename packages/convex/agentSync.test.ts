@@ -46,14 +46,14 @@ async function seedOrg(
       }));
 
     await ctx.db.insert("orgMembers", {
-      orgId,
-      userId,
+      orgId: orgId,
+      userId: userId,
       role: "owner" as const,
       createdAt: now,
     });
 
     const accountId = await ctx.db.insert("accounts", {
-      orgId,
+      orgId: orgId,
       username: opts.username,
       secretHash: "hash-" + opts.username,
       status: "active" as const,
@@ -61,12 +61,12 @@ async function seedOrg(
       updatedAt: now,
     });
 
-    return { orgId, userId, accountId };
+    return { orgId: orgId, userId: userId, accountId: accountId };
   });
 }
 
 const createAgent = (tt: T, accountId: Id<"accounts">, name: string) =>
-  tt.mutation(internal.agents.create, { accountId, name });
+  tt.mutation(internal.agents.create, { accountId: accountId, name: name });
 
 const configFor = (tt: T, agentId: Id<"agents">) =>
   tt.run(async (ctx) =>

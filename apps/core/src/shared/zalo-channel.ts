@@ -66,18 +66,18 @@ export function createZaloChannel(
   return {
     name: "zalo",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return req.method === "POST";
     },
 
-    authenticate(req) {
+    authenticate: function(req) {
       return verifyWebhookSecret(
         req.headers["x-bot-api-secret-token"],
         webhookSecret,
       );
     },
 
-    parse(req): ChannelParseResult {
+    parse: function(req): ChannelParseResult {
       const update = unwrapZaloUpdate(JSON.parse(req.body) as unknown);
       if (update.event_name !== "message.text.received") {
         return { kind: "ignore" };
@@ -101,7 +101,8 @@ export function createZaloChannel(
       }
 
       if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
-        logWarn("Zalo sender not in allow list", { senderId });
+        logWarn("Zalo sender not in allow list", { senderId: senderId });
+
         return { kind: "ignore" };
       }
 
@@ -123,10 +124,10 @@ export function createZaloChannel(
               : {}),
           },
           source: {
-            chatId,
-            chatType,
-            messageId,
-            senderId,
+            chatId: chatId,
+            chatType: chatType,
+            messageId: messageId,
+            senderId: senderId,
             senderName: message.from?.display_name ?? message.from?.name,
             eventName: update.event_name,
             date: message.date,
@@ -135,7 +136,7 @@ export function createZaloChannel(
       };
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createZaloActions(botToken, toZaloSource(msg.source));
     },
   };
@@ -146,7 +147,7 @@ export function createZaloActions(
   source: ZaloSource,
 ): ChannelActions {
   return {
-    async sendText(text) {
+    sendText: async function(text) {
       for (const chunk of chunkZaloText(text)) {
         await callZaloApi(botToken, "sendMessage", {
           chat_id: source.chatId,
@@ -154,13 +155,13 @@ export function createZaloActions(
         });
       }
     },
-    async sendTyping() {
+    sendTyping: async function() {
       await callZaloApi(botToken, "sendChatAction", {
         chat_id: source.chatId,
         action: "typing",
       });
     },
-    async reactToMessage() {
+    reactToMessage: async function() {
       return;
     },
   };
@@ -173,6 +174,7 @@ function verifyWebhookSecret(
   if (!header) return false;
   const actual = Buffer.from(header);
   const expected = Buffer.from(secret);
+
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
@@ -223,6 +225,7 @@ function chunkZaloText(text: string): string[] {
   for (let offset = 0; offset < text.length; offset += ZALO_TEXT_LIMIT) {
     chunks.push(text.slice(offset, offset + ZALO_TEXT_LIMIT));
   }
+
   return chunks;
 }
 
@@ -255,6 +258,7 @@ function parseJsonBody(text: string): ZaloApiResponse | null {
 
   try {
     const parsed = JSON.parse(text) as unknown;
+
     return parsed && typeof parsed === "object"
       ? (parsed as ZaloApiResponse)
       : null;

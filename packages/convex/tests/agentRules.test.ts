@@ -203,11 +203,11 @@ describe("agent rules", () => {
     expect(
       normalizeAgentConfig({
         tools: { [toolId]: { enabled: true } },
-        hooks: { code: [{ hookId }] },
+        hooks: { code: [{ hookId: hookId }] },
       }),
     ).toMatchObject({
       tools: { [toolId]: { enabled: true } },
-      hooks: { code: [{ hookId }] },
+      hooks: { code: [{ hookId: hookId }] },
     });
     expect(() =>
       normalizeAgentConfig({ tools: { tool_legacy: { enabled: true } } }),

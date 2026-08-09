@@ -125,16 +125,16 @@ export function normalizeWorkspaceConfig(value: unknown): WorkspaceConfig {
     );
     if (workspace || memory) {
       harness = {
-        ...(workspace ? { workspace } : {}),
-        ...(memory ? { memory } : {}),
+        ...(workspace ? { workspace: workspace } : {}),
+        ...(memory ? { memory: memory } : {}),
       };
     }
   }
 
   return {
-    storage,
+    storage: storage,
     ...(isolation === true ? { isolation: true } : {}),
-    ...(harness ? { harness } : {}),
+    ...(harness ? { harness: harness } : {}),
   };
 }
 
@@ -151,6 +151,7 @@ function normalizeHarnessFeature(
     throw new Error(`${name} must be an object`);
   }
   assertOptionalBoolean(value.enabled, `${name}.enabled`);
+
   return value.enabled === false ? { enabled: false } : undefined;
 }
 
@@ -181,13 +182,14 @@ function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   const endpoint = optionalString(value.endpoint, "config.storage.endpoint");
   const prefix = optionalString(value.prefix, "config.storage.prefix");
   const auth = normalizeWorkspaceStorageAuth(value.auth);
+
   return {
     provider: (value.provider as WorkspaceStorageProvider | undefined) ?? "s3",
-    ...(bucket ? { bucket } : {}),
-    ...(region ? { region } : {}),
-    ...(endpoint ? { endpoint } : {}),
-    ...(prefix ? { prefix } : {}),
-    ...(auth ? { auth } : {}),
+    ...(bucket ? { bucket: bucket } : {}),
+    ...(region ? { region: region } : {}),
+    ...(endpoint ? { endpoint: endpoint } : {}),
+    ...(prefix ? { prefix: prefix } : {}),
+    ...(auth ? { auth: auth } : {}),
   };
 }
 
@@ -209,10 +211,11 @@ function normalizeWorkspaceStorageAuth(
       value.externalId,
       "config.storage.auth.externalId",
     );
+
     return {
       type: "assumeRole",
-      roleArn,
-      ...(externalId ? { externalId } : {}),
+      roleArn: roleArn,
+      ...(externalId ? { externalId: externalId } : {}),
     };
   }
   throw new Error(
@@ -227,7 +230,8 @@ export function normalizeCreateWorkspaceConfigInput(
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeWorkspaceConfig(value.config);
-  return { name, ...(description ? { description } : {}), config };
+
+  return { name: name, ...(description ? { description: description } : {}), config: config };
 }
 
 export function normalizeUpdateWorkspaceConfigInput(
@@ -255,7 +259,7 @@ export function normalizeUpdateWorkspaceConfigInput(
               : optionalString(value.description, "description"),
         }
       : {}),
-    config,
+    config: config,
   };
 }
 
@@ -268,6 +272,7 @@ export function toPublicWorkspaceConfig(
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
+
   return value;
 }
 
@@ -294,6 +299,7 @@ function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+
   return value.trim();
 }
 
@@ -301,5 +307,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : undefined;
 }

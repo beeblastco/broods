@@ -20,10 +20,7 @@ import type {
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
 export type ObservabilityStreamStatus =
-  | "idle"
-  | "connecting"
-  | "live"
-  | "error";
+  "idle" | "connecting" | "live" | "error";
 
 interface UseObservabilityStreamOptions {
   /** Which realtime stream to subscribe to. */
@@ -145,11 +142,13 @@ export function useObservabilityStream(
     if (!coreEndpoint.ok) {
       setStatus("error");
       setError(coreEndpoint.message);
+
       return;
     }
     if (!projectSlug || !environmentSlug || !apiKey) {
       // Not enough info yet — stay idle; will reconnect when props settle.
       setStatus("idle");
+
       return;
     }
 
@@ -169,6 +168,7 @@ export function useObservabilityStream(
     socket.onopen = () => {
       if (destroyedRef.current || socketRef.current !== socket) {
         socket.close(1000, "superseded");
+
         return;
       }
 
@@ -194,14 +194,14 @@ export function useObservabilityStream(
 
       if (msg.type === "ready") {
         setStatus("live");
+
         return;
       }
 
       if (msg.type === "backfill") {
         setEntries((prev) => {
           const incoming = msg.entries as (
-            | ObservabilityLogEntry
-            | ObservabilitySpanRow
+            ObservabilityLogEntry | ObservabilitySpanRow
           )[];
           const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
           for (const entry of incoming) {
@@ -335,6 +335,7 @@ function entryKey(entry: ObservabilityLogEntry | ObservabilitySpanRow): string {
   if ("spanId" in entry) {
     return `span:${entry.traceId}:${entry.spanId}`;
   }
+
   return `log:${entry.ts}:${entry.eventType}:${entry.message.slice(0, 80)}`;
 }
 

@@ -25,6 +25,31 @@ export type AgentRuntimeRefs = {
 
 type RuntimeNode = Node<BaseNodeData> & { type?: string };
 
+// A config id is cached only once its write lands: caching before the await
+// marked a failed write as persisted, so the next save skipped it.
+export async function writeChangedRefs<
+  Ref extends { configId: Id<"agentConfigs"> },
+>(
+  refs: Ref[],
+  cache: Map<string, string>,
+  serialize: (ref: Ref) => string,
+  write: (ref: Ref) => Promise<unknown>,
+): Promise<void> {
+  const writes = refs.map(async (ref) => {
+    const serialized = serialize(ref);
+    if (cache.get(ref.configId) === serialized) return;
+
+    await write(ref);
+    cache.set(ref.configId, serialized);
+  });
+
+  // allSettled, not all: `all` reports the first failure while the rest are
+  // still in flight, so the caller sees an error over a half-updated cache.
+  const results = await Promise.allSettled(writes);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
+}
+
 /** Build the default node data for a new runtime resource node. */
 export function defaultRuntimeNodeData(
   type: string,
@@ -68,6 +93,8 @@ export type CanvasInfraAnalysis = {
   workspaceStates: Record<string, WorkspaceSandboxState>;
   /** Workspace/sandbox node id → number of distinct agents that reference it. */
   agentRefCounts: Record<string, number>;
+  /** Node id → whether an agent is reachable from it (drives the unwired badge). */
+  connectedToAgent: Record<string, boolean>;
 };
 
 /** Short display label for a runtime node, preferring the mount name. */
@@ -164,7 +191,11 @@ export function analyzeCanvasInfra(
       : { kind: "readonly" };
   }
 
-  return { workspaceStates: workspaceStates, agentRefCounts: agentRefCounts };
+  return {
+    workspaceStates: workspaceStates,
+    agentRefCounts: agentRefCounts,
+    connectedToAgent: resolveAgentReachability(runtimeNodes, adjacency),
+  };
 }
 
 /** Derive all agent runtime references from the current canvas graph. */
@@ -179,8 +210,7 @@ export function deriveAgentRuntimeRefs(
 
   return agents.flatMap((agent) => {
     const agentConfigId = agent.data.agentConfigId as
-      | Id<"agentConfigs">
-      | undefined;
+      Id<"agentConfigs"> | undefined;
     if (!agentConfigId) {
       return [];
     }
@@ -286,8 +316,7 @@ export function deriveSubagentRefs(
     if (edge.type !== "subagent") continue;
     const callee = byId.get(edge.target);
     const calleeConfigId = callee?.data.agentConfigId as
-      | Id<"agentConfigs">
-      | undefined;
+      Id<"agentConfigs"> | undefined;
     if (callee?.type !== "agent" || !calleeConfigId) continue;
     if (!calleesByCaller.has(edge.source))
       calleesByCaller.set(edge.source, new Set());
@@ -329,6 +358,51 @@ function neighbors(
   adjacency: Map<string, Set<string>>,
 ): string[] {
   return [...(adjacency.get(nodeId) ?? [])];
+}
+
+// Infra nodes chain through other infra nodes; every other type counts only a
+// direct agent edge.
+function resolveAgentReachability(
+  nodes: RuntimeNode[],
+  adjacency: Map<string, Set<string>>,
+): Record<string, boolean> {
+  const typeById = new Map(nodes.map((node) => [node.id, node.type]));
+  const touchesAgent = (nodeId: string) =>
+    neighbors(nodeId, adjacency).some((id) => typeById.get(id) === "agent");
+
+  const reachable: Record<string, boolean> = {};
+  const infraPending = new Set<string>();
+  for (const node of nodes) {
+    if (node.type === "agent") {
+      reachable[node.id] = true;
+    } else if (node.type === "workspace" || node.type === "sandbox") {
+      infraPending.add(node.id);
+    } else {
+      reachable[node.id] = touchesAgent(node.id);
+    }
+  }
+
+  // Infra nodes share one verdict per connected infra component: a single agent
+  // edge anywhere in the component wires all of it.
+  while (infraPending.size > 0) {
+    const seed: string = infraPending.values().next().value!;
+    infraPending.delete(seed);
+    const component = [seed];
+    const queue = [seed];
+    let wired = false;
+    while (queue.length > 0) {
+      const current = queue.pop()!;
+      wired ||= touchesAgent(current);
+      for (const next of neighbors(current, adjacency)) {
+        if (!infraPending.delete(next)) continue;
+        component.push(next);
+        queue.push(next);
+      }
+    }
+    for (const nodeId of component) reachable[nodeId] = wired;
+  }
+
+  return reachable;
 }
 
 function resourceIdFor(

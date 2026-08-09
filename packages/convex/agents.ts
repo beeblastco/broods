@@ -319,6 +319,7 @@ export const seedEncryptedConfigForTest = internalMutation({
       updatedAt: Date.now(),
     });
     await mirrorAgentRowOntoConfig(ctx, normalized);
+
     return null;
   },
 });

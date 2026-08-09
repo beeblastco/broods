@@ -86,10 +86,12 @@ describe("code hooks end-to-end (real isolate)", () => {
     const tools: ToolSet = {
       bash: fakeTool(() => {
         bashRan = true;
+
         return "ran";
       }),
       read: fakeTool(() => {
         readRan = true;
+
         return "file contents";
       }),
     };
@@ -226,7 +228,7 @@ describe("channel.message.received rewrite reaches the session", () => {
         name: "Hooked agent",
         status: "active" as const,
         config: {
-          channels,
+          channels: channels,
           hooks: { code: [{ hookId: hookRecord.hookId, enabled: true }] },
         },
         createdAt: "2026-07-16T00:00:00.000Z",
@@ -241,7 +243,7 @@ describe("channel.message.received rewrite reaches the session", () => {
             username: "test-account",
             secretHash: "hash",
             status: "active" as const,
-            config: { channels },
+            config: { channels: channels },
             createdAt: "2026-07-16T00:00:00.000Z",
             updatedAt: "2026-07-16T00:00:00.000Z",
           }),
@@ -333,12 +335,13 @@ function indexFor(
     accountId: "acct_test",
     hookId: "k17zwc4z4q5ysxm74fgrhd13s88xxtv",
     name: "policy_hook",
-    events,
+    events: events,
     bundleStorageKey: "account-hooks/acct_test/bundles/x.mjs",
     sha256: bundleSha,
     status: "active",
     createdAt: "2026-07-08T00:00:00.000Z",
     updatedAt: "2026-07-08T00:00:00.000Z",
   };
+
   return new Map(events.map((event) => [event, [record]]));
 }

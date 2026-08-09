@@ -33,6 +33,7 @@ function relativeTime(ts: number | undefined): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
+
   return `${days}d ago`;
 }
 
@@ -51,6 +52,7 @@ function statusBadge(status: Doc<"crons">["lastStatus"]) {
         running
       </Badge>
     );
+
   return (
     <Badge variant="destructive" className="text-xs">
       failed

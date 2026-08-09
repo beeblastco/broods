@@ -16,6 +16,7 @@ const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 function generateAccountSecret(): { secret: string; secretHash: string } {
   const secret = `${ACCOUNT_SECRET_PREFIX}${randomBytes(32).toString("base64url")}`;
   const secretHash = createHash("sha256").update(secret).digest("hex");
+
   return { secret: secret, secretHash: secretHash };
 }
 

@@ -215,6 +215,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         this.#workDir(request.reservationKey),
       );
       request.abortSignal?.throwIfAborted();
+
       return reservation;
     } catch (error) {
       if (reservation.isFirstCreate) {
@@ -254,6 +255,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       this.#config.controlPlane?.accountId,
     ).catch(() => {});
     request.abortSignal?.throwIfAborted();
+
     return reservation;
   }
 
@@ -274,6 +276,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       env: this.#sandboxEnvVars(request.env),
     });
     request.abortSignal?.throwIfAborted();
+
     return {
       stdout: response.stdout,
       stderr: response.stderr,
@@ -369,7 +372,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         result.stderr || result.stdout || "failed to launch background job",
       );
     }
-    return { jobId };
+
+    return { jobId: jobId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
@@ -379,6 +383,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       endpoint,
       statusScript(jobsDir, request.jobId),
     );
+
     return parseJobStatus(request.jobId, result.stdout);
   }
 
@@ -391,6 +396,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       logsScript(jobsDir, request.jobId, bytes),
     );
     const logs = truncateText(result.stdout, bytes);
+
     return {
       jobId: request.jobId,
       logs: logs.value,
@@ -408,6 +414,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       endpoint,
       statusScript(jobsDir, request.jobId),
     );
+
     return parseJobStatus(request.jobId, result.stdout);
   }
 
@@ -436,11 +443,13 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       const info = await this.#client.send(
         new GetMicrovmCommand({ microvmIdentifier: microvmId }),
       );
+
       return { externalId: microvmId, state: mapMicrovmState(info.state) };
     } catch (error) {
       if (isMicrovmGone(error)) {
         return null;
       }
+
       return { externalId: microvmId, state: "unknown" };
     }
   }
@@ -463,6 +472,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const options = isPlainObject(this.#config.options)
       ? this.#config.options
       : {};
+
     return configString(options[option]) ?? optionalEnv(env);
   }
 
@@ -477,6 +487,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         "MicroVM sandbox requires a config `snapshot` image ARN or MICROVM_IMAGE_IDENTIFIER in the harness runtime.",
       );
     }
+
     return identifier;
   }
 
@@ -486,6 +497,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 
   async #reservedId(request: SandboxReservationRef): Promise<string | null> {
     const key = sandboxReservationKey(request);
+
     return key ? getSandboxExternalId(PROVIDER, key) : null;
   }
 
@@ -496,6 +508,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         "background jobs require a persistent lambda (MicroVM) sandbox reservation key",
       );
     }
+
     return key;
   }
 
@@ -503,6 +516,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const options = isPlainObject(this.#config.options)
       ? this.#config.options
       : {};
+
     return stripTrailingSlashes(
       configString(options.workspaceRoot) ?? DEFAULT_WORKSPACE_ROOT,
     );
@@ -515,7 +529,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   #harnessRequest(reservationKey: string): SandboxRunRequest {
     return {
       code: "true",
-      reservationKey,
+      reservationKey: reservationKey,
       timeoutSeconds: this.#config.timeout ?? 120,
       outputLimitBytes: this.#config.outputLimitBytes ?? 64 * 1024,
     };
@@ -530,6 +544,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
         "persistent MicroVM lifecycle requires a workspace namespace or reservation key",
       );
     }
+
     return key;
   }
 
@@ -592,6 +607,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           existing,
           request.metadata,
         );
+
         return {
           ...this.#cacheTarget(key, reconnected),
           isFirstCreate: false,
@@ -653,6 +669,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       : null;
     if (!reconnected)
       throw new Error("failed to reserve MicroVM (lost create race)");
+
     return { ...this.#cacheTarget(key, reconnected), isFirstCreate: false };
   }
 
@@ -706,7 +723,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       throw new MicrovmGoneError(`MicroVM ${microvmId} is ${info.state}`);
     }
     if (!info.endpoint) throw new Error(`MicroVM ${microvmId} has no endpoint`);
-    return { microvmId, endpoint: info.endpoint };
+
+    return { microvmId: microvmId, endpoint: info.endpoint };
   }
 
   // Exec against a cached reservation endpoint. Returns null when that VM never
@@ -760,6 +778,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!result.microvmId || !result.endpoint) {
       throw new Error("RunMicrovm did not return a microvmId and endpoint");
     }
+
     return { microvmId: result.microvmId, endpoint: result.endpoint };
   }
 
@@ -777,11 +796,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const persistent = this.#persistent(request);
     const lifecycle = resolveSandboxLifecycle(this.#config.lifecycle);
     const runHookPayload = await this.#runHookPayload(request);
+
     return {
-      imageIdentifier,
-      ...(imageVersion ? { imageVersion } : {}),
-      ...(executionRoleArn ? { executionRoleArn } : {}),
-      ...(logGroup ? { logging: { cloudWatch: { logGroup } } } : {}),
+      imageIdentifier: imageIdentifier,
+      ...(imageVersion ? { imageVersion: imageVersion } : {}),
+      ...(executionRoleArn ? { executionRoleArn: executionRoleArn } : {}),
+      ...(logGroup ? { logging: { cloudWatch: { logGroup: logGroup } } } : {}),
       ...(persistent
         ? {
             idlePolicy: {
@@ -799,7 +819,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           )
         : Math.min(request.timeoutSeconds + 60, MAX_MICROVM_DURATION_SECONDS),
       ...this.#networkConnectors(persistent),
-      ...(runHookPayload ? { runHookPayload } : {}),
+      ...(runHookPayload ? { runHookPayload: runHookPayload } : {}),
     };
   }
 
@@ -815,9 +835,10 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       request.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT
     ).replace(/\/+$/, "");
     const namespace = microvmLocalNamespace(request.namespace);
+
     return JSON.stringify({
       workspace: {
-        namespace,
+        namespace: namespace,
         root: workspaceRoot,
         mount: {
           bucket: mount.bucket,
@@ -833,7 +854,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   #s3Context(namespace: string): S3MountContext {
     return {
       storage: this.#config.storage,
-      namespace,
+      namespace: namespace,
       managedBucket: optionalEnv("FILESYSTEM_BUCKET_NAME"),
       region: optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION"),
     };
@@ -980,6 +1001,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!parsed || typeof parsed !== "object") {
       throw new Error("MicroVM exec response must be an object");
     }
+
     return { retry: false, response: parsed as SandboxResponse };
   }
 
@@ -1000,7 +1022,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       new CreateMicrovmAuthTokenCommand({
         microvmIdentifier: microvmId,
         expirationInMinutes: AUTH_TOKEN_TTL_MINUTES,
-        allowedPorts: [{ port }],
+        allowedPorts: [{ port: port }],
       }),
     );
     const token = result.authToken?.["X-aws-proxy-auth"];
@@ -1010,7 +1032,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       );
     evictToCap(authTokens, now);
     authTokens.set(cacheKey, {
-      token,
+      token: token,
       expiresAt:
         now + AUTH_TOKEN_TTL_MINUTES * 60_000 - AUTH_TOKEN_REFRESH_MARGIN_MS,
     });
@@ -1039,6 +1061,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
       },
       budgetMs,
     );
+
     return {
       stdout: response.stdout,
       stderr: response.stderr,
@@ -1211,7 +1234,8 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     const microvmId = await getSandboxExternalId(PROVIDER, key);
     if (!microvmId) throw new Error("no reserved MicroVM for this workspace");
     const { endpoint } = await this.#reconnect(microvmId);
-    return { microvmId, endpoint, jobsDir: this.#jobsDir(key) };
+
+    return { microvmId: microvmId, endpoint: endpoint, jobsDir: this.#jobsDir(key) };
   }
 
   async #terminate(microvmId: string): Promise<void> {
@@ -1236,6 +1260,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
 function managedIngressConnectorArn(name: string): string {
   const region = optionalEnv("AWS_REGION") ?? optionalEnv("AWS_DEFAULT_REGION");
   if (!region) throw new Error("MicroVM ingress connectors require AWS_REGION");
+
   return `arn:aws:lambda:${region}:aws:network-connector:aws-network-connector:${name}`;
 }
 

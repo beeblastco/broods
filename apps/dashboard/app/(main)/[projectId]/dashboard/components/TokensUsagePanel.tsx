@@ -330,6 +330,7 @@ function fillBucketsAcrossRange(
       },
     );
   }
+
   return out;
 }
 
@@ -540,6 +541,7 @@ function StackedBarChart({
           <div className="mt-1 grid gap-0.5">
             {series.map((s) => {
               const value = hovered[s.key as keyof typeof hovered] as number;
+
               return (
                 <div
                   key={s.key as string}

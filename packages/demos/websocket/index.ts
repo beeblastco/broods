@@ -19,7 +19,7 @@ await new Promise<void>((resolve, reject) => {
       input: "Draft a short story about two unlikely friends.",
     },
     {
-      onMeta(meta) {
+      onMeta: function (meta) {
         console.log(`session=${meta.sessionId} task=${meta.taskId}`);
         if (steerSent) return;
         steerSent = true;
@@ -34,7 +34,7 @@ await new Promise<void>((resolve, reject) => {
             "Make the second friend a maintenance robot, and keep the ending hopeful.",
         });
       },
-      onMessage(message) {
+      onMessage: function (message) {
         switch (message.type) {
           case "ack":
             console.log(`\naccepted ${message.eventId}: ${message.status}`);
@@ -50,11 +50,11 @@ await new Promise<void>((resolve, reject) => {
             break;
         }
       },
-      onDone() {
+      onDone: function () {
         process.stdout.write("\nFinished\n");
         resolve();
       },
-      onError(error) {
+      onError: function (error) {
         reject(error);
       },
     },

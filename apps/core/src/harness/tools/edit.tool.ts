@@ -28,6 +28,7 @@ interface EditInput {
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {
@@ -100,7 +101,7 @@ Usage notes:
 - new_string must differ from old_string.
 - The edit fails if the file does not exist — use the \`write\` tool to create new files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const { file_path, old_string, new_string, replace_all, workspace } =
           input as EditInput;
         try {
@@ -127,6 +128,7 @@ Usage notes:
               `${result.stderr}${result.stdout}`.trim() || "Error: edit failed",
             );
           }
+
           return toolText(result.stdout.trim());
         } catch (cause) {
           return toolError(

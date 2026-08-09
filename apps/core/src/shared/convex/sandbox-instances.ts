@@ -53,9 +53,9 @@ export async function upsertSandboxInstance(
       ...(controlPlane.environmentId
         ? { environmentId: controlPlane.environmentId as any }
         : {}),
-      provider,
-      reservationKey,
-      externalId,
+      provider: provider,
+      reservationKey: reservationKey,
+      externalId: externalId,
       name: controlPlane.name,
       specs: controlPlane.specs,
       ...(controlPlane.sandboxConfigId
@@ -93,8 +93,8 @@ export async function upsertSandboxInstance(
       ...(controlPlane.sandboxConfigId
         ? { sandboxConfigId: controlPlane.sandboxConfigId }
         : {}),
-      reservationKey,
-      provider,
+      reservationKey: reservationKey,
+      provider: provider,
       action: "reserve",
       result: "ok",
       status: "running",
@@ -125,8 +125,8 @@ export async function setSandboxInstanceStatus(
   try {
     await getConvexClient().mutation(internal.sandboxInstances.setStatus, {
       accountId: accountId as any,
-      reservationKey,
-      status,
+      reservationKey: reservationKey,
+      status: status,
     });
   } catch (err) {
     logError("Sandbox instance status mirror failed (convex)", {
@@ -149,7 +149,7 @@ export async function sandboxInstanceIsControllable(
     {
       accountId: accountId as any,
       sandboxConfigId: sandboxConfigId as any,
-      reservationKey,
+      reservationKey: reservationKey,
     },
   );
 
@@ -168,7 +168,7 @@ export async function removeSandboxInstance(
   try {
     await getConvexClient().mutation(internal.sandboxInstances.remove, {
       accountId: accountId as any,
-      reservationKey,
+      reservationKey: reservationKey,
     });
   } catch (err) {
     logError("Sandbox instance remove mirror failed (convex)", {

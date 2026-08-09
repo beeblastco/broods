@@ -138,6 +138,7 @@ function apiFile(
     ? channels
         .map((channel) => {
           const path = `/webhooks/${encodeURIComponent(endpoint.accountId)}/${encodeURIComponent(channel.type)}`;
+
           return `    ${propertyKey(channel.alias)}: { kind: "channel", type: ${JSON.stringify(channel.type)}, agentName: ${JSON.stringify(channel.agentName)}, agentId: ids.agents[${JSON.stringify(channel.agentName)}], accountId: ${JSON.stringify(endpoint.accountId)}, webhookPath: ${JSON.stringify(path)} },`;
         })
         .join("\n")

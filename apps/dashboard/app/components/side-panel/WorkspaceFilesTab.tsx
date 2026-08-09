@@ -76,6 +76,7 @@ function buildTree(files: FileRecord[]): FileNode[] {
   const sort = (nodes: FileNode[]) => {
     nodes.sort((a, b) => {
       if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+
       return a.name.localeCompare(b.name);
     });
     for (const n of nodes) {
@@ -133,6 +134,7 @@ function readRuntimeFileCache(
     if (!Array.isArray(parsed.files) || typeof parsed.cachedAt !== "number")
       return undefined;
     runtimeFileCache.set(key, parsed);
+
     return parsed;
   } catch {
     return undefined;
@@ -160,6 +162,7 @@ function writeRuntimeFileCache(
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
@@ -174,6 +177,7 @@ async function readAllEntries(
     if (batch.length === 0) break;
     all.push(...batch);
   }
+
   return all;
 }
 
@@ -212,6 +216,7 @@ async function fileToBase64(file: File): Promise<string> {
       ...bytes.subarray(offset, offset + chunkSize),
     );
   }
+
   return btoa(binary);
 }
 
@@ -531,6 +536,7 @@ export function WorkspaceFilesTab({
       try {
         const next = await pending;
         if (request === refreshRequestRef.current) applyRuntimeFiles(next);
+
         return next;
       } finally {
         if (refreshPromiseRef.current === pending)
@@ -575,6 +581,7 @@ export function WorkspaceFilesTab({
         if (refreshPromiseRef.current === pending)
           refreshPromiseRef.current = undefined;
       });
+
     return () => {
       cancelled = true;
     };
@@ -638,6 +645,7 @@ export function WorkspaceFilesTab({
           );
           await refreshRuntimeFiles(false, true);
         }
+
         return;
       }
       if (node.isFolder) {
@@ -685,6 +693,7 @@ export function WorkspaceFilesTab({
       }
     };
     window.addEventListener("keydown", handler);
+
     return () => window.removeEventListener("keydown", handler);
   }, [selected, renamingPath, files]);
 
@@ -696,6 +705,7 @@ export function WorkspaceFilesTab({
       } else {
         next.add(path);
       }
+
       return next;
     });
   }, []);
@@ -708,6 +718,7 @@ export function WorkspaceFilesTab({
       setUploading((prev) => {
         const next = new Set(prev);
         for (const { path } of entries) next.add(path);
+
         return next;
       });
 
@@ -715,6 +726,7 @@ export function WorkspaceFilesTab({
         setExpanded((prev) => {
           const next = new Set(prev);
           for (const fp of folders) next.add(fp);
+
           return next;
         });
       }
@@ -772,6 +784,7 @@ export function WorkspaceFilesTab({
             setUploading((prev) => {
               const next = new Set(prev);
               next.delete(path);
+
               return next;
             });
           }
@@ -887,6 +900,7 @@ export function WorkspaceFilesTab({
           );
           await refreshRuntimeFiles(false, true);
         }
+
         return;
       }
       await renameMut({ fileId: node._id!, newName: newName });
@@ -1046,6 +1060,7 @@ export function WorkspaceFilesTab({
               );
               if (alreadyInTree) return null;
               const name = path.split("/").pop() ?? path;
+
               return (
                 <div
                   key={`uploading-${path}`}

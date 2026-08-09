@@ -10,7 +10,7 @@ import * as realS3 from "../src/shared/s3.ts";
 const ORIGINAL_ENV = { ...process.env };
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
-  modelId,
+  modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const generateTextMock = mock(async (_options: unknown) => ({
@@ -29,7 +29,7 @@ const readS3TextMock = mock(
 );
 const getAgentMock = mock(async (_accountId: string, agentId: string) => ({
   accountId: "acct",
-  agentId,
+  agentId: agentId,
   name: "Research assistant",
   description: "Specialized research agent",
   status: "active" as const,
@@ -77,7 +77,7 @@ const testStorage = () =>
     workspaceConfigs: {
       getById: async (_accountId: string, workspaceId: string) => ({
         accountId: "acct",
-        workspaceId,
+        workspaceId: workspaceId,
         name: "default",
         config: {
           storage: { provider: "s3" },
@@ -249,7 +249,7 @@ describe("session system context", () => {
         sandboxConfigs: {
           getById: async (_accountId: string, sandboxId: string) => ({
             accountId: "acct",
-            sandboxId,
+            sandboxId: sandboxId,
             name: "lambda",
             config: { provider: "lambda", network: { mode: "deny-all" } },
             createdAt: "2026-01-01T00:00:00.000Z",
@@ -259,7 +259,7 @@ describe("session system context", () => {
         workspaceConfigs: {
           getById: async (_accountId: string, workspaceId: string) => ({
             accountId: "acct",
-            workspaceId,
+            workspaceId: workspaceId,
             name: "default",
             config: workspaceConfig,
             createdAt: "2026-01-01T00:00:00.000Z",

@@ -191,6 +191,7 @@ test("client starts async runs and exposes status id for polling", async () => {
         expect(init?.headers).toMatchObject({
           Authorization: "Bearer runtime-key",
         });
+
         return Response.json(
           {
             statusUrl: "https://core.example/status/request-1?agentId=agent_1",
@@ -332,6 +333,7 @@ test("client defaults async conversation key to the generated event id", async (
     apiKey: "runtime-key",
     fetch: async (_input, init) => {
       bodies.push(init?.body ? JSON.parse(String(init.body)) : undefined);
+
       return Response.json(
         {
           statusUrl: "https://core.example/status/async-123?agentId=agent_1",
@@ -390,6 +392,7 @@ test("client polls async status by status id when agentId is provided", async ()
     apiKey: "runtime-key",
     fetch: async (input) => {
       urls.push(String(input));
+
       return Response.json({ status: "completed", response: { ok: true } });
     },
   });
@@ -471,6 +474,7 @@ test("client sends cron job APIs to the configured base URL", async () => {
       urls.push(String(input));
 
       if (String(input).includes("/runs")) return Response.json({ runs: [] });
+
       return Response.json({ crons: [] });
     },
   });

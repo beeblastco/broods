@@ -21,7 +21,7 @@ test("init writes gitignore entries for generated folders", async () => {
         "init",
         "--force",
       ],
-      cwd,
+      cwd: cwd,
       stdout: "pipe",
       stderr: "pipe",
       env: {

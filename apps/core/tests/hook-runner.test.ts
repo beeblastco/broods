@@ -174,22 +174,23 @@ async function runHookRunner(
       bundleSourceB64: Buffer.from(source).toString("base64"),
       expectedSha256: createHash("sha256").update(source).digest("hex"),
       toolName: "test_hook",
-      hookEvent,
+      hookEvent: hookEvent,
       input: payload,
       config: {},
-      state,
+      state: state,
     }) + "\n",
   );
   const exitCode = await new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => resolve(code));
   });
+
   return {
     frames: stdout
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => JSON.parse(line)),
-    exitCode,
-    stderr,
+    exitCode: exitCode,
+    stderr: stderr,
   };
 }

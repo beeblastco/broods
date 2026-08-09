@@ -23,6 +23,7 @@ export function SkillConfigTab({ nodeId }: { nodeId: string }) {
     // Strip stale keys from previous schema versions
     const clean = { ...raw };
     delete (clean as Record<string, unknown>).publish;
+
     return clean;
   }, [agentConfig]);
 

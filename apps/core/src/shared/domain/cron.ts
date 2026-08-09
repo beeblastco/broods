@@ -109,6 +109,7 @@ export function normalizeCreateCronInput(
   input: CreateCronInput,
 ): NormalizedCronCreate {
   if (!isPlainObject(input)) throw new Error("Request body must be an object");
+
   return {
     name: requireString(input.name, "name", 120),
     agentId: requireString(input.agentId, "agentId", 120),
@@ -155,7 +156,7 @@ export function normalizeUpdateCronInput(
     ...(input.agentId !== undefined
       ? { agentId: requireString(input.agentId, "agentId", 120) }
       : {}),
-    ...(events !== undefined ? { events } : {}),
+    ...(events !== undefined ? { events: events } : {}),
     ...(input.conversationKey !== undefined
       ? {
           conversationKey:
@@ -184,6 +185,7 @@ export function normalizeUpdateCronInput(
   if (Object.keys(normalized).length === 0) {
     throw new Error("Request body must include at least one cron job field");
   }
+
   return normalized;
 }
 
@@ -192,6 +194,7 @@ export function normalizeSchedulerGroupName(value: unknown): string {
   if (!SCHEDULE_NAME_PATTERN.test(groupName)) {
     throw new Error("schedulerGroupName contains unsupported characters");
   }
+
   return groupName;
 }
 
@@ -200,6 +203,7 @@ export function applyCronPatch(
   input: UpdateCronInput,
 ): CronRecord {
   const patch = normalizeUpdateCronInput(input);
+
   return {
     ...record,
     ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -275,6 +279,7 @@ function normalizeScheduleExpression(value: unknown): string {
       "scheduleExpression must use cron(...), rate(...), or at(...)",
     );
   }
+
   return expression;
 }
 
@@ -283,6 +288,7 @@ function normalizeTimezone(value: unknown): string {
   if (!TIMEZONE_PATTERN.test(timezone)) {
     throw new Error("timezone contains unsupported characters");
   }
+
   return timezone;
 }
 
@@ -302,6 +308,7 @@ function requireString(
     throw new Error(`${name} must be a non-empty string`);
   if (trimmed.length > maxLength)
     throw new Error(`${name} must be at most ${maxLength} characters`);
+
   return trimmed;
 }
 
@@ -315,5 +322,6 @@ function optionalString(
   const trimmed = value.trim();
   if (trimmed.length > maxLength)
     throw new Error(`${name} must be at most ${maxLength} characters`);
+
   return trimmed.length > 0 ? trimmed : undefined;
 }

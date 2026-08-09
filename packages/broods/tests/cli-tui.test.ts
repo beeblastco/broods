@@ -312,7 +312,7 @@ test("aborting stops a turn that is waiting on the model", async () => {
     fetch: async () =>
       new Response(
         new ReadableStream({
-          start(sse) {
+          start: function(sse) {
             sse.enqueue(
               new TextEncoder().encode(
                 `data: ${JSON.stringify({ type: "text-start", id: "0" })}\n\n`,

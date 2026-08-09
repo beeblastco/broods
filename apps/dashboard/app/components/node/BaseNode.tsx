@@ -7,7 +7,7 @@ import { Python } from "@/app/components/icons/Python";
 import type { AgentHealthStatus } from "@/app/hooks/useAgentHealth";
 import { Handle, Position, useConnection, useStore } from "@xyflow/react";
 import { CornerDownRight, Globe, Lock, Slash, Users } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type BaseNodeData = {
   label: string;
@@ -127,51 +127,10 @@ export function BaseNode({
     return () => observer.disconnect();
   }, []);
 
-  const isConnectedToAgent = useStore(
-    useCallback(
-      (state: Record<string, unknown>) => {
-        if (nodeType === "agent") return true;
-        const edges = state.edges as Array<{ source: string; target: string }>;
-        const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
-        if (!edges || !nodeLookup) return false;
-
-        if (nodeType === "workspace" || nodeType === "sandbox") {
-          const visited = new Set<string>([id]);
-          const queue = [id];
-          while (queue.length > 0) {
-            const current = queue.shift()!;
-            for (const edge of edges) {
-              if (edge.source !== current && edge.target !== current) continue;
-              const otherNodeId =
-                edge.source === current ? edge.target : edge.source;
-              if (visited.has(otherNodeId)) continue;
-              visited.add(otherNodeId);
-              const otherNode = nodeLookup.get(otherNodeId);
-              if (otherNode?.type === "agent") return true;
-              if (
-                otherNode?.type === "workspace" ||
-                otherNode?.type === "sandbox"
-              ) {
-                queue.push(otherNodeId);
-              }
-            }
-          }
-
-          return false;
-        }
-
-        for (const e of edges) {
-          if (e.source !== id && e.target !== id) continue;
-          const otherNodeId = e.source === id ? e.target : e.source;
-          const otherNode = nodeLookup.get(otherNodeId);
-          if (otherNode?.type === "agent") return true;
-        }
-
-        return false;
-      },
-      [id, nodeType],
-    ),
-  );
+  // Read from the one shared traversal. Walking the graph here instead ran a
+  // per-node store selector on every ReactFlow update, drag frames included.
+  const isConnectedToAgent =
+    nodeType === "agent" || (infraAnalysis.connectedToAgent[id] ?? false);
 
   let statusColor = "";
   let statusText = "";

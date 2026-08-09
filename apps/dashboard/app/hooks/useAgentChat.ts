@@ -192,10 +192,10 @@ async function startWebSocketSseStream(options: {
   let settled = false;
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start: function (controller) {
       streamController = controller;
     },
-    cancel() {
+    cancel: function () {
       if (
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING
@@ -482,6 +482,7 @@ function appendAssistantTextDelta(options: {
   }
 
   const newMessageId = options.messageId ?? crypto.randomUUID();
+
   return {
     messages: [
       ...options.previousMessages,
@@ -826,7 +827,7 @@ export function useAgentChat({
           schema: uiMessageChunkSchema,
         }).pipeThrough(
           new TransformStream({
-            transform(result, transformController) {
+            transform: function (result, transformController) {
               if (result.success) {
                 transformController.enqueue(result.value);
               }

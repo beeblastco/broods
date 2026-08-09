@@ -102,8 +102,9 @@ export default function runSubagentTool(context: {
           : []),
       ].join(" "),
       inputSchema: jsonSchema(buildRunSubagentInputSchema(context.mode)),
-      async execute(input, options) {
+      execute: async function(input, options) {
         const tasks = normalizeInput(input, context.mode);
+
         // Keep the tool as a thin AI SDK adapter. The dispatcher starts child
         // runs and coordinates later parent continuation outside this file.
         return context.dispatchSubagents(tasks, options.messages);
@@ -176,9 +177,9 @@ function normalizeTask(
       : undefined;
 
   return {
-    ...(agentId ? { agentId } : {}),
-    prompt,
-    ...(conversationKey ? { conversationKey } : {}),
+    ...(agentId ? { agentId: agentId } : {}),
+    prompt: prompt,
+    ...(conversationKey ? { conversationKey: conversationKey } : {}),
   };
 }
 
@@ -186,6 +187,7 @@ function normalizeRequiredString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+
   return value.trim();
 }
 
@@ -200,5 +202,6 @@ function normalizeOptionalString(
     throw new Error(`${name} must be a string`);
   }
   const normalized = value.trim();
+
   return normalized.length > 0 ? normalized : undefined;
 }

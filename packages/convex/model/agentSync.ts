@@ -256,7 +256,7 @@ async function ensureCanvasTarget(
       }),
     ))!;
 
-  return { project, environment };
+  return { project: project, environment: environment };
 }
 
 /**
@@ -450,6 +450,7 @@ export async function mirrorAgentRowOntoConfig(
       ...ownership,
       updatedAt: Date.now(),
     });
+
     return;
   }
 

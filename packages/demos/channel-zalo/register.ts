@@ -10,7 +10,7 @@ const response = await fetch(
   {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, secret_token: webhookSecret }),
+    body: JSON.stringify({ url: url, secret_token: webhookSecret }),
   },
 );
 const body = await response.text();

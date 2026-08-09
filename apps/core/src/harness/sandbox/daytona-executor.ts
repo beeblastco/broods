@@ -87,6 +87,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         response.result ?? artifactStdout(response.artifacts),
         request.outputLimitBytes,
       );
+
       return {
         ok: (response.exitCode ?? 0) === 0,
         runtime: request.runtime ?? "bash",
@@ -126,11 +127,13 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           "failed to launch background job",
       );
     }
-    return { jobId };
+
+    return { jobId: jobId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
+
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
@@ -144,6 +147,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
+
     return {
       jobId: request.jobId,
       logs: logs.value,
@@ -154,6 +158,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
+
     // Report the real terminal state: a job that had already finished keeps its
     // own exit code instead of being recorded as killed.
     return parseJobStatus(
@@ -203,6 +208,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         "background jobs require a persistent daytona sandbox reservation key",
       );
     }
+
     return sandboxReservationKey(request)!;
   }
 
@@ -210,6 +216,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     const options = isPlainObject(this.#config.options)
       ? this.#config.options
       : {};
+
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
       "",
@@ -252,6 +259,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
           externalId,
           request.metadata,
         );
+
         return sandbox;
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
@@ -285,6 +293,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
         sandbox.id,
         request.metadata,
       );
+
       return sandbox;
     }
     // Lost a concurrent create race: discard our duplicate and reconnect to the
@@ -293,6 +302,7 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     await sandbox.delete().catch(() => {});
     if (!winner)
       throw new Error("failed to reserve daytona sandbox (lost create race)");
+
     return this.#reconnect(client, winner);
   }
 
@@ -311,7 +321,8 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
       new Daytona(daytonaClientOptions(this.#config)),
       externalId,
     );
-    return { sandbox, jobsDir: this.#jobsDir(key) };
+
+    return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
   }
 
   async #create(
@@ -343,11 +354,13 @@ export class DaytonaSandboxExecutor implements SandboxExecutor {
     if (state && state !== "started" && state !== "starting") {
       await sandbox.start();
     }
+
     return sandbox;
   }
 
   async #shell(sandbox: Sandbox, code: string): Promise<string> {
     const response = await sandbox.process.executeCommand(code);
+
     return response.result ?? artifactStdout(response.artifacts);
   }
 
@@ -389,11 +402,12 @@ function daytonaClientOptions(
     optionalEnv("DAYTONA_ORGANIZATION_ID");
   const apiUrl = customApiUrl ?? optionalEnv("DAYTONA_API_URL");
   const target = configString(options.target) ?? optionalEnv("DAYTONA_TARGET");
+
   return {
-    ...(apiKey ? { apiKey } : {}),
-    ...(organizationId ? { organizationId } : {}),
-    ...(apiUrl ? { apiUrl } : {}),
-    ...(target ? { target } : {}),
+    ...(apiKey ? { apiKey: apiKey } : {}),
+    ...(organizationId ? { organizationId: organizationId } : {}),
+    ...(apiUrl ? { apiUrl: apiUrl } : {}),
+    ...(target ? { target: target } : {}),
   };
 }
 
@@ -421,6 +435,7 @@ async function daytonaCreateOptions(
       (lifecycle.maxLifetimeSeconds ?? DEFAULT_RELEASE_GRACE_SECONDS) / 60,
     ),
   );
+
   return {
     language: "typescript",
     ...(configString(options.snapshot)
@@ -429,7 +444,7 @@ async function daytonaCreateOptions(
     ...(configString(options.image)
       ? { image: configString(options.image) }
       : {}),
-    ...(Object.keys(envVars).length > 0 ? { envVars } : {}),
+    ...(Object.keys(envVars).length > 0 ? { envVars: envVars } : {}),
     ...daytonaNetworkOptions(config),
     ...(persistent
       ? {
@@ -458,6 +473,7 @@ function daytonaNetworkOptions(
       },
     );
   }
+
   return {
     networkBlockAll: true,
     ...((network.allowCidrs?.length ?? 0) > 0
@@ -482,6 +498,7 @@ async function daytonaEnvVars(
     return baseEnv;
   }
   const mount = await resolveS3Mount(daytonaS3Context(config, request));
+
   return {
     ...baseEnv,
     ...(mount.credentials ?? staticAwsKeys(baseEnv)),
@@ -501,6 +518,7 @@ function daytonaS3Context(
   if (!request.namespace) {
     throw new Error("Daytona AWS S3 mounts require a workspace namespace.");
   }
+
   return {
     storage: config.storage,
     namespace: request.namespace,
@@ -527,6 +545,7 @@ function staticAwsKeys(env: Record<string, string>): Record<string, string> {
       "Daytona AWS S3 mounts require SANDBOX_MOUNT_ROLE_ARN in the harness runtime or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in sandbox envVars.",
     );
   }
+
   return {
     AWS_ACCESS_KEY_ID: accessKeyId,
     AWS_SECRET_ACCESS_KEY: secretAccessKey,

@@ -21,7 +21,7 @@ function bundleFile(
   content: string | Uint8Array,
 ): SkillBundleFile {
   return {
-    path,
+    path: path,
     bytes:
       typeof content === "string" ? new TextEncoder().encode(content) : content,
   };

@@ -11,21 +11,56 @@ const SURFACES: Array<{
   collection: Array<"GET" | "POST">;
   item: Array<"GET" | "PATCH" | "DELETE" | "POST" | "PUT">;
 }> = [
-  { path: "/v1/agents", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/channels", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/crons", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/hooks", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/policies", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/skills", collection: ["GET", "POST"], item: ["GET", "PUT", "DELETE"] },
-  { path: "/v1/tools", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
-  { path: "/v1/workspaces", collection: ["GET", "POST"], item: ["GET", "PATCH", "DELETE"] },
+  {
+    path: "/v1/agents",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/channels",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/crons",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/hooks",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/policies",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/skills",
+    collection: ["GET", "POST"],
+    item: ["GET", "PUT", "DELETE"],
+  },
+  {
+    path: "/v1/tools",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/workspaces",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
 ];
 
 describe("config-plane HTTP routes", () => {
   for (const surface of SURFACES) {
     it(`mounts ${surface.path}`, () => {
       for (const method of surface.collection) {
-        expect(http.lookup(surface.path, method), `${method} ${surface.path}`).toBeTruthy();
+        expect(
+          http.lookup(surface.path, method),
+          `${method} ${surface.path}`,
+        ).toBeTruthy();
       }
       for (const method of surface.item) {
         const path = `${surface.path}/id_1`;

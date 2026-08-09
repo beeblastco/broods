@@ -84,7 +84,7 @@ export const listAgentWebhooks = query({
       agentConfigId: config._id,
       agentName: config.name,
       webhooks: readWebhooks(config.extraConfig).map((webhook, index) => ({
-        index,
+        index: index,
         enabled: webhook.enabled !== false,
         url: typeof webhook.url === "string" ? webhook.url : undefined,
         secret: typeof webhook.secret === "string" ? webhook.secret : undefined,

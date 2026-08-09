@@ -56,6 +56,7 @@ export function isSessionInitFrame(frame: string): boolean {
 
   try {
     const parsed: unknown = JSON.parse(frame);
+
     return (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -86,6 +87,7 @@ export function openTerminalUpstream(
     } as unknown as string[]);
   } catch {
     socket.close(1011, "failed to reach the sandbox terminal");
+
     return;
   }
 
@@ -142,6 +144,7 @@ export function relayTerminalInput(
       : (new Uint8Array(rawMessage) as Uint8Array<ArrayBuffer>);
   if (state.upstream && state.upstream.readyState === WebSocket.OPEN) {
     state.upstream.send(chunk);
+
     return;
   }
 
@@ -149,6 +152,7 @@ export function relayTerminalInput(
     typeof chunk === "string" ? chunk.length : chunk.byteLength;
   if (state.pendingBytes > MAX_PENDING_TERMINAL_BYTES) {
     socket.close(1009, "terminal input buffer exceeded");
+
     return;
   }
 

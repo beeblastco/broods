@@ -359,16 +359,16 @@ export function createIncomingEventRouter(
     handlers: IntegrationHandlers,
   ): Promise<Response> =>
     handleHttpRequest(request, handlers, {
-      authResolver,
-      accountLoader,
-      agentLoader,
-      agentLister,
-      channelRecordLoader,
-      deploymentLoader,
-      asyncAgentResultLoader,
-      ingressStatusLoader,
-      directApiEnabled,
-      waitUntil,
+      authResolver: authResolver,
+      accountLoader: accountLoader,
+      agentLoader: agentLoader,
+      agentLister: agentLister,
+      channelRecordLoader: channelRecordLoader,
+      deploymentLoader: deploymentLoader,
+      asyncAgentResultLoader: asyncAgentResultLoader,
+      ingressStatusLoader: ingressStatusLoader,
+      directApiEnabled: directApiEnabled,
+      waitUntil: waitUntil,
     });
 }
 
@@ -421,16 +421,16 @@ async function handleHttpRequest(
 
   if (method !== "POST") {
     return errorResponse(405, "Method not allowed", {
-      method,
+      method: method,
       allowedMethods: ["GET", "POST"],
     });
   }
 
   const channelRequest = {
-    method,
+    method: method,
     rawPath: request.path,
     rawQueryString: request.search,
-    headers,
+    headers: headers,
     body: request.body,
   } satisfies ChannelRequest;
 
@@ -509,8 +509,8 @@ async function handleHttpRequest(
     const channelName = decodeURIComponent(accountWebhookMatch[2]);
     const agentId = "(by channel)";
     logInfo("Webhook request matched account route", {
-      accountId,
-      agentId,
+      accountId: accountId,
+      agentId: agentId,
       channel: channelName,
       method: request.method,
       rawPath: request.path,
@@ -521,8 +521,8 @@ async function handleHttpRequest(
       account = await context.accountLoader(accountId);
     } catch (err) {
       logError("Webhook account load failed", {
-        accountId,
-        agentId,
+        accountId: accountId,
+        agentId: agentId,
         channel: channelName,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -530,10 +530,11 @@ async function handleHttpRequest(
     }
     if (!account || account.status !== "active") {
       logWarn("Webhook account not found or inactive", {
-        accountId,
-        agentId,
+        accountId: accountId,
+        agentId: agentId,
         channel: channelName,
       });
+
       return notFoundResponse();
     }
     // The credential holder owns the provider app the request came from:
@@ -552,7 +553,7 @@ async function handleHttpRequest(
     } catch (err) {
       logError("Webhook agent load failed", {
         accountId: account.accountId,
-        agentId,
+        agentId: agentId,
         channel: channelName,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -595,7 +596,7 @@ async function handleHttpRequest(
 
     logInfo("Webhook received", {
       accountId: account.accountId,
-      agentId,
+      agentId: agentId,
       channel: channelName,
       method: request.method,
       rawPath: request.path,
@@ -609,6 +610,7 @@ async function handleHttpRequest(
       const isConfigured = accountChannelRegistry.webhookChannels.some(
         (channel) => channel.name === channelName,
       );
+
       return integrationNotConfigured(
         isConfigured ? `Webhook ${channelName}` : channelName,
       );
@@ -703,7 +705,7 @@ async function handleHttpRequest(
           projectSlug: auth.projectSlug,
           environmentSlug: auth.environmentSlug,
           publicDeploymentIngress: publicDeploymentIngress(auth),
-          statusUrl,
+          statusUrl: statusUrl,
         });
       }
 
@@ -751,7 +753,7 @@ async function handleHttpRequest(
 
       return handlers.handleAsyncRequest({
         ...parsed,
-        statusUrl,
+        statusUrl: statusUrl,
       });
     }
 
@@ -780,7 +782,7 @@ async function findChannelCredentialHolder(
     listed = await context.agentLister(accountId);
   } catch (err) {
     logWarn("Channel credential holder lookup failed", {
-      accountId,
+      accountId: accountId,
       channel: channelName,
       error: err instanceof Error ? err.message : String(err),
     });
@@ -812,11 +814,11 @@ async function findChannelCredentialHolder(
       truncated = true;
       break;
     }
-    candidates.push({ agent: candidate, adapter });
+    candidates.push({ agent: candidate, adapter: adapter });
   }
   if (truncated) {
     logWarn("Channel credential candidates truncated", {
-      accountId,
+      accountId: accountId,
       channel: channelName,
       limit: CHANNEL_CREDENTIAL_CANDIDATE_LIMIT,
     });
@@ -864,7 +866,7 @@ async function resolveChannelTarget(
   channelName: string,
   identity: ChannelIdentity | undefined,
 ): Promise<ChannelTarget> {
-  if (!identity?.channelId) return { kind: "resolved", agent };
+  if (!identity?.channelId) return { kind: "resolved", agent: agent };
 
   // try/catch, not .catch(): a loader can throw synchronously (a partial storage
   // stub, a missing binding) and that must not escape as a 500.
@@ -898,11 +900,11 @@ async function resolveChannelTarget(
     });
     record = null;
   }
-  if (!record) return { kind: "resolved", agent };
+  if (!record) return { kind: "resolved", agent: agent };
 
   const boundAgentId = resolveChannelAgentId(record);
   if (!boundAgentId || boundAgentId === agent.agentId) {
-    return { kind: "resolved", agent, record };
+    return { kind: "resolved", agent: agent, record: record };
   }
 
   const bound = await context.agentLoader(account.accountId, boundAgentId);
@@ -911,12 +913,13 @@ async function resolveChannelTarget(
       accountId: account.accountId,
       channel: channelName,
       channelRecordId: record.channelRecordId,
-      boundAgentId,
+      boundAgentId: boundAgentId,
     });
-    return { kind: "resolved", agent, record };
+
+    return { kind: "resolved", agent: agent, record: record };
   }
 
-  return { kind: "resolved", agent: bound, record };
+  return { kind: "resolved", agent: bound, record: record };
 }
 
 // A lookup that failed is not the same as "no record": the first must not run.
@@ -957,7 +960,7 @@ async function refuseChannelInvoke(
 ): Promise<string | null> {
   const decision = await evaluateChannelInvoke(agentConfig, {
     accountId: account.accountId,
-    agentId,
+    agentId: agentId,
     channel: channelName,
     ...channelPolicyIdentity(identity),
   });
@@ -967,7 +970,7 @@ async function refuseChannelInvoke(
     `Agent policy ${decision.mode === "enforce" ? "denied" : "would deny"} agent.invoke (${decision.mode})`,
     {
       accountId: account.accountId,
-      agentId,
+      agentId: agentId,
       channel: channelName,
       channelId: identity?.channelId,
       actorId: identity?.actorId,
@@ -1049,6 +1052,7 @@ async function handleChannelWebhook(
         accountId: account.accountId,
         agentId: agent.agentId,
       });
+
       return unauthorizedResponse();
     }
 
@@ -1080,6 +1084,7 @@ async function handleChannelWebhook(
         reason: parsed.reason,
         statusCode: parsed.response.statusCode,
       });
+
       return toResponse(parsed.response);
     }
 
@@ -1093,6 +1098,7 @@ async function handleChannelWebhook(
         reason: parsed.reason,
         statusCode: parsed.response?.statusCode ?? 200,
       });
+
       return toResponse(parsed.response ?? { statusCode: 200 });
     }
 
@@ -1116,6 +1122,7 @@ async function handleChannelWebhook(
           }),
         ),
       );
+
       return toResponse(response);
     }
 
@@ -1192,6 +1199,7 @@ async function handleChannelWebhook(
           }),
         ),
       );
+
       return toResponse(response);
     }
 
@@ -1269,6 +1277,7 @@ async function handleChannelWebhook(
             });
           }),
       );
+
       return toResponse(response);
     }
 
@@ -1291,7 +1300,7 @@ async function handleChannelWebhook(
               { role: "user", content: message.content },
             ],
             channelName: message.channelName,
-            ...(identity ? { identity } : {}),
+            ...(identity ? { identity: identity } : {}),
             source: source,
             channel: channel,
             accountId: account.accountId,
@@ -1309,6 +1318,7 @@ async function handleChannelWebhook(
         ),
       ),
     );
+
     return toResponse(response);
   } catch (err) {
     logError("Failed to process webhook request", {
@@ -1365,7 +1375,7 @@ async function cleanupChannelWorkspaceScopes(options: {
           options.conversationKey,
           "conversation",
         ),
-        workspaceScope,
+        workspaceScope: workspaceScope,
       },
     );
     reservedSandboxesReleased += await releaseReservedSandboxes(
@@ -1386,8 +1396,8 @@ async function cleanupChannelWorkspaceScopes(options: {
     accountId: options.accountId,
     channelName: options.channelName,
     conversationKey: options.conversationKey,
-    deleted,
-    reservedSandboxesReleased,
+    deleted: deleted,
+    reservedSandboxesReleased: reservedSandboxesReleased,
   });
 }
 
@@ -1396,6 +1406,7 @@ function isChannelWorkspaceScope(
 ): value is AgentChannelWorkspaceScope {
   if (!isPlainObject(value)) return false;
   if (value.level === "channel") return value.alias === undefined;
+
   return value.level === "conversation" && typeof value.alias === "string";
 }
 
@@ -1409,7 +1420,8 @@ export function attachMetadataToLatestUserIngress(
     const event = events[i]!;
     if (event.role !== "user") continue;
     const next = [...events];
-    next[i] = { ...event, metadata };
+    next[i] = { ...event, metadata: metadata };
+
     return next;
   }
 
@@ -1475,6 +1487,7 @@ async function processChannelMessage(
           eventId: event.eventId,
           conversationKey: event.conversationKey,
         });
+
         return;
       }
       if (typeof mutation?.text === "string") {
@@ -1494,8 +1507,8 @@ async function processChannelMessage(
 
     await handlers.handleChannelRequest({
       ...event,
-      content,
-      events,
+      content: content,
+      events: events,
       commandToken:
         resolveCommandToken(content, event.source, event.channelName) ??
         undefined,
@@ -1512,7 +1525,7 @@ async function processChannelMessage(
     logError("Failed to process channel message", {
       channel: event.channelName,
       eventId: event.eventId,
-      error,
+      error: error,
     });
     await event.channel
       .sendText(formatChannelErrorText(error))
@@ -1544,6 +1557,7 @@ export function rewriteLatestUserIngressText(
     if (event.role !== "user") continue;
     const next = [...events];
     next[i] = { ...event, content: text };
+
     return next;
   }
 
@@ -1653,6 +1667,7 @@ export async function sendChannelReply(options: {
     logInfo("Channel reply dropped by onMessageSending hook", {
       channel: options.channelName,
     });
+
     return;
   }
 
@@ -1807,10 +1822,10 @@ async function parseDirectPayload(
       rawConversationKey,
     ),
     publicConversationKey: rawConversationKey,
-    events,
+    events: events,
     requestedMode: requestedMode,
     idempotencyKey: idempotencyKey,
-    ...(connectionId ? { connectionId } : {}),
+    ...(connectionId ? { connectionId: connectionId } : {}),
     ...(overrides?.system ? { ephemeralSystem: overrides.system } : {}),
   };
 }
@@ -1917,9 +1932,9 @@ function parseStatusPath(
 
   return {
     accountId: account.accountId,
-    agentId,
+    agentId: agentId,
     eventId: scopedDirectEventId(account.accountId, agentId, publicEventId),
-    publicEventId,
+    publicEventId: publicEventId,
   };
 }
 
@@ -1996,7 +2011,7 @@ function parseSandboxJobCompletionPayload(
 
   return {
     resultId: decodeURIComponent(rawResultId),
-    token,
+    token: token,
     status: record.status,
     ...(record.response !== undefined ? { response: record.response } : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
@@ -2018,6 +2033,7 @@ function badRequestResponse(err: unknown): Response {
   if (err instanceof StatusUrlConfigError) {
     return errorResponse(500, err.message);
   }
+
   return errorResponse(
     400,
     err instanceof Error ? err.message : "Invalid request",

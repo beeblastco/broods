@@ -108,6 +108,7 @@ export class HarnessShellProcess {
       options.abortSignal,
     );
     if (options.abortSignal) void process.wait().catch(() => {});
+
     return process;
   }
 
@@ -117,11 +118,13 @@ export class HarnessShellProcess {
       this.#abortSignal,
       () => this.kill(),
     );
+
     return this.#waitPromise;
   }
 
   kill(): Promise<void> {
     this.#killPromise ??= this.#kill();
+
     return this.#killPromise;
   }
 
@@ -140,6 +143,7 @@ export class HarnessShellProcess {
               .join(" ")}`,
           )
           .catch(() => {});
+
         return result;
       }
       await delay(PROCESS_POLL_INTERVAL_MS);
@@ -181,11 +185,13 @@ export class HarnessShellProcess {
     if (status === "running") return { state: "running" };
     if (status.startsWith("done ")) {
       const exitCode = Number(status.slice(5));
+
       return {
         state: "done",
         exitCode: Number.isFinite(exitCode) ? exitCode : 1,
       };
     }
+
     return { state: "unknown" };
   }
 }
@@ -212,6 +218,7 @@ export async function readHarnessStream(
     content.set(chunk, offset);
     offset += chunk.byteLength;
   }
+
   return new TextDecoder().decode(content);
 }
 
@@ -225,7 +232,7 @@ function processFileStream(
   let cancelled = false;
   const completed = Promise.withResolvers<void>();
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    start: function(controller) {
       void (async () => {
         let offset = 0;
         try {
@@ -249,6 +256,7 @@ function processFileStream(
               }
               controller.close();
               completed.resolve();
+
               return;
             }
             await delay(PROCESS_POLL_INTERVAL_MS);
@@ -259,12 +267,13 @@ function processFileStream(
         }
       })();
     },
-    cancel() {
+    cancel: function() {
       cancelled = true;
       completed.resolve();
     },
   });
-  return { stream, done: completed.promise };
+
+  return { stream: stream, done: completed.promise };
 }
 
 async function readProcessChunk(
@@ -278,6 +287,7 @@ async function readProcessChunk(
   if (result.exitCode !== 0) {
     throw shellProcessError("read process output", result);
   }
+
   return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
 }
 
@@ -289,10 +299,12 @@ function raceWithAbort<T>(
   if (!abortSignal) return promise;
   if (abortSignal.aborted) {
     void Promise.resolve(onAbort()).catch(() => {});
+
     return Promise.reject(
       abortSignal.reason ?? new DOMException("Aborted", "AbortError"),
     );
   }
+
   return new Promise<T>((resolve, reject) => {
     const abort = () => {
       void Promise.resolve(onAbort()).catch(() => {});

@@ -103,7 +103,7 @@ function bitmapToPath(pixels: number[][]): string {
       if (row[x] === 1) {
         const start = x;
         while (x < GRID && row[x] === 1) x++;
-        segments.push({ start, len: x - start });
+        segments.push({ start: start, len: x - start });
       } else {
         x++;
       }

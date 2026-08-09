@@ -16,16 +16,16 @@ const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
 const originalFetch = globalThis.fetch;
 const googleModelMock = mock((modelId: string) => ({
   provider: "google",
-  modelId,
+  modelId: modelId,
 }));
 const createGoogleMock = mock((_options: unknown) => googleModelMock);
 const openAIModelMock = mock((modelId: string) => ({
   provider: "openai",
-  modelId,
+  modelId: modelId,
 }));
 const openAIChatModelMock = mock((modelId: string) => ({
   provider: "custom.chat",
-  modelId,
+  modelId: modelId,
 }));
 const openAIProviderMock = Object.assign(openAIModelMock, {
   chat: openAIChatModelMock,
@@ -33,29 +33,29 @@ const openAIProviderMock = Object.assign(openAIModelMock, {
 const createOpenAIMock = mock((_options: unknown) => openAIProviderMock);
 const openAICompatibleModelMock = mock((modelId: string) => ({
   provider: "custom.chat",
-  modelId,
+  modelId: modelId,
 }));
 const createOpenAICompatibleMock = mock(
   (_options: unknown) => openAICompatibleModelMock,
 );
 const anthropicModelMock = mock((modelId: string) => ({
   provider: "anthropic",
-  modelId,
+  modelId: modelId,
 }));
 const createAnthropicMock = mock((_options: unknown) => anthropicModelMock);
 const bedrockModelMock = mock((modelId: string) => ({
   provider: "bedrock",
-  modelId,
+  modelId: modelId,
 }));
 const createBedrockMock = mock((_options: unknown) => bedrockModelMock);
 const gatewayModelMock = mock((modelId: string) => ({
   provider: "vercel",
-  modelId,
+  modelId: modelId,
 }));
 const createGatewayMock = mock((_options: unknown) => gatewayModelMock);
 const minimaxModelMock = mock((modelId: string) => ({
   provider: "minimax",
-  modelId,
+  modelId: modelId,
 }));
 const createMinimaxMock = mock((_options: unknown) => minimaxModelMock);
 let streamTextScenario:
@@ -155,9 +155,10 @@ const streamTextMock = mock(
   }) => {
     let consumed = false;
     const stream = new ReadableStream({
-      async start(controller) {
+      start: async function(controller) {
         if (streamTextScenario === "hard-throw") {
           controller.error(new Error("stream transport failed"));
+
           return;
         }
 
@@ -179,6 +180,7 @@ const streamTextMock = mock(
             error: new Error("provider failed"),
           });
           controller.close();
+
           return;
         }
 
@@ -221,6 +223,7 @@ const streamTextMock = mock(
           });
           controller.enqueue({ type: "finish", finishReason: "tool-calls" });
           controller.close();
+
           return;
         }
 
@@ -279,6 +282,7 @@ const streamTextMock = mock(
           });
           controller.enqueue({ type: "finish", finishReason: "stop" });
           controller.close();
+
           return;
         }
 
@@ -297,10 +301,10 @@ const streamTextMock = mock(
             metadata: { run: "test" },
           });
           await options.onToolExecutionStart?.({
-            toolCall,
+            toolCall: toolCall,
           });
           await options.onToolExecutionEnd?.({
-            toolCall,
+            toolCall: toolCall,
             toolExecutionMs: 12,
             toolOutput: {
               type: "tool-result",
@@ -349,6 +353,7 @@ const streamTextMock = mock(
           });
           controller.enqueue({ type: "finish", finishReason: "stop" });
           controller.close();
+
           return;
         }
 
@@ -411,6 +416,7 @@ const streamTextMock = mock(
           });
           controller.enqueue({ type: "finish", finishReason: "stop" });
           controller.close();
+
           return;
         }
 
@@ -428,8 +434,8 @@ const streamTextMock = mock(
     });
 
     return {
-      stream,
-      async consumeStream() {
+      stream: stream,
+      consumeStream: async function() {
         if (consumed) {
           return;
         }
@@ -529,8 +535,8 @@ describe("runAgentLoop", () => {
         agentSandboxPermissionMode: () => "ask",
         persistModelMessages: async () => [],
         renewConversationLease: async () => "renewed",
-        applySteeringIngress,
-        appendIngressEvents,
+        applySteeringIngress: applySteeringIngress,
+        appendIngressEvents: appendIngressEvents,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -601,7 +607,7 @@ describe("runAgentLoop", () => {
         agentSandboxPermissionMode: () => "ask",
         persistModelMessages: async () => [],
         renewConversationLease: async () => "stopped",
-        applySteeringIngress,
+        applySteeringIngress: applySteeringIngress,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -640,7 +646,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -667,7 +673,7 @@ describe("runAgentLoop", () => {
         onFinalText: async () => {
           throw new Error("unexpected final text");
         },
-        onErrorText,
+        onErrorText: onErrorText,
       },
     );
 
@@ -822,7 +828,7 @@ describe("runAgentLoop", () => {
         onFinalText: async () => {
           throw new Error("unexpected final text");
         },
-        onErrorText,
+        onErrorText: onErrorText,
       },
     );
 
@@ -913,7 +919,7 @@ describe("runAgentLoop", () => {
       },
       {
         onFinalText: async () => {},
-        onErrorText,
+        onErrorText: onErrorText,
       },
     );
 
@@ -954,7 +960,7 @@ describe("runAgentLoop", () => {
         resolvedWorkspaces: () => [],
         agentSandbox: () => ({ provider: "lambda" }),
         agentSandboxPermissionMode: () => "ask",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -981,8 +987,8 @@ describe("runAgentLoop", () => {
         onFinalText: async () => {
           throw new Error("unexpected final text");
         },
-        onErrorText,
-        onApprovalRequired,
+        onErrorText: onErrorText,
+        onApprovalRequired: onApprovalRequired,
       },
     );
 
@@ -1365,7 +1371,7 @@ describe("runAgentLoop", () => {
         },
       },
       {
-        onFinalText,
+        onFinalText: onFinalText,
         onErrorText: async (error) => {
           throw new Error(error);
         },
@@ -1418,7 +1424,7 @@ describe("runAgentLoop", () => {
         },
       },
       {
-        onFinalText,
+        onFinalText: onFinalText,
         onErrorText: async (error) => {
           throw new Error(error);
         },
@@ -1439,6 +1445,7 @@ describe("runAgentLoop", () => {
       lines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
       );
+
       return true;
     }) as typeof process.stdout.write;
     const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -1563,6 +1570,7 @@ describe("runAgentLoop", () => {
           ? chunk.trim()
           : Buffer.from(chunk).toString("utf8").trim(),
       );
+
       return true;
     }) as typeof process.stdout.write;
     const { runAgentLoop } = await import("../src/harness/harness.ts");
@@ -1700,7 +1708,7 @@ describe("runAgentLoop", () => {
         agentSandbox: () => undefined,
         agentSandboxPermissionMode: () => "ask",
         persistModelMessages: async () => [],
-        loadSkillPrompt,
+        loadSkillPrompt: loadSkillPrompt,
         loadRefreshedSystemPromptParts: async () => ({
           systemContextSnapshot: { cursor: null, messages: [] },
           system: [],
@@ -1838,7 +1846,7 @@ describe("runAgentLoop", () => {
       {
         messages: [{ role: "user", content: "delegate this" }],
         system: ephemeralSystem,
-        ephemeralSystem,
+        ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: { cursor: null, messages: [] },
       },
       {
@@ -1857,7 +1865,7 @@ describe("runAgentLoop", () => {
       },
       undefined,
       {
-        dispatchSubagents,
+        dispatchSubagents: dispatchSubagents,
       },
     );
 
@@ -2250,7 +2258,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountTools: null as never,
     accountHooks: null as never,
     taskUsage: {
-      async record(input) {
+      record: async function(input) {
         writes.push(input);
       },
     },

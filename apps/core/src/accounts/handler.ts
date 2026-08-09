@@ -81,8 +81,8 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
   try {
     logInfo("Account manage request received", {
-      method,
-      rawPath,
+      method: method,
+      rawPath: rawPath,
     });
 
     if (method === "GET" && rawPath === "/") {
@@ -98,14 +98,16 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     });
     if (!auth) {
       logWarn("Account manage request unauthorized", {
-        method,
-        rawPath,
+        method: method,
+        rawPath: rawPath,
       });
+
       return errorResponse(401, "Unauthorized");
     }
 
     if (method === "DELETE" && rawPath === "/v1/account") {
       const account = requireAccountAuth(auth);
+
       return deleteAccountResponse(account);
     }
 
@@ -124,6 +126,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       // Driven by the dashboard via the sandboxPublic Convex actions, which
       // authenticate with the shared service token.
       const account = requireAccountAuth(auth, { allowServiceToken: true });
+
       return await handleSandboxLifecycle(
         method,
         account.accountId,
@@ -142,6 +145,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       const created = await getStorage().accounts.create(
         normalizeCreateAccountInput(body),
       );
+
       return jsonResponse(201, {
         account: toCreateAccountResponse(created.account),
         secret: created.secret,
@@ -156,6 +160,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
         if (!account) {
           return errorResponse(404, "Account not found");
         }
+
         return deleteAccountResponse(account);
       }
     }
@@ -163,12 +168,13 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
     return errorResponse(404, "Not found");
   } catch (err) {
     logError("Account manage request failed", {
-      method,
-      rawPath,
+      method: method,
+      rawPath: rawPath,
       error: err instanceof Error ? err.message : String(err),
       errorName: err instanceof Error ? err.name : undefined,
       stack: err instanceof Error ? err.stack : undefined,
     });
+
     return errorResponseForError(err);
   }
 }
@@ -182,7 +188,7 @@ async function handleSandboxLifecycle(
 ): Promise<Response> {
   if (method !== "POST") {
     return errorResponse(405, "Method not allowed", {
-      method,
+      method: method,
       allowedMethods: ["POST"],
     });
   }
@@ -229,13 +235,13 @@ async function handleSandboxLifecycle(
     } = {},
   ) =>
     recordSandboxAuditEvent({
-      accountId,
+      accountId: accountId,
       sandboxConfigId: sandboxId,
-      reservationKey,
-      provider,
-      action,
-      result,
-      actor,
+      reservationKey: reservationKey,
+      provider: provider,
+      action: action,
+      result: result,
+      actor: actor,
       ...details,
     });
 
@@ -243,12 +249,14 @@ async function handleSandboxLifecycle(
     const code = typeof body.code === "string" ? body.code : "";
     if (!code.trim()) {
       await audit("error", { errorMessage: "code is required" });
+
       return errorResponse(400, "code is required");
     }
     if (code.length > 20_000) {
       await audit("error", {
         errorMessage: "code must be 20000 characters or less",
       });
+
       return errorResponse(400, "code must be 20000 characters or less");
     }
 
@@ -266,10 +274,10 @@ async function handleSandboxLifecycle(
     let result;
     try {
       result = await executor.run({
-        code,
-        reservationKey,
-        timeoutSeconds,
-        outputLimitBytes,
+        code: code,
+        reservationKey: reservationKey,
+        timeoutSeconds: timeoutSeconds,
+        outputLimitBytes: outputLimitBytes,
       });
     } catch (err) {
       await audit("error", {
@@ -305,6 +313,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: `provider ${provider} does not support a live terminal`,
       });
+
       return errorResponse(
         409,
         `provider ${provider} does not support a live terminal`,
@@ -315,6 +324,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: "No reserved sandbox instance for this reservation key",
       });
+
       return errorResponse(
         404,
         "No reserved sandbox instance for this reservation key",
@@ -350,6 +360,7 @@ async function handleSandboxLifecycle(
         // RunMicrovm; connectors cannot be added to a live VM.
         const message = error instanceof Error ? error.message : String(error);
         await audit("error", { errorMessage: message });
+
         return errorResponse(
           409,
           `MicroVM shell access unavailable (${message}); terminate and re-reserve the instance to enable the live terminal`,
@@ -364,14 +375,14 @@ async function handleSandboxLifecycle(
     }
     const expiresAt = Date.now() + TERMINAL_TICKET_TTL_MS;
     const token = sealTerminalTicket(
-      { ...target, accountId, expiresAt },
+      { ...target, accountId: accountId, expiresAt: expiresAt },
       requireEnv("SERVICE_AUTH_SECRET"),
     );
     await audit("ok", { status: "running" });
 
     return jsonResponse(200, {
-      token,
-      expiresAt,
+      token: token,
+      expiresAt: expiresAt,
       websocketPath: TERMINAL_WEBSOCKET_PATH,
     });
   }
@@ -381,6 +392,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: `provider ${provider} does not support instance status refresh`,
       });
+
       return errorResponse(
         409,
         `provider ${provider} does not support instance status refresh`,
@@ -398,12 +410,14 @@ async function handleSandboxLifecycle(
     if (!info || info.state === "terminating") {
       await removeSandboxInstance(accountId, reservationKey);
       await audit("ok", { status: "terminating" });
+
       return jsonResponse(200, { status: "terminated" });
     }
     const status = info.state === "unknown" ? "error" : info.state;
     await setSandboxInstanceStatus(accountId, reservationKey, status);
-    await audit(status === "error" ? "error" : "ok", { status });
-    return jsonResponse(200, { status, externalId: info.externalId });
+    await audit(status === "error" ? "error" : "ok", { status: status });
+
+    return jsonResponse(200, { status: status, externalId: info.externalId });
   }
 
   if (action === "suspend") {
@@ -411,6 +425,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: `provider ${provider} does not support suspend`,
       });
+
       return errorResponse(
         409,
         `provider ${provider} does not support suspend`,
@@ -426,6 +441,7 @@ async function handleSandboxLifecycle(
     }
     await setSandboxInstanceStatus(accountId, reservationKey, "suspended");
     await audit("ok", { status: "suspended" });
+
     return jsonResponse(200, { status: "suspended" });
   }
   if (action === "resume") {
@@ -433,6 +449,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: `provider ${provider} does not support resume`,
       });
+
       return errorResponse(409, `provider ${provider} does not support resume`);
     }
     try {
@@ -445,6 +462,7 @@ async function handleSandboxLifecycle(
     }
     await setSandboxInstanceStatus(accountId, reservationKey, "running");
     await audit("ok", { status: "running" });
+
     return jsonResponse(200, { status: "running" });
   }
   if (action === "snapshot") {
@@ -452,6 +470,7 @@ async function handleSandboxLifecycle(
       await audit("error", {
         errorMessage: `provider ${provider} does not support snapshot`,
       });
+
       return errorResponse(
         409,
         `provider ${provider} does not support snapshot`,
@@ -460,6 +479,7 @@ async function handleSandboxLifecycle(
     const name = typeof body.name === "string" ? body.name.trim() : "";
     if (!name) {
       await audit("error", { errorMessage: "name is required" });
+
       return errorResponse(400, "name is required");
     }
     let result;
@@ -473,24 +493,26 @@ async function handleSandboxLifecycle(
     }
     const externalImageId = result.externalImageId ?? result.snapshotId;
     await upsertSandboxSnapshot({
-      accountId,
-      name,
-      provider,
+      accountId: accountId,
+      name: name,
+      provider: provider,
       baseImage: provider,
-      externalImageId,
+      externalImageId: externalImageId,
       status: "active",
     });
     await audit("ok", { status: "running" });
+
     return jsonResponse(200, {
       status: "active",
       snapshotId: result.snapshotId,
-      externalImageId,
+      externalImageId: externalImageId,
     });
   }
   if (!executor.release) {
     await audit("error", {
       errorMessage: `provider ${provider} does not support terminate`,
     });
+
     return errorResponse(
       409,
       `provider ${provider} does not support terminate`,
@@ -541,17 +563,18 @@ async function deleteAccountResponse(
     getStorage().channelRecords.removeAllForAccount(account.accountId),
   ]);
   await getStorage().accounts.remove(account.accountId);
+
   return jsonResponse(200, {
     deleted: true,
     cleanup: {
       ...runtime,
-      agentsDeleted,
-      skillObjectsDeleted,
-      toolBundleObjectsDeleted,
-      cronsDeleted,
-      accountToolsDeleted,
-      accountHooksDeleted,
-      channelRecordsDeleted,
+      agentsDeleted: agentsDeleted,
+      skillObjectsDeleted: skillObjectsDeleted,
+      toolBundleObjectsDeleted: toolBundleObjectsDeleted,
+      cronsDeleted: cronsDeleted,
+      accountToolsDeleted: accountToolsDeleted,
+      accountHooksDeleted: accountHooksDeleted,
+      channelRecordsDeleted: channelRecordsDeleted,
     },
   });
 }
@@ -566,6 +589,7 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
   await Promise.all(
     crons.map((cron) => cronsStore.remove(accountId, cron.cronId)),
   );
+
   return crons.length;
 }
 
@@ -627,7 +651,7 @@ function sandboxAuditActor(value: unknown): SandboxAuditActor {
       : "unknown";
 
   return {
-    source,
+    source: source,
     ...(typeof value.id === "string" && value.id.trim()
       ? { id: value.id.trim() }
       : {}),
@@ -644,6 +668,7 @@ function errorResponseForError(err: unknown): Response {
   if (err instanceof AccountEndpointUnauthorizedError) {
     return errorResponse(401, err.message);
   }
+
   return errorResponse(
     400,
     err instanceof Error ? err.message : "Invalid request",

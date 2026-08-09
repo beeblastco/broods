@@ -63,6 +63,7 @@ export const create = internalMutation({
     }
 
     const now = Date.now();
+
     return await ctx.db.insert("asyncResults", {
       accountId: args.accountId,
       eventId: args.eventId,

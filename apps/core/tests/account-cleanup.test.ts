@@ -25,7 +25,7 @@ afterEach(() => {
 it("propagates workspace listing failures before destructive cleanup", async () => {
   setStorageForTests({
     workspaceConfigs: {
-      async list() {
+      list: async function() {
         throw new Error("workspace list unavailable");
       },
     },
@@ -46,15 +46,15 @@ it("propagates workspace listing failures before destructive cleanup", async () 
 it("bounds runtime cleanup so disabled-account deletion can be retried", async () => {
   setStorageForTests({
     workspaceConfigs: {
-      async list() {
+      list: async function() {
         return [];
       },
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
     },
     sandboxConfigs: {
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
     },
@@ -111,7 +111,8 @@ it("crons.remove delegates to internal.awsCrons.remove via action", async () => 
     ref: unknown,
     args: unknown,
   ) => {
-    calls.push({ ref, args });
+    calls.push({ ref: ref, args: args });
+
     return true;
   };
 

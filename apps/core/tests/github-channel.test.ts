@@ -962,7 +962,7 @@ function createFetchMock(
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
-    status,
+    status: status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -992,6 +992,7 @@ function normalizeHeaders(
 
 function testPrivateKey(): string {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+
   return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 }
 
@@ -1000,8 +1001,8 @@ function createRequest(body: string, headers: Record<string, string>) {
     method: "POST",
     rawPath: "/",
     rawQueryString: "",
-    headers,
-    body,
+    headers: headers,
+    body: body,
   };
 }
 

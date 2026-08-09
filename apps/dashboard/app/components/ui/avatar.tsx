@@ -10,13 +10,17 @@ interface AvatarProps extends Omit<AvatarPrimitive.Root.Props, "className"> {
   size?: "default" | "sm" | "lg";
 }
 
-interface AvatarImageProps
-  extends Omit<AvatarPrimitive.Image.Props, "className"> {
+interface AvatarImageProps extends Omit<
+  AvatarPrimitive.Image.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface AvatarFallbackProps
-  extends Omit<AvatarPrimitive.Fallback.Props, "className"> {
+interface AvatarFallbackProps extends Omit<
+  AvatarPrimitive.Fallback.Props,
+  "className"
+> {
   className?: string;
 }
 

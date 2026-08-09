@@ -153,6 +153,7 @@ export function normalizeAgentPolicyConfig(
       ? { mode: config.mode as AgentPolicyMode }
       : {}),
   };
+
   return normalized.policyIds ? normalized : undefined;
 }
 
@@ -165,9 +166,9 @@ export function normalizeCreateAgentPolicyInput(
   const document = normalizeAgentPolicyDocument(value.document);
 
   return {
-    name,
-    ...(description ? { description } : {}),
-    document,
+    name: name,
+    ...(description ? { description: description } : {}),
+    document: document,
   };
 }
 
@@ -240,7 +241,7 @@ function normalizeAgentPolicyRule(
   }
 
   return {
-    id,
+    id: id,
     effect: rule.effect as AgentPolicyEffect,
     actions: rule.actions as AgentPolicyAction[],
     ...(rule.resources !== undefined
@@ -296,6 +297,7 @@ function normalizeConditions(
 ): AgentPolicyCondition[] {
   if (!Array.isArray(value))
     throw new Error(`policy rules[${index}].conditions must be an array`);
+
   return value.map((condition, conditionIndex) => {
     if (!isPlainObject(condition)) {
       throw new Error(
@@ -334,7 +336,7 @@ function normalizeConditions(
     }
 
     return {
-      attribute,
+      attribute: attribute,
       operator: record.operator as AgentPolicyConditionOperator,
       value: record.value,
     };
@@ -361,6 +363,7 @@ function isConditionValue(
     elementType !== "boolean"
   )
     return false;
+
   return value.every((entry) => typeof entry === elementType);
 }
 
@@ -382,6 +385,7 @@ function assertOptionalEnum<T extends readonly string[]>(
 function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0)
     throw new Error(`${name} must be a non-empty string`);
+
   return value.trim();
 }
 
@@ -389,5 +393,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : undefined;
 }

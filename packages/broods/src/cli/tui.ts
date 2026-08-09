@@ -180,7 +180,7 @@ function toReadableStream(
   const release = () => void stream.return(undefined);
 
   return new ReadableStream({
-    async pull(controller) {
+    pull: async function(controller) {
       const next = await Promise.race([stream.next(), abortedRead(signal)]);
       if (signal?.aborted) {
         release();

@@ -97,7 +97,7 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      async execute(input) {
+      execute: async function(input) {
         const { statusId, action = "status" } = input as AsyncStatusInput;
         const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
@@ -119,10 +119,12 @@ The result is delivered back into the conversation automatically when it finishe
               settledLogs.length > 0 ? settledLogs : "(no output)",
             );
           }
+
           return toolText(`completed\n${formatUnknown(record.response)}`);
         }
         if (record.status === "failed") {
           await markAsyncToolResultObserved(statusId);
+
           return toolText(`failed\n${record.error ?? "(no error detail)"}`);
         }
 
@@ -152,6 +154,7 @@ The result is delivered back into the conversation automatically when it finishe
               namespace: job.namespace,
               outputLimitBytes: JOB_LOG_LIMIT_BYTES,
             });
+
             return toolText(
               logs.logs.length > 0 ? logs.logs : "(no output yet)",
             );
@@ -165,6 +168,7 @@ The result is delivered back into the conversation automatically when it finishe
               jobId: job.jobId,
               namespace: job.namespace,
             });
+
             return toolText(
               await settleTerminalJob(statusId, executor, job, stopped),
             );
@@ -187,6 +191,7 @@ The result is delivered back into the conversation automatically when it finishe
               `unknown — no record of job ${job.jobId} in the sandbox`,
             );
           }
+
           return toolText(
             await settleTerminalJob(statusId, executor, job, status),
           );
@@ -220,22 +225,23 @@ async function settleTerminalJob(
     : "";
   if (status.state === "completed") {
     await markAsyncToolResultCompleted({
-      resultId,
+      resultId: resultId,
       response: {
         state: status.state,
         exitCode: status.exitCode ?? null,
-        logs,
+        logs: logs,
       },
     });
   } else {
     await markAsyncToolResultFailed({
-      resultId,
+      resultId: resultId,
       error: `Job exited with code ${status.exitCode ?? "unknown"}.${logs ? `\n${logs}` : ""}`,
     });
   }
   // The model is consuming this terminal result through the poll, so suppress the
   // auto-delivery resume from re-injecting the same result.
   await markAsyncToolResultObserved(resultId);
+
   return `${status.state} (exit ${status.exitCode ?? "unknown"})\n${logs}`;
 }
 
@@ -249,6 +255,7 @@ function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
   ) {
     return undefined;
   }
+
   return { namespace: record.namespace, jobId: record.jobId };
 }
 
@@ -275,5 +282,6 @@ function formatUnknown(value: unknown): string {
 function settledJobLogs(response: unknown): string | undefined {
   if (!response || typeof response !== "object") return undefined;
   const logs = (response as { logs?: unknown }).logs;
+
   return typeof logs === "string" ? logs : undefined;
 }

@@ -18,7 +18,7 @@ let approvalRequest: ToolApprovalRequestChunk | null = null;
 for await (const chunk of client.stream(api.agents.approvalAgent, {
   input:
     "Search the web for the latest OpenAI model release and summarize one result.",
-  conversationKey,
+  conversationKey: conversationKey,
 })) {
   switch (chunk.type) {
     case "reasoning-delta":
@@ -83,7 +83,7 @@ for await (const chunk of client.stream(api.agents.approvalAgent, {
       ],
     },
   ],
-  conversationKey,
+  conversationKey: conversationKey,
 })) {
   switch (chunk.type) {
     case "reasoning-delta":

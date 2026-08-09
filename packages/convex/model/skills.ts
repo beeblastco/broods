@@ -252,7 +252,7 @@ export function validateSkillBundle(
 
   return {
     metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
-    files,
+    files: files,
   };
 }
 

@@ -71,7 +71,8 @@ export function normalizeCreateAccountInput(
     throw new Error("Agent config is created through /v1/agents");
   const username = requireString(value.username, "username");
   const description = optionalString(value.description, "description");
-  return { username, ...(description ? { description } : {}) };
+
+  return { username: username, ...(description ? { description: description } : {}) };
 }
 
 export function normalizeUpdateAccountInput(
@@ -99,6 +100,7 @@ export function normalizeUpdateAccountInput(
   if (Object.keys(normalized).length === 0) {
     throw new Error("Request body must include username or description");
   }
+
   return normalized;
 }
 
@@ -106,6 +108,7 @@ function requireString(value: unknown, name: string): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
+
   return value.trim();
 }
 
@@ -113,5 +116,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
   const trimmed = value.trim();
+
   return trimmed.length > 0 ? trimmed : undefined;
 }

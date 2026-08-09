@@ -49,10 +49,11 @@ export async function deleteAccountRuntimeData(
     getStorage().sandboxConfigs.removeAllForAccount(account.accountId),
     getStorage().workspaceConfigs.removeAllForAccount(account.accountId),
   ]);
+
   return {
     ...runtimeDeleted,
-    filesystemObjectsDeleted,
-    reservedSandboxesReleased,
+    filesystemObjectsDeleted: filesystemObjectsDeleted,
+    reservedSandboxesReleased: reservedSandboxesReleased,
   };
 }
 
@@ -84,6 +85,7 @@ export async function deleteWorkspaceFilesystem(
   const target = await resolveS3ReadTarget(
     workspaceReadContext(storage, workspaceNamespace(accountId, workspaceId)),
   );
+
   return deleteS3Prefix(target.bucket, target.prefix, target.access);
 }
 
@@ -110,7 +112,7 @@ async function deleteConvexRuntimeRows(
   ) {
     const batch = await runtime.mutate<
       typeof totals & { totalDeleted: number }
-    >("deleteAccountRuntimeData", { accountId });
+    >("deleteAccountRuntimeData", { accountId: accountId });
     totals.conversationsDeleted += batch.conversationsDeleted;
     totals.processedEventsDeleted += batch.processedEventsDeleted;
     totals.asyncAgentResultDeleted += batch.asyncAgentResultDeleted;
@@ -139,5 +141,6 @@ async function deleteWorkspaceFilesystems(
       workspace.workspaceId,
       workspace.config.storage,
     );
+
   return deleted;
 }

@@ -77,7 +77,7 @@ export const commands: CommandHandler[] = [
       names: ["new", "clear"],
       description: "Clear conversation context and start fresh",
     },
-    async execute(ctx) {
+    execute: async function(ctx) {
       if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
         throw new Error("Clear requires account, agent, and event scope");
       }
@@ -137,7 +137,7 @@ export const commands: CommandHandler[] = [
         },
       ],
     },
-    async execute() {
+    execute: async function() {
       return "Usage: /steer <message>";
     },
   },
@@ -148,7 +148,7 @@ export const commands: CommandHandler[] = [
       names: ["stop"],
       description: "Stop the active run",
     },
-    async execute(ctx) {
+    execute: async function(ctx) {
       if (!ctx.accountId || !ctx.agentId) {
         throw new Error("Stop requires account and agent scope");
       }
@@ -183,7 +183,7 @@ export const commands: CommandHandler[] = [
         },
       ],
     },
-    async execute() {
+    execute: async function() {
       return "Usage: /queue <message>";
     },
   },
@@ -194,7 +194,7 @@ export const commands: CommandHandler[] = [
       names: ["help"],
       description: "Show available commands",
     },
-    async execute() {
+    execute: async function() {
       const lines = ["Available commands:"];
       for (const cmd of getExecutableCommands()) {
         if (cmd.showInHelp === false) {
@@ -202,6 +202,7 @@ export const commands: CommandHandler[] = [
         }
         lines.push(`${cmd.aliases.join(", ")} — ${cmd.description}`);
       }
+
       return lines.join("\n");
     },
   },
@@ -211,6 +212,7 @@ export function parseCommand(text: string): string | null {
   const token = text.trim().toLowerCase().split(/\s+/)[0] ?? "";
   if (!token.startsWith("/")) return null;
   const match = getExecutableCommands().find((c) => c.aliases.includes(token));
+
   return match ? token : null;
 }
 
@@ -246,13 +248,14 @@ export function resolveChannelCommand({
   const requestedMode = commands.find((c) =>
     c.aliases.includes(commandToken),
   )?.rewriteMode;
-  if (!requestedMode) return { kind: "reply", commandToken };
+  if (!requestedMode) return { kind: "reply", commandToken: commandToken };
 
   // A bare rewrite command carries no message, so it falls back to its usage reply.
   const text = stripCommandToken(extractText(content), commandToken);
+
   return text
-    ? { kind: "rewrite", text, requestedMode }
-    : { kind: "reply", commandToken };
+    ? { kind: "rewrite", text: text, requestedMode: requestedMode }
+    : { kind: "reply", commandToken: commandToken };
 }
 
 export function resolveDiscordCommand(
@@ -282,7 +285,7 @@ export function getDiscordCommandRegistrations(
     }
 
     return discord.names.map((name) => ({
-      name,
+      name: name,
       description: discord.description,
       ...(discord.options ? { options: discord.options } : {}),
       ...(scope === "global"

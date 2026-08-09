@@ -16,7 +16,7 @@ async function runAgent(
 ): Promise<void> {
   console.log(`\n[${label}]\n`);
 
-  for await (const chunk of client.stream(agentRef, { input })) {
+  for await (const chunk of client.stream(agentRef, { input: input })) {
     switch (chunk.type) {
       case "reasoning-delta":
         process.stdout.write(`\x1b[90m${chunk.text}\x1b[0m`);

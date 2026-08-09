@@ -624,7 +624,7 @@ export const env: EnvAccessor = new Proxy(
     return { __beeblastEnv: true, name: name };
   },
   {
-    get(target, property, receiver) {
+    get: function(target, property, receiver) {
       if (typeof property === "string" && ENV_NAME_PATTERN.test(property)) {
         throw new Error(
           `env.${property} is not supported; use env("${property}")`,
@@ -666,14 +666,15 @@ function defineChannel<const Type extends ChannelType, Config>(
   config: Config & ChannelIdentityInput,
 ): ChannelDefinition<Type, Config> {
   const { workspaceScope, ...channelConfig } = config;
+
   return {
     [CHANNEL_MARKER]: true,
     kind: "channel",
-    type,
-    ...(workspaceScope ? { workspaceScope } : {}),
+    type: type,
+    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
     config: {
       ...channelConfig,
-      ...(workspaceScope ? { workspaceScope } : {}),
+      ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
     } as Config,
   };
 }

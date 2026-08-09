@@ -7,7 +7,8 @@ import * as React from "react";
 import { cn } from "@/app/lib/utils";
 
 interface ContextMenuContentProps
-  extends Omit<ContextMenuPrimitive.Popup.Props, "className">,
+  extends
+    Omit<ContextMenuPrimitive.Popup.Props, "className">,
     Pick<
       ContextMenuPrimitive.Positioner.Props,
       "align" | "alignOffset" | "side" | "sideOffset"
@@ -15,36 +16,48 @@ interface ContextMenuContentProps
   className?: string;
 }
 
-interface ContextMenuItemProps
-  extends Omit<ContextMenuPrimitive.Item.Props, "className"> {
+interface ContextMenuItemProps extends Omit<
+  ContextMenuPrimitive.Item.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
   variant?: "default" | "destructive";
 }
 
-interface ContextMenuCheckboxItemProps
-  extends Omit<ContextMenuPrimitive.CheckboxItem.Props, "className"> {
+interface ContextMenuCheckboxItemProps extends Omit<
+  ContextMenuPrimitive.CheckboxItem.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface ContextMenuRadioItemProps
-  extends Omit<ContextMenuPrimitive.RadioItem.Props, "className"> {
+interface ContextMenuRadioItemProps extends Omit<
+  ContextMenuPrimitive.RadioItem.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface ContextMenuLabelProps
-  extends Omit<ContextMenuPrimitive.GroupLabel.Props, "className"> {
+interface ContextMenuLabelProps extends Omit<
+  ContextMenuPrimitive.GroupLabel.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
 }
 
-interface ContextMenuSeparatorProps
-  extends Omit<ContextMenuPrimitive.Separator.Props, "className"> {
+interface ContextMenuSeparatorProps extends Omit<
+  ContextMenuPrimitive.Separator.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface ContextMenuSubTriggerProps
-  extends Omit<ContextMenuPrimitive.SubmenuTrigger.Props, "className"> {
+interface ContextMenuSubTriggerProps extends Omit<
+  ContextMenuPrimitive.SubmenuTrigger.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
 }

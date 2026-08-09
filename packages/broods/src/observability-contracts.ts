@@ -129,11 +129,14 @@ export function isObservabilityClientMessage(
       minLevel !== "ERROR"
     )
       return false;
+
     return true;
   }
   if (msg["type"] === "unsubscribe") {
     const stream = msg["stream"];
+
     return stream === "logs" || stream === "traces";
   }
+
   return false;
 }

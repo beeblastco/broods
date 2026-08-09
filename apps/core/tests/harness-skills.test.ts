@@ -43,7 +43,8 @@ const writeS3ObjectMock = mock(
     body: string | Uint8Array,
     options?: Record<string, unknown>,
   ) => {
-    s3Writes.push({ bucket, key, body, options });
+    s3Writes.push({ bucket: bucket, key: key, body: body, options: options });
+
     return typeof body === "string" ? body.length : body.byteLength;
   },
 );
@@ -59,16 +60,16 @@ const copyS3ObjectMock = mock(
     options?: Record<string, unknown>,
   ) => {
     s3Copies.push({
-      sourceBucket,
-      sourceKey,
-      destinationBucket,
-      destinationKey,
-      options,
+      sourceBucket: sourceBucket,
+      sourceKey: sourceKey,
+      destinationBucket: destinationBucket,
+      destinationKey: destinationKey,
+      options: options,
     });
   },
 );
 const deleteS3ObjectMock = mock(async (bucket: string, key: string) => {
-  s3Deletes.push({ bucket, key });
+  s3Deletes.push({ bucket: bucket, key: key });
 });
 
 // Spread the real module first: mock.module is process-global, so any export
@@ -405,11 +406,13 @@ describe("loadConfiguredSkillPrompt", () => {
         ) {
           return [];
         }
+
         return [];
       },
     );
     readS3BytesMock.mockImplementation(async (_bucket: string, key: string) => {
       if (key.endsWith("scripts/analyze.py")) return scriptBytes;
+
       return new TextEncoder().encode(skillContent);
     });
 
@@ -477,6 +480,7 @@ describe("loadConfiguredSkillPrompt", () => {
           // A stale file from a prior load that is no longer in the source bundle.
           return [{ key: `${prefix}old.py`, size: 10, etag: "stale-etag" }];
         }
+
         return [];
       },
     );

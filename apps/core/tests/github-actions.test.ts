@@ -258,7 +258,7 @@ function decodeJwtClaims(authorizationHeader: string | undefined) {
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
-    status,
+    status: status,
     headers: { "Content-Type": "application/json" },
   });
 }

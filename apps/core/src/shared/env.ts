@@ -5,11 +5,13 @@
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
+
   return value;
 }
 
 export function optionalEnv(name: string): string | undefined {
   const value = process.env[name];
+
   return value ? value : undefined;
 }
 
@@ -18,6 +20,7 @@ export function optionalEnv(name: string): string | undefined {
 export function positiveIntegerEnv(name: string, fallback: number): number {
   const raw = optionalEnv(name);
   const parsed = raw === undefined ? fallback : Number(raw);
+
   return Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : fallback;
 }
 
@@ -34,6 +37,7 @@ export function isDeployedRuntime(): boolean {
 // delivery.
 export function getHarnessPublicUrl(): string | undefined {
   const configured = optionalEnv("PUBLIC_BASE_URL");
+
   return configured ? configured.replace(/\/+$/, "") : undefined;
 }
 

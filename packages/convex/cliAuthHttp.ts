@@ -14,12 +14,10 @@ export const exchange = httpAction(async (ctx, req) => {
   try {
     body = (await req.json()) as { code?: unknown };
   } catch {
-
     return json({ error: "Request body must be valid JSON" }, 400);
   }
 
   if (typeof body.code !== "string" || !body.code.trim()) {
-
     return json({ error: "Request body must include code" }, 400);
   }
 
@@ -38,7 +36,6 @@ export const exchange = httpAction(async (ctx, req) => {
       error instanceof Error &&
       error.message.includes("CLI login code is invalid or expired")
     ) {
-
       return json({ error: "Login code is invalid or expired" }, 400);
     }
 

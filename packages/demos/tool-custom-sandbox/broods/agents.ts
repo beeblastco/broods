@@ -29,7 +29,7 @@ export const systemReportTool = defineTool({
     required: ["payload"],
     additionalProperties: false,
   },
-  async execute(input: { payload?: string }, options) {
+  execute: async function (input: { payload?: string }, options) {
     const payload = input.payload ?? "broods sandbox tier";
     const compressed = gzipSync(Buffer.from(payload, "utf8"));
 

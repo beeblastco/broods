@@ -70,15 +70,15 @@ describe("runtime ingress", () => {
     const conversationKey = conversationKeyFor(accountId);
     await t.mutation(internal.runtimeIngress.accept, {
       ...admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "public-owner",
         mode: "reject",
       }),
       delivery: {
         kind: "websocket",
         publicDeploymentIngress: {
-          accountId,
+          accountId: accountId,
           endpointId: "endpoint-one",
           environmentSlug: "development",
           projectSlug: "demo",
@@ -90,13 +90,13 @@ describe("runtime ingress", () => {
     expect(
       (
         await t.query(internal.runtimeIngress.getStatus, {
-          accountId,
+          accountId: accountId,
           agentId: "test-agent",
           eventId: "public-owner",
         })
       )?.publicDeploymentIngress,
     ).toEqual({
-      accountId,
+      accountId: accountId,
       endpointId: "endpoint-one",
       environmentSlug: "development",
       projectSlug: "demo",
@@ -109,15 +109,15 @@ describe("runtime ingress", () => {
     const conversationKey = conversationKeyFor(accountId);
     await t.mutation(internal.runtimeIngress.accept, {
       ...admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "channel-owner",
         mode: "reject",
       }),
       delivery: {
         kind: "channel",
         publicDeploymentIngress: {
-          accountId,
+          accountId: accountId,
           endpointId: "endpoint-one",
           environmentSlug: "development",
           projectSlug: "demo",
@@ -126,7 +126,7 @@ describe("runtime ingress", () => {
     });
 
     const status = await t.query(internal.runtimeIngress.getStatus, {
-      accountId,
+      accountId: accountId,
       agentId: "test-agent",
       eventId: "channel-owner",
     });
@@ -154,22 +154,22 @@ describe("runtime ingress", () => {
       const eventId = `${kind}-owner`;
       await t.mutation(internal.runtimeIngress.accept, {
         ...admission({
-          accountId,
+          accountId: accountId,
           conversationKey: `acct:${accountId}:agent:test-agent:api:${eventId}`,
-          eventId,
+          eventId: eventId,
           mode: "reject",
         }),
         delivery: {
-          kind,
+          kind: kind,
           publicDeploymentIngress: marker,
         },
       });
 
       expect(
         await t.query(internal.runtimeIngress.getStatus, {
-          accountId,
+          accountId: accountId,
           agentId: "test-agent",
-          eventId,
+          eventId: eventId,
         }),
       ).not.toHaveProperty("publicDeploymentIngress");
     });
@@ -182,8 +182,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -196,7 +196,7 @@ describe("runtime ingress", () => {
     });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "owner",
       }),
@@ -209,8 +209,8 @@ describe("runtime ingress", () => {
       await t.mutation(
         internal.runtimeIngress.accept,
         admission({
-          accountId,
-          conversationKey,
+          accountId: accountId,
+          conversationKey: conversationKey,
           eventId: "rejected",
           mode: "reject",
         }),
@@ -219,8 +219,8 @@ describe("runtime ingress", () => {
     const queued = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "queued",
         mode: "followup",
       }),
@@ -234,8 +234,8 @@ describe("runtime ingress", () => {
       await t.mutation(
         internal.runtimeIngress.accept,
         admission({
-          accountId,
-          conversationKey,
+          accountId: accountId,
+          conversationKey: conversationKey,
           eventId: "queued",
           mode: "followup",
         }),
@@ -249,8 +249,8 @@ describe("runtime ingress", () => {
       await t.mutation(
         internal.runtimeIngress.accept,
         admission({
-          accountId,
-          conversationKey,
+          accountId: accountId,
+          conversationKey: conversationKey,
           eventId: "different-event-id",
           idempotencyKey: "queued",
           payloadDigest: "different",
@@ -271,8 +271,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -280,8 +280,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "steer-1",
         mode: "steer",
       }),
@@ -289,8 +289,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "steer-2",
         mode: "steer",
       }),
@@ -335,8 +335,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "steer",
       }),
@@ -349,12 +349,17 @@ describe("runtime ingress", () => {
     ] as const) {
       await t.mutation(
         internal.runtimeIngress.accept,
-        admission({ accountId, conversationKey, eventId, mode }),
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: mode,
+        }),
       );
     }
 
     const applied = await t.mutation(internal.runtimeIngress.applySteering, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       leaseTtlMs: 60_000,
@@ -382,8 +387,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -391,14 +396,19 @@ describe("runtime ingress", () => {
     for (const eventId of ["collect-1", "collect-2"]) {
       await t.mutation(
         internal.runtimeIngress.accept,
-        admission({ accountId, conversationKey, eventId, mode: "collect" }),
+        admission({
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: eventId,
+          mode: "collect",
+        }),
       );
     }
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "late-steer",
         mode: "steer",
       }),
@@ -436,8 +446,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "steer",
       }),
@@ -445,8 +455,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "queued-followup",
         mode: "followup",
       }),
@@ -454,14 +464,14 @@ describe("runtime ingress", () => {
 
     expect(
       await t.mutation(internal.runtimeIngress.stopOwner, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
-        conversationKey,
+        conversationKey: conversationKey,
       }),
     ).toEqual({ stopped: true, queuedCount: 1 });
     expect(
       await t.mutation(internal.runtimeIngress.renewOwner, {
-        conversationKey,
+        conversationKey: conversationKey,
         ownerEventId: "owner",
         ownerGeneration: owner.ownerGeneration!,
         leaseTtlMs: 60_000,
@@ -469,21 +479,21 @@ describe("runtime ingress", () => {
     ).toBe("stopped");
     expect(
       await t.query(internal.runtimeIngress.isCurrentOwner, {
-        conversationKey,
+        conversationKey: conversationKey,
         ownerEventId: "owner",
         ownerGeneration: owner.ownerGeneration!,
       }),
     ).toBe(true);
 
     await t.mutation(internal.runtimeIngress.settle, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       status: "failed",
       error: "Stopped by user at the model boundary",
     });
     const next = await t.mutation(internal.runtimeIngress.takeNext, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       leaseTtlMs: 60_000,
@@ -495,7 +505,7 @@ describe("runtime ingress", () => {
     });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "owner",
       }),
@@ -513,15 +523,15 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
     );
     // Fail without any /stop request for this generation.
     await t.mutation(internal.runtimeIngress.settle, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       status: "failed",
@@ -529,7 +539,7 @@ describe("runtime ingress", () => {
     });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "owner",
       }),
@@ -537,7 +547,7 @@ describe("runtime ingress", () => {
     expect(
       (
         await t.query(internal.runtimeIngress.getStatus, {
-          accountId,
+          accountId: accountId,
           agentId: "test-agent",
           eventId: "owner",
         })
@@ -552,8 +562,8 @@ describe("runtime ingress", () => {
     const first = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "first",
         mode: "reject",
       }),
@@ -568,8 +578,8 @@ describe("runtime ingress", () => {
     const second = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "second",
         mode: "reject",
       }),
@@ -593,16 +603,16 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
     );
     const first = {
       ...admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "one",
         mode: "followup",
         sizeBytes: 60,
@@ -615,8 +625,8 @@ describe("runtime ingress", () => {
     ).toMatchObject({ outcome: "queued" });
     const second = {
       ...admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "two",
         mode: "followup",
         sizeBytes: 1,
@@ -646,8 +656,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -655,8 +665,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "queued",
         mode: "followup",
       }),
@@ -674,7 +684,7 @@ describe("runtime ingress", () => {
     ).toMatchObject({ expired: 1 });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "queued",
       }),
@@ -688,8 +698,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -697,8 +707,8 @@ describe("runtime ingress", () => {
     await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "queued-first",
         mode: "followup",
       }),
@@ -716,8 +726,8 @@ describe("runtime ingress", () => {
     const arrival = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "late-arrival",
         mode: "followup",
       }),
@@ -745,21 +755,21 @@ describe("runtime ingress", () => {
     });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "owner",
       }),
     ).toMatchObject({ status: "expired" });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "queued-first",
       }),
     ).toMatchObject({ status: "processing" });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "late-arrival",
       }),
@@ -773,16 +783,16 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
     );
     await t.mutation(internal.runtimeIngress.accept, {
       ...admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "queued-context",
         mode: "followup",
       }),
@@ -791,7 +801,7 @@ describe("runtime ingress", () => {
     });
 
     const next = await t.mutation(internal.runtimeIngress.takeNext, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       leaseTtlMs: 60_000,
@@ -811,8 +821,8 @@ describe("runtime ingress", () => {
     const owner = await t.mutation(
       internal.runtimeIngress.accept,
       admission({
-        accountId,
-        conversationKey,
+        accountId: accountId,
+        conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
       }),
@@ -820,8 +830,8 @@ describe("runtime ingress", () => {
     for (let index = 0; index < 120; index += 1) {
       await t.mutation(internal.runtimeIngress.accept, {
         ...admission({
-          accountId,
-          conversationKey,
+          accountId: accountId,
+          conversationKey: conversationKey,
           eventId: `steer-${index}`,
           mode: "steer",
         }),
@@ -831,7 +841,7 @@ describe("runtime ingress", () => {
     // Two boundary applications: each drains at most one batch of steer rows.
     for (let round = 0; round < 2; round += 1) {
       await t.mutation(internal.runtimeIngress.applySteering, {
-        conversationKey,
+        conversationKey: conversationKey,
         ownerEventId: "owner",
         ownerGeneration: owner.ownerGeneration!,
         leaseTtlMs: 60_000,
@@ -839,7 +849,7 @@ describe("runtime ingress", () => {
     }
 
     const settled = await t.mutation(internal.runtimeIngress.settle, {
-      conversationKey,
+      conversationKey: conversationKey,
       ownerEventId: "owner",
       ownerGeneration: owner.ownerGeneration!,
       status: "completed",
@@ -910,7 +920,7 @@ describe("runtime ingress", () => {
     ).toMatchObject({ expired: 1 });
     expect(
       await t.query(internal.runtimeIngress.getStatus, {
-        accountId,
+        accountId: accountId,
         agentId: "test-agent",
         eventId: "overdue-queued",
       }),

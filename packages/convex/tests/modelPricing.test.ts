@@ -11,9 +11,7 @@ describe("model pricing", () => {
   it("normalizes SDK providers and resolves vercel model identifiers", () => {
     expect(canonicalModelProvider("amazon-bedrock")).toBe("bedrock");
     expect(canonicalModelProvider("google-vertex")).toBe("google");
-    expect(resolveModelTokenRates("vercel", "openai/gpt-5.4")?.input).toBe(
-      2.5,
-    );
+    expect(resolveModelTokenRates("vercel", "openai/gpt-5.4")?.input).toBe(2.5);
     expect(
       resolveModelTokenRates(
         "bedrock",

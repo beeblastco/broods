@@ -67,9 +67,9 @@ export function createSlackChannel(
   userNameResolver?: SlackUserNameResolver,
 ): ChannelAdapter {
   const slack = new SlackAdapter({
-    apiUrl,
-    botToken,
-    signingSecret,
+    apiUrl: apiUrl,
+    botToken: botToken,
+    signingSecret: signingSecret,
     mode: "webhook",
     logger: new ConsoleLogger("error").child("slack"),
   });
@@ -77,23 +77,25 @@ export function createSlackChannel(
   return {
     name: "slack",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return "x-slack-signature" in req.headers;
     },
 
-    async authenticate(req) {
+    authenticate: async function(req) {
       try {
-        await verifySlackSignature(req.body, req.headers, { signingSecret });
+        await verifySlackSignature(req.body, req.headers, { signingSecret: signingSecret });
+
         return true;
       } catch (err) {
         logWarn("Slack request signature verification failed", {
           error: err instanceof Error ? err.message : String(err),
         });
+
         return false;
       }
     },
 
-    parse(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
       const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
 
       if (payload.kind === "url_verification") {
@@ -130,7 +132,7 @@ export function createSlackChannel(
       );
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createSlackActions(
         botToken,
         slack,
@@ -142,7 +144,7 @@ export function createSlackChannel(
     // Slack is the one provider where the reply has two places it can land, so
     // it is the one that can honour the record. A slash command still answers
     // through its response URL, which carries no thread either way.
-    applyThreadPolicy(source, policy) {
+    applyThreadPolicy: function(source, policy) {
       const slackSource = toSlackSource(source);
       const threadTs =
         policy === "always-thread"
@@ -199,7 +201,8 @@ async function parseEventCallback(
   }
 
   if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
-    logWarn("Slack channel not in allow list", { channelId });
+    logWarn("Slack channel not in allow list", { channelId: channelId });
+
     return { kind: "ignore", reason: "channel_not_allowed" };
   }
 
@@ -253,19 +256,19 @@ async function parseEventCallback(
         threadTs,
       ),
       channelName: "slack",
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: text }],
       identity: {
         workspaceRef: payload.team_id,
-        channelId,
+        channelId: channelId,
         ...(payload.event.thread_ts
           ? { threadId: payload.event.thread_ts }
           : {}),
         ...(payload.event.user ? { actorId: payload.event.user } : {}),
-        ...(actorName ? { actorName } : {}),
+        ...(actorName ? { actorName: actorName } : {}),
       },
       source: {
         teamId: payload.team_id,
-        channelId,
+        channelId: channelId,
         messageTs: ts,
         threadTs: replyThreadTs,
         inThreadTs: payload.event.thread_ts,
@@ -359,7 +362,8 @@ function parseSlashCommand(
   }
 
   if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
-    logWarn("Slack slash command channel not in allow list", { channelId });
+    logWarn("Slack slash command channel not in allow list", { channelId: channelId });
+
     return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
   }
 
@@ -375,15 +379,15 @@ function parseSlashCommand(
       // the threaded equivalent, and that arrives as an app_mention.
       conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
       channelName: "slack",
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: text }],
       identity: {
         workspaceRef: teamId,
-        channelId,
+        channelId: channelId,
         ...(payload.userId ? { actorId: payload.userId } : {}),
       },
       source: {
-        teamId,
-        channelId,
+        teamId: teamId,
+        channelId: channelId,
         responseUrl: payload.responseUrl,
         commandToken: command,
         userId: payload.userId,
@@ -407,12 +411,13 @@ function createSlackActions(
   const formatter = new SlackFormatConverter();
 
   return {
-    async sendText(text) {
+    sendText: async function(text) {
       if (source.responseUrl) {
         await sendSlackWebhookResponse(
           source.responseUrl,
           formatter.toResponseUrlText({ markdown: text }),
         );
+
         return;
       }
 
@@ -430,11 +435,11 @@ function createSlackActions(
       }
     },
 
-    async sendTyping() {
+    sendTyping: async function() {
       return;
     },
 
-    async reactToMessage() {
+    reactToMessage: async function() {
       if (!source.messageTs) {
         return;
       }
@@ -470,6 +475,7 @@ function createSlackActions(
                 taskDisplayMode: "plan",
               },
             );
+
             return result?.id ?? null;
           },
         }
@@ -507,6 +513,7 @@ function normalizeSlackApiError(method: string, err: unknown): Error {
       `Slack ${method} failed (${err.status ?? 200}): ${err.response?.error ?? "unknown_error"}`,
     );
   }
+
   return err instanceof Error ? err : new Error(String(err));
 }
 
@@ -516,7 +523,7 @@ async function sendSlackWebhookResponse(
 ): Promise<void> {
   try {
     await sendSlackResponseUrl(url, {
-      text,
+      text: text,
       responseType: "in_channel",
     });
   } catch (err) {
@@ -558,6 +565,7 @@ async function normalizeSlackMentions(
   return cleanSlackText(
     text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
       if (omittedUserIds.has(userId)) return "";
+
       return `@${names.get(userId) ?? userId}`;
     }),
   );
@@ -603,6 +611,7 @@ async function formatSlackMessageText(
   if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
     return normalized;
   }
+
   return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
 }
 
@@ -623,6 +632,7 @@ function createSlackUserNameResolver(
 ): SlackUserNameResolver {
   return async (userId) => {
     const user = await slack.getUser(userId);
+
     return user?.userName ?? user?.fullName ?? null;
   };
 }
@@ -632,6 +642,7 @@ async function resolveSlackUserName(
   resolveUserName: SlackUserNameResolver,
 ): Promise<string> {
   const resolved = await resolveUserName(userId);
+
   return cleanSlackName(resolved) || userId;
 }
 
@@ -687,6 +698,7 @@ export async function* toSlackStream(
   const flushReasoning = (): StreamChunk | null => {
     if (!pendingReasoning || reasoningChars >= SLACK_TASK_TEXT_LIMIT) {
       pendingReasoning = "";
+
       return null;
     }
     const remaining = SLACK_TASK_TEXT_LIMIT - reasoningChars;
@@ -699,12 +711,13 @@ export async function* toSlackStream(
     reasoningChars += details.length;
     pendingReasoning = "";
     lastReasoningFlushAt = Date.now();
+
     return {
       type: "task_update",
       id: reasoningTaskId(pendingReasoningId, false),
       title: "Thinking",
       status: "in_progress",
-      details,
+      details: details,
     };
   };
 
@@ -721,6 +734,7 @@ export async function* toSlackStream(
       id = taskId("reasoning", `${key}#${reasoningSegment}`);
       reasoningTaskIds.set(key, id);
     }
+
     return id;
   };
 
@@ -929,6 +943,7 @@ function appendBufferedSlackText(
   if (needsSeparator && current) {
     return `${current}\n\n${text}`;
   }
+
   return `${current}${text}`;
 }
 
@@ -961,6 +976,7 @@ const REASONING_FLUSH_INTERVAL_MS = 500;
 
 function truncateForSlackTask(value: string): string {
   const normalized = value.trim();
+
   return normalized.length <= SLACK_TASK_TEXT_LIMIT
     ? normalized
     : `${normalized.slice(0, SLACK_TASK_TEXT_LIMIT - 3)}...`;

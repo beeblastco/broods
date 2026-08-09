@@ -70,6 +70,7 @@ export const create = internalMutation({
     }
 
     const now = Date.now();
+
     return await ctx.db.insert("conversations", {
       accountId: args.accountId,
       agentId: args.agentId,
@@ -96,8 +97,8 @@ export const update = internalMutation({
     }
 
     await ctx.db.patch(conversationId, {
-      ...(title !== undefined && { title }),
-      ...(lastMessageAt !== undefined && { lastMessageAt }),
+      ...(title !== undefined && { title: title }),
+      ...(lastMessageAt !== undefined && { lastMessageAt: lastMessageAt }),
     });
 
     return null;

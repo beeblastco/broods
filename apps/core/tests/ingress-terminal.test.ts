@@ -23,6 +23,7 @@ describe("terminal ingress draining", () => {
       "stream failed",
       async () => {
         actions.push("dispatch");
+
         return true;
       },
     );
@@ -39,6 +40,7 @@ describe("terminal ingress draining", () => {
       "stream failed",
       async () => {
         actions.push("dispatch");
+
         return false;
       },
     );
@@ -87,6 +89,7 @@ describe("terminal ingress draining", () => {
       "stream failed",
       async () => {
         actions.push("dispatch");
+
         return true;
       },
     );

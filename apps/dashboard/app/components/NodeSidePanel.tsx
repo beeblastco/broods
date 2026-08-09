@@ -1,6 +1,7 @@
 "use client";
 
 /** Side panel displaying node details, configuration, and settings for the selected canvas node. */
+import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
 import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
@@ -50,15 +51,16 @@ import {
   type RuntimeVariable,
 } from "@/app/lib/runtimeVariables";
 import { includesSkillRef } from "@/app/lib/skillRefs";
+import { reportPerf } from "@/app/lib/perfReport";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useStore, type Node } from "@xyflow/react";
+import type { Node } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { X } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useParams } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const nodeStatusBadgeVariant: Record<
   "running" | "idle" | "error",
@@ -121,12 +123,7 @@ const ToolTestTab = dynamic(loadToolTestTab, {
 });
 
 type NodeType =
-  | "agent"
-  | "database"
-  | "tool"
-  | "workspace"
-  | "sandbox"
-  | "skill";
+  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
 type HeaderStatusBadge = {
   text: string;
   color: string;
@@ -169,6 +166,7 @@ function inferProviderFromModelId(modelId: string): AgentProvider {
 
 export const NodeSidePanel = memo(function NodeSidePanel({
   node,
+  selectedAt,
   deleteRequestToken,
   onClose,
   onRemoveNode,
@@ -176,6 +174,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   onUpdateNodeData,
 }: {
   node: Node | null;
+  /** `performance.now()` of the click that selected this node, for the open-latency mark. */
+  selectedAt: number;
   deleteRequestToken: number;
   onClose: () => void;
   onRemoveNode: (nodeId: string) => void;
@@ -193,11 +193,23 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const agentConfigId = nodeData?.agentConfigId as
-    | Id<"agentConfigs">
-    | undefined;
+    Id<"agentConfigs"> | undefined;
   const nodeId = node?.id;
   const canQueryToolStatus =
     isTool && !!projectId && !!environmentId && !!nodeId;
+
+  // Time from the canvas click to this panel being on screen — mostly its own
+  // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
+  const measuredSelection = useRef(0);
+  useEffect(() => {
+    if (!nodeId || !selectedAt || measuredSelection.current === selectedAt)
+      return;
+
+    measuredSelection.current = selectedAt;
+    reportPerf("side-panel.open", performance.now() - selectedAt, {
+      attributes: { node_type: nodeType },
+    });
+  }, [nodeId, nodeType, selectedAt]);
 
   // Agent health status (agent nodes only)
   const healthStatus = useAgentHealth(isAgent ? agentConfigId : undefined);
@@ -208,56 +220,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     isSkill ? nodeId : undefined,
   );
 
-  const isConnectedToAgent = useStore(
-    useCallback(
-      (state: Record<string, unknown>) => {
-        if (nodeType === "agent" || !nodeId) return true;
-
-        const edges = state.edges as Array<{ source: string; target: string }>;
-        const nodeLookup = state.nodeLookup as Map<string, { type?: string }>;
-        if (!edges || !nodeLookup) return false;
-
-        if (nodeType === "workspace" || nodeType === "sandbox") {
-          const visited = new Set<string>([nodeId]);
-          const queue = [nodeId];
-          while (queue.length > 0) {
-            const current = queue.shift()!;
-            for (const edge of edges) {
-              if (edge.source !== current && edge.target !== current) continue;
-              const otherNodeId =
-                edge.source === current ? edge.target : edge.source;
-              if (visited.has(otherNodeId)) continue;
-              visited.add(otherNodeId);
-              const otherNode = nodeLookup.get(otherNodeId);
-              if (otherNode?.type === "agent") return true;
-              if (
-                otherNode?.type === "workspace" ||
-                otherNode?.type === "sandbox"
-              ) {
-                queue.push(otherNodeId);
-              }
-            }
-          }
-
-          return false;
-        }
-
-        for (const edge of edges) {
-          if (edge.source !== nodeId && edge.target !== nodeId) continue;
-
-          const otherNodeId =
-            edge.source === nodeId ? edge.target : edge.source;
-          const otherNode = nodeLookup.get(otherNodeId);
-          if (otherNode?.type === "agent") {
-            return true;
-          }
-        }
-
-        return false;
-      },
-      [nodeId, nodeType],
-    ),
-  );
+  // Read the canvas's single graph traversal rather than walking the edges
+  // again here; BaseNode reads the same map for its unwired badge.
+  const infraAnalysis = useInfraAnalysis();
+  const isConnectedToAgent =
+    nodeType === "agent" ||
+    !nodeId ||
+    (infraAnalysis.connectedToAgent[nodeId] ?? false);
 
   // Agent config for editable name (agent nodes only)
   const agentConfig = useQuery(
@@ -797,9 +766,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const resolvedName = isAgent
     ? (agentConfig?.name ?? "")
     : (nodeData?.label ?? "");
+  // Warmed from the tab trigger only. Preloading on open cost every panel view
+  // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
+  // was ever used; intent to open it lands early enough to hide the fetch.
   const warmTestTab = useCallback(() => {
     if (isAgent) {
       void loadAgentTestTab();
+
       return;
     }
 
@@ -807,20 +780,6 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       void loadToolTestTab();
     }
   }, [isAgent, isTool]);
-
-  useEffect(() => {
-    if (!nodeData || (!isAgent && !isTool)) return;
-
-    if (typeof window !== "undefined" && window.requestIdleCallback) {
-      const idleId = window.requestIdleCallback(warmTestTab, { timeout: 1200 });
-
-      return () => window.cancelIdleCallback(idleId);
-    }
-
-    const timeoutId = window.setTimeout(warmTestTab, 100);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [nodeData, isAgent, isTool, warmTestTab]);
 
   return (
     <div className="flex h-full w-full flex-col border-l border-border bg-card">

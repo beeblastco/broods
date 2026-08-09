@@ -39,5 +39,5 @@ export function useEnvironment() {
     [searchParams, pathname, router, startTransition],
   );
 
-  return { environmentId, setEnvironmentId };
+  return { environmentId: environmentId, setEnvironmentId: setEnvironmentId };
 }

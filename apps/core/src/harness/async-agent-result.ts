@@ -28,7 +28,7 @@ export function createPendingAsyncAgentResult(options: {
 export function getAsyncAgentResult(
   eventId: string,
 ): Promise<AsyncAgentResultRecord | null> {
-  return runtime.query("getAsyncAgentResult", { eventId });
+  return runtime.query("getAsyncAgentResult", { eventId: eventId });
 }
 export async function markAsyncAgentResultCompleted(options: {
   eventId: string;

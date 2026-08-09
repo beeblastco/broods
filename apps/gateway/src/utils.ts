@@ -155,7 +155,7 @@ export async function mapWithConcurrency<T, R>(
           value: await mapper(items[index]),
         };
       } catch (reason) {
-        results[index] = { status: "rejected", reason };
+        results[index] = { status: "rejected", reason: reason };
       }
     }
   };

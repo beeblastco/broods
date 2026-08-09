@@ -61,14 +61,16 @@ export class MicrovmWebSocketProxy {
       this.#routes.set(routeId, {
         endpoint: this.#options.endpoint,
         microvmId: this.#options.microvmId,
-        port,
+        port: port,
       });
     }
+
     return `ws://127.0.0.1:${server.port}/bridge/${routeId}`;
   }
 
   close(): Promise<void> {
     this.#closePromise ??= this.#close();
+
     return this.#closePromise;
   }
 
@@ -98,13 +100,14 @@ export class MicrovmWebSocketProxy {
         }
         const upgraded = bunServer.upgrade(request, {
           data: {
-            routeId,
+            routeId: routeId,
             search: url.search,
             queued: [],
             queuedBytes: 0,
             closed: false,
           },
         });
+
         return upgraded
           ? undefined
           : new Response("WebSocket upgrade failed", { status: 400 });
@@ -129,6 +132,7 @@ export class MicrovmWebSocketProxy {
           const upstream = socket.data.upstream;
           if (upstream?.readyState === WebSocket.OPEN) {
             upstream.send(payload);
+
             return;
           }
           const bytes =
@@ -138,6 +142,7 @@ export class MicrovmWebSocketProxy {
           socket.data.queuedBytes += bytes;
           if (socket.data.queuedBytes > MAX_QUEUED_BYTES) {
             socket.close(1009, "Proxy queue limit exceeded");
+
             return;
           }
           socket.data.queued.push(payload);
@@ -157,6 +162,7 @@ export class MicrovmWebSocketProxy {
       },
     });
     this.#server = server;
+
     return server;
   }
 
@@ -166,6 +172,7 @@ export class MicrovmWebSocketProxy {
     const route = this.#routes.get(socket.data.routeId);
     if (!route || socket.data.closed) {
       socket.close(1008, "Proxy route expired");
+
       return;
     }
 
@@ -188,6 +195,7 @@ export class MicrovmWebSocketProxy {
       upstream.addEventListener("open", () => {
         if (socket.data.closed) {
           upstream.close(1000, "Client closed");
+
           return;
         }
         for (const message of socket.data.queued) upstream.send(message);
@@ -261,6 +269,7 @@ function microvmUpstreamUrl(
   url.pathname = "/";
   url.search = search;
   url.hash = "";
+
   return url.toString();
 }
 

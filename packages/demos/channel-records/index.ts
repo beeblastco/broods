@@ -46,8 +46,11 @@ async function upsertChannel(input: {
   };
 
   if (existing) {
-    const updated = await client.updateChannel(existing.channelId, { config });
+    const updated = await client.updateChannel(existing.channelId, {
+      config: config,
+    });
     if (!updated) throw new Error(`Channel vanished: ${existing.channelId}`);
+
     return updated;
   }
 
@@ -56,7 +59,7 @@ async function upsertChannel(input: {
     externalId: input.externalId,
     workspaceRef: SLACK_TEAM_ID,
     name: input.name,
-    config,
+    config: config,
   });
 }
 

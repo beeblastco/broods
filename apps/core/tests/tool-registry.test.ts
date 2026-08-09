@@ -13,7 +13,7 @@ import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
 const urlContextMock = mock((options: unknown) => ({
   provider: "urlContext",
-  options,
+  options: options,
 }));
 
 beforeEach(() => {
@@ -38,7 +38,7 @@ describe("createTools", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
     const context = Object.assign({}, sandboxContext(), {
-      approvalRequirements,
+      approvalRequirements: approvalRequirements,
     }) as never;
 
     const tools = await createTools(context, {
@@ -117,7 +117,7 @@ describe("createTools", () => {
   it("rebuilds a provider tool from an AI SDK descriptor's args", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
-      options,
+      options: options,
     }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
@@ -584,7 +584,7 @@ describe("createTools", () => {
   it("passes agent config through to the provider tool factory", async () => {
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
-      options,
+      options: options,
     }));
     const { createTools } = await import("../src/harness/tools/index.ts");
 
@@ -622,6 +622,7 @@ describe("createTools", () => {
         expect(
           (tools.googleSearch as { needsApproval?: unknown }).needsApproval,
         ).toBeUndefined();
+
         return {
           googleSearch: {
             ...(tools.googleSearch as object),
@@ -633,7 +634,7 @@ describe("createTools", () => {
 
     const googleSearchMock = mock((options: unknown) => ({
       provider: "googleSearch",
-      options,
+      options: options,
       execute: mock(async () => ({ ok: true })),
     }));
 
@@ -641,7 +642,7 @@ describe("createTools", () => {
       Object.assign(
         {},
         createToolContext(googleSearchMock, "google", undefined, dispatch),
-        { approvalRequirements },
+        { approvalRequirements: approvalRequirements },
       ) as never,
       {
         tools: {
@@ -688,6 +689,7 @@ describe("createTools", () => {
     const dispatch = mock(
       (tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
         expect(asyncToolModes).toEqual(new Map([["test_async", "uploaded"]]));
+
         return {
           ...tools,
           test_async: {
@@ -702,7 +704,7 @@ describe("createTools", () => {
       Object.assign(
         {},
         createToolContext(undefined, "google", undefined, dispatch),
-        { approvalRequirements },
+        { approvalRequirements: approvalRequirements },
       ) as never,
       {
         tools: {
@@ -773,15 +775,15 @@ function createToolContext(
     accountId: "acct_test",
     conversationKey: "conversation",
     permissionMode: "ask",
-    modelProviderName,
+    modelProviderName: modelProviderName,
     modelProvider: {
       tools: {
-        googleSearch,
+        googleSearch: googleSearch,
         urlContext: urlContextMock,
       },
     },
-    ...(dispatchSubagents ? { dispatchSubagents } : {}),
-    ...(dispatchAsyncTools ? { dispatchAsyncTools } : {}),
+    ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
+    ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
   } as never;
 }
 
@@ -791,7 +793,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
     agents: {} as never,
     channelRecords: {} as never,
     agentDeployments: {
-      async getByApiKeyHash() {
+      getByApiKeyHash: async function() {
         return null;
       },
     },
@@ -800,13 +802,14 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
     workspaceConfigs: {} as never,
     agentPolicies: {} as never,
     accountTools: {
-      async getById(accountId: string, toolId: string) {
+      getById: async function(accountId: string, toolId: string) {
         const record = accountTool as { accountId: string; toolId: string };
+
         return record.accountId === accountId && record.toolId === toolId
           ? accountTool
           : null;
       },
-      async list() {
+      list: async function() {
         return [accountTool];
       },
       create: mock() as never,
@@ -815,7 +818,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
-    taskUsage: { async record() {} },
+    taskUsage: { record: async function() {} },
   } as Storage;
 }
 
@@ -836,7 +839,7 @@ function sandboxContext(
     workspaces: workspaces.map((workspace) => ({
       ...workspace,
       config: { storage: { provider: "s3" } },
-      sandbox: { provider: "lambda", permissionMode },
+      sandbox: { provider: "lambda", permissionMode: permissionMode },
     })),
     modelProviderName: "google",
     modelProvider: { tools: { urlContext: urlContextMock } },
@@ -855,6 +858,7 @@ async function approvalStatus(
 ) {
   const { compatibilityApprovalStatus } =
     await import("../src/harness/policy.ts");
+
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: ctx.approvalRequirements ?? new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
@@ -876,5 +880,6 @@ async function needsApproval(
   if (typeof value === "function") {
     return Boolean(await value(input, { toolCallId: "t", messages: [] }));
   }
+
   return value === true;
 }

@@ -7,7 +7,8 @@ import * as React from "react";
 import { cn } from "@/app/lib/utils";
 
 interface DropdownMenuContentProps
-  extends Omit<DropdownMenuPrimitive.Popup.Props, "className">,
+  extends
+    Omit<DropdownMenuPrimitive.Popup.Props, "className">,
     Pick<
       DropdownMenuPrimitive.Positioner.Props,
       "align" | "alignOffset" | "side" | "sideOffset"
@@ -15,36 +16,48 @@ interface DropdownMenuContentProps
   className?: string;
 }
 
-interface DropdownMenuItemProps
-  extends Omit<DropdownMenuPrimitive.Item.Props, "className"> {
+interface DropdownMenuItemProps extends Omit<
+  DropdownMenuPrimitive.Item.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
   variant?: "default" | "destructive";
 }
 
-interface DropdownMenuCheckboxItemProps
-  extends Omit<DropdownMenuPrimitive.CheckboxItem.Props, "className"> {
+interface DropdownMenuCheckboxItemProps extends Omit<
+  DropdownMenuPrimitive.CheckboxItem.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface DropdownMenuRadioItemProps
-  extends Omit<DropdownMenuPrimitive.RadioItem.Props, "className"> {
+interface DropdownMenuRadioItemProps extends Omit<
+  DropdownMenuPrimitive.RadioItem.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface DropdownMenuLabelProps
-  extends Omit<DropdownMenuPrimitive.GroupLabel.Props, "className"> {
+interface DropdownMenuLabelProps extends Omit<
+  DropdownMenuPrimitive.GroupLabel.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
 }
 
-interface DropdownMenuSeparatorProps
-  extends Omit<DropdownMenuPrimitive.Separator.Props, "className"> {
+interface DropdownMenuSeparatorProps extends Omit<
+  DropdownMenuPrimitive.Separator.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface DropdownMenuSubTriggerProps
-  extends Omit<DropdownMenuPrimitive.SubmenuTrigger.Props, "className"> {
+interface DropdownMenuSubTriggerProps extends Omit<
+  DropdownMenuPrimitive.SubmenuTrigger.Props,
+  "className"
+> {
   className?: string;
   inset?: boolean;
 }

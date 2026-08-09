@@ -15,7 +15,7 @@ export const streamProgressTool = defineTool({
     },
     additionalProperties: false,
   },
-  async *execute(input: { steps?: number }) {
+  execute: async function* (input: { steps?: number }) {
     const steps = Math.max(1, Math.min(10, input.steps ?? 5));
     for (let i = 1; i <= steps; i++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));

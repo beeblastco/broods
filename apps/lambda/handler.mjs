@@ -38,6 +38,7 @@ export const handler = streamifyResponse(async (event, responseStream) => {
     typeof event.toolName !== "string"
   ) {
     endWithError(responseStream, "invalid tool runner event");
+
     return;
   }
   const home = mkdtempSync(join(tmpdir(), "broods-tool-"));
@@ -142,6 +143,7 @@ async function runChild(event, home, responseStream, bundle) {
       forwardedBytes += chunk.length;
       if (forwardedBytes > OUTPUT_LIMIT_BYTES) {
         stopForwarding("custom tool sandbox output exceeded limit");
+
         return;
       }
       // Pause on a full response buffer so a chatty tool cannot outrun the
@@ -195,6 +197,7 @@ async function runChild(event, home, responseStream, bundle) {
 
 function childRunnerPath() {
   const root = process.env.LAMBDA_TASK_ROOT;
+
   return root
     ? join(root, "child-runner.mjs")
     : fileURLToPath(new URL("./child-runner.mjs", import.meta.url));
@@ -209,13 +212,14 @@ function childTimeoutSeconds() {
     Number.isFinite(override) && override > 0
       ? Math.min(graceBound, override)
       : graceBound;
+
   return String(Math.max(1, seconds));
 }
 
 // Handler-side failures speak the same NDJSON protocol as the child, so core has
 // exactly one frame format to parse whether the run died before or during output.
 function endWithError(responseStream, error) {
-  responseStream.write(`${JSON.stringify({ t: "error", error })}\n`);
+  responseStream.write(`${JSON.stringify({ t: "error", error: error })}\n`);
   responseStream.end();
 }
 

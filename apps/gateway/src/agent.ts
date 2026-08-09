@@ -113,11 +113,13 @@ export function handleAgentMessage(
       error: "Invalid WebSocket message",
     });
     socket.close(1003, "invalid message");
+
     return;
   }
 
   if (message.type === "cancel") {
     stopActiveRun(socket);
+
     return;
   }
 
@@ -128,9 +130,11 @@ export function handleAgentMessage(
         type: "error",
         error: "No active run to control",
       });
+
       return;
     }
     void submitControl(socket, active, message);
+
     return;
   }
 
@@ -139,11 +143,13 @@ export function handleAgentMessage(
       type: "error",
       error: "A run is already active on this WebSocket",
     });
+
     return;
   }
 
   if (message.type === "attach") {
     void attachCoreStream(socket, message, limits, getNatsConnection);
+
     return;
   }
 
@@ -164,8 +170,8 @@ export function buildCoreRunBody(
 
   return {
     agentId: message.agentId.trim(),
-    eventId,
-    conversationKey,
+    eventId: eventId,
+    conversationKey: conversationKey,
     connectionId: `ws-${crypto.randomUUID()}`,
     events: resolveRunEvents(message),
     ...(message.mode !== undefined ? { mode: message.mode } : {}),
@@ -196,6 +202,7 @@ export function parseGatewayMessage(
   if (type === "cancel") return { type: "cancel" };
   if (type === "control") return isControlMessage(parsed) ? parsed : null;
   if (type === "attach") return isAttachMessage(parsed) ? parsed : null;
+
   return isExecuteMessage(parsed) ? parsed : null;
 }
 
@@ -226,11 +233,12 @@ async function runCoreStream(
     body = buildCoreRunBody(message);
   } catch (error) {
     sendAgentTest(socket, { type: "error", error: errorMessage(error) });
+
     return;
   }
   const active: ActiveRun = {
-    abort,
-    startTimeout,
+    abort: abort,
+    startTimeout: startTimeout,
     agentId: String(body.agentId),
     publicConversationKey: String(body.conversationKey),
     publicEventId: String(body.eventId),
@@ -259,6 +267,7 @@ async function runCoreStream(
         status: response.status,
         error: await response.text(),
       });
+
       return;
     }
     if (!response.headers.get("content-type")?.includes("application/json")) {
@@ -266,6 +275,7 @@ async function runCoreStream(
         type: "error",
         error: "Core WebSocket start did not return JSON",
       });
+
       return;
     }
     const payload = (await response.json()) as NatsStartResponse &
@@ -277,6 +287,7 @@ async function runCoreStream(
           type: "error",
           error: "Core did not return a WebSocket stream or ingress status",
         });
+
         return;
       }
       sendAgentTest(socket, {
@@ -298,6 +309,7 @@ async function runCoreStream(
         },
         getNatsConnection,
       );
+
       return;
     }
     await streamNatsResponses(
@@ -470,7 +482,7 @@ async function followQueuedExecution(
     conversationKey: active.publicConversationKey,
   };
   const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({ connection, ...scope });
+  const snapshot = await conversationReplaySnapshot({ connection: connection, ...scope });
 
   await followExecution(socket, active.abort.signal, {
     connection: connection,
@@ -527,6 +539,7 @@ async function submitControl(
           payload.error ??
           `Control input was rejected with HTTP ${response.status}`,
       });
+
       return;
     }
     sendAgentTest(socket, {
@@ -584,8 +597,8 @@ async function pollControlStatus(
       previous = fingerprint;
       sendAgentTest(socket, {
         type: "status",
-        requestId,
-        eventId,
+        requestId: requestId,
+        eventId: eventId,
         status: payload.status,
         ...(payload.requestedMode
           ? { requestedMode: payload.requestedMode }
@@ -594,7 +607,7 @@ async function pollControlStatus(
         ...(payload.appliedToEventId
           ? { appliedToEventId: payload.appliedToEventId }
           : {}),
-        ...(statusUrl ? { statusUrl } : {}),
+        ...(statusUrl ? { statusUrl: statusUrl } : {}),
         ...(payload.error ? { error: payload.error } : {}),
       });
     }
@@ -618,8 +631,8 @@ async function attachCoreStream(
     limits.runStartTimeoutMs,
   );
   const active: ActiveRun = {
-    abort,
-    startTimeout,
+    abort: abort,
+    startTimeout: startTimeout,
     agentId: message.agentId,
     publicConversationKey: message.conversationKey,
     publicEventId: message.eventId,
@@ -639,8 +652,9 @@ async function attachCoreStream(
         requestId: message.requestId,
         eventId: message.eventId,
         status: "not_found",
-        statusUrl,
+        statusUrl: statusUrl,
       });
+
       return;
     }
     if (status.conversationKey !== message.conversationKey) {
@@ -649,8 +663,9 @@ async function attachCoreStream(
         requestId: message.requestId,
         eventId: message.eventId,
         status: status.status,
-        statusUrl,
+        statusUrl: statusUrl,
       });
+
       return;
     }
     const connection = await getNatsConnection();
@@ -660,7 +675,7 @@ async function attachCoreStream(
       conversationKey: message.conversationKey,
     };
     const snapshot = await conversationReplaySnapshot({
-      connection,
+      connection: connection,
       ...scope,
     });
     const cursor = message.afterCursor
@@ -673,7 +688,7 @@ async function attachCoreStream(
         requestId: message.requestId,
         eventId: message.eventId,
         status: status.status,
-        statusUrl,
+        statusUrl: statusUrl,
       });
     if (
       (message.afterCursor && !cursor) ||
@@ -681,6 +696,7 @@ async function attachCoreStream(
       (cursor?.eventKey !== undefined && cursor.eventKey !== eventKey)
     ) {
       unavailable();
+
       return;
     }
     if (cursor) {
@@ -689,11 +705,12 @@ async function attachCoreStream(
       // retained message is intact, and a sequence past the subject's last
       // message is a fabricated future cursor, not a resume point.
       const lastSequence = await conversationLastSequence({
-        connection,
+        connection: connection,
         ...scope,
       });
       if (lastSequence === null || cursor.sequence > lastSequence) {
         unavailable();
+
         return;
       }
       const subjectAtCursor = await retainedMessageSubject(
@@ -709,6 +726,7 @@ async function attachCoreStream(
         )
       ) {
         unavailable();
+
         return;
       }
     }
@@ -739,7 +757,7 @@ async function attachCoreStream(
             ),
           }
         : {}),
-      statusUrl,
+      statusUrl: statusUrl,
     });
     clearTimeout(startTimeout);
     await followAttachedExecution(
@@ -861,12 +879,12 @@ async function streamNatsResponses(
 ): Promise<void> {
   const connection = await getNatsConnection();
   const snapshot = await conversationReplaySnapshot({
-    connection,
+    connection: connection,
     ...started.nats,
   });
   const eventKey = cursorEventKey(started.eventId);
   const messages = await readConversationStream({
-    connection,
+    connection: connection,
     ...started.nats,
   });
   try {
@@ -906,8 +924,9 @@ async function fetchStatus(
     statusUrl && /^https?:\/\//.test(statusUrl)
       ? statusUrl
       : `${socket.data.coreBaseUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+
   return responseJson(
-    await fetch(target, { headers: coreHeaders(socket), signal }),
+    await fetch(target, { headers: coreHeaders(socket), signal: signal }),
   );
 }
 
@@ -923,6 +942,7 @@ function coreHeaders(
 
 async function responseJson(response: Response): Promise<IngressHttpResponse> {
   const payload = await response.json().catch(() => ({}));
+
   return payload && typeof payload === "object"
     ? (payload as IngressHttpResponse)
     : {};
@@ -930,6 +950,7 @@ async function responseJson(response: Response): Promise<IngressHttpResponse> {
 
 function decodeNatsStreamEvent(data: Uint8Array): NatsStreamEvent | null {
   const parsed = parseJson(decoder.decode(data));
+
   return parsed &&
     typeof parsed === "object" &&
     (parsed as { type?: unknown }).type === "stream"
@@ -1006,7 +1027,7 @@ function parseCursor(value: string): {
 
   return {
     generation: match[1],
-    sequence,
+    sequence: sequence,
     ...(match[3] ? { eventKey: match[3] } : {}),
   };
 }
@@ -1037,6 +1058,7 @@ function isIngressMode(
 
 function hasEventInput(value: object): boolean {
   const record = value as { input?: unknown; events?: unknown };
+
   return (
     typeof record.input === "string" ||
     (Array.isArray(record.events) && record.events.length > 0)
@@ -1047,6 +1069,7 @@ function isExecuteMessage(
   value: object,
 ): value is WebSocketClientExecuteMessage {
   const record = value as { type?: unknown; agentId?: unknown; mode?: unknown };
+
   return (
     record.type === "execute" &&
     typeof record.agentId === "string" &&
@@ -1065,6 +1088,7 @@ function isControlMessage(
     eventId?: unknown;
     mode?: unknown;
   };
+
   return (
     record.type === "control" &&
     typeof record.requestId === "string" &&
@@ -1085,6 +1109,7 @@ function isAttachMessage(value: object): value is WebSocketClientAttachMessage {
     eventId?: unknown;
     afterCursor?: unknown;
   };
+
   return (
     record.type === "attach" &&
     typeof record.requestId === "string" &&

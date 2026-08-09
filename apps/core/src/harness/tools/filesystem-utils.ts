@@ -66,18 +66,18 @@ export type ToolModelResult = Awaited<
 >;
 export const toolText = (value: string): ToolModelResult => ({
   type: "text",
-  value,
+  value: value,
 });
 export const toolError = (value: string): ToolModelResult => {
   if (isFatalSandboxSetupError(value)) {
     throw new Error(`Sandbox setup failed: ${value}`);
   }
 
-  return { type: "error-text", value };
+  return { type: "error-text", value: value };
 };
 export const toolJson = (value: JSONObject): ToolModelResult => ({
   type: "json",
-  value,
+  value: value,
 });
 
 function isFatalSandboxSetupError(value: string): boolean {
@@ -119,6 +119,7 @@ export interface SandboxToolContext {
 
 export function workspaceRootFor(config: SandboxExecutorConfig): string {
   const options = isPlainObject(config.options) ? config.options : {};
+
   return typeof options.workspaceRoot === "string" &&
     options.workspaceRoot.trim()
     ? options.workspaceRoot.trim()
@@ -201,6 +202,7 @@ export function resolveWorkspace(
   if (!workspace) {
     throw new Error(`unknown workspace ${requested}`);
   }
+
   return workspace;
 }
 
@@ -209,6 +211,7 @@ export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
   if (workspaces.length <= 1) {
     return undefined;
   }
+
   return {
     type: "string" as const,
     enum: workspaces.map((w) => w.name),
@@ -249,12 +252,12 @@ export async function runSandbox(
       ? statelessReservationKeyFor(config)
       : undefined;
   const result = await executor.run({
-    code,
+    code: code,
     ...(namespace
-      ? { namespace, workspaceRoot: workspaceRootFor(config) }
+      ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
       : {}),
     ...(reservationKey
-      ? { reservationKey, workspaceRoot: workspaceRootFor(config) }
+      ? { reservationKey: reservationKey, workspaceRoot: workspaceRootFor(config) }
       : {}),
     ...(options?.metadata ? { metadata: options.metadata } : {}),
     timeoutSeconds: boundedInteger(
@@ -275,6 +278,7 @@ export async function runSandbox(
       cpuUsec: result.cpuUsec,
     });
   }
+
   return result;
 }
 
@@ -299,9 +303,10 @@ export async function runSandboxBackground(
     throw new Error("this sandbox provider does not support background jobs");
   }
   const limits = workspaceSandboxLimits(config.provider);
+
   return executor.runBackground({
-    code,
-    namespace,
+    code: code,
+    namespace: namespace,
     jobId: options.jobId,
     ...(options.callback ? { callback: options.callback } : {}),
     ...(options.metadata ? { metadata: options.metadata } : {}),
@@ -336,6 +341,7 @@ export function editNeedsApproval(
     if (workspace && !workspace.sandbox) {
       return false;
     }
+
     return permissionModeFor(workspace) === "ask";
   } catch {
     return true;
@@ -357,8 +363,10 @@ export function bashNeedsApproval(
       if (workspace && !workspace.sandbox) {
         return false;
       }
+
       return permissionModeFor(workspace) !== "bypass";
     }
+
     return (context.agentSandboxPermissionMode ?? "ask") !== "bypass";
   } catch {
     return true;
@@ -416,6 +424,7 @@ export async function s3ReadNumbered(
     if (isMissingS3Error(cause)) {
       return toolError(`Error: file not found: ${rel}`);
     }
+
     return toolError(cause instanceof Error ? cause.message : String(cause));
   }
 
@@ -430,6 +439,7 @@ export async function s3ReadNumbered(
   const numbered = selected
     .map((line, index) => `${String(start + index).padStart(6, " ")}\t${line}`)
     .join("\n");
+
   return toolText(numbered.length > 0 ? `${numbered}\n` : "");
 }
 
@@ -514,6 +524,7 @@ export function runtimeDescription(
   config: SandboxExecutorConfig | undefined,
 ): string {
   const runtimes = config ? runtimeList(config) : ["bash", "python", "node"];
+
   return `Allowed runtimes: ${runtimes.join(", ")}.`;
 }
 
@@ -537,6 +548,7 @@ export function disallowedRuntimeCommand(
   ) {
     return "Error: this sandbox does not allow node commands";
   }
+
   return undefined;
 }
 
@@ -607,6 +619,7 @@ export function toWorkspaceRelative(path: string): string {
   if (parts.some((p) => p === "..")) {
     throw new Error("Invalid path: directory traversal not allowed");
   }
+
   return parts.length === 0 ? "." : parts.join("/");
 }
 
@@ -636,6 +649,7 @@ export function boundedInteger(
       `sandbox numeric option must be an integer from 1 to ${max}`,
     );
   }
+
   return value;
 }
 
@@ -677,6 +691,7 @@ function invokesCommand(command: string, names: string[]): boolean {
   const escaped = names
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
     .join("|");
+
   return new RegExp(`(^|[\\s;&|()])(${escaped})(\\s|$)`).test(command);
 }
 
@@ -703,5 +718,6 @@ function stripHereDocBodies(command: string): string {
       marker = match[1];
     }
   }
+
   return kept.join("\n");
 }

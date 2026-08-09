@@ -25,7 +25,8 @@ interface TabsProps extends Omit<TabsPrimitive.Root.Props, "className"> {
 }
 
 interface TabsListProps
-  extends Omit<TabsPrimitive.List.Props, "className">,
+  extends
+    Omit<TabsPrimitive.List.Props, "className">,
     VariantProps<typeof tabsListVariants> {
   className?: string;
 }
@@ -34,8 +35,10 @@ interface TabsTriggerProps extends Omit<TabsPrimitive.Tab.Props, "className"> {
   className?: string;
 }
 
-interface TabsContentProps
-  extends Omit<TabsPrimitive.Panel.Props, "className"> {
+interface TabsContentProps extends Omit<
+  TabsPrimitive.Panel.Props,
+  "className"
+> {
   className?: string;
 }
 
@@ -58,7 +61,7 @@ function TabsList({ className, variant = "default", ...props }: TabsListProps) {
     <TabsPrimitive.List
       data-slot="tabs-list"
       data-variant={variant}
-      className={cn(tabsListVariants({ variant }), className)}
+      className={cn(tabsListVariants({ variant: variant }), className)}
       {...props}
     />
   );

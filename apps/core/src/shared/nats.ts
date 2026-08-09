@@ -132,6 +132,7 @@ export async function connectNats(options: {
   const connection = useWebSocket
     ? await connectWebSocket(connectOptions)
     : await connectTcp(connectOptions);
+
   return connection as unknown as NatsConnection;
 }
 
@@ -196,6 +197,7 @@ export class LiveNatsPublisher implements NatsPublisher {
         throw err;
       });
     }
+
     return this.connectionPromise;
   }
 
@@ -213,7 +215,7 @@ export class LiveNatsPublisher implements NatsPublisher {
       const event = {
         type: "stream",
         headers: this.headers,
-        data,
+        data: data,
         sequence: this.sequence,
       };
       // Core publish: fire-and-forget at core-NATS speed for live subscribers,
@@ -272,6 +274,7 @@ export async function ensureResponseStream(
         await jsm.streams.info(RESPONSE_STREAM_NAME);
         // Exists: best-effort sync of the mutable retention knobs.
         await jsm.streams.update(RESPONSE_STREAM_NAME, config).catch(() => {});
+
         return;
       } catch {
         // Not found: create it below.
@@ -293,6 +296,7 @@ export async function ensureResponseStream(
       throw err;
     });
   }
+
   return ensureStreamPromise;
 }
 
@@ -324,6 +328,7 @@ export async function ensureObservabilityStream(
         await jsm.streams
           .update(OBSERVABILITY_STREAM_NAME, config)
           .catch(() => {});
+
         return;
       } catch {
         // Not found: create it below.
@@ -344,6 +349,7 @@ export async function ensureObservabilityStream(
       throw err;
     });
   }
+
   return ensureObservabilityStreamPromise;
 }
 
@@ -373,6 +379,7 @@ export async function readObservabilityStream(options: {
     filterSubjects: subject,
     ...consumerStartPolicy(undefined, options.startTime),
   });
+
   return consumer.consume();
 }
 
@@ -438,6 +445,7 @@ export async function readConversationStream(options: {
     filterSubjects: subject,
     ...consumerStartPolicy(options.startSequence, options.startTime),
   });
+
   return consumer.consume();
 }
 
@@ -462,6 +470,7 @@ export async function conversationBufferedCount(options: {
     const info = await jsm.streams.info(RESPONSE_STREAM_NAME, {
       subjects_filter: subject,
     });
+
     return (
       (info.state.subjects as Record<string, number> | undefined)?.[subject] ??
       0
@@ -488,6 +497,7 @@ export async function conversationLastSequence(options: {
         options.conversationKey,
       ),
     });
+
     return message.seq;
   } catch {
     return null;
@@ -555,6 +565,7 @@ export async function retainedMessageSubject(
     const message = await jsm.streams.getMessage(RESPONSE_STREAM_NAME, {
       seq: sequence,
     });
+
     return message.subject;
   } catch {
     return null;
@@ -582,6 +593,7 @@ export function consumerStartPolicy(
       opt_start_time: startTime,
     };
   }
+
   return {};
 }
 

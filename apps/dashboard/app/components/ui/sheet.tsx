@@ -6,25 +6,33 @@ import * as React from "react";
 
 import { cn } from "@/app/lib/utils";
 
-interface SheetOverlayProps
-  extends Omit<SheetPrimitive.Backdrop.Props, "className"> {
+interface SheetOverlayProps extends Omit<
+  SheetPrimitive.Backdrop.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface SheetContentProps
-  extends Omit<SheetPrimitive.Popup.Props, "className"> {
+interface SheetContentProps extends Omit<
+  SheetPrimitive.Popup.Props,
+  "className"
+> {
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
   showCloseButton?: boolean;
 }
 
-interface SheetTitleProps
-  extends Omit<SheetPrimitive.Title.Props, "className"> {
+interface SheetTitleProps extends Omit<
+  SheetPrimitive.Title.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface SheetDescriptionProps
-  extends Omit<SheetPrimitive.Description.Props, "className"> {
+interface SheetDescriptionProps extends Omit<
+  SheetPrimitive.Description.Props,
+  "className"
+> {
   className?: string;
 }
 
