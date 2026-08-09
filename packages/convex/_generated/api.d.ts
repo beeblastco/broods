@@ -91,7 +91,6 @@ import type * as sandboxSnapshots from "../sandboxSnapshots.js";
 import type * as skills from "../skills.js";
 import type * as skillsPublic from "../skillsPublic.js";
 import type * as stripe from "../stripe.js";
-import type * as stripeHttp from "../stripeHttp.js";
 import type * as toolService from "../toolService.js";
 import type * as usage from "../usage.js";
 import type * as user from "../user.js";
@@ -192,7 +191,6 @@ declare const fullApi: ApiFromModules<{
   skills: typeof skills;
   skillsPublic: typeof skillsPublic;
   stripe: typeof stripe;
-  stripeHttp: typeof stripeHttp;
   toolService: typeof toolService;
   usage: typeof usage;
   user: typeof user;

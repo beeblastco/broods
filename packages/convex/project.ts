@@ -274,36 +274,6 @@ export const list = query({
   },
 });
 
-/**
- * Lists the caller's projects with lightweight preview fields. Soft-auth like
- * `list`: returns [] when no auth user is resolved yet so the first-login gap
- * does not crash the gallery.
- */
-export const listWithPreview = query({
-  args: {},
-  returns: v.array(
-    v.object({
-      _id: v.id("projects"),
-      name: v.string(),
-      canvas: v.null(),
-      deployedAgentCount: v.number(),
-    }),
-  ),
-  handler: async (ctx) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) return [];
-
-    const projects = await listProjects(ctx, authUser.id);
-
-    return projects.map((p) => ({
-      _id: p._id,
-      name: p.name,
-      canvas: null,
-      deployedAgentCount: 0,
-    }));
-  },
-});
-
 export const getById = query({
   args: { projectId: v.id("projects") },
   returns: v.union(v.null(), projectDoc),
