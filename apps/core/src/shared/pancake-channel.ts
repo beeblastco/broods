@@ -80,24 +80,25 @@ export function createPancakeChannel(
   return {
     name: "pancake",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return req.method === "POST";
     },
 
     // Pancake sends no signature header; the webhook URL carries the secret as
     // a ?secret= query parameter instead.
-    authenticate(req) {
+    authenticate: function(req) {
       const provided = new URLSearchParams(req.rawQueryString).get("secret");
+
       return (
         Boolean(provided) && timingSafeStringEqual(provided!, webhookSecret)
       );
     },
 
-    parse(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
       return parsePancakeWebhook(req, pageId);
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createPancakeActions(
         pageAccessToken,
         toPancakeSource(msg.source),
@@ -134,11 +135,13 @@ function parsePancakeWebhook(
       eventType: payload.event_type,
       pageId: payload.page_id,
     });
+
     return { kind: "ignore" };
   }
 
   if (payload.page_id !== pageId) {
     logWarn("Pancake page not in allow list", { pageId: payload.page_id });
+
     return { kind: "ignore" };
   }
 
@@ -159,6 +162,7 @@ function parsePancakeWebhook(
       hasText: Boolean(text),
       messageType: message?.type,
     });
+
     return { kind: "ignore" };
   }
 
@@ -182,11 +186,12 @@ function parsePancakeWebhook(
       fromId: message.from?.id,
       pageCustomerId: message.from?.page_customer_id,
     });
+
     return { kind: "ignore" };
   }
 
   logInfo("Pancake webhook accepted", {
-    pageId,
+    pageId: pageId,
     conversationId: conversation.id,
     messageId: message.id,
     messageType: message.type,
@@ -201,7 +206,7 @@ function parsePancakeWebhook(
       eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventText(text)}`,
       conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
-      content: [{ type: "text", text }],
+      content: [{ type: "text", text: text }],
       identity: {
         workspaceRef: pageId,
         channelId: conversation.id,
@@ -213,7 +218,7 @@ function parsePancakeWebhook(
           : {}),
       },
       source: {
-        pageId,
+        pageId: pageId,
         conversationId: conversation.id,
         messageId: message.id,
         messageType: message.type,
@@ -235,10 +240,10 @@ export function createPancakeActions(
   return {
     sendText: (text) =>
       sendPancakeMessage(pageAccessToken, source, text, senderId),
-    async sendTyping() {
+    sendTyping: async function() {
       return;
     },
-    async reactToMessage() {
+    reactToMessage: async function() {
       return;
     },
   };
@@ -342,6 +347,7 @@ function normalizePancakeTagIds(value: unknown): string[] {
     if (typeof tag === "string" || typeof tag === "number") {
       return [String(tag)];
     }
+
     return [];
   });
 }
@@ -365,6 +371,7 @@ function parseJsonBody(
 
   try {
     const parsed = JSON.parse(text) as unknown;
+
     return parsed && typeof parsed === "object"
       ? (parsed as { success?: boolean; message?: string })
       : null;

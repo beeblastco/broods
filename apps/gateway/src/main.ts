@@ -71,11 +71,12 @@ if (import.meta.main) {
     port: Number(process.env.PORT ?? "3000"),
     hostname: process.env.BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0",
     idleTimeout: limits.idleTimeoutSeconds,
-    async fetch(request, server) {
+    fetch: async function(request, server) {
       try {
         return await route(request, server);
       } catch (error) {
         console.error("gateway request failed:", error);
+
         return json({ error: "Internal gateway error" }, { status: 500 });
       }
     },
@@ -129,6 +130,7 @@ if (import.meta.main) {
         );
         if (!ticket) {
           authFailureLimiter.allow(ip);
+
           return json(
             { error: "Invalid or expired terminal ticket" },
             { status: 401 },
@@ -136,7 +138,7 @@ if (import.meta.main) {
         }
 
         const upgraded = server.upgrade(request, {
-          data: { kind: "terminal", ticket } satisfies TerminalGatewayData,
+          data: { kind: "terminal", ticket: ticket } satisfies TerminalGatewayData,
         });
 
         return upgraded
@@ -157,6 +159,7 @@ if (import.meta.main) {
         const resolved = await resolveObservabilityScope(token, coreBaseUrls);
         if (!resolved) {
           authFailureLimiter.allow(ip);
+
           return json({ error: "Invalid WebSocket token" }, { status: 401 });
         }
         if (
@@ -179,7 +182,7 @@ if (import.meta.main) {
             kind: "observability",
             project: observabilityPath[1],
             env: observabilityPath[2],
-            token,
+            token: token,
             scope: resolved.scope,
           } satisfies ObservabilityGatewayData,
         });
@@ -202,6 +205,7 @@ if (import.meta.main) {
         const resolved = await resolveObservabilityScope(token, coreBaseUrls);
         if (!resolved) {
           authFailureLimiter.allow(ip);
+
           return json({ error: "Invalid WebSocket token" }, { status: 401 });
         }
         // Bind the socket to the key's own endpoint scope: attach never posts
@@ -226,7 +230,7 @@ if (import.meta.main) {
           data: {
             kind: "agent-test",
             corePath: url.pathname.slice(0, -"/ws".length),
-            token,
+            token: token,
             coreBaseUrl: resolved.coreBaseUrl,
             accountId: resolved.scope.accountId,
           } satisfies AgentTestGatewayData,
@@ -260,7 +264,7 @@ if (import.meta.main) {
       backpressureLimit: limits.backpressureBytes,
       closeOnBackpressureLimit: true,
       idleTimeout: limits.idleTimeoutSeconds,
-      open(socket) {
+      open: function(socket) {
         activeSocketCount += 1;
         if (socket.data.kind === "observability")
           openObservabilitySocket(
@@ -271,12 +275,13 @@ if (import.meta.main) {
             socket as Bun.ServerWebSocket<TerminalGatewayData>,
           );
       },
-      async message(socket, rawMessage) {
+      message: async function(socket, rawMessage) {
         if (socket.data.kind === "terminal") {
           relayTerminalInput(
             socket as Bun.ServerWebSocket<TerminalGatewayData>,
             rawMessage,
           );
+
           return;
         }
 
@@ -286,6 +291,7 @@ if (import.meta.main) {
             rawMessage,
             getNatsConnection,
           );
+
           return;
         }
 
@@ -296,18 +302,20 @@ if (import.meta.main) {
           getNatsConnection,
         );
       },
-      close(socket) {
+      close: function(socket) {
         activeSocketCount = Math.max(0, activeSocketCount - 1);
         if (socket.data.kind === "terminal") {
           cleanupTerminalSocket(
             socket as Bun.ServerWebSocket<TerminalGatewayData>,
           );
+
           return;
         }
         if (socket.data.kind === "observability") {
           cleanupObservabilitySocket(
             socket as Bun.ServerWebSocket<ObservabilityGatewayData>,
           );
+
           return;
         }
 
@@ -335,6 +343,7 @@ function getNatsConnection(): Promise<NatsConnection> {
         void connection.closed().then(() => {
           if (natsConnectionPromise === pending) natsConnectionPromise = null;
         });
+
         return connection;
       })
       .catch((error) => {

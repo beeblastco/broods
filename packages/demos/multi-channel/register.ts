@@ -35,6 +35,7 @@ async function rotateSlackConfigToken(
       `Slack token rotation failed: ${data.error ?? "missing tokens in response"}${details ? ` (${details})` : ""}`,
     );
   }
+
   return { token: data.token, refreshToken: data.refresh_token };
 }
 
@@ -55,6 +56,7 @@ async function persistRotatedSlackTokens(
   const file = Bun.file(envPath);
   if (!(await file.exists())) {
     console.warn(`Could not persist rotated tokens: ${envPath} not found`);
+
     return;
   }
   const original = await file.text();
@@ -66,6 +68,7 @@ async function persistRotatedSlackTokens(
   );
   if (updated === original) {
     console.warn(`Could not persist rotated tokens to ${envPath}`);
+
     return;
   }
   await Bun.write(envPath, updated);
@@ -76,6 +79,7 @@ function upsertEnvValue(source: string, key: string, value: string): string {
   const line = `${key}="${value}"`;
   const pattern = new RegExp(`^${key}=.*$`, "m");
   if (pattern.test(source)) return source.replace(pattern, line);
+
   return `${source.trimEnd()}\n${line}\n`;
 }
 
@@ -127,12 +131,14 @@ function createGitHubAppJwt(appId: string, privateKey: string): string {
     .update(unsigned)
     .end()
     .sign(normalizeGitHubPrivateKey(privateKey));
+
   return `${unsigned}.${base64UrlEncode(signature)}`;
 }
 
 function normalizeGitHubPrivateKey(value: string): string {
   const cleaned = cleanEnvToken(value).replace(/\\n/g, "\n");
   if (cleaned.includes("-----BEGIN")) return cleaned;
+
   return Buffer.from(cleaned, "base64").toString("utf8");
 }
 
@@ -335,11 +341,11 @@ if (githubRef) {
 
   if (appId && privateKey && webhookSecret) {
     await updateGitHubAppWebhook({
-      appId,
-      privateKey,
-      webhookSecret,
+      appId: appId,
+      privateKey: privateKey,
+      webhookSecret: webhookSecret,
       webhookUrl: githubUrl,
-      apiUrl,
+      apiUrl: apiUrl,
     });
     console.log(`Registered GitHub App webhook: ${githubUrl}`);
     console.log(

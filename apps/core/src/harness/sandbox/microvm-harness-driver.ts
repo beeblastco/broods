@@ -69,6 +69,7 @@ export function createMicrovmHarnessDriver(
       "MicroVM Harness driver requires the core MicroVM executor",
     );
   }
+
   return new MicrovmHarnessDriver(options, executor);
 }
 
@@ -108,6 +109,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
       });
       options.abortSignal?.throwIfAborted();
+
       return {
         session: this.#session(reservation),
         isFirstCreate: reservation.isFirstCreate,
@@ -131,6 +133,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
     options.abortSignal?.throwIfAborted();
+
     return this.#session(reservation);
   }
 
@@ -148,7 +151,7 @@ export class MicrovmHarnessDriver implements BroodsSandboxDriver {
     reservation: Omit<MicrovmHarnessReservation, "isFirstCreate">,
   ): BroodsSandboxDriverSession {
     return new MicrovmHarnessSession({
-      reservation,
+      reservation: reservation,
       executor: this.#executor,
       reservationKey: this.#options.reservationKey,
       defaultWorkingDirectory:
@@ -227,7 +230,8 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
       readHarnessStream(process.stderr),
       process.wait(),
     ]);
-    return { exitCode: result.exitCode, stdout, stderr };
+
+    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
   }
 
   async spawnCommand(
@@ -254,6 +258,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     );
     if (result.exitCode === 44) return null;
     if (result.exitCode !== 0) throw microvmError("read file", result);
+
     return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
   }
 
@@ -277,6 +282,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
     if (options.protocol !== undefined && options.protocol !== "ws") {
       throw new Error("MicroVM Harness proxy supports WebSocket ports only");
     }
+
     return this.#proxy.getPortUrl(options.port);
   }
 

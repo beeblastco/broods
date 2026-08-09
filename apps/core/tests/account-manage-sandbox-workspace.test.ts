@@ -48,7 +48,7 @@ const fetchMock = mock(
     const body = init?.body
       ? (JSON.parse(String(init.body)) as Record<string, unknown>)
       : undefined;
-    fetchCalls.push({ method, path, body });
+    fetchCalls.push({ method: method, path: path, body: body });
 
     if (method === "GET" && path === "/v1/sandboxes/sbx_handler") {
       return fetchResponse({
@@ -64,6 +64,7 @@ const fetchMock = mock(
         stderr: "stderr text",
       });
     }
+
     return fetchResponse({ error: { code: "not_found", message: path } }, 404);
   },
 );
@@ -106,6 +107,7 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
       };
     case "CreateMicrovmShellAuthToken":
       if (microvmShellTokenError) throw new Error(microvmShellTokenError);
+
       return { authToken: { "X-aws-proxy-auth": "jwe-shell-token" } };
     default:
       return {};
@@ -267,7 +269,7 @@ describe("account-manage sandbox endpoints", () => {
     const created = await seedSandbox({
       provider: "sandbox",
       persistent: true,
-      options: { reservationKey },
+      options: { reservationKey: reservationKey },
     });
 
     const response = await handler(
@@ -276,7 +278,7 @@ describe("account-manage sandbox endpoints", () => {
         `/v1/sandboxes/${created.sandboxId}/exec`,
         { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
         {
-          reservationKey,
+          reservationKey: reservationKey,
           code: "exit 7",
           timeoutSeconds: 9999,
           outputLimitBytes: 999999,
@@ -311,7 +313,7 @@ describe("account-manage sandbox endpoints", () => {
     const created = await seedSandbox({
       provider: "sandbox",
       persistent: true,
-      options: { reservationKey },
+      options: { reservationKey: reservationKey },
     });
 
     const response = await handler(
@@ -319,7 +321,7 @@ describe("account-manage sandbox endpoints", () => {
         "POST",
         `/v1/sandboxes/${created.sandboxId}/terminal`,
         { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey },
+        { reservationKey: reservationKey },
       ),
     );
 
@@ -347,7 +349,7 @@ describe("account-manage sandbox endpoints", () => {
     const created = await seedSandbox({
       provider: "lambda",
       persistent: true,
-      options: { reservationKey },
+      options: { reservationKey: reservationKey },
     });
 
     const response = await handler(
@@ -355,7 +357,7 @@ describe("account-manage sandbox endpoints", () => {
         "POST",
         `/v1/sandboxes/${created.sandboxId}/terminal`,
         { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey },
+        { reservationKey: reservationKey },
       ),
     );
 
@@ -384,7 +386,7 @@ describe("account-manage sandbox endpoints", () => {
     const created = await seedSandbox({
       provider: "lambda",
       persistent: true,
-      options: { reservationKey },
+      options: { reservationKey: reservationKey },
     });
 
     const response = await handler(
@@ -392,7 +394,7 @@ describe("account-manage sandbox endpoints", () => {
         "POST",
         `/v1/sandboxes/${created.sandboxId}/terminal`,
         { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey },
+        { reservationKey: reservationKey },
       ),
     );
 
@@ -409,7 +411,7 @@ describe("account-manage sandbox endpoints", () => {
       provider: "e2b",
       persistent: true,
       network: { mode: "allow-all" },
-      options: { reservationKey },
+      options: { reservationKey: reservationKey },
     });
 
     const response = await handler(
@@ -417,7 +419,7 @@ describe("account-manage sandbox endpoints", () => {
         "POST",
         `/v1/sandboxes/${created.sandboxId}/terminal`,
         { authorization: "Bearer service-secret", "x-account-id": ACCOUNT_ID },
-        { reservationKey },
+        { reservationKey: reservationKey },
       ),
     );
 
@@ -484,14 +486,14 @@ async function seedSandbox(
 
   return await storage.sandboxConfigs.create(ACCOUNT_ID, {
     name: "persistent",
-    config,
+    config: config,
   });
 }
 
 function fetchResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
-    status,
+    status: status,
     text: async () => JSON.stringify(payload),
   } as unknown as Response;
 }
@@ -516,48 +518,48 @@ function createFakeStorage() {
 
   return {
     accounts: {
-      async getById() {
+      getById: async function() {
         return fakeAccount();
       },
-      async getBySecretHash() {
+      getBySecretHash: async function() {
         return fakeAccount();
       },
-      async list() {
+      list: async function() {
         return [fakeAccount()];
       },
-      async create() {
+      create: async function() {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      async update() {
+      update: async function() {
         return fakeAccount();
       },
-      async rotateSecret() {
+      rotateSecret: async function() {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      async remove() {
+      remove: async function() {
         return true;
       },
     },
     agents: {} as never,
     agentDeployments: {
-      async getByApiKeyHash() {
+      getByApiKeyHash: async function() {
         return null;
       },
     },
     crons: {} as never,
     sandboxConfigs: {
-      async getById(_accountId: string, id: string) {
+      getById: async function(_accountId: string, id: string) {
         return sandboxes.get(id) ?? null;
       },
-      async list() {
+      list: async function() {
         return [...sandboxes.values()];
       },
-      async create(accountId: string, input: unknown) {
+      create: async function(accountId: string, input: unknown) {
         const n = normalizeCreateSandboxConfigInput(input as never);
         const sandboxId = `sb_${++counter}`;
         const record: SandboxConfigRecord = {
-          accountId,
-          sandboxId,
+          accountId: accountId,
+          sandboxId: sandboxId,
           name: n.name,
           ...(n.description ? { description: n.description } : {}),
           config: n.config,
@@ -565,9 +567,10 @@ function createFakeStorage() {
           updatedAt: stamp,
         };
         sandboxes.set(sandboxId, record);
+
         return record;
       },
-      async update(_accountId: string, id: string, patch: unknown) {
+      update: async function(_accountId: string, id: string, patch: unknown) {
         const existing = sandboxes.get(id);
         if (!existing) return null;
         const n = normalizeUpdateSandboxConfigInput(
@@ -584,30 +587,32 @@ function createFakeStorage() {
         else if (n.description !== undefined)
           record.description = n.description;
         sandboxes.set(id, record);
+
         return record;
       },
-      async remove(_accountId: string, id: string) {
+      remove: async function(_accountId: string, id: string) {
         return sandboxes.delete(id);
       },
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         const n = sandboxes.size;
         sandboxes.clear();
+
         return n;
       },
     },
     workspaceConfigs: {
-      async getById(_accountId: string, id: string) {
+      getById: async function(_accountId: string, id: string) {
         return workspaces.get(id) ?? null;
       },
-      async list() {
+      list: async function() {
         return [...workspaces.values()];
       },
-      async create(accountId: string, input: unknown) {
+      create: async function(accountId: string, input: unknown) {
         const n = normalizeCreateWorkspaceConfigInput(input as never);
         const workspaceId = `ws_${++counter}`;
         const record: WorkspaceConfigRecord = {
-          accountId,
-          workspaceId,
+          accountId: accountId,
+          workspaceId: workspaceId,
           name: n.name,
           ...(n.description ? { description: n.description } : {}),
           config: n.config,
@@ -615,9 +620,10 @@ function createFakeStorage() {
           updatedAt: stamp,
         };
         workspaces.set(workspaceId, record);
+
         return record;
       },
-      async update(_accountId: string, id: string, patch: unknown) {
+      update: async function(_accountId: string, id: string, patch: unknown) {
         const existing = workspaces.get(id);
         if (!existing) return null;
         const n = normalizeUpdateWorkspaceConfigInput(
@@ -634,14 +640,16 @@ function createFakeStorage() {
         else if (n.description !== undefined)
           record.description = n.description;
         workspaces.set(id, record);
+
         return record;
       },
-      async remove(_accountId: string, id: string) {
+      remove: async function(_accountId: string, id: string) {
         return workspaces.delete(id);
       },
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         const n = workspaces.size;
         workspaces.clear();
+
         return n;
       },
     },

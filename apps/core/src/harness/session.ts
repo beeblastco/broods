@@ -313,6 +313,7 @@ export class Session {
     }
 
     await this.persistModelMessages(persistedMessages);
+
     return ephemeralSystem;
   }
 
@@ -375,7 +376,7 @@ export class Session {
     const compactionStartedMs = Date.now();
     const compactionSummary = await compactSessionContext({
       conversationKey: this.conversationKey,
-      system,
+      system: system,
       // Compaction feeds these to a model, so envelope fields must not leak.
       messages: stripEnvelopeFieldsFromMessages(messages),
       agentConfig: this.agentConfig,
@@ -388,6 +389,7 @@ export class Session {
           error: error instanceof Error ? error.message : String(error),
         },
       );
+
       return null;
     });
     const compactionEndedMs = Date.now();
@@ -413,7 +415,7 @@ export class Session {
         ephemeralSystem: ephemeralSystem,
         systemContextSnapshot: compactedSystemContextSnapshot,
         timings: {
-          prepareStartedMs,
+          prepareStartedMs: prepareStartedMs,
           prepareEndedMs: Date.now(),
           compaction: {
             startedMs: compactionStartedMs,
@@ -433,11 +435,11 @@ export class Session {
     });
 
     return {
-      messages,
-      system,
-      ephemeralSystem,
-      systemContextSnapshot,
-      timings: { prepareStartedMs, prepareEndedMs: Date.now() },
+      messages: messages,
+      system: system,
+      ephemeralSystem: ephemeralSystem,
+      systemContextSnapshot: systemContextSnapshot,
+      timings: { prepareStartedMs: prepareStartedMs, prepareEndedMs: Date.now() },
     };
   }
 
@@ -446,6 +448,7 @@ export class Session {
     ephemeralSystem: SystemModelMessage[] = [],
   ): Promise<TurnContextSnapshot> {
     await this.ensureResolvedRuntime();
+
     // Ephemeral child turns are in-memory only, but they still need the same
     // source `ephemeralSystem` list so system prompt refreshes preserve it.
     return {
@@ -515,6 +518,7 @@ export class Session {
         : undefined,
     );
     this.loadedSkillPrompts.push(loaded.prompt);
+
     return loaded;
   }
 
@@ -542,14 +546,16 @@ export class Session {
           this.delivery?.kind === "channel"
             ? this.delivery.channelName
             : undefined,
-        channelScopeKey,
+        channelScopeKey: channelScopeKey,
         conversationKey: conversationScopeKey,
         workspaceScope: this.channelWorkspaceScope(),
       },
     ).then((resolved) => {
       this.resolvedRuntime = resolved;
+
       return resolved;
     });
+
     return this.resolvedRuntimePromise;
   }
 
@@ -561,6 +567,7 @@ export class Session {
     const workspaceScope = isPlainObject(config)
       ? config.workspaceScope
       : undefined;
+
     return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
   }
 
@@ -656,6 +663,7 @@ export class Session {
         event: event,
       });
     }
+
     return createdAt;
   }
 
@@ -693,6 +701,7 @@ export class Session {
   private nextCreatedAt(): string {
     const sequence = String(this.messageSequence).padStart(4, "0");
     this.messageSequence += 1;
+
     return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
   }
 
@@ -715,9 +724,10 @@ export class Session {
       }
       const content = await this.loadMemoryFile(workspace);
       if (content != null) {
-        memoryFiles.push({ workspace, content });
+        memoryFiles.push({ workspace: workspace, content: content });
       }
     }
+
     return memoryFiles;
   }
 
@@ -744,7 +754,7 @@ export class Session {
         logError("Failed to load the memory index for session prompt", {
           conversationKey: this.conversationKey,
           workspace: workspace.name,
-          key,
+          key: key,
           error: error instanceof Error ? error.message : String(error),
         });
         throw error;
@@ -755,7 +765,7 @@ export class Session {
       logInfo("No memory index found for session prompt", {
         conversationKey: this.conversationKey,
         workspace: workspace.name,
-        key,
+        key: key,
       });
       this.hasLoggedMissingMemoryFile = true;
     }
@@ -859,6 +869,7 @@ export function stripEnvelopeFieldsFromMessages(
       createdAt: _createdAt,
       ...rest
     } = message as ModelMessage & { metadata?: unknown; createdAt?: string };
+
     return rest as ModelMessage;
   });
 }
@@ -871,6 +882,7 @@ function formatMemorySystemPrompt(
     memoryFiles[0]?.workspace.name === "default"
   ) {
     const normalizedContent = memoryFiles[0].content.trimEnd();
+
     return normalizedContent.length > 0
       ? `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n${normalizedContent}`
       : `Current memory index (${MEMORY_INDEX_PATH}) for this conversation:\n\n(the index exists but is empty)`;
@@ -879,6 +891,7 @@ function formatMemorySystemPrompt(
   const sections = memoryFiles
     .map(({ workspace, content }) => {
       const normalizedContent = content.trimEnd();
+
       return `## ${workspace.name}\n\n${normalizedContent.length > 0 ? normalizedContent : "(the index exists but is empty)"}`;
     })
     .join("\n\n");
@@ -915,6 +928,7 @@ function formatWorkspaceHarnessSystemPrompt(
     .map((workspace, index) => {
       const readOnlyTag =
         workspace.sandbox == null ? " [read-only: read, glob]" : "";
+
       return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
     })
     .join("\n");
@@ -979,6 +993,7 @@ function formatSubagentSystemPrompt(subagents: SubagentMetadata[]): string {
         .map((agent) => {
           const description =
             agent.description?.trim() || "No description provided.";
+
           return `- ${agent.agentId} (${agent.name}): ${description}`;
         })
         .join("\n")
@@ -1027,6 +1042,7 @@ export function createStoredEventFromModelMessage(
       const { metadata, ...userMessage } = message as UserModelMessage & {
         metadata?: unknown;
       };
+
       return toStoredConversationEvent(
         sanitizeUserMessage(userMessage),
         sourceEventId,
@@ -1063,9 +1079,9 @@ function toStoredConversationEvent<
   return message
     ? {
         version: 1,
-        sourceEventId,
-        ...(metadata !== undefined ? { metadata } : {}),
-        message,
+        sourceEventId: sourceEventId,
+        ...(metadata !== undefined ? { metadata: metadata } : {}),
+        message: message,
       }
     : null;
 }
@@ -1086,8 +1102,9 @@ function projectEntriesToMessages(
         } = {
           ...event.message,
           ...(event.metadata !== undefined ? { metadata: event.metadata } : {}),
-          createdAt,
+          createdAt: createdAt,
         };
+
         return [projected];
       }
       case "assistant":
@@ -1133,6 +1150,7 @@ function projectActiveConversationEntries(
   entries: StoredConversationEntry[],
 ): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
   return latestCompactionIndex === -1
     ? entries
     : entries.slice(latestCompactionIndex + 1);
@@ -1178,6 +1196,7 @@ function entriesSinceLatestCompactionSummary(
   entries: StoredConversationEntry[],
 ): StoredConversationEntry[] {
   const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
   return latestCompactionIndex === -1
     ? entries
     : entries.slice(latestCompactionIndex);
@@ -1207,7 +1226,8 @@ function sanitizeUserMessage(
   }
 
   const content = message.content.filter((part) => part.type === "text");
-  return content.length > 0 ? { ...message, content } : null;
+
+  return content.length > 0 ? { ...message, content: content } : null;
 }
 
 /**
@@ -1222,7 +1242,7 @@ function sanitizeAssistantMessage(
 
   const content = message.content.filter(isPersistedAssistantContentPart);
 
-  return content.length > 0 ? { ...message, content } : null;
+  return content.length > 0 ? { ...message, content: content } : null;
 }
 
 /**
@@ -1233,7 +1253,7 @@ function sanitizeToolMessage(
 ): ToolModelMessage | null {
   const content = message.content.filter(isPersistedToolContentPart);
 
-  return content.length > 0 ? { ...message, content } : null;
+  return content.length > 0 ? { ...message, content: content } : null;
 }
 
 /**
@@ -1272,5 +1292,6 @@ function isToolApprovalResponseMessage(
 function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
   if (!isPlainObject(value)) return false;
   if (value.level === "channel") return value.alias === undefined;
+
   return value.level === "conversation" && typeof value.alias === "string";
 }

@@ -146,6 +146,7 @@ export function normalizeUpdateAccountHookInput(
   if (input.bundleStorageKey !== undefined)
     patch.bundleStorageKey = normalizeStorageKey(input.bundleStorageKey);
   if (input.sha256 !== undefined) patch.sha256 = normalizeSha256(input.sha256);
+
   return patch;
 }
 
@@ -185,6 +186,7 @@ function normalizeHookName(value: unknown): string {
       "hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
     );
   }
+
   return name;
 }
 
@@ -192,6 +194,7 @@ function normalizeDescription(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("hook.description must be a non-empty string");
   }
+
   return value.trim();
 }
 
@@ -213,6 +216,7 @@ function normalizeEvents(value: unknown): AgentHookEventName[] {
       events.push(event as AgentHookEventName);
     }
   }
+
   return events;
 }
 
@@ -231,6 +235,7 @@ function normalizeBundle(value: unknown): string {
       "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
     );
   }
+
   return value;
 }
 
@@ -238,6 +243,7 @@ function normalizeStorageKey(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("hook.bundleStorageKey must be a non-empty string");
   }
+
   return value;
 }
 
@@ -245,6 +251,7 @@ function normalizeSha256(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
     throw new Error("hook.sha256 must be a hex sha256");
   }
+
   return value;
 }
 

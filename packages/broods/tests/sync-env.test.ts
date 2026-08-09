@@ -9,6 +9,7 @@ function clientWith(handler: (url: string, init: RequestInit) => Response) {
     fetch: async (input, init) => {
       const url = String(input);
       calls.push({ url: url, method: (init?.method ?? "GET").toUpperCase() });
+
       return handler(url, init ?? {});
     },
   });

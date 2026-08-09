@@ -15,6 +15,7 @@ const e2bRunMock = mock(
         disconnect: e2bDisconnectMock,
       };
     }
+
     return {
       exitCode: 0,
       stdout: "ok\n",
@@ -59,7 +60,7 @@ const vercelStopMock = mock(async () => {});
 const vercelDeleteMock = mock(async () => {});
 function vercelSandbox(name = "vercel-sandbox") {
   return {
-    name,
+    name: name,
     runCommand: vercelRunCommandMock,
     stop: vercelStopMock,
     delete: vercelDeleteMock,
@@ -71,11 +72,13 @@ const vercelCreateMock = mock(async (_options: Record<string, unknown>) =>
 const vercelGetMock = mock(async (options: Record<string, unknown>) => {
   const sandbox = vercelSandbox(String(options.name ?? "stored"));
   if (typeof options.onResume === "function") await options.onResume(sandbox);
+
   return sandbox;
 });
 const vercelGetOrCreateMock = mock(async (options: Record<string, unknown>) => {
   const sandbox = vercelSandbox(String(options.name ?? "created"));
   if (typeof options.onCreate === "function") await options.onCreate(sandbox);
+
   return sandbox;
 });
 function vercelCommandIncludes(text: string): boolean {
@@ -92,6 +95,7 @@ const getSandboxExternalIdMock = mock(
 const claimSandboxInstanceMock = mock(
   async (_provider: string, _key: string, externalId: string) => {
     storedSandboxExternalId = externalId;
+
     return true;
   },
 );
@@ -147,8 +151,10 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
       if (microvmGetResponses.length > 0) {
         const next = microvmGetResponses.shift();
         if (next instanceof Error) throw next;
+
         return next;
       }
+
       return {
         microvmId: "microvm-1",
         endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
@@ -211,6 +217,7 @@ const microvmRunInput = (): Record<string, unknown> => {
   const call = microvmSendMock.mock.calls.find(
     (c) => (c[0] as { _type?: string })?._type === "RunMicrovm",
   );
+
   return (call![0] as { input: Record<string, unknown> }).input;
 };
 mock.module("e2b", () => ({

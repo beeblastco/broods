@@ -72,6 +72,7 @@ export default function HomePage() {
             router.replace(
               `/${target.projectId}${segment ? `/${segment}` : ""}${query ? `?${query}` : ""}`,
             );
+
             return;
           }
         }

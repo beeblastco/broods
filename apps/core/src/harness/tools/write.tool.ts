@@ -26,6 +26,7 @@ interface WriteInput {
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {
@@ -51,7 +52,7 @@ Usage notes:
 - Prefer editing an existing file with the \`edit\` tool over overwriting it with \`write\`.
 - Always prefer this over \`bash\` redirection for creating files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const { file_path, content, workspace } = input as WriteInput;
         try {
           const ws = resolveWorkspace(context.workspaces, workspace);
@@ -81,6 +82,7 @@ Usage notes:
                 "Error: write failed",
             );
           }
+
           return toolText(result.stdout.trim());
         } catch (cause) {
           return toolError(

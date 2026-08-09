@@ -36,8 +36,8 @@ export function createTelegramChannel(
   apiUrl?: string,
 ): ChannelAdapter {
   const transport = new TelegramAdapter({
-    apiUrl,
-    botToken,
+    apiUrl: apiUrl,
+    botToken: botToken,
     secretToken: webhookSecret,
     mode: "webhook",
     logger: new ConsoleLogger("error").child("telegram"),
@@ -46,20 +46,22 @@ export function createTelegramChannel(
   return {
     name: "telegram",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return "x-telegram-bot-api-secret-token" in req.headers;
     },
 
-    authenticate(req) {
+    authenticate: function(req) {
       const secret = req.headers["x-telegram-bot-api-secret-token"];
       if (!verifyWebhookSecret(secret, webhookSecret)) {
         logWarn("Webhook secret verification failed");
+
         return false;
       }
+
       return true;
     },
 
-    parse(req): ChannelParseResult {
+    parse: function(req): ChannelParseResult {
       const update: TelegramUpdate = JSON.parse(req.body);
       const message = extractInboundMessage(update);
       if (!message?.text) {
@@ -68,6 +70,7 @@ export function createTelegramChannel(
 
       if (!allowedChatIds.has(message.chat.id)) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
+
         return { kind: "ignore" };
       }
 
@@ -101,11 +104,11 @@ export function createTelegramChannel(
       };
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       const source = toTelegramSource(msg.source);
 
       return {
-        async sendText(text) {
+        sendText: async function(text) {
           for (const chunk of splitTelegramRawText(text)) {
             await transport.postMessage(source.threadId, { markdown: chunk });
           }
@@ -125,6 +128,7 @@ export function createTelegramChannel(
                   fromFullStream(textStream),
                   options,
                 );
+
                 return result?.id ?? null;
               },
             }
@@ -142,6 +146,7 @@ function verifyWebhookSecret(
   const a = Buffer.from(header);
   const b = Buffer.from(secret);
   if (a.length !== b.length) return false;
+
   return timingSafeEqual(a, b);
 }
 
@@ -167,6 +172,7 @@ function splitTelegramRawText(text: string): string[] {
     remaining = remaining.slice(boundary).trim();
   }
   if (remaining) chunks.push(remaining);
+
   return chunks;
 }
 

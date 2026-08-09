@@ -56,6 +56,7 @@ function parseSkillMd(text: string): { name?: string; description?: string } {
   const fm = match[1];
   const name = fm.match(/^name:\s*(.+)$/m)?.[1]?.trim();
   const desc = fm.match(/^description:\s*(.+)$/m)?.[1]?.trim();
+
   return { name: name, description: desc };
 }
 
@@ -274,6 +275,7 @@ export function SkillFilesTab({
       .catch(() => {
         if (!cancelled) setSkillMeta(null);
       });
+
     return () => {
       cancelled = true;
     };
@@ -286,6 +288,7 @@ export function SkillFilesTab({
     const ext = f.name.includes(".")
       ? (f.name.split(".").pop()?.toLowerCase() ?? "")
       : "";
+
     return ext && !ALLOWED_EXTENSIONS.has(ext);
   });
 

@@ -116,40 +116,52 @@ async function main(): Promise<void> {
     case "--help":
     case "-h":
       console.log(HELP);
+
       return;
     case "--version":
     case "-v":
       console.log(VERSION);
+
       return;
     case "init":
       await init(args);
+
       return;
     case "login":
       await login(args);
+
       return;
     case "diff":
       await diff(args);
+
       return;
     case "deploy":
       await deploy(args);
+
       return;
     case "dev":
       await dev(args);
+
       return;
     case "env":
       await envCommand(args);
+
       return;
     case "stream":
       await streamLogs(args);
+
       return;
     case "logs":
       await logs(args);
+
       return;
     case "agent":
       await agentCommand(args);
+
       return;
     case "run":
       await run(args);
+
       return;
     default:
       throw new Error(`Unknown command: ${command}\n\n${HELP}`);
@@ -183,6 +195,7 @@ async function init(args: string[]): Promise<void> {
 async function login(args: string[]): Promise<void> {
   if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
     console.log("Usage: broods login [--dashboard-url <url>]");
+
     return;
   }
   const runtime = loadBroodsRuntimeConfig();
@@ -310,6 +323,7 @@ async function applyDeploymentKey(
   if (deployment.apiKey) {
     await writeEnvValue("BROODS_API_KEY", deployment.apiKey);
     console.log(`Wrote BROODS_API_KEY (${deployment.keyHint}) to .env.local`);
+
     return;
   }
 }
@@ -342,6 +356,7 @@ async function dev(args: string[]): Promise<void> {
     const start = performance.now();
     await syncDev(args);
     printReadyLine(performance.now() - start);
+
     return;
   }
 
@@ -369,6 +384,7 @@ async function dev(args: string[]): Promise<void> {
   const runSync = (): void => {
     if (syncing) {
       pending = true;
+
       return;
     }
     syncing = true;
@@ -688,6 +704,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     child.on("exit", (code, signal) => {
       if (code === 0) {
         resolvePromise();
+
         return;
       }
       reject(
@@ -797,6 +814,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   await applyDeploymentKey(result.deployment);
   printChannelEndpoints(channels, result);
   printSyncWarnings(result);
+
   return result;
 }
 
@@ -844,6 +862,7 @@ async function syncLocalEnvVars(
 ): Promise<void> {
   const present = collectEnvRefNames(manifest).filter((name) => {
     const value = process.env[name];
+
     return !name.startsWith("BROODS_") && value !== undefined && value !== "";
   });
   if (present.length === 0) return;
@@ -914,6 +933,7 @@ async function loadEnvSyncCache(): Promise<EnvSyncCache> {
   if (!text) return {};
   try {
     const parsed = JSON.parse(text) as unknown;
+
     return parsed && typeof parsed === "object" ? (parsed as EnvSyncCache) : {};
   } catch {
     return {};
@@ -1037,10 +1057,12 @@ async function envCommand(args: string[]): Promise<void> {
     );
     if (variables.length === 0) {
       console.log(`No environment variables set for ${target}.`);
+
       return;
     }
     console.log(`Environment variables for ${target} (values hidden):`);
     for (const variable of variables) console.log(`  ${variable.name}`);
+
     return;
   }
 
@@ -1053,10 +1075,12 @@ async function envCommand(args: string[]): Promise<void> {
     if (value === null) {
       console.error(`${name} is not set for ${target}`);
       process.exitCode = 1;
+
       return;
     }
     // Print the raw value to stdout so it can be piped/captured.
     console.log(value);
+
     return;
   }
 
@@ -1069,6 +1093,7 @@ async function envCommand(args: string[]): Promise<void> {
       name!,
     );
     console.log(`Removed ${name} from ${target}`);
+
     return;
   }
 
@@ -1101,7 +1126,8 @@ function resolveObservabilityCredentials(): {
     process.env.BROODS_BASE_URL ??
     process.env.BROODS_HOST ??
     DEFAULT_CORE_BASE_URL;
-  return { apiKey, baseUrl };
+
+  return { apiKey: apiKey, baseUrl: baseUrl };
 }
 
 /** Parse --errors / --level <lvl> into a LogLevel (defaults to WARN). */
@@ -1136,13 +1162,15 @@ async function resolveProjectEnv(
       "Environment name is required. Pass --env <name> or set BROODS_ENVIRONMENT in .env.local.",
     );
   }
-  return { project, environment };
+
+  return { project: project, environment: environment };
 }
 
 /** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
   const level = entry.level.padEnd(5);
+
   return `${time} ${level} ${entry.eventType} ${entry.message}`;
 }
 
@@ -1165,8 +1193,8 @@ async function streamLogs(args: string[]): Promise<void> {
 
   try {
     for await (const entry of subscribeObservabilityLogs(
-      { baseUrl, apiKey, project, environment },
-      { backfill: 0, minLevel, signal: controller.signal },
+      { baseUrl: baseUrl, apiKey: apiKey, project: project, environment: environment },
+      { backfill: 0, minLevel: minLevel, signal: controller.signal },
     )) {
       console.log(formatObservabilityEntry(entry));
     }
@@ -1203,8 +1231,8 @@ async function logs(args: string[]): Promise<void> {
 
   try {
     for await (const entry of subscribeObservabilityLogs(
-      { baseUrl, apiKey, project, environment },
-      { backfill: limit, minLevel, signal: controller.signal },
+      { baseUrl: baseUrl, apiKey: apiKey, project: project, environment: environment },
+      { backfill: limit, minLevel: minLevel, signal: controller.signal },
     )) {
       if (jsonMode) {
         console.log(JSON.stringify(entry));
@@ -1232,10 +1260,12 @@ async function agentCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
   if (subcommand === "list" || subcommand === "ls") {
     await agentList(args);
+
     return;
   }
   if (subcommand === "get") {
     await agentGet(args[1], args);
+
     return;
   }
   throw new Error("Usage: broods agent <list|get> [name]");
@@ -1270,7 +1300,7 @@ async function loadAgentsWithIds(args: string[]): Promise<{
       agentId: remote?.ids.agents[resource.name],
     }));
 
-  return { manifest, agents };
+  return { manifest: manifest, agents: agents };
 }
 
 async function agentList(args: string[]): Promise<void> {
@@ -1279,6 +1309,7 @@ async function agentList(args: string[]): Promise<void> {
     console.log(
       `No agents declared in ${manifest.project}/${manifest.environment}.`,
     );
+
     return;
   }
   console.log(`Agents in ${manifest.project}/${manifest.environment}:`);

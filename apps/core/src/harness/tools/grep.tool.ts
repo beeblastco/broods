@@ -31,6 +31,7 @@ interface GrepInput {
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {
@@ -79,7 +80,7 @@ Usage notes:
 - Filter files with the \`glob\` parameter (e.g. \`*.ts\`) and narrow the search root with \`path\`.
 - Prefer this over \`bash grep\`/\`rg\` for searching file contents.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const {
           pattern,
           path,
@@ -125,10 +126,12 @@ Usage notes:
                 "Error: ripgrep (rg) is not installed in this sandbox image, so content search is unavailable. Use the bash tool with `grep -r` instead.",
               );
             }
+
             return toolError(
               `${result.stderr}${result.stdout}`.trim() || "Error: grep failed",
             );
           }
+
           return toolText(result.stdout.trim() || "No matches found");
         } catch (cause) {
           return toolError(

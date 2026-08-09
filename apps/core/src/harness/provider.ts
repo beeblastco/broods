@@ -130,8 +130,8 @@ function resolveProviderModel(
   modelId: string,
 ): ResolvedModelProvider {
   return {
-    providerName,
-    provider,
+    providerName: providerName,
+    provider: provider,
     model: provider(modelId),
   };
 }
@@ -147,6 +147,7 @@ export const mergeSystemMessagesMiddleware: LanguageModelMiddleware = {
       (message) => message.role === "system",
     );
     if (systems.length <= 1) return params;
+
     return {
       ...params,
       prompt: [
@@ -182,7 +183,7 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
           LanguageModelV4StreamPart,
           LanguageModelV4StreamPart
         >({
-          transform(part, controller) {
+          transform: function(part, controller) {
             if (part.type === "reasoning-delta" || part.type === "text-delta") {
               const key = `${part.type}:${part.id}`;
               const previous = accumulated.get(key) ?? "";
@@ -194,9 +195,10 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
               chars[part.type] += delta.length;
               if (delta) {
                 controller.enqueue(
-                  delta === part.delta ? part : { ...part, delta },
+                  delta === part.delta ? part : { ...part, delta: delta },
                 );
               }
+
               return;
             }
 
@@ -214,10 +216,11 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
                     outputTokens: {
                       total: output.total,
                       text: output.total - reasoning,
-                      reasoning,
+                      reasoning: reasoning,
                     },
                   },
                 });
+
                 return;
               }
             }
@@ -250,8 +253,8 @@ function resolveOpenAICompatibleModel(
   });
 
   return {
-    providerName,
-    provider,
+    providerName: providerName,
+    provider: provider,
     model: wrapLanguageModel({
       model: provider(modelId),
       middleware: [
@@ -269,6 +272,7 @@ function requireModelProvider(
   if (!provider) {
     throw new Error("config.model.provider is required");
   }
+
   return provider;
 }
 
@@ -277,6 +281,7 @@ function requireModelId(agentConfig: AgentConfig): string {
   if (!modelId) {
     throw new Error("config.model.modelId is required");
   }
+
   return modelId;
 }
 
@@ -298,6 +303,7 @@ function requireProviderSettings(
         : "";
     throw new Error(`config.provider.custom.base_url is required${hint}`);
   }
+
   return providerConfig;
 }
 

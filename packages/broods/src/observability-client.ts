@@ -39,6 +39,7 @@ function buildObservabilityUrl(
   apiKey: string,
 ): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
+
   return (
     `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(environment)}/observability/ws` +
     `?token=${encodeURIComponent(apiKey)}`
@@ -49,6 +50,7 @@ function parseServerMessage(data: unknown): ObservabilityServerMessage | null {
   if (typeof data !== "string") return null;
   try {
     const value = JSON.parse(data) as ObservabilityServerMessage;
+
     return typeof value === "object" &&
       value !== null &&
       typeof (value as { type?: unknown }).type === "string"
@@ -63,6 +65,7 @@ function resolveWebSocket(): new (url: string) => WebSocket {
   const impl = (globalThis as { WebSocket?: new (url: string) => WebSocket })
     .WebSocket;
   if (!impl) throw new Error("WebSocket is not available in this environment.");
+
   return impl;
 }
 
@@ -147,14 +150,15 @@ async function* subscribeObservabilityLogsOnce(
   socket.onopen = (): void => {
     if (signal?.aborted) {
       cleanup();
+
       return;
     }
     const msg: ObservabilityClientMessage = {
       type: "subscribe",
       stream: "logs",
-      ...(backfill > 0 ? { backfill } : {}),
+      ...(backfill > 0 ? { backfill: backfill } : {}),
       ...(liveOnly ? { liveOnly: true } : {}),
-      ...(minLevel !== undefined ? { minLevel } : {}),
+      ...(minLevel !== undefined ? { minLevel: minLevel } : {}),
     };
     socket.send(JSON.stringify(msg));
   };

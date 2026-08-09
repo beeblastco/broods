@@ -50,7 +50,7 @@ function useCopy() {
     }
   }
 
-  return { copied, copy };
+  return { copied: copied, copy: copy };
 }
 
 /** Honeycomb progress: one hex cell per step — filled for the current, dimmed for the done, hollow for the rest. */

@@ -152,30 +152,32 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
   >();
 
   return {
-    acquisitions,
-    resumptions,
-    suspensions,
-    releases,
-    authRequests,
-    launchEnvs,
+    acquisitions: acquisitions,
+    resumptions: resumptions,
+    suspensions: suspensions,
+    releases: releases,
+    authRequests: authRequests,
+    launchEnvs: launchEnvs,
     value: {
-      async acquireHarnessReservation(request: unknown) {
+      acquireHarnessReservation: async function(request: unknown) {
         acquisitions.push(request);
         afterAcquire?.();
+
         return {
           microvmId: "microvm-1",
           endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
-          isFirstCreate,
+          isFirstCreate: isFirstCreate,
         };
       },
-      async resumeHarnessReservation(request: unknown) {
+      resumeHarnessReservation: async function(request: unknown) {
         resumptions.push(request);
+
         return {
           microvmId: "microvm-1",
           endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
         };
       },
-      async runHarnessCommand(request: {
+      runHarnessCommand: async function(request: {
         code: string;
         env?: Record<string, string>;
       }) {
@@ -189,6 +191,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
             stderr: encoder.encode("warning\n"),
             exitCode: 0,
           });
+
           return result();
         }
         if (request.code.includes("dd if=") && processRoot) {
@@ -198,6 +201,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
             : process?.stdout;
           const skip = Number(request.code.match(/ skip=(\d+)/)?.[1] ?? 0);
           const count = Number(request.code.match(/ count=(\d+)/)?.[1] ?? 0);
+
           return result(
             Buffer.from(
               stream?.slice(skip, skip + count) ?? new Uint8Array(),
@@ -206,6 +210,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
         }
         if (request.code.includes('echo "done $(cat') && processRoot) {
           const process = processes.get(processRoot);
+
           return result(process ? `done ${process.exitCode}\n` : "unknown\n");
         }
 
@@ -217,25 +222,29 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
             write[2]!,
             new Uint8Array(Buffer.from(write[1]!, "base64")),
           );
+
           return result();
         }
         const read = request.code.match(/if \[ -f '([^']+)' \]/);
         if (read) {
           const content = files.get(read[1]!);
+
           return content
             ? result(Buffer.from(content).toString("base64"))
             : result("", "", 44);
         }
+
         return result();
       },
-      async createHarnessAuthToken(microvmId: string, port: number) {
-        authRequests.push({ microvmId, port });
+      createHarnessAuthToken: async function(microvmId: string, port: number) {
+        authRequests.push({ microvmId: microvmId, port: port });
+
         return "secret-token";
       },
-      async suspend(request: unknown) {
+      suspend: async function(request: unknown) {
         suspensions.push(request);
       },
-      async release(request: unknown) {
+      release: async function(request: unknown) {
         releases.push(request);
       },
     },
@@ -243,5 +252,5 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
 }
 
 function result(stdout = "", stderr = "", exitCode = 0) {
-  return { stdout, stderr, exitCode };
+  return { stdout: stdout, stderr: stderr, exitCode: exitCode };
 }

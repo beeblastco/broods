@@ -13,7 +13,7 @@ export function coreRequest(
   }
 
   return {
-    method,
+    method: method,
     path: url.pathname,
     search: url.search.startsWith("?") ? url.search.slice(1) : url.search,
     query: url.searchParams,
@@ -42,7 +42,7 @@ export function testContext(): RequestContext {
   return {
     requestId: "request-id",
     deadlineMs: Date.now() + 60_000,
-    waitUntil() {},
+    waitUntil: function() {},
   };
 }
 

@@ -14,7 +14,7 @@ import type { Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 
 export const taskUsage: Storage["taskUsage"] = {
-  async record(input): Promise<void> {
+  record: async function(input): Promise<void> {
     try {
       await getConvexClient().mutation(internal.usage.recordTaskUsage, {
         accountId: input.accountId as any,

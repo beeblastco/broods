@@ -225,7 +225,7 @@ async function runChild(
   (child.stdio[3] as Writable).end(source);
   child.stdin.end(
     `${JSON.stringify({
-      expectedSha256,
+      expectedSha256: expectedSha256,
       toolName: options.toolName,
       input: options.input ?? {},
       config: options.config ?? {},
@@ -255,7 +255,7 @@ async function runChild(
 
   return {
     frames: frames.map(({ cpuUsec: _cpuUsec, ...frame }) => frame),
-    terminalCpuUsec,
-    exitCode,
+    terminalCpuUsec: terminalCpuUsec,
+    exitCode: exitCode,
   };
 }

@@ -74,6 +74,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
     context.workspaces,
     context.agentSandbox,
   );
+
   return {
     type: "object",
     properties: {
@@ -114,6 +115,7 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
 function description(context: SandboxToolContext): string {
   if (context.workspaces.length === 0) {
     const runtimes = runtimeDescription(context.agentSandbox);
+
     return `Executes a bash command in an ephemeral Linux sandbox (bash, python3, and node on PATH).
 
 Usage notes:
@@ -276,16 +278,16 @@ async function dispatchBackground(
   // Create + seal the tracking row BEFORE launching so a fast job's callback can
   // never arrive before the row exists.
   await createPendingAsyncToolResult({
-    resultId,
-    parentEventId,
+    resultId: resultId,
+    parentEventId: parentEventId,
     conversationKey: context.background.conversationKey,
     toolName: "bash",
-    toolCallId,
-    input: { kind: "sandbox_job", namespace: ws.namespace, jobId, command },
+    toolCallId: toolCallId,
+    input: { kind: "sandbox_job", namespace: ws.namespace, jobId: jobId, command: command },
     // Push the result back to the originating channel/WebSocket when known;
     // otherwise it settles for status polling only.
     delivery: context.background.delivery ?? { kind: "async" },
-    completionToken,
+    completionToken: completionToken,
   });
   // Seal the group immediately — this is a group of exactly one job, so all
   // siblings are already registered. Sealing lets the callback handler know it
@@ -296,20 +298,21 @@ async function dispatchBackground(
 
   try {
     await runSandboxBackground(ws.sandbox, ws.namespace, command, {
-      jobId,
+      jobId: jobId,
       metadata: sandboxRunMetadata(context, ws),
-      ...(callback ? { callback } : {}),
+      ...(callback ? { callback: callback } : {}),
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
-    await markAsyncToolResultFailed({ resultId, error }).catch(() => {});
+    await markAsyncToolResultFailed({ resultId: resultId, error: error }).catch(() => {});
+
     return toolError(`Error: failed to start background job: ${error}`);
   }
 
   logInfo("bash background job started", {
     namespace: ws.namespace,
-    jobId,
-    resultId,
+    jobId: jobId,
+    resultId: resultId,
     delivers: Boolean(callback),
   });
   const delivery = callback
@@ -318,6 +321,7 @@ async function dispatchBackground(
   const controls = sandboxSupportsJobControls(ws.sandbox)
     ? `You can also use async_status to check status, tail logs (action "logs"), or stop it (action "stop").`
     : `You can use async_status with this statusId to read the completed result after delivery; this sandbox does not support live log tailing or stop controls.`;
+
   return toolText(
     // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
@@ -330,7 +334,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
     bash: tool({
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input, options) {
+      execute: async function(input, options) {
         const {
           command,
           workspace,
@@ -393,6 +397,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             commandLength: trimmed.length,
             pty: pty === true,
           });
+
           return toolText(
             formatRunText(
               await runSandbox(sandbox, ws?.namespace, effective, {

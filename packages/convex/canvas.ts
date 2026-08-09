@@ -492,7 +492,7 @@ export const saveLayout = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, {
         nodes: persistedNodes,
-        edges,
+        edges: edges,
         updatedAt: now,
       });
 
@@ -501,10 +501,10 @@ export const saveLayout = mutation({
 
     const layoutId = await ctx.db.insert("canvasLayouts", {
       authId: authUser.id,
-      projectId,
-      environmentId,
+      projectId: projectId,
+      environmentId: environmentId,
       nodes: persistedNodes,
-      edges,
+      edges: edges,
       updatedAt: now,
     });
 

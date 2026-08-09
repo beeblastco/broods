@@ -35,7 +35,7 @@ export function stripReasoningFromMessages(
   messages: ModelMessage[],
 ): ModelMessage[] {
   return pruneMessages({
-    messages,
+    messages: messages,
     reasoning: "all",
     emptyMessages: "remove",
   });
@@ -45,6 +45,7 @@ export function hasPendingToolApprovalResponse(
   messages: ModelMessage[],
 ): boolean {
   const lastMessage = messages.at(-1);
+
   return (
     lastMessage?.role === "tool" &&
     lastMessage.content.length > 0 &&

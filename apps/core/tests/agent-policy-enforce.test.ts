@@ -36,7 +36,7 @@ const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];
 const server = Bun.serve({
   port: 0,
-  async fetch(request) {
+  fetch: async function(request) {
     seenAuthHeaders.push(request.headers.get("authorization"));
     const body = await request.json().catch(() => undefined);
     seenPolicyInputs.push(
@@ -44,6 +44,7 @@ const server = Bun.serve({
         ? (body as { input?: unknown }).input
         : body,
     );
+
     return Response.json({
       result: {
         allow: false,
@@ -70,7 +71,7 @@ function agentConfig(mode?: "enforce" | "audit") {
   return {
     policy: {
       policyIds: ["policy_a"],
-      ...(mode ? { mode } : {}),
+      ...(mode ? { mode: mode } : {}),
     },
   } as Parameters<typeof createPolicyToolApproval>[0];
 }
@@ -88,6 +89,7 @@ function decisionType(status: unknown): string | undefined {
   if (typeof status === "string") return status;
   if (status && typeof status === "object")
     return (status as { type?: string }).type;
+
   return undefined;
 }
 

@@ -21,6 +21,7 @@ function deriveName(data: {
 }): string {
   const first = data.firstName ?? "";
   const last = data.lastName ?? "";
+
   return `${first} ${last}`.trim() || data.email;
 }
 
@@ -40,6 +41,7 @@ export const { authKitEvent } = authKit.events({
         name: deriveName(event.data),
         avatarUrl: avatarUrl,
       });
+
       return;
     }
 
@@ -60,6 +62,7 @@ export const { authKitEvent } = authKit.events({
       .first();
     if (!user) {
       console.warn(`User not found for update: ${event.data.id}`);
+
       return;
     }
     const picture = (event.data as { picture?: string | null }).picture;
@@ -79,6 +82,7 @@ export const { authKitEvent } = authKit.events({
       .first();
     if (!user) {
       console.warn(`User not found for deletion: ${event.data.id}`);
+
       return;
     }
     // WorkOS may redeliver a deletion event. Queue teardown once, so a

@@ -46,6 +46,7 @@ async function getOwned(
   cronId: Id<"crons">,
 ) {
   const cron = await ctx.db.get(cronId);
+
   return cron && cron.accountId === accountId ? cron : null;
 }
 
@@ -159,6 +160,7 @@ export const getBySchedulerName = internalQuery({
         q.eq("schedulerName", schedulerName),
       )
       .unique();
+
     return cron ?? null;
   },
 });
@@ -185,6 +187,7 @@ export const create = internalMutation({
     }
 
     const now = Date.now();
+
     return ctx.db.insert("crons", {
       ...args,
       status: args.status ?? "active",
@@ -227,12 +230,13 @@ export const update = internalMutation({
     }
 
     const defined = Object.fromEntries(
-      Object.entries({ ...patch, agentId })
+      Object.entries({ ...patch, agentId: agentId })
         .filter(([, v]) => v !== undefined)
         .map(([key, value]) => [key, value === null ? undefined : value]),
     );
 
     await ctx.db.patch(cronId, { ...defined, updatedAt: Date.now() });
+
     return null;
   },
 });
@@ -260,11 +264,12 @@ export const recordInvocation = internalMutation({
     }
 
     await ctx.db.patch(cronId, {
-      lastStatus,
-      lastError,
+      lastStatus: lastStatus,
+      lastError: lastError,
       lastInvokedAt: lastInvokedAt ?? Date.now(),
       updatedAt: Date.now(),
     });
+
     return null;
   },
 });
@@ -311,7 +316,7 @@ export const completeRun = internalMutation({
 
     await ctx.db.patch(runId, {
       status: "completed",
-      result,
+      result: result,
       completedAt: Date.now(),
     });
 
@@ -338,7 +343,7 @@ export const failRun = internalMutation({
 
     await ctx.db.patch(runId, {
       status: "failed",
-      error,
+      error: error,
       completedAt: Date.now(),
     });
 
@@ -377,6 +382,7 @@ export const remove = internalMutation({
   handler: async (ctx, { accountId, cronId }) => {
     const cron = await getOwned(ctx, accountId, cronId);
     if (cron) await ctx.db.delete(cronId);
+
     return null;
   },
 });

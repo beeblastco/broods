@@ -199,6 +199,7 @@ export class SubagentCoordinator {
       // Intentionally not awaited: child agents run concurrently while the
       // parent model can keep streaming or later wait for injected results.
       this.startTask(task, subagentParent);
+
       return toDispatch(task);
     });
 
@@ -241,6 +242,7 @@ export class SubagentCoordinator {
     await this.parentSession.persistModelMessages(
       completions.map(completionToParentMessage),
     );
+
     return completions.length;
   }
 
@@ -253,6 +255,7 @@ export class SubagentCoordinator {
     const timeouts = [...this.pending.keys()].map(
       (taskId): SubagentCompletion => {
         const metadata = this.pendingMetadata.get(taskId);
+
         return {
           taskId: metadata?.taskId ?? taskId,
           eventId: metadata?.eventId ?? taskId,
@@ -274,6 +277,7 @@ export class SubagentCoordinator {
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
     );
+
     return batch.length;
   }
 
@@ -300,45 +304,47 @@ export class SubagentCoordinator {
       this.parentAgentConfig.subagent?.context === "inherited";
     if (task.agentId) {
       const agent = await this.resolveAllowedAgent(accountId, task.agentId);
+
       return {
-        taskId,
+        taskId: taskId,
         eventId: scopedDirectEventId(accountId, agent.agentId, taskId),
         agentId: agent.agentId,
         agentConfig: withoutNestedSubagents(agent.config),
         ...(agent.description ? { description: agent.description } : {}),
-        publicConversationKey,
+        publicConversationKey: publicConversationKey,
         conversationKey: scopedDirectConversationKey(
           accountId,
           agent.agentId,
           publicConversationKey,
         ),
         prompt: task.prompt,
-        inheritedContext,
-        parentMessages,
-        parentEphemeralSystem,
-        persistent,
-        resuming,
+        inheritedContext: inheritedContext,
+        parentMessages: parentMessages,
+        parentEphemeralSystem: parentEphemeralSystem,
+        persistent: persistent,
+        resuming: resuming,
       };
     }
 
     const virtualAgentId = `${VIRTUAL_AGENT_PREFIX}${taskId}`;
+
     return {
-      taskId,
+      taskId: taskId,
       eventId: scopedDirectEventId(accountId, virtualAgentId, taskId),
       agentId: virtualAgentId,
       agentConfig: withoutNestedSubagents(this.parentAgentConfig),
-      publicConversationKey,
+      publicConversationKey: publicConversationKey,
       conversationKey: scopedDirectConversationKey(
         accountId,
         virtualAgentId,
         publicConversationKey,
       ),
       prompt: task.prompt,
-      inheritedContext,
-      parentMessages,
-      parentEphemeralSystem,
-      persistent,
-      resuming,
+      inheritedContext: inheritedContext,
+      parentMessages: parentMessages,
+      parentEphemeralSystem: parentEphemeralSystem,
+      persistent: persistent,
+      resuming: resuming,
     };
   }
 
@@ -431,6 +437,7 @@ export class SubagentCoordinator {
         taskId: task.taskId,
         error: error instanceof Error ? error.message : String(error),
       });
+
       return undefined;
     }
   }
@@ -517,7 +524,7 @@ export class SubagentCoordinator {
             approvalRequested = true;
           },
         },
-        subagentParent ? { subagentParent } : {},
+        subagentParent ? { subagentParent: subagentParent } : {},
       );
 
       if (publisher) {
@@ -709,6 +716,7 @@ export class SubagentCoordinator {
         taskId: task.taskId,
         error: error instanceof Error ? error.message : String(error),
       });
+
       return false;
     });
     if (!transferred) {
@@ -891,6 +899,7 @@ export class SubagentCoordinator {
         this.parentAgentConfig,
       );
     }
+
     return this.hooksPromise;
   }
 
@@ -908,6 +917,7 @@ export class SubagentCoordinator {
           ? null
           : toLifecycleValue(completion.response),
     });
+
     return mutation?.visibleResult as JSONValue | undefined;
   }
 
@@ -993,6 +1003,7 @@ export function createEphemeralChildSession(
         [],
         options.ephemeralSystem ?? [],
       );
+
       return {
         systemContextSnapshot: options.systemContextSnapshot,
         system: refreshed.system.length > 0 ? refreshed.system : system,
@@ -1092,7 +1103,7 @@ function bestEffortSubagentPublisher(
       }
       await publisher.publish(data).catch((error) => {
         logError("Best-effort subagent stream publish failed", {
-          taskId,
+          taskId: taskId,
           error: error instanceof Error ? error.message : String(error),
         });
       });
@@ -1100,7 +1111,7 @@ function bestEffortSubagentPublisher(
     close: async () => {
       await publisher.close().catch((error) => {
         logError("Best-effort subagent stream flush failed", {
-          taskId,
+          taskId: taskId,
           error: error instanceof Error ? error.message : String(error),
         });
       });
@@ -1122,6 +1133,7 @@ function requireParentAccountId(session: Session): string {
   if (!session.accountId) {
     throw new Error("Subagents require an account-scoped parent session");
   }
+
   return session.accountId;
 }
 

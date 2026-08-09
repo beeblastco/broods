@@ -26,7 +26,7 @@ function dispatcherReturning(
 ): HookDispatcher {
   return {
     hasHooksFor: (event) => events.includes(event),
-    async runMutation(event, payload) {
+    runMutation: async function(event, payload) {
       return responder(event, payload as Record<string, unknown>);
     },
   };
@@ -65,6 +65,7 @@ describe("wrapToolsWithHooks", () => {
     const tools: ToolSet = {
       search: fakeTool((input) => {
         seen = input;
+
         return "ok";
       }),
     };

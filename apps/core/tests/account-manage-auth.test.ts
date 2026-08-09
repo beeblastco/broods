@@ -53,15 +53,15 @@ function deploymentStorage(): Storage {
 
   return {
     accounts: {
-      async getById(accountId: string) {
+      getById: async function(accountId: string) {
         return accountId === account.accountId ? account : null;
       },
-      async getBySecretHash() {
+      getBySecretHash: async function() {
         return null;
       },
     },
     agentDeployments: {
-      async getByApiKeyHash() {
+      getByApiKeyHash: async function() {
         return {
           accountId: account.accountId,
           endpointId: "env-endpoint",

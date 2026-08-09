@@ -83,6 +83,7 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
       document = JSON.parse(documentText);
     } catch {
       setError("Policy document must be valid JSON.");
+
       return;
     }
     setBusy(true);

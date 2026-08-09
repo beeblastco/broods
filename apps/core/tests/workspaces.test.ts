@@ -217,6 +217,7 @@ describe("resolveAgentRuntime", () => {
             return { config: { provider: "lambda", permissionMode: "ask" } };
           if (id === "sb_bypass")
             return { config: { provider: "lambda", permissionMode: "bypass" } };
+
           return null;
         },
       },

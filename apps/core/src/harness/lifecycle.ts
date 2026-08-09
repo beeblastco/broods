@@ -46,7 +46,7 @@ export function createAgentLifecycleEmitter(
   );
 
   return {
-    async emit(type, payload = {}) {
+    emit: async function(type, payload = {}) {
       // A webhook with no events allow-list receives every event; otherwise only
       // the events it subscribed to.
       const targets = webhooks.filter(
@@ -57,13 +57,13 @@ export function createAgentLifecycleEmitter(
       }
 
       const event = {
-        type,
+        type: type,
         timestamp: new Date().toISOString(),
         ...(session.accountId ? { accountId: session.accountId } : {}),
         ...(session.agentId ? { agentId: session.agentId } : {}),
         eventId: session.eventId,
         conversationKey: session.conversationKey,
-        payload,
+        payload: payload,
       } satisfies AgentLifecycleEvent;
 
       await Promise.all(
@@ -97,6 +97,7 @@ export function toLifecycleValue(value: unknown): JSONValue | undefined {
 
   try {
     const serialized = JSON.stringify(value);
+
     return serialized === undefined
       ? String(value)
       : (JSON.parse(serialized) as JSONValue);

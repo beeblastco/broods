@@ -35,6 +35,7 @@ describe("ingress admission payloads", () => {
     const calls: Array<Record<string, unknown>> = [];
     runtime.mutate = (async (_name: string, args: Record<string, unknown>) => {
       calls.push(args);
+
       return { outcome: "queued" };
     }) as never;
 
@@ -68,6 +69,7 @@ describe("ingress admission payloads", () => {
     const calls: Array<Record<string, unknown>> = [];
     runtime.mutate = (async (_name: string, args: Record<string, unknown>) => {
       calls.push(args);
+
       return { outcome: "owner", ownerGeneration: 1 };
     }) as never;
 

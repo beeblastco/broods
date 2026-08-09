@@ -105,30 +105,30 @@ export function createGitHubChannel(
   options?: { triggerOnIssueOpen?: boolean; triggerOnPROpen?: boolean },
 ): ChannelAdapter {
   const github = new BroodsGitHubAdapter({
-    apiUrl,
-    appId,
+    apiUrl: apiUrl,
+    appId: appId,
     privateKey: normalizePrivateKey(privateKey),
-    webhookSecret,
-    userName,
-    botUserId,
+    webhookSecret: webhookSecret,
+    userName: userName,
+    botUserId: botUserId,
     logger: new ConsoleLogger("error").child("github"),
   });
 
   return {
     name: "github",
 
-    canHandle(req) {
+    canHandle: function(req) {
       return "x-github-event" in req.headers;
     },
 
-    authenticate(req) {
+    authenticate: function(req) {
       return github.verifyWebhookSignature(
         req.body,
         req.headers["x-hub-signature-256"],
       );
     },
 
-    parse(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
       const event = req.headers["x-github-event"];
       const deliveryId = req.headers["x-github-delivery"];
       const payload = JSON.parse(req.body) as GitHubWebhookPayload;
@@ -160,6 +160,7 @@ export function createGitHubChannel(
         logWarn("GitHub repository not in allow list", {
           repository: fullName,
         });
+
         return { kind: "ignore" };
       }
 
@@ -184,9 +185,9 @@ export function createGitHubChannel(
             repo,
             fullName,
             {
-              apiUrl,
-              appId,
-              privateKey,
+              apiUrl: apiUrl,
+              appId: appId,
+              privateKey: privateKey,
               botUserName: userName,
             },
           );
@@ -210,9 +211,9 @@ export function createGitHubChannel(
             repo,
             fullName,
             {
-              apiUrl,
-              appId,
-              privateKey,
+              apiUrl: apiUrl,
+              appId: appId,
+              privateKey: privateKey,
               botUserName: userName,
             },
           );
@@ -221,7 +222,7 @@ export function createGitHubChannel(
       }
     },
 
-    actions(msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createGitHubActions(
         appId,
         privateKey,
@@ -261,12 +262,13 @@ function parseIssuesEvent(
       return { kind: "ignore" };
     }
     const thread = {
-      owner,
-      repo,
+      owner: owner,
+      repo: repo,
       prNumber: issueNumber,
       type: "issue",
     } satisfies GitHubThreadId;
     const threadId = github.encodeThreadId(thread);
+
     return {
       kind: "message",
       ack: { statusCode: 200 },
@@ -286,11 +288,11 @@ function parseIssuesEvent(
         ],
         identity: githubIdentity(repoFullName, issueNumber, payload.sender),
         source: {
-          owner,
-          repo,
-          installationId,
-          threadId,
-          issueNumber,
+          owner: owner,
+          repo: repo,
+          installationId: installationId,
+          threadId: threadId,
+          issueNumber: issueNumber,
           target: "issue",
         } satisfies GitHubSource,
       },
@@ -303,8 +305,8 @@ function parseIssuesEvent(
     return { kind: "ignore" };
   }
   const thread = {
-    owner,
-    repo,
+    owner: owner,
+    repo: repo,
     prNumber: issueNumber,
     type: "issue",
   } satisfies GitHubThreadId;
@@ -329,11 +331,11 @@ function parseIssuesEvent(
       ],
       identity: githubIdentity(repoFullName, issueNumber, payload.sender),
       source: {
-        owner,
-        repo,
-        installationId,
-        threadId,
-        issueNumber,
+        owner: owner,
+        repo: repo,
+        installationId: installationId,
+        threadId: threadId,
+        issueNumber: issueNumber,
         target: "issue",
       } satisfies GitHubSource,
     },
@@ -382,26 +384,26 @@ function parseIssueCommentEvent(
 
   const resource = payload.issue?.pull_request ? "pr" : "issue";
   const thread = {
-    owner,
-    repo,
+    owner: owner,
+    repo: repo,
     prNumber: issueNumber,
     type: resource === "issue" ? "issue" : "pr",
   } satisfies GitHubThreadId;
   const threadId = github.encodeThreadId(thread);
 
   return buildCommentMessage({
-    payload,
-    options,
-    resource,
-    owner,
-    repo,
-    repoFullName,
-    installationId,
-    issueNumber,
-    commentId,
-    threadId,
+    payload: payload,
+    options: options,
+    resource: resource,
+    owner: owner,
+    repo: repo,
+    repoFullName: repoFullName,
+    installationId: installationId,
+    issueNumber: issueNumber,
+    commentId: commentId,
+    threadId: threadId,
     eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
-    body,
+    body: body,
     target: "issue_comment",
   });
 }
@@ -451,7 +453,7 @@ async function buildCommentMessage(options: {
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:${options.resource}:${options.issueNumber}`,
       channelName: "github",
       content: [{ type: "text", text: options.body }],
-      events,
+      events: events,
       identity: githubIdentity(
         options.repoFullName,
         options.issueNumber,
@@ -500,11 +502,12 @@ function parsePullRequestEvent(
       return { kind: "ignore" };
     }
     const thread = {
-      owner,
-      repo,
+      owner: owner,
+      repo: repo,
       prNumber: pullNumber,
     } satisfies GitHubThreadId;
     const threadId = github.encodeThreadId(thread);
+
     return {
       kind: "message",
       ack: { statusCode: 200 },
@@ -524,12 +527,12 @@ function parsePullRequestEvent(
         ],
         identity: githubIdentity(repoFullName, pullNumber, payload.sender),
         source: {
-          owner,
-          repo,
-          installationId,
-          threadId,
+          owner: owner,
+          repo: repo,
+          installationId: installationId,
+          threadId: threadId,
           issueNumber: pullNumber,
-          pullNumber,
+          pullNumber: pullNumber,
           target: "pull_request",
         } satisfies GitHubSource,
       },
@@ -541,7 +544,7 @@ function parsePullRequestEvent(
   if (options?.triggerOnPROpen === false) {
     return { kind: "ignore" };
   }
-  const thread = { owner, repo, prNumber: pullNumber } satisfies GitHubThreadId;
+  const thread = { owner: owner, repo: repo, prNumber: pullNumber } satisfies GitHubThreadId;
   const threadId = github.encodeThreadId(thread);
 
   return {
@@ -563,12 +566,12 @@ function parsePullRequestEvent(
       ],
       identity: githubIdentity(repoFullName, pullNumber, payload.sender),
       source: {
-        owner,
-        repo,
-        installationId,
-        threadId,
+        owner: owner,
+        repo: repo,
+        installationId: installationId,
+        threadId: threadId,
         issueNumber: pullNumber,
-        pullNumber,
+        pullNumber: pullNumber,
         target: "pull_request",
       } satisfies GitHubSource,
     },
@@ -617,25 +620,25 @@ function parseReviewCommentEvent(
 
   const rootCommentId = payload.comment?.in_reply_to_id ?? commentId;
   const thread = {
-    owner,
-    repo,
+    owner: owner,
+    repo: repo,
     prNumber: pullNumber,
     reviewCommentId: rootCommentId,
   } satisfies GitHubThreadId;
   const threadId = github.encodeThreadId(thread);
 
   return buildReviewCommentMessage({
-    payload,
-    options,
-    owner,
-    repo,
-    repoFullName,
-    installationId,
-    pullNumber,
-    commentId,
-    threadId,
+    payload: payload,
+    options: options,
+    owner: owner,
+    repo: repo,
+    repoFullName: repoFullName,
+    installationId: installationId,
+    pullNumber: pullNumber,
+    commentId: commentId,
+    threadId: threadId,
     eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
-    body,
+    body: body,
   });
 }
 
@@ -683,7 +686,7 @@ async function buildReviewCommentMessage(options: {
       conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:pr:${options.pullNumber}`,
       channelName: "github",
       content: [{ type: "text", text: options.body }],
-      events,
+      events: events,
       identity: githubIdentity(
         options.repoFullName,
         options.pullNumber,
@@ -770,6 +773,7 @@ function isBotAssignee(
   const assignee = payload.assignee;
   if (!assignee?.login) return false;
   if (isBotActor(assignee.type)) return false;
+
   return assignee.login.toLowerCase() === botUserName.toLowerCase();
 }
 
@@ -823,13 +827,14 @@ async function hydrateGitHubThreadContext(options: {
       repo: options.repo,
       resource: options.resource,
       number: options.number,
-      thread,
-      issueComments,
-      reviewComments,
+      thread: thread,
+      issueComments: issueComments,
+      reviewComments: reviewComments,
       currentCommentId: options.currentCommentId,
       currentCommentCreatedAt: options.currentCommentCreatedAt,
     });
-    return content ? { role: "system", content, persist: false } : null;
+
+    return content ? { role: "system", content: content, persist: false } : null;
   } catch (error) {
     logWarn(
       "GitHub thread context hydration failed; continuing with current comment only",
@@ -841,6 +846,7 @@ async function hydrateGitHubThreadContext(options: {
         error: error instanceof Error ? error.message : String(error),
       },
     );
+
     return null;
   }
 }
@@ -878,7 +884,7 @@ async function createGitHubRestClient(options: {
   }
 
   return {
-    async get<T>(path: string): Promise<T> {
+    get: async function<T>(path: string): Promise<T> {
       const response = await fetch(`${baseApiUrl}${path}`, {
         method: "GET",
         headers: {
@@ -890,6 +896,7 @@ async function createGitHubRestClient(options: {
       if (!response.ok) {
         throw new Error(`GitHub GET ${path} failed (${response.status})`);
       }
+
       return (await response.json()) as T;
     },
   };
@@ -969,6 +976,7 @@ function formatGitHubThreadContext(options: {
   }
 
   lines.push("</github_thread_context>");
+
   return lines.join("\n");
 }
 
@@ -983,12 +991,14 @@ function isPriorGitHubComment(
   if (currentCommentCreatedAt && comment.createdAt) {
     return comment.createdAt < currentCommentCreatedAt;
   }
+
   return true;
 }
 
 function formatReviewCommentLabel(comment: GitHubCommentRef): string {
   const path = safeText(comment.path);
   const line = comment.line ?? comment.original_line;
+
   return path
     ? `review comment on ${path}${line ? `:${line}` : ""}`
     : "review comment";
@@ -1009,6 +1019,7 @@ function createGitHubAppJwt(appId: string, privateKey: string): string {
     .update(unsigned)
     .end()
     .sign(normalizePrivateKey(privateKey));
+
   return `${unsigned}.${base64UrlEncode(signature)}`;
 }
 
@@ -1040,6 +1051,7 @@ function formatTitleAndBody(
     lines.push("");
     lines.push(body.trim());
   }
+
   return lines.join("\n");
 }
 
@@ -1050,8 +1062,8 @@ function createGitHubActions(
   apiUrl?: string,
 ): ChannelActions {
   const github = new GitHubAdapter({
-    apiUrl,
-    appId,
+    apiUrl: apiUrl,
+    appId: appId,
     installationId: source.installationId,
     privateKey: normalizePrivateKey(privateKey),
     logger: new ConsoleLogger("error").child("github"),
@@ -1059,15 +1071,15 @@ function createGitHubActions(
   });
 
   return {
-    async sendText(text) {
+    sendText: async function(text) {
       await github.postMessage(source.threadId, { markdown: text });
     },
 
-    async sendTyping() {
+    sendTyping: async function() {
       await github.startTyping(source.threadId);
     },
 
-    async reactToMessage() {
+    reactToMessage: async function() {
       if (!source.messageId) {
         return;
       }
@@ -1080,6 +1092,7 @@ function createGitHubActions(
         fromFullStream(textStream),
         options,
       );
+
       return result.id;
     },
   };

@@ -75,6 +75,7 @@ interface ConvexAccountDoc {
 
 function accountFromConvex(doc: ConvexAccountDoc | null): AccountRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc._id,
     username: doc.username,
@@ -110,13 +111,14 @@ function agentFromConvex(doc: ConvexAgentDoc | null): AgentRecord | null {
           tag: doc.encryptionTag,
         })
       : {};
+
   return {
     accountId: doc.accountId,
     agentId: doc._id,
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     status: "active",
-    config,
+    config: config,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -144,6 +146,7 @@ interface ConvexCronDoc {
 
 function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc.accountId,
     cronId: doc._id,
@@ -168,22 +171,24 @@ function cronFromConvex(doc: ConvexCronDoc | null): CronRecord | null {
 }
 
 const accounts: Storage["accounts"] = {
-  async getById(accountId) {
+  getById: async function(accountId) {
     const doc = await getConvexClient().query(internal.accounts.getById, {
       accountId: accountId,
     });
+
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
-  async getBySecretHash(secretHash) {
+  getBySecretHash: async function(secretHash) {
     const doc = await getConvexClient().query(
       internal.accounts.getBySecretHash,
       {
-        secretHash,
+        secretHash: secretHash,
       },
     );
+
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
-  async create(input) {
+  create: async function(input) {
     const normalized = normalizeCreateAccountInput(input);
     const secret = createAccountSecret();
     const doc = (await getConvexClient().mutation(internal.accounts.create, {
@@ -195,16 +200,18 @@ const accounts: Storage["accounts"] = {
     })) as ConvexAccountDoc;
     const account = accountFromConvex(doc);
     if (!account) throw new Error("Failed to fetch created account");
-    return { account, secret };
+
+    return { account: account, secret: secret };
   },
-  async disable(accountId) {
+  disable: async function(accountId) {
     const doc = await getConvexClient().mutation(internal.accounts.update, {
       accountId: accountId as any,
       status: "disabled",
     });
+
     return accountFromConvex(doc as ConvexAccountDoc | null);
   },
-  async remove(accountId) {
+  remove: async function(accountId) {
     for (let batch = 0; batch < ACCOUNT_DELETE_MAX_BATCHES; batch += 1) {
       const complete = await getConvexClient().mutation(
         internal.accounts.removeBatch,
@@ -221,20 +228,22 @@ const accounts: Storage["accounts"] = {
 };
 
 const agents: Storage["agents"] = {
-  async getById(accountId, agentId) {
+  getById: async function(accountId, agentId) {
     const doc = await getConvexClient().query(internal.agents.getById, {
       accountId: accountId as any,
       agentId: agentId as any,
     });
+
     return agentFromConvex(doc as ConvexAgentDoc | null);
   },
-  async list(accountId) {
+  list: async function(accountId) {
     const docs = (await getConvexClient().query(internal.agents.list, {
       accountId: accountId as any,
     })) as ConvexAgentDoc[];
+
     return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.agents.list, {
       accountId: accountId as any,
     })) as ConvexAgentDoc[];
@@ -244,21 +253,23 @@ const agents: Storage["agents"] = {
         agentId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
 
 const agentDeployments: Storage["agentDeployments"] = {
-  async getByApiKeyHash(apiKeyHash) {
+  getByApiKeyHash: async function(apiKeyHash) {
     const doc = (await getConvexClient().query(
       internal.agentDeployments.getByApiKeyHash,
       {
         apiKeyHash: apiKeyHash,
       },
     )) as AgentDeploymentScope | null;
+
     return doc;
   },
-  async getByAgentId(accountId, agentId) {
+  getByAgentId: async function(accountId, agentId) {
     const doc = (await getConvexClient().query(
       internal.agentDeployments.getByAgentId,
       {
@@ -266,47 +277,50 @@ const agentDeployments: Storage["agentDeployments"] = {
         agentId: agentId,
       },
     )) as AgentDeploymentScope | null;
+
     return doc;
   },
 };
 
 const crons: Storage["crons"] = {
-  async getById(accountId, cronId) {
+  getById: async function(accountId, cronId) {
     const doc = await getConvexClient().query(internal.cron.getById, {
       accountId: accountId as any,
       cronId: cronId as any,
     });
+
     return cronFromConvex(doc as ConvexCronDoc | null);
   },
-  async list(accountId) {
+  list: async function(accountId) {
     const docs = (await getConvexClient().query(internal.cron.list, {
       accountId: accountId as any,
     })) as ConvexCronDoc[];
+
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);
   },
   // awsCrons.remove is a Node action that drops the EventBridge schedule and the
   // row together, so a schedule can never outlive the cron row that names it.
-  async remove(accountId, cronId) {
+  remove: async function(accountId, cronId) {
     return (await getConvexClient().action(internal.awsCrons.remove, {
       accountId: accountId as any,
       cronId: cronId as any,
     })) as boolean;
   },
-  async markStarted(accountId, cronId) {
+  markStarted: async function(accountId, cronId) {
     await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
       cronId: cronId as any,
       lastStatus: "started",
     });
   },
-  async markCompleted(accountId, cronId) {
+  markCompleted: async function(accountId, cronId) {
     await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
       cronId: cronId as any,
       lastStatus: "completed",
     });
   },
-  async markFailed(accountId, cronId, error) {
+  markFailed: async function(accountId, cronId, error) {
     await getConvexClient().mutation(internal.cron.recordInvocation, {
       accountId: accountId as any,
       cronId: cronId as any,
@@ -314,34 +328,35 @@ const crons: Storage["crons"] = {
       lastError: error,
     });
   },
-  async createRun(input) {
+  createRun: async function(input) {
     const runId = (await getConvexClient().mutation(internal.cron.createRun, {
       accountId: input.accountId as any,
       cronId: input.cronId as any,
       eventId: input.eventId,
       conversationKey: input.conversationKey,
     })) as string;
+
     return {
       ...input,
-      runId,
+      runId: runId,
       status: "started",
       startedAt: new Date().toISOString(),
     };
   },
-  async completeRun(accountId, cronId, runId, result) {
+  completeRun: async function(accountId, cronId, runId, result) {
     await getConvexClient().mutation(internal.cron.completeRun, {
       accountId: accountId as any,
       cronId: cronId as any,
       runId: runId as any,
-      result,
+      result: result,
     });
   },
-  async failRun(accountId, cronId, runId, error) {
+  failRun: async function(accountId, cronId, runId, error) {
     await getConvexClient().mutation(internal.cron.failRun, {
       accountId: accountId as any,
       cronId: cronId as any,
       runId: runId as any,
-      error,
+      error: error,
     });
   },
 };
@@ -378,6 +393,7 @@ function sandboxConfigFromConvex(
           permissionMode: "ask",
           network: { mode: "deny-all" },
         } as SandboxConfig);
+
   return {
     accountId: doc.accountId,
     sandboxId: doc._id,
@@ -385,7 +401,7 @@ function sandboxConfigFromConvex(
     ...(doc.environmentId ? { environmentId: doc.environmentId } : {}),
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
-    config,
+    config: config,
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -405,6 +421,7 @@ function workspaceConfigFromConvex(
   doc: ConvexWorkspaceConfigDoc | null,
 ): WorkspaceConfigRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc.accountId,
     workspaceId: doc._id,
@@ -434,6 +451,7 @@ function channelRecordFromConvex(
   doc: ConvexChannelRecordDoc | null,
 ): ChannelRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc.accountId,
     channelRecordId: doc._id,
@@ -450,14 +468,15 @@ function channelRecordFromConvex(
 }
 
 const channelRecords: Storage["channelRecords"] = {
-  async getById(accountId, channelRecordId) {
+  getById: async function(accountId, channelRecordId) {
     const doc = await getConvexClient().query(internal.channelRecords.getById, {
       accountId: accountId as any,
       channelRecordId: channelRecordId as any,
     });
+
     return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
   },
-  async getByExternalId(accountId, platform, externalId) {
+  getByExternalId: async function(accountId, platform, externalId) {
     const doc = await getConvexClient().query(
       internal.channelRecords.getByExternalId,
       {
@@ -466,15 +485,17 @@ const channelRecords: Storage["channelRecords"] = {
         externalId: externalId as any,
       },
     );
+
     return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
   },
-  async list(accountId) {
+  list: async function(accountId) {
     const docs = (await getConvexClient().query(internal.channelRecords.list, {
       accountId: accountId as any,
     })) as ConvexChannelRecordDoc[];
+
     return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.channelRecords.list, {
       accountId: accountId as any,
     })) as ConvexChannelRecordDoc[];
@@ -484,25 +505,28 @@ const channelRecords: Storage["channelRecords"] = {
         channelRecordId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
 
 const sandboxConfigs: Storage["sandboxConfigs"] = {
-  async getById(accountId, sandboxId) {
+  getById: async function(accountId, sandboxId) {
     const doc = await getConvexClient().query(internal.sandboxConfigs.getById, {
       accountId: accountId as any,
       sandboxId: sandboxId as any,
     });
+
     return sandboxConfigFromConvex(doc as ConvexSandboxConfigDoc | null);
   },
-  async list(accountId) {
+  list: async function(accountId) {
     const docs = (await getConvexClient().query(internal.sandboxConfigs.list, {
       accountId: accountId as any,
     })) as ConvexSandboxConfigDoc[];
+
     return docs.map((d) => sandboxConfigFromConvex(d)!).filter(Boolean);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.sandboxConfigs.list, {
       accountId: accountId as any,
     })) as ConvexSandboxConfigDoc[];
@@ -512,12 +536,13 @@ const sandboxConfigs: Storage["sandboxConfigs"] = {
         sandboxId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
 
 const workspaceConfigs: Storage["workspaceConfigs"] = {
-  async getById(accountId, workspaceId) {
+  getById: async function(accountId, workspaceId) {
     const doc = await getConvexClient().query(
       internal.workspaceConfigs.getById,
       {
@@ -525,18 +550,20 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
         workspaceId: workspaceId as any,
       },
     );
+
     return workspaceConfigFromConvex(doc as ConvexWorkspaceConfigDoc | null);
   },
-  async list(accountId) {
+  list: async function(accountId) {
     const docs = (await getConvexClient().query(
       internal.workspaceConfigs.list,
       {
         accountId: accountId as any,
       },
     )) as ConvexWorkspaceConfigDoc[];
+
     return docs.map((d) => workspaceConfigFromConvex(d)!).filter(Boolean);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(
       internal.workspaceConfigs.list,
       {
@@ -549,6 +576,7 @@ const workspaceConfigs: Storage["workspaceConfigs"] = {
         workspaceId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
@@ -573,6 +601,7 @@ function accountToolFromConvex(
   doc: ConvexAccountToolDoc | null,
 ): AccountToolRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc.accountId,
     toolId: doc._id,
@@ -640,6 +669,7 @@ function accountHookFromConvex(
   doc: ConvexAccountHookDoc | null,
 ): AccountHookRecord | null {
   if (!doc) return null;
+
   return {
     accountId: doc.accountId,
     hookId: doc._id,
@@ -658,7 +688,7 @@ function accountHookFromConvex(
 }
 
 const agentPolicies: Storage["agentPolicies"] = {
-  async getById(accountId, policyId) {
+  getById: async function(accountId, policyId) {
     const doc = await getConvexClient().query(internal.agentPolicies.getById, {
       accountId: accountId as any,
       policyId: policyId,
@@ -669,14 +699,15 @@ const agentPolicies: Storage["agentPolicies"] = {
 };
 
 const accountTools: Storage["accountTools"] = {
-  async getById(accountId, toolId) {
+  getById: async function(accountId, toolId) {
     const doc = await getConvexClient().query(internal.accountTools.getById, {
       accountId: accountId as any,
       toolId: toolId as any,
     });
+
     return accountToolFromConvex(doc as ConvexAccountToolDoc | null);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.accountTools.list, {
       accountId: accountId as any,
     })) as ConvexAccountToolDoc[];
@@ -686,19 +717,21 @@ const accountTools: Storage["accountTools"] = {
         toolId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
 
 const accountHooks: Storage["accountHooks"] = {
-  async getById(accountId, hookId) {
+  getById: async function(accountId, hookId) {
     const doc = await getConvexClient().query(internal.accountHooks.getById, {
       accountId: accountId as any,
       hookId: hookId as any,
     });
+
     return accountHookFromConvex(doc as ConvexAccountHookDoc | null);
   },
-  async removeAllForAccount(accountId) {
+  removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.accountHooks.list, {
       accountId: accountId as any,
     })) as ConvexAccountHookDoc[];
@@ -708,20 +741,21 @@ const accountHooks: Storage["accountHooks"] = {
         hookId: doc._id as any,
       }),
     );
+
     return docs.length;
   },
 };
 
 export const convexStorage: Storage = {
-  accounts,
-  agents,
-  agentDeployments,
-  channelRecords,
-  crons,
-  sandboxConfigs,
-  workspaceConfigs,
-  agentPolicies,
-  accountTools,
-  accountHooks,
-  taskUsage,
+  accounts: accounts,
+  agents: agents,
+  agentDeployments: agentDeployments,
+  channelRecords: channelRecords,
+  crons: crons,
+  sandboxConfigs: sandboxConfigs,
+  workspaceConfigs: workspaceConfigs,
+  agentPolicies: agentPolicies,
+  accountTools: accountTools,
+  accountHooks: accountHooks,
+  taskUsage: taskUsage,
 };

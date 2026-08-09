@@ -89,18 +89,22 @@ export function channelScopeKeyFromConversation(
 
   if (unscopedKey.startsWith(SLACK_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
+
     return parts.length >= 4 ? parts.slice(0, 3).join(":") : unscopedKey;
   }
   if (unscopedKey.startsWith(DISCORD_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
+
     return parts.length >= 3 ? parts.slice(0, 3).join(":") : unscopedKey;
   }
   if (unscopedKey.startsWith(PANCAKE_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
+
     return parts.length >= 3 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
   if (unscopedKey.startsWith(GITHUB_INTEGRATION_PREFIX)) {
     const parts = unscopedKey.split(":");
+
     return parts.length >= 2 ? parts.slice(0, 2).join(":") : unscopedKey;
   }
 
@@ -121,6 +125,7 @@ export function assertValidPublicEventId(value: string): string {
   if (hasReservedEventIdPrefix(normalized)) {
     throw new Error("eventId uses a reserved internal prefix");
   }
+
   return normalized;
 }
 
@@ -132,6 +137,7 @@ export function assertValidPublicStatusEventId(value: string): string {
   ) {
     throw new Error("eventId uses a reserved internal prefix");
   }
+
   return normalized;
 }
 
@@ -142,6 +148,7 @@ export function assertValidPublicConversationKey(value: string): string {
       "conversationKey uses a reserved channel or internal prefix",
     );
   }
+
   return normalized;
 }
 
@@ -242,6 +249,7 @@ export function subagentParentEventId(taskId: string): string | null {
       return null;
     }
     const scope = parseAccountAgentScopedKey(decoded);
+
     return scope ? decoded : null;
   } catch {
     return null;
@@ -265,6 +273,7 @@ function unscopedChannelConversationKey(conversationKey: string): string {
       return conversationKey.slice(start);
     }
   }
+
   return conversationKey;
 }
 

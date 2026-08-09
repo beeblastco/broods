@@ -17,7 +17,7 @@ import {
 
 function ctx(accountId: string): ObservabilityContext {
   return {
-    accountId,
+    accountId: accountId,
     project: "p",
     environment: "e",
     endpointId: "ep-" + accountId,

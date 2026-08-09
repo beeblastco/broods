@@ -25,11 +25,12 @@ function mockClient(responses: Array<{ status: number; body: unknown }>) {
         ...(typeof init?.body === "string" ? { body: init.body } : {}),
       });
       const next = responses.shift() ?? { status: 200, body: {} };
+
       return new Response(JSON.stringify(next.body), { status: next.status });
     },
   });
 
-  return { client, calls };
+  return { client: client, calls: calls };
 }
 
 test("sends bearer auth and strips the trailing slash from baseUrl", async () => {

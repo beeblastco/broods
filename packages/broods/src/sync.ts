@@ -89,6 +89,7 @@ export class BroodsSyncClient {
     });
     if (response.status === 404) return null;
     await assertOk(response, "Fetch manifest failed");
+
     return (await response.json()) as RemoteManifestResponse;
   }
 
@@ -104,10 +105,11 @@ export class BroodsSyncClient {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest, prune, rotateRuntimeKey }),
+        body: JSON.stringify({ manifest: manifest, prune: prune, rotateRuntimeKey: rotateRuntimeKey }),
       },
     );
     await assertOk(response, "Sync manifest failed");
+
     return (await response.json()) as RemoteManifestResponse;
   }
 
@@ -166,7 +168,7 @@ export class BroodsSyncClient {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value }),
+        body: JSON.stringify({ value: value }),
       },
     );
     await assertOk(response, "Set environment variable failed");
@@ -279,6 +281,7 @@ export class BroodsSyncClient {
     const url =
       `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
       `/environments/${encodeURIComponent(environment)}${suffix}`;
+
     return await this.fetchImpl(url, {
       ...init,
       headers: {
@@ -450,6 +453,7 @@ function stripArtifactContent(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).flatMap(([key, entry]) => {
         if (key === "contentBase64" || key === "bundle") return [];
+
         return [[key, stripArtifactContent(entry)]];
       }),
     );

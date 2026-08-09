@@ -544,20 +544,20 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
   } = config;
 
   return normalizeAgentConfig({
-    ...(agent !== undefined ? { agent } : {}),
-    ...(harness !== undefined ? { harness } : {}),
-    ...(model !== undefined ? { model } : {}),
-    ...(provider !== undefined ? { provider } : {}),
-    ...(sandbox !== undefined ? { sandbox } : {}),
-    ...(workspaces !== undefined ? { workspaces } : {}),
-    ...(session !== undefined ? { session } : {}),
-    ...(hooks !== undefined ? { hooks } : {}),
-    ...(tools !== undefined ? { tools } : {}),
-    ...(denyTools !== undefined ? { denyTools } : {}),
-    ...(skills !== undefined ? { skills } : {}),
-    ...(subagent !== undefined ? { subagent } : {}),
-    ...(policy !== undefined ? { policy } : {}),
-    ...(publicAccess !== undefined ? { publicAccess } : {}),
+    ...(agent !== undefined ? { agent: agent } : {}),
+    ...(harness !== undefined ? { harness: harness } : {}),
+    ...(model !== undefined ? { model: model } : {}),
+    ...(provider !== undefined ? { provider: provider } : {}),
+    ...(sandbox !== undefined ? { sandbox: sandbox } : {}),
+    ...(workspaces !== undefined ? { workspaces: workspaces } : {}),
+    ...(session !== undefined ? { session: session } : {}),
+    ...(hooks !== undefined ? { hooks: hooks } : {}),
+    ...(tools !== undefined ? { tools: tools } : {}),
+    ...(denyTools !== undefined ? { denyTools: denyTools } : {}),
+    ...(skills !== undefined ? { skills: skills } : {}),
+    ...(subagent !== undefined ? { subagent: subagent } : {}),
+    ...(policy !== undefined ? { policy: policy } : {}),
+    ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
   });
 }
 
@@ -745,6 +745,7 @@ export function normalizeAgentConfigPatch(value: unknown): AgentConfigPatch {
   }
 
   validateConfigPatch(value, "config");
+
   return value;
 }
 
@@ -875,11 +876,13 @@ function normalizeModelOutputConfig(value: unknown): void {
       if (!isPlainObject(config.schema)) {
         throw new Error("config.model.output.schema must be an object");
       }
+
       return;
     case "array":
       if (!isPlainObject(config.element)) {
         throw new Error("config.model.output.element must be an object");
       }
+
       return;
     case "choice":
       if (
@@ -891,6 +894,7 @@ function normalizeModelOutputConfig(value: unknown): void {
           "config.model.output.options must be a non-empty array of strings",
         );
       }
+
       return;
   }
 }
@@ -1282,6 +1286,7 @@ function validateConfigPatch(value: unknown, path: string): void {
 
   if (path === "config") {
     normalizeAgentConfig(withoutNulls);
+
     return;
   }
 }
@@ -1297,6 +1302,7 @@ function removeNullConfigValues(
       if (isPlainObject(entry)) {
         return [[key, removeNullConfigValues(entry)]];
       }
+
       return [[key, entry]];
     }),
   );
@@ -1467,6 +1473,7 @@ function normalizeChannelIdentityConfig(
         `${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`,
       );
     }
+
     return;
   }
   normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
@@ -1533,6 +1540,7 @@ function normalizeOptionalString(
   }
 
   const normalized = value.trim();
+
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -1700,6 +1708,7 @@ export function applyRunOverrides(
   if (overrides.model && Object.keys(overrides.model).length > 0) {
     next.model = { ...config.model, ...overrides.model };
   }
+
   return next;
 }
 
@@ -1746,6 +1755,7 @@ export function mergeConfigObjects(
   patch: object,
 ): Record<string, unknown> {
   const merged = mergeConfigValue(existing, patch);
+
   return isPlainObject(merged) ? merged : {};
 }
 
@@ -1774,6 +1784,7 @@ function redactSecrets(value: unknown): unknown {
 
 function isSecretConfigKey(key: string): boolean {
   const normalized = key.toLowerCase();
+
   return (
     normalized.includes("secret") ||
     normalized.includes("token") ||

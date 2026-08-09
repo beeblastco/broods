@@ -233,7 +233,7 @@ export class BroodsClient {
       if (part.type === "text-delta") text += part.text;
     }
 
-    return { text, events };
+    return { text: text, events: events };
   }
 
   /** Stream an agent run, yielding each AI SDK `TextStreamPart` as it arrives. */
@@ -617,7 +617,7 @@ function directRunBody(
 
   return {
     agentId: input.agentId,
-    eventId,
+    eventId: eventId,
     conversationKey: input.conversationKey ?? eventId,
     events: resolveRunEvents(input),
     ...(input.mode !== undefined ? { mode: input.mode } : {}),
@@ -650,10 +650,11 @@ function normalizeAsyncAccepted(
       : status.statusId;
   const acceptedStatus = (payload as { status?: unknown }).status;
   const requestedMode = (payload as { requestedMode?: unknown }).requestedMode;
+
   return {
-    statusUrl,
+    statusUrl: statusUrl,
     statusId: status.statusId,
-    eventId,
+    eventId: eventId,
     agentId: status.agentId ?? requestBody.agentId,
     ...(acceptedStatus === "accepted" ||
     acceptedStatus === "queued" ||
@@ -665,7 +666,7 @@ function normalizeAsyncAccepted(
     requestedMode === "followup" ||
     requestedMode === "collect" ||
     requestedMode === "steer"
-      ? { requestedMode }
+      ? { requestedMode: requestedMode }
       : {}),
   };
 }
@@ -698,6 +699,7 @@ async function responseErrorDetails(
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.toLowerCase().includes("text/event-stream")) {
     await response.body?.cancel().catch(() => {});
+
     return `expected ${expected}, but the server returned an SSE stream. This usually means the core deployment routed /async to the direct streaming runner instead of the async handler.`;
   }
 
@@ -727,13 +729,14 @@ function resolveCronInput(input: CreateClientCronInput): CreateCronInput {
 
   // Spreading erases the input|events discrimination; the caller already
   // supplied a valid one-of, so re-assert the union shape.
-  return { ...rest, agentId } as CreateCronInput;
+  return { ...rest, agentId: agentId } as CreateCronInput;
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     if (signal?.aborted) {
       reject(new Error("Async status polling aborted."));
+
       return;
     }
     const timer = setTimeout(resolvePromise, ms);

@@ -12,7 +12,7 @@ async function runAgent(label: string, input: string): Promise<void> {
   console.log(`\n[${label}]\n`);
 
   for await (const chunk of client.stream(api.agents.multiWorkspaceAgent, {
-    input,
+    input: input,
   })) {
     switch (chunk.type) {
       case "reasoning-delta":

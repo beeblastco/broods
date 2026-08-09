@@ -75,7 +75,7 @@ describe("account management HTTP handler", () => {
   it("requires bearer auth to create an account", async () => {
     setStorageForTests(
       createFakeStorage({
-        async create() {
+        create: async function() {
           throw new Error("create should not be called");
         },
       }),
@@ -103,12 +103,12 @@ describe("account management HTTP handler", () => {
     setStorageForTests(
       createFakeStorage({
         accounts: {
-          async getBySecretHash(secretHash: string) {
+          getBySecretHash: async function(secretHash: string) {
             return secretHash === hashAccountSecret(accountSecret)
               ? fakeAccount()
               : null;
           },
-          async create() {
+          create: async function() {
             throw new Error("create should not be called");
           },
         },
@@ -137,7 +137,7 @@ describe("account management HTTP handler", () => {
     process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
     setStorageForTests(
       createFakeStorage({
-        async create() {
+        create: async function() {
           return {
             account: fakeAccount(),
             secret: "fp_acct_created",
@@ -313,14 +313,15 @@ describe("account management HTTP handler", () => {
     setStorageForTests(
       createFakeStorage({
         accounts: {
-          async getBySecretHash(secretHash: string) {
+          getBySecretHash: async function(secretHash: string) {
             return secretHash === disabledAccount.secretHash
               ? disabledAccount
               : null;
           },
-          async disable(accountId: string) {
+          disable: async function(accountId: string) {
             expect(accountId).toBe(disabledAccount.accountId);
             disableCalls += 1;
+
             return null;
           },
         },
@@ -351,14 +352,15 @@ describe("account management HTTP handler", () => {
     setStorageForTests(
       createFakeStorage({
         accounts: {
-          async getById(accountId: string) {
+          getById: async function(accountId: string) {
             return accountId === disabledAccount.accountId
               ? disabledAccount
               : null;
           },
-          async disable(accountId: string) {
+          disable: async function(accountId: string) {
             expect(accountId).toBe(disabledAccount.accountId);
             disableCalls += 1;
+
             return null;
           },
         },
@@ -381,7 +383,7 @@ describe("account management HTTP handler", () => {
     setStorageForTests(
       createFakeStorage({
         sandboxConfigs: {
-          async getById() {
+          getById: async function() {
             return { accountId: "acct_test", sandboxId: "sbx_1", config: {} };
           },
         },
@@ -407,6 +409,7 @@ describe("account management HTTP handler", () => {
 
 async function responseJson(response: Response): Promise<unknown> {
   expect(response.headers.get("content-type")).toBe("application/json");
+
   return response.json();
 }
 
@@ -419,8 +422,9 @@ function createEvent(
   const lower: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers))
     lower[key.toLowerCase()] = value;
+
   return {
-    method,
+    method: method,
     path: rawPath,
     search: "",
     query: new URLSearchParams(),
@@ -458,83 +462,83 @@ function fakeAgent(overrides: Partial<{ status: "active" | "disabled" }> = {}) {
 function createFakeStorage(overrides: Record<string, unknown>) {
   return {
     accounts: {
-      async getById() {
+      getById: async function() {
         return fakeAccount();
       },
-      async getBySecretHash() {
+      getBySecretHash: async function() {
         return null;
       },
-      async list() {
+      list: async function() {
         return [fakeAccount()];
       },
-      async create() {
+      create: async function() {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      async update() {
+      update: async function() {
         return fakeAccount();
       },
-      async rotateSecret() {
+      rotateSecret: async function() {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      async remove() {
+      remove: async function() {
         return true;
       },
       ...(overrides.accounts as Record<string, unknown> | undefined),
       ...(!("accounts" in overrides) ? overrides : {}),
     },
     agents: {
-      async getById() {
+      getById: async function() {
         return fakeAgent();
       },
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.agents as Record<string, unknown> | undefined),
     },
     crons: {
-      async list() {
+      list: async function() {
         return [];
       },
-      async create() {
+      create: async function() {
         throw new Error("not implemented");
       },
       ...(overrides.crons as Record<string, unknown> | undefined),
     },
     agentDeployments: {
-      async getByApiKeyHash() {
+      getByApiKeyHash: async function() {
         return null;
       },
       ...(overrides.agentDeployments as Record<string, unknown> | undefined),
     },
     sandboxConfigs: {
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.sandboxConfigs as Record<string, unknown> | undefined),
     },
     workspaceConfigs: {
-      async list() {
+      list: async function() {
         return [];
       },
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.workspaceConfigs as Record<string, unknown> | undefined),
     },
     accountTools: {
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.accountTools as Record<string, unknown> | undefined),
     },
     channelRecords: {
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.channelRecords as Record<string, unknown> | undefined),
     },
     accountHooks: {
-      async removeAllForAccount() {
+      removeAllForAccount: async function() {
         return 0;
       },
       ...(overrides.accountHooks as Record<string, unknown> | undefined),
@@ -551,6 +555,7 @@ function stubAccountDeletionDependencies(): void {
   })) as never;
   runtime.mutate = mock(async (name) => {
     expect(name).toBe("deleteAccountRuntimeData");
+
     return {
       conversationsDeleted: 0,
       processedEventsDeleted: 0,

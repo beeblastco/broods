@@ -175,13 +175,14 @@ export class BroodsWebSocketClient {
       clearTimeout(timeout);
       if (input.signal?.aborted) {
         onAbort();
+
         return;
       }
 
       socket.send(
         JSON.stringify({
           type: "execute",
-          agentId,
+          agentId: agentId,
           events: resolveRunEvents(input),
           sessionId: input.sessionId,
           ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
@@ -231,7 +232,7 @@ export class BroodsWebSocketClient {
 
     return {
       url: url,
-      sendControl(message) {
+      sendControl: function(message) {
         if (socket.readyState !== WS_OPEN)
           throw new Error("WebSocket is not open");
         socket.send(JSON.stringify({ type: "control", ...message }));
@@ -282,14 +283,15 @@ export class BroodsWebSocketClient {
           new Error(event.reason || "WebSocket connection closed."),
         );
     };
+
     return {
-      url,
-      sendControl(message) {
+      url: url,
+      sendControl: function(message) {
         if (socket.readyState !== WS_OPEN)
           throw new Error("WebSocket is not open");
         socket.send(JSON.stringify({ type: "control", ...message }));
       },
-      close,
+      close: close,
     };
   }
 
@@ -307,15 +309,15 @@ export class BroodsWebSocketClient {
     };
 
     const subscription = this.subscribe(input, {
-      onMessage(message) {
+      onMessage: function(message) {
         queue.push(message);
         wakeReader();
       },
-      onDone() {
+      onDone: function() {
         done = true;
         wakeReader();
       },
-      onError(nextError) {
+      onError: function(nextError) {
         error = nextError;
         wakeReader();
       },
@@ -442,6 +444,7 @@ function unwrapServerMessage(
 function parseServerMessage(data: string): WebSocketServerMessage | null {
   try {
     const value = JSON.parse(data) as WebSocketServerMessage;
+
     return typeof value === "object" &&
       value !== null &&
       typeof value.type === "string"

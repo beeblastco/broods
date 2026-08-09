@@ -28,6 +28,7 @@ const mutationMock = mock(
     if (name === "claimSandboxReservation") {
       if (reservations.has(reservationKey)) return false;
       reservations.set(reservationKey, String(args.externalId));
+
       return true;
     }
     if (name === "deleteSandboxReservation") {
@@ -38,10 +39,12 @@ const mutationMock = mock(
       ) {
         reservations.delete(reservationKey);
       }
+
       return null;
     }
     if (name === "saveSandboxReservation") {
       reservations.set(reservationKey, String(args.externalId));
+
       return null;
     }
     throw new Error(`Unexpected live-test runtime mutation: ${name}`);
@@ -52,6 +55,7 @@ const queryMock = mock(
     if (name !== "getSandboxReservation") {
       throw new Error(`Unexpected live-test runtime query: ${name}`);
     }
+
     return reservations.get(String(args.reservationKey)) ?? null;
   },
 );
@@ -79,7 +83,7 @@ describe.skipIf(!ENABLED)(
       const compute = liveCompute();
       const sandbox = createBroodsSandbox({
         driver: createMicrovmHarnessDriver({
-          reservationKey,
+          reservationKey: reservationKey,
           bootstrapIdentity: identity,
           config: {
             ...compute,
@@ -93,7 +97,7 @@ describe.skipIf(!ENABLED)(
         null;
 
       try {
-        session = await sandbox.createSession({ identity });
+        session = await sandbox.createSession({ identity: identity });
         await expect(
           session.run({
             command:
@@ -106,8 +110,8 @@ describe.skipIf(!ENABLED)(
         });
 
         const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
-        await session.writeTextFile({ path, content: "live-file-content" });
-        await expect(session.readTextFile({ path })).resolves.toBe(
+        await session.writeTextFile({ path: path, content: "live-file-content" });
+        await expect(session.readTextFile({ path: path })).resolves.toBe(
           "live-file-content",
         );
 
@@ -119,7 +123,7 @@ describe.skipIf(!ENABLED)(
       } finally {
         if (session) await session.destroy!();
         else {
-          await createSandboxExecutor(compute).release?.({ reservationKey });
+          await createSandboxExecutor(compute).release?.({ reservationKey: reservationKey });
         }
       }
 
@@ -172,10 +176,11 @@ function liveCompute(): SandboxExecutorConfig & {
   if (!process.env.AWS_REGION && !process.env.AWS_DEFAULT_REGION) {
     throw new Error("MICROVM_HARNESS_TEST requires an AWS region");
   }
+
   return {
     provider: "lambda",
     persistent: true,
-    snapshot,
+    snapshot: snapshot,
     network: { mode: "allow-all" },
     timeout: 180,
   };

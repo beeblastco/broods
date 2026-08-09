@@ -159,8 +159,8 @@ export function useConnectedAgentConfig(
   );
 
   return {
-    agentConfigId,
-    agentConfig,
-    updateBranch,
+    agentConfigId: agentConfigId,
+    agentConfig: agentConfig,
+    updateBranch: updateBranch,
   };
 }

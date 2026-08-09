@@ -400,6 +400,7 @@ async function resolveBearerAuth(
     const account: Doc<"accounts"> | null = accountId
       ? await getAccountById(ctx, accountId)
       : null;
+
     return account && account.status === "active"
       ? { kind: "account", account: account, viaServiceToken: true }
       : null;
@@ -419,6 +420,7 @@ async function resolveBearerAuth(
     internal.accounts.getBySecretHash,
     { secretHash: tokenHash },
   );
+
   return account && account.status === "active"
     ? { kind: "account", account: account }
     : null;
@@ -2607,9 +2609,9 @@ function isAddressableTool(
 ): record is Doc<"accountTools"> {
   return Boolean(
     record &&
-      record.status === "active" &&
-      record.projectId &&
-      record.environmentId,
+    record.status === "active" &&
+    record.projectId &&
+    record.environmentId,
   );
 }
 
@@ -2923,6 +2925,7 @@ function methodNotAllowed(allowedMethods: string[]): Response {
 function isClientInputError(error: unknown): error is Error {
   if (!(error instanceof Error)) return false;
   if (error instanceof SyntaxError) return true;
+
   return [
     "tool.",
     "Request body",
@@ -2988,8 +2991,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 type ToolScope =
-  | ({ ok: true } & ProjectEnvironmentScope)
-  | { ok: false; response: Response };
+  ({ ok: true } & ProjectEnvironmentScope) | { ok: false; response: Response };
 
 async function resolveToolScope(
   ctx: ActionCtx,

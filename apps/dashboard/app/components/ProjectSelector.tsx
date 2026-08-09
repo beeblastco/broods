@@ -26,8 +26,7 @@ export function ProjectSelector() {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const queryArgs = !isLoading && isAuthenticated ? {} : "skip";
   const projects = useQuery(api.project.list, queryArgs) as
-    | Doc<"projects">[]
-    | undefined;
+    Doc<"projects">[] | undefined;
   const currentUser = useQuery(api.user.getCurrent, queryArgs);
   const router = useRouter();
   const params = useParams<{ projectId?: string }>();

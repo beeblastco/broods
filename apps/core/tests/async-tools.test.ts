@@ -37,7 +37,7 @@ describe("AsyncToolCoordinator", () => {
       {
         conversationKey: "conversation-1",
         eventId: "event-1",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       Date.now() + 1_000,
     );
@@ -58,6 +58,7 @@ describe("AsyncToolCoordinator", () => {
             await new Promise((resolve) => {
               finishTool = resolve;
             });
+
             return { answer: `result for ${query}` };
           },
         }),
@@ -81,7 +82,7 @@ describe("AsyncToolCoordinator", () => {
     expect(mutationMock.mock.calls[0]).toEqual([
       "createAsyncToolResult",
       {
-        resultId,
+        resultId: resultId,
         parentEventId: "event-1",
         conversationKey: "conversation-1",
         toolName: "slowLookup",
@@ -95,7 +96,7 @@ describe("AsyncToolCoordinator", () => {
     await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
 
     expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
-      resultId,
+      resultId: resultId,
       status: "completed",
       response: { answer: "result for alpha" },
       onlyWhenProcessing: true,
@@ -153,7 +154,7 @@ describe("AsyncToolCoordinator", () => {
       {
         conversationKey: "conversation-1",
         eventId: "event-1",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       Date.now(),
     );
@@ -183,7 +184,7 @@ describe("AsyncToolCoordinator", () => {
     expect(mutationMock.mock.calls[0]).toEqual([
       "createAsyncToolResult",
       {
-        resultId,
+        resultId: resultId,
         parentEventId: "event-1",
         conversationKey: "conversation-1",
         toolName: "neverFinishes",
@@ -198,7 +199,7 @@ describe("AsyncToolCoordinator", () => {
     ).resolves.toBe(1);
 
     expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
-      resultId,
+      resultId: resultId,
       status: "failed",
       error:
         "Async tool call is still pending near the parent request timeout.",
@@ -229,7 +230,7 @@ describe("AsyncToolCoordinator", () => {
       {
         conversationKey: "conversation-1",
         eventId: "event-1",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       Date.now() + 1_000,
       {
@@ -253,6 +254,7 @@ describe("AsyncToolCoordinator", () => {
             asyncToolMetadata = (
               options as { asyncTool?: typeof asyncToolMetadata }
             ).asyncTool;
+
             return { started: true };
           },
         }),
@@ -299,7 +301,7 @@ describe("AsyncToolCoordinator", () => {
       toolName: "uploadedLookup",
       toolCallId: "tool-call-3",
       input: {},
-      completionToken,
+      completionToken: completionToken,
       delivery: {
         kind: "nats",
         connectionId: "connection-1",
@@ -337,6 +339,7 @@ describe("AsyncToolCoordinator", () => {
             await new Promise((resolve) => {
               finishSameInvocation = resolve;
             });
+
             return { ok: true };
           },
         }),
@@ -427,5 +430,6 @@ function messageText(message: UserModelMessage | undefined): string {
   }
 
   const part = content[0];
+
   return part?.type === "text" ? part.text : "";
 }

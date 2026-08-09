@@ -32,8 +32,8 @@ export async function proxyHttp(
     try {
       response = await fetch(`${coreBaseUrl}${url.pathname}${url.search}`, {
         method: request.method,
-        headers,
-        body,
+        headers: headers,
+        body: body,
         redirect: "manual",
       });
     } catch {
@@ -73,7 +73,7 @@ export async function resolveObservabilityScope(
 
       return {
         scope: (await response.json()) as ObservabilityScope,
-        coreBaseUrl,
+        coreBaseUrl: coreBaseUrl,
       };
     } catch {
       continue;
@@ -94,6 +94,6 @@ function responseWithoutEncoding(response: Response): Response {
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers,
+    headers: headers,
   });
 }

@@ -61,6 +61,7 @@ export const PLAN_CONFIGS: Record<ConfiguredPlanTier, PlanConfig> = {
  */
 export function resolvePlan(plan: PlanTier | undefined): ConfiguredPlanTier {
   if (plan === "free" || plan === undefined) return "hobby";
+
   return plan;
 }
 

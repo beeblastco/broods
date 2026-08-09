@@ -441,7 +441,7 @@ export const ensureDefault = mutation({
       development?._id ??
       (await ctx.db.insert("environments", {
         authId: authUser.id,
-        projectId,
+        projectId: projectId,
         name: "Development",
         kind: "development",
         isDefault: true,
@@ -502,7 +502,7 @@ export const create = mutation({
     const now = Date.now();
     const environmentId = await ctx.db.insert("environments", {
       authId: authUser.id,
-      projectId,
+      projectId: projectId,
       name: trimmedName,
       kind: "custom",
       isDefault: false,
@@ -522,6 +522,7 @@ export const create = mutation({
     }
 
     await ctx.db.patch(projectId, { updatedAt: now });
+
     return environmentId;
   },
 });
@@ -633,6 +634,7 @@ export const remove = mutation({
 
     await ctx.db.delete(environmentId);
     await ctx.db.patch(environment.projectId, { updatedAt: Date.now() });
+
     return environmentId;
   },
 });

@@ -272,6 +272,7 @@ function NewSecretDialog({
   onClose: () => void;
 }) {
   const [open, setOpen] = useState(true);
+
   return (
     <Dialog
       open={open}

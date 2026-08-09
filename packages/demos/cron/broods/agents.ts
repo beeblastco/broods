@@ -29,7 +29,7 @@ export const oneMinuteCron = defineCron({
 function atExpressionOneMinuteFromNow(timeZone: string): string {
   const date = new Date(Date.now() + 60_000);
   const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
+    timeZone: timeZone,
     hourCycle: "h23",
     year: "numeric",
     month: "2-digit",

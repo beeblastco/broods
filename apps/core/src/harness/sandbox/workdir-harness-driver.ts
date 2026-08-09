@@ -63,6 +63,7 @@ export function createWorkdirHarnessDriver(
       "Workdir Harness driver requires the core sandbox executor",
     );
   }
+
   return new WorkdirHarnessDriver(options, executor);
 }
 
@@ -126,6 +127,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
     options.abortSignal?.throwIfAborted();
+
     return this.#session(sandbox);
   }
 
@@ -141,7 +143,7 @@ export class WorkdirHarnessDriver implements BroodsSandboxDriver {
 
   #session(sandbox: Sandbox): BroodsSandboxDriverSession {
     return new WorkdirHarnessSession({
-      sandbox,
+      sandbox: sandbox,
       executor: this.#executor,
       reservationKey: this.#options.reservationKey,
       description: `Broods Workdir sandbox ${sandbox.id}`,
@@ -195,6 +197,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
           ...(shellOptions?.env ? { env: shellOptions.env } : {}),
         });
         shellOptions?.abortSignal?.throwIfAborted();
+
         return {
           exitCode: result.exit_code,
           stdout: result.stdout,
@@ -220,7 +223,8 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
       readHarnessStream(process.stderr),
       process.wait(),
     ]);
-    return { exitCode: result.exitCode, stdout, stderr };
+
+    return { exitCode: result.exitCode, stdout: stdout, stderr: stderr };
   }
 
   async spawnCommand(
@@ -247,6 +251,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     options.abortSignal?.throwIfAborted();
     if (result.exit_code === 44) return null;
     if (result.exit_code !== 0) throw workdirError("read file", result);
+
     return new Uint8Array(Buffer.from(result.stdout.trim(), "base64"));
   }
 
@@ -289,6 +294,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     } else if (options.protocol) {
       exposed.protocol = `${options.protocol}:`;
     }
+
     return exposed.toString();
   }
 

@@ -13,7 +13,6 @@ COPY apps/gateway/package.json ./apps/gateway/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
-COPY patches ./patches
 # --ignore-scripts skips core's `sst install` postinstall; system prompts are
 # generated explicitly in the builder stage instead.
 RUN bun install --frozen-lockfile --ignore-scripts

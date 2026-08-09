@@ -22,6 +22,7 @@ function registered(
   ref: Parameters<typeof getFunctionName>[0],
 ): RegisteredFunction | undefined {
   const [moduleName, functionName] = getFunctionName(ref).split(":");
+
   return moduleName && functionName
     ? registeredModules[moduleName]?.[functionName]
     : undefined;

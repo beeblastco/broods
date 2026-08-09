@@ -217,6 +217,7 @@ function resolveEnvironment(
   if (explicit) return explicit;
   const configured = config.environments?.[command];
   if (configured) return configured;
+
   return command === "deploy" ? "production" : "development";
 }
 
@@ -238,6 +239,7 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
   }
 
   await walk(root);
+
   return results.sort((a, b) =>
     relative(root, a).localeCompare(relative(root, b)),
   );
@@ -256,6 +258,7 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
       })),
     );
   }
+
   return values;
 }
 
@@ -481,6 +484,7 @@ function assertWorkspaceScopeShape(
         `${name} workspaceScope.alias is only supported when workspaceScope.level is conversation`,
       );
     }
+
     return;
   }
   if (scope.level !== "conversation") {
@@ -516,6 +520,7 @@ function resolveLocalWorkspace(
       return workspace;
     if (typeof workspace === "string") return workspaces.get(workspace);
   }
+
   return undefined;
 }
 
@@ -550,6 +555,7 @@ function resolveLocalSandbox(
 ): SandboxResource | undefined {
   if (isResource(value) && value.kind === "sandbox") return value;
   if (typeof value === "string") return sandboxes.get(value);
+
   return undefined;
 }
 
@@ -561,8 +567,10 @@ function effectiveWorkspaceSandbox(
   if (entry && typeof entry === "object" && "sandbox" in entry) {
     const sandbox = (entry as { sandbox?: unknown }).sandbox;
     if (sandbox === null) return undefined;
+
     return resolveLocalSandbox(sandbox, sandboxes);
   }
+
   return agentSandbox;
 }
 
@@ -573,6 +581,7 @@ function workspaceNameFor(entry: unknown): string {
     if (isResource(workspace)) return workspace.name;
     if (typeof workspace === "string") return workspace;
   }
+
   return "<unknown>";
 }
 
@@ -581,6 +590,7 @@ function supportsS3WorkspaceMount(sandbox: SandboxResource): boolean {
   if (provider === "lambda" || provider === "sandbox") return true;
   if (provider !== "daytona") return false;
   const options = (sandbox.config as { options?: unknown }).options;
+
   return Boolean(
     options &&
     typeof options === "object" &&
@@ -713,7 +723,7 @@ function compileChannels(
         throw new Error(`Duplicate channel export alias: ${alias}`);
       aliases.add(alias);
       compiled.push({
-        alias,
+        alias: alias,
         type: entry.type,
         id: alias,
         agentName: resource.name,
@@ -746,6 +756,7 @@ async function toManifestResources(
   const resource = entry.resource;
   if (resource.kind === "agent") {
     const normalized = normalizeAgentConfig(resource, projectRoot);
+
     return [
       ...(normalized.hookResource ? [normalized.hookResource] : []),
       {
@@ -796,6 +807,7 @@ async function normalizeConfig(
   if (resource.kind === "policy") {
     const config = { ...(resource.config as Record<string, unknown>) };
     config.version = config.version ?? 1;
+
     return rewriteValues(config);
   }
 
@@ -813,6 +825,7 @@ async function normalizeConfig(
       ];
       delete config.input;
     }
+
     return rewriteValues(config);
   }
 
@@ -1111,6 +1124,7 @@ function normalizeAgentConfig(
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+
         return [channel.type, { id: channelId, ...channel.config }];
       }),
     );
@@ -1161,9 +1175,10 @@ function normalizeInlineAgentHooks(
         `Agent "${agentName}" config.hooks.${name} must be a function`,
       );
     }
+
     return [
       {
-        name,
+        name: name,
         event: INLINE_AGENT_HOOK_EVENTS[name],
         source: toHookFunctionExpression(handler.toString()),
       },
@@ -1185,14 +1200,14 @@ function normalizeInlineAgentHooks(
   agentHooksConfig.code = [{ hookId: hookName }];
 
   return {
-    agentHooksConfig,
+    agentHooksConfig: agentHooksConfig,
     hookResource: {
       kind: "hook",
       name: hookName,
       description: `Inline hooks for agent ${agentName}`,
       config: {
-        events,
-        bundle,
+        events: events,
+        bundle: bundle,
         sha256: sha256Hex(bundle),
       },
     },
@@ -1217,6 +1232,7 @@ function stripInlineHookKeys(
   const result = Object.fromEntries(
     entries.filter(([key]) => key === "webhooks"),
   );
+
   return result;
 }
 
@@ -1236,6 +1252,7 @@ function toHookFunctionExpression(source: string): string {
   if (/^(async\s+)?[A-Za-z_$][\w$]*\s*\(/.test(trimmed)) {
     return trimmed.replace(/^(async\s+)?/, "$1function ");
   }
+
   return trimmed;
 }
 
@@ -1473,6 +1490,7 @@ function normalizeWorkspaceRef(
       normalized.sandbox =
         sandbox === null ? null : isResource(sandbox) ? sandbox.name : sandbox;
     }
+
     return normalized;
   }
   throw new Error(
@@ -1562,6 +1580,7 @@ async function readBundleFiles(
   }
 
   await walk(root);
+
   return files.sort((a, b) => String(a.path).localeCompare(String(b.path)));
 }
 
@@ -1585,6 +1604,7 @@ function isBuildFailure(error: unknown): error is BuildFailure {
 
 function isUnsafeBundlePath(path: string): boolean {
   const parts = path.split("/");
+
   return parts.some(
     (part) =>
       part.startsWith(".") ||
@@ -1603,6 +1623,7 @@ function contentTypeForPath(path: string): string {
     return "application/javascript";
   if (path.endsWith(".ts")) return "text/typescript; charset=utf-8";
   if (path.endsWith(".txt")) return "text/plain; charset=utf-8";
+
   return "application/octet-stream";
 }
 
@@ -1613,7 +1634,7 @@ function sdkStubPlugin(shimDir: string): Plugin {
 
   return {
     name: "broods-sdk-stub",
-    setup(build) {
+    setup: function(build) {
       build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
     },
   };

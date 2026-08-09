@@ -101,6 +101,7 @@ export function resolveSandboxSpecs(input: {
   }
   const base = SANDBOX_SIZES[DEFAULT_SIZE];
   const options = input.options ?? {};
+
   return {
     vcpu: numberOrUndefined(options.cpu) ?? base.vcpu,
     memoryMb:
@@ -125,7 +126,7 @@ export function workdirSizeResources(size: SandboxSize): {
     WORKDIR_CPU_CHOICES.find((choice) => choice >= specs.vcpu) ??
     WORKDIR_CPU_CHOICES[WORKDIR_CPU_CHOICES.length - 1]!;
 
-  return { cpu, memoryMb: specs.memoryMb, diskGb: specs.storageGb };
+  return { cpu: cpu, memoryMb: specs.memoryMb, diskGb: specs.storageGb };
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

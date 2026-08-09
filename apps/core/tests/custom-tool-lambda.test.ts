@@ -110,6 +110,7 @@ describe("streamInLambda", () => {
     const client = {
       send: mock(async (command: { input: { Payload: Uint8Array } }) => {
         sent = JSON.parse(new TextDecoder().decode(command.input.Payload));
+
         return {
           EventStream: (async function* () {
             yield payloadChunk(frame({ t: "final", result: 1 }));
@@ -131,6 +132,7 @@ describe("streamInLambda", () => {
       send: mock(
         async (_command: unknown, options?: { abortSignal?: AbortSignal }) => {
           seen = options?.abortSignal;
+
           return {
             EventStream: (async function* () {
               yield payloadChunk(frame({ t: "final", result: 1 }));
@@ -182,7 +184,7 @@ describe("streamAccountTool tier dispatch", () => {
       tool: { ...toolRecord(), runtime: "isolate" },
       input: { message: "hi" },
       config: {},
-      sandboxExecutor,
+      sandboxExecutor: sandboxExecutor,
       isolateExecutor: async function* () {
         yield { fromIsolate: true };
       },
@@ -239,7 +241,7 @@ async function* streamOf(
       tool: toolRecord(),
       input: { message: "hi" },
       config: {},
-      ...(options !== undefined ? { options } : {}),
+      ...(options !== undefined ? { options: options } : {}),
     },
     client,
   );

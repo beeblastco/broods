@@ -20,10 +20,10 @@ console.log(`Creating Daytona snapshot ${snapshotName} from ${baseImage}`);
 
 try {
   const snapshot = await new Daytona().snapshot.create(
-    { name: snapshotName, image },
+    { name: snapshotName, image: image },
     {
       timeout: 0,
-      onLogs(chunk) {
+      onLogs: function(chunk) {
         process.stdout.write(chunk);
       },
     },

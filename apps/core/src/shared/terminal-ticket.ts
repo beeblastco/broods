@@ -106,11 +106,11 @@ export function openTerminalTicket(
     if (typeof expiresAt !== "number" || expiresAt <= now) return null;
 
     return {
-      url,
-      authorization,
-      accountId,
-      expiresAt,
-      ...(authorizationHeader ? { authorizationHeader } : {}),
+      url: url,
+      authorization: authorization,
+      accountId: accountId,
+      expiresAt: expiresAt,
+      ...(authorizationHeader ? { authorizationHeader: authorizationHeader } : {}),
     };
   } catch {
     return null;

@@ -76,6 +76,7 @@ export async function readSkillMarkdown(
   skillName: string,
 ): Promise<string | null> {
   validateSkillName(skillName);
+
   return readSkillText(formatSkillPath(accountId, skillName), SKILL_FILE).catch(
     () => null,
   );
@@ -122,7 +123,8 @@ export function parseSkillMarkdown(
   const description = frontmatter.description;
   validateSkillName(name);
   validateSkillDescription(description);
-  return { name, description };
+
+  return { name: name, description: description };
 }
 
 export function skillInstructionsFromMarkdown(markdown: string): string {
@@ -159,9 +161,10 @@ export function validateSkillBundle(
   if (!skillFile) {
     throw new Error("Skill bundle must include SKILL.md at the root");
   }
+
   return {
     metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
-    files,
+    files: files,
   };
 }
 
@@ -208,11 +211,12 @@ export function parseGitHubSkillUrl(value: unknown): {
   assertSafeGitHubSegment(repo, "repo");
   assertSafeGitHubSegment(ref, "ref");
   const subdir = subdirParts.map((part) => normalizeBundlePath(part)).join("/");
+
   return {
-    owner,
-    repo,
-    ref,
-    subdir,
+    owner: owner,
+    repo: repo,
+    ref: ref,
+    subdir: subdir,
     archiveUrl: `https://codeload.github.com/${owner}/${repo}/tar.gz/${encodeURIComponent(ref)}`,
   };
 }
@@ -229,6 +233,7 @@ export function parseSkillPath(
   } catch {
     return null;
   }
+
   return {
     accountId: parts[0],
     skillName: parts[1],
@@ -237,6 +242,7 @@ export function parseSkillPath(
 
 export function formatSkillPath(accountId: string, skillName: string): string {
   validateSkillName(skillName);
+
   return `${accountId}/${skillName}`;
 }
 
@@ -255,6 +261,7 @@ export function normalizeBundlePath(value: string): string {
   ) {
     throw new Error(`Invalid skill file path: ${value}`);
   }
+
   return trimmed;
 }
 
@@ -297,6 +304,7 @@ function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   if (!TEXT_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
     return false;
   }
+
   return !bytes.includes(0);
 }
 
@@ -311,6 +319,7 @@ function parseSimpleYamlFrontmatter(
     }
     result[match[1]] = stripYamlScalarQuotes(match[2] ?? "").trim();
   }
+
   return result;
 }
 
@@ -322,6 +331,7 @@ function stripYamlScalarQuotes(value: string): string {
   ) {
     return trimmed.slice(1, -1);
   }
+
   return trimmed;
 }
 

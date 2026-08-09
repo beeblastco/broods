@@ -37,6 +37,7 @@ export const getById = internalQuery({
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) return null;
+
     return doc;
   },
 });
@@ -118,6 +119,7 @@ export const create = internalMutation({
     }
 
     const now = Date.now();
+
     return await ctx.db.insert("channelRecords", {
       accountId: args.accountId,
       platform: args.platform,
@@ -200,6 +202,7 @@ export const remove = internalMutation({
       args.channelRecordId,
     );
     await ctx.db.delete(doc._id);
+
     return null;
   },
 });

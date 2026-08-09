@@ -310,7 +310,7 @@ export async function runAgentLoop(
   const parentObservabilityContext = getObservabilityContext();
   setObservabilityContext({
     ...observabilityScope,
-    traceId,
+    traceId: traceId,
     otelContext: rootOtelContext,
     secretValues: collectSecretValues([
       agentConfig,
@@ -357,7 +357,7 @@ export async function runAgentLoop(
   };
   otelRootSpan.setAttributes(rootRunningAttributes);
   publishSpan({
-    traceId,
+    traceId: traceId,
     spanId: rootSpanId,
     name: rootSpanName,
     kind: rootSpanKind,
@@ -412,12 +412,12 @@ export async function runAgentLoop(
         kind: "phase",
         startTimeMs: startMs,
         endTimeMs: endMs,
-        durationMs,
+        durationMs: durationMs,
         status: "ok",
         endpointId: session.endpointId,
         agentId: session.agentId,
         conversationKey: session.conversationKey,
-        attributes,
+        attributes: attributes,
       });
     } catch {
       // Best-effort: a telemetry failure must not affect the run.
@@ -469,7 +469,7 @@ export async function runAgentLoop(
         dispatchAsyncTools: options.dispatchAsyncTools,
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,
-        policyToolIdsByName,
+        policyToolIdsByName: policyToolIdsByName,
         sandboxMetadata: {
           traceId: traceId,
           taskId: session.eventId,
@@ -565,16 +565,16 @@ export async function runAgentLoop(
     const spanContext = otelSpan.spanContext();
 
     return {
-      otelSpan,
+      otelSpan: otelSpan,
       otelContext: otelTraceApi.setSpan(parentContext, otelSpan),
-      name,
+      name: name,
       traceId: /[^0]/.test(spanContext.traceId) ? spanContext.traceId : traceId,
       spanId: /[^0]/.test(spanContext.spanId)
         ? spanContext.spanId
         : mintSpanId(),
-      parentSpanId,
-      startTimeMs,
-      attributes,
+      parentSpanId: parentSpanId,
+      startTimeMs: startTimeMs,
+      attributes: attributes,
     };
   };
 
@@ -654,7 +654,7 @@ export async function runAgentLoop(
         name: tracked.name,
         kind: tracked.name,
         startTimeMs: tracked.startTimeMs,
-        endTimeMs,
+        endTimeMs: endTimeMs,
         durationMs: Math.max(0, endTimeMs - tracked.startTimeMs),
         status: status === "completed" ? "ok" : "error",
         endpointId: session.endpointId,
@@ -685,13 +685,13 @@ export async function runAgentLoop(
       ]),
     );
     const rootSpanRow: ObservabilitySpanRow = {
-      traceId,
+      traceId: traceId,
       spanId: rootSpanId,
       name: rootSpanName,
       kind: rootSpanKind,
       startTimeMs: runStartedAt,
-      endTimeMs,
-      durationMs,
+      endTimeMs: endTimeMs,
+      durationMs: durationMs,
       status: status === "completed" ? "ok" : "error",
       endpointId: session.endpointId,
       agentId: session.agentId,
@@ -750,8 +750,8 @@ export async function runAgentLoop(
         modelProvider: configuredModel.providerName ?? "unknown",
         modelId: agentConfig.model?.modelId ?? "unknown",
         finishedAt: endTimeMs,
-        durationMs,
-        status,
+        durationMs: durationMs,
+        status: status,
         inputTokens: taskTokens.inputTokens,
         outputTokens: taskTokens.outputTokens,
         reasoningTokens: taskTokens.reasoningTokens,
@@ -765,8 +765,8 @@ export async function runAgentLoop(
           10,
         ),
         sandboxUsage: [...sandboxUsageByKey.values()],
-        stepCount,
-        toolCallCount,
+        stepCount: stepCount,
+        toolCallCount: toolCallCount,
       });
       // Ensure the terminal span's publish has been issued, then flush the OTLP
       // exporters (Tempo/Loki) AND the live NATS connection so the durable
@@ -819,7 +819,7 @@ export async function runAgentLoop(
     messages: stripEnvelopeFieldsFromMessages(turnContext.messages),
     ...(modelOutput ? { output: modelOutput } : {}),
     ...(enabledTools ? { tools: enabledTools } : {}),
-    ...(toolApproval ? { toolApproval } : {}),
+    ...(toolApproval ? { toolApproval: toolApproval } : {}),
     ...(providerOptions ? { providerOptions: providerOptions as never } : {}),
     // SDK-native OTel spans (via the @ai-sdk/otel integration registered in
     // initOtel). Inputs/outputs are off: the harness's own span rows already
@@ -941,7 +941,7 @@ export async function runAgentLoop(
         endpointId: session.endpointId,
         agentId: session.agentId,
         conversationKey: session.conversationKey,
-        attributes,
+        attributes: attributes,
       });
     },
     onToolExecutionStart: async ({ toolCall }) => {
@@ -983,9 +983,9 @@ export async function runAgentLoop(
         endpointId: session.endpointId,
         agentId: session.agentId,
         conversationKey: session.conversationKey,
-        attributes,
+        attributes: attributes,
       });
-      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
+      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -1090,7 +1090,7 @@ export async function runAgentLoop(
       // Every surface quotes the same normalized number the span does, so a
       // trace and its event log can never disagree about how long a tool took.
       recordToolCallSummary(toolCallSummaries, toolCall, {
-        stepNumber,
+        stepNumber: stepNumber,
         durationMs: toolDurationMs,
         success: toolSucceeded,
       });
@@ -1115,6 +1115,7 @@ export async function runAgentLoop(
           `Tool call finished: ${toolCall.toolName} in ${formatDuration(toolDurationMs)}`,
           details,
         );
+
         return;
       }
 
@@ -1149,7 +1150,7 @@ export async function runAgentLoop(
         lastStepText = stepText;
       }
       for (const toolCall of toolCalls) {
-        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber });
+        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
       }
 
       // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)
@@ -1217,8 +1218,8 @@ export async function runAgentLoop(
           durationMs: durationMs,
           toolCallCount: toolCalls.length,
           toolCalls: toolCalls.map(({ toolCallId, toolName }) => ({
-            toolCallId,
-            toolName,
+            toolCallId: toolCallId,
+            toolName: toolName,
           })),
           usage: usage,
           responseMetadata: {
@@ -1226,7 +1227,7 @@ export async function runAgentLoop(
             modelId: response.modelId,
             timestamp: response.timestamp.toISOString(),
           },
-          providerMetadata,
+          providerMetadata: providerMetadata,
         },
       );
 
@@ -1314,7 +1315,7 @@ export async function runAgentLoop(
           endpointId: session.endpointId,
           agentId: session.agentId,
           conversationKey: session.conversationKey,
-          attributes,
+          attributes: attributes,
         });
       }
       // Re-publish the running root span with the sandbox CPU accumulated so far so
@@ -1325,7 +1326,7 @@ export async function runAgentLoop(
         // A running span has no known end — keep end == start (like the initial
         // running publish) so a stale fresh-load copy never shows a fake duration.
         publishSpan({
-          traceId,
+          traceId: traceId,
           spanId: rootSpanId,
           name: rootSpanName,
           kind: rootSpanKind,
@@ -1453,6 +1454,7 @@ export async function runAgentLoop(
             toolCalls: toLifecycleValue(tools.toolCalls),
           });
           await reply?.onErrorText(errorText).catch(() => {});
+
           return;
         }
 
@@ -1481,13 +1483,14 @@ export async function runAgentLoop(
             });
           }
           await reply?.onApprovalRequired?.(approvals);
+
           return;
         }
 
         if (modelOutput) {
           finalResponse = (await modelOutput.parseCompleteOutput(
-            { text },
-            { response, usage, finishReason },
+            { text: text },
+            { response: response, usage: usage, finishReason: finishReason },
           )) as JSONValue;
           finalResponse = await foldAgentFinished(
             hooks,
@@ -1504,6 +1507,7 @@ export async function runAgentLoop(
             toolCalls: toLifecycleValue(tools.toolCalls),
             response: toLifecycleValue(finalResponse),
           });
+
           return;
         }
 
@@ -1726,7 +1730,7 @@ export async function runAgentLoop(
     consumeStream: wrappedConsumeStream,
     // Callers that drain the stream themselves must call this in a finally to
     // guarantee finalization.
-    ensureFinalized,
+    ensureFinalized: ensureFinalized,
     didFail: () => didFail,
     failureText: () => failureText,
     approvalSummaries: () => approvalSummaries,
@@ -1761,6 +1765,7 @@ function errorMessage(error: unknown): string {
       `provider uploads.`
     );
   }
+
   return message;
 }
 
@@ -1909,6 +1914,7 @@ function formatCallWarning(warning: {
 }): string {
   const subject = warning.feature ?? warning.setting;
   const detail = warning.message ?? warning.details;
+
   return [warning.type, subject, detail].filter(Boolean).join(": ");
 }
 
@@ -1920,6 +1926,7 @@ function formatDuration(durationMs: number | undefined): string {
 
 function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
+
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
 }
 
@@ -1942,6 +1949,7 @@ function toolOutputErrorText(output: unknown): string | undefined {
     return undefined;
   }
   const maybeOutput = output as { type?: unknown; value?: unknown };
+
   return maybeOutput.type === "error-text" &&
     typeof maybeOutput.value === "string"
     ? maybeOutput.value
@@ -2004,9 +2012,10 @@ async function foldAgentFinished(
     return response;
   }
   const mutation = await hooks.runMutation("agent.finished", {
-    finishReason,
+    finishReason: finishReason,
     response: toLifecycleValue(response),
   });
+
   return mutation && "output" in mutation
     ? (mutation.output as JSONValue)
     : response;
@@ -2085,6 +2094,7 @@ function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>) {
   const toolUsage = toolCalls.reduce<Record<string, number>>(
     (counts, toolCall) => {
       counts[toolCall.toolName] = (counts[toolCall.toolName] ?? 0) + 1;
+
       return counts;
     },
     {},
@@ -2092,8 +2102,8 @@ function summarizeToolsUsed(summaries: Map<string, ToolCallSummary>) {
 
   return {
     toolsUsed: Object.keys(toolUsage).sort(),
-    toolUsage,
-    toolCalls,
+    toolUsage: toolUsage,
+    toolCalls: toolCalls,
   };
 }
 
@@ -2132,10 +2142,11 @@ function withApprovalToolCalls(
       }
 
       existingToolCallIds.add(part.toolCallId);
+
       return [toToolCallPart(toolCall), part];
     });
 
-    return { ...message, content } satisfies AssistantModelMessage;
+    return { ...message, content: content } satisfies AssistantModelMessage;
   });
 }
 

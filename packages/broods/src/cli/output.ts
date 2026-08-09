@@ -51,6 +51,7 @@ export function formatReadyLine(
   options: FormatOptions = {},
 ): string {
   const time = (options.now ?? new Date()).toTimeString().slice(0, 8);
+
   return `${paint("✔", GREEN, shouldUseColor(options))} ${time} Resources ready! (${formatDuration(durationMs)})`;
 }
 
@@ -65,6 +66,7 @@ export function formatEnvSync(
   const color = shouldUseColor(options);
   const bar = paint("▌", GREEN, color);
   const arrow = paint("↑", GREEN, color);
+
   return `${bar} ${arrow} Synced ${names.length} env var(s) from .env.local: ${names.join(", ")}`;
 }
 
@@ -79,6 +81,7 @@ export function formatDiffEntries(
     if (entry.operation === "rename" && entry.previousName) {
       return `  ${marker} ${entry.kind}:${entry.previousName} -> ${entry.name}`;
     }
+
     return `  ${marker} ${entry.kind}:${entry.name}`;
   });
 }
@@ -114,6 +117,7 @@ function shouldUseColor(options: FormatOptions): boolean {
   if (options.color !== undefined) return options.color;
   if (Object.hasOwn(process.env, "NO_COLOR")) return false;
   if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
+
   return process.stderr.isTTY && process.env.TERM !== "dumb";
 }
 
@@ -128,10 +132,12 @@ function formatDiffMarker(
   if (operation === "create") return `[${paint("+", GREEN, color)}]`;
   if (operation === "rename") return `[${paint("~", YELLOW, color)}]`;
   if (operation === "update") return `[${paint("*", CYAN, color)}]`;
+
   return `[${paint("-", RED, color)}]`;
 }
 
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+
   return `${Math.max(ms, 0).toFixed(1)}ms`;
 }

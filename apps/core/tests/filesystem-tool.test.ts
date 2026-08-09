@@ -32,6 +32,7 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
 });
 const microvmFetchMock = mock(async (_url: string, init: { body: string }) => {
   const payload = JSON.parse(init.body);
+
   return new Response(
     JSON.stringify({
       ok: true,
@@ -165,6 +166,7 @@ function ownSandboxCtx(sandboxOverrides: Record<string, unknown> = {}) {
     controlPlane: { sandboxConfigId: "sb_own" },
     ...sandboxOverrides,
   };
+
   return {
     workspaces: [
       {
@@ -249,6 +251,7 @@ async function approvalStatus(
   const { compatibilityApprovalStatus } = await import(
     "../src/harness/policy.ts"
   );
+
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
     workspaces: (ctx.workspaces ?? []) as never,
@@ -264,6 +267,7 @@ function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
     | [string, { body: string }]
     | undefined;
+
   return { payload: JSON.parse(call![1].body) };
 }
 
@@ -272,6 +276,7 @@ async function tool(
   ctx: never,
 ) {
   const mod = await import(`../src/harness/tools/${name}.tool.ts`);
+
   return mod.default(ctx)[name.replace("-", "_")] as {
     description: string;
     inputSchema: unknown;
@@ -314,6 +319,7 @@ describe("sandbox tool set", () => {
     microvmFetchMock.mockImplementationOnce(
       async (_url: string, init: { body: string }) => {
         const payload = JSON.parse(init.body);
+
         return new Response(
           JSON.stringify({
             ok: false,
@@ -912,7 +918,8 @@ describe("memory tool", () => {
 
   async function memorySave(ctx: Record<string, unknown>) {
     const mod = await import("../src/harness/tools/memory.tool.ts");
-    return mod.default({ ...ctx, conversationKey } as never)
+
+    return mod.default({ ...ctx, conversationKey: conversationKey } as never)
       .memory_save as unknown as {
       execute(
         input: Record<string, unknown>,

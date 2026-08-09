@@ -82,7 +82,7 @@ export async function compactSessionContext(
     conversationKey: input.conversationKey,
     messageCount: messages.length,
     compactedMessageCount: compactableContext.length,
-    maxContextLength,
+    maxContextLength: maxContextLength,
     durationMs: Date.now() - startedAt,
   });
 
@@ -104,7 +104,7 @@ export function estimateContextLength(
 ): number {
   // This is a serialized character count, not a word/token count.
   // It is a cheap provider-independent threshold for the MVP compaction trigger.
-  return JSON.stringify({ system, messages }).length;
+  return JSON.stringify({ system: system, messages: messages }).length;
 }
 
 function createCompactionSummaryMessage(summary: string): SystemModelMessage {

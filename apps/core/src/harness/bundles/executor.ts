@@ -57,6 +57,7 @@ export async function* streamAccountTool(
 
   if (options.tool.runtime === "sandbox") {
     yield* (options.sandboxExecutor ?? streamInLambda)(options);
+
     return;
   }
 
@@ -114,6 +115,7 @@ export async function* streamInLambda(
       if (frame.t === "final") {
         reportCpu(frame.cpuUsec);
         yield frame.result;
+
         return;
       }
       if (frame.t === "end") {
@@ -137,6 +139,7 @@ function defaultClient(): LambdaClient {
   sharedClient ??= new LambdaClient({
     requestHandler: { connectionTimeout: 5_000, requestTimeout: 45_000 },
   });
+
   return sharedClient;
 }
 
@@ -155,7 +158,7 @@ async function drainInvokeStream(
       InvocationType: "RequestResponse",
       Payload: new TextEncoder().encode(JSON.stringify(payload)),
     }),
-    abortSignal ? { abortSignal } : {},
+    abortSignal ? { abortSignal: abortSignal } : {},
   );
   // Chunk boundaries fall anywhere, including mid-codepoint, so the decoder has
   // to carry state across them.

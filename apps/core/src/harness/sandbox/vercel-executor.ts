@@ -79,13 +79,14 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       const result = await sandbox.runCommand({
         cmd: "bash",
         args: ["-lc", request.code],
-        ...(cwd ? { cwd } : {}),
+        ...(cwd ? { cwd: cwd } : {}),
         env: {
           ...stringRecord(this.#config.envVars),
           ...(request.envVars ?? {}),
         },
         timeoutMs: request.timeoutSeconds * 1000,
       });
+
       return this.#adaptResult(result, request, startedAt);
     } finally {
       if (!persistent) await sandbox.stop().catch(() => {});
@@ -133,11 +134,13 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await commandError(result, "failed to launch background job"),
       );
     }
-    return { jobId };
+
+    return { jobId: jobId };
   }
 
   async jobStatus(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
+
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
@@ -151,6 +154,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       await this.#shell(sandbox, logsScript(jobsDir, request.jobId, bytes)),
       bytes,
     );
+
     return {
       jobId: request.jobId,
       logs: logs.value,
@@ -161,6 +165,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
   async stopJob(request: SandboxJobRequest): Promise<SandboxJobStatus> {
     const { sandbox, jobsDir } = await this.#jobContext(request);
     await this.#shell(sandbox, stopScript(jobsDir, request.jobId));
+
     return parseJobStatus(
       request.jobId,
       await this.#shell(sandbox, statusScript(jobsDir, request.jobId)),
@@ -178,7 +183,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     try {
       const Sandbox = await this.#Sandbox();
       const sandbox = await Sandbox.get({
-        name,
+        name: name,
         ...vercelAuthOptions(this.#config),
       });
       await sandbox.delete();
@@ -208,6 +213,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         "background jobs require a persistent vercel sandbox reservation key",
       );
     }
+
     return sandboxReservationKey(request)!;
   }
 
@@ -215,6 +221,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const options = isPlainObject(this.#config.options)
       ? this.#config.options
       : {};
+
     return (configString(options.workspaceRoot) ?? "/mnt/workspaces").replace(
       /\/+$/,
       "",
@@ -264,6 +271,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
           storedName,
           request.metadata,
         );
+
         return sandbox;
       } catch (error) {
         // Recreate only when the sandbox is really gone; a transient error must
@@ -282,7 +290,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     const name = persistentSandboxName(key);
     const sandbox = await Sandbox.getOrCreate({
       ...vercelCreateOptions(this.#config, request, true),
-      name,
+      name: name,
     });
     if (
       await claimSandboxInstance(
@@ -299,6 +307,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         name,
         request.metadata,
       );
+
       return sandbox;
     }
     const winner = await getSandboxExternalId("vercel", key);
@@ -306,6 +315,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
       return sandbox;
     }
     await sandbox.delete().catch(() => {});
+
     return Sandbox.get({
       name: winner,
       ...vercelAuthOptions(this.#config),
@@ -324,10 +334,11 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     if (!name) throw new Error("no reserved vercel sandbox for this workspace");
     const Sandbox = await this.#Sandbox();
     const sandbox = await Sandbox.get({
-      name,
+      name: name,
       ...vercelAuthOptions(this.#config),
     });
-    return { sandbox, jobsDir: this.#jobsDir(key) };
+
+    return { sandbox: sandbox, jobsDir: this.#jobsDir(key) };
   }
 
   async #shell(
@@ -346,6 +357,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         await commandError(result, "vercel sandbox setup command failed"),
       );
     }
+
     return await result.stdout();
   }
 
@@ -380,6 +392,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
     ]);
     const stdout = truncateText(rawStdout, request.outputLimitBytes);
     const stderr = truncateText(rawStderr, request.outputLimitBytes);
+
     return {
       ok: result.exitCode === 0,
       runtime: request.runtime ?? "bash",
@@ -394,6 +407,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
 
   #Sandbox(): Promise<VercelSandboxClass> {
     this.#sandboxClass ??= import("@vercel/sandbox").then((mod) => mod.Sandbox);
+
     return this.#sandboxClass;
   }
 }
@@ -405,10 +419,11 @@ function vercelCreateOptions(
 ): Record<string, unknown> {
   const options = isPlainObject(config.options) ? config.options : {};
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
+
   return {
     ...vercelAuthOptions(config),
     runtime: configString(options.runtime) ?? "node24",
-    persistent,
+    persistent: persistent,
     timeout:
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
@@ -428,7 +443,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
   const projectId =
     configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");
-  const missing = Object.entries({ token, teamId, projectId })
+  const missing = Object.entries({ token: token, teamId: teamId, projectId: projectId })
     .filter(([, value]) => !value)
     .map(([key]) => key);
   if (missing.length > 0) {
@@ -436,6 +451,7 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
       `vercel sandbox auth is missing ${missing.join(", ")}; set config.options.{token,teamId,projectId} or VERCEL_TOKEN/VERCEL_TEAM_ID/VERCEL_PROJECT_ID`,
     );
   }
+
   return { token: token!, teamId: teamId!, projectId: projectId! };
 }
 
@@ -443,6 +459,7 @@ function vercelNetworkPolicy(config: SandboxExecutorConfig): NetworkPolicy {
   const network = config.network ?? { mode: "deny-all" as const };
   if (network.mode === "allow-all") return "allow-all";
   if (network.mode === "deny-all") return "deny-all";
+
   return {
     ...(network.allowDomains?.length ? { allow: network.allowDomains } : {}),
     ...(network.allowCidrs?.length
@@ -459,6 +476,7 @@ async function commandError(
     result.stderr(),
     result.stdout(),
   ]);
+
   return [stderr, stdout].filter(Boolean).join("\n") || fallback;
 }
 
@@ -482,5 +500,6 @@ export function classifyVercelError(err: unknown): Error {
         `configured team/project. Verify VERCEL_TOKEN, VERCEL_TEAM_ID, and VERCEL_PROJECT_ID.`,
     );
   }
+
   return err instanceof Error ? err : new Error(message);
 }

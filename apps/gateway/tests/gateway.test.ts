@@ -161,6 +161,7 @@ test("attaches virtual and private child streams through durable parent deployme
       const taskId = decodeURIComponent(
         new URL(String(input)).pathname.slice("/status/".length),
       );
+
       return new Response(
         JSON.stringify({
           eventId: taskId,
@@ -288,15 +289,15 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
           eventId: "child-task",
           connectionId: "child-task",
         },
-        data,
-        sequence,
+        data: data,
+        sequence: sequence,
       }),
     ),
     ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
-      async *[Symbol.asyncIterator]() {
+      [Symbol.asyncIterator]: async function*() {
         await Bun.sleep(50);
         yield streamEvent(21, { type: "text-delta", text: "future" });
         yield streamEvent(22, { type: "done" });
@@ -394,15 +395,15 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
           eventId: "child-task",
           connectionId: "child-task",
         },
-        data,
-        sequence,
+        data: data,
+        sequence: sequence,
       }),
     ),
     ack: () => {},
   });
   const connection = zeroBufferConnection(
     async () => ({
-      async *[Symbol.asyncIterator]() {
+      [Symbol.asyncIterator]: async function*() {
         yield streamEvent(10, { type: "text-delta", text: "first" });
         await Bun.sleep(2_100);
         if (consumerClosed) return;
@@ -485,8 +486,8 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
           eventId: "child-task",
           connectionId: "child-task",
         },
-        data,
-        sequence,
+        data: data,
+        sequence: sequence,
       }),
     ),
     ack: () => {},
@@ -495,7 +496,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
   // to another conversation; this subject's own frames start at 10.
   const connection = zeroBufferConnection(
     async () => ({
-      async *[Symbol.asyncIterator]() {
+      [Symbol.asyncIterator]: async function*() {
         yield streamEvent(10, { type: "text-delta", text: "first" });
         yield streamEvent(12, { type: "done" });
       },
@@ -558,7 +559,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   let consumerClosed = false;
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]: async function*() {
       while (!consumerClosed) {
         await Bun.sleep(10);
       }
@@ -569,6 +570,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   }));
   globalThis.fetch = (async () => {
     statusReads += 1;
+
     return new Response(
       JSON.stringify({
         eventId: "child-task",
@@ -625,7 +627,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
   let consumerClosed = false;
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]: async function*() {
       yield {
         seq: 21,
         data: encoder.encode(
@@ -654,6 +656,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
   }));
   globalThis.fetch = (async () => {
     statusReads += 1;
+
     return new Response(
       JSON.stringify({
         eventId: "child-task",
@@ -704,7 +707,7 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
   const socket = gatewaySocket(sent);
   let consumerClosed = false;
   const connection = zeroBufferConnection(async () => ({
-    async *[Symbol.asyncIterator]() {
+    [Symbol.asyncIterator]: async function*() {
       while (!consumerClosed) {
         await Bun.sleep(10);
       }
@@ -728,6 +731,7 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
         },
       );
     }
+
     return new Response(
       JSON.stringify({
         eventId: "queued-task",
@@ -779,6 +783,7 @@ test("falls back to durable attach status when NATS consumer creation fails", as
   });
   globalThis.fetch = (async () => {
     statusReads += 1;
+
     return new Response(
       JSON.stringify({
         eventId: "child-task",
@@ -840,6 +845,7 @@ test("falls back to durable queued status when NATS consumer creation fails", as
         },
       );
     }
+
     return new Response(
       JSON.stringify({
         eventId: "queued-task",
@@ -1212,6 +1218,7 @@ test("routes a runtime key to the matching core upstream", async () => {
       calls.push(String(input));
       if (new URL(String(input)).origin === "https://dev.example")
         return new Response("unauthorized", { status: 401 });
+
       return Response.json({
         accountId: "account-1",
         projectSlug: "project",
@@ -1233,7 +1240,8 @@ test("proxyHttp strips hop-by-hop headers and preserves method query and body", 
   const calls: Array<{ input: string; init?: RequestInit }> = [];
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push({ input: String(input), init });
+    calls.push({ input: String(input), init: init });
+
     return new Response("ok", { status: 200 });
   }) as typeof fetch;
 
@@ -1276,6 +1284,7 @@ test("proxyHttp falls through to the next upstream only on 401", async () => {
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     calls.push(String(input));
+
     return calls.length === 1
       ? new Response("unauthorized", { status: 401 })
       : new Response("ok", { status: 200 });
@@ -1883,9 +1892,9 @@ function gatewaySubagentFixture(childKind: "private" | "virtual") {
     childKind === "virtual" ? `virtual_subagent_${taskId}` : "agent_private";
 
   return {
-    account,
-    taskId,
-    childAgentId,
+    account: account,
+    taskId: taskId,
+    childAgentId: childAgentId,
     publicConversationKey: "subagent-child",
   };
 }
@@ -1911,8 +1920,8 @@ function replayThenLiveConnection(
           eventId: fixture.taskId,
           connectionId: fixture.taskId,
         },
-        data,
-        sequence,
+        data: data,
+        sequence: sequence,
       }),
     ),
     ack: () => {},
@@ -1926,7 +1935,7 @@ function replayThenLiveConnection(
     jetstreamManager: async () => ({
       streams: {
         add: async () => {},
-        getMessage: async () => ({ seq: 10, subject }),
+        getMessage: async () => ({ seq: 10, subject: subject }),
         info: async (
           _name: string,
           options?: { subjects_filter?: string },
@@ -1945,7 +1954,7 @@ function replayThenLiveConnection(
       consumers: {
         get: async () => ({
           consume: async () => ({
-            async *[Symbol.asyncIterator]() {
+            [Symbol.asyncIterator]: async function*() {
               for (const message of messages) {
                 yield message;
               }
@@ -2048,7 +2057,7 @@ function zeroBufferConnection(
         ) => {
           onConsumerOptions?.(options);
 
-          return { consume };
+          return { consume: consume };
         },
       },
     }),

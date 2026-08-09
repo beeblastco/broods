@@ -262,25 +262,28 @@ function fakeExecutor(
   const resumptions: unknown[] = [];
   const suspensions: unknown[] = [];
   const releases: unknown[] = [];
+
   return {
-    acquisitions,
-    resumptions,
-    suspensions,
-    releases,
+    acquisitions: acquisitions,
+    resumptions: resumptions,
+    suspensions: suspensions,
+    releases: releases,
     value: {
-      async acquireHarnessReservation(request: unknown) {
+      acquireHarnessReservation: async function(request: unknown) {
         acquisitions.push(request);
         afterAcquire?.();
-        return { sandbox, isFirstCreate };
+
+        return { sandbox: sandbox, isFirstCreate: isFirstCreate };
       },
-      async resumeHarnessReservation(request: unknown) {
+      resumeHarnessReservation: async function(request: unknown) {
         resumptions.push(request);
+
         return sandbox;
       },
-      async suspend(request: unknown) {
+      suspend: async function(request: unknown) {
         suspensions.push(request);
       },
-      async release(request: unknown) {
+      release: async function(request: unknown) {
         releases.push(request);
       },
     },
@@ -311,7 +314,7 @@ function fakeWorkdir(
 
   const sandbox = {
     id: "workdir-1",
-    async exec(
+    exec: async function(
       command: string,
       execOptions?: { env?: Record<string, string> },
     ) {
@@ -328,6 +331,7 @@ function fakeWorkdir(
           running: options.processRunsUntilKilled === true,
         });
         options.onLaunch?.();
+
         return result();
       }
 
@@ -338,6 +342,7 @@ function fakeWorkdir(
           process.running = false;
           process.exitCode = 143;
         }
+
         return result();
       }
 
@@ -348,6 +353,7 @@ function fakeWorkdir(
           : process?.stdout;
         const skip = Number(command.match(/ skip=(\d+)/)?.[1] ?? 0);
         const count = Number(command.match(/ count=(\d+)/)?.[1] ?? 0);
+
         return result(
           Buffer.from(
             stream?.slice(skip, skip + count) ?? new Uint8Array(),
@@ -358,6 +364,7 @@ function fakeWorkdir(
       if (command.includes('echo "done $(cat') && processRoot) {
         const process = processes.get(processRoot);
         if (!process) return result("unknown\n");
+
         return result(
           process.running ? "running\n" : `done ${process.exitCode}\n`,
         );
@@ -366,6 +373,7 @@ function fakeWorkdir(
       const readPath = command.match(/base64 < '([^']+)'/)?.[1];
       if (readPath) {
         const content = files.get(readPath);
+
         return content === undefined
           ? result("", 44)
           : result(Buffer.from(content).toString("base64"));
@@ -376,23 +384,24 @@ function fakeWorkdir(
         const encoded = temporaryFiles.get(write[1]!);
         if (encoded === undefined) return result("", 1, "missing upload");
         files.set(write[2]!, new Uint8Array(Buffer.from(encoded, "base64")));
+
         return result();
       }
 
       return result();
     },
-    async writeFile(path: string, content: string) {
+    writeFile: async function(path: string, content: string) {
       temporaryFiles.set(`/workspace/${path.replace(/^\/+/, "")}`, content);
     },
-    async exposePort(port: number) {
+    exposePort: async function(port: number) {
       return `https://workdir.example.test/ports/${port}`;
     },
   } as unknown as Sandbox;
 
   return {
-    sandbox,
-    launchCommands,
-    launchEnvs,
+    sandbox: sandbox,
+    launchCommands: launchCommands,
+    launchEnvs: launchEnvs,
     get killCalls() {
       return killCalls;
     },
@@ -400,5 +409,5 @@ function fakeWorkdir(
 }
 
 function result(stdout = "", exit_code = 0, stderr = "") {
-  return { stdout, stderr, exit_code };
+  return { stdout: stdout, stderr: stderr, exit_code: exit_code };
 }

@@ -31,6 +31,7 @@ export const getById = internalQuery({
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId) return null;
+
     return doc;
   },
 });
@@ -63,6 +64,7 @@ export const create = internalMutation({
     }
 
     const now = Date.now();
+
     return await ctx.db.insert("sandboxConfigs", {
       accountId: args.accountId,
       name: args.name,
@@ -144,6 +146,7 @@ export const remove = internalMutation({
     }
 
     await ctx.db.delete(normalized);
+
     return null;
   },
 });

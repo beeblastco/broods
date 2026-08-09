@@ -87,7 +87,7 @@ function loadEnvFiles(cwd: string): void {
     const mtimeMs = statSync(path).mtimeMs;
     const cached = envFileCache.get(path);
     if (cached && cached.mtimeMs === mtimeMs) continue;
-    envFileCache.set(path, { mtimeMs });
+    envFileCache.set(path, { mtimeMs: mtimeMs });
 
     for (const [key, value] of Object.entries(
       parseEnv(readFileSync(path, "utf8")),
@@ -134,6 +134,7 @@ function unquoteEnvValue(value: string): string {
   }
   // Unquoted: drop a trailing ` # comment`, if present.
   const commentIndex = value.indexOf(" #");
+
   return commentIndex >= 0 ? value.slice(0, commentIndex).trimEnd() : value;
 }
 
@@ -155,6 +156,7 @@ function readStoredAuthSync(): {
     };
     if (typeof value.baseUrl !== "string" || typeof value.token !== "string")
       return null;
+
     return {
       baseUrl: stripTrailingSlash(value.baseUrl),
       ...(typeof value.dashboardUrl === "string"

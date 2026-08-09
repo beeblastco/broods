@@ -21,6 +21,7 @@ export const getById = internalQuery({
   returns: v.union(skillDoc, v.null()),
   handler: async (ctx, { accountId, skillId }) => {
     const skill = await ctx.db.get(skillId);
+
     return skill && skill.accountId === accountId ? skill : null;
   },
 });
@@ -49,6 +50,7 @@ export const create = internalMutation({
     if (!account) throw new Error(`Account not found: ${args.accountId}`);
 
     const now = Date.now();
+
     return ctx.db.insert("skills", {
       ...args,
       createdAt: now,
@@ -77,6 +79,7 @@ export const update = internalMutation({
       Object.entries(updates).filter(([, v]) => v !== undefined),
     );
     await ctx.db.patch(skillId, { ...patch, updatedAt: Date.now() });
+
     return null;
   },
 });
@@ -93,6 +96,7 @@ export const remove = internalMutation({
     if (skill && skill.accountId === accountId) {
       await ctx.db.delete(skillId);
     }
+
     return null;
   },
 });

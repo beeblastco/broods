@@ -204,6 +204,7 @@ export function normalizeUpdateAccountToolInput(
         ? null
         : normalizeDefaultConfig(input.defaultConfig);
   }
+
   return patch;
 }
 
@@ -254,6 +255,7 @@ export function inferAccountToolRuntime(
   ) {
     return "sandbox";
   }
+
   return "isolate";
 }
 
@@ -267,6 +269,7 @@ function normalizeToolName(value: unknown): string {
       "tool.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
     );
   }
+
   return name;
 }
 
@@ -274,6 +277,7 @@ function normalizeDescription(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("tool.description must be a non-empty string");
   }
+
   return value.trim();
 }
 
@@ -289,6 +293,7 @@ function normalizeInputSchema(value: unknown): JSONSchema7 {
   ) {
     throw new Error("tool.inputSchema.type must be a string or array");
   }
+
   return schema;
 }
 
@@ -305,6 +310,7 @@ function normalizeBundle(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error("tool.bundle must be a non-empty string");
   }
+
   return value;
 }
 
@@ -312,6 +318,7 @@ function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) {
     throw new Error("tool.defaultConfig must be an object");
   }
+
   return value as Record<string, unknown>;
 }
 
@@ -324,6 +331,7 @@ function normalizeStorageKey(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error("tool.bundleStorageKey must be a non-empty string");
   }
+
   return value;
 }
 
@@ -331,6 +339,7 @@ function normalizeSha256(value: unknown): string {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) {
     throw new Error("tool.sha256 must be a hex sha256");
   }
+
   return value;
 }
 

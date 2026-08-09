@@ -86,6 +86,7 @@ export async function saveAgentRuntimeSecrets(
 
   if (Object.keys(variables).length === 0) {
     if (stored) await ctx.db.delete(stored._id);
+
     return [];
   }
 

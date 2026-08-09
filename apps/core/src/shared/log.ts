@@ -73,6 +73,7 @@ function isRedactedKey(key: string): boolean {
   for (const suffix of DENY_SUFFIX) {
     if (norm.endsWith(suffix)) return true;
   }
+
   return false;
 }
 
@@ -84,6 +85,7 @@ const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
 
 function isSensitiveEnvName(name: string): boolean {
   const normalized = name.toLowerCase().replace(/[-_]/g, "");
+
   return (
     isRedactedKey(name) ||
     normalized.includes("credential") ||
@@ -160,6 +162,7 @@ export function redact(
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     out[k] = isRedactedKey(k) ? "[redacted]" : redact(v, secretValues);
   }
+
   return out;
 }
 
@@ -171,6 +174,7 @@ export function collectSecretValues(value: unknown): string[] {
     if (!current || typeof current !== "object") return;
     if (Array.isArray(current)) {
       current.forEach(visit);
+
       return;
     }
 
@@ -220,6 +224,7 @@ export function collectSecretValues(value: unknown): string[] {
   };
 
   visit(value);
+
   return [...secrets].filter((secret) => secret.length >= 4);
 }
 
@@ -275,9 +280,9 @@ function emit(
   const entry: Record<string, unknown> = {
     ...redactedData,
     time: new Date(ts).toISOString(),
-    level,
+    level: level,
     message: redactedMessage,
-    service,
+    service: service,
     "service.name": service,
     ...(ctx
       ? {
@@ -297,14 +302,14 @@ function emit(
   // 3. NATS — INFO/WARN/ERROR only, context must be set
   if (level !== "DEBUG" && ctx) {
     const obsEntry: ObservabilityLogEntry = {
-      ts,
+      ts: ts,
       level: level as "INFO" | "WARN" | "ERROR",
       eventType: (redactedData?.eventType as string) ?? level.toLowerCase(),
       message: redactedMessage,
       traceId: ctx.traceId,
       accountId: ctx.accountId,
       endpointId: ctx.endpointId,
-      service,
+      service: service,
       agentId: ctx.agentId,
       conversationKey: ctx.conversationKey,
       data: redactedData,

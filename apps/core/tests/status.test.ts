@@ -45,7 +45,7 @@ describe("async agent result persistence", () => {
     ];
     await markAsyncAgentResultAwaitingApproval({
       eventId: "event-1",
-      approvals,
+      approvals: approvals,
     });
     await markAsyncAgentResultCompleted({
       eventId: "event-1",
@@ -56,7 +56,7 @@ describe("async agent result persistence", () => {
       {
         eventId: "event-1",
         status: "awaiting_approval",
-        approvals,
+        approvals: approvals,
       },
     ]);
     expect(mutationMock.mock.calls[1]).toEqual([

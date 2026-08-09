@@ -56,6 +56,7 @@ export function positionalArgs(args: string[]): string[] {
 
 export function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
+
   return index >= 0 ? args[index + 1] : undefined;
 }
 
@@ -85,10 +86,11 @@ export async function requireAuth(baseUrl?: string): Promise<StoredAuthConfig> {
 }
 
 export async function promptSecret(label: string): Promise<string> {
-  const rl = createInterface({ input, output });
+  const rl = createInterface({ input: input, output: output });
   try {
     const value = await rl.question(`${label}: `);
     if (!value) throw new Error(`${label} is required`);
+
     return value;
   } finally {
     rl.close();
@@ -99,7 +101,7 @@ export async function promptText(
   label: string,
   defaultValue?: string,
 ): Promise<string> {
-  const rl = createInterface({ input, output });
+  const rl = createInterface({ input: input, output: output });
   try {
     const pending = rl.question(`${label}: `);
     if (defaultValue) {
@@ -128,7 +130,7 @@ export async function promptSelect<T>(
     console.log(`  ${index + 1}. ${render(option)}`);
   });
 
-  const rl = createInterface({ input, output });
+  const rl = createInterface({ input: input, output: output });
   try {
     while (true) {
       const answer = (await rl.question(`Choose 1-${options.length}: `)).trim();
@@ -149,11 +151,12 @@ export async function promptSelect<T>(
  */
 export async function promptConfirm(question: string): Promise<boolean> {
   if (!input.isTTY) return false;
-  const rl = createInterface({ input, output });
+  const rl = createInterface({ input: input, output: output });
   try {
     const answer = (await rl.question(`${question} [y/N] `))
       .trim()
       .toLowerCase();
+
     return answer === "y" || answer === "yes";
   } finally {
     rl.close();
@@ -203,6 +206,7 @@ export async function loginWithBrowser(
       ...(payload.account ? { account: payload.account } : {}),
     };
     await writeStoredAuth(auth);
+
     return auth;
   } finally {
     close();
@@ -241,6 +245,7 @@ function waitForCallback(expectedState: string): Promise<{
         const baseUrl = url.searchParams.get("base_url");
         if (state !== expectedState || !code) {
           res.writeHead(400).end("Invalid broods login callback.");
+
           return;
         }
         if (!baseUrl) {
@@ -255,6 +260,7 @@ function waitForCallback(expectedState: string): Promise<{
                 "Deploy a dashboard build that includes the Convex-direct CLI auth flow.",
             ),
           );
+
           return;
         }
         res
@@ -284,6 +290,7 @@ function waitForCallback(expectedState: string): Promise<{
         error.code === "EADDRINUSE"
       ) {
         server.listen(0, "127.0.0.1");
+
         return;
       }
       reject(error);
@@ -292,6 +299,7 @@ function waitForCallback(expectedState: string): Promise<{
       const address = server.address();
       if (!address || typeof address === "string") {
         reject(new Error("Failed to allocate callback port"));
+
         return;
       }
       resolve({

@@ -231,7 +231,7 @@ export const setStatus = internalMutation({
 
     const now = Date.now();
     await ctx.db.patch(instance._id, {
-      status,
+      status: status,
       lastUsedAt: now,
       ...(status === "suspended" ? { suspendedAt: now } : {}),
       ...(status === "terminating" ? { terminatedAt: now } : {}),

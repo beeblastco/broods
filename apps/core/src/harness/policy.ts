@@ -83,7 +83,7 @@ export async function createPolicyToolApproval(
   const client = policyClient();
   const approval = shadow(
     opaPolicy({
-      client,
+      client: client,
       path: POLICY_DECISION_PATH,
       toInput: ({ toolCall }) => ({
         ...baseInput,
@@ -93,7 +93,7 @@ export async function createPolicyToolApproval(
           workspaces,
           options,
         ),
-        mode,
+        mode: mode,
         policies: documents,
       }),
     }),
@@ -113,8 +113,8 @@ export async function createPolicyToolApproval(
           decision: event.decision.type,
           enforced: event.enforced,
           inputPreview: policyInput.tool?.inputPreview,
-          mode,
-          reason,
+          mode: mode,
+          reason: reason,
           toolName: event.toolCall.toolName,
         });
         const data = {
@@ -124,9 +124,9 @@ export async function createPolicyToolApproval(
           toolCallId: event.toolCall.toolCallId,
           action: policyInput.action,
           decision: event.decision.type,
-          mode,
+          mode: mode,
           enforced: event.enforced,
-          reason,
+          reason: reason,
           toolInputKeys: policyInput.tool?.inputKeys,
           toolInputPreview: policyInput.tool?.inputPreview,
           toolId: policyInput.toolId,
@@ -144,6 +144,7 @@ export async function createPolicyToolApproval(
       },
     },
   );
+
   return typeof approval === "function"
     ? (approval as RuntimeToolApproval)
     : undefined;
@@ -173,13 +174,13 @@ export async function evaluateChannelInvoke(
     >(POLICY_DECISION_PATH, {
       ...input,
       action: "agent.invoke",
-      mode,
-      policies,
+      mode: mode,
+      policies: policies,
     });
 
     return {
       allowed: decision?.allowed !== false,
-      mode,
+      mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
       matchedRuleIds: decision?.matchedRuleIds ?? [],
     };
@@ -188,13 +189,13 @@ export async function evaluateChannelInvoke(
       accountId: input.accountId,
       agentId: input.agentId,
       channelId: input.channelId,
-      mode,
+      mode: mode,
       error: error instanceof Error ? error.message : String(error),
     });
 
     return {
       allowed: false,
-      mode,
+      mode: mode,
       reason: "Policy evaluation failed",
       matchedRuleIds: [],
     };
@@ -221,6 +222,7 @@ export function policyDecisionLogMessage(input: {
     .filter(Boolean)
     .join(", ");
   const message = `Agent policy ${action} ${input.toolName} (${input.mode})${details ? `: ${details}` : ""}`;
+
   return input.reason ? `${message}: ${input.reason}` : message;
 }
 
@@ -245,6 +247,7 @@ export function createRuntimeToolApproval(options: {
       options,
     );
     if (compatibility) return compatibility;
+
     return options.policyApproval?.(event);
   };
 }
@@ -357,7 +360,7 @@ export function policyInputForTool(
         ? record.pattern
         : undefined;
   const base = {
-    toolName,
+    toolName: toolName,
     ...(options.toolIdsByName?.get(toolName)
       ? { toolId: options.toolIdsByName.get(toolName)! }
       : {}),
@@ -369,7 +372,7 @@ export function policyInputForTool(
           sandboxPermissionMode: workspace.sandbox?.permissionMode,
         }
       : {}),
-    ...(filePath ? { filePath } : {}),
+    ...(filePath ? { filePath: filePath } : {}),
   };
 
   if (toolName === "read" || toolName === "glob" || toolName === "grep")
@@ -380,6 +383,7 @@ export function policyInputForTool(
     // The tool derives its target path from the title, so mirror that here to give
     // policies the same workspace.write + filePath surface as write/edit.
     const title = typeof record.title === "string" ? record.title : "";
+
     return {
       action: "workspace.write",
       ...base,
@@ -389,10 +393,11 @@ export function policyInputForTool(
   if (toolName === "bash") return { action: "workspace.exec", ...base };
   if (toolName === "load_skill") {
     const skillPath = typeof record.path === "string" ? record.path : undefined;
+
     return {
       action: "skill.load",
       ...base,
-      ...(skillPath ? { skillPath } : {}),
+      ...(skillPath ? { skillPath: skillPath } : {}),
     };
   }
   if (toolName === "run_subagent") {
@@ -406,10 +411,11 @@ export function policyInputForTool(
           ) as { agentId?: string } | undefined
         )?.agentId
       : undefined;
+
     return {
       action: "subagent.run",
       ...base,
-      ...(subagentId ? { subagentId } : {}),
+      ...(subagentId ? { subagentId: subagentId } : {}),
     };
   }
 
@@ -420,6 +426,7 @@ function toolContextForPolicy(
   input: unknown,
 ): NonNullable<PolicyDecisionInput["tool"]> {
   const sanitizedInput = sanitizePolicyToolInput(input);
+
   return {
     ...(sanitizedInput ? { input: sanitizedInput } : {}),
     ...(sanitizedInput
@@ -446,6 +453,7 @@ function sanitizePolicyToolInput(
   if (!value || typeof value !== "object" || Array.isArray(value))
     return undefined;
   const result = sanitizePolicyValue(value, depth);
+
   return result && typeof result === "object" && !Array.isArray(result)
     ? (result as Record<string, unknown>)
     : undefined;
@@ -457,6 +465,7 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
   if (typeof value === "string") return truncatePolicyString(value);
   if (Array.isArray(value)) {
     if (depth >= POLICY_INPUT_MAX_DEPTH) return `[array:${value.length}]`;
+
     return value
       .slice(0, POLICY_INPUT_MAX_ARRAY)
       .map((entry) => sanitizePolicyValue(entry, depth + 1));
@@ -471,8 +480,10 @@ function sanitizePolicyValue(value: unknown, depth: number): unknown {
         ? POLICY_REDACTED_VALUE
         : sanitizePolicyValue(entry, depth + 1);
     }
+
     return output;
   }
+
   return String(value);
 }
 
@@ -499,6 +510,7 @@ function formatPolicyPreviewValue(value: unknown): string {
     return String(value);
   if (Array.isArray(value)) return `[array:${value.length}]`;
   if (value && typeof value === "object") return "{object}";
+
   return String(value);
 }
 
@@ -512,9 +524,10 @@ function resolveWorkspaceForPolicy(
     // Workspace-scoped selectors cannot match without this context, so make
     // the miss visible before enforcement mode relies on it.
     logDebug("Policy workspace resolution failed", {
-      workspaceName,
+      workspaceName: workspaceName,
       error: error instanceof Error ? error.message : String(error),
     });
+
     return undefined;
   }
 }

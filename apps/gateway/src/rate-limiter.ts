@@ -15,10 +15,12 @@ export class RateLimiter {
     if (!window || now - window.start >= this.#windowMs) {
       if (this.#windows.size > 10_000) this.#removeExpiredWindows(now);
       this.#windows.set(key, { start: now, count: 1 });
+
       return true;
     }
 
     window.count += 1;
+
     return window.count <= this.#limit;
   }
 

@@ -100,7 +100,7 @@ describe("streamAccountTool dispatcher", () => {
       tool: accountToolRecord("isolate"),
       input: {},
       config: {},
-      isolateExecutor,
+      isolateExecutor: isolateExecutor,
     })) {
       outputs.push(output);
     }
@@ -173,8 +173,8 @@ describe("streamAccountTool dispatcher", () => {
       tool: accountToolRecord("sandbox"),
       input: {},
       config: {},
-      isolateExecutor,
-      sandboxExecutor,
+      isolateExecutor: isolateExecutor,
+      sandboxExecutor: sandboxExecutor,
     })) {
       outputs.push(output);
     }
@@ -206,7 +206,7 @@ describe("streamAccountTool dispatcher", () => {
               completionToken: "tok_123",
             },
           },
-          sandboxExecutor,
+          sandboxExecutor: sandboxExecutor,
         }),
       ),
     ).rejects.toThrow(/not yet supported off Lambda/);
@@ -235,7 +235,7 @@ describe("streamAccountTool dispatcher", () => {
               completionToken: "tok_123",
             },
           },
-          isolateExecutor,
+          isolateExecutor: isolateExecutor,
         }),
       ),
     ).rejects.toThrow(/not yet supported off Lambda/);
@@ -598,8 +598,8 @@ describe("isolate pooled worker (--pool)", () => {
       const source =
         "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
       const { byCall } = await runPoolRunner([
-        { callId: "1", tenantId: "acct_a", toolName: "counter", source },
-        { callId: "2", tenantId: "acct_a", toolName: "counter", source },
+        { callId: "1", tenantId: "acct_a", toolName: "counter", source: source },
+        { callId: "2", tenantId: "acct_a", toolName: "counter", source: source },
       ]);
 
       // Same tenant reuses the isolate, but the fresh context resets globals, so
@@ -987,6 +987,7 @@ async function runPoolRunner(
   const next = async (): Promise<{ t: string; [key: string]: unknown }> => {
     while (!frames.length)
       await new Promise<void>((resolve) => (wake = resolve));
+
     return frames.shift()!;
   };
 
@@ -1020,7 +1021,8 @@ async function runPoolRunner(
       }
       byCall.set(request.callId, collected);
     }
-    return { byCall, ready, stderr };
+
+    return { byCall: byCall, ready: ready, stderr: stderr };
   } finally {
     child.kill();
   }
@@ -1061,7 +1063,7 @@ async function runRealRunner(
   child.stdin.end(
     JSON.stringify({
       bundleSourceB64: Buffer.from(source).toString("base64"),
-      expectedSha256,
+      expectedSha256: expectedSha256,
       toolName: options.toolName,
       input: options.input ?? {},
       config: options.config ?? {},
@@ -1091,8 +1093,8 @@ async function runRealRunner(
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => JSON.parse(line)),
-    exitCode,
-    stderr,
+    exitCode: exitCode,
+    stderr: stderr,
   };
 }
 
@@ -1107,7 +1109,7 @@ function accountToolRecord(
     inputSchema: { type: "object", properties: {} },
     bundleStorageKey: "account-tools/acct_test/bundles/hash.mjs",
     sha256: sha256(bundle),
-    runtime,
+    runtime: runtime,
     defaultConfig: { fromDefault: true },
     status: "active",
     createdAt: "2026-06-06T00:00:00.000Z",

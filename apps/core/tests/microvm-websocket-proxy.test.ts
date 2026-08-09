@@ -22,12 +22,13 @@ describe("MicrovmWebSocketProxy", () => {
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
-      fetch(request, server) {
+      fetch: function(request, server) {
         const url = new URL(request.url);
         upstreamRequest.resolve({
           protocols: request.headers.get("sec-websocket-protocol") ?? "",
           path: `${url.pathname}${url.search}`,
         });
+
         return server.upgrade(request, {
           headers: { "Sec-WebSocket-Protocol": "lambda-microvms" },
         })
@@ -35,7 +36,7 @@ describe("MicrovmWebSocketProxy", () => {
           : new Response("upgrade failed", { status: 400 });
       },
       websocket: {
-        message(socket, message) {
+        message: function(socket, message) {
           socket.send(message);
         },
       },
@@ -47,9 +48,10 @@ describe("MicrovmWebSocketProxy", () => {
       microvmId: "mvm-test-123",
       allowedPorts: [4_321],
       allowInsecureUpstream: true,
-      async createAuthToken(microvmId, port) {
+      createAuthToken: async function(microvmId, port) {
         expect(microvmId).toBe("mvm-test-123");
         expect(port).toBe(4_321);
+
         return SECRET_TOKEN;
       },
     });
@@ -79,7 +81,7 @@ describe("MicrovmWebSocketProxy", () => {
       endpoint: "wss://example.lambda-microvm.us-east-1.on.aws",
       microvmId: "mvm-test-123",
       allowedPorts: [4_321],
-      async createAuthToken() {
+      createAuthToken: async function() {
         return SECRET_TOKEN;
       },
     });
@@ -95,7 +97,7 @@ describe("MicrovmWebSocketProxy", () => {
       endpoint: "wss://example.lambda-microvm.us-east-1.on.aws",
       microvmId: "mvm-test-123",
       allowedPorts: [4_321],
-      async createAuthToken() {
+      createAuthToken: async function() {
         throw new Error(`credential failure: ${SECRET_TOKEN}`);
       },
     });

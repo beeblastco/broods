@@ -32,7 +32,7 @@ export interface HookDispatcher {
 
 const NO_HOOKS: HookDispatcher = {
   hasHooksFor: () => false,
-  async runMutation() {
+  runMutation: async function() {
     return undefined;
   },
 };
@@ -53,6 +53,7 @@ export async function createAgentHookDispatcher(
   if (index.size === 0) {
     return NO_HOOKS;
   }
+
   return createHookDispatcher(accountId, index);
 }
 
@@ -67,9 +68,10 @@ export function createHookDispatcher(
   // Fire-points can overlap (parallel tool calls, a subagent finishing mid-step);
   // hook runs queue on this chain so no two read-modify-write runState at once.
   let queue: Promise<unknown> = Promise.resolve();
+
   return {
     hasHooksFor: (event) => index.has(event),
-    async runMutation(event, payload) {
+    runMutation: async function(event, payload) {
       const records = index.get(event);
       if (!records || records.length === 0) {
         return undefined;
@@ -79,10 +81,10 @@ export function createHookDispatcher(
         let merged: Record<string, unknown> | undefined;
         for (const record of records) {
           const { mutation, state } = await runCodeHook({
-            accountId,
-            record,
-            event,
-            payload,
+            accountId: accountId,
+            record: record,
+            event: event,
+            payload: payload,
             state: runState,
           });
           runState = state;
@@ -90,9 +92,11 @@ export function createHookDispatcher(
             merged = { ...(merged ?? {}), ...mutation };
           }
         }
+
         return merged;
       });
       queue = run.catch(() => undefined);
+
       return run;
     },
   };
@@ -120,6 +124,7 @@ function buildEventIndex(
       index.set(event, list);
     }
   }
+
   return index;
 }
 
@@ -179,8 +184,8 @@ export async function applyMessageSendingHook(
   text: string,
 ): Promise<string | null> {
   const mutation = await hooks.runMutation("channel.message.sending", {
-    channel,
-    text,
+    channel: channel,
+    text: text,
   });
   if (mutation?.drop === true) {
     return null;
@@ -199,6 +204,7 @@ async function loadAgentHooks(
   const records = await Promise.all(
     ids.map((id) => store.getById(accountId, id)),
   );
+
   return records.filter(
     (record): record is AccountHookRecord =>
       record != null && record.status === "active",

@@ -868,6 +868,7 @@ function normalizeChannelIdentityConfig(
         `${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`,
       );
     }
+
     return;
   }
   normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
@@ -883,6 +884,7 @@ function validateConfigPatch(value: unknown, path: string): void {
   const withoutNulls = removeNullConfigValues(candidate);
   if (path === "config") {
     normalizeAgentConfig(withoutNulls);
+
     return;
   }
 }
@@ -894,6 +896,7 @@ function removeNullConfigValues(
     Object.entries(value).flatMap(([key, entry]) => {
       if (entry === null) return [];
       if (isPlainObject(entry)) return [[key, removeNullConfigValues(entry)]];
+
       return [[key, entry]];
     }),
   );
@@ -925,6 +928,7 @@ function isPrivateHostname(hostname: string): boolean {
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
     const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+
     return (
       a === 0 ||
       a === 10 ||

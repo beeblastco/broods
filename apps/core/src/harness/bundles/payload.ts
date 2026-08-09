@@ -199,6 +199,7 @@ export function parseToolRunnerFrame(line: string): ToolRunnerFrame | null {
     ) {
       return parsed;
     }
+
     return null;
   } catch {
     return null;

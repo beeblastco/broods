@@ -319,7 +319,7 @@ describe("account webhook ingress", () => {
             zalo: {
               botToken: "zalo-token",
               webhookSecret: "zalo-secret",
-              allowedUserIds,
+              allowedUserIds: allowedUserIds,
             },
           },
         },
@@ -428,6 +428,7 @@ function createIncomingEventRouter(options: IntegrationRoutingOptions = {}) {
         () => undefined,
       );
     }
+
     return shape;
   };
 }
@@ -544,9 +545,10 @@ async function responseToShape(response: Response): Promise<ResponseShape> {
   response.headers.forEach((value, key) => {
     headers[key] = value;
   });
+
   return {
     statusCode: response.status,
-    headers,
+    headers: headers,
     body: await response.text(),
   };
 }

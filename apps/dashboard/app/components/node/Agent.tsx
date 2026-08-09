@@ -42,8 +42,7 @@ function isStructuredOutputEnabled(outputFormat: unknown): boolean {
 export function AgentNode({ id, data }: NodeProps) {
   const nodeData = data as BaseNodeData;
   const agentConfigId = nodeData.agentConfigId as
-    | Id<"agentConfigs">
-    | undefined;
+    Id<"agentConfigs"> | undefined;
   const healthStatus = useAgentHealth(agentConfigId);
   const agentConfig = useQuery(
     api.agentConfig.getById,
@@ -63,7 +62,7 @@ export function AgentNode({ id, data }: NodeProps) {
       ?.publicAccess === true;
   const withColor: BaseNodeData = {
     ...nodeData,
-    config: { ...nodeData.config, publicAccess },
+    config: { ...nodeData.config, publicAccess: publicAccess },
     properties: nodeData.properties ?? { color: DEFAULT_AGENT_COLOR },
   };
 

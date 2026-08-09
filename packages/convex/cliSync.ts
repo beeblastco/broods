@@ -670,6 +670,7 @@ export const deleteResourceBySecretHash = internalMutation({
     }
 
     await ctx.db.patch(resolved.projectDoc._id, { updatedAt: Date.now() });
+
     return null;
   },
 });
@@ -1174,6 +1175,7 @@ function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
   const provider = sandboxProvider(sandbox);
   if (provider === "lambda" || provider === "sandbox") return true;
   if (provider !== "daytona") return false;
+
   return (
     plainRecord(plainRecord(sandbox.config).options).mountAwsS3Buckets === true
   );
@@ -1181,6 +1183,7 @@ function supportsS3WorkspaceMount(sandbox: CliResource): boolean {
 
 function sandboxProvider(sandbox: CliResource): string {
   const provider = plainRecord(sandbox.config).provider;
+
   return typeof provider === "string" ? provider : "sandbox";
 }
 
@@ -2035,6 +2038,7 @@ async function syncCanvasLayoutForManifest(
       skill: 3,
       tool: 4,
     } as const;
+
     return rank[a.kind] - rank[b.kind] || a.name.localeCompare(b.name);
   });
   ordered.forEach((resource) => {
@@ -2042,8 +2046,8 @@ async function syncCanvasLayoutForManifest(
       const config = agentConfigByName.get(resource.name);
       if (!config) return;
       const node = upsertCanvasNode({
-        nextById,
-        existingById,
+        nextById: nextById,
+        existingById: existingById,
         preferred: existingByAgentConfigId.get(config._id),
         kind: "agent",
         name: resource.name,
@@ -2057,14 +2061,15 @@ async function syncCanvasLayoutForManifest(
         },
       });
       nodeIdByKindName.set(`agent:${resource.name}`, node.id);
+
       return;
     }
 
     if (resource.kind === "skill") {
       const configSnapshot = snapshotExternalConfig(resource.config);
       const node = upsertCanvasNode({
-        nextById,
-        existingById,
+        nextById: nextById,
+        existingById: existingById,
         preferred: existingById.get(canvasNodeId("skill", resource.name)),
         kind: "skill",
         name: resource.name,
@@ -2083,6 +2088,7 @@ async function syncCanvasLayoutForManifest(
         },
       });
       nodeIdByKindName.set(`skill:${resource.name}`, node.id);
+
       return;
     }
 
@@ -2090,8 +2096,8 @@ async function syncCanvasLayoutForManifest(
       const record = toolsByName.get(resource.name);
       if (!record) return;
       const node = upsertCanvasNode({
-        nextById,
-        existingById,
+        nextById: nextById,
+        existingById: existingById,
         preferred: existingByResourceId.get(record._id),
         kind: "tool",
         name: resource.name,
@@ -2111,6 +2117,7 @@ async function syncCanvasLayoutForManifest(
       });
       nodeIdByKindName.set(`tool:${resource.name}`, node.id);
       if (record.nodeId !== node.id) toolNodeIds.set(record._id, node.id);
+
       return;
     }
 
@@ -2120,8 +2127,8 @@ async function syncCanvasLayoutForManifest(
         : sandboxIds[resource.name];
     if (!resourceId) return;
     const node = upsertCanvasNode({
-      nextById,
-      existingById,
+      nextById: nextById,
+      existingById: existingById,
       preferred: existingByResourceId.get(resourceId),
       kind: resource.kind,
       name: resource.name,
@@ -2280,6 +2287,7 @@ async function syncCanvasLayoutForManifest(
     if (key) return desiredNodeKeys.has(key);
     if (node.id.startsWith("cli-"))
       return desiredNodeKeys.has(cliResourceKeyForNode(node));
+
     return true;
   });
   const now = Date.now();
@@ -2738,106 +2746,90 @@ async function resourcesForEnvironment(
   const sandboxResources: CliResource[] = await Promise.all(
     sandboxes
       .filter((sandbox) => sandbox.managedBy === "cli")
-      .map(
-        async (sandbox): Promise<CliResource> => ({
-          kind: "sandbox",
-          name: sandbox.name,
-          description: sandbox.description,
-          config: await decryptSandboxManifestConfig(sandbox, secret),
-        }),
-      ),
+      .map(async (sandbox): Promise<CliResource> => ({
+        kind: "sandbox",
+        name: sandbox.name,
+        description: sandbox.description,
+        config: await decryptSandboxManifestConfig(sandbox, secret),
+      })),
   );
 
   return [
     ...agents
       .filter((agent) => agent.managedBy === "cli")
-      .map(
-        (agent): CliResource => ({
-          kind: "agent",
-          name: agent.name,
-          description: agent.description,
-          config: rewriteIdsToNames(
-            toNestedAgentConfig({
-              name: agent.name,
-              description: agent.description,
-              provider: agent.provider,
-              modelId: agent.modelId,
-              systemPrompt: agent.systemPrompt,
-              maxTurns: agent.maxTurns,
-              outputFormat: agent.outputFormat as
-                | Record<string, unknown>
-                | undefined,
-              providerOptions: agent.providerOptions as
-                | Record<string, unknown>
-                | undefined,
-              temperature: agent.temperature,
-              maxTokens: agent.maxTokens,
-              memoryToolEnabled: agent.memoryToolEnabled,
-              searchToolEnabled: agent.searchToolEnabled,
-              searchToolConfig: agent.searchToolConfig as
-                | Record<string, unknown>
-                | undefined,
-              extraConfig: agent.extraConfig as
-                | Record<string, unknown>
-                | undefined,
-            }),
-            workspaceNames,
-            sandboxNames,
-            agentNames,
-            skillNames,
-            toolNames,
-            hookNames,
-            policyNames,
-          ),
-        }),
-      ),
+      .map((agent): CliResource => ({
+        kind: "agent",
+        name: agent.name,
+        description: agent.description,
+        config: rewriteIdsToNames(
+          toNestedAgentConfig({
+            name: agent.name,
+            description: agent.description,
+            provider: agent.provider,
+            modelId: agent.modelId,
+            systemPrompt: agent.systemPrompt,
+            maxTurns: agent.maxTurns,
+            outputFormat: agent.outputFormat as
+              Record<string, unknown> | undefined,
+            providerOptions: agent.providerOptions as
+              Record<string, unknown> | undefined,
+            temperature: agent.temperature,
+            maxTokens: agent.maxTokens,
+            memoryToolEnabled: agent.memoryToolEnabled,
+            searchToolEnabled: agent.searchToolEnabled,
+            searchToolConfig: agent.searchToolConfig as
+              Record<string, unknown> | undefined,
+            extraConfig: agent.extraConfig as
+              Record<string, unknown> | undefined,
+          }),
+          workspaceNames,
+          sandboxNames,
+          agentNames,
+          skillNames,
+          toolNames,
+          hookNames,
+          policyNames,
+        ),
+      })),
     ...policies
       .filter(
         (policy) => policy.managedBy === "cli" && policy.status === "active",
       )
-      .map(
-        (policy): CliResource => ({
-          kind: "policy",
-          name: policy.name,
-          description: policy.description,
-          config: policy.document,
-        }),
-      ),
+      .map((policy): CliResource => ({
+        kind: "policy",
+        name: policy.name,
+        description: policy.description,
+        config: policy.document,
+      })),
     ...channelRecords
       .filter(
         (record) => record.managedBy === "cli" && record.status === "active",
       )
-      .map(
-        (record): CliResource => ({
-          kind: "channelRecord",
-          name: record.name,
-          description: record.description,
-          config: channelRecordManifestConfig(record, {
-            agentNames: agentNames,
-            policyNames: policyNames,
-            workspaceNames: workspaceNames,
-          }),
+      .map((record): CliResource => ({
+        kind: "channelRecord",
+        name: record.name,
+        description: record.description,
+        config: channelRecordManifestConfig(record, {
+          agentNames: agentNames,
+          policyNames: policyNames,
+          workspaceNames: workspaceNames,
         }),
-      ),
-    ...externalResources.map(
-      (resource): CliResource => ({
-        kind: resource.kind,
-        name: resource.name,
-        description: resource.description,
-        config: resource.config,
-      }),
-    ),
+      })),
+    ...externalResources.map((resource): CliResource => ({
+      kind: resource.kind,
+      name: resource.name,
+      description: resource.description,
+      config: resource.config,
+    })),
     ...sandboxResources,
     ...workspaces
       .filter((workspace) => workspace.managedBy === "cli")
-      .map(
-        (workspace): CliResource => ({
-          kind: "workspace",
-          name: workspace.name,
-          description: workspace.description,
-          config: workspace.config,
-        }),
-      ),
+      .map((workspace): CliResource => ({
+        kind: "workspace",
+        name: workspace.name,
+        description: workspace.description,
+        config: workspace.config,
+      })),
     ...crons.flatMap((cron): CliResource[] => {
       const agentName = agentNames[cron.agentId];
       if (!agentName) return [];
@@ -3060,15 +3052,13 @@ function renameComparableAgent(agent: Doc<"agentConfigs">): unknown {
       maxTurns: agent.maxTurns,
       outputFormat: agent.outputFormat as Record<string, unknown> | undefined,
       providerOptions: agent.providerOptions as
-        | Record<string, unknown>
-        | undefined,
+        Record<string, unknown> | undefined,
       temperature: agent.temperature,
       maxTokens: agent.maxTokens,
       memoryToolEnabled: agent.memoryToolEnabled,
       searchToolEnabled: agent.searchToolEnabled,
       searchToolConfig: agent.searchToolConfig as
-        | Record<string, unknown>
-        | undefined,
+        Record<string, unknown> | undefined,
       extraConfig: agent.extraConfig as Record<string, unknown> | undefined,
     }),
   );
@@ -3302,6 +3292,7 @@ function snapshotExternalConfig(value: unknown): unknown {
               entry.map((file) => {
                 if (!isPlainObject(file)) return snapshotExternalConfig(file);
                 const { contentBase64: _contentBase64, ...rest } = file;
+
                 return snapshotExternalConfig(rest);
               }),
             ],

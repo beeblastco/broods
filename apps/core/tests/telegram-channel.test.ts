@@ -155,7 +155,7 @@ function createRequest(
     method: "POST",
     rawPath: "/",
     rawQueryString: "",
-    headers,
+    headers: headers,
     body: JSON.stringify(payload),
   };
 }

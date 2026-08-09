@@ -204,7 +204,7 @@ function createPancakeRequest(
   return {
     method: "POST",
     rawPath: "/",
-    rawQueryString,
+    rawQueryString: rawQueryString,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
   };

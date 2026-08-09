@@ -28,10 +28,10 @@ let execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
 // The documented sandbox object shape (docs/API.md:124-152), trimmed.
 function sandboxObject(id: string, state: string): Record<string, unknown> {
   return {
-    id,
+    id: id,
     runtime: "firecracker",
     image: "base",
-    state,
+    state: state,
     resources: { cpu: "1 shared vCPU", memory_mb: 2048, disk_gb: 8 },
     boot_path: "hot_pool",
     urls: { ports: {} },
@@ -44,7 +44,7 @@ function sandboxObject(id: string, state: string): Record<string, unknown> {
 function jsonResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
-    status,
+    status: status,
     text: async () => (payload === undefined ? "" : JSON.stringify(payload)),
   } as unknown as Response;
 }
@@ -58,9 +58,9 @@ const fetchMock = mock(
       ? (JSON.parse(String(init.body)) as Record<string, unknown>)
       : undefined;
     fetchCalls.push({
-      method,
-      path,
-      body,
+      method: method,
+      path: path,
+      body: body,
       headers: (init?.headers ?? {}) as Record<string, string>,
     });
 
@@ -80,6 +80,7 @@ const fetchMock = mock(
     if (method === "POST" && path.endsWith("/resume"))
       return jsonResponse(sandboxObject("sbx_stored", "running"));
     if (method === "DELETE") return jsonResponse({});
+
     return jsonResponse({ error: { code: "not_found", message: path } }, 404);
   },
 );
@@ -91,6 +92,7 @@ const getSandboxExternalIdMock = mock(
 const claimSandboxInstanceMock = mock(
   async (_provider: string, _key: string, externalId: string) => {
     storedSandboxExternalId = externalId;
+
     return true;
   },
 );
@@ -147,6 +149,7 @@ function createBody(): Record<string, unknown> {
   const create = fetchCalls.find(
     (c) => c.method === "POST" && c.path === "/v1/sandboxes",
   );
+
   return (create?.body ?? {}) as Record<string, unknown>;
 }
 
@@ -163,6 +166,7 @@ async function newExecutor(config: Record<string, unknown>) {
     options?.workdirUrl && !options.apiKey
       ? { ...config, options: { ...options, apiKey: "tenant-workdir-key" } }
       : config;
+
   return new WorkdirSandboxExecutor(safeConfig as never);
 }
 

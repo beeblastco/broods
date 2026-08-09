@@ -28,6 +28,7 @@ interface GlobInput {
 
 function inputSchema(context: SandboxToolContext): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(context.workspaces);
+
   return {
     type: "object",
     properties: {
@@ -107,7 +108,7 @@ Usage notes:
 - path is the directory to search in, relative to the workspace root; it defaults to the root.
 - Prefer this over \`bash find\` for locating files by name.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      async execute(input) {
+      execute: async function(input) {
         const { pattern, path, workspace } = input as GlobInput;
         try {
           if (typeof pattern !== "string" || pattern.trim().length === 0) {
@@ -133,6 +134,7 @@ Usage notes:
               `${result.stderr}${result.stdout}`.trim() || "Error: glob failed",
             );
           }
+
           return toolText(result.stdout);
         } catch (cause) {
           return toolError(

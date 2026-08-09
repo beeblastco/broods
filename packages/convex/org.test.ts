@@ -18,8 +18,8 @@ async function seedAccount(
   return await t.run(
     async (ctx) =>
       await ctx.db.insert("accounts", {
-        orgId,
-        username,
+        orgId: orgId,
+        username: username,
         description: "sale-agent-usecase dev stack tenant account",
         secretHash: "hash-" + username,
         status: "active" as const,
@@ -34,7 +34,7 @@ async function seedUser(t: T, email: string) {
     async (ctx) =>
       await ctx.db.insert("users", {
         authId: "auth_" + email,
-        email,
+        email: email,
         name: "Test Owner",
         plan: "free" as const,
       }),
@@ -53,7 +53,7 @@ describe("adoptExternalAccount", () => {
     const userId = await seedUser(t, "owner@example.com");
 
     const result = await adopt(t, {
-      accountId,
+      accountId: accountId,
       ownerEmail: "owner@example.com",
       orgName: "BeeBlast Sale Agent (dev)",
     });
@@ -72,7 +72,7 @@ describe("adoptExternalAccount", () => {
       const membership = await ctx.db.get(result.membershipId);
       expect(membership).toMatchObject({
         orgId: result.orgId,
-        userId,
+        userId: userId,
         role: "owner",
       });
     });
@@ -84,14 +84,14 @@ describe("adoptExternalAccount", () => {
     await seedUser(t, "owner@example.com");
 
     const { orgId } = await adopt(t, {
-      accountId,
+      accountId: accountId,
       ownerEmail: "owner@example.com",
       orgName: "BeeBlast Sale Agent (dev)",
     });
 
     // getByOrgId resolves with .unique(); this is the query that was previously
     // unreachable for this account, and that would throw on a duplicate binding.
-    const found = await t.query(internal.accounts.getByOrgId, { orgId });
+    const found = await t.query(internal.accounts.getByOrgId, { orgId: orgId });
     expect(found?._id).toBe(accountId);
   });
 
@@ -113,7 +113,7 @@ describe("adoptExternalAccount", () => {
 
     await expect(
       adopt(t, {
-        accountId,
+        accountId: accountId,
         ownerEmail: "owner@example.com",
         orgName: "Hijack",
       }),
@@ -125,7 +125,11 @@ describe("adoptExternalAccount", () => {
     const accountId = await seedAccount(t, "external:sale-agent-dev");
 
     await expect(
-      adopt(t, { accountId, ownerEmail: "ghost@example.com", orgName: "Nope" }),
+      adopt(t, {
+        accountId: accountId,
+        ownerEmail: "ghost@example.com",
+        orgName: "Nope",
+      }),
     ).rejects.toThrow(/must sign in/);
   });
 
@@ -152,7 +156,7 @@ describe("adoptExternalAccount", () => {
     await seedUser(t, "owner@example.com");
 
     const { orgId } = await adopt(t, {
-      accountId,
+      accountId: accountId,
       ownerEmail: "owner@example.com",
       orgName: "BeeBlast Sale Agent (dev)",
     });

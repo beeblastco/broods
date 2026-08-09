@@ -63,6 +63,7 @@ export function setObservabilityContext(
   const cell = _obsStore.getStore();
   if (cell) {
     cell.current = ctx;
+
     return;
   }
   _obsCtxGlobal = ctx;
@@ -70,6 +71,7 @@ export function setObservabilityContext(
 
 export function getObservabilityContext(): ObservabilityContext | null {
   const cell = _obsStore.getStore();
+
   return cell ? cell.current : _obsCtxGlobal;
 }
 
@@ -119,7 +121,7 @@ export function initOtel(): void {
       "service.namespace": "beeblast",
     });
     const tracerProvider = new BasicTracerProvider({
-      resource,
+      resource: resource,
       spanProcessors: [new BatchSpanProcessor(traceExporter)],
     });
     trace.setGlobalTracerProvider(tracerProvider);
@@ -131,7 +133,7 @@ export function initOtel(): void {
       timeoutMillis: 5000,
     });
     const loggerProvider = new LoggerProvider({
-      resource,
+      resource: resource,
       processors: [new BatchLogRecordProcessor({ exporter: logExporter })],
     });
     logs.setGlobalLoggerProvider(loggerProvider);
@@ -152,6 +154,7 @@ export function initOtel(): void {
 // Returns a noop tracer if initOtel() has not run.
 export function getTracer(): Tracer {
   if (_tracer) return _tracer;
+
   return trace.getTracer("broods-harness");
 }
 

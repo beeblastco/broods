@@ -70,10 +70,10 @@ export async function toCoreRequest(
     path: url.pathname,
     search: url.search.startsWith("?") ? url.search.slice(1) : url.search,
     query: url.searchParams,
-    headers,
+    headers: headers,
     body: await request.text(),
-    cookies,
-    clientIp,
+    cookies: cookies,
+    clientIp: clientIp,
   };
 }
 
@@ -136,7 +136,7 @@ if (import.meta.main) {
       const ctx: RequestContext = {
         requestId: crypto.randomUUID(),
         deadlineMs: Date.now() + requestBudgetMs,
-        waitUntil,
+        waitUntil: waitUntil,
       };
 
       try {
@@ -148,6 +148,7 @@ if (import.meta.main) {
           path: url.pathname,
           error: err instanceof Error ? err.message : String(err),
         });
+
         return Response.json(
           { error: "Internal server error" },
           { status: 500 },
@@ -162,7 +163,7 @@ if (import.meta.main) {
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    logInfo("Core server shutting down", { signal });
+    logInfo("Core server shutting down", { signal: signal });
     const deadline = new Promise<void>((resolve) =>
       setTimeout(resolve, SHUTDOWN_DEADLINE_MS),
     );

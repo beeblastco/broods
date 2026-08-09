@@ -173,17 +173,17 @@ export function applyChannelRecord(
           },
         }
       : {}),
-    ...(workspaces ? { workspaces } : {}),
+    ...(workspaces ? { workspaces: workspaces } : {}),
     ...(policyIds.length > 0
       ? {
           policy: {
             ...config.policy,
-            policyIds,
+            policyIds: policyIds,
             ...(policyMode ? { mode: policyMode } : {}),
           },
         }
       : {}),
-    ...(denyTools ? { denyTools } : {}),
+    ...(denyTools ? { denyTools: denyTools } : {}),
     // The scope entry is written even when the bound agent carries no config for
     // this channel — with an account-scoped webhook the credentials live on the
     // receiving agent, and an isolated workspace throws without a scope.
@@ -234,16 +234,16 @@ export function normalizeChannelRecordConfig(
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
   return {
-    ...(instructions ? { instructions } : {}),
-    agentBindings,
-    ...(workspaces ? { workspaces } : {}),
-    ...(policyIds ? { policyIds } : {}),
-    ...(policyMode ? { policyMode } : {}),
-    ...(denyTools ? { denyTools } : {}),
-    ...(threadPolicy ? { threadPolicy } : {}),
-    ...(workspaceScope ? { workspaceScope } : {}),
-    ...(sandboxImages ? { sandboxImages } : {}),
-    ...(tagRoles ? { tagRoles } : {}),
+    ...(instructions ? { instructions: instructions } : {}),
+    agentBindings: agentBindings,
+    ...(workspaces ? { workspaces: workspaces } : {}),
+    ...(policyIds ? { policyIds: policyIds } : {}),
+    ...(policyMode ? { policyMode: policyMode } : {}),
+    ...(denyTools ? { denyTools: denyTools } : {}),
+    ...(threadPolicy ? { threadPolicy: threadPolicy } : {}),
+    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+    ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
+    ...(tagRoles ? { tagRoles: tagRoles } : {}),
   };
 }
 
@@ -259,8 +259,8 @@ export function normalizeCreateChannelRecordInput(
     platform: requireString(input.platform, "platform"),
     externalId: requireString(input.externalId, "externalId"),
     name: requireString(input.name, "name"),
-    ...(workspaceRef ? { workspaceRef } : {}),
-    ...(description ? { description } : {}),
+    ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
+    ...(description ? { description: description } : {}),
     config: normalizeChannelRecordConfig(input.config),
   };
 }

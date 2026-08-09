@@ -16,10 +16,11 @@ type PromptMessage = { role: string; content: unknown };
 
 async function transform(prompt: PromptMessage[]): Promise<PromptMessage[]> {
   const result = await mergeSystemMessagesMiddleware.transformParams!({
-    params: { prompt } as never,
+    params: { prompt: prompt } as never,
     type: "stream",
     model: {} as never,
   });
+
   return (result as { prompt: PromptMessage[] }).prompt;
 }
 
@@ -64,7 +65,7 @@ async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
   const { stream } = (await normalizeStreamDeltasMiddleware.wrapStream!({
     doStream: async () => ({
       stream: new ReadableStream<StreamPart>({
-        start(controller) {
+        start: function(controller) {
           for (const part of parts) controller.enqueue(part);
           controller.close();
         },
@@ -76,6 +77,7 @@ async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
   for await (const part of stream) {
     emitted.push(part);
   }
+
   return emitted;
 }
 

@@ -11,7 +11,6 @@ COPY apps/gateway/package.json ./apps/gateway/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
 COPY packages/convex/package.json ./packages/convex/
 COPY packages/broods/package.json ./packages/broods/
-COPY patches ./patches
 RUN bun install --frozen-lockfile --ignore-scripts
 
 FROM ${BUN_IMAGE} AS builder

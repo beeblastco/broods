@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["@base-ui/react", "@xyflow/react", "lucide-react"],
   },
-  async headers() {
+  headers: async function () {
     return [
       {
         source: "/:path*",

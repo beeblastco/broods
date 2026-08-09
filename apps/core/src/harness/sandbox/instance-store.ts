@@ -6,7 +6,7 @@ export function getSandboxExternalId(
   provider: SandboxProvider,
   reservationKey: string,
 ): Promise<string | null> {
-  return runtime.query("getSandboxReservation", { provider, reservationKey });
+  return runtime.query("getSandboxReservation", { provider: provider, reservationKey: reservationKey });
 }
 // The reservation key is a hashed namespace, so the owning account can't be
 // derived from it — callers pass accountId from the sandbox control plane. When
@@ -21,10 +21,10 @@ export function claimSandboxInstance(
   if (!accountId) return Promise.resolve(false);
 
   return runtime.mutate("claimSandboxReservation", {
-    provider,
-    reservationKey,
-    externalId,
-    accountId,
+    provider: provider,
+    reservationKey: reservationKey,
+    externalId: externalId,
+    accountId: accountId,
   });
 }
 export async function deleteSandboxInstance(
@@ -36,10 +36,10 @@ export async function deleteSandboxInstance(
   if (!accountId) return;
 
   await runtime.mutate("deleteSandboxReservation", {
-    provider,
-    reservationKey,
-    expectedExternalId,
-    accountId,
+    provider: provider,
+    reservationKey: reservationKey,
+    expectedExternalId: expectedExternalId,
+    accountId: accountId,
   });
 }
 export async function saveSandboxInstance(
@@ -51,9 +51,9 @@ export async function saveSandboxInstance(
   if (!accountId) return;
 
   await runtime.mutate("saveSandboxReservation", {
-    provider,
-    reservationKey,
-    externalId,
-    accountId,
+    provider: provider,
+    reservationKey: reservationKey,
+    externalId: externalId,
+    accountId: accountId,
   });
 }

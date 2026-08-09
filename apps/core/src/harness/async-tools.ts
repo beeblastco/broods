@@ -81,6 +81,7 @@ export class AsyncToolCoordinator {
     return Object.fromEntries(
       Object.entries(tools).map(([toolName, entry]) => {
         const source = asyncToolModes.get(toolName);
+
         return [
           toolName,
           source ? this.wrapTool(toolName, entry, source) : entry,
@@ -131,6 +132,7 @@ export class AsyncToolCoordinator {
     await this.parentSession.persistModelMessages(
       completions.map(completionToParentMessage),
     );
+
     return completions.length;
   }
 
@@ -170,6 +172,7 @@ export class AsyncToolCoordinator {
     await this.parentSession.persistModelMessages(
       batch.map(completionToParentMessage),
     );
+
     return batch.length;
   }
 
@@ -180,10 +183,11 @@ export class AsyncToolCoordinator {
   ): ToolEntry {
     if (!entry.execute) {
       logWarn("Async tool config ignored because tool has no local execute", {
-        toolName,
+        toolName: toolName,
         conversationKey: this.parentSession.conversationKey,
         eventId: this.parentSession.eventId,
       });
+
       return entry;
     }
 
@@ -206,45 +210,45 @@ export class AsyncToolCoordinator {
           ? crypto.randomUUID()
           : undefined;
         await createPendingAsyncToolResult({
-          resultId,
+          resultId: resultId,
           parentEventId: this.parentSession.eventId,
           conversationKey: this.parentSession.conversationKey,
-          toolName,
+          toolName: toolName,
           toolCallId: options.toolCallId,
-          input,
+          input: input,
           ...(detachedCallback && this.delivery
             ? { delivery: this.delivery }
             : {}),
-          ...(completionToken ? { completionToken } : {}),
+          ...(completionToken ? { completionToken: completionToken } : {}),
         });
         const executeOptions = withAsyncToolMetadata(options, {
-          resultId,
+          resultId: resultId,
           parentEventId: this.parentSession.eventId,
           conversationKey: this.parentSession.conversationKey,
           ...(detachedCallback ? { detached: true } : {}),
-          ...(completionToken ? { completionToken } : {}),
+          ...(completionToken ? { completionToken: completionToken } : {}),
         });
 
         if (detachedCallback) {
           this.detachedCallbackCount++;
           await this.dispatchDetachedToolCall({
-            resultId,
-            toolName,
+            resultId: resultId,
+            toolName: toolName,
             toolCallId: options.toolCallId,
-            input,
+            input: input,
             execute: () => originalExecute(input, executeOptions),
           });
         } else {
           this.startToolCall({
-            resultId,
-            toolName,
+            resultId: resultId,
+            toolName: toolName,
             toolCallId: options.toolCallId,
-            input,
+            input: input,
             execute: () => originalExecute(input, executeOptions),
           });
         }
 
-        return { resultId, status: "running" };
+        return { resultId: resultId, status: "running" };
       },
     };
 
@@ -321,14 +325,14 @@ export class AsyncToolCoordinator {
     const response = await resolveToolOutput(options.execute());
     await markAsyncToolResultCompleted({
       resultId: options.resultId,
-      response,
+      response: response,
     });
     await this.completeToolCall({
       resultId: options.resultId,
       toolName: options.toolName,
       input: options.input,
       status: "completed",
-      response,
+      response: response,
     });
   }
 
@@ -410,6 +414,7 @@ async function resolveToolOutput(
     for await (const chunk of output) {
       lastOutput = chunk;
     }
+
     return lastOutput;
   }
 

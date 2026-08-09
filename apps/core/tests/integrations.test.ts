@@ -804,6 +804,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleDirectRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -872,6 +873,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleDirectRequest: async (event) => {
           handledEvents.push(event);
+
           return { statusCode: 202, body: "{}" };
         },
       }),
@@ -914,6 +916,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleDirectRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -983,6 +986,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleDirectRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "text/plain; charset=utf-8" },
@@ -1095,6 +1099,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleAsyncRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 202,
             headers: { "Content-Type": "application/json" },
@@ -1143,6 +1148,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleAsyncRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 202,
             headers: { "Content-Type": "application/json" },
@@ -1205,6 +1211,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleAsyncRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 202,
             headers: { "Content-Type": "application/json" },
@@ -1282,6 +1289,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleStatusRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "application/json" },
@@ -1329,6 +1337,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleStatusRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "application/json" },
@@ -1370,6 +1379,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleStatusRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "application/json" },
@@ -1428,6 +1438,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleStatusRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 200,
             headers: { "Content-Type": "application/json" },
@@ -1558,6 +1569,7 @@ describe("direct API ingress", () => {
         createHandlers({
           handleStatusRequest: async (event) => {
             handledEvents.push(event);
+
             return {
               statusCode: 200,
               headers: { "Content-Type": "application/json" },
@@ -1788,6 +1800,7 @@ describe("direct API ingress", () => {
       createHandlers({
         handleAsyncToolCompletionRequest: async (event) => {
           handledEvents.push(event);
+
           return {
             statusCode: 202,
             headers: { "Content-Type": "application/json" },
@@ -1912,6 +1925,7 @@ async function routeIncomingEvent(
   });
 
   const response = await router(event, handlers);
+
   return responseToShape(response);
 }
 
@@ -1947,7 +1961,7 @@ async function deploymentStatusRequest(
 
 function ingressStatus(eventId: string, conversationKey: string) {
   return {
-    eventId,
+    eventId: eventId,
     conversationKey: scopedDirectConversationKey(
       TEST_ACCOUNT.accountId,
       TEST_AGENT.agentId,
@@ -1999,12 +2013,12 @@ function subagentStatusFixture(overrides: { parentEventId?: string } = {}) {
   );
 
   return {
-    parentEventId,
-    taskId,
-    childAgentId,
+    parentEventId: parentEventId,
+    taskId: taskId,
+    childAgentId: childAgentId,
     childResult: {
       accountId: TEST_ACCOUNT.accountId,
-      eventId,
+      eventId: eventId,
       conversationKey: scopedDirectConversationKey(
         TEST_ACCOUNT.accountId,
         childAgentId,
@@ -2073,7 +2087,7 @@ async function responseToShape(response: Response): Promise<ResponseShape> {
 
   return {
     statusCode: response.status,
-    headers,
+    headers: headers,
     body: await response.text(),
   };
 }

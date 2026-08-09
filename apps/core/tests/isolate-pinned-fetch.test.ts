@@ -197,5 +197,6 @@ function runNodeScenario(scenario: string): any {
       (child.stderr || child.stdout || "node scenario failed").trim(),
     );
   }
+
   return JSON.parse(child.stdout);
 }

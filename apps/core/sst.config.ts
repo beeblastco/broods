@@ -59,11 +59,13 @@ function requiredEnv(name: string): string {
   if (!value) {
     throw new Error(`${name} must be set`);
   }
+
   return value;
 }
 
 function resourceName(service: string, stage: string, region: string): string {
   const stagePrefix = isProductionStage(stage) ? "" : `${stage}-`;
+
   return `${stagePrefix}${PROJECT_NAME}-${service}-${AWS_ACCOUNT_ID}-${region}`;
 }
 
@@ -76,6 +78,7 @@ function accountRegionalBucketName(
   if (name.length > 63) {
     throw new Error(`S3 bucket name is too long (${name.length}/63): ${name}`);
   }
+
   return name;
 }
 
@@ -121,6 +124,7 @@ function ecrRepositoryExists(name: string, region: string): boolean {
       stdout: "ignore",
       stderr: "ignore",
     });
+
     return result.success;
   } catch {
     return false;
@@ -173,7 +177,7 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
 }
 
 export default $config({
-  app(input) {
+  app: function(input) {
     const stage = input?.stage ?? "dev";
     const region = awsRegion();
 
@@ -186,7 +190,7 @@ export default $config({
         // Only for the IAM-propagation wait in front of the MicroVM egress connector.
         command: "1.0.1",
         aws: {
-          region,
+          region: region,
           version: "7.30.0",
           ...(AWS_PROFILE ? { profile: AWS_PROFILE } : {}),
           defaultTags: {
@@ -201,7 +205,7 @@ export default $config({
     };
   },
 
-  async run() {
+  run: async function() {
     const aws = await import("@pulumi/aws");
     const command = await import("@pulumi/command");
     const stage = $app.stage;

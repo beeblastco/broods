@@ -54,15 +54,16 @@ export function verifyAsyncToolCompletionToken(
   resultId: string,
   completionToken: string,
 ): Promise<boolean> {
-  return runtime.query("getAsyncToolToken", { resultId, completionToken });
+  return runtime.query("getAsyncToolToken", { resultId: resultId, completionToken: completionToken });
 }
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
 ): Promise<DetachedAsyncToolGroup | null> {
   const row = await runtime.query<DetachedAsyncToolGroup | null>(
     "getAsyncToolGroup",
-    { parentEventId },
+    { parentEventId: parentEventId },
   );
+
   return row
     ? {
         parentEventId: row.parentEventId,
@@ -76,8 +77,9 @@ export async function sealDetachedAsyncToolGroup(
 ): Promise<DetachedAsyncToolGroup | null> {
   const row = await runtime.mutate<DetachedAsyncToolGroup | null>(
     "sealAsyncToolGroup",
-    { parentEventId },
+    { parentEventId: parentEventId },
   );
+
   return row
     ? {
         parentEventId: row.parentEventId,
@@ -89,12 +91,12 @@ export async function sealDetachedAsyncToolGroup(
 export function listAsyncToolResultsByParentEvent(
   parentEventId: string,
 ): Promise<AsyncToolResultRecord[]> {
-  return runtime.query("listAsyncToolResults", { parentEventId });
+  return runtime.query("listAsyncToolResults", { parentEventId: parentEventId });
 }
 export function getAsyncToolResult(
   resultId: string,
 ): Promise<AsyncToolResultRecord | null> {
-  return runtime.query("getAsyncToolResult", { resultId });
+  return runtime.query("getAsyncToolResult", { resultId: resultId });
 }
 export async function markAsyncToolResultObserved(
   resultId: string,
@@ -102,7 +104,7 @@ export async function markAsyncToolResultObserved(
   const row = await getAsyncToolResult(resultId);
   if (row && row.status !== "processing")
     await runtime.mutate("updateAsyncToolResult", {
-      resultId,
+      resultId: resultId,
       status: row.status,
       observed: true,
     });

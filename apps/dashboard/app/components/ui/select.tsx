@@ -5,14 +5,17 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 import { cn } from "@/app/lib/utils";
 
-interface SelectTriggerProps
-  extends Omit<SelectPrimitive.Trigger.Props, "className"> {
+interface SelectTriggerProps extends Omit<
+  SelectPrimitive.Trigger.Props,
+  "className"
+> {
   className?: string;
   size?: "sm" | "default";
 }
 
 interface SelectContentProps
-  extends Omit<SelectPrimitive.Popup.Props, "className">,
+  extends
+    Omit<SelectPrimitive.Popup.Props, "className">,
     Pick<
       SelectPrimitive.Positioner.Props,
       "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
@@ -20,18 +23,24 @@ interface SelectContentProps
   className?: string;
 }
 
-interface SelectLabelProps
-  extends Omit<SelectPrimitive.GroupLabel.Props, "className"> {
+interface SelectLabelProps extends Omit<
+  SelectPrimitive.GroupLabel.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface SelectItemProps
-  extends Omit<SelectPrimitive.Item.Props, "className"> {
+interface SelectItemProps extends Omit<
+  SelectPrimitive.Item.Props,
+  "className"
+> {
   className?: string;
 }
 
-interface SelectSeparatorProps
-  extends Omit<SelectPrimitive.Separator.Props, "className"> {
+interface SelectSeparatorProps extends Omit<
+  SelectPrimitive.Separator.Props,
+  "className"
+> {
   className?: string;
 }
 

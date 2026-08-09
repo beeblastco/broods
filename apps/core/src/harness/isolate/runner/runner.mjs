@@ -40,12 +40,14 @@ if (process.argv[2] === "--fetch-bridge") {
 
 function memoryLimitMb() {
   const value = Number(process.env.ISOLATE_MEMORY_LIMIT_MB);
+
   return Number.isFinite(value) && value > 0 ? value : 128;
 }
 
 function runTimeoutMs() {
   const value = Number(process.env.ISOLATE_RUNNER_TIMEOUT_SECONDS);
   const seconds = Number.isFinite(value) && value > 0 ? value : 30;
+
   return seconds * 1000;
 }
 
@@ -68,13 +70,13 @@ async function runToolRequest() {
     const payload = JSON.parse(await readAllStdin());
     isolate = new ivm.Isolate({ memoryLimit: memoryLimitMb() });
     const result = await runIsolateJob(isolate, payload, {
-      timeoutMs,
-      emitChunk: (output) => writeFrame({ t: "chunk", output }),
+      timeoutMs: timeoutMs,
+      emitChunk: (output) => writeFrame({ t: "chunk", output: output }),
       registerAbort: (fire) => {
         activeAbort = fire;
       },
     });
-    if (!timedOut) writeFrame({ t: "final", result });
+    if (!timedOut) writeFrame({ t: "final", result: result });
   } catch (error) {
     if (!timedOut) writeFrame({ t: "error", error: errorMessage(error) });
     process.exitCode = 1;
@@ -149,8 +151,8 @@ async function handlePoolRun(request, cache, cacheCap) {
     }, timeoutMs + 1_000);
 
     const result = await runIsolateJob(isolate, payload, {
-      timeoutMs,
-      emitChunk: (output) => writeFrame({ t: "chunk", callId, output }),
+      timeoutMs: timeoutMs,
+      emitChunk: (output) => writeFrame({ t: "chunk", callId: callId, output: output }),
       registerAbort: (fire) => {
         activeAbort = fire;
       },
@@ -163,11 +165,11 @@ async function handlePoolRun(request, cache, cacheCap) {
     const cpuNow = readCpuTimeNs(isolate);
     const cpuMs = Number(cpuNow - entry.lastCpu) / 1e6;
     entry.lastCpu = cpuNow;
-    writeFrame({ t: "meter", callId, tenantId, toolName: payload.toolName, cpuMs });
-    writeFrame({ t: "final", callId, result });
+    writeFrame({ t: "meter", callId: callId, tenantId: tenantId, toolName: payload.toolName, cpuMs: cpuMs });
+    writeFrame({ t: "final", callId: callId, result: result });
   } catch (error) {
     poisoned = true;
-    writeFrame({ t: "error", callId, error: errorMessage(error) });
+    writeFrame({ t: "error", callId: callId, error: errorMessage(error) });
   } finally {
     activeAbort = null;
     if (watchdog) clearTimeout(watchdog);
@@ -372,6 +374,7 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
         },
       );
     }
+
     return await context.eval(
       `(async () => {
         const options = {
@@ -412,6 +415,7 @@ function readCpuTimeNs(isolate) {
   const value = isolate.cpuTime;
   if (typeof value === "bigint") return value;
   if (Array.isArray(value)) return BigInt(value[0]) * 1_000_000_000n + BigInt(value[1]);
+
   return 0n;
 }
 
@@ -438,7 +442,7 @@ function bridgeFetchSync(url, init) {
     throw new Error("custom tool isolate execution timed out");
   }
   const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--fetch-bridge"], {
-    input: JSON.stringify({ url, init }),
+    input: JSON.stringify({ url: url, init: init }),
     encoding: "utf8",
     timeout: Math.min(FETCH_TIMEOUT_MS, remainingMs),
     maxBuffer: BODY_LIMIT_BYTES + 64 * 1024,
@@ -454,6 +458,7 @@ function bridgeFetchSync(url, init) {
   if (!parsed.ok) {
     throw new Error(typeof parsed.error === "string" ? parsed.error : "fetch bridge failed");
   }
+
   return parsed.result;
 }
 
@@ -461,7 +466,7 @@ async function runFetchBridgeHelper() {
   try {
     const { url, init } = JSON.parse(await readAllStdin());
     const result = await guardedFetch(url, init);
-    process.stdout.write(JSON.stringify({ ok: true, result }));
+    process.stdout.write(JSON.stringify({ ok: true, result: result }));
   } catch (error) {
     process.stdout.write(JSON.stringify({ ok: false, error: errorMessage(error) }));
     process.exitCode = 1;
@@ -481,6 +486,7 @@ function decodeBundle(payload) {
   if (typeof payload.toolName !== "string") {
     throw new Error("isolate runner payload missing toolName");
   }
+
   return Buffer.from(payload.bundleSourceB64, "base64");
 }
 
@@ -489,6 +495,7 @@ function asPlainRecord(value, name) {
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`isolate runner payload ${name} must be an object`);
   }
+
   return value;
 }
 
@@ -499,6 +506,7 @@ function parseUrl(input, base, setterKey, setterValue) {
   try {
     const url = new URL(input, base ?? undefined);
     if (setterKey) url[setterKey] = setterValue;
+
     return {
       href: url.href,
       protocol: url.protocol,
@@ -525,6 +533,7 @@ async function readAllStdin() {
   let input = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) input += chunk;
+
   return input.trim();
 }
 

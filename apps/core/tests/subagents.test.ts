@@ -73,6 +73,7 @@ describe("SubagentCoordinator", () => {
     const timeline: string[] = [];
     runtime.mutate = mock(async (name: string) => {
       timeline.push(`persist:${name}`);
+
       return true;
     }) as never;
     const lifecycle = {
@@ -127,7 +128,7 @@ describe("SubagentCoordinator", () => {
     ];
     const stream = {
       stream: new ReadableStream({
-        start(controller) {
+        start: function(controller) {
           for (const part of parts) {
             controller.enqueue(part);
           }
@@ -309,7 +310,7 @@ describe("SubagentCoordinator", () => {
         accountId: "account_1",
         agentId: "agent_parent",
         eventId: "acct:account_1:agent:agent_parent:api:event_parent",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       {},
       Date.now() + 1_000,
@@ -351,7 +352,7 @@ describe("SubagentCoordinator", () => {
         accountId: "account_1",
         agentId: "agent_parent",
         eventId: "event_parent",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       {},
       Date.now() + 10,
@@ -369,7 +370,7 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_2",
     });
 
-    await expect(coordinator.waitForIdle({ onHeartbeat })).resolves.toBe(
+    await expect(coordinator.waitForIdle({ onHeartbeat: onHeartbeat })).resolves.toBe(
       "timeout",
     );
     expect(onHeartbeat).toHaveBeenCalledWith(1);
@@ -400,7 +401,7 @@ describe("SubagentCoordinator", () => {
         accountId: "account_1",
         agentId: "agent_parent",
         eventId: "event_parent",
-        persistModelMessages,
+        persistModelMessages: persistModelMessages,
       } as never,
       {},
       Date.now() + 1_000,
@@ -468,6 +469,7 @@ describe("SubagentCoordinator", () => {
     runtime.mutate = mock(
       async (name: string, args: Record<string, unknown>) => {
         candidates.push({ name: name, ...args });
+
         return { outcome: "owner", ownerGeneration: 7 };
       },
     ) as never;
@@ -677,7 +679,7 @@ describe("SubagentCoordinator", () => {
 
     await internals.drainChildConversation(
       {
-        releaseConversationLease,
+        releaseConversationLease: releaseConversationLease,
         takeNextIngress: async () => ({
           eventId: "queued-event",
           events: [{ role: "user", content: "follow up" }],
@@ -805,7 +807,7 @@ describe("SubagentCoordinator", () => {
 
     await internals.drainChildConversation(
       {
-        releaseConversationLease,
+        releaseConversationLease: releaseConversationLease,
         takeNextIngress: async () => null,
       } as never,
       persistentChildTask(),
@@ -835,7 +837,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     await internals.drainChildConversation(
-      { releaseConversationLease, takeNextIngress } as never,
+      { releaseConversationLease: releaseConversationLease, takeNextIngress: takeNextIngress } as never,
       persistentChildTask(),
     );
 
@@ -869,7 +871,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     await internals.drainChildConversation(
-      { releaseConversationLease } as never,
+      { releaseConversationLease: releaseConversationLease } as never,
       persistentChildTask(),
     );
 
@@ -891,7 +893,7 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     await internals.drainChildConversation(
-      { releaseConversationLease } as never,
+      { releaseConversationLease: releaseConversationLease } as never,
       persistentChildTask(),
     );
 
@@ -989,12 +991,12 @@ describe("SubagentCoordinator", () => {
 
 function completion(taskId: string, response: unknown): TestCompletion {
   return {
-    taskId,
+    taskId: taskId,
     eventId: `event_${taskId}`,
     agentId: `agent_${taskId}`,
     conversationKey: `conversation_${taskId}`,
     status: "completed",
-    response,
+    response: response,
   };
 }
 
@@ -1031,9 +1033,10 @@ function recordingPublisher(): NatsPublisher & {
 } {
   const events: Record<string, unknown>[] = [];
   const timeline: string[] = [];
+
   return {
-    events,
-    timeline,
+    events: events,
+    timeline: timeline,
     publish: async (data) => {
       events.push(data);
       timeline.push(`publish:${String(data.type)}`);
@@ -1071,5 +1074,6 @@ function messageText(message: UserModelMessage | undefined): string {
   }
 
   const part = content[0];
+
   return part?.type === "text" ? part.text : "";
 }

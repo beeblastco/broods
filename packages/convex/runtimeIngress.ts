@@ -234,6 +234,7 @@ function contiguousModePrefix(
   const end = rows.findIndex(
     (row) => row.requestedMode !== rows[0]!.requestedMode,
   );
+
   return end === -1 ? rows : rows.slice(0, end);
 }
 
@@ -527,7 +528,7 @@ export const accept = internalMutation({
     if (busy && args.requestedMode === "reject") {
       return {
         outcome: "rejected" as const,
-        ...(recovered ? { recovered } : {}),
+        ...(recovered ? { recovered: recovered } : {}),
       };
     }
     if (
@@ -537,7 +538,7 @@ export const accept = internalMutation({
     ) {
       return {
         outcome: "capacity" as const,
-        ...(recovered ? { recovered } : {}),
+        ...(recovered ? { recovered: recovered } : {}),
       };
     }
 
@@ -583,7 +584,7 @@ export const accept = internalMutation({
         eventId: args.eventId,
         status: "queued" as const,
         sequence: sequence,
-        ...(recovered ? { recovered } : {}),
+        ...(recovered ? { recovered: recovered } : {}),
       };
     }
 
@@ -592,7 +593,7 @@ export const accept = internalMutation({
       args.requestedMode === "steer" ? "followup" : args.requestedMode;
     await ctx.db.insert("runtimeIngressEnvelopes", {
       ...baseEnvelope,
-      appliedMode,
+      appliedMode: appliedMode,
       appliedToEventId: args.eventId,
       ownerGeneration: ownerGeneration,
       status: "processing",
@@ -684,6 +685,7 @@ export const isCurrentOwner = internalQuery({
   handler: async (ctx, args) => {
     try {
       await requireOwner(ctx, args);
+
       return true;
     } catch {
       return false;
@@ -748,6 +750,7 @@ export const applySteering = internalMutation({
           updatedAt: now,
         });
       }
+
       return null;
     }
     const eventIds = selected.map((row) => row.eventId);
@@ -823,6 +826,7 @@ export const takeNext = internalMutation({
         leaseExpiresAt: now + args.leaseTtlMs,
         updatedAt: now,
       });
+
       return null;
     }
 
@@ -1117,6 +1121,7 @@ export const maintain = internalMutation({
       .withIndex("by_expiresAt", (q) => q.lte("expiresAt", now))
       .take(MAX_DRAIN_ENVELOPES);
     for (const row of applications) await ctx.db.delete(row._id);
-    return { expired, deleted };
+
+    return { expired: expired, deleted: deleted };
   },
 });

@@ -31,7 +31,7 @@ beforeAll(() => {
     agentPolicies: {
       getById: async (_accountId: string, policyId: string) => ({
         accountId: "acct_test",
-        policyId,
+        policyId: policyId,
         name: policyId,
         document: { version: 1 as const, rules: [] },
         status: "active" as const,
@@ -131,7 +131,7 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: { "telegram:123": channelRecord() },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
     });
 
@@ -147,7 +147,7 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: {},
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
     });
 
@@ -159,7 +159,7 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: { "telegram:123": channelRecord() },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/agent_support/telegram",
     });
 
@@ -177,7 +177,7 @@ describe("channel record resolution", () => {
           config: { agentBindings: [{ agentId: "agent_missing" }] },
         }),
       },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
     });
 
@@ -188,7 +188,7 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: {},
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
       channelRecordLoader: async () => {
         throw new Error("convex unreachable");
@@ -206,7 +206,7 @@ describe("channel record resolution", () => {
     const runs: ChannelInboundEvent[] = [];
     const response = await route({
       records: {},
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
       // A partial storage stub makes `storage.channelRecords` undefined, so the
       // default loader throws before a promise exists — `.catch` would miss it
@@ -290,7 +290,7 @@ describe("channel record resolution", () => {
     );
     const response = await route({
       records: {},
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
       agents: [...noise, SUPPORT_AGENT],
     });
@@ -315,7 +315,7 @@ describe("channel record resolution", () => {
           },
         }),
       },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
     });
 
@@ -341,7 +341,7 @@ describe("channel record resolution", () => {
           },
         }),
       },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
     });
 
@@ -362,10 +362,10 @@ describe("channel record resolution", () => {
           },
         }),
       },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
       policyDenies: true,
-      replies,
+      replies: replies,
     });
 
     // Slow provider retries are worse than a refusal, so the webhook still ACKs.
@@ -386,7 +386,7 @@ describe("channel record resolution", () => {
           },
         }),
       },
-      runs,
+      runs: runs,
       path: "/webhooks/acct_test/telegram",
       policyDenies: true,
       policyMode: "audit",
@@ -399,7 +399,7 @@ describe("channel record resolution", () => {
   // the run gets, so a refusal is where the placement is observable end to end.
   it("posts the record's inline reply to the channel, not a thread", async () => {
     const posts: Array<Record<string, unknown>> = [];
-    await routeSlackMention({ threadPolicy: "inline", posts });
+    await routeSlackMention({ threadPolicy: "inline", posts: posts });
 
     expect(posts).toHaveLength(1);
     expect(posts[0]!.thread_ts).toBeUndefined();
@@ -407,14 +407,14 @@ describe("channel record resolution", () => {
 
   it("posts the record's always-thread reply into a new thread", async () => {
     const posts: Array<Record<string, unknown>> = [];
-    await routeSlackMention({ threadPolicy: "always-thread", posts });
+    await routeSlackMention({ threadPolicy: "always-thread", posts: posts });
 
     expect(posts[0]!.thread_ts).toBe(SLACK_MESSAGE_TS);
   });
 
   it("carries the placement into the run, so a delayed reply lands there too", async () => {
     const runs: ChannelInboundEvent[] = [];
-    await routeSlackMention({ threadPolicy: "inline", runs });
+    await routeSlackMention({ threadPolicy: "inline", runs: runs });
 
     // handler.ts rebuilds a background job's sender from this stored source.
     expect(runs[0]!.source.threadTs).toBeUndefined();
@@ -422,7 +422,7 @@ describe("channel record resolution", () => {
 
   it("threads a Slack reply when no record asks otherwise", async () => {
     const runs: ChannelInboundEvent[] = [];
-    await routeSlackMention({ runs });
+    await routeSlackMention({ runs: runs });
 
     expect(runs[0]!.source.threadTs).toBe(SLACK_MESSAGE_TS);
   });
@@ -834,6 +834,7 @@ async function route(options: {
           Object.fromEntries(new URLSearchParams(String(body)).entries()),
         );
       }
+
       return Response.json({ ok: true, ts: "1713916800.000099" });
     }
     if (new URL(url).hostname === "api.telegram.org") {
@@ -846,8 +847,10 @@ async function route(options: {
         const text = parsed.text ?? parsed.rich_message?.markdown;
         if (text) sentTexts.push(text);
       }
+
       return Response.json({ ok: true, result: { message_id: 1 } });
     }
+
     return originalFetch(input, init);
   }) as typeof fetch;
   const agents = options.agents ?? [SUPPORT_AGENT, SALES_AGENT];

@@ -91,6 +91,7 @@ function pruneEmpty(
     }
     cleaned[key] = raw;
   }
+
   return Object.keys(cleaned).length === 0 ? undefined : cleaned;
 }
 
@@ -156,7 +157,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   return {
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
-    ...(provider ? { provider } : {}),
+    ...(provider ? { provider: provider } : {}),
     ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
     ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
     ...(extra.session ? { session: extra.session } : {}),
@@ -219,8 +220,10 @@ function substitutePlaceholders<T>(
         continue;
       result[key] = substitutePlaceholders(value, variables, pattern);
     }
+
     return result as unknown as T;
   }
+
   return config;
 }
 
@@ -233,16 +236,19 @@ export function collectEnvPlaceholderNames(
     for (const match of value.matchAll(ACCOUNT_ENV_PLACEHOLDER_PATTERN_G)) {
       if (match[1]) names.add(match[1]);
     }
+
     return names;
   }
   if (Array.isArray(value)) {
     for (const item of value) collectEnvPlaceholderNames(item, names);
+
     return names;
   }
   if (isPlainObject(value)) {
     for (const item of Object.values(value))
       collectEnvPlaceholderNames(item, names);
   }
+
   return names;
 }
 
@@ -377,6 +383,7 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   if (typeof nested.publicAccess === "boolean")
     extra.publicAccess = nested.publicAccess;
   patch.extraConfig = extra;
+
   return patch;
 }
 
@@ -391,6 +398,7 @@ function bytesToBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.byteLength; i++)
     bin += String.fromCharCode(bytes[i]);
+
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
@@ -401,6 +409,7 @@ function base64UrlToBytes(s: string): Uint8Array {
   const bin = atob(padded);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+
   return out;
 }
 
@@ -440,6 +449,7 @@ export async function decryptAgentConfigBlob(
     );
     const decoded = new TextDecoder().decode(plaintext);
     const parsed = JSON.parse(decoded);
+
     return isPlainObject(parsed) ? parsed : null;
   } catch {
     return null;

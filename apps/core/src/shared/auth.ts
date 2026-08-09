@@ -37,6 +37,7 @@ export function extractBearerToken(
   ) {
     return null;
   }
+
   return token;
 }
 
@@ -61,7 +62,8 @@ export async function resolveBearerAuth(
     if (!accountId) return null;
     const account = await getStorage().accounts.getById(accountId);
     if (!account || account.status !== "active") return null;
-    return { kind: "account", account, viaServiceToken: true };
+
+    return { kind: "account", account: account, viaServiceToken: true };
   }
 
   const deployment = await getStorage().agentDeployments.getByApiKeyHash(
@@ -88,7 +90,8 @@ export async function resolveBearerAuth(
     (account.status !== "active" && options.allowDisabledAccountSecret !== true)
   )
     return null;
-  return { kind: "account", account };
+
+  return { kind: "account", account: account };
 }
 
 function sha256Hex(value: string): string {
@@ -102,5 +105,6 @@ export function timingSafeStringEqual(
 ): boolean {
   const actualDigest = createHash("sha256").update(actual).digest();
   const expectedDigest = createHash("sha256").update(expected).digest();
+
   return timingSafeEqual(actualDigest, expectedDigest);
 }

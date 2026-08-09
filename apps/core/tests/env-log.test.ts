@@ -131,6 +131,7 @@ describe("logging helpers", () => {
       lines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
       );
+
       return true;
     }) as typeof process.stdout.write;
 

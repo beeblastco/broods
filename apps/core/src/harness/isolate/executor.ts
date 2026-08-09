@@ -51,6 +51,7 @@ export async function* streamIsolatePayload(
 ): AsyncGenerator<unknown, void, void> {
   if (isolatePoolEnabled()) {
     yield* streamViaPool(accountId, runPayload, options.abortSignal);
+
     return;
   }
   yield* streamViaOneShot(runPayload, options.abortSignal);
@@ -80,14 +81,15 @@ async function buildRunPayload({
 }: ExecuteAccountToolOptions): Promise<Record<string, unknown>> {
   const payload = await createRunnerPayload({
     bucket: toolBundlesBucket(),
-    tool,
-    input,
-    config,
+    tool: tool,
+    input: input,
+    config: config,
     toolCallId: toolCallIdFromOptions(options),
     messages: messagesFromOptions(options),
     experimentalContext: experimentalContextFromOptions(options),
     bundleTransport: "inline",
   });
+
   return { ...payload };
 }
 
@@ -106,6 +108,7 @@ function forwardAbortSignal(
   };
   if (abortSignal.aborted) {
     onAbort();
+
     return undefined;
   }
   abortSignal.addEventListener("abort", onAbort, { once: true });
@@ -153,7 +156,7 @@ async function* streamViaOneShot(
       signal: NodeJS.Signals | null;
     }>((resolve, reject) => {
       child!.once("error", reject);
-      child!.once("exit", (code, signal) => resolve({ code, signal }));
+      child!.once("exit", (code, signal) => resolve({ code: code, signal: signal }));
     });
 
     child.stdout.setEncoding("utf8");
@@ -168,6 +171,7 @@ async function* streamViaOneShot(
         );
         queue.close();
         child?.kill("SIGKILL");
+
         return;
       }
       queue.push(chunk);
@@ -203,6 +207,7 @@ async function* streamViaOneShot(
       }
       if (frame.t === "final") {
         yield frame.result;
+
         return;
       }
       if (frame.t === "end") {
@@ -233,11 +238,13 @@ async function acquireIsolateSlot(): Promise<() => void> {
   const limit = positiveIntegerEnv("ISOLATE_RUNNER_CONCURRENCY", 8);
   if (activeIsolateRuns < limit) {
     activeIsolateRuns += 1;
+
     return releaseIsolateSlot;
   }
   // The releasing run hands its slot to the woken waiter directly (no decrement),
   // so a concurrent fast-path acquire cannot sneak in and exceed the cap.
   await new Promise<void>((resolve) => isolateWaiters.push(resolve));
+
   return releaseIsolateSlot;
 }
 
@@ -245,6 +252,7 @@ function releaseIsolateSlot(): void {
   const next = isolateWaiters.shift();
   if (next) {
     next();
+
     return;
   }
   activeIsolateRuns = Math.max(0, activeIsolateRuns - 1);
@@ -316,6 +324,7 @@ class IsolateWorker {
     if (this.#stdoutBytes > RUNNER_OUTPUT_LIMIT_BYTES) {
       this.kill();
       this.#sink?.fail(new Error("custom tool isolate output exceeded limit"));
+
       return;
     }
     this.#buffer += chunk;
@@ -435,6 +444,7 @@ async function acquireWorker(tenantId: string): Promise<IsolateWorker> {
         worker.busy = false;
         continue;
       }
+
       return worker;
     }
     await new Promise<void>((resolve) => poolWaiters.push(resolve));
@@ -488,7 +498,7 @@ async function* streamViaPool(
   const tenantId = accountId ?? "anonymous";
   const worker = await acquireWorker(tenantId);
   const callId = String((callCounter += 1));
-  const request = { t: "run", callId, tenantId, payload: runPayload };
+  const request = { t: "run", callId: callId, tenantId: tenantId, payload: runPayload };
   const detachAbort = forwardAbortSignal(worker.child, abortSignal);
 
   // Guard against a wedged worker: if no terminal frame lands within the run
@@ -515,10 +525,12 @@ async function* streamViaPool(
       if (frame.t === "final") {
         terminalReceived = true;
         yield frame.result;
+
         return;
       }
       if (frame.t === "end") {
         terminalReceived = true;
+
         return;
       }
       if (frame.t === "error") {

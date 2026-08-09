@@ -88,6 +88,7 @@ export async function loadConfiguredSkillPrompt(
   const staged = workspaceNamespace
     ? await stageSkillBundleForSandbox(skillPath, workspaceNamespace)
     : null;
+
   return {
     path: skillPath,
     loadedPaths: loaded.parts.map((part) => part.path),
@@ -178,6 +179,7 @@ export async function listSkillMetadataForConfig(
       });
     }
   }
+
   return enabled;
 }
 
@@ -217,7 +219,7 @@ export async function loadSkillContent(
       ...skill,
       path: skillPath,
     },
-    parts,
+    parts: parts,
     bytes: parts.reduce(
       (total, part) => total + Buffer.byteLength(part.text, "utf-8"),
       0,
@@ -293,11 +295,13 @@ async function listSkillSourceFiles(
 ): Promise<SkillSourceFile[]> {
   const sourcePrefix = `${skillPath}/`;
   const objects = await listS3Prefix(skillsBucketName(), sourcePrefix);
+
   return objects
     .flatMap((object) => {
       if (object.key.endsWith("/")) {
         return [];
       }
+
       return [
         {
           key: object.key,
@@ -358,6 +362,7 @@ function mirrorStagedPaths(skillName: string): string[] {
 function compareSkillBundlePath(a: string, b: string): number {
   if (a === SKILL_FILE) return b === SKILL_FILE ? 0 : -1;
   if (b === SKILL_FILE) return 1;
+
   return a.localeCompare(b);
 }
 
@@ -375,6 +380,7 @@ function formatLoadedSkillPrompt(
   const sandboxText = staged
     ? `\n\n## Sandbox files\n\nThis skill's helper files are staged inside the current sandbox at \`${staged.stagedPath}\`. Run scripts from that path, for example \`bash ${staged.stagedPath}/script.sh\`, \`python3 ${staged.stagedPath}/script.py\`, or direct executable paths when the file has a shebang.${mirrorText}`
     : "\n\n## Sandbox files\n\nThe skill instructions are loaded. No sandbox staging path is available for bundled helper files in this turn, so bundled scripts are not available to execute.";
+
   // See https://github.com/microsoft/agent-framework/discussions/4239: loaded skills stay in
   // refreshed system instructions instead of polluting chat history.
   return `<loaded-skill path="${loaded.path}" name="${loaded.skill.name}">

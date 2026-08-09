@@ -26,6 +26,7 @@ const mutationMock = mock(
     if (name === "claimSandboxReservation") {
       if (reservations.has(reservationKey)) return false;
       reservations.set(reservationKey, String(args.externalId));
+
       return true;
     }
     if (name === "deleteSandboxReservation") {
@@ -36,10 +37,12 @@ const mutationMock = mock(
       ) {
         reservations.delete(reservationKey);
       }
+
       return null;
     }
     if (name === "saveSandboxReservation") {
       reservations.set(reservationKey, String(args.externalId));
+
       return null;
     }
     throw new Error(`Unexpected live-test runtime mutation: ${name}`);
@@ -50,6 +53,7 @@ const queryMock = mock(
     if (name !== "getSandboxReservation") {
       throw new Error(`Unexpected live-test runtime query: ${name}`);
     }
+
     return reservations.get(String(args.reservationKey)) ?? null;
   },
 );
@@ -80,7 +84,7 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
     const identity = `live-${randomUUID()}`;
     const sandbox = createBroodsSandbox({
       driver: createWorkdirHarnessDriver({
-        reservationKey,
+        reservationKey: reservationKey,
         bootstrapIdentity: identity,
         config: {
           provider: "sandbox",
@@ -99,7 +103,7 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
         },
       }),
     });
-    const session = await sandbox.createSession({ identity });
+    const session = await sandbox.createSession({ identity: identity });
     let cleanup = session;
 
     try {
@@ -114,8 +118,8 @@ describe.skipIf(!URL)("Broods Workdir Harness integration (live)", () => {
       });
 
       const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
-      await session.writeTextFile({ path, content: "live-file-content" });
-      await expect(session.readTextFile({ path })).resolves.toBe(
+      await session.writeTextFile({ path: path, content: "live-file-content" });
+      await expect(session.readTextFile({ path: path })).resolves.toBe(
         "live-file-content",
       );
 

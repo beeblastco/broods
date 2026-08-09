@@ -150,6 +150,7 @@ export class BroodsSandboxProvider implements HarnessV1SandboxProvider {
       this.resumeSession = async (resumeOptions) => {
         resumeOptions.abortSignal?.throwIfAborted();
         const driverSession = await resumeSession(resumeOptions);
+
         return new BroodsNetworkSandboxSession(driverSession, this.providerId);
       };
     }
@@ -218,6 +219,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options: BroodsSandboxCommandOptions,
   ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     options.abortSignal?.throwIfAborted();
+
     return await this.session.runCommand(options);
   }
 
@@ -225,6 +227,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options: BroodsSandboxCommandOptions,
   ): Promise<Experimental_SandboxProcess> {
     options.abortSignal?.throwIfAborted();
+
     return await this.session.spawnCommand(options);
   }
 
@@ -232,6 +235,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options: BroodsSandboxFileOptions,
   ): Promise<ReadableStream<Uint8Array> | null> {
     const bytes = await this.readBinaryFile(options);
+
     return bytes === null ? null : bytesToStream(bytes);
   }
 
@@ -239,6 +243,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     options: BroodsSandboxFileOptions,
   ): Promise<Uint8Array | null> {
     options.abortSignal?.throwIfAborted();
+
     return await this.session.readFile({
       path: options.path,
       ...(options.abortSignal !== undefined
@@ -259,8 +264,9 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     const text = Buffer.from(bytes).toString(
       (options.encoding ?? "utf-8") as BufferEncoding,
     );
+
     return extractLines({
-      text,
+      text: text,
       startLine: options.startLine,
       endLine: options.endLine,
     });
@@ -272,7 +278,7 @@ class BroodsSandboxSession implements Experimental_SandboxSession {
     const content = await collectStream(options.content, options.abortSignal);
     await this.writeBinaryFile({
       path: options.path,
-      content,
+      content: content,
       abortSignal: options.abortSignal,
     });
   }
@@ -355,6 +361,7 @@ class BroodsNetworkSandboxSession
         message: `${this.#providerId} cannot expose a sandbox port URL.`,
       });
     }
+
     return await this.session.getPortUrl(options);
   };
 
@@ -363,6 +370,7 @@ class BroodsNetworkSandboxSession
     this.#stopPromise ??= Promise.resolve().then(async () => {
       await this.session.stop();
     });
+
     return this.#stopPromise;
   };
 
@@ -370,12 +378,14 @@ class BroodsNetworkSandboxSession
     if (this.#destroyPromise) return this.#destroyPromise;
     if (!this.session.destroy) {
       this.#destroyPromise = this.stop();
+
       return this.#destroyPromise;
     }
 
     this.#destroyPromise = Promise.resolve().then(async () => {
       await this.session.destroy!();
     });
+
     return this.#destroyPromise;
   };
 
@@ -386,7 +396,7 @@ class BroodsNetworkSandboxSession
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    start(controller) {
+    start: function(controller) {
       controller.enqueue(bytes);
       controller.close();
     },
@@ -454,5 +464,6 @@ async function collectStream(
     content.set(chunk, offset);
     offset += chunk.byteLength;
   }
+
   return content;
 }

@@ -90,6 +90,7 @@ export function workspaceSandboxLimits(
   provider: SandboxProvider = "lambda",
 ): WorkspaceSandboxLimits {
   const isLambda = provider === "lambda";
+
   return {
     defaultTimeoutSeconds: positiveIntegerEnv(
       "WORKSPACE_SANDBOX_DEFAULT_TIMEOUT_SECONDS",

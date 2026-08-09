@@ -28,7 +28,7 @@ class FakeObservabilitySocket {
 
   close(code = 1000, reason = "closed"): void {
     this.readyState = 3;
-    this.onclose?.({ code, reason });
+    this.onclose?.({ code: code, reason: reason });
   }
 
   emit(message: ObservabilityServerMessage): void {
