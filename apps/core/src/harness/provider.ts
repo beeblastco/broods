@@ -40,24 +40,32 @@ import type {
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
 
-/**
- * What every AI SDK provider factory has in common: settings in, a callable
- * provider out. Both halves stay the SDK's own — the settings each provider
- * accepts are read off its factory, never restated here.
- */
+// What every AI SDK provider factory has in common: settings in, callable
+// provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
 interface ModelProviderInstance {
   (modelId: string): LanguageModel;
 }
 
-/**
- * Name → Vercel AI SDK factory. Adding a provider is one import and one line;
- * `satisfies` makes a name the shared list carries without a factory (or a
- * factory the AI SDK cannot back) a compile error. Built per call so each
- * factory is read off its live module binding, which is what lets a test swap a
- * provider module out from under an already-loaded harness.
- */
+/** The constructor settings one provider accepts, straight from the AI SDK. */
+export type ProviderSettingsFor<K extends AccountModelProviderName> =
+  Parameters<ReturnType<typeof modelProviderFactories>[K]>[0];
+
+export interface ResolvedModelProvider {
+  providerName: AccountModelProviderName;
+  provider: unknown;
+  model: LanguageModel;
+}
+
+export type ModelOutputSpec =
+  | ReturnType<typeof Output.object>
+  | ReturnType<typeof Output.array>
+  | ReturnType<typeof Output.choice>
+  | ReturnType<typeof Output.json>;
+
+// Name → AI SDK factory; `satisfies` fails the build if a name has no factory.
+// Built per call so each is read off its live binding, which keeps it mockable.
 export function modelProviderFactories() {
   return {
     anthropic: createAnthropic,
@@ -83,22 +91,6 @@ export function modelProviderFactories() {
     xai: createXai,
   } satisfies Record<AccountModelProviderName, ModelProviderFactory>;
 }
-
-/** The constructor settings one provider accepts, straight from the AI SDK. */
-export type ProviderSettingsFor<K extends AccountModelProviderName> =
-  Parameters<ReturnType<typeof modelProviderFactories>[K]>[0];
-
-export interface ResolvedModelProvider {
-  providerName: AccountModelProviderName;
-  provider: unknown;
-  model: LanguageModel;
-}
-
-export type ModelOutputSpec =
-  | ReturnType<typeof Output.object>
-  | ReturnType<typeof Output.array>
-  | ReturnType<typeof Output.choice>
-  | ReturnType<typeof Output.json>;
 
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,

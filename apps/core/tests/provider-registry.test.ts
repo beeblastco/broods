@@ -50,11 +50,18 @@ describe("model provider registry", () => {
 
   it("passes provider-owned settings through validation untouched", () => {
     const config = normalizeAgentConfig({
-      model: { provider: "xai", modelId: "grok-4" },
-      provider: { xai: { apiKey: "sk-test", fetch: undefined } },
+      model: { provider: "vertex", modelId: "gemini-2.5-flash" },
+      // `project` and `location` are Vertex's own; broods declares neither.
+      provider: {
+        vertex: { apiKey: "sk-test", project: "p", location: "us-central1" },
+      },
     });
 
-    expect(config.model?.provider).toBe("xai");
-    expect(config.provider?.xai?.apiKey).toBe("sk-test");
+    expect(config.model?.provider).toBe("vertex");
+    expect(config.provider?.vertex).toEqual({
+      apiKey: "sk-test",
+      project: "p",
+      location: "us-central1",
+    });
   });
 });

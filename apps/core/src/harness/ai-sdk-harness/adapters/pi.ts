@@ -6,7 +6,6 @@ import { VERSION, createPi, type PiHarnessSettings } from "@ai-sdk/harness-pi";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  harnessProviderSetting,
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
@@ -26,7 +25,7 @@ export function createConfiguredPiAdapter(
     providerName === "vercel"
       ? "AI_GATEWAY"
       : providerName === "custom"
-        ? (harnessProviderSetting(provider, "name") ?? "custom")
+        ? (provider.name ?? "custom")
             .replace(/[^A-Za-z0-9]+/g, "_")
             .toUpperCase()
         : providerName.toUpperCase();

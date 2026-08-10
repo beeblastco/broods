@@ -10,7 +10,6 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
-  harnessProviderSetting,
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
@@ -48,8 +47,7 @@ export function createConfiguredCodexAdapter(
           openaiCompatible: {
             apiKey: provider.apiKey!,
             baseUrl: baseUrl,
-            modelProviderName:
-              harnessProviderSetting(provider, "name") ?? "custom",
+            modelProviderName: provider.name ?? "custom",
           },
         }
       : providerName === "openai"
@@ -57,8 +55,8 @@ export function createConfiguredCodexAdapter(
             openai: {
               apiKey: provider.apiKey!,
               ...(baseUrl ? { baseUrl: baseUrl } : {}),
-              organization: harnessProviderSetting(provider, "organization"),
-              project: harnessProviderSetting(provider, "project"),
+              organization: provider.organization,
+              project: provider.project,
             },
           }
         : {

@@ -60,6 +60,15 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "deepseek" } }),
     ).not.toThrow();
+    // Inherited Object keys are not provider names, however `in` reads them.
+    for (const inherited of ["constructor", "__proto__", "toString"]) {
+      expect(() =>
+        normalizeAgentConfig({ model: { provider: inherited } }),
+      ).toThrow("config.model.provider must be one of:");
+      expect(() =>
+        normalizeAgentConfig({ provider: { [inherited]: { apiKey: "k" } } }),
+      ).toThrow("is not a supported provider");
+    }
     // Settings a provider's AI SDK factory owns pass straight through.
     expect(() =>
       normalizeAgentConfig({

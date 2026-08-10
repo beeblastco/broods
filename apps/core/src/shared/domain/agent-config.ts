@@ -283,12 +283,8 @@ export type AgentProviderConfig = Partial<
   Record<AccountModelProviderName, AgentProviderSettings>
 >;
 
-/**
- * Constructor settings for a model provider. Open on purpose: whatever the
- * provider's AI SDK factory accepts is passed through verbatim, so a new SDK
- * setting needs no change here. Only the keys broods itself reads are named —
- * `harness/provider.ts` types the rest off the factory it calls.
- */
+// Open on purpose: what a provider's AI SDK factory accepts is passed through
+// verbatim. Named keys are only the ones broods reads itself, never a limit.
 export interface AgentProviderSettings {
   apiKey?: string;
   /** OpenAI-compatible endpoint (`custom`). Snake form, as documented. */
@@ -296,6 +292,10 @@ export interface AgentProviderSettings {
   /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
   headers?: Record<string, string>;
+  /** Endpoint label; becomes the provider id and the pi harness env prefix. */
+  name?: string;
+  organization?: string;
+  project?: string;
   [key: string]: unknown;
 }
 

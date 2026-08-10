@@ -72,15 +72,3 @@ export function resolveHarnessProviderBaseUrl(
 ): string | undefined {
   return provider.base_url ?? provider.baseURL;
 }
-
-// Provider settings are an open bag passed through to the AI SDK factory, so
-// the few keys the harness adapters themselves forward are read as strings here
-// rather than pinned in `AgentProviderSettings`.
-export function harnessProviderSetting(
-  provider: AgentProviderSettings,
-  key: string,
-): string | undefined {
-  const value = provider[key];
-
-  return typeof value === "string" ? value : undefined;
-}

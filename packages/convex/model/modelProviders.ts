@@ -68,8 +68,10 @@ export const ACCOUNT_MODEL_PROVIDER_NAMES = Object.keys(
   MODEL_PROVIDERS,
 ) as AccountModelProviderName[];
 
+// Own properties only: `in` would accept "constructor"/"__proto__"/"toString"
+// as provider names, which then reach a registry lookup that has no factory.
 export function isAccountModelProviderName(
   value: string,
 ): value is AccountModelProviderName {
-  return value in MODEL_PROVIDERS;
+  return Object.hasOwn(MODEL_PROVIDERS, value);
 }
