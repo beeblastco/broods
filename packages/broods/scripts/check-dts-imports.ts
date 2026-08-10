@@ -7,8 +7,10 @@ const ALLOWED_DTS_IMPORTS = new Set(["ai"]);
 
 for (const bundle of ["dist/index.d.ts", "dist/account.d.ts"]) {
   const source = await readFile(bundle, "utf8");
+  // `from "x"` plus the `import("x").T` form declaration emit uses for a type
+  // it never imports at the top level.
   for (const [, specifier] of source.matchAll(
-    /from\s+['"]([^'".][^'"]*)['"]/g,
+    /(?:from|import)\s*\(?\s*['"]([^'".][^'"]*)['"]/g,
   )) {
     const packageName = specifier.startsWith("@")
       ? specifier.split("/").slice(0, 2).join("/")

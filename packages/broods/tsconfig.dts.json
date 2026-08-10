@@ -7,9 +7,8 @@
     "noEmit": false,
     "outDir": ".dts-temp",
     "rootDir": "../..",
-    // Resolve the shared provider list to source so the rolled-up .d.ts inlines
-    // the name union. Left bare it emits an import of a private workspace
-    // package that no `npm i broods` consumer can resolve.
+    // Resolve to source so the rolled-up .d.ts inlines the name union; left
+    // bare it imports a private package no `npm i broods` consumer can resolve.
     "paths": {
       "@broods/convex/model/modelProviders": [
         "../convex/model/modelProviders.ts"
