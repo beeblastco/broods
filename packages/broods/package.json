@@ -53,11 +53,11 @@
     "esbuild": "^0.28.1"
   },
   "peerDependencies": {
-    "ai": "^7.0.40"
+    "ai": "^7.0.56"
   },
   "devDependencies": {
     "@ai-sdk/tui": "^1.0.41",
-    "ai": "^7.0.40",
+    "ai": "^7.0.56",
     "@chat-adapter/discord": "^4.35.0",
     "@chat-adapter/github": "^4.35.0",
     "@chat-adapter/slack": "^4.35.0",
