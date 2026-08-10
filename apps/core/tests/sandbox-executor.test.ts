@@ -424,8 +424,13 @@ describe("createSandboxExecutor", () => {
       prefix: `${NS}/`,
       env: { AWS_ACCESS_KEY_ID: "scoped-access-key" },
     });
-    // The exec request is POSTed to the VM endpoint with the proxy auth headers.
-    const [url, init] = microvmFetchMock.mock.calls[0] as [
+    // A namespaced ephemeral VM must prove the run-hook mount is live before the
+    // user's code reaches /exec, or a fast exec writes to local disk and is lost.
+    const calls = microvmFetchMock.mock.calls;
+    expect(JSON.parse((calls[0]![1] as { body: string }).body).code).toBe(
+      `mountpoint -q '/mnt/workspaces/${NS}'`,
+    );
+    const [url, init] = calls.at(-1)! as [
       string,
       { headers: Record<string, string>; body: string },
     ];
@@ -439,6 +444,30 @@ describe("createSandboxExecutor", () => {
       workspace_root: "/mnt/workspaces",
       timeout_ms: 30000,
     });
+  });
+
+  it("waits for an ephemeral workspace mount before executing user code", async () => {
+    microvmMountPendingChecks = 3;
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({ provider: "lambda" });
+
+    const result = await executor.run({
+      code: "echo persisted",
+      namespace: NS,
+      workspaceRoot: "/mnt/workspaces",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(result).toMatchObject({ ok: true, provider: "lambda" });
+    expect(microvmMountPendingChecks).toBe(0);
+    const bodies = execBodies();
+    expect(
+      bodies.filter((code) => code.includes("mountpoint -q ")),
+    ).toHaveLength(4);
+    expect(bodies.at(-1)).toBe("echo persisted");
   });
 
   it("removes an ephemeral mirror only after its non-blocking upsert settles", async () => {
