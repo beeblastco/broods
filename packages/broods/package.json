@@ -41,7 +41,7 @@
     "LICENSE.md"
   ],
   "scripts": {
-    "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && bun scripts/clean-dts-side-effects.ts && rm -rf .dts-temp",
+    "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && bun scripts/check-dts-imports.ts && rm -rf .dts-temp",
     "check": "tsc --noEmit",
     "pack:check": "bun run build && npm pack --dry-run",
     "test": "bun test"

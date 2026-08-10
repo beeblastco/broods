@@ -57,7 +57,7 @@ request in
 - **channel:** `src/shared/<channel>-channel.ts` implementing `ChannelAdapter` from `src/shared/channels.ts`, then wire normalize into `src/harness/integrations.ts`. reply send stay inside that channel `ChannelActions`. never hardcode channel logic into a shared handler or the agent loop. prefer the channel SDK formatter; hand-rolled formatting only when the provider ship no SDK.
 - **bot command:** entry in the `commands` array in `src/shared/commands.ts`. command get channel-agnostic `ChannelActions` from `CommandContext`. never import a channel module from a command.
 - **model provider:** add the name to `packages/convex/model/modelProviders.ts` (the source of truth — Convex can not import the AI SDK), then the `@ai-sdk/*` dep plus one line in `modelProviderFactories()` (`src/harness/provider.ts`). the `satisfies` there fail the build when the two drift. write **no** settings validation: what the provider factory accept is what we accept. the SDK mirror the name list in `packages/broods/src/manifest.ts`, and `tests/provider-config.test.ts` fail if it drift.
-- a type the SDK reach through `shared/domain/*` must resolve to **source**, not a bare `@broods/*` specifier: the rolled-up `dist/*.d.ts` externalise a bare one and `npm i broods` can not resolve it. map it in `packages/broods/tsconfig.dts.json`; `clean-dts-side-effects.ts` fail the build if you forget.
+- a type the SDK reach through `shared/domain/*` must resolve to **source**, not a bare `@broods/*` specifier: the rolled-up `dist/*.d.ts` externalise a bare one and `npm i broods` can not resolve it. map it in `packages/broods/tsconfig.dts.json`; `check-dts-imports.ts` fail the build if you forget.
 
 ## Style
 

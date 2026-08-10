@@ -1,23 +1,9 @@
-import { readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 
-const roots = ["../../apps/core/src/shared", "../convex"];
 // The published .d.ts may only import from real dependencies. A backend type
 // reached by a bare specifier gets externalized rather than inlined, and no
 // `npm i broods` consumer can resolve it.
 const ALLOWED_DTS_IMPORTS = new Set(["ai"]);
-
-for (const root of roots) {
-  const files = new Bun.Glob("**/*.{js,d.ts}").scanSync({
-    cwd: root,
-    absolute: false,
-  });
-  for (const file of files) {
-    const path = join(root, file);
-    if (isGitTracked(path)) continue;
-    await rm(path, { force: true });
-  }
-}
 
 for (const bundle of ["dist/index.d.ts", "dist/account.d.ts"]) {
   const source = await readFile(bundle, "utf8");
@@ -33,14 +19,4 @@ for (const bundle of ["dist/index.d.ts", "dist/account.d.ts"]) {
         `Map it to source in tsconfig.dts.json so the rollup inlines it.`,
     );
   }
-}
-
-function isGitTracked(path: string): boolean {
-  const result = Bun.spawnSync({
-    cmd: ["git", "ls-files", "--error-unmatch", path],
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-
-  return result.exitCode === 0;
 }
