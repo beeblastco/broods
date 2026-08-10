@@ -32,7 +32,7 @@ import {
   type LanguageModelMiddleware,
 } from "ai";
 import { createMinimax } from "vercel-minimax-ai-provider";
-import type { AccountModelProviderName } from "../shared/providers.ts";
+import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type {
   AgentConfig,
   AgentModelOutputConfig,
@@ -47,10 +47,6 @@ type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 interface ModelProviderInstance {
   (modelId: string): LanguageModel;
 }
-
-/** The constructor settings one provider accepts, straight from the AI SDK. */
-export type ProviderSettingsFor<K extends AccountModelProviderName> =
-  Parameters<ReturnType<typeof modelProviderFactories>[K]>[0];
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;

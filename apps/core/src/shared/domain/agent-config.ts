@@ -30,16 +30,16 @@ import {
   isStringRecord,
 } from "../object.ts";
 import {
-  accountModelProviderNames,
+  ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
   type AccountModelProviderName,
-} from "../providers.ts";
+} from "@broods/convex/model/modelProviders";
 import { isAccountToolId } from "./account-tools.ts";
 import {
   normalizeAgentPolicyConfig,
   type AgentPolicyConfig,
 } from "./agent-policy.ts";
-export type { AccountModelProviderName } from "../providers.ts";
+export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
@@ -1515,7 +1515,7 @@ function assertOptionalProviderName(value: unknown, name: string): void {
   }
   if (typeof value !== "string" || !isAccountModelProviderName(value)) {
     throw new Error(
-      `${name} must be one of: ${accountModelProviderNames().join(", ")}`,
+      `${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
     );
   }
 }

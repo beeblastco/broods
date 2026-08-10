@@ -1,7 +1,11 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const roots = ["../../apps/core/src/shared", "../convex"];
+// The published .d.ts may only import from real dependencies. A backend type
+// reached by a bare specifier gets externalized rather than inlined, and no
+// `npm i broods` consumer can resolve it.
+const ALLOWED_DTS_IMPORTS = new Set(["ai"]);
 
 for (const root of roots) {
   const files = new Bun.Glob("**/*.{js,d.ts}").scanSync({
@@ -12,6 +16,22 @@ for (const root of roots) {
     const path = join(root, file);
     if (isGitTracked(path)) continue;
     await rm(path, { force: true });
+  }
+}
+
+for (const bundle of ["dist/index.d.ts", "dist/account.d.ts"]) {
+  const source = await readFile(bundle, "utf8");
+  for (const [, specifier] of source.matchAll(
+    /from\s+['"]([^'".][^'"]*)['"]/g,
+  )) {
+    const packageName = specifier.startsWith("@")
+      ? specifier.split("/").slice(0, 2).join("/")
+      : specifier.split("/")[0]!;
+    if (ALLOWED_DTS_IMPORTS.has(packageName)) continue;
+    throw new Error(
+      `${bundle} imports "${specifier}", which consumers cannot resolve. ` +
+        `Map it to source in tsconfig.dts.json so the rollup inlines it.`,
+    );
   }
 }
 

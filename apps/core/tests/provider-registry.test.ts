@@ -8,22 +8,9 @@ import { describe, expect, it } from "bun:test";
 import {
   modelProviderFactories,
   resolveConfiguredModel,
-  type ProviderSettingsFor,
 } from "../src/harness/provider.ts";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../src/shared/providers.ts";
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
 import { normalizeAgentConfig } from "../src/shared/domain/agent-config.ts";
-
-// Compile-time half of the contract: per-provider settings are the AI SDK's own
-// types, so provider-specific fields broods never declared are known under the
-// provider that owns them. `bun run check` is what enforces this.
-const bedrockSettings: ProviderSettingsFor<"bedrock"> = {
-  apiKey: "sk-test",
-  region: "us-east-1",
-};
-const vertexSettings: ProviderSettingsFor<"vertex"> = {
-  project: "p",
-  location: "us-central1",
-};
 
 describe("model provider registry", () => {
   it("has a live AI SDK factory for every supported provider name", () => {
@@ -44,8 +31,6 @@ describe("model provider registry", () => {
 
     expect(resolved.providerName).toBe("deepseek");
     expect(resolved.model).toBeDefined();
-    expect(bedrockSettings.region).toBe("us-east-1");
-    expect(vertexSettings.location).toBe("us-central1");
   });
 
   it("passes provider-owned settings through validation untouched", () => {

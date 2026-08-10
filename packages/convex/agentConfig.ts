@@ -2,7 +2,7 @@
  * Agent config CRUD for the canvas UI. Scoped to authenticated user.
  */
 
-import { v, type VLiteral } from "convex/values";
+import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import {
@@ -21,22 +21,11 @@ import {
 import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
-import {
-  ACCOUNT_MODEL_PROVIDER_NAMES,
-  type AccountModelProviderName,
-} from "./model/modelProviders";
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
 
-// Built from the shared list, not restated: `v.union` takes a tuple, so the
-// mapped literals are asserted back into one to keep the generated API typed as
-// the provider-name union rather than a bare string.
-type ProviderLiteral = VLiteral<AccountModelProviderName>;
 const agentProviderValidator = v.union(
-  ...(ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)) as [
-    ProviderLiteral,
-    ProviderLiteral,
-    ...ProviderLiteral[],
-  ]),
+  ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
 );
 
 const agentConfigDoc = v.object({
