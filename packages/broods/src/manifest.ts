@@ -18,6 +18,10 @@ import {
   type BuildFailure,
   type Plugin,
 } from "esbuild";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  isAccountModelProviderName,
+} from "../../convex/model/modelProviders.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -831,34 +835,6 @@ async function normalizeConfig(
   return rewriteValues(resource.config);
 }
 
-// A local mirror of the shared provider list, kept as plain values rather than a
-// runtime import so no backend code is bundled into the published SDK.
-// `tests/manifest.test.ts` fails if it drifts from `MODEL_PROVIDERS`. Settings
-// keys are deliberately NOT mirrored: whatever a provider's Vercel AI SDK
-// factory accepts is passed straight through.
-export const KNOWN_PROVIDER_NAMES = [
-  "anthropic",
-  "azure",
-  "baseten",
-  "bedrock",
-  "cerebras",
-  "cohere",
-  "custom",
-  "deepinfra",
-  "deepseek",
-  "fireworks",
-  "google",
-  "groq",
-  "minimax",
-  "mistral",
-  "openai",
-  "perplexity",
-  "togetherai",
-  "v0",
-  "vercel",
-  "vertex",
-  "xai",
-] as const;
 const CANONICAL_PROVIDER_KEYS = new Set(["apiKey", "base_url", "baseURL"]);
 const KNOWN_HARNESS_KEYS = new Set([
   "activeTools",
@@ -906,9 +882,9 @@ export function validateProviderConfig(
   for (const [providerName, settings] of Object.entries(
     provider as Record<string, unknown>,
   )) {
-    if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(providerName)) {
+    if (!isAccountModelProviderName(providerName)) {
       throw new Error(
-        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${KNOWN_PROVIDER_NAMES.join(", ")})`,
+        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")})`,
       );
     }
     if (

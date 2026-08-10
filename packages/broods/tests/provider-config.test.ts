@@ -1,9 +1,6 @@
 import { expect, test } from "bun:test";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../../convex/model/modelProviders.ts";
-import {
-  KNOWN_PROVIDER_NAMES,
-  validateProviderConfig,
-} from "../src/manifest.ts";
+import { validateProviderConfig } from "../src/manifest.ts";
 import { env } from "../src/resources.ts";
 
 test("accepts base_url and baseURL for the custom provider", () => {
@@ -61,10 +58,18 @@ test("passes provider-owned settings through and still catches apiKey typos", ()
 });
 
 test("supports every provider on the shared list, deepseek included", () => {
-  expect(KNOWN_PROVIDER_NAMES).toEqual([...ACCOUNT_MODEL_PROVIDER_NAMES]);
-  expect(() =>
-    validateProviderConfig("a", { deepseek: { apiKey: "k" } }),
-  ).not.toThrow();
+  for (const name of ACCOUNT_MODEL_PROVIDER_NAMES) {
+    const settings =
+      name === "custom"
+        ? { apiKey: "k", baseURL: "https://x/v1" }
+        : { apiKey: "k" };
+    expect(() =>
+      validateProviderConfig("a", { [name]: settings }),
+    ).not.toThrow();
+  }
+  expect(() => validateProviderConfig("a", { nope: { apiKey: "k" } })).toThrow(
+    "is not a supported provider",
+  );
 });
 
 test("requires a base URL for the custom provider", () => {

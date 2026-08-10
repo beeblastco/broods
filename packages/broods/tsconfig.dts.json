@@ -7,12 +7,11 @@
     "noEmit": false,
     "outDir": ".dts-temp",
     "rootDir": "../..",
-    // Resolve to source so the rolled-up .d.ts inlines the name union; left
-    // bare it imports a private package no `npm i broods` consumer can resolve.
+    // Every @broods/* type the public surface touches resolves to source, so the
+    // rolled-up .d.ts inlines it instead of importing a package consumers lack.
     "paths": {
-      "@broods/convex/model/modelProviders": [
-        "../convex/model/modelProviders.ts"
-      ]
+      "@broods/core/*": ["../../apps/core/*", "../../apps/core/*.ts"],
+      "@broods/*": ["../*", "../*.ts"]
     }
   },
   "include": ["src/**/*.ts"]
