@@ -376,6 +376,36 @@ export const publicAgent = defineAgent({
   expect(agent?.config).toMatchObject({ publicAccess: true });
 });
 
+test("compileProject carries channel trace settings into the manifest", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineZaloChannel, env } from "${RESOURCES_MODULE}";
+
+export const zalo = defineZaloChannel({
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
+  trace: "disabled",
+});
+
+export const privateReplies = defineAgent({
+  name: "private-replies",
+  channels: [zalo],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const agent = manifest.resources.find(
+    (resource) =>
+      resource.kind === "agent" && resource.name === "private-replies",
+  );
+
+  expect(agent?.config).toMatchObject({
+    channels: { zalo: { trace: "disabled" } },
+  });
+});
+
 test("compileProject lowers all typed channel constructors into the existing keyed config", async () => {
   const cwd = await fixtureProject(
     "",

@@ -1,11 +1,36 @@
 import { describe, expect, it } from "bun:test";
 import {
+  isChannelTraceEnabled,
   normalizeAgentConfig,
   normalizeAgentConfigPatch,
   resolveSubagentMode,
 } from "../src/shared/domain/agent-config.ts";
 
 describe("agent config validation", () => {
+  it("validates channel trace settings", () => {
+    expect(
+      normalizeAgentConfig({
+        channels: { zalo: { id: "support", trace: "disabled" } },
+      }),
+    ).toEqual({
+      channels: { zalo: { id: "support", trace: "disabled" } },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { zalo: { id: "support", trace: "hidden" } },
+      }),
+    ).toThrow(
+      "config.channels.zalo.trace must be one of: enabled, disabled",
+    );
+    expect(isChannelTraceEnabled({}, "zalo")).toBe(true);
+    expect(
+      isChannelTraceEnabled(
+        { channels: { zalo: { trace: "disabled" } } },
+        "zalo",
+      ),
+    ).toBe(false);
+  });
+
   it("validates AI SDK Harness selection", () => {
     expect(
       normalizeAgentConfig({

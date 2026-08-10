@@ -3681,6 +3681,11 @@ components:
                 type: integer
             reactionEmoji:
               type: string
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3725,6 +3730,11 @@ components:
             triggerOnPROpen:
               type: boolean
               description: When false, the bot does not auto-trigger on new pull requests (opened, edited, reopened). Defaults to true.
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3755,6 +3765,11 @@ components:
                 type: string
             reactionEmoji:
               type: string
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3797,6 +3812,11 @@ components:
               description: >-
                 Role ids that also count as a mention, so tagging @oncall
                 reaches the agent without naming it directly.
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3826,6 +3846,11 @@ components:
             senderId:
               type: string
               description: Optional staff user ID for replies
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3857,6 +3882,11 @@ components:
               items:
                 type: string
               description: Optional Zalo user IDs allowed to trigger the agent. When omitted or empty, any private sender is accepted.
+            trace:
+              type: string
+              enum: [enabled, disabled]
+              default: enabled
+              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."

@@ -844,6 +844,10 @@ function normalizeChannelIdentityConfig(
   name: string,
 ): void {
   normalizeRequiredString(config.id, `${name}.id`);
+  assertOptionalEnum(config.trace, `${name}.trace`, [
+    "enabled",
+    "disabled",
+  ] as const);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
       `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,

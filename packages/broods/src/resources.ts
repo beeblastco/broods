@@ -203,6 +203,7 @@ type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 type ChannelIdentityInput = {
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
 };
 

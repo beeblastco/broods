@@ -8,7 +8,11 @@ import { extractBearerToken, timingSafeStringEqual } from "../shared/auth.ts";
 import { extractText, formatChannelErrorText } from "../shared/channels.ts";
 import { markHandlerEntry } from "../shared/cold-start.ts";
 import { executeCommand, resolveChannelCommand } from "../shared/commands.ts";
-import { toRuntimeAgentConfig } from "../shared/domain/agent-config.ts";
+import {
+  isChannelTraceEnabled,
+  toRuntimeAgentConfig,
+  type AgentConfig,
+} from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import {
     booleanEnv,
@@ -794,6 +798,8 @@ async function handleAsyncWorkerRequest(
                 : JSON.stringify(response, null, 2),
               traceId,
               event,
+              event.replyTarget?.channelName,
+              event.agentConfig,
             ),
           );
         },
@@ -817,6 +823,8 @@ async function handleAsyncWorkerRequest(
               formatChannelErrorText(error),
               traceId,
               event,
+              event.replyTarget?.channelName,
+              event.agentConfig,
             ),
           );
         },
@@ -1265,6 +1273,8 @@ async function handleChannelRequest(
                     : JSON.stringify(response, null, 2),
                   traceId,
                   event,
+                  event.channelName,
+                  activeConfig,
                 );
                 const text = await applyMessageSendingHook(
                   hooks,
@@ -1281,6 +1291,8 @@ async function handleChannelRequest(
                     formatChannelErrorText(error),
                     traceId,
                     event,
+                    event.channelName,
+                    activeConfig,
                   ),
                 );
               },
@@ -1597,7 +1609,12 @@ function formatChannelFinalText(
     DirectInboundEvent | ChannelInboundEvent,
     "projectSlug" | "environmentSlug"
   >,
+  channelName: string | undefined,
+  config: AgentConfig,
 ): string {
+  if (!isChannelTraceEnabled(config, channelName)) {
+    return text;
+  }
   const link = dashboardTraceUrl(traceId, event);
   if (!link) {
     return text;

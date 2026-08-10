@@ -15,6 +15,21 @@ import {
 } from "../model/agentConfigCodec";
 
 describe("agent rules", () => {
+  it("validates channel trace settings", () => {
+    expect(
+      normalizeAgentConfig({
+        channels: { zalo: { id: "support", trace: "disabled" } },
+      }),
+    ).toEqual({
+      channels: { zalo: { id: "support", trace: "disabled" } },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { zalo: { id: "support", trace: "hidden" } },
+      }),
+    ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
+  });
+
   it("normalizes empty configs and rejects non-objects", () => {
     expect(normalizeAgentConfig(null)).toEqual({});
     expect(() => normalizeAgentConfig("bad")).toThrow(
