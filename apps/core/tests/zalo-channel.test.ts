@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { ChannelParseResult } from "../src/shared/channels.ts";
 import { createZaloChannel } from "../src/shared/zalo-channel.ts";
 
 describe("zalo channel adapter", () => {
@@ -126,32 +127,49 @@ describe("zalo channel adapter", () => {
       new Set(["user-1"]),
     );
 
-    expect(
+    expectIgnoreReason(
       await adapter.parse(
         createZaloRequest(validUpdate({ eventName: "message.image.received" })),
       ),
-    ).toEqual({
-      kind: "ignore",
-    });
-    expect(
+      "unsupported_event:message.image.received",
+    );
+    expectIgnoreReason(
       await adapter.parse(
         createZaloRequest(validUpdate({ chatType: "GROUP" })),
       ),
-    ).toEqual({ kind: "ignore" });
-    expect(
+      "unsupported_chat_type:GROUP",
+    );
+    expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ text: "   " }))),
-    ).toEqual({ kind: "ignore" });
-    expect(
+      "missing_text",
+    );
+    const richLink = await adapter.parse(
+      createZaloRequest(validUpdate({ text: { url: "https://example.com" } })),
+    );
+    expectIgnoreReason(richLink, "missing_text");
+    if (richLink.kind !== "ignore") {
+      throw new Error("Expected malformed Zalo rich-link text to be ignored");
+    }
+    expect(richLink.reason).toContain('"textType":"object"');
+    expect(richLink.reason).toContain('"textFields":["url"]');
+    expectIgnoreReason(
+      await adapter.parse(createZaloRequest({ event_name: 42 })),
+      "unsupported_event:missing",
+    );
+    expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ isBot: true }))),
-    ).toEqual({ kind: "ignore" });
-    expect(
+      "bot_message",
+    );
+    expectIgnoreReason(
       await adapter.parse(
         createZaloRequest(validUpdate({ senderId: "user-2" })),
       ),
-    ).toEqual({ kind: "ignore" });
-    expect(
+      "sender_not_allowed:user-2",
+    );
+    expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ messageId: null }))),
-    ).toEqual({ kind: "ignore" });
+      "missing_message_id",
+    );
   });
 });
 
@@ -168,10 +186,21 @@ function createZaloRequest(
   };
 }
 
+function expectIgnoreReason(
+  parsed: ChannelParseResult,
+  reason: string,
+): void {
+  expect(parsed.kind).toBe("ignore");
+  if (parsed.kind !== "ignore") {
+    throw new Error("Expected Zalo webhook to be ignored");
+  }
+  expect(parsed.reason?.startsWith(`${reason} details=`)).toBe(true);
+}
+
 function validUpdate(
   overrides: {
     eventName?: string;
-    text?: string;
+    text?: unknown;
     chatType?: string;
     senderId?: string;
     messageId?: string | null;

@@ -1091,7 +1091,7 @@ async function handleChannelWebhook(
     // Webhook is valid enough to accept, but should not run the agent.
     // Example: unsupported Pancake event, wrong page ID, hidden/removed or page-originated message.
     if (parsed.kind === "ignore") {
-      logInfo("Channel webhook ignored", {
+      logInfo(`Channel webhook ignored: ${parsed.reason ?? "unspecified"}`, {
         channel: adapter.name,
         accountId: account.accountId,
         agentId: agent.agentId,

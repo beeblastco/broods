@@ -79,31 +79,57 @@ export function createZaloChannel(
 
     parse: function(req): ChannelParseResult {
       const update = unwrapZaloUpdate(JSON.parse(req.body) as unknown);
-      if (update.event_name !== "message.text.received") {
-        return { kind: "ignore" };
+      const eventName =
+        typeof update.event_name === "string"
+          ? update.event_name.slice(0, 128)
+          : "missing";
+      if (eventName !== "message.text.received") {
+
+        return ignoreZaloUpdate(
+          update,
+          `unsupported_event:${eventName}`,
+        );
       }
 
       const message = update.message;
-      const text = message?.text?.trim();
+      const text =
+        typeof message?.text === "string" ? message.text.trim() : undefined;
       const chatId = message?.chat?.id;
       const senderId = message?.from?.id;
       const messageId = message?.message_id;
       const chatType = message?.chat?.chat_type;
-      if (
-        !messageId ||
-        !chatId ||
-        !senderId ||
-        !text ||
-        chatType !== "PRIVATE" ||
-        message.from?.is_bot
-      ) {
-        return { kind: "ignore" };
+      if (!messageId) {
+
+        return ignoreZaloUpdate(update, "missing_message_id");
+      }
+      if (!chatId) {
+
+        return ignoreZaloUpdate(update, "missing_chat_id");
+      }
+      if (!senderId) {
+
+        return ignoreZaloUpdate(update, "missing_sender_id");
+      }
+      if (!text) {
+
+        return ignoreZaloUpdate(update, "missing_text");
+      }
+      if (chatType !== "PRIVATE") {
+
+        return ignoreZaloUpdate(
+          update,
+          `unsupported_chat_type:${chatType ?? "missing"}`,
+        );
+      }
+      if (message?.from?.is_bot) {
+
+        return ignoreZaloUpdate(update, "bot_message");
       }
 
       if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
         logWarn("Zalo sender not in allow list", { senderId: senderId });
 
-        return { kind: "ignore" };
+        return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
       return {
@@ -129,7 +155,7 @@ export function createZaloChannel(
             messageId: messageId,
             senderId: senderId,
             senderName: message.from?.display_name ?? message.from?.name,
-            eventName: update.event_name,
+            eventName: eventName,
             date: message.date,
           } satisfies ZaloSource,
         },
@@ -164,6 +190,66 @@ export function createZaloActions(
     reactToMessage: async function() {
       return;
     },
+  };
+}
+
+function ignoreZaloUpdate(
+  update: ZaloUpdate,
+  reason: string,
+): ChannelParseResult {
+  const message = update.message;
+  const messageRecord =
+    message && typeof message === "object"
+      ? (message as unknown as Record<string, unknown>)
+      : null;
+  const messageFields = messageRecord ? Object.keys(messageRecord).sort() : [];
+  const text = message?.text;
+  const details = {
+    updateFields: Object.keys(update).sort(),
+    eventName:
+      typeof update.event_name === "string"
+        ? update.event_name.slice(0, 128)
+        : null,
+    eventNameType: typeof update.event_name,
+    messageFields: messageFields,
+    messageFieldTypes: Object.fromEntries(
+      messageFields.map((field) => {
+        const value = messageRecord?.[field];
+
+        return [
+          field,
+          Array.isArray(value)
+            ? "array"
+            : value === null
+              ? "null"
+              : typeof value,
+        ];
+      }),
+    ),
+    nestedMessageFields: Object.fromEntries(
+      messageFields.flatMap((field) => {
+        const value = messageRecord?.[field];
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return [];
+        }
+
+        return [[field, Object.keys(value).sort()]];
+      }),
+    ),
+    messageIdPresent: Boolean(message?.message_id),
+    chatIdPresent: Boolean(message?.chat?.id),
+    senderIdPresent: Boolean(message?.from?.id),
+    chatType: message?.chat?.chat_type ?? null,
+    isBot: message?.from?.is_bot ?? null,
+    textType: Array.isArray(text) ? "array" : typeof text,
+    textFields:
+      text && typeof text === "object" ? Object.keys(text).sort() : [],
+    textLength: typeof text === "string" ? text.length : null,
+  };
+
+  return {
+    kind: "ignore",
+    reason: `${reason} details=${JSON.stringify(details)}`,
   };
 }
 
