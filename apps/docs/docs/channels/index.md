@@ -117,6 +117,7 @@ Every channel gets these behaviors from the shared pipeline, not from the adapte
 - **Error replies** — if processing fails, the channel receives `Error: <message>` as the reply.
 - **Per-channel config scoping** — a webhook run only sees its own channel's config; other channels' credentials are stripped from the runtime agent config.
 - **Deferred replies** — when a turn finishes in the background (detached async tools or sandbox jobs), the final result is pushed back into the originating chat once it settles.
+- **Trace links** — channel replies include a dashboard trace link by default. Set `trace: "disabled"` on a channel definition to omit its links without disabling trace collection.
 - **Channel records** — a run may be re-targeted to the agent a [channel record](channel-records.md) binds, with that record's instructions, workspaces and policies layered on.
 - **Tag gating** — when a policy denies `agent.invoke`, the refusal is posted in-channel and the turn never starts.
 

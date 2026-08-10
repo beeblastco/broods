@@ -448,6 +448,7 @@ export interface AgentTelegramChannelConfig {
   webhookSecret?: string;
   allowedChatIds?: number[];
   reactionEmoji?: string;
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -467,6 +468,7 @@ export interface AgentGitHubChannelConfig {
   triggerOnIssueOpen?: boolean;
   /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
   triggerOnPROpen?: boolean;
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -478,6 +480,7 @@ export interface AgentSlackChannelConfig {
   signingSecret?: string;
   allowedChannelIds?: string[];
   reactionEmoji?: string;
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -492,6 +495,7 @@ export interface AgentDiscordChannelConfig {
   botUserId?: string;
   /** Role ids that count as mentioning the agent, e.g. an on-call role. */
   mentionRoleIds?: string[];
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -502,6 +506,7 @@ export interface AgentPancakeChannelConfig {
   pageAccessToken?: string;
   webhookSecret?: string;
   senderId?: string;
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -511,6 +516,7 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
+  trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
 }
@@ -576,6 +582,18 @@ export function toChannelRuntimeAgentConfig(
     ...runtimeConfig,
     channels: config.channels,
   };
+}
+
+export function isChannelTraceEnabled(
+  config: AgentConfig,
+  channelName: string | undefined,
+): boolean {
+  if (!channelName) return true;
+  const channelConfig = config.channels?.[channelName] as
+    | { trace?: "enabled" | "disabled" }
+    | undefined;
+
+  return channelConfig?.trace !== "disabled";
 }
 
 // Provider-defined tool names are validated for shape only; whether the
@@ -1445,6 +1463,10 @@ function normalizeChannelIdentityConfig(
   name: string,
 ): void {
   normalizeRequiredString(config.id, `${name}.id`);
+  assertOptionalEnum(config.trace, `${name}.trace`, [
+    "enabled",
+    "disabled",
+  ] as const);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
       `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
