@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { validateProviderConfig } from "../src/manifest.ts";
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../../convex/model/modelProviders.ts";
+import {
+  KNOWN_PROVIDER_NAMES,
+  validateProviderConfig,
+} from "../src/manifest.ts";
 import { env } from "../src/resources.ts";
 
 test("accepts base_url and baseURL for the custom provider", () => {
@@ -42,17 +46,25 @@ test("rejects the camel `baseUrl` typo with a did-you-mean hint", () => {
   );
 });
 
-test("rejects other unknown options and misspelled apiKey", () => {
+test("passes provider-owned settings through and still catches apiKey typos", () => {
+  // Anything the provider's own AI SDK factory accepts is not the SDK's business.
   expect(() =>
     validateProviderConfig("a", {
-      custom: { baseURL: "https://x/v1", tokens: 1 },
+      vertex: { apiKey: "k", project: "p", location: "us-central1" },
     }),
-  ).toThrow(`config.provider.custom has unknown option "tokens"`);
+  ).not.toThrow();
   expect(() =>
     validateProviderConfig("a", {
       custom: { api_key: "k", baseURL: "https://x/v1" },
     }),
   ).toThrow(`did you mean "apiKey"?`);
+});
+
+test("supports every provider on the shared list, deepseek included", () => {
+  expect(KNOWN_PROVIDER_NAMES).toEqual([...ACCOUNT_MODEL_PROVIDER_NAMES]);
+  expect(() =>
+    validateProviderConfig("a", { deepseek: { apiKey: "k" } }),
+  ).not.toThrow();
 });
 
 test("requires a base URL for the custom provider", () => {

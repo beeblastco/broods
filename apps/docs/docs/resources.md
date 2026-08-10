@@ -82,14 +82,38 @@ export const myAgent = defineAgent({
 
 ### Supported Providers
 
-| Provider                          | Config key | Required fields      |
-| --------------------------------- | ---------- | -------------------- |
-| Google                            | `google`   | `apiKey`             |
-| OpenAI                            | `openai`   | `apiKey`             |
-| Bedrock                           | `bedrock`  | `region`, `apiKey`   |
-| Vercel (AI Gateway)               | `vercel`   | `apiKey`             |
-| MiniMax                           | `minimax`  | `apiKey`             |
-| OpenAI-compatible custom endpoint | `custom`   | `apiKey`, `base_url` |
+Every Vercel AI SDK provider that ships language models is supported, plus any
+OpenAI-compatible endpoint. Each needs an `apiKey`; anything else you set is
+passed to that provider's AI SDK factory unchanged, so the provider's own
+documentation is the reference for its settings.
+
+| Provider                          | Config key   |
+| --------------------------------- | ------------ |
+| Anthropic                         | `anthropic`  |
+| Azure OpenAI                      | `azure`      |
+| Baseten                           | `baseten`    |
+| Amazon Bedrock                    | `bedrock`    |
+| Cerebras                          | `cerebras`   |
+| Cohere                            | `cohere`     |
+| DeepInfra                         | `deepinfra`  |
+| DeepSeek                          | `deepseek`   |
+| Fireworks                         | `fireworks`  |
+| Google Generative AI              | `google`     |
+| Google Vertex AI                  | `vertex`     |
+| Groq                              | `groq`       |
+| MiniMax                           | `minimax`    |
+| Mistral                           | `mistral`    |
+| OpenAI                            | `openai`     |
+| Perplexity                        | `perplexity` |
+| Together.ai                       | `togetherai` |
+| Vercel AI Gateway                 | `vercel`     |
+| Vercel v0                         | `v0`         |
+| xAI Grok                          | `xai`        |
+| OpenAI-compatible custom endpoint | `custom`     |
+
+`bedrock` also accepts `region` / `accessKeyId` / `secretAccessKey`, `vertex`
+accepts `project` / `location`, and `custom` additionally requires `base_url` —
+all of them straight from the AI SDK.
 
 Use `custom` for providers that expose an OpenAI-compatible Chat Completions API:
 
@@ -107,10 +131,10 @@ model: {
 ```
 
 The base URL key is `base_url` (or the AI-SDK spelling `baseURL`) — both are
-accepted. The camel-case `baseUrl` is **not**: the SDK rejects it at type-check
-time and `broods dev`/`deploy` throw a clear error before syncing, so the typo
-never reaches a run. Provider settings are a fixed allow-list, so any other
-misspelled option is reported the same way.
+accepted. The camel-case `baseUrl` is **not**: `broods dev`/`deploy` throw a
+clear error before syncing, so the typo never reaches a run. Settings broods
+does not read itself are forwarded to the provider untouched and are not
+checked here — the provider decides what it accepts.
 
 The `custom` path also normalizes two vLLM-style endpoint quirks automatically:
 multiple system messages are folded into one before the request is sent, and

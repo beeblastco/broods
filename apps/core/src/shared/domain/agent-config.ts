@@ -284,12 +284,10 @@ export type AgentProviderConfig = Partial<
 >;
 
 /**
- * Constructor settings for a model provider. The keys are an explicit allow-list
- * (no open index signature) so a misspelled option — most commonly the camel
- * `baseUrl` instead of the canonical `base_url`/`baseURL` — is a compile-time
- * error in the SDK and is caught by `normalizeProviderSettings` at runtime.
- * Keep this list in sync with `normalizeProviderSettings` and the SDK's
- * `KNOWN_PROVIDER_SETTING_KEYS`.
+ * Constructor settings for a model provider. Open on purpose: whatever the
+ * provider's AI SDK factory accepts is passed through verbatim, so a new SDK
+ * setting needs no change here. Only the keys broods itself reads are named —
+ * `harness/provider.ts` types the rest off the factory it calls.
  */
 export interface AgentProviderSettings {
   apiKey?: string;
@@ -298,13 +296,7 @@ export interface AgentProviderSettings {
   /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
   headers?: Record<string, string>;
-  organization?: string;
-  project?: string;
-  name?: string;
-  region?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  sessionToken?: string;
+  [key: string]: unknown;
 }
 
 export interface AgentWorkspaceRef {
@@ -985,34 +977,6 @@ function normalizeProviderSettings(
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new Error(
       `config.provider.${providerName}.headers must be an object with string values`,
-    );
-  }
-
-  if (providerName === "openai" || providerName === "custom") {
-    assertOptionalString(
-      config.organization,
-      `config.provider.${providerName}.organization`,
-    );
-    assertOptionalString(
-      config.project,
-      `config.provider.${providerName}.project`,
-    );
-    assertOptionalString(config.name, `config.provider.${providerName}.name`);
-  }
-
-  if (providerName === "bedrock") {
-    assertOptionalString(config.region, "config.provider.bedrock.region");
-    assertOptionalString(
-      config.accessKeyId,
-      "config.provider.bedrock.accessKeyId",
-    );
-    assertOptionalString(
-      config.secretAccessKey,
-      "config.provider.bedrock.secretAccessKey",
-    );
-    assertOptionalString(
-      config.sessionToken,
-      "config.provider.bedrock.sessionToken",
     );
   }
 }

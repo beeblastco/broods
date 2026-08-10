@@ -1,26 +1,20 @@
 /**
- * Supported account model provider names.
- * Keep provider identifiers here so config validation and model resolution share one source.
+ * Core's seam onto the shared model-provider list.
+ * The list itself lives in the config plane so Convex, the dashboard and core
+ * validate against one source; the AI SDK factory for each name lives in
+ * `harness/provider.ts`. Nothing provider-specific belongs here.
  */
 
-export const ACCOUNT_MODEL_PROVIDERS = {
-  google: true,
-  openai: true,
-  anthropic: true,
-  bedrock: true,
-  vercel: true,
-  minimax: true,
-  custom: true,
-} as const;
+export {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  isAccountModelProviderName,
+  MODEL_PROVIDERS,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
 
-export type AccountModelProviderName = keyof typeof ACCOUNT_MODEL_PROVIDERS;
-
-export function isAccountModelProviderName(
-  value: string,
-): value is AccountModelProviderName {
-  return value in ACCOUNT_MODEL_PROVIDERS;
-}
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "@broods/convex/model/modelProviders";
+import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
 export function accountModelProviderNames(): AccountModelProviderName[] {
-  return Object.keys(ACCOUNT_MODEL_PROVIDERS) as AccountModelProviderName[];
+  return [...ACCOUNT_MODEL_PROVIDER_NAMES];
 }

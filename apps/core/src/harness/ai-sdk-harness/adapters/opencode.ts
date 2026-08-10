@@ -10,6 +10,7 @@ import {
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { AgentConfig } from "../../../shared/domain/agent-config.ts";
 import {
+  harnessProviderSetting,
   requireHarnessModelId,
   requireHarnessProviderName,
   requireHarnessProviderSettings,
@@ -32,7 +33,7 @@ export function createConfiguredOpenCodeAdapter(
           openaiCompatible: {
             apiKey: provider.apiKey!,
             baseUrl: baseUrl,
-            name: provider.name ?? "custom",
+            name: harnessProviderSetting(provider, "name") ?? "custom",
           },
         }
       : providerName === "openai"
@@ -40,8 +41,8 @@ export function createConfiguredOpenCodeAdapter(
             openai: {
               apiKey: provider.apiKey!,
               ...(baseUrl ? { baseUrl: baseUrl } : {}),
-              organization: provider.organization,
-              project: provider.project,
+              organization: harnessProviderSetting(provider, "organization"),
+              project: harnessProviderSetting(provider, "project"),
             },
           }
         : providerName === "anthropic"
@@ -70,7 +71,9 @@ export function createConfiguredOpenCodeAdapter(
     auth: auth,
     model: model,
     provider:
-      providerName === "custom" ? (provider.name ?? "custom") : providerName,
+      providerName === "custom"
+        ? (harnessProviderSetting(provider, "name") ?? "custom")
+        : providerName,
     reasoningVariant: reasoning && reasoning !== "none" ? reasoning : undefined,
     startupTimeoutMs: harness.startupTimeoutMs,
   });

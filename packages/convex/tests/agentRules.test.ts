@@ -13,6 +13,7 @@ import {
   collectEnvPlaceholderNames,
   substituteAccountEnvPlaceholders,
 } from "../model/agentConfigCodec";
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "../model/modelProviders";
 
 describe("agent rules", () => {
   it("validates channel trace settings", () => {
@@ -54,8 +55,17 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ model: { provider: "other" } }),
     ).toThrow(
-      "config.model.provider must be one of: google, openai, anthropic, bedrock, vercel, minimax, custom",
+      `config.model.provider must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
     );
+    expect(() =>
+      normalizeAgentConfig({ model: { provider: "deepseek" } }),
+    ).not.toThrow();
+    // Settings a provider's AI SDK factory owns pass straight through.
+    expect(() =>
+      normalizeAgentConfig({
+        provider: { vertex: { apiKey: "k", project: "p", location: "us" } },
+      }),
+    ).not.toThrow();
   });
 
   it("validates public provider URLs and output variants", () => {

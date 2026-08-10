@@ -21,47 +21,25 @@ import {
 } from "@/app/components/ui/select";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  MODEL_PROVIDERS,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 
-type AgentProvider =
-  | "openai"
-  | "google"
-  | "bedrock"
-  | "anthropic"
-  | "minimax"
-  | "vercel"
-  | "custom";
+type AgentProvider = AccountModelProviderName;
 
 const providerOptions: Array<{
   value: AgentProvider;
   label: string;
   modelPlaceholder: string;
-}> = [
-  { value: "openai", label: "OpenAI", modelPlaceholder: "gpt-4.1-mini" },
-  { value: "google", label: "Google", modelPlaceholder: "gemini-2.5-flash" },
-  {
-    value: "bedrock",
-    label: "Bedrock",
-    modelPlaceholder: "anthropic.claude-sonnet-4-5-20250929-v1:0",
-  },
-  {
-    value: "anthropic",
-    label: "Anthropic",
-    modelPlaceholder: "claude-sonnet-4-5-20250929",
-  },
-  { value: "minimax", label: "MiniMax", modelPlaceholder: "MiniMax-M2.7" },
-  {
-    value: "vercel",
-    label: "Vercel",
-    modelPlaceholder: "openai/gpt-4.1-mini",
-  },
-  {
-    value: "custom",
-    label: "Custom OpenAI-compatible",
-    modelPlaceholder: "gpt-oss-120b",
-  },
-];
+}> = ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
+  value: name,
+  label: MODEL_PROVIDERS[name].label,
+  modelPlaceholder: MODEL_PROVIDERS[name].modelPlaceholder,
+}));
 
 export function CreateAgentConfigDialog({
   projectId,

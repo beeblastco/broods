@@ -10,7 +10,6 @@
 import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
-  AgentProviderSettings,
   AgentChannelWorkspaceScope,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
@@ -183,12 +182,7 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  | "telegram"
-  | "github"
-  | "slack"
-  | "discord"
-  | "pancake"
-  | "zalo";
+  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
 export interface ChannelDefinition<Type extends ChannelType, Config> {
   readonly [CHANNEL_MARKER]: true;
@@ -462,47 +456,24 @@ export type AgentPolicyDefinitionConfig = Omit<
  * gains a new top-level field that should be code-definable.
  */
 /**
- * SDK-facing model-provider constructor settings. Written as an explicit
- * interface — NOT `EnvRefString<AgentProviderSettings>` — because TypeScript
- * suppresses excess-property checks through mapped types, which would let a
- * typo like the camel `baseUrl` (instead of `base_url`/`baseURL`) slip past
- * `tsc`. Keep the keys in lockstep with core's `AgentProviderSettings`; the
- * `_ProviderKeyParity` assertion below fails `broods check` if they drift.
- * Every string field also accepts an `env("NAME")` reference.
+ * SDK-facing model-provider constructor settings. Open by design: everything a
+ * provider's Vercel AI SDK factory accepts is forwarded verbatim, so there is no
+ * key list to keep in sync. Only the keys broods reads itself are named (and so
+ * typo-checked at run time by `validateProviderConfig`); every string field also
+ * accepts an `env("NAME")` reference.
  */
 export interface ProviderSettingsInput {
   apiKey?: string | EnvRef;
   base_url?: string | EnvRef;
   baseURL?: string | EnvRef;
   headers?: Record<string, string | EnvRef>;
-  organization?: string | EnvRef;
-  project?: string | EnvRef;
-  name?: string | EnvRef;
-  region?: string | EnvRef;
-  accessKeyId?: string | EnvRef;
-  secretAccessKey?: string | EnvRef;
-  sessionToken?: string | EnvRef;
+  [key: string]: unknown;
 }
 
 /** Per-provider settings; provider names stay synced with core's `AgentConfig`. */
 export type ProviderConfigInput = Partial<
   Record<keyof NonNullable<AgentConfig["provider"]>, ProviderSettingsInput>
 >;
-
-// Compile-time guard: ProviderSettingsInput's keys must equal core's
-// AgentProviderSettings keys, so a new core provider setting cannot silently
-// bypass the SDK's excess-property checking. If this line fails to compile,
-// add/remove the key in ProviderSettingsInput to match AgentProviderSettings.
-type KeysEqual<A, B> = [keyof A] extends [keyof B]
-  ? [keyof B] extends [keyof A]
-    ? true
-    : false
-  : false;
-const _providerKeyParity: KeysEqual<
-  ProviderSettingsInput,
-  NonNullable<AgentProviderSettings>
-> = true;
-void _providerKeyParity;
 
 export type AgentDefinitionConfig = EnvRefString<
   Pick<AgentConfig, "agent" | "model" | "scheduler" | "session" | "tools">
@@ -627,7 +598,7 @@ export const env: EnvAccessor = new Proxy(
     return { __beeblastEnv: true, name: name };
   },
   {
-    get: function(target, property, receiver) {
+    get: function (target, property, receiver) {
       if (typeof property === "string" && ENV_NAME_PATTERN.test(property)) {
         throw new Error(
           `env.${property} is not supported; use env("${property}")`,

@@ -831,32 +831,35 @@ async function normalizeConfig(
   return rewriteValues(resource.config);
 }
 
-// Supported providers and their constructor-setting keys — a local mirror of
-// core's `ACCOUNT_MODEL_PROVIDERS` / `normalizeProviderSettings` (kept as plain
-// values rather than a runtime import so core is not bundled into the SDK). Keep
-// in sync with core's `AgentProviderSettings`.
-const KNOWN_PROVIDER_NAMES = [
-  "google",
-  "openai",
+// A local mirror of the shared provider list, kept as plain values rather than a
+// runtime import so no backend code is bundled into the published SDK.
+// `tests/manifest.test.ts` fails if it drifts from `MODEL_PROVIDERS`. Settings
+// keys are deliberately NOT mirrored: whatever a provider's Vercel AI SDK
+// factory accepts is passed straight through.
+export const KNOWN_PROVIDER_NAMES = [
   "anthropic",
+  "azure",
+  "baseten",
   "bedrock",
-  "vercel",
-  "minimax",
+  "cerebras",
+  "cohere",
   "custom",
+  "deepinfra",
+  "deepseek",
+  "fireworks",
+  "google",
+  "groq",
+  "minimax",
+  "mistral",
+  "openai",
+  "perplexity",
+  "togetherai",
+  "v0",
+  "vercel",
+  "vertex",
+  "xai",
 ] as const;
-const KNOWN_PROVIDER_SETTING_KEYS = new Set([
-  "apiKey",
-  "base_url",
-  "baseURL",
-  "headers",
-  "organization",
-  "project",
-  "name",
-  "region",
-  "accessKeyId",
-  "secretAccessKey",
-  "sessionToken",
-]);
+const CANONICAL_PROVIDER_KEYS = new Set(["apiKey", "base_url", "baseURL"]);
 const KNOWN_HARNESS_KEYS = new Set([
   "activeTools",
   "debug",
@@ -869,8 +872,16 @@ const KNOWN_HARNESS_KEYS = new Set([
 ]);
 const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
-/** Suggest the canonical key for a common misspelling, else "". */
+/**
+ * Suggest the canonical key for a common misspelling, else "". A setting the SDK
+ * has never heard of is fine — it reaches the provider's Vercel AI SDK factory
+ * untouched — but a casing slip on one of the few keys broods reads itself
+ * (`apiKey`, `base_url`) would silently do nothing, so those still throw.
+ */
 function suggestProviderKey(key: string): string {
+  if (CANONICAL_PROVIDER_KEYS.has(key)) {
+    return "";
+  }
   const canonical = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   if (canonical === "baseurl") return `"base_url" or "baseURL"`;
   if (canonical === "apikey") return `"apiKey"`;
@@ -911,11 +922,12 @@ export function validateProviderConfig(
     }
     const record = settings as Record<string, unknown>;
     for (const key of Object.keys(record)) {
-      if (KNOWN_PROVIDER_SETTING_KEYS.has(key)) continue;
       const suggestion = suggestProviderKey(key);
-      throw new Error(
-        `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}"${suggestion ? ` — did you mean ${suggestion}?` : ""}`,
-      );
+      if (suggestion) {
+        throw new Error(
+          `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}" — did you mean ${suggestion}?`,
+        );
+      }
     }
     if (
       providerName === "custom" &&
@@ -1633,7 +1645,7 @@ function sdkStubPlugin(shimDir: string): Plugin {
 
   return {
     name: "broods-sdk-stub",
-    setup: function(build) {
+    setup: function (build) {
       build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
     },
   };
