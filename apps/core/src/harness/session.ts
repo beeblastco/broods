@@ -591,7 +591,7 @@ export class Session {
           ];
     const memoryToolEnabled = this.isMemoryToolEnabled();
     const workspaceHarnessSystem: SystemModelMessage[] =
-      this.isWorkspaceHarnessEnabled()
+      this.enableDefaultHarness()
         ? [
             {
               role: "system",
@@ -806,7 +806,13 @@ export class Session {
     return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
   }
 
-  private isWorkspaceHarnessEnabled(): boolean {
+  // The <workspace> prompt is the default harness's own guidance. An AI SDK
+  // harness brings its own, and takes over the tools this prompt describes.
+  private enableDefaultHarness(): boolean {
+    if (this.agentConfig.harness !== undefined) {
+      return false;
+    }
+
     return (this.resolvedRuntime?.workspaces ?? []).some((workspace) =>
       workspaceGuidanceEnabled(workspace.config),
     );
