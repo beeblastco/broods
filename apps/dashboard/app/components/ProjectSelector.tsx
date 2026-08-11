@@ -58,8 +58,9 @@ export function ProjectSelector() {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject]);
 
-  // Hide selector entirely when loading or the user has no projects yet.
-  if (projects === undefined || projects.length === 0) {
+  // Hide only while the list is still loading. An org with no projects still
+  // needs the menu, otherwise "New Project" is unreachable from the header.
+  if (projects === undefined) {
     return null;
   }
 
@@ -69,7 +70,8 @@ export function ProjectSelector() {
   );
   const displayName =
     selectedProject?.name ??
-    (currentProjectId ? projects[0]?.name : "Projects");
+    (currentProjectId ? projects[0]?.name : undefined) ??
+    "Projects";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
 
@@ -98,30 +100,39 @@ export function ProjectSelector() {
             <DropdownMenuSeparator />
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {projects.map((project: Doc<"projects">) => (
-                <DropdownMenuItem
-                  key={project._id}
-                  onClick={() => router.push(`/${project._id}`)}
-                  onMouseEnter={() => prefetchProject(project._id)}
-                  onFocus={() => prefetchProject(project._id)}
-                  className={cn(
-                    "cursor-pointer",
-                    project._id === currentProjectId
-                      ? "bg-accent text-accent-foreground"
-                      : "",
-                  )}
-                >
-                  <Folder className="size-4" />
-                  <span className="truncate max-w-60 block">
-                    {project.name}
-                  </span>
-                </DropdownMenuItem>
-              ))}
+              {projects.length === 0 ? (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                  No projects in this organization yet.
+                </div>
+              ) : (
+                projects.map((project: Doc<"projects">) => (
+                  <DropdownMenuItem
+                    key={project._id}
+                    onClick={() => router.push(`/${project._id}`)}
+                    onMouseEnter={() => prefetchProject(project._id)}
+                    onFocus={() => prefetchProject(project._id)}
+                    className={cn(
+                      "cursor-pointer",
+                      project._id === currentProjectId
+                        ? "bg-accent text-accent-foreground"
+                        : "",
+                    )}
+                  >
+                    <Folder className="size-4" />
+                    <span className="truncate max-w-60 block">
+                      {project.name}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
             </div>
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setDialogOpen(true)}>
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => setDialogOpen(true)}
+          >
             <Plus className="size-4" />
             New Project
           </DropdownMenuItem>

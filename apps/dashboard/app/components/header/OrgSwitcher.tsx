@@ -29,13 +29,21 @@ import { Label } from "@/app/components/ui/label";
 import { publishOnboardingSecret } from "@/app/lib/onboardingSecret";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useConvexAuth,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
 export function OrgSwitcher() {
   const router = useRouter();
+  const convex = useConvex();
+  const params = useParams<{ projectId?: string }>();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const orgQueryArgs = !isLoading && isAuthenticated ? {} : "skip";
   const orgs = useQuery(api.org.list, orgQueryArgs);
@@ -49,10 +57,21 @@ export function OrgSwitcher() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // Switching org invalidates whatever project the URL points at: send the user
+  // to the gallery when the new org has none, so they can create their first.
   async function handleSwitch(orgId: Id<"orgs">) {
     if (active?._id === orgId) return;
     try {
       await setActive({ orgId: orgId });
+      const projects = await convex.query(api.project.list, {});
+      if (projects.length === 0) {
+        router.replace("/projects");
+      } else if (
+        params.projectId &&
+        !projects.some((project) => project._id === params.projectId)
+      ) {
+        router.replace(`/${projects[0]._id}`);
+      }
       router.refresh();
     } catch (err) {
       console.error("Failed to switch org:", err);
@@ -79,6 +98,8 @@ export function OrgSwitcher() {
 
       setCreateOpen(false);
       setNewName("");
+      // A fresh org has no projects yet, so the gallery is the only useful landing.
+      router.replace("/projects");
       router.refresh();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Create failed");
