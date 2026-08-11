@@ -58,18 +58,38 @@ export function ProjectSelector() {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject]);
 
+  // Nothing to name yet, and the empty/list shapes differ — wait for the query.
+  if (projects === undefined) {
+    return null;
+  }
+
   const currentProjectId = params.projectId;
-  const selectedProject = projects?.find(
+  const selectedProject = projects.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
   // The trigger states what is true right now — never another project's name.
-  const displayName =
-    projects === undefined
-      ? "Loading..."
-      : (selectedProject?.name ??
-        (projects.length === 0 ? "No projects" : "Select project"));
+  const displayName = selectedProject?.name ?? "Select project";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
+
+  // An org with no projects has nothing to pick from: skip the menu and put the
+  // create action itself in the header, one click from the same dialog.
+  if (projects.length === 0) {
+    return (
+      <>
+        <Button
+          variant="ghost"
+          className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+          onClick={() => setDialogOpen(true)}
+        >
+          <Plus className="size-3.5" />
+          New Project
+        </Button>
+
+        <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -96,35 +116,25 @@ export function ProjectSelector() {
             <DropdownMenuSeparator />
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {projects === undefined ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  Loading...
-                </div>
-              ) : projects.length === 0 ? (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  No projects in this organization yet.
-                </div>
-              ) : (
-                projects.map((project: Doc<"projects">) => (
-                  <DropdownMenuItem
-                    key={project._id}
-                    onClick={() => router.push(`/${project._id}`)}
-                    onMouseEnter={() => prefetchProject(project._id)}
-                    onFocus={() => prefetchProject(project._id)}
-                    className={cn(
-                      "cursor-pointer",
-                      project._id === currentProjectId
-                        ? "bg-accent text-accent-foreground"
-                        : "",
-                    )}
-                  >
-                    <Folder className="size-4" />
-                    <span className="truncate max-w-60 block">
-                      {project.name}
-                    </span>
-                  </DropdownMenuItem>
-                ))
-              )}
+              {projects.map((project: Doc<"projects">) => (
+                <DropdownMenuItem
+                  key={project._id}
+                  onClick={() => router.push(`/${project._id}`)}
+                  onMouseEnter={() => prefetchProject(project._id)}
+                  onFocus={() => prefetchProject(project._id)}
+                  className={cn(
+                    "cursor-pointer",
+                    project._id === currentProjectId
+                      ? "bg-accent text-accent-foreground"
+                      : "",
+                  )}
+                >
+                  <Folder className="size-4" />
+                  <span className="truncate max-w-60 block">
+                    {project.name}
+                  </span>
+                </DropdownMenuItem>
+              ))}
             </div>
           </DropdownMenuGroup>
 
