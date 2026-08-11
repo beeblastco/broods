@@ -162,6 +162,24 @@ export function createZaloChannel(
         date: message.date,
       } satisfies ZaloSource;
 
+      // Everything a reply needs to route. Only `content` separates a message
+      // the agent runs from a notice sent in place of one.
+      const inbound = {
+        eventId: `${ZALO_INTEGRATION_PREFIX}${eventName}:${chatId}:${senderId}:${messageId}`,
+        conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
+        channelName: "zalo",
+        identity: {
+          channelId: chatId,
+          ...(senderId ? { actorId: senderId } : {}),
+          ...((message.from?.display_name ?? message.from?.name)
+            ? {
+                actorName: message.from?.display_name ?? message.from?.name,
+              }
+            : {}),
+        },
+        source: source,
+      };
+
       // Zalo empties the payload of anything it will not hand a bot, links most of
       // all. Private senders are told; groups are not, having not asked.
       if (eventName !== "message.text.received") {
@@ -177,7 +195,7 @@ export function createZaloChannel(
             eventName === "message.unsupported.received"
               ? ZALO_UNREADABLE_NOTICE
               : ZALO_TEXT_ONLY_NOTICE,
-          source: source,
+          message: { ...inbound, content: "" },
           ack: { statusCode: 200, body: "ok" },
         };
       }
@@ -206,22 +224,7 @@ export function createZaloChannel(
       return {
         kind: runAgent ? "message" : "context",
         ack: { statusCode: 200, body: "ok" },
-        message: {
-          eventId: `${ZALO_INTEGRATION_PREFIX}${update.event_name}:${chatId}:${senderId}:${messageId}`,
-          conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
-          channelName: "zalo",
-          content: content,
-          identity: {
-            channelId: chatId,
-            ...(senderId ? { actorId: senderId } : {}),
-            ...((message.from?.display_name ?? message.from?.name)
-              ? {
-                  actorName: message.from?.display_name ?? message.from?.name,
-                }
-              : {}),
-          },
-          source: source,
-        },
+        message: { ...inbound, content: content },
       };
     },
 

@@ -184,7 +184,12 @@ describe("zalo channel adapter", () => {
     );
     expect(parsed.reason).toContain('"textType":"undefined"');
     expect(parsed.text).toContain("link");
-    expect(parsed.source).toEqual({
+    // The notice routes to the same conversation a real message would, so a
+    // reply lands in the chat that sent the unreadable message.
+    expect(parsed.message.content).toBe("");
+    expect(parsed.message.conversationKey).toBe("zalo:chat-1");
+    expect(parsed.message.identity?.channelId).toBe("chat-1");
+    expect(parsed.message.source).toEqual({
       chatId: "chat-1",
       chatType: "PRIVATE",
       messageId: "message-1",
@@ -193,7 +198,7 @@ describe("zalo channel adapter", () => {
       eventName: "message.unsupported.received",
       date: 1713916800,
     });
-    expect(() => adapter.actions({ source: parsed.source })).not.toThrow();
+    expect(() => adapter.actions(parsed.message)).not.toThrow();
   });
 
   it("notifies with a text-only notice for media events", async () => {

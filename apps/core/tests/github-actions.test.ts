@@ -234,6 +234,10 @@ function createGitHubActions(
     privateKey,
     null,
   ).actions({
+    eventId: "gh:test",
+    conversationKey: source.threadId,
+    channelName: "github",
+    content: [],
     source: source as unknown as Record<string, unknown>,
   });
 }

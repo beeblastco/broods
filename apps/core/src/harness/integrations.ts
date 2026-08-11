@@ -1101,7 +1101,7 @@ async function handleChannelWebhook(
       });
       waitUntil(
         adapter
-          .actions({ source: parsed.source })
+          .actions(parsed.message)
           .sendText(parsed.text)
           .catch((err: unknown) => {
             logWarn("Channel notify reply failed", {
