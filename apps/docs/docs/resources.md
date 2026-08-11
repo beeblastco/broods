@@ -166,6 +166,13 @@ registry, including `bash`, `read`, `write`, `edit`, `glob`, and `grep` when
 their required sandbox or workspace is configured. An agent-level `sandbox` is
 a tool execution target; the serverless loop itself does not live inside it.
 
+The `<workspace>` prompt belongs to that default loop, so setting `harness`
+turns it off. Each adapter ships its own file-tool instructions and its own
+builtins under the same names, and the Broods block would describe tools the
+run no longer has. Structured memory is unaffected: no adapter declares a
+`memory_save` builtin, so that tool and its `<memory>` block still apply. See
+[Memory and Session](./workspace/memory-and-session.md).
+
 Every AI SDK Harness adapter requires its `sandbox` on `defineHarness()`. The
 sandbox must be persistent and use the Workdir (`sandbox`) or Lambda MicroVM
 (`lambda`) provider. Compute lifecycle belongs to `defineSandbox()`: use

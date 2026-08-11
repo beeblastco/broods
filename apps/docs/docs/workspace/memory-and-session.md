@@ -42,7 +42,7 @@ flowchart TD
   Session --> Context["createTurnContext()"]
   Context --> Memory{"memory/MEMORY.md exists?"}
   Memory -->|"yes"| MemoryPrompt["System prompt<br/>current memory index"]
-  Context --> HarnessPrompt{"workspace harness enabled?"}
+  Context --> HarnessPrompt{"default harness enabled?"}
   HarnessPrompt -->|"yes"| Prompt["System prompt<br/>workspace + memory guidance"]
   HarnessPrompt -->|"no"| Custom["Agent/system prompt only"]
   History --> Prune["pruning.ts<br/>drop old transient clutter"]
@@ -188,6 +188,15 @@ export const notesBare = defineWorkspace({
   harness: { workspace: { enabled: false } },
 });
 ```
+
+The `<workspace>` prompt belongs to the default harness. An agent that sets
+`harness` on `defineAgent` never receives it, whatever this toggle says. Claude
+Code, Codex, Deep Agents, OpenCode, and Pi each ship their own file-tool
+instructions, and each one replaces Broods file tools with its own builtins of
+the same name, so the block would describe tools the run does not have.
+
+Structured memory is not affected. No adapter declares a `memory_save` builtin,
+so the tool and its `<memory>` block still apply under every harness.
 
 Remove a workspace reference from the agent config to disable that workspace's mounted
 tools and prompt-time memory loading. Set `workspaces[].sandbox: null` when the agent
