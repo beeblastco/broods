@@ -119,6 +119,11 @@ export function initOtel(): void {
     const resource = resourceFromAttributes({
       "service.name": process.env.SERVICE_NAME ?? "broods-core",
       "service.namespace": "beeblast",
+      ...(process.env.DEPLOYMENT_ENVIRONMENT
+        ? {
+            "deployment.environment.name": process.env.DEPLOYMENT_ENVIRONMENT,
+          }
+        : {}),
     });
     const tracerProvider = new BasicTracerProvider({
       resource: resource,

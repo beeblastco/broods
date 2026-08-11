@@ -30,7 +30,7 @@ const microvmSendMock = mock(async (command: { _type?: string }) => {
       return {};
   }
 });
-const microvmFetchMock = mock(async (_url: string, init: { body: string }) => {
+const microvmFetchResponse = async (_url: string, init: { body: string }) => {
   const payload = JSON.parse(init.body);
 
   return new Response(
@@ -45,7 +45,8 @@ const microvmFetchMock = mock(async (_url: string, init: { body: string }) => {
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
-});
+};
+const microvmFetchMock = mock(microvmFetchResponse);
 function microvmCommand(type: string) {
   return class {
     input: unknown;
@@ -271,6 +272,16 @@ function lastSandboxExec() {
   return { payload: JSON.parse(call![1].body) };
 }
 
+function sandboxExecPayloads(): Array<Record<string, unknown>> {
+  return microvmFetchMock.mock.calls
+    .map((call) => JSON.parse((call[1] as { body: string }).body))
+    .filter(
+      (payload) =>
+        typeof payload.code !== "string" ||
+        !payload.code.includes("mountpoint -q "),
+    );
+}
+
 async function tool(
   name: "bash" | "read" | "write" | "edit" | "glob" | "grep",
   ctx: never,
@@ -316,6 +327,7 @@ describe("sandbox tool set", () => {
   });
 
   it("bash treats sandbox setup failures as failed tool calls", async () => {
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
     microvmFetchMock.mockImplementationOnce(
       async (_url: string, init: { body: string }) => {
         const payload = JSON.parse(init.body);
@@ -435,7 +447,7 @@ describe("sandbox tool set", () => {
       const result = await bash.execute({ command: command });
       expect(result.type).toBe("text");
     }
-    expect(microvmFetchMock).toHaveBeenCalledTimes(3);
+    expect(sandboxExecPayloads()).toHaveLength(3);
   });
 
   it("bash rejects writes that would be lost, naming a workspace path to use", async () => {

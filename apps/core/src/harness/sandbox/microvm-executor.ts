@@ -325,6 +325,12 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
           workDir,
         );
         await this.#runLifecycle(microvmId, endpoint, workDir);
+      } else if (request.namespace) {
+        await this.#assertWorkspaceMounted(
+          microvmId,
+          endpoint,
+          this.#workDir(microvmLocalNamespace(request.namespace)),
+        );
       }
 
       return sandboxResult(
