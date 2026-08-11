@@ -58,20 +58,16 @@ export function ProjectSelector() {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject]);
 
-  // Hide only while the list is still loading. An org with no projects still
-  // needs the menu, otherwise "New Project" is unreachable from the header.
-  if (projects === undefined) {
-    return null;
-  }
-
   const currentProjectId = params.projectId;
-  const selectedProject = projects.find(
+  const selectedProject = projects?.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
+  // The trigger states what is true right now — never another project's name.
   const displayName =
-    selectedProject?.name ??
-    (currentProjectId ? projects[0]?.name : undefined) ??
-    "Projects";
+    projects === undefined
+      ? "Loading..."
+      : (selectedProject?.name ??
+        (projects.length === 0 ? "No projects" : "Select project"));
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
 
@@ -100,7 +96,11 @@ export function ProjectSelector() {
             <DropdownMenuSeparator />
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {projects.length === 0 ? (
+              {projects === undefined ? (
+                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Loading...
+                </div>
+              ) : projects.length === 0 ? (
                 <div className="px-2 py-1.5 text-xs text-muted-foreground">
                   No projects in this organization yet.
                 </div>
