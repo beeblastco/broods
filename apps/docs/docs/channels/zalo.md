@@ -24,7 +24,7 @@ export const myAgent = defineAgent({
 - `webhookSecret` (Required): Secret sent by Zalo in `X-Bot-Api-Secret-Token`. Must be 8 to 256 characters.
 - `allowedUserIds` (Optional): Zalo user IDs allowed to trigger the agent. When omitted or empty, any user can send the agent a text message. Applies to private chats and groups alike.
 - `allowedGroupIds` (Optional): Zalo group chat IDs the agent answers in. When omitted or empty, the agent answers in any group it belongs to. Private chats are unaffected.
-- `botName` (Optional): Name the agent answers to in group chats. Group messages that do not contain it are stored as context instead of running the agent, and the name is stripped from the text the agent sees. When omitted, every group message runs the agent.
+- `botName` (Optional): Name the agent answers to in group chats, matched case-insensitively. Group messages that do not mention it are stored as context instead of running the agent, and the mention is stripped from the text the agent sees. When omitted, every group message runs the agent.
 
 ## Group Chats
 
@@ -41,7 +41,7 @@ export const zalo = defineZaloChannel({
 });
 ```
 
-With `botName` set, `@Brood what is on the calendar?` runs the agent and it receives `what is on the calendar?`. Everything else said in the group is kept as conversation context, so a later mention still sees what the room discussed. Leave `botName` unset and the agent answers every group message.
+With `botName` set, `@Brood what is on the calendar?` runs the agent and it receives `what is on the calendar?`. Matching ignores case and an optional leading `@`, and the mention must stand on its own: a name of `Brood` is not matched by `brooding`. Everything else said in the group is kept as conversation context, so a later mention still sees what the room discussed. Leave `botName` unset and the agent answers every group message.
 
 Each chat is its own conversation, keyed by chat ID, so a group and a private chat with the same person never share history. A group chat ID is also the external ID for a channel record, so a record can bind one group to a different agent.
 

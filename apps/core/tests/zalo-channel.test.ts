@@ -279,6 +279,21 @@ describe("zalo channel adapter", () => {
       throw new Error("Expected mentioned Zalo group message to run the agent");
     }
     expect(addressed.message.content).toBe("what is on the calendar?");
+
+    const lowercased = await adapter.parse(
+      createZaloRequest(
+        validUpdate({
+          chatType: "GROUP",
+          chatId: "group-1",
+          text: "@brood remind me later",
+        }),
+      ),
+    );
+    expect(lowercased.kind).toBe("message");
+    if (lowercased.kind !== "message") {
+      throw new Error("Expected a mixed-case mention to run the agent");
+    }
+    expect(lowercased.message.content).toBe("remind me later");
   });
 
   it("matches the bot name as a mention, not a substring", async () => {
