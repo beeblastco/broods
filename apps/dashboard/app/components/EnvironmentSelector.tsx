@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { useEnvironment } from "@/app/hooks/useEnvironment";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -165,7 +166,17 @@ export function EnvironmentSelector() {
     }
   }, [environments, environmentId, setEnvironmentId]);
 
-  if (!projectId || !environments || environments.length === 0) {
+  if (!projectId) {
+    return null;
+  }
+
+  // Its divider is already painted on a project route: hold the slot instead of
+  // letting the header snap wider when the environments arrive.
+  if (environments === undefined) {
+    return <Skeleton className="h-4 w-20 bg-muted" />;
+  }
+
+  if (environments.length === 0) {
     return null;
   }
 

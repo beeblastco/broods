@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -58,9 +59,10 @@ export function ProjectSelector() {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject]);
 
-  // Nothing to name yet, and the empty/list shapes differ — wait for the query.
+  // The header divider next to this is always painted, so rendering nothing
+  // here collapses the row and shifts it back once the query lands.
   if (projects === undefined) {
-    return null;
+    return <Skeleton className="h-4 w-24 bg-muted" />;
   }
 
   const currentProjectId = params.projectId;
