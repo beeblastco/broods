@@ -176,6 +176,11 @@ describe("agent rules", () => {
         channels: { zalo: { id: "zalo", webhookSecret: "short" } },
       }),
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { zalo: { id: "zalo", botName: "   " } },
+      }),
+    ).toThrow("config.channels.zalo.botName must not be blank");
   });
 
   it("validates subagent event streaming across full, create, update, and patch inputs", () => {

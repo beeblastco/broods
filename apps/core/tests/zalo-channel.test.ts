@@ -281,6 +281,63 @@ describe("zalo channel adapter", () => {
     expect(addressed.message.content).toBe("what is on the calendar?");
   });
 
+  it("matches the bot name as a mention, not a substring", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      botName: "Brood",
+    });
+
+    const embedded = await adapter.parse(
+      createZaloRequest(
+        validUpdate({
+          chatType: "GROUP",
+          chatId: "group-1",
+          text: "I am brooding",
+        }),
+      ),
+    );
+    expect(embedded.kind).toBe("context");
+    if (embedded.kind !== "context") {
+      throw new Error("Expected an embedded bot name to stay unaddressed");
+    }
+    expect(embedded.message.content).toBe("I am brooding");
+
+    const mixed = await adapter.parse(
+      createZaloRequest(
+        validUpdate({
+          chatType: "GROUP",
+          chatId: "group-1",
+          text: "brooding @Brood help",
+        }),
+      ),
+    );
+    expect(mixed.kind).toBe("message");
+    if (mixed.kind !== "message") {
+      throw new Error("Expected a real mention to run the agent");
+    }
+    expect(mixed.message.content).toBe("brooding help");
+  });
+
+  it("treats a blank bot name as no bot name", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      botName: "   ",
+    });
+    const parsed = await adapter.parse(
+      createZaloRequest(
+        validUpdate({
+          chatType: "GROUP",
+          chatId: "group-1",
+          text: "no mention anywhere",
+        }),
+      ),
+    );
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected a blank bot name to gate nothing");
+    }
+    expect(parsed.message.content).toBe("no mention anywhere");
+  });
+
   it("keeps the bot name gate out of private chats", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
       botName: "Brood",
