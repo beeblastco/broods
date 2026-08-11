@@ -17,7 +17,7 @@ export const vercelSandbox = defineSandbox({
     token: env("VERCEL_TOKEN"),
     teamId: env("VERCEL_TEAM_ID"),
     projectId: env("VERCEL_PROJECT_ID"),
-    runtime: "node24",
+    image: "vercel/sandbox/universal:latest",
   },
 });
 

@@ -24,7 +24,7 @@ reservation key used by the other providers (`reservationKey ?? namespace`).
       "token": "vercel-token",
       "teamId": "team_xxx",
       "projectId": "prj_xxx",
-      "runtime": "node24",
+      "image": "vercel/sandbox/universal:latest",
     },
   },
 }
@@ -32,7 +32,24 @@ reservation key used by the other providers (`reservationKey ?? namespace`).
 
 `options.token`, `options.teamId`, and `options.projectId` can be omitted when the harness
 environment provides `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, and `VERCEL_PROJECT_ID`. `runtime`
-defaults to `node24`.
+is deprecated but remains available for existing configs. Do not set it together with `image`.
+When neither is set, Vercel uses `vercel/sandbox/universal:latest`.
+
+## Images
+
+Vercel Sandbox 3 uses Ubuntu-based managed images instead of the legacy Amazon Linux
+runtimes. `options.image` accepts Vercel's managed images or an OCI image pushed to the
+project's Vercel Container Registry. The managed choices are:
+
+- `vercel/sandbox/universal:latest` — Node.js 24, Bun, Python 3.14, coding agents, and
+  common development tools; this is the default.
+- `vercel/sandbox/node:22`, `:24`, or `:26` — a smaller Node.js image.
+- `vercel/sandbox/python:3.14` — Python with pip, venv, and uv.
+- `vercel/sandbox/ubuntu:latest` or `vercel/sandbox/arch:latest` — general-purpose base
+  images.
+
+Custom images can use a repository, tag, digest, or fully qualified VCR URL, for example
+`my-repo:v1` or `vcr.vercel.com/my-team/my-project/my-repo@sha256:...`.
 
 ## Lifecycle
 

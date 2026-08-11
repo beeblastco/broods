@@ -51,6 +51,32 @@ describe("sandbox config", () => {
     ).toThrow("config.options.functionNames is not supported");
   });
 
+  it("validates Vercel image selection", () => {
+    expect(
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { image: "vercel/sandbox/universal:latest" },
+      }).options,
+    ).toEqual({ image: "vercel/sandbox/universal:latest" });
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: { image: 24 },
+      }),
+    ).toThrow("config.options.image must be a string");
+    expect(() =>
+      normalizeSandboxConfig({
+        provider: "vercel",
+        options: {
+          image: "vercel/sandbox/node:24",
+          runtime: "node24",
+        },
+      }),
+    ).toThrow(
+      "config.options.image and config.options.runtime cannot both be set",
+    );
+  });
+
   it("redacts env vars and sensitive provider option names", () => {
     const record: SandboxConfigRecord = {
       accountId: "acct_1",
