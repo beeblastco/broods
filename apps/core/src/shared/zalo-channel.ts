@@ -14,6 +14,10 @@ import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_TEXT_LIMIT = 2000;
+const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
+const ZALO_UNREADABLE_NOTICE =
+  "I could not read that message. Zalo delivered it without any content, which is what happens when a message carries a link. Please send the address as plain text.";
+const ZALO_TEXT_ONLY_NOTICE = "I can only read text messages right now.";
 
 interface ZaloWebhookEnvelope {
   ok?: boolean;
@@ -48,9 +52,11 @@ interface ZaloApiResponse<T = unknown> {
   description?: string;
 }
 
+export type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
+
 export interface ZaloSource {
   chatId: string;
-  chatType: "PRIVATE";
+  chatType: ZaloChatType;
   messageId: string;
   senderId: string;
   senderName?: string;
@@ -58,11 +64,23 @@ export interface ZaloSource {
   date?: number;
 }
 
+/**
+ * Zalo ships no mention entities, so `botName` is the only way to tell a group
+ * message meant for the agent from the rest of the room's conversation.
+ */
+export interface ZaloChannelOptions {
+  allowedUserIds?: ReadonlySet<string>;
+  allowedGroupIds?: ReadonlySet<string>;
+  botName?: string;
+}
+
 export function createZaloChannel(
   botToken: string,
   webhookSecret: string,
-  allowedUserIds?: ReadonlySet<string>,
+  options: ZaloChannelOptions = {},
 ): ChannelAdapter {
+  const { allowedUserIds, allowedGroupIds, botName } = options;
+
   return {
     name: "zalo",
 
@@ -83,17 +101,7 @@ export function createZaloChannel(
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)
           : "missing";
-      if (eventName !== "message.text.received") {
-
-        return ignoreZaloUpdate(
-          update,
-          `unsupported_event:${eventName}`,
-        );
-      }
-
       const message = update.message;
-      const text =
-        typeof message?.text === "string" ? message.text.trim() : undefined;
       const chatId = message?.chat?.id;
       const senderId = message?.from?.id;
       const messageId = message?.message_id;
@@ -110,11 +118,7 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, "missing_sender_id");
       }
-      if (!text) {
-
-        return ignoreZaloUpdate(update, "missing_text");
-      }
-      if (chatType !== "PRIVATE") {
+      if (!isZaloChatType(chatType)) {
 
         return ignoreZaloUpdate(
           update,
@@ -125,21 +129,80 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, "bot_message");
       }
+      if (
+        chatType === "GROUP" &&
+        allowedGroupIds?.size &&
+        !allowedGroupIds.has(chatId)
+      ) {
+        logWarn("Zalo group not in allow list", { chatId: chatId });
 
+        return ignoreZaloUpdate(update, `group_not_allowed:${chatId}`);
+      }
       if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
         logWarn("Zalo sender not in allow list", { senderId: senderId });
 
         return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
+      const source = {
+        chatId: chatId,
+        chatType: chatType,
+        messageId: messageId,
+        senderId: senderId,
+        senderName: message.from?.display_name ?? message.from?.name,
+        eventName: eventName,
+        date: message.date,
+      } satisfies ZaloSource;
+
+      // Zalo empties the payload of anything it will not hand a bot, links most
+      // of all. A private sender is told rather than met with silence; a group
+      // is not, because most of what it posts was never addressed to the agent.
+      if (eventName !== "message.text.received") {
+        if (chatType !== "PRIVATE") {
+
+          return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
+        }
+
+        return {
+          kind: "notify",
+          reason: `unsupported_event:${eventName} ${describeZaloUpdate(update)}`,
+          text:
+            eventName === "message.unsupported.received"
+              ? ZALO_UNREADABLE_NOTICE
+              : ZALO_TEXT_ONLY_NOTICE,
+          source: source,
+          ack: { statusCode: 200, body: "ok" },
+        };
+      }
+
+      const text =
+        typeof message.text === "string" ? message.text.trim() : undefined;
+      if (!text) {
+
+        return ignoreZaloUpdate(update, "missing_text");
+      }
+
+      // Only a message addressed to the agent runs it; the rest is stored so a
+      // later mention still sees what the group said. Without a configured
+      // botName a mention cannot be recognised, so every message runs the agent.
+      const groupBotName = chatType === "GROUP" ? botName : undefined;
+      const runAgent = !groupBotName || textMentionsZaloBot(text, groupBotName);
+      const content = groupBotName
+        ? stripZaloBotMention(text, groupBotName)
+        : text;
+      if (!content) {
+
+        return ignoreZaloUpdate(update, "missing_text");
+      }
+
       return {
-        kind: "message",
+        kind: runAgent ? "message" : "context",
         ack: { statusCode: 200, body: "ok" },
         message: {
           eventId: `${ZALO_INTEGRATION_PREFIX}${update.event_name}:${chatId}:${senderId}:${messageId}`,
           conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
           channelName: "zalo",
-          content: text,
+          content: content,
           identity: {
             channelId: chatId,
             ...(senderId ? { actorId: senderId } : {}),
@@ -149,15 +212,7 @@ export function createZaloChannel(
                 }
               : {}),
           },
-          source: {
-            chatId: chatId,
-            chatType: chatType,
-            messageId: messageId,
-            senderId: senderId,
-            senderName: message.from?.display_name ?? message.from?.name,
-            eventName: eventName,
-            date: message.date,
-          } satisfies ZaloSource,
+          source: source,
         },
       };
     },
@@ -193,10 +248,7 @@ export function createZaloActions(
   };
 }
 
-function ignoreZaloUpdate(
-  update: ZaloUpdate,
-  reason: string,
-): ChannelParseResult {
+function describeZaloUpdate(update: ZaloUpdate): string {
   const message = update.message;
   const messageRecord =
     message && typeof message === "object"
@@ -247,10 +299,37 @@ function ignoreZaloUpdate(
     textLength: typeof text === "string" ? text.length : null,
   };
 
+  return `details=${JSON.stringify(details)}`;
+}
+
+function ignoreZaloUpdate(
+  update: ZaloUpdate,
+  reason: string,
+): ChannelParseResult {
   return {
     kind: "ignore",
-    reason: `${reason} details=${JSON.stringify(details)}`,
+    reason: `${reason} ${describeZaloUpdate(update)}`,
   };
+}
+
+function isZaloChatType(value: unknown): value is ZaloChatType {
+  return ZALO_CHAT_TYPES.includes(value as ZaloChatType);
+}
+
+function stripZaloBotMention(text: string, botName: string): string {
+  const lowered = text.toLowerCase();
+  for (const needle of [`@${botName.toLowerCase()}`, botName.toLowerCase()]) {
+    const index = lowered.indexOf(needle);
+    if (index >= 0) {
+      return `${text.slice(0, index)} ${text.slice(index + needle.length)}`.trim();
+    }
+  }
+
+  return text;
+}
+
+function textMentionsZaloBot(text: string, botName: string): boolean {
+  return text.toLowerCase().includes(botName.toLowerCase());
 }
 
 function verifyWebhookSecret(
@@ -282,7 +361,7 @@ function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
 function toZaloSource(source: Record<string, unknown>): ZaloSource {
   if (
     typeof source.chatId !== "string" ||
-    source.chatType !== "PRIVATE" ||
+    !isZaloChatType(source.chatType) ||
     typeof source.messageId !== "string" ||
     typeof source.senderId !== "string" ||
     typeof source.eventName !== "string"

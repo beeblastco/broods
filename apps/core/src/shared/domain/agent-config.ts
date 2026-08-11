@@ -516,6 +516,8 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   allowedUserIds?: string[];
+  allowedGroupIds?: string[];
+  botName?: string;
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
@@ -1448,6 +1450,11 @@ function normalizeZaloConfig(value: unknown): void {
     config.allowedUserIds,
     "config.channels.zalo.allowedUserIds",
   );
+  assertOptionalStringArray(
+    config.allowedGroupIds,
+    "config.channels.zalo.allowedGroupIds",
+  );
+  assertOptionalString(config.botName, "config.channels.zalo.botName");
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {

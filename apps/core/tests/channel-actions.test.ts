@@ -567,7 +567,7 @@ describe("zalo channel actions", () => {
     const actions = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     ).actions(
       createMessage({
         chatId: "chat-1",
@@ -612,7 +612,7 @@ describe("zalo channel actions", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     );
     const actions = adapter.actions(
       createMessage({
@@ -636,6 +636,18 @@ describe("zalo channel actions", () => {
         createMessage({
           chatId: "chat-1",
           chatType: "GROUP",
+          messageId: "message-1",
+          senderId: "user-1",
+          eventName: "message.text.received",
+        }),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      adapter.actions(
+        createMessage({
+          chatId: "chat-1",
+          chatType: "CHANNEL",
           messageId: "message-1",
           senderId: "user-1",
           eventName: "message.text.received",

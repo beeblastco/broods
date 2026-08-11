@@ -88,6 +88,18 @@ export interface ParsedChannelCleanup {
 }
 
 /**
+ * A webhook the agent will not answer, but whose sender still needs telling why.
+ * Carries reply routing only, because the provider handed over no content to run.
+ */
+export interface ParsedChannelNotify {
+  kind: "notify";
+  reason: string;
+  text: string;
+  source: Record<string, unknown>;
+  ack?: ChannelResponse;
+}
+
+/**
  * Channel parse results describe what the webhook should do before the agent runs.
  * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
  */
@@ -95,6 +107,7 @@ export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
   | ParsedChannelCleanup
+  | ParsedChannelNotify
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 
@@ -107,7 +120,11 @@ export interface ChannelAdapter {
    * Parsing may be async when a channel must check external state before deciding to run the agent.
    */
   parse(req: ChannelRequest): ChannelParseResult | Promise<ChannelParseResult>;
-  actions(msg: InboundMessage): ChannelActions;
+  /**
+   * Reply handles for one inbound message. Only `source` is read, so a parse
+   * result that never became a message can still answer the sender.
+   */
+  actions(msg: Pick<InboundMessage, "source">): ChannelActions;
   /**
    * Rewrite the reply routing a channel record's `threadPolicy` asks for.
    * Only providers where the runtime chooses between a thread and the channel

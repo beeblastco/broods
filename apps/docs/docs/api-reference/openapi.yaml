@@ -3865,7 +3865,7 @@ components:
                   enum: [channel, conversation]
         zalo:
           type: object
-          description: Official Zalo Bot API webhook channel for direct text messages.
+          description: Official Zalo Bot API webhook channel for text messages in private chats and groups.
           properties:
             id:
               type: string
@@ -3881,7 +3881,15 @@ components:
               type: array
               items:
                 type: string
-              description: Optional Zalo user IDs allowed to trigger the agent. When omitted or empty, any private sender is accepted.
+              description: Optional Zalo user IDs allowed to trigger the agent. When omitted or empty, any sender is accepted. Applies to private chats and groups alike.
+            allowedGroupIds:
+              type: array
+              items:
+                type: string
+              description: Optional Zalo group chat IDs the agent answers in. When omitted or empty, any group is accepted. Private chats are unaffected.
+            botName:
+              type: string
+              description: Name the agent answers to in group chats. Group messages without it are stored as context instead of running the agent. When omitted, every group message runs the agent.
             trace:
               type: string
               enum: [enabled, disabled]
