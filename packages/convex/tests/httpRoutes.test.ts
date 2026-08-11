@@ -68,4 +68,18 @@ describe("config-plane HTTP routes", () => {
       }
     });
   }
+
+  it("mounts workspace file and download-link surfaces", () => {
+    expect(http.lookup("/v1/workspaces/ws_1/files", "GET")).toBeTruthy();
+    expect(http.lookup("/v1/workspaces/ws_1/files", "POST")).toBeTruthy();
+    expect(
+      http.lookup("/v1/workspaces/ws_1/download-links", "POST"),
+    ).toBeTruthy();
+  });
+
+  // Redeeming happens in a browser with no credential, so it must resolve on a
+  // bare GET. Convex serves HEAD from the same route.
+  it("mounts download redemption for unauthenticated GET", () => {
+    expect(http.lookup("/v1/downloads/abcdefghijklmnop", "GET")).toBeTruthy();
+  });
 });

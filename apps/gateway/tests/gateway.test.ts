@@ -1136,6 +1136,18 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
+  expect(
+    isConfigHttpPath("/v1/workspaces/ws_123/download-links", "POST"),
+  ).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "GET")).toBe(
+    false,
+  );
+  // Redeeming a download link is unauthenticated and read-only.
+  expect(isConfigHttpPath("/v1/downloads/tok_abc", "GET")).toBe(true);
+  expect(isConfigHttpPath("/v1/downloads/tok_abc", "HEAD")).toBe(true);
+  expect(isConfigHttpPath("/v1/downloads/tok_abc", "DELETE")).toBe(false);
+  expect(isConfigHttpPath("/v1/downloads", "GET")).toBe(false);
+  expect(isConfigHttpPath("/v1/downloads/tok_abc/extra", "GET")).toBe(false);
   expect(isConfigHttpPath("/v1/sandboxes")).toBe(true);
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
   expect(isConfigHttpPath("/v1/policies")).toBe(true);

@@ -196,6 +196,27 @@ export async function workspaceNamespace(
   return `${FILESYSTEM_NAMESPACE_PREFIX}${hex.slice(0, HASH_HEX_LENGTH)}`;
 }
 
+/**
+ * Validate and normalize a workspace-relative file path. Lives here rather than
+ * in model/workspaceFs so the default-runtime HTTP surface can reuse it without
+ * pulling the S3 client into a non-node bundle.
+ * @param value candidate path
+ * @returns the normalized path
+ * @throws when the path is empty or contains traversal segments
+ */
+export function normalizeFilePath(value: unknown): string {
+  if (typeof value !== "string") throw new Error("path is required");
+  const path = value.trim().replace(/^\/+|\/+$/g, "");
+  const parts = path.split("/");
+  if (
+    !path ||
+    parts.some((part) => part.length === 0 || part === "." || part === "..")
+  )
+    throw new Error("Invalid workspace file path");
+
+  return path;
+}
+
 function normalizeWorkspaceStorage(value: unknown): WorkspaceStorageConfig {
   if (value === undefined) {
     return { provider: "s3" };

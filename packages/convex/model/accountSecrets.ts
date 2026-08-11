@@ -1,5 +1,6 @@
 /**
- * Account secret generation and hashing for default-runtime Convex code.
+ * Account secret generation, plus the SHA-256 hashing every default-runtime
+ * Convex path uses to store a bearer token as a digest instead of plaintext.
  */
 
 const ACCOUNT_SECRET_PREFIX = "fp_acct_";
@@ -27,9 +28,18 @@ export function createAccountSecret(): string {
  * @returns lowercase SHA-256 hex digest
  */
 export async function hashAccountSecret(secret: string): Promise<string> {
+  return await sha256Hex(secret);
+}
+
+/**
+ * SHA-256 hex digest of a UTF-8 string.
+ * @param value string to digest
+ * @returns lowercase SHA-256 hex digest
+ */
+export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",
-    new TextEncoder().encode(secret),
+    new TextEncoder().encode(value),
   );
 
   return hexFromBytes(new Uint8Array(digest));

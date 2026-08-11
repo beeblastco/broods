@@ -1664,6 +1664,72 @@ paths:
       responses:
         "200": { description: File or folder deleted }
 
+  /v1/workspaces/{workspaceId}/download-links:
+    post:
+      tags: [Workspaces]
+      summary: Create a shareable download link for a workspace file
+      description: |
+        Mints a capability token for one file and returns the path to redeem it.
+        Prefer this over the presigned URL from `GET .../files?path=`: that URL is
+        ~1.4 KB, expires in five minutes, and carries AWS signature material whose
+        `+` characters many chat clients corrupt. A download link is short, URL-safe
+        and lives as long as you ask for.
+
+        Join `downloadPath` to the same base URL you called here — the service sits
+        behind the gateway, which strips Host, so it cannot know its public origin.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string }
+                expiresInSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 604800
+                  default: 86400
+      responses:
+        "200":
+          description: Download link created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  downloadPath: { type: string, example: /v1/downloads/abc123 }
+                  path: { type: string }
+                  expiresInSeconds: { type: integer }
+        "400": { description: Invalid path or expiresInSeconds }
+        "404": { description: Workspace or file not found }
+
+  /v1/downloads/{token}:
+    get:
+      tags: [Workspaces]
+      summary: Redeem a download link
+      description: |
+        Redirects to a freshly minted presigned S3 URL. Unauthenticated by design —
+        the token is the whole credential — so treat the link as a secret. Unknown,
+        expired and revoked tokens all answer 404 so the route cannot be used to
+        probe for files.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "302": { description: Redirect to the file }
+        "404": { description: Unknown, expired or revoked token }
+
   /v1/tools:
     post:
       tags: [Tools]

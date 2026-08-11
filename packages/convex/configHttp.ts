@@ -9,7 +9,11 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
+import {
+  createAccountSecret,
+  hashAccountSecret,
+  sha256Hex,
+} from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
@@ -49,6 +53,7 @@ import {
 } from "./model/sandboxRules";
 import {
   normalizeCreateWorkspaceConfigInput,
+  normalizeFilePath,
   normalizeUpdateWorkspaceConfigInput,
   normalizeWorkspaceConfig,
   toPublicWorkspaceConfigResponse,
@@ -62,11 +67,23 @@ import {
 import { isPlainObject } from "./model/objects";
 import type { ProjectEnvironmentScope } from "./model/projectScope";
 import { fetchSlackChannelDirectory } from "./model/slackDirectory";
+import {
+  DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS,
+  MAX_DOWNLOAD_TOKEN_TTL_SECONDS,
+} from "./workspaceDownloadTokens";
+
+const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
 export const handle = httpAction(async (ctx, req) => {
   try {
     const accountRoute = parseAccountRoute(new URL(req.url).pathname);
     if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
+
+    // Redeeming a download token carries no Authorization header: the token in
+    // the path is the whole credential, so it runs before requireAccount.
+    const downloadToken = parseDownloadRoute(new URL(req.url).pathname);
+    if (downloadToken)
+      return await handleDownloadRedeemRoute(ctx, req, downloadToken);
 
     const accountAuth = await requireAccount(ctx, req);
     if (accountAuth instanceof Response) return accountAuth;
@@ -96,6 +113,14 @@ export const handle = httpAction(async (ctx, req) => {
         );
       case "workspaceFiles":
         return await handleWorkspaceFilesRoute(
+          ctx,
+          req,
+          account._id,
+          actor,
+          route.workspaceId,
+        );
+      case "workspaceDownloadLinks":
+        return await handleWorkspaceDownloadLinkRoute(
           ctx,
           req,
           account._id,
@@ -177,6 +202,59 @@ export const handle = httpAction(async (ctx, req) => {
     return json({ error: "Internal server error" }, 500);
   }
 });
+
+/**
+ * Match a download-token redemption and return the raw token. Kept separate from
+ * parseRoute because this one route runs before authentication.
+ * @param pathname request path
+ * @returns the token, or null when the path is not a redemption
+ */
+function parseDownloadRoute(pathname: string): string | null {
+  const match = pathname.match(/^\/v1\/downloads\/([A-Za-z0-9_-]{16,128})$/);
+
+  return match?.[1] ?? null;
+}
+
+/**
+ * Read the requested token lifetime, defaulting and capping it.
+ * @param value client-supplied expiresInSeconds
+ * @returns the lifetime in seconds, or a 400 response
+ */
+function parseDownloadTtlSeconds(value: unknown): number | Response {
+  if (value === undefined) return DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS;
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_DOWNLOAD_TOKEN_TTL_SECONDS
+  ) {
+    return json(
+      {
+        error: `expiresInSeconds must be an integer between 1 and ${MAX_DOWNLOAD_TOKEN_TTL_SECONDS}`,
+      },
+      400,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Mint a download token. base64url only: a `+` in a link is exactly the bug this
+ * route exists to avoid, since chat clients decode it back into a space.
+ * @returns a 256-bit URL-safe token
+ */
+function generateDownloadToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 /**
  * Map a client-input error to its HTTP status. Core returned 401 for
@@ -768,6 +846,7 @@ type ConfigRoute =
   | { kind: "tools"; toolId?: string }
   | { kind: "hooks"; hookId?: string }
   | { kind: "workspaceFiles"; workspaceId: string }
+  | { kind: "workspaceDownloadLinks"; workspaceId: string }
   | { kind: "crons"; cronId?: string; runs: boolean }
   | { kind: "workspaces"; workspaceId?: string }
   | { kind: "sandboxes"; sandboxId?: string }
@@ -816,6 +895,15 @@ function parseRoute(pathname: string): ConfigRoute | null {
     return {
       kind: "workspaceFiles",
       workspaceId: decodeURIComponent(files[1]),
+    };
+
+  const downloadLinks = pathname.match(
+    /^\/v1\/workspaces\/([^/]+)\/download-links$/,
+  );
+  if (downloadLinks?.[1])
+    return {
+      kind: "workspaceDownloadLinks",
+      workspaceId: decodeURIComponent(downloadLinks[1]),
     };
 
   const workspaces = pathname.match(/^\/v1\/workspaces(?:\/([^/]+))?$/);
@@ -2456,6 +2544,132 @@ async function handleWorkspaceFilesRoute(
 }
 
 /**
+ * Mint a capability link for one workspace file. Returns the token and the path
+ * to join to the base URL the caller reached us on — the config plane sits behind
+ * the gateway, which strips Host, so it cannot know its own public origin.
+ */
+async function handleWorkspaceDownloadLinkRoute(
+  ctx: ActionCtx,
+  req: Request,
+  accountId: Id<"accounts">,
+  actor: ConfigAuditActor,
+  workspaceId: string,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {
+    accountId: accountId,
+    workspaceId: workspaceId,
+  });
+  if (!workspace) return json({ error: "Workspace not found" }, 404);
+
+  const body = (await req.json()) as {
+    path?: unknown;
+    expiresInSeconds?: unknown;
+  };
+  if (typeof body.path !== "string")
+    return json({ error: "path is required" }, 400);
+  const ttl = parseDownloadTtlSeconds(body.expiresInSeconds);
+  if (ttl instanceof Response) return ttl;
+  const path = normalizeFilePath(body.path);
+
+  // Presigning now proves the file exists and that we can read it, so a link is
+  // never handed out for something that will 404 when someone follows it.
+  try {
+    await ctx.runAction(internal.awsWorkspaceFiles.downloadUrl, {
+      accountId: accountId,
+      workspaceId: workspace._id,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+      path: path,
+    });
+  } catch {
+    return json({ error: "Workspace file not found" }, 404);
+  }
+
+  const now = Date.now();
+  const token = generateDownloadToken();
+  await ctx.runMutation(internal.workspaceDownloadTokens.create, {
+    accountId: accountId,
+    workspaceId: workspace._id,
+    path: path,
+    filename: path.split("/").at(-1)!,
+    tokenHash: await sha256Hex(token),
+    expiresAt: now + ttl * 1000,
+    now: now,
+  });
+  await writeAudit(ctx, {
+    accountId: accountId,
+    projectId: workspace.projectId,
+    environmentId: workspace.environmentId,
+    actor: actor,
+    action: "file-link-created",
+    resource: { kind: "workspaceFile", id: workspace._id, name: path },
+    summary: "Workspace download link created",
+    detailsJson: auditDetailsJson({
+      workspaceId: workspace._id,
+      path: path,
+      expiresInSeconds: ttl,
+    }),
+  });
+
+  return json({
+    token: token,
+    downloadPath: `${DOWNLOAD_ROUTE_PREFIX}${token}`,
+    path: path,
+    expiresInSeconds: ttl,
+  });
+}
+
+/**
+ * Redeem a capability link: mint a presigned S3 URL and redirect to it. The
+ * signed URL never touches a chat client, which is the whole point — an unknown,
+ * expired or revoked token is a flat 404 so the route cannot be used as an oracle.
+ */
+async function handleDownloadRedeemRoute(
+  ctx: ActionCtx,
+  req: Request,
+  token: string,
+): Promise<Response> {
+  if (req.method !== "GET" && req.method !== "HEAD")
+    return methodNotAllowed(["GET", "HEAD"]);
+
+  const now = Date.now();
+  const resolved = await ctx.runQuery(
+    internal.workspaceDownloadTokens.resolveByHash,
+    { tokenHash: await sha256Hex(token), now: now },
+  );
+  if (!resolved) return json({ error: "Not found" }, 404);
+
+  const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {
+    accountId: resolved.accountId,
+    workspaceId: resolved.workspaceId,
+  });
+  if (!workspace) return json({ error: "Not found" }, 404);
+
+  let url: string;
+  try {
+    url = await ctx.runAction(internal.awsWorkspaceFiles.downloadUrl, {
+      accountId: resolved.accountId,
+      workspaceId: resolved.workspaceId,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+      path: resolved.path,
+    });
+  } catch {
+    return json({ error: "Not found" }, 404);
+  }
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: url,
+      "Cache-Control": "no-store",
+      // The link is a bearer credential; keep it out of referrers and indexes.
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+/**
  * Cron CRUD: list/create on the collection, get/patch/delete by id, plus the
  * run history at /v1/crons/{id}/runs. Table writes and EventBridge Scheduler
  * mutations happen in awsCrons; mirrors core's former handleCronRoute contract.
@@ -2954,6 +3168,7 @@ function isClientInputError(error: unknown): error is Error {
     "config.",
     "e2b ",
     "Invalid workspace path",
+    "Invalid workspace file path",
     "Invalid destination path",
     "Workspace uploads ",
     "Workspace file not found",

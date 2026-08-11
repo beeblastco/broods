@@ -752,6 +752,24 @@ export const workspaceFilesFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * Capability link for one file in a workspace's S3 namespace, redeemed with no
+ * credential of its own. It exists because a presigned S3 URL cannot survive the
+ * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
+ */
+export const workspaceDownloadTokensFields = {
+  accountId: v.id("accounts"),
+  workspaceId: v.id("workspaceConfigs"),
+  /** Workspace-relative path, already normalized when the token was minted. */
+  path: v.string(),
+  /** Name offered to whoever follows the link. */
+  filename: v.string(),
+  /** SHA-256 hex of the token; the token itself only ever exists in the URL. */
+  tokenHash: v.string(),
+  expiresAt: v.number(),
+  createdAt: v.number(),
+};
+
 /** Async job tracking for the harness-processing /async endpoint. */
 export const asyncResultsFields = {
   accountId: v.id("accounts"),
@@ -1226,6 +1244,11 @@ export default defineSchema({
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
     .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
     .index("by_authId", ["authId"]),
+  workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_accountId", ["accountId"])
+    .index("by_workspaceId", ["workspaceId"])
+    .index("by_expiresAt", ["expiresAt"]),
   asyncResults: defineTable(asyncResultsFields)
     .index("by_accountId", ["accountId"])
     .index("by_eventId", ["eventId"]),

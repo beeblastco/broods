@@ -145,6 +145,13 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
+// Redeeming a workspace download link. GET only, and unauthenticated by design:
+// the token in the path is the credential. Convex serves HEAD off this route.
+http.route({
+  pathPrefix: "/v1/downloads/",
+  method: "GET",
+  handler: configHttp,
+});
 http.route({ path: "/v1/sandboxes", method: "GET", handler: configHttp });
 http.route({ path: "/v1/sandboxes", method: "POST", handler: configHttp });
 http.route({
@@ -197,7 +204,6 @@ async function handleStripeWebhook(
 
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
-
     return new Response("Missing Stripe signature", { status: 400 });
   }
 
@@ -219,7 +225,6 @@ async function handleStripeWebhook(
     event.data.object.object === "invoice" &&
     event.data.object.customer === null
   ) {
-
     return Response.json({ received: true });
   }
 

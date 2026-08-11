@@ -17,6 +17,7 @@ const accountScopedTables = [
   "agentPolicies",
   "sandboxConfigs",
   "workspaceConfigs",
+  "workspaceDownloadTokens",
   "sandboxInstances",
   "sandboxSnapshots",
   "sandboxAuditEvents",

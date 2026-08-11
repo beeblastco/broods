@@ -27,6 +27,12 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   if (pathname === "/v1/env") return upperMethod === "GET";
   if (/^\/v1\/env\/[^/]+$/.test(pathname))
     return upperMethod === "PUT" || upperMethod === "DELETE";
+  // Redeeming a workspace download link. Unauthenticated by design: the token in
+  // the path is the credential, and the config plane answers with a 302.
+  if (/^\/v1\/downloads\/[^/]+$/.test(pathname))
+    return upperMethod === "GET" || upperMethod === "HEAD";
+  if (/^\/v1\/workspaces\/[^/]+\/download-links$/.test(pathname))
+    return upperMethod === "POST";
 
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
