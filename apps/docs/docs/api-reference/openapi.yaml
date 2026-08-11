@@ -1511,7 +1511,7 @@ paths:
                       properties:
                         workspace:
                           type: object
-                          description: The injected <workspace> guidance prompt.
+                          description: The injected <workspace> guidance prompt. Belongs to the default Broods loop, so an agent that sets harness never receives it regardless of this value.
                           properties:
                             enabled: { type: boolean }
                         memory:

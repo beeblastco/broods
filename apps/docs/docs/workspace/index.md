@@ -365,4 +365,6 @@ the workspace-files API — or scope it at `level: "channel"` instead.
 The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`
 disables structured memory (the `memory_save` tool, index loading, and the `<memory>`
-prompt). See [Memory and Session](./memory-and-session.md).
+prompt). An agent that sets `harness` on `defineAgent` never gets the workspace
+guidance prompt, whatever the workspace toggle says. See
+[Memory and Session](./memory-and-session.md).

@@ -363,6 +363,49 @@ describe("session system context", () => {
       ),
     ).toBe(true);
   });
+
+  it("drops the workspace prompt when an AI SDK harness owns the run", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    setStorageForTests({
+      ...(testStorage() as object),
+      sandboxConfigs: {
+        getById: async (_accountId: string, sandboxId: string) => ({
+          accountId: "acct",
+          sandboxId: sandboxId,
+          name: "lambda",
+          config: { provider: "lambda", network: { mode: "deny-all" } },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      },
+    } as never);
+    const { Session } = await import("../src/harness/session.ts");
+    const harnessSession = new Session(
+      "event",
+      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
+      "acct",
+      "agent",
+      {
+        harness: { type: "codex" },
+        sandbox: "sb_1",
+        workspaces: [{ name: "default", workspaceId: "ws_a" }],
+      },
+    );
+    const harnessContext = await harnessSession.createEphemeralTurnContext([
+      { role: "user", content: "hello" },
+    ]);
+    expect(
+      harnessContext.system.some((message) =>
+        message.content.includes("<workspace>"),
+      ),
+    ).toBe(false);
+    // memory_save collides with no adapter builtin, so its block still applies.
+    expect(
+      harnessContext.system.some((message) =>
+        message.content.startsWith("<memory>"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("session pruning", () => {
