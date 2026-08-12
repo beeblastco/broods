@@ -1,5 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { subscribeObservabilityLogs } from "../src/observability-client.ts";
+import {
+  fetchObservabilityScope,
+  subscribeObservabilityLogs,
+} from "../src/observability-client.ts";
 import type {
   ObservabilityLogEntry,
   ObservabilityServerMessage,
@@ -135,4 +138,55 @@ test("does not include the runtime key in connection errors", async () => {
 
   await expect(result).rejects.toThrow("Unauthorized");
   await expect(result).rejects.not.toThrow("do-not-leak");
+});
+
+test("resolves the scope a runtime key actually grants", async () => {
+  const calls: Array<{ url: string; auth: string | undefined }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    calls.push({
+      url: String(input),
+      auth: new Headers(init?.headers).get("Authorization") ?? undefined,
+    });
+
+    return new Response(
+      JSON.stringify({
+        accountId: "acct1",
+        projectSlug: "demo-app-1",
+        stageSlug: "development",
+        endpointIds: ["stage-abc"],
+      }),
+      { status: 200 },
+    );
+  };
+
+  const scope = await fetchObservabilityScope(
+    "https://app.example/",
+    "rk-secret",
+    fetchImpl,
+  );
+
+  // The slug, not the display name, is what the gateway matches the path on.
+  expect(scope?.projectSlug).toBe("demo-app-1");
+  expect(scope?.stageSlug).toBe("development");
+  expect(calls[0]!.url).toBe(
+    "https://app.example/v1/internal/observability-scope",
+  );
+  expect(calls[0]!.auth).toBe("Bearer rk-secret");
+});
+
+test("falls back to the configured names when the scope lookup fails", async () => {
+  const failing: typeof fetch = async () =>
+    new Response("nope", { status: 500 });
+
+  expect(
+    await fetchObservabilityScope("https://app.example", "rk", failing),
+  ).toBeNull();
+
+  const throwing: typeof fetch = async () => {
+    throw new Error("network down");
+  };
+
+  expect(
+    await fetchObservabilityScope("https://app.example", "rk", throwing),
+  ).toBeNull();
 });

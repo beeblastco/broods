@@ -37,7 +37,10 @@ import {
   type AgentReference,
 } from "../client.ts";
 import { isShellOwnedEnv, loadBroodsRuntimeConfig } from "../runtime-config.ts";
-import { subscribeObservabilityLogs } from "../observability-client.ts";
+import {
+  fetchObservabilityScope,
+  subscribeObservabilityLogs,
+} from "../observability-client.ts";
 import type {
   LogLevel,
   ObservabilityLogEntry,
@@ -743,7 +746,7 @@ async function streamDevLogs(
   let project: string;
   let stage: string;
   try {
-    ({ project, stage } = await resolveProjectStage(args));
+    ({ project, stage } = await resolveObservabilityTarget(args, creds));
   } catch {
     return;
   }
@@ -1551,6 +1554,30 @@ async function resolveProjectStage(
   return { project: project, stage: stage };
 }
 
+// The gateway matches the socket path on the key's slug, but BROODS_PROJECT
+// holds a display name. Ask core so the two cannot disagree.
+async function resolveObservabilityTarget(
+  args: string[],
+  credentials: { baseUrl: string; apiKey: string },
+): Promise<{ project: string; stage: string }> {
+  const configured = await resolveProjectStage(args);
+  const scope = await fetchObservabilityScope(
+    credentials.baseUrl,
+    credentials.apiKey,
+  );
+  if (!scope) return configured;
+  if (
+    scope.projectSlug !== configured.project ||
+    scope.stageSlug !== configured.stage
+  ) {
+    console.log(
+      `· reading ${scope.projectSlug}/${scope.stageSlug} — the runtime key is scoped there, not to ${configured.project}/${configured.stage}.`,
+    );
+  }
+
+  return { project: scope.projectSlug, stage: scope.stageSlug };
+}
+
 /** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
@@ -1563,7 +1590,10 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
 // until Ctrl-C, no backfill. Flags are documented in HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, stage } = await resolveProjectStage(args);
+  const { project, stage } = await resolveObservabilityTarget(args, {
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  });
   const minLevel = resolveMinLevel(args);
 
   const controller = new AbortController();
@@ -1597,7 +1627,10 @@ async function streamLogs(args: string[]): Promise<void> {
 // until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, stage } = await resolveProjectStage(args);
+  const { project, stage } = await resolveObservabilityTarget(args, {
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  });
   const minLevel = resolveMinLevel(args);
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,

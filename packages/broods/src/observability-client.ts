@@ -19,6 +19,14 @@ export interface ObservabilityClientOptions {
   stage: string;
 }
 
+/** What a runtime key actually grants, as core resolves it. */
+export interface ObservabilityScope {
+  accountId: string;
+  projectSlug: string;
+  stageSlug: string;
+  endpointIds: string[];
+}
+
 export interface ObservabilitySubscribeOptions {
   // Recent lines to backfill from Loki before going live; 0/absent = live-only.
   backfill?: number;
@@ -67,6 +75,45 @@ function resolveWebSocket(): new (url: string) => WebSocket {
   if (!impl) throw new Error("WebSocket is not available in this environment.");
 
   return impl;
+}
+
+/**
+ * Ask core which project/stage a runtime key reads. Null when the lookup fails,
+ * so callers fall back to whatever they were configured with.
+ */
+export async function fetchObservabilityScope(
+  baseUrl: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ObservabilityScope | null> {
+  try {
+    const response = await fetchImpl(
+      `${baseUrl.replace(/\/+$/, "")}/v1/internal/observability-scope`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) return null;
+    const scope = (await response.json()) as ObservabilityScope;
+    // An empty slug builds a path that matches nothing, which is the silent
+    // failure this lookup exists to prevent.
+    if (
+      typeof scope?.projectSlug !== "string" ||
+      typeof scope?.stageSlug !== "string" ||
+      scope.projectSlug === "" ||
+      scope.stageSlug === ""
+    )
+      return null;
+
+    return scope;
+  } catch {
+    return null;
+  }
 }
 
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
