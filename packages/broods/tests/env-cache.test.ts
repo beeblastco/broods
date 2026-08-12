@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadBroodsRuntimeConfig } from "../src/runtime-config.ts";
+import {
+  isShellOwnedEnv,
+  loadBroodsRuntimeConfig,
+} from "../src/runtime-config.ts";
 
 test("loadBroodsRuntimeConfig picks up .env.local edits for vars not in real env", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));
@@ -110,6 +113,49 @@ test("loadBroodsRuntimeConfig picks up .env (not just .env.local) edits", async 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+// `stage use` / `org use` rewrite `.env.local`, but a shell export wins over the
+// file on the next command, so the CLI has to tell the two apart and warn.
+// Bun loads `.env.local` into process.env before user code runs, so this cannot
+// be answered from a startup snapshot — only by reading the file back.
+test("isShellOwnedEnv separates a shell export from a .env.local value", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "broods-env-owner-"));
+  const saved = {
+    file: process.env.BROODS_TEST_FROM_FILE,
+    shell: process.env.BROODS_TEST_FROM_SHELL,
+    shadow: process.env.BROODS_TEST_SHADOWED,
+  };
+  try {
+    await writeFile(
+      join(cwd, ".env.local"),
+      [
+        "BROODS_TEST_FROM_FILE=from-file",
+        "BROODS_TEST_SHADOWED=from-file",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    loadBroodsRuntimeConfig(cwd);
+    // An export the shell made after the file was written still wins.
+    process.env.BROODS_TEST_SHADOWED = "from-shell";
+    process.env.BROODS_TEST_FROM_SHELL = "from-shell";
+
+    expect(isShellOwnedEnv("BROODS_TEST_FROM_FILE", cwd)).toBe(false);
+    expect(isShellOwnedEnv("BROODS_TEST_SHADOWED", cwd)).toBe(true);
+    expect(isShellOwnedEnv("BROODS_TEST_FROM_SHELL", cwd)).toBe(true);
+    expect(isShellOwnedEnv("BROODS_TEST_NEVER_SET", cwd)).toBe(false);
+  } finally {
+    restoreEnv("BROODS_TEST_FROM_FILE", saved.file);
+    restoreEnv("BROODS_TEST_FROM_SHELL", saved.shell);
+    restoreEnv("BROODS_TEST_SHADOWED", saved.shadow);
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
 
 test("loadBroodsRuntimeConfig cleans up cache entry when file is deleted", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "broods-env-cache-"));

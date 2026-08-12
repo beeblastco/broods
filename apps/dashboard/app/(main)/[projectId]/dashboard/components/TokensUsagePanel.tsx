@@ -41,11 +41,11 @@ const RANGE_BIN_SECONDS: Record<Range, number> = {
 
 interface Props {
   projectId: Id<"projects">;
-  /** Active environment to scope usage to, or null for the whole project. */
-  environmentId: Id<"environments"> | null;
+  /** Active stage to scope usage to, or null for the whole project. */
+  stageId: Id<"stages"> | null;
   /** Scope + key for the live trace overlay. Omitted = Convex-only (no overlay). */
   projectSlug?: string | undefined;
-  environmentSlug?: string | undefined;
+  stageSlug?: string | undefined;
   apiKey?: string | undefined;
 }
 
@@ -761,9 +761,9 @@ function ComputeTile({
 
 export function TokensUsagePanel({
   projectId,
-  environmentId,
+  stageId,
   projectSlug,
-  environmentSlug,
+  stageSlug,
   apiKey,
 }: Props) {
   const [range, setRange] = useState<Range>("1h");
@@ -771,7 +771,7 @@ export function TokensUsagePanel({
   // Reactive subscription: usage totals update live as the harness meters tokens.
   const data = useQuery(api.logs.fetchUsageStats, {
     projectId: projectId,
-    environmentId: environmentId ?? undefined,
+    stageId: stageId ?? undefined,
     range: range,
   });
   const stats: UsageStats | null = data ?? null;
@@ -783,7 +783,7 @@ export function TokensUsagePanel({
   const { entries: liveSpans } = useObservabilityStream({
     stream: "traces",
     projectSlug: projectSlug,
-    environmentSlug: environmentSlug,
+    stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 30,
   });

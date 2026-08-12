@@ -101,3 +101,4 @@ Channel hooks (`onMessageReceived` / `onMessageSending`) never fire for subagent
 - **Non-fatal.** A hook that throws or times out is logged and skipped; the agent run continues with unmutated state. Hooks are wall-clock bounded.
 - **Streaming caveat.** `onFinish` output transforms change the delivered/stored final result; tokens already streamed over SSE cannot be recalled.
 - **Return is field-scoped.** Only the fields listed for an event are honored; anything else is dropped, and the return is size-capped.
+- **`console` is wired to the log pipeline.** `console.log`/`info` land at INFO, `warn` and `error` at their own levels, and `debug` at DEBUG. They carry the run's tenant context, so they appear in `broods logs`, `broods stream`, and the dashboard Monitoring tab alongside harness logs, tagged `source: "user-code"`. DEBUG is the exception: like every DEBUG line it goes to stdout and OTLP but is not published to the live stream.

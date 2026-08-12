@@ -18,7 +18,7 @@ import {
   insertConfigAuditEvent,
   type ConfigAuditActor,
 } from "./model/auditEvents";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { agentConfigsFields } from "./schema";
@@ -84,7 +84,7 @@ async function recordAgentConfigAudit(
   actor: ConfigAuditActor,
   input: {
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     action: string;
     agentId?: string;
     configId: Id<"agentConfigs">;
@@ -99,7 +99,7 @@ async function recordAgentConfigAudit(
   await insertConfigAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
-    environmentId: input.environmentId,
+    stageId: input.stageId,
     actor: actor,
     action: input.action,
     resource: {
@@ -130,7 +130,7 @@ export const getById = query({
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     name: v.string(),
     provider: v.optional(agentProviderValidator),
     modelId: v.optional(v.string()),
@@ -143,7 +143,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const {
       projectId,
-      environmentId,
+      stageId,
       name,
       provider,
       modelId,
@@ -159,13 +159,9 @@ export const create = mutation({
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
 
     const now = Date.now();
@@ -179,7 +175,7 @@ export const create = mutation({
       description: description?.trim() || undefined,
       agentId: undefined,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       provider: provider,
       modelId: modelId?.trim() || "gpt-4.1-mini",
       systemPrompt: systemPrompt?.trim() || undefined,
@@ -205,8 +201,8 @@ export const create = mutation({
     if (position) {
       const layout = await ctx.db
         .query("canvasLayouts")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-          q.eq("projectId", projectId).eq("environmentId", environmentId),
+        .withIndex("by_projectId_and_stageId", (q) =>
+          q.eq("projectId", projectId).eq("stageId", stageId),
         )
         .unique();
 
@@ -230,7 +226,7 @@ export const create = mutation({
         await ctx.db.insert("canvasLayouts", {
           authId: authUser.id,
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           nodes: [nextNode],
           edges: [],
           updatedAt: now,
@@ -246,7 +242,7 @@ export const create = mutation({
     const created = await ctx.db.get(configId);
     await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       action: "created",
       agentId: created?.agentId,
       configId: configId,
@@ -327,7 +323,7 @@ export const update = mutation({
     const updated = await ctx.db.get(configId);
     await recordAgentConfigAudit(ctx, dashboardAuditActor(user), {
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       action: "updated",
       agentId: updated?.agentId,
       configId: configId,
@@ -516,9 +512,9 @@ export const remove = mutation({
       );
     }
 
-    // Note: the environment's runtime API key is shared across all its agents
-    // (env-scoped), so deleting one agent config must NOT delete it. The key is
-    // only removed when the whole environment is deleted (see environment.ts).
+    // Note: the stage's runtime API key is shared across all its agents
+    // (stage-scoped), so deleting one agent config must NOT delete it. The key
+    // is only removed when the whole stage is deleted (see stage.ts).
 
     // Clean up the linked broods `agents` row if present so the
     // harness side stays consistent with the dashboard's canvas.
@@ -532,7 +528,7 @@ export const remove = mutation({
 
     await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       action: "deleted",
       agentId: existing.agentId,
       configId: configId,

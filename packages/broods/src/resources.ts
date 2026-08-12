@@ -58,7 +58,7 @@ export type EnvRefString<T> = T extends string
 
 export interface BroodsProjectConfig {
   project?: string;
-  environments?: {
+  stages?: {
     dev?: string;
     deploy?: string;
     [name: string]: string | undefined;
@@ -170,9 +170,10 @@ export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
   inputSchema: Record<string, unknown>;
   runtime?: "isolate" | "sandbox";
   /**
-   * Account-wide, non-secret defaults. Environment references are rejected
-   * here; put `env("NAME")` under the enabling agent's `tools.<tool>.config` so
-   * the value is resolved per environment and stored with encrypted agent config.
+   * Account-wide, non-secret defaults. Environment variable references are
+   * rejected here; put `env("NAME")` under the enabling agent's
+   * `tools.<tool>.config` so the value is resolved per stage and stored with
+   * encrypted agent config.
    */
   defaultConfig?: Record<string, unknown>;
 }
@@ -517,7 +518,7 @@ export type AgentDefinitionConfig = EnvRefString<
   policy?: AgentPolicyDefinitionConfig;
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
-   * environment runtime key). Off by default — secured: when unset the public
+   * stage runtime key). Off by default — secured: when unset the public
    * endpoint refuses requests for this agent. Reach a private agent through an
    * internal endpoint or a channel webhook. See issue #65.
    */

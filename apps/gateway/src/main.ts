@@ -165,13 +165,12 @@ if (import.meta.main) {
         if (
           resolved.scope.projectSlug !==
             decodeURIComponent(observabilityPath[1]) ||
-          resolved.scope.environmentSlug !==
-            decodeURIComponent(observabilityPath[2])
+          resolved.scope.stageSlug !== decodeURIComponent(observabilityPath[2])
         ) {
           return json(
             {
               error:
-                "WebSocket scope does not match the requested project/environment",
+                "WebSocket scope does not match the requested project/stage",
             },
             { status: 403 },
           );
@@ -181,7 +180,7 @@ if (import.meta.main) {
           data: {
             kind: "observability",
             project: observabilityPath[1],
-            env: observabilityPath[2],
+            stage: observabilityPath[2],
             token: token,
             scope: resolved.scope,
           } satisfies ObservabilityGatewayData,
@@ -214,9 +213,8 @@ if (import.meta.main) {
           !resolved.scope.endpointIds.includes(agentWebSocketPath.endpointId) ||
           (agentWebSocketPath.projectSlug !== undefined &&
             resolved.scope.projectSlug !== agentWebSocketPath.projectSlug) ||
-          (agentWebSocketPath.environmentSlug !== undefined &&
-            resolved.scope.environmentSlug !==
-              agentWebSocketPath.environmentSlug)
+          (agentWebSocketPath.stageSlug !== undefined &&
+            resolved.scope.stageSlug !== agentWebSocketPath.stageSlug)
         ) {
           return json(
             {

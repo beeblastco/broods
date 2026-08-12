@@ -21,7 +21,7 @@ export type IngressStatus =
 export interface PublicDeploymentIngress {
   accountId: string;
   endpointId: string;
-  environmentSlug: string;
+  stageSlug: string;
   projectSlug: string;
 }
 

@@ -11,6 +11,7 @@ import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
+import { handle as cliStagesHttp } from "./cliStagesHttp";
 import { handle as configHttp } from "./configHttp";
 
 const http = httpRouter();
@@ -45,6 +46,18 @@ http.route({
   path: "/v1/account/onboarding",
   method: "POST",
   handler: cliOnboardingHttp,
+});
+
+http.route({
+  path: "/v1/account/stages",
+  method: "GET",
+  handler: cliStagesHttp,
+});
+
+http.route({
+  path: "/v1/account/stages",
+  method: "POST",
+  handler: cliStagesHttp,
 });
 
 http.route({
@@ -145,6 +158,13 @@ http.route({
   method: "DELETE",
   handler: configHttp,
 });
+// Redeeming a workspace download link. GET only, and unauthenticated by design:
+// the token in the path is the credential. Convex serves HEAD off this route.
+http.route({
+  pathPrefix: "/v1/downloads/",
+  method: "GET",
+  handler: configHttp,
+});
 http.route({ path: "/v1/sandboxes", method: "GET", handler: configHttp });
 http.route({ path: "/v1/sandboxes", method: "POST", handler: configHttp });
 http.route({
@@ -197,7 +217,6 @@ async function handleStripeWebhook(
 
   const signature = request.headers.get("stripe-signature");
   if (!signature) {
-
     return new Response("Missing Stripe signature", { status: 400 });
   }
 
@@ -219,7 +238,6 @@ async function handleStripeWebhook(
     event.data.object.object === "invoice" &&
     event.data.object.customer === null
   ) {
-
     return Response.json({ received: true });
   }
 

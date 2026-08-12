@@ -21,10 +21,10 @@ import { Copy, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
-  /** Project that owns the environment. */
+  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active environment the webhooks are scoped to, or null while none is selected. */
-  environmentId: Id<"environments"> | null;
+  /** Active stage the webhooks are scoped to, or null while none is selected. */
+  stageId: Id<"stages"> | null;
 }
 
 type AgentWebhooks = {
@@ -46,12 +46,10 @@ type PendingWebhookDelete = {
 };
 
 /** Lists each agent's outbound webhooks with add / activate / remove controls. */
-export function WebhooksPanel({ projectId, environmentId }: Props) {
+export function WebhooksPanel({ projectId, stageId }: Props) {
   const agents = useQuery(
     api.webhooks.listAgentWebhooks,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as AgentWebhooks[] | undefined;
 
   const setEnabled = useMutation(
@@ -83,11 +81,11 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
     }
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
       <Section description="Outbound event webhooks delivered to your services.">
         <p className="text-sm text-muted-foreground">
-          Select an environment to view its webhooks.
+          Select a stage to view its webhooks.
         </p>
       </Section>
     );
@@ -98,7 +96,7 @@ export function WebhooksPanel({ projectId, environmentId }: Props) {
       <Section description="Outbound event webhooks delivered to your services. Each agent can register several — add one, toggle it active/inactive, or remove it. (Webhooks defined in code via the SDK resolve their URL/secret from environment variables.)">
         {agents && agents.length === 0 && (
           <p className="text-sm text-muted-foreground">
-            No agents in this environment yet.
+            No agents in this stage yet.
           </p>
         )}
 

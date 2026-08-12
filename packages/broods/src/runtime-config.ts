@@ -1,5 +1,5 @@
 /**
- * Runtime config (dashboard URL, token, project, environment) for SDK/CLI callers.
+ * Runtime config (dashboard URL, token, project, stage) for SDK/CLI callers.
  *
  * Reads `.env`/`.env.local` from the target project directory (`cwd`, which is
  * not always the directory the process started in) so a generated client picks
@@ -9,7 +9,11 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { USER_CONFIG_PATH, stripTrailingSlash } from "./config.ts";
+import {
+  USER_CONFIG_PATH,
+  stageFromEnv,
+  stripTrailingSlash,
+} from "./config.ts";
 
 export interface BroodsRuntimeConfig {
   /** Dashboard UI base URL; only used for browser login and deep links. */
@@ -18,7 +22,7 @@ export interface BroodsRuntimeConfig {
   baseUrl?: string;
   token?: string;
   project?: string;
-  environment?: string;
+  stage?: string;
 }
 
 interface EnvCacheEntry {
@@ -55,8 +59,31 @@ export function loadBroodsRuntimeConfig(
     baseUrl: process.env.BROODS_BASE_URL ?? stored?.baseUrl,
     token: process.env.BROODS_TOKEN ?? stored?.token,
     project: process.env.BROODS_PROJECT,
-    environment: process.env.BROODS_ENVIRONMENT,
+    stage: stageFromEnv(),
   };
+}
+
+/**
+ * True when the live value of `name` came from the shell rather than from
+ * `.env`/`.env.local`, which means rewriting the file cannot change what the
+ * next `broods` command reads. Compares against the files instead of the
+ * startup snapshot because Bun loads `.env.local` into `process.env` before any
+ * user code runs, so a snapshot cannot tell a file value from an export. A
+ * shell export that already matches the file reads as file-owned; the two
+ * agree, so there is nothing to report at that moment.
+ */
+export function isShellOwnedEnv(name: string, cwd = process.cwd()): boolean {
+  const current = process.env[name];
+  if (current === undefined) return false;
+  const root = resolve(cwd);
+  for (const file of [".env.local", ".env"]) {
+    const path = join(root, file);
+    if (!existsSync(path)) continue;
+    const values = parseEnv(readFileSync(path, "utf8"));
+    if (values[name] !== undefined) return values[name] !== current;
+  }
+
+  return true;
 }
 
 /**
@@ -67,7 +94,7 @@ export function loadBroodsRuntimeConfig(
  *  2. It was previously loaded from a `.env`/`.env.local` file by this module.
  *
  * This lets `dev` child processes pick up `.env.local` edits while still
- * respecting variables exported in the shell (`BROODS_ENVIRONMENT=staging broods dev`).
+ * respecting variables exported in the shell (`BROODS_STAGE=staging broods dev`).
  *
  * Cached by file path + mtime so unchanged files are not re-read.
  */

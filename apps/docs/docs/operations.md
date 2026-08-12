@@ -54,7 +54,7 @@ broods run my-agent "Hello"  # same, with the prompt sent as the first turn
 | ----------------------- | --------------------------- |
 | `--dashboard-url <url>` | Override dashboard URL      |
 | `--project <name>`      | Override project name       |
-| `--env <name>`          | Override target environment |
+| `--stage <name>`        | Override target stage       |
 
 ## Self-Hosted Configuration
 
@@ -169,7 +169,7 @@ Declare channel agents with the CLI SDK and run `broods dev` or `broods deploy`.
 
 ## Public Access & Agent Commands
 
-The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the environment runtime key) is **off by default** for each agent — secured. An agent only answers public-key requests when its config opts in:
+The public runtime endpoint (HTTP/SSE and WebSocket, authenticated with the stage runtime key) is **off by default** for each agent — secured. An agent only answers public-key requests when its config opts in:
 
 ```ts
 export const myAgent = defineAgent({
@@ -181,11 +181,11 @@ export const myAgent = defineAgent({
 
 When `publicAccess` is not set, a public-key request for that agent is refused with HTTP `403` (`{"error": "...", "code": "public_access_disabled"}`). Internal callers (account/admin secret), channel webhooks, and cron runs are never gated by this flag, so a private agent stays reachable through an internal endpoint or a channel webhook. The dashboard's agent **Public API** panel shows the toggle and hides the endpoint URLs while access is off.
 
-The environment runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `broods login` or `broods deploy` writes it to `BROODS_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
+The stage runtime key is encrypted at rest and recoverable by the owning user. The dashboard loads it automatically for Monitoring and Tracing, while `broods login` or `broods deploy` writes it to `BROODS_API_KEY` in `.env.local`. Dashboard and CLI sessions reuse the stored key without rotating it.
 
 Logs and traces are published once to NATS and captured by a durable `OBSERVABILITY` JetStream stream (bound to the `*.logs.>` / `*.traces.>` subjects). See [Observability](observability.md) for the full pipeline, including how sandbox (MicroVM + workdir) logs route into the same per-tenant view. On (re)connect the gateway replays the recent window from that stream and then tails live, so the dashboard shows full-fidelity recent activity even for a run that happened while no tab was open — JetStream replay, not the slower/lossier core subscribe it replaced. Loki (logs) and Tempo (traces) remain the long-term store for history older than the replay window; the refresh control reloads from them. Because Tempo truncates large attributes on ingest, the dashboard prefers the richer/terminal copy of a span when the same span arrives from both sources, so a reload never downgrades a payload.
 
-Tracing shows active and completed tasks with a started-time column, model input, reasoning, response, tool calls, tool input, and the tool output returned to the model. Each model step is decomposed into **time to first token** (queue/prefill wait), **streaming** (model token generation only), and **tool wait** (tool execution, also shown as the child tool spans) — streaming never folds in tool-execution time, so a slow tool can't be mistaken for slow generation. Channel webhooks and account-management operations resolve the same environment scope as direct agent calls. Configuration mutations now write to Convex `configAuditEvents`, and the dashboard Settings → Audit Logs tab reads that feed reactively; the former core service-audit leaf has been removed.
+Tracing shows active and completed tasks with a started-time column, model input, reasoning, response, tool calls, tool input, and the tool output returned to the model. Each model step is decomposed into **time to first token** (queue/prefill wait), **streaming** (model token generation only), and **tool wait** (tool execution, also shown as the child tool spans) — streaming never folds in tool-execution time, so a slow tool can't be mistaken for slow generation. Channel webhooks and account-management operations resolve the same stage scope as direct agent calls. Configuration mutations now write to Convex `configAuditEvents`, and the dashboard Settings → Audit Logs tab reads that feed reactively; the former core service-audit leaf has been removed.
 
 > Bringing your own custom domain to replace the generated endpoint URL is tracked as a future enhancement.
 
@@ -278,8 +278,8 @@ flowchart LR
 
 | Stage          | Auto-reconcile on drift?                                   | Gate                                                                          |
 | -------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| `dev`          | yes                                                        | `development` environment (no approval)                                       |
-| `production-*` | yes (when the GitHub `production` environment is approved) | `production` environment (approval-gated — same gate as a normal prod deploy) |
+| `dev`          | yes                                                        | GitHub `development` environment (no approval)                                |
+| `production-*` | yes (when the GitHub `production` environment is approved) | GitHub `production` environment (approval-gated — same gate as a prod deploy) |
 
 Each run uploads the full refresh + diff log as the artifact
 `drift-plan-{stage}`. The first 200 lines of any non-empty diff are also rendered

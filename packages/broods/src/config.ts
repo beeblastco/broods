@@ -80,6 +80,10 @@ export async function writeStoredAuth(config: StoredAuthConfig): Promise<void> {
   );
 }
 
+export function stageFromEnv(): string | undefined {
+  return process.env.BROODS_STAGE;
+}
+
 export function stripTrailingSlash(value: string): string {
   let end = value.length;
   while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;

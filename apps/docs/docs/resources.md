@@ -429,7 +429,7 @@ export const myAgent = defineAgent({
 
 Supported policy actions are `tool.call`, `workspace.read`, `workspace.write`, `workspace.exec`, `subagent.run`, and `skill.load`. `deny` rules win over `allow` rules, and a request with no matching allow rule is denied. Assigning at least one policy activates evaluation; an empty `policy` object is ignored. `mode: "audit"` logs decisions without blocking; `mode: "enforce"` blocks denied actions.
 
-Policy rules can scope by resource selectors like `toolNames`, `toolIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `environment`, `agentId`, `channel`, `toolName`, `toolId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
+Policy rules can scope by resource selectors like `toolNames`, `toolIds`, `filePaths`, `workspaceNames`, `skillPaths`, and `subagentIds`. Conditions can read trusted top-level attributes such as `project`, `stage`, `agentId`, `channel`, `toolName`, `toolId`, `filePath`, and `sandboxPermissionMode`, or nested tool-call input attributes with dotted paths:
 
 - `toolName`: exact model-facing tool/function name, for example `bash`, `read`, `googleSearch`, or an uploaded tool's model name.
 - `toolId`: stable uploaded account tool id when the call is for a custom tool.
@@ -596,7 +596,7 @@ import { defineBroods } from "broods";
 
 export default defineBroods({
   project: "my-project",
-  environments: {
+  stages: {
     dev: "development",
     deploy: "production",
   },
@@ -604,7 +604,7 @@ export default defineBroods({
 });
 ```
 
-These values can be overridden by CLI flags (`--project`, `--env`) or `.env.local`.
+These values can be overridden by CLI flags (`--project`, `--stage`) or `.env.local`.
 
 `dashboardUrl` is only where `broods login` opens the browser and where deep links point. Sync, env, and deploy calls go to the broods API base URL discovered during login (`baseUrl` in stored auth), overridable via `baseUrl` here, `BROODS_BASE_URL`, or `--base-url`. The same `BROODS_BASE_URL` also drives runtime SDK clients -- one public endpoint serves both planes.
 

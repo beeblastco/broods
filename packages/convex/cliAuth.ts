@@ -19,11 +19,18 @@ const CODE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
+const planValidator = v.union(
+  v.literal("free"),
+  v.literal("pro"),
+  v.literal("enterprise"),
+);
+
 const onboardingOrgValidator = v.object({
   id: v.id("orgs"),
   name: v.string(),
   slug: v.string(),
   role: v.union(v.literal("owner"), v.literal("admin"), v.literal("member")),
+  plan: planValidator,
   accountStatus: v.union(
     v.literal("active"),
     v.literal("missing"),
@@ -37,10 +44,25 @@ const onboardingProjectValidator = v.object({
   slug: v.string(),
 });
 
+/** The API account backing the token's current org; `broods status` reports it. */
+const onboardingAccountValidator = v.object({
+  id: v.id("accounts"),
+  username: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+});
+
+const onboardingUserValidator = v.object({
+  authId: v.string(),
+  email: v.string(),
+  name: v.string(),
+});
+
 const onboardingContextValidator = v.object({
   currentOrgId: v.id("orgs"),
   orgs: v.array(onboardingOrgValidator),
   projects: v.array(onboardingProjectValidator),
+  account: v.union(v.null(), onboardingAccountValidator),
+  user: onboardingUserValidator,
 });
 
 type OnboardingOrg = {
@@ -48,6 +70,7 @@ type OnboardingOrg = {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
+  plan: "free" | "pro" | "enterprise";
   accountStatus: "active" | "disabled" | "missing";
 };
 
@@ -417,6 +440,7 @@ async function onboardingContext(
       name: org.name,
       slug: org.slug,
       role: membership.role,
+      plan: org.plan,
       accountStatus: accountStatus,
     });
   }
@@ -425,6 +449,10 @@ async function onboardingContext(
     .query("projects")
     .withIndex("by_orgId", (q) => q.eq("orgId", currentOrgId))
     .collect();
+  const currentAccount = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", currentOrgId))
+    .unique();
 
   return {
     currentOrgId: currentOrgId,
@@ -436,5 +464,17 @@ async function onboardingContext(
         slug: project.slug,
       }))
       .sort((a, b) => a.name.localeCompare(b.name)),
+    account: currentAccount
+      ? {
+          id: currentAccount._id,
+          username: currentAccount.username,
+          status: currentAccount.status,
+        }
+      : null,
+    user: {
+      authId: user.authId,
+      email: user.email,
+      name: user.name,
+    },
   };
 }

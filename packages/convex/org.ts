@@ -410,7 +410,7 @@ export const remove = mutation({
 
     await requireOrgMember(ctx, orgId, user._id, "owner");
 
-    // Full cascade: projects (+ environments/keys/files), account, memberships.
+    // Full cascade: projects (+ stages/keys/files), account, memberships.
     await purgeOrg(ctx, orgId);
 
     return null;

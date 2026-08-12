@@ -15,7 +15,7 @@ import type { IngressStatusRecord } from "./ingress.ts";
 export interface StatusAccessAuth {
   account: { accountId: string };
   endpointId: string;
-  environmentSlug: string;
+  stageSlug: string;
   projectSlug: string;
 }
 
@@ -159,6 +159,6 @@ function deploymentScopeMatches(
     deployment?.accountId === auth.account.accountId &&
     deployment.endpointId === auth.endpointId &&
     deployment.projectSlug === auth.projectSlug &&
-    deployment.environmentSlug === auth.environmentSlug
+    deployment.stageSlug === auth.stageSlug
   );
 }

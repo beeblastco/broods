@@ -1,5 +1,5 @@
 /**
- * Canvas layout persistence keyed by (project, environment).
+ * Canvas layout persistence keyed by (project, stage).
  */
 
 import { v } from "convex/values";
@@ -8,7 +8,7 @@ import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 
 const canvasNodeValidator = v.object({
@@ -102,13 +102,13 @@ async function encryptSandboxConfigFields(
   };
 }
 
-/** True when a runtime resource row belongs to the canvas environment being saved. */
-function rowBelongsToEnvironment(
+/** True when a runtime resource row belongs to the canvas stage being saved. */
+function rowBelongsToStage(
   row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
 ): boolean {
-  return row.projectId === projectId && row.environmentId === environmentId;
+  return row.projectId === projectId && row.stageId === stageId;
 }
 
 /** Compare only the node fields that materialize into runtime resource rows. */
@@ -154,7 +154,7 @@ function resourceReferenceSignature(nodes: CanvasNode[]): string {
 
 /**
  * Reject old account-scoped runtime resources instead of silently creating a new
- * environment-scoped row with the same name and a different runtime id.
+ * stage-scoped row with the same name and a different runtime id.
  */
 async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
@@ -170,17 +170,17 @@ async function assertNoAccountScopedResourceConflict(
       q.eq("accountId", options.accountId).eq("name", options.name),
     )
     .collect();
-  const accountScoped = rows.find((row) => row.environmentId === undefined);
+  const accountScoped = rows.find((row) => row.stageId === undefined);
   if (!accountScoped) return;
 
   throw new Error(
     `${options.table} "${options.name}" is account-scoped legacy data. ` +
-      "Migrate it to a project/environment or delete it before saving the canvas.",
+      "Migrate it to a project/stage or delete it before saving the canvas.",
   );
 }
 
 /**
- * Ensure canvas workspace/sandbox nodes point at real, environment-scoped core
+ * Ensure canvas workspace/sandbox nodes point at real, stage-scoped core
  * resource rows. Creates a `managedBy: "dashboard"` row for new nodes and patches
  * existing dashboard-owned rows from the node's edited config, so dashboard adds
  * and edits become real (the runtime resolves these rows by `_id`). Rows owned by
@@ -191,7 +191,7 @@ async function materializeRuntimeNodes(
   ctx: MutationCtx,
   account: Doc<"accounts"> | null,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   nodes: CanvasNode[],
   previousNodes: CanvasNode[],
 ): Promise<CanvasNode[]> {
@@ -227,13 +227,13 @@ async function materializeRuntimeNodes(
       if (
         byId &&
         byId.accountId === account._id &&
-        !rowBelongsToEnvironment(byId, projectId, environmentId)
+        !rowBelongsToStage(byId, projectId, stageId)
       ) {
         throw new Error(
-          "Workspace resource belongs to a different project or environment.",
+          "Workspace resource belongs to a different project or stage.",
         );
       }
-      // Fall back to (environment, name) so a node named like an existing row
+      // Fall back to (stage, name) so a node named like an existing row
       // binds to it instead of inserting a duplicate — duplicates would later
       // break the CLI's by-name `.unique()` lookup on deploy.
       const existing =
@@ -241,8 +241,8 @@ async function materializeRuntimeNodes(
           ? byId
           : await ctx.db
               .query("workspaceConfigs")
-              .withIndex("by_environmentId_and_name", (q) =>
-                q.eq("environmentId", environmentId).eq("name", name),
+              .withIndex("by_stageId_and_name", (q) =>
+                q.eq("stageId", stageId).eq("name", name),
               )
               .first();
       if (existing && existing.accountId === account._id) {
@@ -254,7 +254,7 @@ async function materializeRuntimeNodes(
         ) {
           await ctx.db.patch(existing._id, {
             projectId: projectId,
-            environmentId: environmentId,
+            stageId: stageId,
             name: name,
             description: description,
             config: config,
@@ -274,7 +274,7 @@ async function materializeRuntimeNodes(
       const createdId = await ctx.db.insert("workspaceConfigs", {
         accountId: account._id,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name,
         description: description,
         config: config,
@@ -300,10 +300,10 @@ async function materializeRuntimeNodes(
     if (
       byId &&
       byId.accountId === account._id &&
-      !rowBelongsToEnvironment(byId, projectId, environmentId)
+      !rowBelongsToStage(byId, projectId, stageId)
     ) {
       throw new Error(
-        "Sandbox resource belongs to a different project or environment.",
+        "Sandbox resource belongs to a different project or stage.",
       );
     }
     const existing =
@@ -311,8 +311,8 @@ async function materializeRuntimeNodes(
         ? byId
         : await ctx.db
             .query("sandboxConfigs")
-            .withIndex("by_environmentId_and_name", (q) =>
-              q.eq("environmentId", environmentId).eq("name", name),
+            .withIndex("by_stageId_and_name", (q) =>
+              q.eq("stageId", stageId).eq("name", name),
             )
             .first();
     if (existing && existing.accountId === account._id) {
@@ -323,7 +323,7 @@ async function materializeRuntimeNodes(
       ) {
         await ctx.db.patch(existing._id, {
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           name: name,
           description: description,
           managedBy: "dashboard",
@@ -343,7 +343,7 @@ async function materializeRuntimeNodes(
     const createdId = await ctx.db.insert("sandboxConfigs", {
       accountId: account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       name: name,
       description: description,
       managedBy: "dashboard",
@@ -358,7 +358,7 @@ async function materializeRuntimeNodes(
 }
 
 /**
- * Delete dashboard-owned workspace/sandbox rows in this environment that no
+ * Delete dashboard-owned workspace/sandbox rows in this stage that no
  * canvas node references anymore, making node deletion a real resource delete.
  * CLI-owned (`managedBy: "cli"`) rows are never touched — code owns their
  * lifecycle and prune removes them via the CLI instead.
@@ -366,7 +366,7 @@ async function materializeRuntimeNodes(
 async function pruneOrphanedDashboardRows(
   ctx: MutationCtx,
   account: Doc<"accounts"> | null,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   persistedNodes: CanvasNode[],
 ): Promise<void> {
   if (!account) return;
@@ -379,15 +379,11 @@ async function pruneOrphanedDashboardRows(
 
   const workspaces = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const sandboxes = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
 
   for (const row of [...workspaces, ...sandboxes]) {
@@ -401,7 +397,7 @@ async function pruneOrphanedDashboardRows(
 export const getByProject = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   },
   returns: v.union(
     v.null(),
@@ -410,26 +406,22 @@ export const getByProject = query({
       edges: v.array(canvasEdgeValidator),
     }),
   ),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Reactive subscribers may briefly hold a just-deleted project/environment;
+    // Reactive subscribers may briefly hold a just-deleted project/stage;
     // return null instead of throwing so the canvas unmounts without crashing.
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) return null;
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return null;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
 
     const layout = await ctx.db
       .query("canvasLayouts")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .unique();
 
@@ -440,40 +432,36 @@ export const getByProject = query({
 export const saveLayout = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodes: v.array(canvasNodeValidator),
     edges: v.array(canvasEdgeValidator),
   },
   returns: saveLayoutResult,
-  handler: async (ctx, { projectId, environmentId, nodes, edges }) => {
+  handler: async (ctx, { projectId, stageId, nodes, edges }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
 
     const now = Date.now();
     const account = await accountForProject(ctx, project);
     const existing = await ctx.db
       .query("canvasLayouts")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .unique();
     const persistedNodes = await materializeRuntimeNodes(
       ctx,
       account,
       projectId,
-      environmentId,
+      stageId,
       nodes,
       (existing?.nodes ?? []) as CanvasNode[],
     );
@@ -481,12 +469,7 @@ export const saveLayout = mutation({
       resourceReferenceSignature(persistedNodes) !==
       resourceReferenceSignature((existing?.nodes ?? []) as CanvasNode[])
     ) {
-      await pruneOrphanedDashboardRows(
-        ctx,
-        account,
-        environmentId,
-        persistedNodes,
-      );
+      await pruneOrphanedDashboardRows(ctx, account, stageId, persistedNodes);
     }
 
     if (existing) {
@@ -502,7 +485,7 @@ export const saveLayout = mutation({
     const layoutId = await ctx.db.insert("canvasLayouts", {
       authId: authUser.id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       nodes: persistedNodes,
       edges: edges,
       updatedAt: now,
@@ -513,7 +496,7 @@ export const saveLayout = mutation({
 });
 
 /**
- * Authoritative ownership for an environment's workspace/sandbox resources,
+ * Authoritative ownership for a stage's workspace/sandbox resources,
  * keyed by row `_id` (the canvas node's `resourceId`). The side panel reads this
  * — not the cached `managedBy` on canvas node data — so the "managed by code"
  * lock/warning reflects the real row even if the node JSON is stale or missing it.
@@ -521,25 +504,21 @@ export const saveLayout = mutation({
 export const resourceOwnership = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   },
   returns: v.record(
     v.string(),
     v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
   ),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project || !project.orgId) return {};
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return {};
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return {};
 
     const account = await ctx.db
       .query("accounts")
@@ -549,15 +528,11 @@ export const resourceOwnership = query({
 
     const workspaces = await ctx.db
       .query("workspaceConfigs")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentId),
-      )
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
       .collect();
     const sandboxes = await ctx.db
       .query("sandboxConfigs")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentId),
-      )
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
       .collect();
 
     const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
@@ -576,23 +551,23 @@ export const resourceOwnership = query({
 });
 
 /**
- * Names of code-managed (`managedBy: "cli"`) resources in this environment, by
+ * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
  * kind. The side panel uses this to warn when a dashboard-created agent /
  * workspace / sandbox is named the same as a code-managed one — the next
  * `broods deploy` would adopt and overwrite that resource with the code
- * definition (the CLI resolves by `(environmentId, name)`).
+ * definition (the CLI resolves by `(stageId, name)`).
  */
 export const cliManagedResourceNames = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   },
   returns: v.object({
     agent: v.array(v.string()),
     workspace: v.array(v.string()),
     sandbox: v.array(v.string()),
   }),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const empty = { agent: [], workspace: [], sandbox: [] };
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
@@ -600,12 +575,8 @@ export const cliManagedResourceNames = query({
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project || !project.orgId) return empty;
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return empty;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return empty;
 
     const account = await ctx.db
       .query("accounts")
@@ -615,21 +586,17 @@ export const cliManagedResourceNames = query({
 
     const agents = await ctx.db
       .query("agentConfigs")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
     const workspaces = await ctx.db
       .query("workspaceConfigs")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentId),
-      )
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
       .collect();
     const sandboxes = await ctx.db
       .query("sandboxConfigs")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentId),
-      )
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
       .collect();
 
     return {

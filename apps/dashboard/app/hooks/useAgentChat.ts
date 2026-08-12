@@ -70,7 +70,7 @@ async function startHttpSseStream(options: {
   apiKey: string;
   baseUrl: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   message: string;
   sessionId?: string;
   signal: AbortSignal;
@@ -81,15 +81,15 @@ async function startHttpSseStream(options: {
     apiKey,
     baseUrl,
     projectSlug,
-    environmentSlug,
+    stageSlug,
     message,
     sessionId,
     signal,
   } = options;
 
-  const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
+  const stagePrefix = stageSlug ? `/${stageSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-  const endpointUrl = `${baseUrl.replace(/\/+$/, "")}/v1${projectPrefix}/agents${envPrefix}/${endpointId}`;
+  const endpointUrl = `${baseUrl.replace(/\/+$/, "")}/v1${projectPrefix}/agents${stagePrefix}/${endpointId}`;
   const conversationKey = sessionId || `chat-${crypto.randomUUID()}`;
 
   const response = await fetch(endpointUrl, {
@@ -139,7 +139,7 @@ async function startWebSocketSseStream(options: {
   apiKey: string;
   websocketBaseUrl: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   message: string;
   sessionId?: string;
   signal: AbortSignal;
@@ -166,7 +166,7 @@ async function startWebSocketSseStream(options: {
     apiKey,
     websocketBaseUrl,
     projectSlug,
-    environmentSlug,
+    stageSlug,
     message,
     sessionId,
     signal,
@@ -177,10 +177,10 @@ async function startWebSocketSseStream(options: {
     onSubagentResult,
   } = options;
 
-  const envPrefix = environmentSlug ? `/${environmentSlug}` : "";
+  const stagePrefix = stageSlug ? `/${stageSlug}` : "";
   const projectPrefix = projectSlug ? `/${projectSlug}` : "";
   const wsUrl =
-    `${websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${endpointId}/ws` +
+    `${websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${endpointId}/ws` +
     `?token=${encodeURIComponent(apiKey)}`;
 
   const socket = new WebSocket(wsUrl);
@@ -619,21 +619,21 @@ function upsertSubagentPanel(options: {
  * @param endpointId Deployment endpoint ID
  * @param apiKey API key for bearer authentication
  * @param projectSlug Optional project slug for the URL path prefix
- * @param environmentSlug Optional environment slug for the URL path prefix
+ * @param stageSlug Optional stage slug for the URL path prefix
  */
 export function useAgentChat({
   endpointId,
   agentId,
   apiKey,
   projectSlug,
-  environmentSlug,
+  stageSlug,
   webSocketEnabled,
 }: {
   endpointId: string;
   agentId: string;
   apiKey: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   webSocketEnabled: boolean;
 }) {
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -704,7 +704,7 @@ export function useAgentChat({
               apiKey: apiKey,
               websocketBaseUrl: websocketBaseUrl,
               projectSlug: projectSlug,
-              environmentSlug: environmentSlug,
+              stageSlug: stageSlug,
               message: trimmed,
               sessionId: sessionIdRef.current,
               signal: controller.signal,
@@ -810,7 +810,7 @@ export function useAgentChat({
             apiKey: apiKey,
             baseUrl: baseUrl,
             projectSlug: projectSlug,
-            environmentSlug: environmentSlug,
+            stageSlug: stageSlug,
             message: trimmed,
             sessionId: sessionIdRef.current,
             signal: controller.signal,
@@ -874,7 +874,7 @@ export function useAgentChat({
       agentId,
       apiKey,
       projectSlug,
-      environmentSlug,
+      stageSlug,
       coreEndpointOk,
       coreEndpointMessage,
       baseUrl,

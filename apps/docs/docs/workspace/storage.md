@@ -74,6 +74,40 @@ legacy canvas-node files are copied from Convex storage into S3 and the old reco
 are removed. Existing S3 paths win, preventing stale legacy content from overwriting
 newer agent files or reappearing after deletion.
 
+## Sharing a file with someone
+
+There are two ways to hand a workspace file to a person, and they are not
+interchangeable.
+
+`GET /v1/workspaces/{id}/files?path=…` returns a **presigned S3 URL**. It is about
+1.4 KB long, expires after five minutes, and most of its length is AWS signature
+material. Use it for machine-to-machine fetches you make immediately.
+
+Do not send that URL through a chat app, an email client, or anything else that
+rewrites links. Its query string carries `+` characters, and a client that decodes
+them into spaces turns the request into `InvalidToken`; a client that drops the
+query string entirely turns it into `AccessDenied`. Both failures happen after the
+URL leaves you, so nothing in the API can detect them.
+
+For a link a person will click, mint one instead:
+
+```bash
+curl -X POST "$BROODS_BASE_URL/v1/workspaces/$WORKSPACE_ID/download-links" \
+  -H "Authorization: Bearer $ACCOUNT_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"path": "documents/report.docx", "expiresInSeconds": 86400}'
+```
+
+The response carries a `downloadPath` such as `/v1/downloads/K3n8…`. Join it to the
+same base URL you called, and the result is short, URL-safe and valid for as long as
+you asked (default 24 hours, maximum 7 days). Following it redirects to a presigned
+URL minted at that moment — the browser receives the signature directly, so no chat
+client ever sees it.
+
+The token is the entire credential: anyone holding the link can download that one
+file until it expires. Treat it like a password, keep the lifetime short, and note
+that deleting the workspace or the account revokes every link it issued.
+
 Top-level `<namespace>/` (i.e. `fs-<40 hex>/`) folders are the application workspace
 roots: each namespace's files live directly under its own `fs-<40 hex>/` key.
 

@@ -9,7 +9,11 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { createAccountSecret, hashAccountSecret } from "./model/accountSecrets";
+import {
+  createAccountSecret,
+  hashAccountSecret,
+  sha256Hex,
+} from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
@@ -49,6 +53,7 @@ import {
 } from "./model/sandboxRules";
 import {
   normalizeCreateWorkspaceConfigInput,
+  normalizeFilePath,
   normalizeUpdateWorkspaceConfigInput,
   normalizeWorkspaceConfig,
   toPublicWorkspaceConfigResponse,
@@ -60,13 +65,25 @@ import {
   type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
-import type { ProjectEnvironmentScope } from "./model/projectScope";
+import type { ProjectStageScope } from "./model/projectScope";
 import { fetchSlackChannelDirectory } from "./model/slackDirectory";
+import {
+  DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS,
+  MAX_DOWNLOAD_TOKEN_TTL_SECONDS,
+} from "./workspaceDownloadTokens";
+
+const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
 export const handle = httpAction(async (ctx, req) => {
   try {
     const accountRoute = parseAccountRoute(new URL(req.url).pathname);
     if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
+
+    // Redeeming a download token carries no Authorization header: the token in
+    // the path is the whole credential, so it runs before requireAccount.
+    const downloadToken = parseDownloadRoute(new URL(req.url).pathname);
+    if (downloadToken)
+      return await handleDownloadRedeemRoute(ctx, req, downloadToken);
 
     const accountAuth = await requireAccount(ctx, req);
     if (accountAuth instanceof Response) return accountAuth;
@@ -96,6 +113,14 @@ export const handle = httpAction(async (ctx, req) => {
         );
       case "workspaceFiles":
         return await handleWorkspaceFilesRoute(
+          ctx,
+          req,
+          account._id,
+          actor,
+          route.workspaceId,
+        );
+      case "workspaceDownloadLinks":
+        return await handleWorkspaceDownloadLinkRoute(
           ctx,
           req,
           account._id,
@@ -177,6 +202,59 @@ export const handle = httpAction(async (ctx, req) => {
     return json({ error: "Internal server error" }, 500);
   }
 });
+
+/**
+ * Match a download-token redemption and return the raw token. Kept separate from
+ * parseRoute because this one route runs before authentication.
+ * @param pathname request path
+ * @returns the token, or null when the path is not a redemption
+ */
+function parseDownloadRoute(pathname: string): string | null {
+  const match = pathname.match(/^\/v1\/downloads\/([A-Za-z0-9_-]{16,128})$/);
+
+  return match?.[1] ?? null;
+}
+
+/**
+ * Read the requested token lifetime, defaulting and capping it.
+ * @param value client-supplied expiresInSeconds
+ * @returns the lifetime in seconds, or a 400 response
+ */
+function parseDownloadTtlSeconds(value: unknown): number | Response {
+  if (value === undefined) return DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS;
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_DOWNLOAD_TOKEN_TTL_SECONDS
+  ) {
+    return json(
+      {
+        error: `expiresInSeconds must be an integer between 1 and ${MAX_DOWNLOAD_TOKEN_TTL_SECONDS}`,
+      },
+      400,
+    );
+  }
+
+  return value;
+}
+
+/**
+ * Mint a download token. base64url only: a `+` in a link is exactly the bug this
+ * route exists to avoid, since chat clients decode it back into a space.
+ * @returns a 256-bit URL-safe token
+ */
+function generateDownloadToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 /**
  * Map a client-input error to its HTTP status. Core returned 401 for
@@ -410,7 +488,7 @@ async function resolveBearerAuth(
     accountId: Id<"accounts">;
     endpointId: string;
     projectSlug: string;
-    environmentSlug: string;
+    stageSlug: string;
   } | null = await ctx.runQuery(internal.agentDeployments.getByApiKeyHash, {
     apiKeyHash: tokenHash,
   });
@@ -537,7 +615,7 @@ async function writeAudit(
   event: {
     accountId: Id<"accounts">;
     projectId?: Id<"projects">;
-    environmentId?: Id<"environments">;
+    stageId?: Id<"stages">;
     actor: ConfigAuditActor;
     action: string;
     resource: ConfigAuditResource;
@@ -549,7 +627,7 @@ async function writeAudit(
     await ctx.runMutation(internal.configAuditEvents.record, {
       accountId: event.accountId,
       projectId: event.projectId,
-      environmentId: event.environmentId,
+      stageId: event.stageId,
       actor: event.actor,
       action: event.action,
       resource: event.resource,
@@ -768,6 +846,7 @@ type ConfigRoute =
   | { kind: "tools"; toolId?: string }
   | { kind: "hooks"; hookId?: string }
   | { kind: "workspaceFiles"; workspaceId: string }
+  | { kind: "workspaceDownloadLinks"; workspaceId: string }
   | { kind: "crons"; cronId?: string; runs: boolean }
   | { kind: "workspaces"; workspaceId?: string }
   | { kind: "sandboxes"; sandboxId?: string }
@@ -816,6 +895,15 @@ function parseRoute(pathname: string): ConfigRoute | null {
     return {
       kind: "workspaceFiles",
       workspaceId: decodeURIComponent(files[1]),
+    };
+
+  const downloadLinks = pathname.match(
+    /^\/v1\/workspaces\/([^/]+)\/download-links$/,
+  );
+  if (downloadLinks?.[1])
+    return {
+      kind: "workspaceDownloadLinks",
+      workspaceId: decodeURIComponent(downloadLinks[1]),
     };
 
   const workspaces = pathname.match(/^\/v1\/workspaces(?:\/([^/]+))?$/);
@@ -1314,7 +1402,7 @@ async function handleWorkspaceConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "workspace", id: created._id, name: created.name },
@@ -1374,7 +1462,7 @@ async function handleWorkspaceConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "workspace", id: updated._id, name: updated.name },
@@ -1422,7 +1510,7 @@ async function handleWorkspaceConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "workspace", id: existing._id, name: existing.name },
@@ -1489,7 +1577,7 @@ async function handleSandboxConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "sandbox", id: created._id, name: created.name },
@@ -1564,7 +1652,7 @@ async function handleSandboxConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "sandbox", id: updated._id, name: updated.name },
@@ -1603,7 +1691,7 @@ async function handleSandboxConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "sandbox", id: existing._id, name: existing.name },
@@ -1661,7 +1749,7 @@ async function handlePolicyConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "policy", id: created._id, name: created.name },
@@ -1719,7 +1807,7 @@ async function handlePolicyConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "policy", id: updated._id, name: updated.name },
@@ -1748,7 +1836,7 @@ async function handlePolicyConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "policy", id: existing._id, name: existing.name },
@@ -1806,7 +1894,7 @@ async function handleChannelRecordRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "channel", id: created._id, name: created.name },
@@ -1861,7 +1949,7 @@ async function handleChannelRecordRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "channel", id: updated._id, name: updated.name },
@@ -1887,7 +1975,7 @@ async function handleChannelRecordRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "channel", id: existing._id, name: existing.name },
@@ -2013,15 +2101,14 @@ async function handleToolRoute(
   toolId?: string,
 ): Promise<Response> {
   if (!toolId) {
-    // Tools belong to one environment, so the collection routes need a scope.
+    // Tools belong to one stage, so the collection routes need a scope.
     const scope = await resolveToolScope(ctx, req, accountId);
     if (!scope.ok) return scope.response;
 
     if (req.method === "GET") {
-      const records = await ctx.runQuery(
-        internal.accountTools.listForEnvironment,
-        { environmentId: scope.environmentId },
-      );
+      const records = await ctx.runQuery(internal.accountTools.listForStage, {
+        stageId: scope.stageId,
+      });
 
       return json({
         tools: records.map((record) => toPublicAccountTool(record)),
@@ -2039,7 +2126,7 @@ async function handleToolRoute(
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
         projectId: scope.projectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
@@ -2381,7 +2468,7 @@ async function handleWorkspaceFilesRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: workspace.projectId,
-      environmentId: workspace.environmentId,
+      stageId: workspace.stageId,
       actor: actor,
       action: "file-uploaded",
       resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
@@ -2407,7 +2494,7 @@ async function handleWorkspaceFilesRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: workspace.projectId,
-      environmentId: workspace.environmentId,
+      stageId: workspace.stageId,
       actor: actor,
       action: "file-updated",
       resource: {
@@ -2437,7 +2524,7 @@ async function handleWorkspaceFilesRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: workspace.projectId,
-        environmentId: workspace.environmentId,
+        stageId: workspace.stageId,
         actor: actor,
         action: "file-deleted",
         resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
@@ -2453,6 +2540,132 @@ async function handleWorkspaceFilesRoute(
   }
 
   return methodNotAllowed(["GET", "POST", "PATCH", "DELETE"]);
+}
+
+/**
+ * Mint a capability link for one workspace file. Returns the token and the path
+ * to join to the base URL the caller reached us on — the config plane sits behind
+ * the gateway, which strips Host, so it cannot know its own public origin.
+ */
+async function handleWorkspaceDownloadLinkRoute(
+  ctx: ActionCtx,
+  req: Request,
+  accountId: Id<"accounts">,
+  actor: ConfigAuditActor,
+  workspaceId: string,
+): Promise<Response> {
+  if (req.method !== "POST") return methodNotAllowed(["POST"]);
+  const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {
+    accountId: accountId,
+    workspaceId: workspaceId,
+  });
+  if (!workspace) return json({ error: "Workspace not found" }, 404);
+
+  const body = (await req.json()) as {
+    path?: unknown;
+    expiresInSeconds?: unknown;
+  };
+  if (typeof body.path !== "string")
+    return json({ error: "path is required" }, 400);
+  const ttl = parseDownloadTtlSeconds(body.expiresInSeconds);
+  if (ttl instanceof Response) return ttl;
+  const path = normalizeFilePath(body.path);
+
+  // Presigning now proves the file exists and that we can read it, so a link is
+  // never handed out for something that will 404 when someone follows it.
+  try {
+    await ctx.runAction(internal.awsWorkspaceFiles.downloadUrl, {
+      accountId: accountId,
+      workspaceId: workspace._id,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+      path: path,
+    });
+  } catch {
+    return json({ error: "Workspace file not found" }, 404);
+  }
+
+  const now = Date.now();
+  const token = generateDownloadToken();
+  await ctx.runMutation(internal.workspaceDownloadTokens.create, {
+    accountId: accountId,
+    workspaceId: workspace._id,
+    path: path,
+    filename: path.split("/").at(-1)!,
+    tokenHash: await sha256Hex(token),
+    expiresAt: now + ttl * 1000,
+    now: now,
+  });
+  await writeAudit(ctx, {
+    accountId: accountId,
+    projectId: workspace.projectId,
+    stageId: workspace.stageId,
+    actor: actor,
+    action: "file-link-created",
+    resource: { kind: "workspaceFile", id: workspace._id, name: path },
+    summary: "Workspace download link created",
+    detailsJson: auditDetailsJson({
+      workspaceId: workspace._id,
+      path: path,
+      expiresInSeconds: ttl,
+    }),
+  });
+
+  return json({
+    token: token,
+    downloadPath: `${DOWNLOAD_ROUTE_PREFIX}${token}`,
+    path: path,
+    expiresInSeconds: ttl,
+  });
+}
+
+/**
+ * Redeem a capability link: mint a presigned S3 URL and redirect to it. The
+ * signed URL never touches a chat client, which is the whole point — an unknown,
+ * expired or revoked token is a flat 404 so the route cannot be used as an oracle.
+ */
+async function handleDownloadRedeemRoute(
+  ctx: ActionCtx,
+  req: Request,
+  token: string,
+): Promise<Response> {
+  if (req.method !== "GET" && req.method !== "HEAD")
+    return methodNotAllowed(["GET", "HEAD"]);
+
+  const now = Date.now();
+  const resolved = await ctx.runQuery(
+    internal.workspaceDownloadTokens.resolveByHash,
+    { tokenHash: await sha256Hex(token), now: now },
+  );
+  if (!resolved) return json({ error: "Not found" }, 404);
+
+  const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {
+    accountId: resolved.accountId,
+    workspaceId: resolved.workspaceId,
+  });
+  if (!workspace) return json({ error: "Not found" }, 404);
+
+  let url: string;
+  try {
+    url = await ctx.runAction(internal.awsWorkspaceFiles.downloadUrl, {
+      accountId: resolved.accountId,
+      workspaceId: resolved.workspaceId,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+      path: resolved.path,
+    });
+  } catch {
+    return json({ error: "Not found" }, 404);
+  }
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: url,
+      "Cache-Control": "no-store",
+      // The link is a bearer credential; keep it out of referrers and indexes.
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
 }
 
 /**
@@ -2608,10 +2821,7 @@ function isAddressableTool(
   record: Doc<"accountTools"> | null,
 ): record is Doc<"accountTools"> {
   return Boolean(
-    record &&
-    record.status === "active" &&
-    record.projectId &&
-    record.environmentId,
+    record && record.status === "active" && record.projectId && record.stageId,
   );
 }
 
@@ -2622,7 +2832,7 @@ function toPublicAccountTool(
     accountId: record.accountId,
     toolId: record._id,
     projectId: record.projectId,
-    environmentId: record.environmentId,
+    stageId: record.stageId,
     name: record.name,
     description: record.description,
     inputSchema: record.inputSchema,
@@ -2954,6 +3164,7 @@ function isClientInputError(error: unknown): error is Error {
     "config.",
     "e2b ",
     "Invalid workspace path",
+    "Invalid workspace file path",
     "Invalid destination path",
     "Workspace uploads ",
     "Workspace file not found",
@@ -2991,7 +3202,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 type ToolScope =
-  ({ ok: true } & ProjectEnvironmentScope) | { ok: false; response: Response };
+  ({ ok: true } & ProjectStageScope) | { ok: false; response: Response };
 
 async function resolveToolScope(
   ctx: ActionCtx,
@@ -3000,14 +3211,14 @@ async function resolveToolScope(
 ): Promise<ToolScope> {
   const params = new URL(req.url).searchParams;
   const project = params.get("project")?.trim();
-  const environment = params.get("environment")?.trim();
-  if (!project || !environment) {
+  const stage = params.get("stage")?.trim();
+  if (!project || !stage) {
     return {
       ok: false,
       response: json(
         {
           error:
-            "Tools are scoped to an environment: pass ?project=<slug>&environment=<name>",
+            "Tools are scoped to a stage: pass ?project=<slug>&stage=<name>",
         },
         400,
       ),
@@ -3017,18 +3228,18 @@ async function resolveToolScope(
   const scope = await ctx.runQuery(internal.accountTools.resolveScope, {
     accountId: accountId,
     project: project,
-    environment: environment,
+    stage: stage,
   });
   if (!scope) {
     return {
       ok: false,
-      response: json({ error: "Project or environment not found" }, 404),
+      response: json({ error: "Project or stage not found" }, 404),
     };
   }
 
   return {
     ok: true,
     projectId: scope.projectId,
-    environmentId: scope.environmentId,
+    stageId: scope.stageId,
   };
 }

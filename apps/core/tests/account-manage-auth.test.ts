@@ -66,7 +66,7 @@ function deploymentStorage(): Storage {
           accountId: account.accountId,
           endpointId: "env-endpoint",
           projectSlug: "demo",
-          environmentSlug: "development",
+          stageSlug: "development",
         };
       },
     },

@@ -101,11 +101,11 @@ test("formatReadyLine includes a checkmark, time, message, and duration", () => 
   expect(line).toBe("✔ 20:05:32 Resources ready! (3.11s)");
 });
 
-test("formatDeploymentTarget includes project, environment, and dashboard URL", () => {
+test("formatDeploymentTarget includes project, stage, and dashboard URL", () => {
   const output = formatDeploymentTarget(
     {
       project: "sandbox-stateless",
-      environment: "development",
+      stage: "development",
       dashboardUrl: "https://dashboard.dev.broods.app",
     },
     { color: false },
@@ -114,8 +114,65 @@ test("formatDeploymentTarget includes project, environment, and dashboard URL", 
   expect(output).toContain("▌ Syncing Development: sandbox-stateless");
   expect(output).toContain("[Development] development (dashboard)");
   expect(output).toContain(
-    "▌ └─ https://dashboard.dev.broods.app?project=sandbox-stateless&env=development",
+    "▌ └─ https://dashboard.dev.broods.app?project=sandbox-stateless&stage=development",
   );
+});
+
+// `broods stage use staging` + `broods dev` syncs staging, so the banner has to
+// name staging. It used to hardcode "Development" and mislabel every other
+// stage, including Production.
+test("formatDeploymentTarget names the stage it is actually syncing", () => {
+  const output = formatDeploymentTarget(
+    {
+      project: "sandbox-stateless",
+      stage: "staging",
+      dashboardUrl: "https://dashboard.dev.broods.app",
+    },
+    { color: false },
+  );
+
+  expect(output).toContain("▌ Syncing staging: sandbox-stateless");
+  expect(output).toContain("[staging] staging (dashboard)");
+  expect(output).not.toContain("Development");
+  expect(output).toContain("?project=sandbox-stateless&stage=staging");
+});
+
+test("formatDeploymentTarget canonicalizes the reserved stage names", () => {
+  const output = formatDeploymentTarget(
+    {
+      project: "sandbox-stateless",
+      stage: "production",
+      dashboardUrl: "https://dashboard.dev.broods.app",
+    },
+    { color: false },
+  );
+
+  expect(output).toContain("▌ Syncing Production: sandbox-stateless");
+  expect(output).toContain("[Production] production (dashboard)");
+});
+
+// Green reads as "routine dev sync", so only Development may claim it.
+test("formatDeploymentTarget drops the green badge outside Development", () => {
+  const development = formatDeploymentTarget(
+    {
+      project: "app",
+      stage: "development",
+      dashboardUrl: "https://dashboard.dev.broods.app",
+    },
+    { color: true },
+  );
+  const production = formatDeploymentTarget(
+    {
+      project: "app",
+      stage: "production",
+      dashboardUrl: "https://dashboard.dev.broods.app",
+    },
+    { color: true },
+  );
+
+  expect(development).toContain("\x1b[42m");
+  expect(production).not.toContain("\x1b[42m");
+  expect(production).toContain("\x1b[43m");
 });
 
 test("formatEnvSync lists the synced env var names", () => {

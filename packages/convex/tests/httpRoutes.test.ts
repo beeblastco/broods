@@ -2,6 +2,8 @@
 
 import { describe, expect, it } from "vitest";
 import http from "../http";
+import { handle as cliHttp } from "../cliHttp";
+import { handle as cliStagesHttp } from "../cliStagesHttp";
 
 // A handler that configHttp knows how to dispatch is still a 404 until the
 // router mounts it. That gap shipped once for /v1/channels and reached dev, so
@@ -68,4 +70,44 @@ describe("config-plane HTTP routes", () => {
       }
     });
   }
+
+  it("mounts workspace file and download-link surfaces", () => {
+    expect(http.lookup("/v1/workspaces/ws_1/files", "GET")).toBeTruthy();
+    expect(http.lookup("/v1/workspaces/ws_1/files", "POST")).toBeTruthy();
+    expect(
+      http.lookup("/v1/workspaces/ws_1/download-links", "POST"),
+    ).toBeTruthy();
+  });
+
+  // `/v1/account/projects/` is mounted as a pathPrefix, so a stage route nested
+  // under it would reach cliHttp and 404. Pin the sibling path instead.
+  // Truthiness alone would still pass if a pathPrefix swallowed the path, so
+  // assert which handler actually wins.
+  it("mounts the CLI stage surface on its own handler", () => {
+    for (const method of ["GET", "POST"] as const) {
+      const route = http.lookup("/v1/account/stages", method);
+      expect(route, `${method} /v1/account/stages`).toBeTruthy();
+      expect(route?.[0], `${method} /v1/account/stages`).toBe(cliStagesHttp);
+    }
+  });
+
+  // The stage-scoped CLI routes stay on cliHttp, and the old `/environments/`
+  // spelling must not resolve at all after the hard rename.
+  it("routes project-scoped stage paths to cliHttp and drops /environments/", () => {
+    expect(
+      http.lookup("/v1/account/projects/p1/stages/s1/manifest", "GET")?.[0],
+    ).toBe(cliHttp);
+    expect(
+      http.lookup(
+        "/v1/account/projects/p1/environments/e1/manifest",
+        "GET",
+      )?.[0],
+    ).not.toBe(cliStagesHttp);
+  });
+
+  // Redeeming happens in a browser with no credential, so it must resolve on a
+  // bare GET. Convex serves HEAD from the same route.
+  it("mounts download redemption for unauthenticated GET", () => {
+    expect(http.lookup("/v1/downloads/abcdefghijklmnop", "GET")).toBeTruthy();
+  });
 });

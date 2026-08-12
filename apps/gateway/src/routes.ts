@@ -27,6 +27,12 @@ export function isConfigHttpPath(pathname: string, method = "GET"): boolean {
   if (pathname === "/v1/env") return upperMethod === "GET";
   if (/^\/v1\/env\/[^/]+$/.test(pathname))
     return upperMethod === "PUT" || upperMethod === "DELETE";
+  // Redeeming a workspace download link. Unauthenticated by design: the token in
+  // the path is the credential, and the config plane answers with a 302.
+  if (/^\/v1\/downloads\/[^/]+$/.test(pathname))
+    return upperMethod === "GET" || upperMethod === "HEAD";
+  if (/^\/v1\/workspaces\/[^/]+\/download-links$/.test(pathname))
+    return upperMethod === "POST";
 
   return (
     /^\/v1\/skills(?:\/[^/]+)?$/.test(pathname) ||
@@ -52,7 +58,7 @@ export function isWebSocketPath(pathname: string): boolean {
 export function matchAgentWebSocketPath(pathname: string): {
   endpointId: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
 } | null {
   const scoped = pathname.match(
     /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)\/ws$/,
@@ -60,7 +66,7 @@ export function matchAgentWebSocketPath(pathname: string): {
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
-      environmentSlug: decodeURIComponent(scoped[2]),
+      stageSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
     };
   }

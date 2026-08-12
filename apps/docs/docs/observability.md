@@ -34,21 +34,31 @@ flowchart LR
   are not recorded on those spans because the harness's own span rows already carry
   the redacted payloads.
 - **NATS** — INFO/WARN/ERROR only, and only when an _observability context_ is set
-  (project + environment + endpoint id). This is the live path the dashboard tails.
+  (project + stage + endpoint id). This is the live path the dashboard tails.
 
 A failure in any one sink never blocks the others, and never throws into the agent path.
+
+## User code
+
+`console.*` inside an uploaded hook or custom tool runs in a V8 isolate that has no
+host logger of its own. The isolate sends each line back as a `log` frame on the
+same NDJSON protocol that carries results, and the host re-emits it through
+`emit()` while iterating that run's frames, so it inherits the run's observability
+context and reaches all three sinks tagged `source: "user-code"`. Writing those
+lines to the worker's stderr instead would lose them: the pooled worker, which is
+the default, discards its children's stderr.
 
 ## Tenant scoping
 
 Logs and spans carry the same tenant attributes so a span, its logs, and the live
 dashboard stream all correlate:
 
-`account_id` · `project` · `environment` · `endpoint_id` · `agent_id` · `conversation_key` · `trace_id`
+`account_id` · `project` · `stage` · `endpoint_id` · `agent_id` · `conversation_key` · `trace_id`
 
 NATS subjects encode the routable subset (`src/shared/nats.ts`):
 
 ```text
-v1.<accountId>.<project>.<base64url(environment)>.{logs|traces}.<endpointId>
+v1.<accountId>.<project>.<base64url(stage)>.{logs|traces}.<endpointId>
 ```
 
 The durable **`OBSERVABILITY`** JetStream stream binds `v1.*.*.*.logs.>` and

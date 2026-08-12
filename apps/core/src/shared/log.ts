@@ -239,14 +239,14 @@ function publishNats(
 
   const ctx = getObservabilityContext();
   // Skip when the task isn't deployment-scoped (channel/cron paths have empty
-  // project/env/endpoint): no dashboard tab subscribes those, so publishing to a
-  // malformed subject is wasted. Durable OTLP + stdout still capture the line.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment) return;
+  // project/stage/endpoint): no dashboard tab subscribes those, so publishing
+  // to a malformed subject is wasted. Durable OTLP + stdout still capture it.
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage) return;
 
   const subject = logsSubject(
     ctx.accountId,
     ctx.project,
-    ctx.environment,
+    ctx.stage,
     ctx.endpointId,
   );
 

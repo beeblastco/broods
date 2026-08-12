@@ -346,7 +346,7 @@ export function toPublicSandboxConfigResponse(
     accountId: doc.accountId,
     sandboxId: doc._id,
     ...(doc.projectId ? { projectId: doc.projectId } : {}),
-    ...(doc.environmentId ? { environmentId: doc.environmentId } : {}),
+    ...(doc.stageId ? { stageId: doc.stageId } : {}),
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config: redactSandboxConfigSecrets(config),

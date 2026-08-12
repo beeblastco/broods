@@ -31,7 +31,7 @@ test("listEnv GETs the env collection and returns variable names", async () => {
 
   expect(variables).toEqual([{ name: "OPENAI_API_KEY", updatedAt: 1 }]);
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env",
+    url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/env",
     method: "GET",
   });
 });
@@ -42,7 +42,7 @@ test("listEnv returns an empty array when the payload omits variables", async ()
   expect(await client.listEnv("demo-app", "development")).toEqual([]);
 });
 
-test("getRuntimeKey recovers the environment runtime key", async () => {
+test("getRuntimeKey recovers the stage runtime key", async () => {
   const { client, calls } = clientWith(
     () =>
       new Response(
@@ -51,7 +51,7 @@ test("getRuntimeKey recovers the environment runtime key", async () => {
           keyHint: "fp_agent_…cret",
           endpointId: "env_123",
           projectSlug: "demo-app",
-          environmentSlug: "development",
+          stageSlug: "development",
         }),
       ),
   );
@@ -63,15 +63,15 @@ test("getRuntimeKey recovers the environment runtime key", async () => {
     keyHint: "fp_agent_…cret",
     endpointId: "env_123",
     projectSlug: "demo-app",
-    environmentSlug: "development",
+    stageSlug: "development",
   });
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/runtime-key",
+    url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/runtime-key",
     method: "GET",
   });
 });
 
-test("getRuntimeKey returns null when the environment is unknown", async () => {
+test("getRuntimeKey returns null when the stage is unknown", async () => {
   const { client } = clientWith(
     () => new Response("not found", { status: 404 }),
   );
@@ -92,7 +92,7 @@ test("getEnv GETs the named env var and returns its value", async () => {
 
   expect(value).toBe("sk-secret");
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env/OPENAI_API_KEY",
+    url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/env/OPENAI_API_KEY",
     method: "GET",
   });
 });
@@ -113,7 +113,7 @@ test("removeEnv DELETEs the named env var", async () => {
   await client.removeEnv("demo-app", "development", "OPENAI_API_KEY");
 
   expect(calls[0]).toEqual({
-    url: "https://convex.example.com/v1/account/projects/demo-app/environments/development/env/OPENAI_API_KEY",
+    url: "https://convex.example.com/v1/account/projects/demo-app/stages/development/env/OPENAI_API_KEY",
     method: "DELETE",
   });
 });
@@ -124,4 +124,34 @@ test("removeEnv throws on a non-ok response", async () => {
   await expect(
     client.removeEnv("demo-app", "development", "X"),
   ).rejects.toThrow("Remove environment variable failed");
+});
+
+// The backend keys the manifest route off the stage segment and rejects a
+// manifest body carrying the pre-rename `environment` field.
+test("putManifest PUTs to the stage manifest route and sends manifest.stage", async () => {
+  const manifest = {
+    version: 1 as const,
+    project: "demo-app",
+    stage: "staging",
+    resources: [],
+  };
+  let sent: { url: string; body: string } | undefined;
+  const client = new BroodsSyncClient({
+    baseUrl: "https://convex.example.com",
+    token: "tok",
+    fetch: async (input, init) => {
+      sent = { url: String(input), body: String(init?.body ?? "") };
+
+      return new Response(
+        JSON.stringify({ manifest: manifest, ids: {}, deployment: null }),
+      );
+    },
+  });
+
+  await client.putManifest(manifest, false);
+
+  expect(sent?.url).toBe(
+    "https://convex.example.com/v1/account/projects/demo-app/stages/staging/manifest",
+  );
+  expect(JSON.parse(sent?.body ?? "{}").manifest).toEqual(manifest);
 });

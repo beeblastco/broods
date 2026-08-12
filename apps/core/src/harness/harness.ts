@@ -132,13 +132,13 @@ function publishSpan(row: ObservabilitySpanRow): Promise<void> {
   const ctx = getObservabilityContext();
   // Skip traffic that cannot be resolved to a deployment. No dashboard trace
   // subscription exists for that scope; Tempo still receives the OTel span.
-  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.environment)
+  if (!ctx || !ctx.endpointId || !ctx.project || !ctx.stage)
     return Promise.resolve();
 
   const subject = tracesSubject(
     ctx.accountId,
     ctx.project,
-    ctx.environment,
+    ctx.stage,
     ctx.endpointId,
   );
 
@@ -270,13 +270,13 @@ export async function runAgentLoop(
   // stamped on every log line and NATS span row AND exported to Tempo — that shared
   // id links logs<->traces in Grafana. When OTel is not initialised the tracer is a
   // noop and its context is all-zero, so fall back to freshly minted ids for the
-  // live/NATS path. project/environment come from the auth scope on the session's
+  // live/NATS path. project/stage come from the auth scope on the session's
   // endpointId; empty for non-deployment (channel/cron).
   const runStartedAt = Date.now();
   const observabilityScope = {
     accountId: session.accountId ?? "",
     project: session.projectSlug ?? "",
-    environment: session.environmentSlug ?? "",
+    stage: session.stageSlug ?? "",
     endpointId: session.endpointId ?? "",
     agentId: session.agentId ?? "",
     conversationKey: session.conversationKey,
@@ -505,7 +505,7 @@ export async function runAgentLoop(
     {
       accountId: session.accountId,
       project: session.projectSlug,
-      environment: session.environmentSlug,
+      stage: session.stageSlug,
       endpointId: session.endpointId,
       agentId: session.agentId,
       conversationKey: session.conversationKey,

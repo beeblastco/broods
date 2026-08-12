@@ -282,7 +282,7 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   ]);
 
   const created = await client.createTool(
-    { project: "demo", environment: "development" },
+    { project: "demo", stage: "development" },
     {
       name: "sum",
       description: "adds",
@@ -292,7 +292,7 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   );
   expect(created.toolId).toBe("qs78zwc4z4q5ysxm74fgrhd13s88xxt");
   expect(calls[0]?.url).toBe(
-    "https://gateway.example.com/v1/tools?project=demo&environment=development",
+    "https://gateway.example.com/v1/tools?project=demo&stage=development",
   );
   expect(calls[0]?.headers["Content-Type"]).toBe("application/json");
   expect(JSON.parse(calls[0]?.body ?? "{}").bundle).toBe("export default {}");
@@ -300,27 +300,26 @@ test("tools: create posts JSON with the bundle and delete returns the flag", asy
   expect(await client.deleteTool("qs78zwc4z4q5ysxm74fgrhd13s88xxt")).toBe(true);
 });
 
-test("tools: list carries the environment scope and encodes it", async () => {
+test("tools: list carries the stage scope and encodes it", async () => {
   const { client, calls } = mockClient([
     { status: 200, body: { tools: [{ toolId: "tool_1", name: "sum" }] } },
   ]);
 
   expect(
-    (await client.listTools({ project: "acme", environment: "My Env" }))[0]
-      ?.toolId,
+    (await client.listTools({ project: "acme", stage: "My Env" }))[0]?.toolId,
   ).toBe("tool_1");
   expect(calls[0]?.url).toBe(
-    "https://gateway.example.com/v1/tools?project=acme&environment=My+Env",
+    "https://gateway.example.com/v1/tools?project=acme&stage=My+Env",
   );
 });
 
 test("tools: list throws on an unresolvable scope instead of returning empty", async () => {
   const { client } = mockClient([
-    { status: 404, body: { error: "Environment not found" } },
+    { status: 404, body: { error: "Stage not found" } },
   ]);
 
   expect(
-    client.listTools({ project: "acme", environment: "typo" }),
+    client.listTools({ project: "acme", stage: "typo" }),
   ).rejects.toThrow();
 });
 

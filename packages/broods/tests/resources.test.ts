@@ -22,7 +22,7 @@ afterEach(async () => {
   delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_TOKEN;
   delete process.env.BROODS_PROJECT;
-  delete process.env.BROODS_ENVIRONMENT;
+  delete process.env.BROODS_STAGE;
 });
 
 test("compileProject maps workspace resources and env refs to the SaaS manifest shape", async () => {
@@ -34,7 +34,7 @@ test("compileProject maps workspace resources and env refs to the SaaS manifest 
   );
 
   expect(manifest.project).toBe("typed-app");
-  expect(manifest.environment).toBe("development");
+  expect(manifest.stage).toBe("development");
   expect(agent?.config).toEqual({
     provider: {
       openai: {
@@ -870,7 +870,7 @@ export const support = defineAgent({
   );
 
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    `Tool "helper" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config`,
+    `Tool "helper" defaultConfig cannot contain env("NAME") references; put environment variable values in the agent's tools.<tool>.config`,
   );
 });
 
@@ -1019,7 +1019,7 @@ export const support = defineAgent({
   const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
 
   expect(manifest.project).toStartWith("broods-test-");
-  expect(manifest.environment).toBe("development");
+  expect(manifest.stage).toBe("development");
 });
 
 test("compileProject accepts explicit project override", async () => {
@@ -1169,7 +1169,7 @@ export const oneMinuteCron = defineCron({
   expect(api).toContain("sandboxes: {}");
 });
 
-test("compileProject loads project and environment from .env.local", async () => {
+test("compileProject loads project and stage from .env.local", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -1183,15 +1183,13 @@ export const support = defineAgent({
   );
   await writeFile(
     join(cwd, ".env.local"),
-    ["BROODS_PROJECT=env-file-project", "BROODS_ENVIRONMENT=staging", ""].join(
-      "\n",
-    ),
+    ["BROODS_PROJECT=env-file-project", "BROODS_STAGE=staging", ""].join("\n"),
   );
 
   const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
 
   expect(manifest.project).toBe("env-file-project");
-  expect(manifest.environment).toBe("staging");
+  expect(manifest.stage).toBe("staging");
 });
 
 test("compileProject defaults deploy to production without an override", async () => {
@@ -1206,10 +1204,9 @@ export const support = defineAgent({
 });
 `,
   );
-
   const { manifest } = await compileProject({ cwd: cwd, command: "deploy" });
 
-  expect(manifest.environment).toBe("production");
+  expect(manifest.stage).toBe("production");
 });
 
 test("compileProject can ignore runtime env when deploy uses command defaults", async () => {
@@ -1226,16 +1223,16 @@ export const support = defineAgent({
   );
   await writeFile(
     join(cwd, ".env.local"),
-    ["BROODS_ENVIRONMENT=development", ""].join("\n"),
+    ["BROODS_STAGE=development", ""].join("\n"),
   );
 
   const { manifest } = await compileProject({
     cwd: cwd,
     command: "deploy",
-    useRuntimeEnvironment: false,
+    useRuntimeStage: false,
   });
 
-  expect(manifest.environment).toBe("production");
+  expect(manifest.stage).toBe("production");
 });
 
 test("compileProject maps workspace overrides, subagents, skills, and tools", async () => {
@@ -1548,7 +1545,7 @@ test("diffManifests reports create, update, and delete operations", () => {
   const local = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       { kind: "agent" as const, name: "new", config: { a: 1 } },
       { kind: "workspace" as const, name: "changed", config: { a: 2 } },
@@ -1557,7 +1554,7 @@ test("diffManifests reports create, update, and delete operations", () => {
   const remote = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       { kind: "workspace" as const, name: "changed", config: { a: 1 } },
       { kind: "sandbox" as const, name: "old", config: { provider: "lambda" } },
@@ -1575,7 +1572,7 @@ test("diffManifests reports a pure resource rename without delete prompt noise",
   const local = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       {
         kind: "agent" as const,
@@ -1587,7 +1584,7 @@ test("diffManifests reports a pure resource rename without delete prompt noise",
   const remote = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       {
         kind: "agent" as const,
@@ -1611,7 +1608,7 @@ test("diffManifests treats env refs and remote placeholders as equal", () => {
   const local = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       {
         kind: "agent" as const,
@@ -1629,7 +1626,7 @@ test("diffManifests treats env refs and remote placeholders as equal", () => {
   const remote = {
     version: 1 as const,
     project: "app",
-    environment: "dev",
+    stage: "dev",
     resources: [
       {
         kind: "agent" as const,
@@ -1681,7 +1678,7 @@ test("writeGeneratedFiles creates Convex-style typed resource references", async
 
   expect(api).toContain("export const api = {");
   expect(api).toContain(
-    'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", environment: "development" }',
+    'support: { kind: "agent", name: "support", id: ids.agents["support"], project: "typed-app", stage: "development" }',
   );
   expect(ids).toContain('"support": "agent_123"');
   expect(dataModel).toContain("AgentReference");
@@ -1721,7 +1718,7 @@ export const support = defineAgent({ name: "support", channels: [github] });
       accountId: "account/123",
       endpointId: "endpoint-1",
       projectSlug: "typed-app",
-      environmentSlug: "development",
+      stageSlug: "development",
     },
     channels,
   );
@@ -1732,6 +1729,8 @@ export const support = defineAgent({ name: "support", channels: [github] });
   );
   expect(api).toContain('github: { kind: "channel", type: "github"');
   expect(api).toContain('webhookPath: "/webhooks/account%2F123/github"');
+  // client.ts and websocket.ts build the scoped invoke URL from this field.
+  expect(api).toContain('stageSlug: "development"');
 });
 
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
@@ -1794,7 +1793,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
       "BROODS_BASE_URL=https://gateway.dev.broods.app",
       "BROODS_TOKEN=fp_cli_test",
       "BROODS_PROJECT=sandbox-stateless",
-      "BROODS_ENVIRONMENT=development",
+      "BROODS_STAGE=development",
       "",
     ].join("\n"),
   );
@@ -1806,7 +1805,7 @@ test("runtime config loads .env.local without manual client wiring", async () =>
     baseUrl: "https://gateway.dev.broods.app",
     token: "fp_cli_test",
     project: "sandbox-stateless",
-    environment: "development",
+    stage: "development",
   });
 });
 
@@ -1922,7 +1921,7 @@ import { defineBroods } from "${RESOURCES_MODULE}";
 
 export default defineBroods({
   project: "typed-app",
-  environments: { dev: "development", deploy: "production" },
+  stages: { dev: "development", deploy: "production" },
 });
 `,
   );

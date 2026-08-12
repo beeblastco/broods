@@ -195,7 +195,7 @@ async function listProjects(ctx: Ctx, authId: string) {
 /**
  * Returns the caller's most recent project. On the very first call for an
  * org that has never had a project, creates a random one plus a default
- * Production environment and marks the org as onboarded. On subsequent calls
+ * Production stage and marks the org as onboarded. On subsequent calls
  * where the user has deleted every project, returns null so the UI can fall
  * back to the project gallery.
  * @returns The existing or newly created project id, or null when the org has
@@ -241,7 +241,7 @@ export const getOrCreateDefault = mutation({
       updatedAt: now,
     });
 
-    await ctx.db.insert("environments", {
+    await ctx.db.insert("stages", {
       authId: authUser.id,
       projectId: projectId,
       name: "Development",
@@ -285,23 +285,23 @@ export const getById = query({
 });
 
 /**
- * Resolves a CLI-style project name/slug (and optional environment name) to the
- * caller's real project and environment ids, so a `broods` deep link can
+ * Resolves a CLI-style project name/slug (and optional stage name) to the
+ * caller's real project and stage ids, so a `broods` deep link can
  * land directly on that project's architecture view.
  * @param project name or slug as printed by the CLI
- * @param environment optional environment name (e.g. "development"); matched case-insensitively
+ * @param stage optional stage name (e.g. "development"); matched case-insensitively
  * @returns the matching ids, or null when the project is not visible to the caller
  */
 export const resolveTarget = query({
-  args: { project: v.string(), environment: v.optional(v.string()) },
+  args: { project: v.string(), stage: v.optional(v.string()) },
   returns: v.union(
     v.null(),
     v.object({
       projectId: v.id("projects"),
-      environmentId: v.union(v.null(), v.id("environments")),
+      stageId: v.union(v.null(), v.id("stages")),
     }),
   ),
-  handler: async (ctx, { project, environment }) => {
+  handler: async (ctx, { project, stage }) => {
     const authUser = await requireAuth(ctx);
     const needle = project.trim().toLowerCase();
     const match = (await listProjects(ctx, authUser.id)).find(
@@ -311,19 +311,19 @@ export const resolveTarget = query({
     );
     if (!match) return null;
 
-    const environments = await ctx.db
-      .query("environments")
+    const stages = await ctx.db
+      .query("stages")
       .withIndex("by_projectId", (q) => q.eq("projectId", match._id))
       .collect();
-    const wanted = environment?.trim().toLowerCase();
+    const wanted = stage?.trim().toLowerCase();
     const target =
       (wanted
-        ? environments.find((entry) => entry.name.toLowerCase() === wanted)
+        ? stages.find((entry) => entry.name.toLowerCase() === wanted)
         : undefined) ??
-      environments.find((entry) => entry.isDefault) ??
+      stages.find((entry) => entry.isDefault) ??
       null;
 
-    return { projectId: match._id, environmentId: target?._id ?? null };
+    return { projectId: match._id, stageId: target?._id ?? null };
   },
 });
 
@@ -350,7 +350,7 @@ export const create = mutation({
       updatedAt: now,
     });
 
-    await ctx.db.insert("environments", {
+    await ctx.db.insert("stages", {
       authId: authUser.id,
       projectId: projectId,
       name: "Development",

@@ -1,7 +1,7 @@
 "use client";
 
 /** Test tab with a streaming chat window for testing a deployed agent. */
-import type { EnvironmentDeployment } from "@/app/components/side-panel/DetailsTab";
+import type { StageDeployment } from "@/app/components/side-panel/DetailsTab";
 import {
   Collapsible,
   CollapsibleContent,
@@ -163,7 +163,7 @@ export function TestTab({
   agentId,
   nodeColor,
 }: {
-  activeDeployment: EnvironmentDeployment | undefined;
+  activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
   agentId: string;
   nodeColor?: string;
@@ -172,8 +172,8 @@ export function TestTab({
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
-          No runtime API key for this environment yet. Generate one in Details
-          to test this agent.
+          No runtime API key for this stage yet. Generate one in Details to test
+          this agent.
         </p>
       </div>
     );
@@ -204,7 +204,7 @@ export function TestTab({
       apiKey={deploymentApiKey}
       projectSlug={activeDeployment.projectSlug}
       nodeColor={nodeColor}
-      environmentSlug={activeDeployment.environmentSlug}
+      stageSlug={activeDeployment.stageSlug}
     />
   );
 }
@@ -216,21 +216,21 @@ function ChatWindow({
   apiKey,
   projectSlug,
   nodeColor,
-  environmentSlug,
+  stageSlug,
 }: {
   endpointId: string;
   agentId: string;
   apiKey: string;
   projectSlug?: string;
   nodeColor?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
 }) {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
     agentId: agentId,
     apiKey: apiKey,
     projectSlug: projectSlug,
-    environmentSlug: environmentSlug,
+    stageSlug: stageSlug,
     webSocketEnabled: true,
   });
   const [input, setInput] = useState("");

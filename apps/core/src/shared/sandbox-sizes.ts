@@ -71,7 +71,7 @@ export interface SandboxControlPlane {
   accountId: string;
   /** Optional SaaS route scope for dashboard live views. */
   projectId?: string;
-  environmentId?: string;
+  stageId?: string;
   /** The owning sandbox config row, so the dashboard can drive its write-path. */
   sandboxConfigId?: string;
   name: string;
