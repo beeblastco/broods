@@ -19,6 +19,14 @@ export interface ObservabilityClientOptions {
   stage: string;
 }
 
+/** What a runtime key actually grants, as core resolves it. */
+export interface ObservabilityScope {
+  accountId: string;
+  projectSlug: string;
+  stageSlug: string;
+  endpointIds: string[];
+}
+
 export interface ObservabilitySubscribeOptions {
   // Recent lines to backfill from Loki before going live; 0/absent = live-only.
   backfill?: number;
@@ -67,6 +75,44 @@ function resolveWebSocket(): new (url: string) => WebSocket {
   if (!impl) throw new Error("WebSocket is not available in this environment.");
 
   return impl;
+}
+
+/**
+ * Ask core which project/stage a runtime key reads. The gateway compares the
+ * socket path against this and closes on a mismatch, and a rejected handshake
+ * carries no status the WebSocket API can report, so callers that guess the
+ * path get an empty stream instead of an error. Returns null when the lookup
+ * itself fails; callers fall back to what they were configured with.
+ */
+export async function fetchObservabilityScope(
+  baseUrl: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ObservabilityScope | null> {
+  try {
+    const response = await fetchImpl(
+      `${baseUrl.replace(/\/+$/, "")}/v1/internal/observability-scope`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) return null;
+    const scope = (await response.json()) as ObservabilityScope;
+    if (
+      typeof scope?.projectSlug !== "string" ||
+      typeof scope?.stageSlug !== "string"
+    )
+      return null;
+
+    return scope;
+  } catch {
+    return null;
+  }
 }
 
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
