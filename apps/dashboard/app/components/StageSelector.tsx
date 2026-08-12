@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -155,7 +156,17 @@ export function StageSelector() {
     }
   }, [stages, stageId, setStageId]);
 
-  if (!projectId || !stages || stages.length === 0) {
+  if (!projectId) {
+    return null;
+  }
+
+  // Its divider is already painted on a project route: hold the slot instead of
+  // letting the header snap wider when the stages arrive.
+  if (stages === undefined) {
+    return <Skeleton className="h-4 w-20 bg-muted" />;
+  }
+
+  if (stages.length === 0) {
     return null;
   }
 

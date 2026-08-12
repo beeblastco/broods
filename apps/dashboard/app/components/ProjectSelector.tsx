@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/app/components/ui/dropdown-menu";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { FULL_ROUTE_PREFETCH } from "@/app/lib/prefetch";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
@@ -58,20 +59,39 @@ export function ProjectSelector() {
     return () => window.clearTimeout(timeoutId);
   }, [projects, prefetchProject]);
 
-  // Hide selector entirely when loading or the user has no projects yet.
-  if (projects === undefined || projects.length === 0) {
-    return null;
+  // The header divider next to this is always painted, so rendering nothing
+  // here collapses the row and shifts it back once the query lands.
+  if (projects === undefined) {
+    return <Skeleton className="h-4 w-24 bg-muted" />;
   }
 
   const currentProjectId = params.projectId;
   const selectedProject = projects.find(
     (p: Doc<"projects">) => p._id === currentProjectId,
   );
-  const displayName =
-    selectedProject?.name ??
-    (currentProjectId ? projects[0]?.name : "Projects");
+  // The trigger states what is true right now — never another project's name.
+  const displayName = selectedProject?.name ?? "Select project";
   const userName = currentUser?.name?.split(" ")[0] ?? "";
   const projectsLabel = userName ? `${userName}'s projects` : "Projects";
+
+  // An org with no projects has nothing to pick from: skip the menu and put the
+  // create action itself in the header, one click from the same dialog.
+  if (projects.length === 0) {
+    return (
+      <>
+        <Button
+          variant="ghost"
+          className="h-auto select-none gap-1.5 px-2 py-1 text-sm font-medium text-muted-foreground hover:text-foreground active:bg-accent/80 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none cursor-pointer"
+          onClick={() => setDialogOpen(true)}
+        >
+          <Plus className="size-3.5" />
+          New Project
+        </Button>
+
+        <CreateProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -121,7 +141,10 @@ export function ProjectSelector() {
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setDialogOpen(true)}>
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => setDialogOpen(true)}
+          >
             <Plus className="size-4" />
             New Project
           </DropdownMenuItem>
