@@ -65,7 +65,7 @@ import {
   type ConfigAuditResource,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
-import type { ProjectEnvironmentScope } from "./model/projectScope";
+import type { ProjectStageScope } from "./model/projectScope";
 import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 import {
   DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS,
@@ -488,7 +488,7 @@ async function resolveBearerAuth(
     accountId: Id<"accounts">;
     endpointId: string;
     projectSlug: string;
-    environmentSlug: string;
+    stageSlug: string;
   } | null = await ctx.runQuery(internal.agentDeployments.getByApiKeyHash, {
     apiKeyHash: tokenHash,
   });
@@ -615,7 +615,7 @@ async function writeAudit(
   event: {
     accountId: Id<"accounts">;
     projectId?: Id<"projects">;
-    environmentId?: Id<"environments">;
+    stageId?: Id<"stages">;
     actor: ConfigAuditActor;
     action: string;
     resource: ConfigAuditResource;
@@ -627,7 +627,7 @@ async function writeAudit(
     await ctx.runMutation(internal.configAuditEvents.record, {
       accountId: event.accountId,
       projectId: event.projectId,
-      environmentId: event.environmentId,
+      stageId: event.stageId,
       actor: event.actor,
       action: event.action,
       resource: event.resource,
@@ -1402,7 +1402,7 @@ async function handleWorkspaceConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "workspace", id: created._id, name: created.name },
@@ -1462,7 +1462,7 @@ async function handleWorkspaceConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "workspace", id: updated._id, name: updated.name },
@@ -1510,7 +1510,7 @@ async function handleWorkspaceConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "workspace", id: existing._id, name: existing.name },
@@ -1577,7 +1577,7 @@ async function handleSandboxConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "sandbox", id: created._id, name: created.name },
@@ -1652,7 +1652,7 @@ async function handleSandboxConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "sandbox", id: updated._id, name: updated.name },
@@ -1691,7 +1691,7 @@ async function handleSandboxConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "sandbox", id: existing._id, name: existing.name },
@@ -1749,7 +1749,7 @@ async function handlePolicyConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "policy", id: created._id, name: created.name },
@@ -1807,7 +1807,7 @@ async function handlePolicyConfigRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "policy", id: updated._id, name: updated.name },
@@ -1836,7 +1836,7 @@ async function handlePolicyConfigRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "policy", id: existing._id, name: existing.name },
@@ -1894,7 +1894,7 @@ async function handleChannelRecordRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: created.projectId,
-        environmentId: created.environmentId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "channel", id: created._id, name: created.name },
@@ -1949,7 +1949,7 @@ async function handleChannelRecordRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: updated.projectId,
-        environmentId: updated.environmentId,
+        stageId: updated.stageId,
         actor: actor,
         action: "updated",
         resource: { kind: "channel", id: updated._id, name: updated.name },
@@ -1975,7 +1975,7 @@ async function handleChannelRecordRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: existing.projectId,
-      environmentId: existing.environmentId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "channel", id: existing._id, name: existing.name },
@@ -2101,15 +2101,14 @@ async function handleToolRoute(
   toolId?: string,
 ): Promise<Response> {
   if (!toolId) {
-    // Tools belong to one environment, so the collection routes need a scope.
+    // Tools belong to one stage, so the collection routes need a scope.
     const scope = await resolveToolScope(ctx, req, accountId);
     if (!scope.ok) return scope.response;
 
     if (req.method === "GET") {
-      const records = await ctx.runQuery(
-        internal.accountTools.listForEnvironment,
-        { environmentId: scope.environmentId },
-      );
+      const records = await ctx.runQuery(internal.accountTools.listForStage, {
+        stageId: scope.stageId,
+      });
 
       return json({
         tools: records.map((record) => toPublicAccountTool(record)),
@@ -2127,7 +2126,7 @@ async function handleToolRoute(
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
         projectId: scope.projectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
@@ -2469,7 +2468,7 @@ async function handleWorkspaceFilesRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: workspace.projectId,
-      environmentId: workspace.environmentId,
+      stageId: workspace.stageId,
       actor: actor,
       action: "file-uploaded",
       resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
@@ -2495,7 +2494,7 @@ async function handleWorkspaceFilesRoute(
     await writeAudit(ctx, {
       accountId: accountId,
       projectId: workspace.projectId,
-      environmentId: workspace.environmentId,
+      stageId: workspace.stageId,
       actor: actor,
       action: "file-updated",
       resource: {
@@ -2525,7 +2524,7 @@ async function handleWorkspaceFilesRoute(
       await writeAudit(ctx, {
         accountId: accountId,
         projectId: workspace.projectId,
-        environmentId: workspace.environmentId,
+        stageId: workspace.stageId,
         actor: actor,
         action: "file-deleted",
         resource: { kind: "workspaceFile", id: workspace._id, name: body.path },
@@ -2599,7 +2598,7 @@ async function handleWorkspaceDownloadLinkRoute(
   await writeAudit(ctx, {
     accountId: accountId,
     projectId: workspace.projectId,
-    environmentId: workspace.environmentId,
+    stageId: workspace.stageId,
     actor: actor,
     action: "file-link-created",
     resource: { kind: "workspaceFile", id: workspace._id, name: path },
@@ -2822,10 +2821,7 @@ function isAddressableTool(
   record: Doc<"accountTools"> | null,
 ): record is Doc<"accountTools"> {
   return Boolean(
-    record &&
-    record.status === "active" &&
-    record.projectId &&
-    record.environmentId,
+    record && record.status === "active" && record.projectId && record.stageId,
   );
 }
 
@@ -2836,7 +2832,7 @@ function toPublicAccountTool(
     accountId: record.accountId,
     toolId: record._id,
     projectId: record.projectId,
-    environmentId: record.environmentId,
+    stageId: record.stageId,
     name: record.name,
     description: record.description,
     inputSchema: record.inputSchema,
@@ -3206,7 +3202,7 @@ function json(body: unknown, status = 200): Response {
 }
 
 type ToolScope =
-  ({ ok: true } & ProjectEnvironmentScope) | { ok: false; response: Response };
+  ({ ok: true } & ProjectStageScope) | { ok: false; response: Response };
 
 async function resolveToolScope(
   ctx: ActionCtx,
@@ -3215,14 +3211,14 @@ async function resolveToolScope(
 ): Promise<ToolScope> {
   const params = new URL(req.url).searchParams;
   const project = params.get("project")?.trim();
-  const environment = params.get("environment")?.trim();
-  if (!project || !environment) {
+  const stage = params.get("stage")?.trim();
+  if (!project || !stage) {
     return {
       ok: false,
       response: json(
         {
           error:
-            "Tools are scoped to an environment: pass ?project=<slug>&environment=<name>",
+            "Tools are scoped to a stage: pass ?project=<slug>&stage=<name>",
         },
         400,
       ),
@@ -3232,18 +3228,18 @@ async function resolveToolScope(
   const scope = await ctx.runQuery(internal.accountTools.resolveScope, {
     accountId: accountId,
     project: project,
-    environment: environment,
+    stage: stage,
   });
   if (!scope) {
     return {
       ok: false,
-      response: json({ error: "Project or environment not found" }, 404),
+      response: json({ error: "Project or stage not found" }, 404),
     };
   }
 
   return {
     ok: true,
     projectId: scope.projectId,
-    environmentId: scope.environmentId,
+    stageId: scope.stageId,
   };
 }

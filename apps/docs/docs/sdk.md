@@ -21,10 +21,10 @@ from it, so without it a valid agent config fails to compile.
 
 ## Authentication
 
-Runtime calls use the **environment runtime API key** (not your dashboard login token). After your first `broods deploy`, the CLI writes `BROODS_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:
+Runtime calls use the **stage runtime API key** (not your dashboard login token). After your first `broods deploy`, the CLI writes `BROODS_API_KEY` to `.env.local`. The SDK loads it automatically, or you can pass it explicitly:
 
 The key is deployment-scoped: the gateway resolves its account, project,
-environment, endpoint, and agent, and rejects a generated agent reference whose
+stage, endpoint, and agent, and rejects a generated agent reference whose
 path does not match that scope. A request body cannot redirect the key to a
 different deployment or tenant.
 
@@ -57,7 +57,7 @@ const client = new BroodsClient({
 ### Sync Run (accumulate text)
 
 Pass the generated `api.agents.<name>` reference separately from the model input. The
-reference carries the deployed endpoint, project, and environment routing metadata.
+reference carries the deployed endpoint, project, and stage routing metadata.
 
 ```ts
 import { api } from "./broods/_generated/api";

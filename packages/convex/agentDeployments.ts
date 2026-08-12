@@ -1,7 +1,7 @@
 /**
- * Project + environment scoped runtime API keys (`fp_agent_…`).
+ * Project + stage scoped runtime API keys (`fp_agent_…`).
  *
- * One key per environment invokes any deployed agent in it; the agent is chosen
+ * One key per stage invokes any deployed agent in it; the agent is chosen
  * per request by id. The dashboard surfaces the key/URLs; the CLI mints it on
  * `deploy`. The SHA-256 hash authenticates runtime calls (`getByApiKeyHash` in
  * `core`); the plaintext is also stored AES-GCM encrypted so the owner can
@@ -27,7 +27,7 @@ import {
   insertConfigAuditEvent,
   type ConfigAuditActor,
 } from "./model/auditEvents";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 
 const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
@@ -37,7 +37,7 @@ const agentDeploymentScopeValidator = v.object({
   accountId: v.id("accounts"),
   endpointId: v.string(),
   projectSlug: v.string(),
-  environmentSlug: v.string(),
+  stageSlug: v.string(),
 });
 
 /** SHA-256 hex digest for one-time deployment API keys. */
@@ -70,9 +70,9 @@ function deploymentKeyHint(token: string): string {
   return `${DEPLOYMENT_KEY_PREFIX}…${token.slice(-4)}`;
 }
 
-/** Stable opaque endpoint handle for an environment's runtime API. */
-function endpointIdForEnvironment(environmentId: Id<"environments">): string {
-  return `env-${environmentId.slice(-8)}`;
+/** Stable opaque endpoint handle for a stage's runtime API. */
+function endpointIdForStage(stageId: Id<"stages">): string {
+  return `stage-${stageId.slice(-8)}`;
 }
 
 /** Secret for AES-GCM encrypting the runtime key at rest (shared with env vars). */
@@ -123,12 +123,12 @@ async function decryptApiKey(deployment: {
   return value;
 }
 
-/** Public (hash-free) view of an environment deployment for the dashboard. */
-const environmentDeploymentView = v.object({
+/** Public (hash-free) view of a stage deployment for the dashboard. */
+const stageDeploymentView = v.object({
   _id: v.id("agentDeployments"),
   endpointId: v.string(),
   projectSlug: v.string(),
-  environmentSlug: v.string(),
+  stageSlug: v.string(),
   keyHint: v.string(),
   updatedAt: v.number(),
 });
@@ -137,50 +137,50 @@ type EnsureResult = {
   deploymentId: Id<"agentDeployments">;
   endpointId: string;
   projectSlug: string;
-  environmentSlug: string;
+  stageSlug: string;
   keyHint: string;
   /** Plaintext key: freshly minted, or recovered from the stored blob. */
   rawApiKey: string;
 };
 
 /**
- * Find the environment's active deployment, creating one (with a fresh key) when
+ * Find the stage's active deployment, creating one (with a fresh key) when
  * absent. When `rotate` is true an existing key is regenerated. Returns the raw
  * key whenever it can — minted now, or decrypted from the at-rest blob.
  */
-export async function ensureEnvironmentDeployment(
+export async function ensureStageDeployment(
   ctx: MutationCtx,
   args: {
     authId: string;
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     projectSlug: string;
-    environmentSlug: string;
+    stageSlug: string;
     rotate?: boolean;
   },
 ): Promise<EnsureResult> {
-  const endpointId = endpointIdForEnvironment(args.environmentId);
+  const endpointId = endpointIdForStage(args.stageId);
   const existing = await ctx.db
     .query("agentDeployments")
-    .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+    .withIndex("by_projectId_and_stageId_and_status", (q) =>
       q
         .eq("projectId", args.projectId)
-        .eq("environmentId", args.environmentId)
+        .eq("stageId", args.stageId)
         .eq("status", "active"),
     )
     .first();
 
   if (existing && args.rotate !== true) {
-    // Keep slugs fresh (project/environment can be renamed) but reuse the key,
+    // Keep slugs fresh (project/stage can be renamed) but reuse the key,
     // recovering its plaintext from the stored blob.
     if (
       existing.projectSlug !== args.projectSlug ||
-      existing.environmentSlug !== args.environmentSlug
+      existing.stageSlug !== args.stageSlug
     ) {
       await ctx.db.patch(existing._id, {
         projectSlug: args.projectSlug,
-        environmentSlug: args.environmentSlug,
+        stageSlug: args.stageSlug,
         updatedAt: Date.now(),
       });
     }
@@ -189,7 +189,7 @@ export async function ensureEnvironmentDeployment(
       deploymentId: existing._id,
       endpointId: existing.endpointId,
       projectSlug: args.projectSlug,
-      environmentSlug: args.environmentSlug,
+      stageSlug: args.stageSlug,
       keyHint: existing.keyHint,
       rawApiKey: await decryptApiKey(existing),
     };
@@ -207,7 +207,7 @@ export async function ensureEnvironmentDeployment(
       keyHint: keyHint,
       ...encryptedKey,
       projectSlug: args.projectSlug,
-      environmentSlug: args.environmentSlug,
+      stageSlug: args.stageSlug,
       updatedAt: now,
     });
 
@@ -215,7 +215,7 @@ export async function ensureEnvironmentDeployment(
       deploymentId: existing._id,
       endpointId: existing.endpointId,
       projectSlug: args.projectSlug,
-      environmentSlug: args.environmentSlug,
+      stageSlug: args.stageSlug,
       keyHint: keyHint,
       rawApiKey: rawApiKey,
     };
@@ -225,11 +225,11 @@ export async function ensureEnvironmentDeployment(
     authId: args.authId,
     accountId: args.accountId,
     projectId: args.projectId,
-    environmentId: args.environmentId,
+    stageId: args.stageId,
     status: "active",
     endpointId: endpointId,
     projectSlug: args.projectSlug,
-    environmentSlug: args.environmentSlug,
+    stageSlug: args.stageSlug,
     apiKeyHash: apiKeyHash,
     keyHint: keyHint,
     ...encryptedKey,
@@ -240,24 +240,24 @@ export async function ensureEnvironmentDeployment(
     deploymentId: deploymentId,
     endpointId: endpointId,
     projectSlug: args.projectSlug,
-    environmentSlug: args.environmentSlug,
+    stageSlug: args.stageSlug,
     keyHint: keyHint,
     rawApiKey: rawApiKey,
   };
 }
 
-/** Resolve the project's org account, slug, and the environment's slug. */
-async function resolveEnvironmentContext(
+/** Resolve the project's org account, slug, and the stage's slug. */
+async function resolveStageContext(
   ctx: MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
 ) {
   const project = await ctx.db.get(projectId);
   if (!project?.orgId)
     throw new Error("Project is not linked to an organization.");
-  const environment = await ctx.db.get(environmentId);
-  if (!environment || environment.projectId !== projectId)
-    throw new Error("Environment not found.");
+  const stage = await ctx.db.get(stageId);
+  if (!stage || stage.projectId !== projectId)
+    throw new Error("Stage not found.");
 
   const account = await ctx.db
     .query("accounts")
@@ -272,7 +272,7 @@ async function resolveEnvironmentContext(
   return {
     account: account,
     projectSlug: project.slug ?? "project",
-    environmentSlug: environment.name.toLowerCase(),
+    stageSlug: stage.name.toLowerCase(),
     authId: project.authId,
   };
 }
@@ -284,7 +284,7 @@ async function recordDeploymentAudit(
   input: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     action: string;
     endpointId: string;
     summary: string;
@@ -293,7 +293,7 @@ async function recordDeploymentAudit(
   await insertConfigAuditEvent(ctx.db, {
     accountId: input.accountId,
     projectId: input.projectId,
-    environmentId: input.environmentId,
+    stageId: input.stageId,
     actor: actor,
     action: input.action,
     resource: {
@@ -305,29 +305,25 @@ async function recordDeploymentAudit(
   });
 }
 
-/** The environment's active deployment for display (no secret material). */
-export const getForEnvironment = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
-  returns: v.union(environmentDeploymentView, v.null()),
-  handler: async (ctx, { projectId, environmentId }) => {
+/** The stage's active deployment for display (no secret material). */
+export const getForStage = query({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: v.union(stageDeploymentView, v.null()),
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Return null rather than throwing so a just-deleted environment doesn't
+    // Return null rather than throwing so a just-deleted stage doesn't
     // crash the reactive side panel before it unmounts.
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return null;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
 
     const deployment = await ctx.db
       .query("agentDeployments")
-      .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+      .withIndex("by_projectId_and_stageId_and_status", (q) =>
         q
           .eq("projectId", projectId)
-          .eq("environmentId", environmentId)
+          .eq("stageId", stageId)
           .eq("status", "active"),
       )
       .first();
@@ -337,7 +333,7 @@ export const getForEnvironment = query({
       _id: deployment._id,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
-      environmentSlug: deployment.environmentSlug,
+      stageSlug: deployment.stageSlug,
       keyHint: deployment.keyHint,
       updatedAt: deployment.updatedAt,
     };
@@ -345,31 +341,27 @@ export const getForEnvironment = query({
 });
 
 /**
- * Owner-only: decrypts the environment's stored runtime key so the dashboard can
- * stream logs/traces without re-minting. Returns null when the environment has no
+ * Owner-only: decrypts the stage's stored runtime key so the dashboard can
+ * stream logs/traces without re-minting. Returns null when the stage has no
  * deployment yet. Reactive by design, so a freshly generated key appears without
  * a reload.
  */
-export const revealKeyForEnvironment = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+export const revealKeyForStage = query({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.union(v.string(), v.null()),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return null;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
 
     const deployment = await ctx.db
       .query("agentDeployments")
-      .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+      .withIndex("by_projectId_and_stageId_and_status", (q) =>
         q
           .eq("projectId", projectId)
-          .eq("environmentId", environmentId)
+          .eq("stageId", stageId)
           .eq("status", "active"),
       )
       .first();
@@ -383,16 +375,16 @@ const ensureReturn = v.object({
   _id: v.id("agentDeployments"),
   endpointId: v.string(),
   projectSlug: v.string(),
-  environmentSlug: v.string(),
+  stageSlug: v.string(),
   keyHint: v.string(),
   rawApiKey: v.string(),
 });
 
-/** Ensure the environment has a recoverable runtime key, creating one on first call. */
-export const ensureForEnvironment = mutation({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+/** Ensure the stage has a recoverable runtime key, creating one on first call. */
+export const ensureForStage = mutation({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: ensureReturn,
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -403,26 +395,22 @@ export const ensureForEnvironment = mutation({
       "admin",
     );
     if (!project) throw new Error("Project not found.");
-    const context = await resolveEnvironmentContext(
-      ctx,
-      projectId,
-      environmentId,
-    );
-    const result = await ensureEnvironmentDeployment(ctx, {
+    const context = await resolveStageContext(ctx, projectId, stageId);
+    const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       projectSlug: context.projectSlug,
-      environmentSlug: context.environmentSlug,
+      stageSlug: context.stageSlug,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       action: "ready",
       endpointId: result.endpointId,
-      summary: "Environment runtime deployment is ready",
+      summary: "Stage runtime deployment is ready",
     });
 
     return toEnsureReturn(result);
@@ -430,14 +418,14 @@ export const ensureForEnvironment = mutation({
 });
 
 /**
- * Regenerate the environment's runtime key and return the new plaintext. If the
- * environment has no key yet this mints the first one (same as
- * `ensureForEnvironment`), so a rotate is always safe to call.
+ * Regenerate the stage's runtime key and return the new plaintext. If the
+ * stage has no key yet this mints the first one (same as
+ * `ensureForStage`), so a rotate is always safe to call.
  */
 export const rotate = mutation({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: ensureReturn,
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
@@ -448,27 +436,23 @@ export const rotate = mutation({
       "admin",
     );
     if (!project) throw new Error("Project not found.");
-    const context = await resolveEnvironmentContext(
-      ctx,
-      projectId,
-      environmentId,
-    );
-    const result = await ensureEnvironmentDeployment(ctx, {
+    const context = await resolveStageContext(ctx, projectId, stageId);
+    const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       projectSlug: context.projectSlug,
-      environmentSlug: context.environmentSlug,
+      stageSlug: context.stageSlug,
       rotate: true,
     });
     await recordDeploymentAudit(ctx, dashboardAuditActor(authUser), {
       accountId: context.account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       action: "key-rotated",
       endpointId: result.endpointId,
-      summary: "Environment runtime key rotated",
+      summary: "Stage runtime key rotated",
     });
 
     return toEnsureReturn(result);
@@ -493,12 +477,12 @@ export const getByApiKeyHash = internalQuery({
       accountId: deployment.accountId,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
-      environmentSlug: deployment.environmentSlug,
+      stageSlug: deployment.stageSlug,
     };
   },
 });
 
-/** Resolve the active environment deployment linked to one runtime agent. */
+/** Resolve the active stage deployment linked to one runtime agent. */
 export const getByAgentId = internalQuery({
   args: {
     accountId: v.id("accounts"),
@@ -519,10 +503,10 @@ export const getByAgentId = internalQuery({
 
     const deployment = await ctx.db
       .query("agentDeployments")
-      .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+      .withIndex("by_projectId_and_stageId_and_status", (q) =>
         q
           .eq("projectId", config.projectId)
-          .eq("environmentId", config.environmentId)
+          .eq("stageId", config.stageId)
           .eq("status", "active"),
       )
       .unique();
@@ -532,7 +516,7 @@ export const getByAgentId = internalQuery({
       accountId: deployment.accountId,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
-      environmentSlug: deployment.environmentSlug,
+      stageSlug: deployment.stageSlug,
     };
   },
 });
@@ -542,7 +526,7 @@ function toEnsureReturn(result: EnsureResult) {
     _id: result.deploymentId,
     endpointId: result.endpointId,
     projectSlug: result.projectSlug,
-    environmentSlug: result.environmentSlug,
+    stageSlug: result.stageSlug,
     keyHint: result.keyHint,
     rawApiKey: result.rawApiKey,
   };

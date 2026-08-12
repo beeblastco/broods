@@ -233,7 +233,7 @@ function sandboxControlPlane(
   return {
     accountId: accountId,
     ...(record.projectId ? { projectId: record.projectId } : {}),
-    ...(record.environmentId ? { environmentId: record.environmentId } : {}),
+    ...(record.stageId ? { stageId: record.stageId } : {}),
     sandboxConfigId: record.sandboxId,
     name: record.name,
     specs: resolveSandboxSpecs({

@@ -1,10 +1,10 @@
 "use client";
 
-/** Danger panel: delete the active environment or the entire project, each behind a typed confirmation. */
+/** Danger panel: delete the active stage or the entire project, each behind a typed confirmation. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
@@ -14,18 +14,18 @@ import { useState } from "react";
 interface Props {
   /** Project to delete. */
   projectId: Id<"projects">;
-  /** Active environment that the environment-scoped delete acts on, or null. */
-  environmentId: Id<"environments"> | null;
+  /** Active stage that the stage-scoped delete acts on, or null. */
+  stageId: Id<"stages"> | null;
 }
 
-export function DangerPanel({ projectId, environmentId }: Props) {
+export function DangerPanel({ projectId, stageId }: Props) {
   const project = useQuery(api.project.getById, { projectId: projectId });
-  const environments = useQuery(api.environment.list, {
+  const stages = useQuery(api.stage.list, {
     projectId: projectId,
-  }) as Doc<"environments">[] | undefined;
+  }) as Doc<"stages">[] | undefined;
   const removeProject = useMutation(api.project.remove);
-  const removeEnvironment = useMutation(api.environment.remove);
-  const { setEnvironmentId } = useEnvironment();
+  const removeStage = useMutation(api.stage.remove);
+  const { setStageId } = useStage();
   const router = useRouter();
 
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
@@ -34,14 +34,13 @@ export function DangerPanel({ projectId, environmentId }: Props) {
     null,
   );
 
-  const [envDialogOpen, setEnvDialogOpen] = useState(false);
-  const [isDeletingEnv, setIsDeletingEnv] = useState(false);
-  const [envDeleteError, setEnvDeleteError] = useState<string | null>(null);
+  const [stageDialogOpen, setStageDialogOpen] = useState(false);
+  const [isDeletingStage, setIsDeletingStage] = useState(false);
+  const [stageDeleteError, setStageDeleteError] = useState<string | null>(null);
 
-  const activeEnv =
-    environments?.find((env) => env._id === environmentId) ?? null;
-  const defaultEnv = environments?.find((env) => env.isDefault) ?? null;
-  const canDeleteEnv = Boolean(activeEnv && !activeEnv.isDefault);
+  const activeStage = stages?.find((stage) => stage._id === stageId) ?? null;
+  const defaultStage = stages?.find((stage) => stage.isDefault) ?? null;
+  const canDeleteStage = Boolean(activeStage && !activeStage.isDefault);
 
   async function handleDeleteProject() {
     setIsDeletingProject(true);
@@ -58,20 +57,20 @@ export function DangerPanel({ projectId, environmentId }: Props) {
     }
   }
 
-  async function handleDeleteEnvironment() {
-    if (!activeEnv) return;
-    setIsDeletingEnv(true);
-    setEnvDeleteError(null);
+  async function handleDeleteStage() {
+    if (!activeStage) return;
+    setIsDeletingStage(true);
+    setStageDeleteError(null);
     try {
-      await removeEnvironment({ environmentId: activeEnv._id });
-      setEnvironmentId(defaultEnv ? defaultEnv._id : null);
-      setEnvDialogOpen(false);
+      await removeStage({ stageId: activeStage._id });
+      setStageId(defaultStage ? defaultStage._id : null);
+      setStageDialogOpen(false);
     } catch (err) {
-      setEnvDeleteError(
-        err instanceof Error ? err.message : "Failed to delete environment.",
+      setStageDeleteError(
+        err instanceof Error ? err.message : "Failed to delete stage.",
       );
     } finally {
-      setIsDeletingEnv(false);
+      setIsDeletingStage(false);
     }
   }
 
@@ -79,36 +78,36 @@ export function DangerPanel({ projectId, environmentId }: Props) {
     <>
       <div className="grid gap-6">
         <Section
-          title="Delete Environment"
-          description="Permanently delete the selected environment and all of its data. This cannot be undone."
+          title="Delete Stage"
+          description="Permanently delete the selected stage and all of its data. This cannot be undone."
           danger
         >
           <div className="flex items-center justify-between gap-6">
             <div>
               <p className="text-sm font-medium text-foreground">
-                Delete {activeEnv ? `"${activeEnv.name}"` : "this environment"}
+                Delete {activeStage ? `"${activeStage.name}"` : "this stage"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {activeEnv?.isDefault
-                  ? "The default environment can't be deleted."
-                  : "All agents, services, variables, deploy keys, and webhooks in this environment will be removed."}
+                {activeStage?.isDefault
+                  ? "The default stage can't be deleted."
+                  : "All agents, services, variables, deploy keys, and webhooks in this stage will be removed."}
               </p>
             </div>
             <Button
               variant="destructive"
               size="sm"
               className="shrink-0 cursor-pointer disabled:cursor-not-allowed"
-              disabled={!canDeleteEnv}
+              disabled={!canDeleteStage}
               onClick={() => {
-                setEnvDeleteError(null);
-                setEnvDialogOpen(true);
+                setStageDeleteError(null);
+                setStageDialogOpen(true);
               }}
             >
-              Delete Environment
+              Delete Stage
             </Button>
           </div>
-          {envDeleteError && (
-            <p className="text-sm text-destructive">{envDeleteError}</p>
+          {stageDeleteError && (
+            <p className="text-sm text-destructive">{stageDeleteError}</p>
           )}
         </Section>
 
@@ -123,8 +122,8 @@ export function DangerPanel({ projectId, environmentId }: Props) {
                 Delete this project
               </p>
               <p className="text-xs text-muted-foreground">
-                All environments, agent configs, canvas layouts, and variables
-                will be permanently removed.
+                All stages, agent configs, canvas layouts, and variables will be
+                permanently removed.
               </p>
             </div>
             <Button
@@ -145,15 +144,15 @@ export function DangerPanel({ projectId, environmentId }: Props) {
         </Section>
       </div>
 
-      {activeEnv && (
+      {activeStage && (
         <DeleteConfirmDialog
-          open={envDialogOpen}
-          onOpenChange={setEnvDialogOpen}
-          resourceName={activeEnv.name}
-          resourceType="environment"
+          open={stageDialogOpen}
+          onOpenChange={setStageDialogOpen}
+          resourceName={activeStage.name}
+          resourceType="stage"
           critical={true}
-          onConfirm={handleDeleteEnvironment}
-          isDeleting={isDeletingEnv}
+          onConfirm={handleDeleteStage}
+          isDeleting={isDeletingStage}
         />
       )}
 

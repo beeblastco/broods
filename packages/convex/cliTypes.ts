@@ -37,6 +37,6 @@ export type GeneratedIds = {
 export type CliManifest = {
   version: 1;
   project: string;
-  environment: string;
+  stage: string;
   resources: CliManifestResource[];
 };

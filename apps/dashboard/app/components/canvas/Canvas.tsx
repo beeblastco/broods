@@ -27,7 +27,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/app/components/ui/context-menu";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { reportPerf } from "@/app/lib/perfReport";
 import {
   analyzeCanvasInfra,
@@ -369,12 +369,10 @@ function findNearestAgentNode(
 
 /** Inner canvas that consumes ReactFlow context. */
 function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
-  const { environmentId } = useEnvironment();
+  const { stageId } = useStage();
   const canvasLayout = useQuery(
     api.canvas.getByProject,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
   const { theme } = useTheme();
   const isDark = theme === "dark";
@@ -424,7 +422,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     // snapshot matches what's on screen (local React state is already optimistic).
     localStore.setQuery(
       api.canvas.getByProject,
-      { projectId: args.projectId, environmentId: args.environmentId },
+      { projectId: args.projectId, stageId: args.stageId },
       { nodes: args.nodes, edges: args.edges },
     );
   });
@@ -445,7 +443,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     editGeneration.current += 1;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
-      if (!environmentId) return;
+      if (!stageId) return;
       const generation = editGeneration.current;
       setSaveState("saving");
       // The layout write is optimistic (withOptimisticUpdate above), so this
@@ -458,7 +456,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       const currentEdges = edgesRef.current;
       saveLayoutMutation({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
@@ -562,7 +560,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         });
     }, 500);
   }, [
-    environmentId,
+    stageId,
     projectId,
     saveLayoutMutation,
     setNodes,
@@ -1196,7 +1194,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
         <CreateAgentConfigDialog
           projectId={projectId}
-          environmentId={environmentId}
+          stageId={stageId}
           open={configDialogOpen}
           onOpenChange={onConfigDialogOpenChange}
           initialCanvasPosition={agentCreatePosition}

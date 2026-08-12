@@ -189,10 +189,10 @@ export interface ChannelRecordConfig {
   tagRoles?: Array<{ roleId: string; actorIds: string[] }>;
 }
 
-/** The environment a tool belongs to. Tools with the same name in two environments are two tools. */
+/** The stage a tool belongs to. Tools with the same name in two stages are two tools. */
 export interface ToolScope {
   project: string;
-  environment: string;
+  stage: string;
 }
 
 /** Public uploaded-tool record returned by the tools routes. */
@@ -200,7 +200,7 @@ export interface AccountTool {
   accountId: string;
   toolId: string;
   projectId: string;
-  environmentId: string;
+  stageId: string;
   name: string;
   description: string;
   inputSchema: unknown;
@@ -300,7 +300,7 @@ function envVar(name: string): string | undefined {
 function toolScopeQuery(scope: ToolScope): string {
   const query = new URLSearchParams({
     project: scope.project,
-    environment: scope.environment,
+    stage: scope.stage,
   });
 
   return `?${query.toString()}`;
@@ -788,10 +788,10 @@ export class BroodsAccountClient {
     );
   }
 
-  /** Tools live in one environment, so the collection routes need a scope. Both fields are required. */
+  /** Tools live in one stage, so the collection routes need a scope. Both fields are required. */
   async listTools(scope: ToolScope): Promise<AccountTool[]> {
     // A 404 here means the scope does not resolve, which is not an empty
-    // environment — collapsing the two would hide a typo in the scope.
+    // stage — collapsing the two would hide a typo in the scope.
     const path = `/v1/tools${toolScopeQuery(scope)}`;
     const result = await this.request<{ tools: AccountTool[] }>("GET", path);
     if (!result) throw new BroodsAccountApiError("GET", path, 404, "Not found");

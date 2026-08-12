@@ -43,21 +43,21 @@ function formatDuration(ms: number): string {
 
 export function ToolTestTab({
   projectId,
-  environmentId,
+  stageId,
   nodeId,
 }: {
   projectId: Id<"projects"> | undefined;
-  environmentId: Id<"environments"> | null;
+  stageId: Id<"stages"> | null;
   nodeId: string;
 }) {
-  const canQueryTool = !!projectId && !!environmentId;
+  const canQueryTool = !!projectId && !!stageId;
   const executeTool = useAction(api.toolService.execute);
   const toolService = useQuery(
     api.toolService.getByNode,
     canQueryTool
       ? {
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           nodeId: nodeId,
         }
       : "skip",
@@ -98,10 +98,8 @@ export function ToolTestTab({
       return;
     }
 
-    if (!projectId || !environmentId) {
-      setRunError(
-        "Project and environment context are required to run this tool.",
-      );
+    if (!projectId || !stageId) {
+      setRunError("Project and stage context are required to run this tool.");
 
       return;
     }
@@ -126,7 +124,7 @@ export function ToolTestTab({
     try {
       const body = await executeTool({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         nodeId: nodeId,
         input: parsedInput,
       });
@@ -162,11 +160,11 @@ export function ToolTestTab({
     );
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
-          Select an environment before testing this tool.
+          Select a stage before testing this tool.
         </p>
       </div>
     );

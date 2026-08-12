@@ -1,7 +1,7 @@
 "use client";
 
-/** Project name switcher and (when on a project page) environment selector in the header. */
-import { EnvironmentSelector } from "@/app/components/EnvironmentSelector";
+/** Project name switcher and (when on a project page) stage selector in the header. */
+import { StageSelector } from "@/app/components/StageSelector";
 import { ProjectSelector } from "@/app/components/ProjectSelector";
 import { useParams } from "next/navigation";
 
@@ -16,7 +16,7 @@ export function ProjectHeaderLeft() {
       {hasProject && (
         <>
           <div className="h-4 w-px bg-border" />
-          <EnvironmentSelector />
+          <StageSelector />
         </>
       )}
     </>

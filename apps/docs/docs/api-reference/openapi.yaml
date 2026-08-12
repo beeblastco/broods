@@ -1736,13 +1736,13 @@ paths:
       summary: Create uploaded custom tool
       description: >-
         Upload an already-bundled JavaScript tool bundle and model-facing manifest.
-        A tool belongs to one project environment, so `project` and `environment`
-        are required; two environments may each define a tool of the same name.
+        A tool belongs to one project stage, so `project` and `stage`
+        are required; two stages may each define a tool of the same name.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
         - {
-            name: environment,
+            name: stage,
             in: query,
             required: true,
             schema: { type: string },
@@ -1760,17 +1760,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or environment }
-        "404": { description: Project or environment not found }
+        "400": { description: Missing project or stage }
+        "404": { description: Project or stage not found }
     get:
       tags: [Tools]
       summary: List uploaded custom tools
-      description: Lists the tools of one project environment. Both query parameters are required.
+      description: Lists the tools of one project stage. Both query parameters are required.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
         - {
-            name: environment,
+            name: stage,
             in: query,
             required: true,
             schema: { type: string },
@@ -1787,8 +1787,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or environment }
-        "404": { description: Project or environment not found }
+        "400": { description: Missing project or stage }
+        "404": { description: Project or stage not found }
 
   /v1/tools/{toolId}:
     get:
@@ -3026,7 +3026,7 @@ components:
           $ref: "#/components/schemas/AgentPolicyConfig"
         publicAccess:
           type: boolean
-          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
+          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
@@ -3174,7 +3174,7 @@ components:
           type: string
           description: >-
             Trusted runtime attribute or dotted path. Examples include accountId,
-            project, environment, agentId, channel, channelId, threadId, actorId,
+            project, stage, agentId, channel, channelId, threadId, actorId,
             actorName, actorRoles, toolName, toolId, filePath, workspaceName,
             sandboxPermissionMode, tool.input.command, tool.input.file_path, and
             tool.inputKeys. On an array attribute such as actorRoles, `contains`
@@ -3659,7 +3659,7 @@ components:
           example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
         projectId:
           type: string
-        environmentId:
+        stageId:
           type: string
         name:
           type: string

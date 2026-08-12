@@ -19,7 +19,7 @@ function ctx(accountId: string): ObservabilityContext {
   return {
     accountId: accountId,
     project: "p",
-    environment: "e",
+    stage: "e",
     endpointId: "ep-" + accountId,
     agentId: "a",
     conversationKey: "c",

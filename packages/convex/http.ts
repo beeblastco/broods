@@ -11,6 +11,7 @@ import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
+import { handle as cliStagesHttp } from "./cliStagesHttp";
 import { handle as configHttp } from "./configHttp";
 
 const http = httpRouter();
@@ -45,6 +46,18 @@ http.route({
   path: "/v1/account/onboarding",
   method: "POST",
   handler: cliOnboardingHttp,
+});
+
+http.route({
+  path: "/v1/account/stages",
+  method: "GET",
+  handler: cliStagesHttp,
+});
+
+http.route({
+  path: "/v1/account/stages",
+  method: "POST",
+  handler: cliStagesHttp,
 });
 
 http.route({

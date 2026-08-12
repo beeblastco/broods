@@ -51,7 +51,7 @@ test("reconnects transient log sockets and de-duplicates overlap backfill", asyn
       baseUrl: "https://app.example",
       apiKey: "secret-key",
       project: "demo",
-      environment: "development",
+      stage: "development",
     },
     { backfill: 100, signal: controller.signal },
   );
@@ -99,7 +99,7 @@ test("requests live-only logs when no backfill is requested", async () => {
       baseUrl: "https://app.example",
       apiKey: "secret-key",
       project: "demo",
-      environment: "development",
+      stage: "development",
     },
     { signal: controller.signal },
   );
@@ -124,7 +124,7 @@ test("does not include the runtime key in connection errors", async () => {
     baseUrl: "https://app.example",
     apiKey: "do-not-leak",
     project: "demo",
-    environment: "development",
+    stage: "development",
   });
   const result = stream.next();
   await Bun.sleep(0);

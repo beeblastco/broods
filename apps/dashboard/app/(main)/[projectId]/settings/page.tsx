@@ -2,7 +2,7 @@
 
 /** Settings page with sidebar navigation and panel-based content layout. */
 import { Button } from "@/app/components/ui/button";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -11,17 +11,17 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { DangerPanel } from "./components/DangerPanel";
 import { DeployKeysPanel } from "./components/DeployKeysPanel";
-import { EnvironmentsPanel } from "./components/EnvironmentsPanel";
+import { EnvironmentVariablesPanel } from "./components/EnvironmentVariablesPanel";
 import { PoliciesPanel } from "./components/PoliciesPanel";
 import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
 type SettingsTab =
-  "general" | "environments" | "deploy" | "webhooks" | "policies" | "danger";
+  "general" | "variables" | "deploy" | "webhooks" | "policies" | "danger";
 
 const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "general", label: "General" },
-  { id: "environments", label: "Environments" },
+  { id: "variables", label: "Environment variables" },
   { id: "deploy", label: "Deploy" },
   { id: "webhooks", label: "Webhooks" },
   { id: "policies", label: "Policies" },
@@ -32,9 +32,9 @@ export default function SettingsPage() {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
-  const { environmentId } = useEnvironment();
+  const { stageId } = useStage();
 
-  // Build a tab href that preserves the current params (e.g. ?env=) so the link is shareable
+  // Build a tab href that preserves the current params (e.g. ?stage=) so the link is shareable
   // and can be opened in a new browser tab.
   const tabHref = (tabId: SettingsTab) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -43,16 +43,16 @@ export default function SettingsPage() {
     return `/${projectId}/settings?${next.toString()}`;
   };
 
-  const environments = useQuery(api.environment.list, {
+  const stages = useQuery(api.stage.list, {
     projectId: projectId,
-  }) as Doc<"environments">[] | undefined;
-  // Resolve the environment to configure: the URL selection, else the default, else the first.
-  const activeEnv =
-    environments?.find((env) => env._id === environmentId) ??
-    environments?.find((env) => env.isDefault) ??
-    environments?.[0] ??
+  }) as Doc<"stages">[] | undefined;
+  // Resolve the stage to configure: the URL selection, else the default, else the first.
+  const activeStage =
+    stages?.find((stage) => stage._id === stageId) ??
+    stages?.find((stage) => stage.isDefault) ??
+    stages?.[0] ??
     null;
-  const activeEnvId = activeEnv?._id ?? null;
+  const activeStageId = activeStage?._id ?? null;
 
   const activeTab = (searchParams.get("tab") as SettingsTab) || "general";
   const tab = TABS.find((t) => t.id === activeTab);
@@ -62,29 +62,23 @@ export default function SettingsPage() {
     switch (activeTab) {
       case "general":
         return <ProjectGeneralPanel projectId={projectId} />;
-      case "environments":
+      case "variables":
         return (
-          <EnvironmentsPanel
+          <EnvironmentVariablesPanel
             projectId={projectId}
-            environmentId={activeEnvId}
+            stageId={activeStageId}
           />
         );
       case "deploy":
         return (
-          <DeployKeysPanel projectId={projectId} environmentId={activeEnvId} />
+          <DeployKeysPanel projectId={projectId} stageId={activeStageId} />
         );
       case "webhooks":
-        return (
-          <WebhooksPanel projectId={projectId} environmentId={activeEnvId} />
-        );
+        return <WebhooksPanel projectId={projectId} stageId={activeStageId} />;
       case "policies":
-        return (
-          <PoliciesPanel projectId={projectId} environmentId={activeEnvId} />
-        );
+        return <PoliciesPanel projectId={projectId} stageId={activeStageId} />;
       case "danger":
-        return (
-          <DangerPanel projectId={projectId} environmentId={activeEnvId} />
-        );
+        return <DangerPanel projectId={projectId} stageId={activeStageId} />;
       default:
         return <ProjectGeneralPanel projectId={projectId} />;
     }

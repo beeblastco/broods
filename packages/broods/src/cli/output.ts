@@ -12,6 +12,7 @@ const YELLOW = "\x1b[33m";
 const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 const LABEL_BG_GREEN = "\x1b[42m\x1b[30m\x1b[1m";
+const LABEL_BG_YELLOW = "\x1b[43m\x1b[30m\x1b[1m";
 
 export interface FormatOptions {
   color?: boolean;
@@ -20,7 +21,7 @@ export interface FormatOptions {
 
 export interface DeploymentTarget {
   project: string;
-  environment: string;
+  stage: string;
   dashboardUrl: string;
 }
 
@@ -29,19 +30,24 @@ export function formatDeploymentTarget(
   options: FormatOptions = {},
 ): string {
   const color = shouldUseColor(options);
-  const bar = paint("▌", GREEN, color);
+  // `dev` syncs whatever stage BROODS_STAGE/--stage resolves to, so the banner
+  // has to name that stage. A green badge is reserved for Development; anything
+  // else gets a yellow one so syncing Production never looks routine.
+  const stageLabel = stageDisplayName(target.stage);
+  const development = stageLabel === "Development";
+  const bar = paint("▌", development ? GREEN : YELLOW, color);
   const label = color
-    ? `${LABEL_BG_GREEN} Development ${RESET}`
-    : "[Development]";
+    ? `${development ? LABEL_BG_GREEN : LABEL_BG_YELLOW} ${stageLabel} ${RESET}`
+    : `[${stageLabel}]`;
   const dashboardText = color
     ? paint("dashboard", UNDERLINE, color)
     : "dashboard";
-  const deepLink = `${target.dashboardUrl}?project=${encodeURIComponent(target.project)}&env=${encodeURIComponent(target.environment)}`;
+  const deepLink = `${target.dashboardUrl}?project=${encodeURIComponent(target.project)}&stage=${encodeURIComponent(target.stage)}`;
   const url = paint(deepLink, `${DIM}${UNDERLINE}`, color);
 
   return [
-    `${bar} Syncing Development: ${paint(target.project, "", color)}`,
-    `${bar} ${label} ${target.environment} (${dashboardText})`,
+    `${bar} Syncing ${stageLabel}: ${paint(target.project, "", color)}`,
+    `${bar} ${label} ${target.stage} (${dashboardText})`,
     `${bar} ${paint("└─", DIM, color)} ${url}`,
   ].join("\n");
 }
@@ -57,7 +63,7 @@ export function formatReadyLine(
 
 /**
  * One-line summary of the env vars `dev` pushed from `.env.local` to the cloud
- * environment, e.g. `▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, …`.
+ * stage, e.g. `▌ ↑ Synced 2 env var(s) from .env.local: OPENAI_API_KEY, …`.
  */
 export function formatEnvSync(
   names: string[],
@@ -123,6 +129,18 @@ function shouldUseColor(options: FormatOptions): boolean {
 
 function paint(value: string, style: string, color: boolean): string {
   return color ? `${style}${value}${RESET}` : value;
+}
+
+/**
+ * The stage name as the backend stores it: `development` and `production` are
+ * reserved and always canonicalize, every other name is kept verbatim.
+ */
+function stageDisplayName(stage: string): string {
+  const normalized = stage.trim().toLowerCase();
+  if (normalized === "development") return "Development";
+  if (normalized === "production") return "Production";
+
+  return stage.trim();
 }
 
 function formatDiffMarker(

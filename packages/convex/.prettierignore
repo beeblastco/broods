@@ -1,0 +1,3 @@
+# Convex writes these; formatting them produces diff noise and can mangle the
+# markdown guidelines the generator ships.
+_generated/

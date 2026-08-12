@@ -21,14 +21,14 @@ export interface RemoteManifestResponse {
   /** Non-fatal deploy advisories (e.g. referenced-but-unset env vars, unresolved policy refs). */
   warnings?: { missingEnv?: string[]; missingPolicies?: string[] };
   /**
-   * The environment's runtime API key context. Deployments include the plaintext
+   * The stage's runtime API key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
    */
   deployment?: {
     accountId: string;
     endpointId: string;
     projectSlug: string;
-    environmentSlug: string;
+    stageSlug: string;
     keyHint: string;
     apiKey: string;
   } | null;
@@ -39,6 +39,8 @@ export interface CliOnboardingOrg {
   name: string;
   slug: string;
   role: "owner" | "admin" | "member";
+  /** Absent on backends that predate plan reporting. */
+  plan?: "free" | "pro" | "enterprise";
   accountStatus: "active" | "missing" | "disabled";
 }
 
@@ -48,10 +50,37 @@ export interface CliOnboardingProject {
   slug: string;
 }
 
+export interface CliOnboardingAccount {
+  id: string;
+  username: string;
+  status: "active" | "disabled";
+}
+
+export interface CliOnboardingUser {
+  authId: string;
+  email: string;
+  name: string;
+}
+
 export interface CliOnboardingContext {
   currentOrgId: string;
   orgs: CliOnboardingOrg[];
   projects: CliOnboardingProject[];
+  /** The API account backing the current org; absent on older backends. */
+  account?: CliOnboardingAccount | null;
+  user?: CliOnboardingUser;
+}
+
+/** One stage of a project, as listed by `broods stage list`. */
+export interface CliStage {
+  id: string;
+  name: string;
+  kind: "development" | "production" | "custom";
+  isDefault: boolean;
+  deploymentRegion?: "ap-southeast-1" | "eu-west-1" | "us-east-1";
+  agentCount: number;
+  variableCount: number;
+  updatedAt: number;
 }
 
 /** A stored environment variable as listed by the CLI (name only; value is write-only). */
@@ -82,9 +111,9 @@ export class BroodsSyncClient {
 
   async getManifest(
     project: string,
-    environment: string,
+    stage: string,
   ): Promise<RemoteManifestResponse | null> {
-    const response = await this.request(project, environment, "/manifest", {
+    const response = await this.request(project, stage, "/manifest", {
       method: "GET",
     });
     if (response.status === 404) return null;
@@ -100,7 +129,7 @@ export class BroodsSyncClient {
   ): Promise<RemoteManifestResponse> {
     const response = await this.request(
       manifest.project,
-      manifest.environment,
+      manifest.stage,
       "/manifest",
       {
         method: "PUT",
@@ -114,21 +143,21 @@ export class BroodsSyncClient {
   }
 
   /**
-   * Recovers the environment's runtime API key so the CLI can reconnect to a
+   * Recovers the stage's runtime API key so the CLI can reconnect to a
    * dashboard-created project without redeploying. Returns null when the project/
-   * environment is unknown.
+   * stage is unknown.
    */
   async getRuntimeKey(
     project: string,
-    environment: string,
+    stage: string,
   ): Promise<{
     apiKey: string;
     keyHint: string;
     endpointId?: string;
     projectSlug?: string;
-    environmentSlug?: string;
+    stageSlug?: string;
   } | null> {
-    const response = await this.request(project, environment, "/runtime-key", {
+    const response = await this.request(project, stage, "/runtime-key", {
       method: "GET",
     });
     if (response.status === 404) return null;
@@ -138,7 +167,7 @@ export class BroodsSyncClient {
       keyHint?: string;
       endpointId?: string;
       projectSlug?: string;
-      environmentSlug?: string;
+      stageSlug?: string;
     };
 
     if (!payload.apiKey)
@@ -149,21 +178,19 @@ export class BroodsSyncClient {
       keyHint: payload.keyHint ?? "",
       ...(payload.endpointId ? { endpointId: payload.endpointId } : {}),
       ...(payload.projectSlug ? { projectSlug: payload.projectSlug } : {}),
-      ...(payload.environmentSlug
-        ? { environmentSlug: payload.environmentSlug }
-        : {}),
+      ...(payload.stageSlug ? { stageSlug: payload.stageSlug } : {}),
     };
   }
 
   async setEnv(
     project: string,
-    environment: string,
+    stage: string,
     name: string,
     value: string,
   ): Promise<void> {
     const response = await this.request(
       project,
-      environment,
+      stage,
       `/env/${encodeURIComponent(name)}`,
       {
         method: "PUT",
@@ -175,11 +202,11 @@ export class BroodsSyncClient {
   }
 
   /**
-   * Lists the names of the environment's stored variables (values stay
+   * Lists the names of the stage's stored variables (values stay
    * server-side and encrypted, so only names and last-updated times return).
    */
-  async listEnv(project: string, environment: string): Promise<CliEnvVar[]> {
-    const response = await this.request(project, environment, "/env", {
+  async listEnv(project: string, stage: string): Promise<CliEnvVar[]> {
+    const response = await this.request(project, stage, "/env", {
       method: "GET",
     });
     await assertOk(response, "List environment variables failed");
@@ -191,12 +218,12 @@ export class BroodsSyncClient {
   /** Reveals a single env var's plaintext value, or null when it is not set. The reveal is audited server-side. */
   async getEnv(
     project: string,
-    environment: string,
+    stage: string,
     name: string,
   ): Promise<string | null> {
     const response = await this.request(
       project,
-      environment,
+      stage,
       `/env/${encodeURIComponent(name)}`,
       { method: "GET" },
     );
@@ -207,14 +234,10 @@ export class BroodsSyncClient {
     return payload.value ?? null;
   }
 
-  async removeEnv(
-    project: string,
-    environment: string,
-    name: string,
-  ): Promise<void> {
+  async removeEnv(project: string, stage: string, name: string): Promise<void> {
     const response = await this.request(
       project,
-      environment,
+      stage,
       `/env/${encodeURIComponent(name)}`,
       {
         method: "DELETE",
@@ -255,6 +278,49 @@ export class BroodsSyncClient {
     return (await response.json()) as CliOnboardingContext;
   }
 
+  async listStages(project: string): Promise<CliStage[]> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/stages?project=${encodeURIComponent(project)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+      },
+    );
+    assertStageRouteMounted(response);
+    await assertOk(response, "List stages failed");
+    const payload = (await response.json()) as { stages?: CliStage[] };
+
+    return payload.stages ?? [];
+  }
+
+  async createStage(
+    project: string,
+    name: string,
+    duplicateFrom?: string,
+  ): Promise<{ stage: CliStage; clonedFrom: string | null }> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/account/stages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        project: project,
+        name: name,
+        ...(duplicateFrom ? { from: duplicateFrom } : {}),
+      }),
+    });
+    assertStageRouteMounted(response);
+    await assertOk(response, "Create stage failed");
+
+    return (await response.json()) as {
+      stage: CliStage;
+      clonedFrom: string | null;
+    };
+  }
+
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/v1/account/onboarding`,
@@ -274,13 +340,13 @@ export class BroodsSyncClient {
 
   private async request(
     project: string,
-    environment: string,
+    stage: string,
     suffix: string,
     init: RequestInit,
   ): Promise<Response> {
     const url =
       `${this.baseUrl}/v1/account/projects/${encodeURIComponent(project)}` +
-      `/environments/${encodeURIComponent(environment)}${suffix}`;
+      `/stages/${encodeURIComponent(stage)}${suffix}`;
 
     return await this.fetchImpl(url, {
       ...init,
@@ -477,6 +543,20 @@ function sortValue(value: unknown): unknown {
   }
 
   return value;
+}
+
+/**
+ * A 404 the router produced (rather than the handler) means the deployment
+ * predates `/v1/account/stages`, which reads as "project not found" otherwise.
+ */
+function assertStageRouteMounted(response: Response): void {
+  if (response.status !== 404) return;
+  const contentType = response.headers.get("Content-Type") ?? "";
+  if (contentType.includes("application/json")) return;
+
+  throw new Error(
+    "This broods deployment has no /v1/account/stages route yet. Update the backend to use `broods stage`.",
+  );
 }
 
 async function assertOk(response: Response, message: string): Promise<void> {

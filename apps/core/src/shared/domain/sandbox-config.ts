@@ -108,7 +108,7 @@ export interface SandboxConfigRecord {
   accountId: string;
   sandboxId: string;
   projectId?: string;
-  environmentId?: string;
+  stageId?: string;
   name: string;
   description?: string;
   config: SandboxConfig;

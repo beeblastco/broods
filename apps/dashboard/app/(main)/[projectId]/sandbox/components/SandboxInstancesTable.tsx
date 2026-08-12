@@ -170,8 +170,8 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
 
   function traceHref(traceId: string): string {
     const next = new URLSearchParams();
-    const env = searchParams.get("env");
-    if (env) next.set("env", env);
+    const stage = searchParams.get("stage");
+    if (stage) next.set("stage", stage);
     next.set("tab", "tracing");
     next.set("trace", traceId);
 

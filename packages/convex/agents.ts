@@ -168,7 +168,7 @@ export const create = internalMutation({
     });
 
     // Back-sync to the dashboard's canvas so API-created agents appear on
-    // the org owner's default project/environment. Safe no-op when the
+    // the org owner's default project/stage. Safe no-op when the
     // canvas surface isn't provisioned (no org owner / no projects).
     await backSyncCanvasFromAgentRow(ctx, agentRowId);
 
@@ -351,10 +351,10 @@ export const remove = internalMutation({
     if (linkedConfig) {
       const layout = await ctx.db
         .query("canvasLayouts")
-        .withIndex("by_projectId_and_environmentId", (q) =>
+        .withIndex("by_projectId_and_stageId", (q) =>
           q
             .eq("projectId", linkedConfig.projectId)
-            .eq("environmentId", linkedConfig.environmentId),
+            .eq("stageId", linkedConfig.stageId),
         )
         .unique();
       if (layout) {
@@ -387,10 +387,10 @@ export const remove = internalMutation({
 
       // Recompute the API-managed wiring so workspace/sandbox/skill nodes
       // no remaining API agent references disappear with their agent.
-      if (linkedConfig.projectId && linkedConfig.environmentId) {
+      if (linkedConfig.projectId && linkedConfig.stageId) {
         await syncApiAgentCanvasWiring(ctx, {
           projectId: linkedConfig.projectId,
-          environmentId: linkedConfig.environmentId,
+          stageId: linkedConfig.stageId,
         });
       }
     }

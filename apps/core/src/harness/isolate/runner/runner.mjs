@@ -72,6 +72,7 @@ async function runToolRequest() {
     const result = await runIsolateJob(isolate, payload, {
       timeoutMs: timeoutMs,
       emitChunk: (output) => writeFrame({ t: "chunk", output: output }),
+      emitLog: makeLogEmitter(undefined),
       registerAbort: (fire) => {
         activeAbort = fire;
       },
@@ -153,6 +154,7 @@ async function handlePoolRun(request, cache, cacheCap) {
     const result = await runIsolateJob(isolate, payload, {
       timeoutMs: timeoutMs,
       emitChunk: (output) => writeFrame({ t: "chunk", callId: callId, output: output }),
+      emitLog: makeLogEmitter(callId),
       registerAbort: (fire) => {
         activeAbort = fire;
       },
@@ -185,7 +187,7 @@ async function handlePoolRun(request, cache, cacheCap) {
 // Runs one tool bundle on the given isolate in a FRESH context and returns its
 // result; the caller owns isolate lifetime and terminal frames. Shared by the
 // one-shot and pooled paths so the security-critical setup lives in one place.
-async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerAbort }) {
+async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, registerAbort }) {
   const bundleSource = decodeBundle(payload);
   const actualSha = createHash("sha256").update(bundleSource).digest("hex");
   if (actualSha !== payload.expectedSha256) {
@@ -197,7 +199,8 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
     await context.global.set("globalThis", context.global.derefInto());
     // Besides ctx/input, inject the minimal runtime surface tool bundles
     // reasonably assume in a fresh V8 isolate: timers, queueMicrotask, console
-    // (host stderr — stdout is the frame protocol), and a global fetch aliased
+    // (a log frame, so the host can emit it under the run's tenant context and
+    // it reaches the dashboard and `broods logs`), and a global fetch aliased
     // to the same SSRF-guarded bridge as ctx.fetch. Timers cannot await the
     // host (promises do not cross the isolate boundary): the isolate registers
     // the id, the host arms a real timer, and on expiry re-enters the isolate
@@ -245,13 +248,63 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
       };
       globalThis.clearInterval = (id) => { __timers.delete(id); };
       globalThis.queueMicrotask = (fn) => { void Promise.resolve().then(fn); };
-      const __log = (level) => (...args) => $4(level, args.map(String).join(" "));
+      // String(value) alone renders every object as "[object Object]" and throws
+      // outright on a null-prototype or hostile toString, which would kill the
+      // run from inside a console.log. Serialize structurally, guard cycles, and
+      // bound the line so one log cannot blow the runner's stdout budget.
+      const __LOG_MAX = 8192;
+      const __fmt = (value) => {
+        if (typeof value === "string") return value;
+        if (typeof value === "bigint") return \`\${value}n\`;
+        if (typeof value === "function") return \`[Function: \${value.name || "anonymous"}]\`;
+        if (value instanceof Error) return value.stack || \`\${value.name}: \${value.message}\`;
+        try {
+          const seen = new WeakSet();
+          const text = JSON.stringify(value, (_key, entry) => {
+            if (typeof entry === "bigint") return \`\${entry}n\`;
+            if (typeof entry === "function") return \`[Function: \${entry.name || "anonymous"}]\`;
+            if (entry && typeof entry === "object") {
+              if (seen.has(entry)) return "[Circular]";
+              seen.add(entry);
+            }
+            return entry;
+          });
+          if (text !== undefined) return text;
+        } catch {}
+        try { return String(value); } catch { return "[unserializable]"; }
+      };
+      const __log = (level) => (...args) => {
+        let line = "";
+        for (const arg of args) {
+          if (line.length >= __LOG_MAX) break;
+          line += (line.length ? " " : "") + __fmt(arg);
+        }
+        $4(level, line.length > __LOG_MAX ? line.slice(0, __LOG_MAX) + "... [truncated]" : line);
+      };
+      // Every console method Node exposes, so a bundle calling console.trace or
+      // console.table gets a log line instead of "is not a function" mid-run.
+      const __noop = () => {};
       globalThis.console = {
         log: __log("log"),
         info: __log("info"),
         warn: __log("warn"),
         error: __log("error"),
-        debug: () => {},
+        debug: __log("debug"),
+        trace: __log("debug"),
+        dir: __log("log"),
+        table: __log("log"),
+        group: __log("log"),
+        groupCollapsed: __log("log"),
+        groupEnd: __noop,
+        time: __noop,
+        timeEnd: __noop,
+        timeLog: __noop,
+        count: __noop,
+        countReset: __noop,
+        assert: (condition, ...args) => {
+          if (condition) return;
+          __log("error")("Assertion failed:", ...args);
+        },
       };
       // Minimal AbortController/AbortSignal (absent in a bare V8 isolate). The run's
       // signal is exposed as options.abortSignal; the host fires __abort on cancel.
@@ -291,7 +344,12 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, registerA
           },
           { ignored: true },
         ),
-        new ivm.Callback((level, line) => process.stderr.write(`[tool:${level}] ${line}\n`), { ignored: true }),
+        // sync, like __emitChunk: an `ignored` callback is dispatched on a later
+        // host turn, so the log frame could be written AFTER this call's terminal
+        // frame — by which time the host has detached the sink (line lost) or
+        // handed the worker to the next call (line emitted under that tenant's
+        // observability context). Ordering is the correctness property here.
+        new ivm.Callback((level, line) => emitLog(level, line), { sync: true }),
         // Mutable per-run scratchpad for hooks (ctx.state); read back out after a
         // hook runs so the host can thread it into the next fire-point. Empty for
         // tools, which are stateless single calls.
@@ -527,6 +585,40 @@ function parseUrl(input, base, setterKey, setterValue) {
 
 function writeFrame(frame) {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
+}
+
+// A tool logging in a tight loop would otherwise walk straight into the host's
+// 1 MiB stdout cap, which kills the worker and fails the call. Spend a per-call
+// budget on console lines, then say so once and stay quiet — the tool still runs.
+// The budget lives in here, not at module scope: the entry dispatch at the top of
+// this file is a top-level await, so a module-level const below it is still in
+// its temporal dead zone while a run is emitting, and reading one would throw a
+// ReferenceError out of the console callback and into the tool.
+function makeLogEmitter(callId) {
+  const budgetBytes = 256 * 1024;
+  const budgetLines = 2_000;
+  const tag = callId === undefined ? {} : { callId: callId };
+  let bytes = 0;
+  let lines = 0;
+  let stopped = false;
+
+  return (level, message) => {
+    if (stopped) return;
+    lines += 1;
+    bytes += Buffer.byteLength(message, "utf8");
+    if (lines > budgetLines || bytes > budgetBytes) {
+      stopped = true;
+      writeFrame({
+        t: "log",
+        ...tag,
+        level: "warn",
+        message: "console output budget for this call is spent; later lines are dropped",
+      });
+
+      return;
+    }
+    writeFrame({ t: "log", ...tag, level: level, message: message });
+  };
 }
 
 async function readAllStdin() {

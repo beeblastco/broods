@@ -18,7 +18,7 @@ import {
   type BuildFailure,
   type Plugin,
 } from "esbuild";
-import { GENERATED_DIR, PROJECT_DIR } from "./config.ts";
+import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
   isChannelDefinition,
@@ -37,9 +37,9 @@ import {
 export interface CompileOptions {
   cwd?: string;
   project?: string;
-  environment?: string;
+  stage?: string;
   command?: "dev" | "deploy";
-  useRuntimeEnvironment?: boolean;
+  useRuntimeStage?: boolean;
 }
 
 export interface CompiledProject {
@@ -146,12 +146,10 @@ export async function compileProject(
   assertWorkspaceIsolationConsistency(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
   const resourceAliases = aliasesForResources(resourceExports);
-  const environment = resolveEnvironment(
+  const stage = resolveStage(
     config,
-    options.environment ??
-      (options.useRuntimeEnvironment === false
-        ? undefined
-        : process.env.BROODS_ENVIRONMENT),
+    options.stage ??
+      (options.useRuntimeStage === false ? undefined : stageFromEnv()),
     options.command ?? "dev",
   );
   const manifestResources = (
@@ -170,7 +168,7 @@ export async function compileProject(
     manifest: {
       version: 1,
       project: config.project!,
-      environment: environment,
+      stage: stage,
       resources: manifestResources,
     },
   };
@@ -209,13 +207,13 @@ function collectEnvRefNamesFromValue(value: unknown, names: Set<string>): void {
   }
 }
 
-function resolveEnvironment(
+function resolveStage(
   config: BroodsProjectConfig,
   explicit: string | undefined,
   command: "dev" | "deploy",
 ): string {
   if (explicit) return explicit;
-  const configured = config.environments?.[command];
+  const configured = config.stages?.[command];
   if (configured) return configured;
 
   return command === "deploy" ? "production" : "development";
@@ -1373,7 +1371,7 @@ async function normalizeToolConfig(
   collectEnvRefNamesFromValue(config.defaultConfig, defaultConfigEnvRefs);
   if (defaultConfigEnvRefs.size > 0) {
     throw new Error(
-      `Tool "${entry.resource.name}" defaultConfig cannot contain env("NAME") references; put environment values in the agent's tools.<tool>.config so they stay encrypted and environment-scoped`,
+      `Tool "${entry.resource.name}" defaultConfig cannot contain env("NAME") references; put environment variable values in the agent's tools.<tool>.config so they stay encrypted and stage-scoped`,
     );
   }
 

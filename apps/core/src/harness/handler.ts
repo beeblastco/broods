@@ -1163,7 +1163,7 @@ async function handleChannelRequest(
       ),
       endpointId: event.endpointId,
       projectSlug: event.projectSlug,
-      environmentSlug: event.environmentSlug,
+      stageSlug: event.stageSlug,
     },
     admission,
   );
@@ -1215,7 +1215,7 @@ async function handleChannelRequest(
     },
     event.endpointId,
     event.projectSlug,
-    event.environmentSlug,
+    event.stageSlug,
     admission.ownerGeneration,
   );
   let incoming: ConversationIngressEvent[] = event.events;
@@ -1364,7 +1364,7 @@ async function handleChannelRequest(
         },
         event.endpointId,
         event.projectSlug,
-        event.environmentSlug,
+        event.stageSlug,
         next.ownerGeneration,
       );
       incoming = next.events as ConversationIngressEvent[];
@@ -1395,7 +1395,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     undefined,
     event.endpointId,
     event.projectSlug,
-    event.environmentSlug,
+    event.stageSlug,
   );
   logInfo("Channel context received", {
     channel: event.channelName,
@@ -1526,7 +1526,7 @@ async function prepareDirectTurn(
     delivery,
     event.endpointId,
     event.projectSlug,
-    event.environmentSlug,
+    event.stageSlug,
     event.ownerGeneration,
   );
   try {
@@ -1568,7 +1568,7 @@ async function failOwnedIngress(
       : undefined,
     event.endpointId,
     event.projectSlug,
-    event.environmentSlug,
+    event.stageSlug,
     event.ownerGeneration,
   );
   // A scheduling failure recurses back through dispatchAppliedIngress; each
@@ -1607,7 +1607,7 @@ function formatChannelFinalText(
   traceId: string | undefined,
   event: Pick<
     DirectInboundEvent | ChannelInboundEvent,
-    "projectSlug" | "environmentSlug"
+    "projectSlug" | "stageSlug"
   >,
   channelName: string | undefined,
   config: AgentConfig,
@@ -1627,10 +1627,10 @@ function dashboardTraceUrl(
   traceId: string | undefined,
   event: Pick<
     DirectInboundEvent | ChannelInboundEvent,
-    "projectSlug" | "environmentSlug"
+    "projectSlug" | "stageSlug"
   >,
 ): string | null {
-  if (!traceId || !event.projectSlug || !event.environmentSlug) {
+  if (!traceId || !event.projectSlug || !event.stageSlug) {
     return null;
   }
   const dashboardUrl = (
@@ -1640,7 +1640,7 @@ function dashboardTraceUrl(
   ).replace(/\/+$/, "");
   const params = new URLSearchParams({
     project: event.projectSlug,
-    env: event.environmentSlug,
+    stage: event.stageSlug,
     tab: "tracing",
     trace: traceId,
   });
@@ -1758,7 +1758,7 @@ async function dispatchAppliedIngress(
     conversationKey: base.conversationKey,
     endpointId: base.endpointId,
     projectSlug: base.projectSlug,
-    environmentSlug: base.environmentSlug,
+    stageSlug: base.stageSlug,
     eventId: next.eventId,
     publicEventId: publicEventId,
     publicConversationKey: publicConversationKey,
@@ -2109,7 +2109,7 @@ async function createCronDirectEvent(
       ? {
           endpointId: deployment.endpointId,
           projectSlug: deployment.projectSlug,
-          environmentSlug: deployment.environmentSlug,
+          stageSlug: deployment.stageSlug,
         }
       : {}),
   } satisfies DirectInboundEvent;

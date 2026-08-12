@@ -2,7 +2,7 @@
  * CLI manifest sync for code-defined Broods resources.
  *
  * Authenticates with the org Bearer secret and writes desired-state resources
- * into the SaaS project/environment model before syncing runtime agent rows.
+ * into the SaaS project/stage model before syncing runtime agent rows.
  */
 
 import { v } from "convex/values";
@@ -14,7 +14,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { ensureEnvironmentDeployment } from "./agentDeployments";
+import { ensureStageDeployment } from "./agentDeployments";
 import { normalizePolicyDocument } from "./agentPolicies";
 import { normalizeChannelRecordConfig } from "./model/channelRules";
 import {
@@ -39,10 +39,7 @@ import {
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
-import {
-  environmentNameEquals,
-  resolveProjectEnvironment,
-} from "./model/projectScope";
+import { stageNameEquals, resolveProjectStage } from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
 
 const resourceValidator = v.object({
@@ -65,7 +62,7 @@ const resourceValidator = v.object({
 const manifestValidator = v.object({
   version: v.literal(1),
   project: v.string(),
-  environment: v.string(),
+  stage: v.string(),
   resources: v.array(resourceValidator),
 });
 
@@ -84,7 +81,7 @@ const idsValidator = v.object({
 /**
  * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
  * names referenced via `env("NAME")` in agent config but not yet stored for the
- * environment, so the operator can run `broods env set <NAME>`.
+ * stage, so the operator can run `broods env set <NAME>`.
  * `missingPolicies` lists `policy.policyIds` refs that did not resolve to a
  * policy resource in this deploy, so a typo cannot silently weaken the
  * intended policy set.
@@ -106,42 +103,37 @@ export const getManifestBySecretHash = internalQuery({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
   },
   returns: v.union(
     v.null(),
     v.object({ manifest: v.any(), ids: idsValidator }),
   ),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment } = args;
+    const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) return null;
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      account,
-      project,
-      environment,
-    );
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return null;
-    const { projectDoc, environmentDoc } = resolved;
-    const ids = await idsForEnvironment(
+    const { projectDoc, stageDoc } = resolved;
+    const ids = await idsForStage(
       ctx,
       account._id,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
     );
-    const resources = await resourcesForEnvironment(
+    const resources = await resourcesForStage(
       ctx,
       account._id,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
     );
 
     return {
       manifest: {
         version: 1,
         project: project,
-        environment: environment,
+        stage: stage,
         resources: resources,
       },
       ids: ids,
@@ -152,12 +144,12 @@ export const getManifestBySecretHash = internalQuery({
 /**
  * Resolves a CLI Bearer token hash to the account secret hash it authorizes with.
  * The org Bearer secret grants full account access (`scoped: false`); a project +
- * environment deploy key grants access only when the route resolves to the exact
- * project/environment the key is bound to (`scoped: true`). Returns null when the
+ * stage deploy key grants access only when the route resolves to the exact
+ * project/stage the key is bound to (`scoped: true`). Returns null when the
  * token is unknown, revoked, or out of scope.
  */
 export const resolveCliAuth = internalQuery({
-  args: { tokenHash: v.string(), project: v.string(), environment: v.string() },
+  args: { tokenHash: v.string(), project: v.string(), stage: v.string() },
   returns: v.union(
     v.null(),
     v.object({
@@ -168,14 +160,14 @@ export const resolveCliAuth = internalQuery({
     }),
   ),
   handler: async (ctx, args) => {
-    const { tokenHash, project, environment } = args;
+    const { tokenHash, project, stage } = args;
 
     // Org Bearer secret → full account access.
     const account = await accountFromSecretHash(ctx, tokenHash);
     if (account)
       return { accountId: account._id, secretHash: tokenHash, scoped: false };
 
-    // Scoped deploy key → only valid for its bound project + environment.
+    // Scoped deploy key → only valid for its bound project + stage.
     const deployKey = await ctx.db
       .query("deployKeys")
       .withIndex("by_keyHash", (q) => q.eq("keyHash", tokenHash))
@@ -185,16 +177,11 @@ export const resolveCliAuth = internalQuery({
     const keyAccount = await ctx.db.get(deployKey.accountId);
     if (!keyAccount || keyAccount.status !== "active") return null;
 
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      keyAccount,
-      project,
-      environment,
-    );
+    const resolved = await resolveProjectStage(ctx, keyAccount, project, stage);
     if (
       !resolved ||
       resolved.projectDoc._id !== deployKey.projectId ||
-      resolved.environmentDoc._id !== deployKey.environmentId
+      resolved.stageDoc._id !== deployKey.stageId
     ) {
       return null;
     }
@@ -226,41 +213,37 @@ export const syncManifestBySecretHash = internalMutation({
     assertSupportedWorkspaceSandboxMounts(manifest.resources);
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
-    const environmentDoc = await ensureEnvironment(
-      ctx,
-      projectDoc,
-      manifest.environment,
-    );
+    const stageDoc = await ensureStage(ctx, projectDoc, manifest.stage);
     const workspaceIds = await syncWorkspaceResources(
       ctx,
       account._id,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
       manifest.resources,
     );
     const policyIds = await syncPolicyResources(
       ctx,
       account._id,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
       manifest.resources,
     );
-    const externalIds = await externalIdsForEnvironment(
+    const externalIds = await externalIdsForStage(
       ctx,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
     );
     const envValues = await loadEnvironmentVariableValues(
       ctx,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
     );
     const missingEnv = new Set<string>();
     const missingPolicies = new Set<string>();
     const sandboxIds = await syncSandboxResources(ctx, {
       accountId: account._id,
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
       resources: manifest.resources,
       envValues: envValues,
       missingEnv: missingEnv,
@@ -268,7 +251,7 @@ export const syncManifestBySecretHash = internalMutation({
     const agentIds = await syncAgentResources(ctx, {
       account: account,
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
       resources: manifest.resources,
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
@@ -282,7 +265,7 @@ export const syncManifestBySecretHash = internalMutation({
     const channelRecordIds = await syncChannelRecordResources(ctx, {
       accountId: account._id,
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
       resources: manifest.resources,
       agentIds: agentIds,
       workspaceIds: workspaceIds,
@@ -290,30 +273,17 @@ export const syncManifestBySecretHash = internalMutation({
     });
 
     if (prune === true) {
-      await pruneAgents(
-        ctx,
-        projectDoc._id,
-        environmentDoc._id,
-        manifest.resources,
-      );
-      await pruneChannelRecordResources(
-        ctx,
-        environmentDoc._id,
-        manifest.resources,
-      );
-      await prunePolicyResources(ctx, environmentDoc._id, manifest.resources);
-      await pruneWorkspaceResources(
-        ctx,
-        environmentDoc._id,
-        manifest.resources,
-      );
-      await pruneSandboxResources(ctx, environmentDoc._id, manifest.resources);
+      await pruneAgents(ctx, projectDoc._id, stageDoc._id, manifest.resources);
+      await pruneChannelRecordResources(ctx, stageDoc._id, manifest.resources);
+      await prunePolicyResources(ctx, stageDoc._id, manifest.resources);
+      await pruneWorkspaceResources(ctx, stageDoc._id, manifest.resources);
+      await pruneSandboxResources(ctx, stageDoc._id, manifest.resources);
     }
 
     await syncCanvasLayoutForManifest(ctx, {
       account: account,
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
       resources: manifest.resources,
       workspaceIds: workspaceIds,
       sandboxIds: sandboxIds,
@@ -331,18 +301,18 @@ export const syncManifestBySecretHash = internalMutation({
       policies: policyIds,
       channelRecords: channelRecordIds,
     };
-    const resources = await resourcesForEnvironment(
+    const resources = await resourcesForStage(
       ctx,
       account._id,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
     );
 
     return {
       manifest: {
         version: 1,
         project: manifest.project,
-        environment: manifest.environment,
+        stage: manifest.stage,
         resources: resources,
       },
       ids: ids,
@@ -355,7 +325,7 @@ export const syncManifestBySecretHash = internalMutation({
 });
 
 /**
- * Ensure the synced environment has a runtime API key (`fp_agent_…`) so the CLI
+ * Ensure the synced stage has a runtime API key (`fp_agent_…`) so the CLI
  * can write `BROODS_API_KEY` into `.env.local`. Returns the stored plaintext
  * so reconnecting clients do not need to rotate the key.
  */
@@ -363,7 +333,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     rotate: v.optional(v.boolean()),
     auditSync: v.optional(
       v.object({
@@ -380,7 +350,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       accountId: v.id("accounts"),
       endpointId: v.string(),
       projectSlug: v.string(),
-      environmentSlug: v.string(),
+      stageSlug: v.string(),
       keyHint: v.string(),
       apiKey: v.string(),
     }),
@@ -388,21 +358,21 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) return null;
-    const resolved = await resolveProjectEnvironment(
+    const resolved = await resolveProjectStage(
       ctx,
       account,
       args.project,
-      args.environment,
+      args.stage,
     );
     if (!resolved) return null;
-    const { projectDoc, environmentDoc } = resolved;
-    const result = await ensureEnvironmentDeployment(ctx, {
+    const { projectDoc, stageDoc } = resolved;
+    const result = await ensureStageDeployment(ctx, {
       authId: projectDoc.authId,
       accountId: account._id,
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
       projectSlug: projectDoc.slug ?? resourceName(args.project),
-      environmentSlug: environmentDoc.name.toLowerCase(),
+      stageSlug: stageDoc.name.toLowerCase(),
       rotate: args.rotate === true,
     });
     if (args.auditSync) {
@@ -413,12 +383,12 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       await insertConfigAuditEvent(ctx.db, {
         accountId: account._id,
         projectId: projectDoc._id,
-        environmentId: environmentDoc._id,
+        stageId: stageDoc._id,
         actor: actor,
         action: "synced",
         resource: {
           kind: "manifest",
-          name: `${args.project}/${args.environment}`,
+          name: `${args.project}/${args.stage}`,
         },
         summary: "CLI manifest synchronized",
         detailsJson: auditDetailsJson({
@@ -432,7 +402,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       accountId: account._id,
       endpointId: result.endpointId,
       projectSlug: result.projectSlug,
-      environmentSlug: result.environmentSlug,
+      stageSlug: result.stageSlug,
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
     };
@@ -440,30 +410,26 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
 });
 
 // The HTTP action needs these ids before it uploads tools, so tool rows land in
-// the right environment instead of matching by name across the whole account.
+// the right stage instead of matching by name across the whole account.
 export const ensureScopeBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
   },
   returns: v.object({
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   }),
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, args.project);
-    const environmentDoc = await ensureEnvironment(
-      ctx,
-      projectDoc,
-      args.environment,
-    );
+    const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
 
     return {
       projectId: projectDoc._id,
-      environmentId: environmentDoc._id,
+      stageId: stageDoc._id,
     };
   },
 });
@@ -472,7 +438,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     resources: v.array(resourceValidator),
     ids: v.object({
       skills: v.record(v.string(), v.string()),
@@ -486,17 +452,11 @@ export const recordExternalResourcesBySecretHash = internalMutation({
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, args.project);
-    const environmentDoc = await ensureEnvironment(
-      ctx,
-      projectDoc,
-      args.environment,
-    );
+    const stageDoc = await ensureStage(ctx, projectDoc, args.stage);
     const existing = await ctx.db
       .query("cliExternalResources")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q
-          .eq("projectId", projectDoc._id)
-          .eq("environmentId", environmentDoc._id),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectDoc._id).eq("stageId", stageDoc._id),
       )
       .collect();
     const desired = args.resources.filter(
@@ -533,7 +493,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       const row = {
         accountId: account._id,
         projectId: projectDoc._id,
-        environmentId: environmentDoc._id,
+        stageId: stageDoc._id,
         kind: kind,
         name: name,
         description: resource.description,
@@ -563,7 +523,7 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     skillName: v.string(),
     files: v.array(
       v.object({
@@ -579,13 +539,13 @@ export const replaceSkillNodeFilesBySecretHash = internalMutation({
   handler: async (ctx, args) => {
     const account = await accountFromSecretHash(ctx, args.secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await resolveProjectEnvironment(
+    const resolved = await resolveProjectStage(
       ctx,
       account,
       args.project,
-      args.environment,
+      args.stage,
     );
-    if (!resolved) throw new Error("Project or environment not found");
+    if (!resolved) throw new Error("Project or stage not found");
     const authId = await authIdForAccount(ctx, account);
     if (!authId) throw new Error("Account org owner not found");
     const nodeId = canvasNodeId("skill", resourceName(args.skillName));
@@ -626,7 +586,7 @@ export const deleteResourceBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     kind: v.union(
       v.literal("agent"),
       v.literal("workspace"),
@@ -636,37 +596,24 @@ export const deleteResourceBySecretHash = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment, kind, name } = args;
+    const { secretHash, project, stage, kind, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      account,
-      project,
-      environment,
-    );
-    if (!resolved) throw new Error("Project/environment not found");
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
+    if (!resolved) throw new Error("Project/stage not found");
     const normalizedName = resourceName(name);
 
     if (kind === "agent") {
       await deleteAgentResource(
         ctx,
         resolved.projectDoc._id,
-        resolved.environmentDoc._id,
+        resolved.stageDoc._id,
         normalizedName,
       );
     } else if (kind === "workspace") {
-      await deleteWorkspaceResource(
-        ctx,
-        resolved.environmentDoc._id,
-        normalizedName,
-      );
+      await deleteWorkspaceResource(ctx, resolved.stageDoc._id, normalizedName);
     } else {
-      await deleteSandboxResource(
-        ctx,
-        resolved.environmentDoc._id,
-        normalizedName,
-      );
+      await deleteSandboxResource(ctx, resolved.stageDoc._id, normalizedName);
     }
 
     await ctx.db.patch(resolved.projectDoc._id, { updatedAt: Date.now() });
@@ -679,26 +626,22 @@ export const setEnvBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     name: v.string(),
     value: v.string(),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment, name, value } = args;
+    const { secretHash, project, stage, name, value } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
     const projectDoc = await ensureProject(ctx, account, project);
-    const environmentDoc = await ensureEnvironment(
-      ctx,
-      projectDoc,
-      environment,
-    );
+    const stageDoc = await ensureStage(ctx, projectDoc, stage);
     const normalizedName = envName(name);
     const existing = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentDoc._id).eq("name", normalizedName),
+      .withIndex("by_stageId_and_name", (q) =>
+        q.eq("stageId", stageDoc._id).eq("name", normalizedName),
       )
       .unique();
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
@@ -720,7 +663,7 @@ export const setEnvBySecretHash = internalMutation({
     } else {
       await ctx.db.insert("environmentVariables", {
         projectId: projectDoc._id,
-        environmentId: environmentDoc._id,
+        stageId: stageDoc._id,
         name: normalizedName,
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
@@ -731,14 +674,14 @@ export const setEnvBySecretHash = internalMutation({
     await refreshAgentConfigsForEnvironmentVariable(
       ctx,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
       normalizedName,
       value,
     );
     await refreshSandboxConfigsForEnvironmentVariable(
       ctx,
       projectDoc._id,
-      environmentDoc._id,
+      stageDoc._id,
       normalizedName,
       value,
     );
@@ -748,7 +691,7 @@ export const setEnvBySecretHash = internalMutation({
 });
 
 /**
- * Lists the names (and last-updated times) of an environment's stored variables
+ * Lists the names (and last-updated times) of a stage's stored variables
  * for the CLI `env list`. Values are never returned — they are encrypted at rest
  * and write-only by design, so the dashboard and CLI only ever see the names.
  */
@@ -756,27 +699,22 @@ export const listEnvBySecretHash = internalQuery({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
   },
   returns: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment } = args;
+    const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      account,
-      project,
-      environment,
-    );
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return [];
 
     const variables = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_projectId_and_environmentId", (q) =>
+      .withIndex("by_projectId_and_stageId", (q) =>
         q
           .eq("projectId", resolved.projectDoc._id)
-          .eq("environmentId", resolved.environmentDoc._id),
+          .eq("stageId", resolved.stageDoc._id),
       )
       .collect();
 
@@ -793,13 +731,13 @@ export const listEnvBySecretHash = internalQuery({
  * Decrypts and returns one environment variable's plaintext value for the CLI
  * `env get`, writing an audit record of the reveal. A mutation (not a query) so
  * decryption and the audit insert happen together. Returns null when the
- * project/environment or the named variable does not exist.
+ * project/stage or the named variable does not exist.
  */
 export const getEnvBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     name: v.string(),
     revealedByCliTokenId: v.optional(v.id("cliTokens")),
     revealedByCliAuthId: v.optional(v.string()),
@@ -807,24 +745,17 @@ export const getEnvBySecretHash = internalMutation({
   },
   returns: v.union(v.null(), v.object({ value: v.string() })),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment, name } = args;
+    const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      account,
-      project,
-      environment,
-    );
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
     if (!resolved) return null;
     const normalizedName = envName(name);
 
     const existing = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q
-          .eq("environmentId", resolved.environmentDoc._id)
-          .eq("name", normalizedName),
+      .withIndex("by_stageId_and_name", (q) =>
+        q.eq("stageId", resolved.stageDoc._id).eq("name", normalizedName),
       )
       .unique();
     if (!existing) return null;
@@ -844,7 +775,7 @@ export const getEnvBySecretHash = internalMutation({
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: resolved.projectDoc._id,
-      environmentId: resolved.environmentDoc._id,
+      stageId: resolved.stageDoc._id,
       environmentVariableId: existing._id,
       name: normalizedName,
       source: "cli",
@@ -861,36 +792,29 @@ export const getEnvBySecretHash = internalMutation({
 
 /**
  * Removes one environment variable by name for the CLI `env rm`. Resolving the
- * project/environment is required; a missing variable is treated as success so
+ * project/stage is required; a missing variable is treated as success so
  * the command is idempotent.
  */
 export const removeEnvBySecretHash = internalMutation({
   args: {
     secretHash: v.string(),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
     name: v.string(),
   },
   returns: v.object({ removed: v.boolean() }),
   handler: async (ctx, args) => {
-    const { secretHash, project, environment, name } = args;
+    const { secretHash, project, stage, name } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
     if (!account) throw new Error("Invalid Broods token");
-    const resolved = await resolveProjectEnvironment(
-      ctx,
-      account,
-      project,
-      environment,
-    );
-    if (!resolved) throw new Error("Project/environment not found");
+    const resolved = await resolveProjectStage(ctx, account, project, stage);
+    if (!resolved) throw new Error("Project/stage not found");
     const normalizedName = envName(name);
 
     const existing = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q
-          .eq("environmentId", resolved.environmentDoc._id)
-          .eq("name", normalizedName),
+      .withIndex("by_stageId_and_name", (q) =>
+        q.eq("stageId", resolved.stageDoc._id).eq("name", normalizedName),
       )
       .unique();
     if (!existing) return { removed: false };
@@ -899,14 +823,14 @@ export const removeEnvBySecretHash = internalMutation({
     await refreshAgentConfigsForEnvironmentVariable(
       ctx,
       resolved.projectDoc._id,
-      resolved.environmentDoc._id,
+      resolved.stageDoc._id,
       normalizedName,
       undefined,
     );
     await refreshSandboxConfigsForEnvironmentVariable(
       ctx,
       resolved.projectDoc._id,
-      resolved.environmentDoc._id,
+      resolved.stageDoc._id,
       normalizedName,
       undefined,
     );
@@ -961,7 +885,7 @@ async function ensureProject(
 
   // Seed a Development default so the dashboard lands on Development even when
   // the first CLI command deploys straight to Production.
-  await ctx.db.insert("environments", {
+  await ctx.db.insert("stages", {
     authId: org.ownerAuthId,
     projectId: projectId,
     name: "Development",
@@ -973,37 +897,32 @@ async function ensureProject(
   return created;
 }
 
-async function ensureEnvironment(
+async function ensureStage(
   ctx: MutationCtx,
   project: Doc<"projects">,
-  environment: string,
+  stage: string,
 ) {
-  const environments = await ctx.db
-    .query("environments")
+  const stages = await ctx.db
+    .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
     .collect();
-  const name = resourceName(environment);
-  const existing = environments.find((entry) =>
-    environmentNameEquals(entry.name, name),
-  );
-  const kind = environmentKindForName(name);
+  const name = resourceName(stage);
+  const existing = stages.find((entry) => stageNameEquals(entry.name, name));
+  const kind = stageKindForName(name);
   if (existing) {
-    if (
-      existing.kind !== kind ||
-      existing.name !== displayEnvironmentName(name)
-    ) {
+    if (existing.kind !== kind || existing.name !== displayStageName(name)) {
       await ctx.db.patch(existing._id, {
-        name: displayEnvironmentName(name),
+        name: displayStageName(name),
         kind: kind,
         isDefault: kind === "development" ? true : existing.isDefault,
         updatedAt: Date.now(),
       });
     }
     if (kind === "development") {
-      for (const environment of environments.filter(
+      for (const stage of stages.filter(
         (entry) => entry._id !== existing._id && entry.isDefault,
       )) {
-        await ctx.db.patch(environment._id, {
+        await ctx.db.patch(stage._id, {
           isDefault: false,
           updatedAt: Date.now(),
         });
@@ -1013,21 +932,21 @@ async function ensureEnvironment(
     return existing;
   }
 
-  // Only Development is ever the default; Production/custom environments are
+  // Only Development is ever the default; Production/custom stages are
   // never auto-defaulted, even when created first.
-  const environmentId = await ctx.db.insert("environments", {
+  const stageId = await ctx.db.insert("stages", {
     authId: project.authId,
     projectId: project._id,
-    name: displayEnvironmentName(name),
+    name: displayStageName(name),
     kind: kind,
     isDefault: kind === "development",
     updatedAt: Date.now(),
   });
-  const created = await ctx.db.get(environmentId);
-  if (!created) throw new Error("Failed to create environment");
+  const created = await ctx.db.get(stageId);
+  if (!created) throw new Error("Failed to create stage");
   if (kind === "development") {
-    for (const environment of environments.filter((entry) => entry.isDefault)) {
-      await ctx.db.patch(environment._id, {
+    for (const stage of stages.filter((entry) => entry.isDefault)) {
+      await ctx.db.patch(stage._id, {
         isDefault: false,
         updatedAt: Date.now(),
       });
@@ -1041,15 +960,13 @@ async function syncWorkspaceResources(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
   const existing = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const workspaceResources = resources.filter(
     (entry) => entry.kind === "workspace",
@@ -1098,7 +1015,7 @@ async function syncWorkspaceResources(
       const id = await ctx.db.insert("workspaceConfigs", {
         accountId: accountId,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name,
         description: resource.description,
         config: resource.config,
@@ -1192,20 +1109,14 @@ async function syncSandboxResources(
   options: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     resources: CliResource[];
     envValues: Record<string, string>;
     missingEnv: Set<string>;
   },
 ): Promise<Record<string, string>> {
-  const {
-    accountId,
-    projectId,
-    environmentId,
-    resources,
-    envValues,
-    missingEnv,
-  } = options;
+  const { accountId, projectId, stageId, resources, envValues, missingEnv } =
+    options;
   const ids: Record<string, string> = {};
   const sandboxes = resources.filter((entry) => entry.kind === "sandbox");
   if (sandboxes.length === 0) return ids;
@@ -1220,9 +1131,7 @@ async function syncSandboxResources(
   }
   const existing = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const desiredNames = new Set(
     sandboxes.map((entry) => resourceName(entry.name)),
@@ -1309,7 +1218,7 @@ async function syncSandboxResources(
       const id = await ctx.db.insert("sandboxConfigs", {
         accountId: accountId,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name,
         description: resource.description,
         encryptedConfig: encrypted.ciphertext,
@@ -1334,7 +1243,7 @@ async function syncPolicyResources(
   ctx: MutationCtx,
   accountId: Id<"accounts">,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<Record<string, string>> {
   const ids: Record<string, string> = {};
@@ -1343,9 +1252,7 @@ async function syncPolicyResources(
 
   const existing = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const desiredNames = new Set(
     policies.map((entry) => resourceName(entry.name)),
@@ -1377,7 +1284,7 @@ async function syncPolicyResources(
       await ctx.db.patch(target._id, {
         accountId: accountId,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name,
         description: resource.description,
         document: document,
@@ -1392,7 +1299,7 @@ async function syncPolicyResources(
       const id = await ctx.db.insert("agentPolicies", {
         accountId: accountId,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name,
         description: resource.description,
         document: document,
@@ -1412,7 +1319,7 @@ async function syncPolicyResources(
  * Channel records name agents, workspaces and policies by resource name, so this
  * runs after those are synced and their ids are known. A record is unique per
  * `(account, platform, externalId)` because the inbound webhook looks it up that
- * way — so two environments cannot both claim one Slack channel, and trying is
+ * way — so two stages cannot both claim one Slack channel, and trying is
  * an error rather than a silent last-writer-wins.
  */
 async function syncChannelRecordResources(
@@ -1420,7 +1327,7 @@ async function syncChannelRecordResources(
   options: {
     accountId: Id<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     resources: CliResource[];
     agentIds: Record<string, string>;
     workspaceIds: Record<string, string>;
@@ -1435,9 +1342,7 @@ async function syncChannelRecordResources(
 
   const existing = await ctx.db
     .query("channelRecords")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", options.environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", options.stageId))
     .collect();
 
   for (const resource of records) {
@@ -1453,7 +1358,7 @@ async function syncChannelRecordResources(
     const config = normalizeChannelRecordConfig(input.config);
     await assertChannelRecordPlaceIsFree(ctx, {
       accountId: options.accountId,
-      environmentId: options.environmentId,
+      stageId: options.stageId,
       platform: platform,
       externalId: externalId,
       name: name,
@@ -1463,7 +1368,7 @@ async function syncChannelRecordResources(
     const patch = {
       accountId: options.accountId,
       projectId: options.projectId,
-      environmentId: options.environmentId,
+      stageId: options.stageId,
       platform: platform,
       externalId: externalId,
       ...(typeof input.workspaceRef === "string"
@@ -1623,7 +1528,7 @@ async function assertChannelRecordPlaceIsFree(
   ctx: MutationCtx,
   options: {
     accountId: Id<"accounts">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     platform: string;
     externalId: string;
     name: string;
@@ -1641,9 +1546,7 @@ async function assertChannelRecordPlaceIsFree(
   const conflict = rows.find(
     (row) =>
       row.status === "active" &&
-      !(
-        row.environmentId === options.environmentId && row.name === options.name
-      ),
+      !(row.stageId === options.stageId && row.name === options.name),
   );
   if (!conflict) return;
 
@@ -1663,7 +1566,7 @@ function requireChannelRecordString(value: unknown, field: string): string {
 
 /**
  * Fail loudly when an old account-scoped runtime resource would shadow the new
- * environment-scoped row. Operators must migrate or delete that row explicitly.
+ * stage-scoped row. Operators must migrate or delete that row explicitly.
  */
 async function assertNoAccountScopedResourceConflict(
   ctx: MutationCtx,
@@ -1679,12 +1582,12 @@ async function assertNoAccountScopedResourceConflict(
       q.eq("accountId", options.accountId).eq("name", options.name),
     )
     .collect();
-  const accountScoped = rows.find((row) => row.environmentId === undefined);
+  const accountScoped = rows.find((row) => row.stageId === undefined);
   if (!accountScoped) return;
 
   throw new Error(
     `${options.table} "${options.name}" is account-scoped legacy data. ` +
-      "Migrate it to a project/environment or delete it before syncing code-managed resources.",
+      "Migrate it to a project/stage or delete it before syncing code-managed resources.",
   );
 }
 
@@ -1693,7 +1596,7 @@ async function syncAgentResources(
   options: {
     account: Doc<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     resources: CliResource[];
     workspaceIds: Record<string, string>;
     sandboxIds: Record<string, string>;
@@ -1707,7 +1610,7 @@ async function syncAgentResources(
   const {
     account,
     projectId,
-    environmentId,
+    stageId,
     resources,
     workspaceIds,
     sandboxIds,
@@ -1726,8 +1629,8 @@ async function syncAgentResources(
   }> = [];
   const existing = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const agentResources = resources.filter((entry) => entry.kind === "agent");
@@ -1767,7 +1670,7 @@ async function syncAgentResources(
       toolIds,
     );
     const flat = fromNestedAgentConfig(nested);
-    // Names referenced via `env("NAME")` but not yet stored for this environment.
+    // Names referenced via `env("NAME")` but not yet stored for this stage.
     // Surfaced as a deploy warning so a typo/rename can't silently no-op into
     // an unresolved `${NAME}` placeholder at run time.
     for (const envNameEntry of envNames) {
@@ -1833,7 +1736,7 @@ async function syncAgentResources(
         name: name,
         description: resource.description,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         provider: flat.provider,
         modelId: flat.modelId,
         systemPrompt: flat.systemPrompt,
@@ -1930,24 +1833,18 @@ async function syncCanvasLayoutForManifest(
   options: {
     account: Doc<"accounts">;
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     resources: CliResource[];
     workspaceIds: Record<string, string>;
     sandboxIds: Record<string, string>;
   },
 ): Promise<void> {
-  const {
-    account,
-    projectId,
-    environmentId,
-    resources,
-    workspaceIds,
-    sandboxIds,
-  } = options;
+  const { account, projectId, stageId, resources, workspaceIds, sandboxIds } =
+    options;
   const layout = await ctx.db
     .query("canvasLayouts")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .unique();
   const existingNodes = ((layout?.nodes ?? []) as CanvasNode[]).map(
@@ -1970,8 +1867,8 @@ async function syncCanvasLayoutForManifest(
 
   const agentConfigs = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const agentConfigByName = new Map(
@@ -1983,8 +1880,8 @@ async function syncCanvasLayoutForManifest(
     (
       await ctx.db
         .query("accountTools")
-        .withIndex("by_environmentId_and_status", (q) =>
-          q.eq("environmentId", environmentId).eq("status", "active"),
+        .withIndex("by_stageId_and_status", (q) =>
+          q.eq("stageId", stageId).eq("status", "active"),
         )
         .collect()
     ).map((entry) => [entry.name, entry]),
@@ -2148,7 +2045,7 @@ async function syncCanvasLayoutForManifest(
   });
 
   // Point each tool row at the node the CLI just drew for it. Every tool panel
-  // resolves through `getByNode`, which reads `by_environmentId_and_nodeId` —
+  // resolves through `getByNode`, which reads `by_stageId_and_nodeId` —
   // so without this the CLI's own node never matched its row and the config,
   // details and test tabs all opened empty on a tool that ran fine.
   for (const [toolId, nodeId] of toolNodeIds) {
@@ -2303,7 +2200,7 @@ async function syncCanvasLayoutForManifest(
     await ctx.db.insert("canvasLayouts", {
       authId: authId,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       nodes: nextNodes,
       edges: nextEdges,
       updatedAt: now,
@@ -2455,7 +2352,7 @@ function cliResourceKeyForNode(node: CanvasNode): string {
 async function pruneAgents(
   ctx: MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<void> {
   const declared = new Set(
@@ -2465,8 +2362,8 @@ async function pruneAgents(
   );
   const existing = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   for (const config of existing) {
@@ -2484,7 +2381,7 @@ async function pruneAgents(
 
 async function prunePolicyResources(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<void> {
   const declared = new Set(
@@ -2494,9 +2391,7 @@ async function prunePolicyResources(
   );
   const existing = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const policy of existing) {
     if (policy.managedBy === "cli" && !declared.has(policy.name)) {
@@ -2511,7 +2406,7 @@ async function prunePolicyResources(
 
 async function pruneChannelRecordResources(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<void> {
   const declared = new Set(
@@ -2521,9 +2416,7 @@ async function pruneChannelRecordResources(
   );
   const existing = await ctx.db
     .query("channelRecords")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const record of existing) {
     if (record.managedBy === "cli" && !declared.has(record.name)) {
@@ -2538,7 +2431,7 @@ async function pruneChannelRecordResources(
 
 async function pruneWorkspaceResources(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<void> {
   const declared = new Set(
@@ -2546,13 +2439,11 @@ async function pruneWorkspaceResources(
       .filter((entry) => entry.kind === "workspace")
       .map((entry) => resourceName(entry.name)),
   );
-  // Scope to this environment so prune never reaches across environments or
-  // touches account-scoped (env-less) legacy / dashboard-shared rows.
+  // Scope to this stage so prune never reaches across stages or touches
+  // account-scoped (stage-less) legacy / dashboard-shared rows.
   const existing = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const workspace of existing) {
     if (workspace.managedBy === "cli" && !declared.has(workspace.name))
@@ -2562,7 +2453,7 @@ async function pruneWorkspaceResources(
 
 async function pruneSandboxResources(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   resources: CliResource[],
 ): Promise<void> {
   const declared = new Set(
@@ -2572,9 +2463,7 @@ async function pruneSandboxResources(
   );
   const existing = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   for (const sandbox of existing) {
     if (sandbox.managedBy === "cli" && !declared.has(sandbox.name))
@@ -2585,13 +2474,13 @@ async function pruneSandboxResources(
 async function deleteAgentResource(
   ctx: MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   name: string,
 ): Promise<void> {
   const configs = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const config = configs.find((entry) => entry.name === name);
@@ -2613,13 +2502,13 @@ async function deleteAgentResource(
 
 async function deleteWorkspaceResource(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   name: string,
 ): Promise<void> {
   const workspace = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId).eq("name", name),
+    .withIndex("by_stageId_and_name", (q) =>
+      q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
   if (!workspace) return;
@@ -2633,13 +2522,13 @@ async function deleteWorkspaceResource(
 
 async function deleteSandboxResource(
   ctx: MutationCtx,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   name: string,
 ): Promise<void> {
   const sandbox = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId).eq("name", name),
+    .withIndex("by_stageId_and_name", (q) =>
+      q.eq("stageId", stageId).eq("name", name),
     )
     .unique();
   if (!sandbox) return;
@@ -2651,41 +2540,33 @@ async function deleteSandboxResource(
   await ctx.db.delete(sandbox._id);
 }
 
-async function resourcesForEnvironment(
+async function resourcesForStage(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
 ): Promise<CliResource[]> {
   const sandboxes = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const workspaces = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const agents = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const agentIds = agents.flatMap((entry) =>
     entry.agentId ? [entry.agentId] : [],
@@ -2715,8 +2596,8 @@ async function resourcesForEnvironment(
   );
   const externalResources = await ctx.db
     .query("cliExternalResources")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const skillNames = Object.fromEntries(
@@ -2856,41 +2737,33 @@ async function resourcesForEnvironment(
   ].sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
 }
 
-async function idsForEnvironment(
+async function idsForStage(
   ctx: QueryCtx | MutationCtx,
   accountId: Id<"accounts">,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
 ): Promise<Ids> {
   const sandboxes = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const workspaces = await ctx.db
     .query("workspaceConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const agents = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
   const policies = await ctx.db
     .query("agentPolicies")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const channelRecords = await ctx.db
     .query("channelRecords")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const agentIds = new Set(
     agents.flatMap((entry) => (entry.agentId ? [entry.agentId] : [])),
@@ -2907,11 +2780,7 @@ async function idsForEnvironment(
       ),
     )
   ).flat();
-  const externalIds = await externalIdsForEnvironment(
-    ctx,
-    projectId,
-    environmentId,
-  );
+  const externalIds = await externalIdsForStage(ctx, projectId, stageId);
 
   return {
     agents: Object.fromEntries(
@@ -2956,10 +2825,10 @@ async function idsForEnvironment(
   };
 }
 
-async function externalIdsForEnvironment(
+async function externalIdsForStage(
   ctx: QueryCtx | MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
 ): Promise<{
   skills: Record<string, string>;
   tools: Record<string, string>;
@@ -2967,8 +2836,8 @@ async function externalIdsForEnvironment(
 }> {
   const resources = await ctx.db
     .query("cliExternalResources")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
 
@@ -3321,7 +3190,7 @@ function resourceName(value: string): string {
   return trimmed;
 }
 
-function environmentKindForName(
+function stageKindForName(
   name: string,
 ): "development" | "production" | "custom" {
   const normalized = name.trim().toLowerCase();
@@ -3331,8 +3200,8 @@ function environmentKindForName(
   return "custom";
 }
 
-function displayEnvironmentName(name: string): string {
-  const kind = environmentKindForName(name);
+function displayStageName(name: string): string {
+  const kind = stageKindForName(name);
   if (kind === "development") return "Development";
   if (kind === "production") return "Production";
 

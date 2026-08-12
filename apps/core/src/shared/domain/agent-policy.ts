@@ -73,7 +73,7 @@ export interface PolicyDecisionInput {
   action: AgentPolicyAction;
   accountId?: string;
   project?: string;
-  environment?: string;
+  stage?: string;
   endpointId?: string;
   agentId?: string;
   conversationKey?: string;

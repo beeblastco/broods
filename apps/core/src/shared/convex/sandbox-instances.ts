@@ -50,9 +50,7 @@ export async function upsertSandboxInstance(
       ...(controlPlane.projectId
         ? { projectId: controlPlane.projectId as any }
         : {}),
-      ...(controlPlane.environmentId
-        ? { environmentId: controlPlane.environmentId as any }
-        : {}),
+      ...(controlPlane.stageId ? { stageId: controlPlane.stageId as any } : {}),
       provider: provider,
       reservationKey: reservationKey,
       externalId: externalId,

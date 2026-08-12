@@ -76,7 +76,7 @@ export type {
 };
 
 export type ProjectDoc = Doc<"projects">;
-export type EnvironmentDoc = Doc<"environments">;
+export type StageDoc = Doc<"stages">;
 export type AgentConfigDoc = Doc<"agentConfigs">;
 export type WorkspaceConfigDoc = Doc<"workspaceConfigs">;
 export type SandboxConfigDoc = Doc<"sandboxConfigs">;

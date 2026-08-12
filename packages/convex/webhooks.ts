@@ -1,7 +1,7 @@
 /**
  * Outbound webhook views and editing for the dashboard. The harness delivers
  * events from each agent's `config.hooks.webhooks` array; this module surfaces
- * those per-agent hooks for an environment and lets the settings tab add, toggle,
+ * those per-agent hooks for a stage and lets the settings tab add, toggle,
  * and remove them. There is no separate webhook store — the agent config is the
  * source of truth.
  */
@@ -23,7 +23,7 @@ import {
   type ConfigAuditActor,
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
@@ -47,13 +47,13 @@ function readWebhooks(extraConfig: unknown): Record<string, unknown>[] {
 }
 
 /**
- * List every agent in an environment with its configured outbound webhooks. Agents
+ * List every agent in a stage with its configured outbound webhooks. Agents
  * with no webhooks are still returned so the settings tab can offer an empty agent
  * to add one to.
  * @returns one entry per agent, each carrying its indexed webhook rows
  */
 export const listAgentWebhooks = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(
     v.object({
       agentConfigId: v.id("agentConfigs"),
@@ -61,22 +61,22 @@ export const listAgentWebhooks = query({
       webhooks: v.array(webhookRow),
     }),
   ),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
       return [];
     }
 
     const configs = await ctx.db
       .query("agentConfigs")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
 
@@ -160,7 +160,7 @@ async function recordWebhookAudit(
   await insertConfigAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: config.projectId,
-    environmentId: config.environmentId,
+    stageId: config.stageId,
     actor: actor,
     action: action,
     resource: {

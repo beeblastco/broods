@@ -29,14 +29,14 @@ const DELETE_DESCRIPTIONS: Record<
       "Only the tool configuration will be removed. This will not interfere with any existing code or tool logic.",
   },
   workspace: {
-    summary: "Delete this workspace from the environment.",
+    summary: "Delete this workspace from the stage.",
     detail:
-      "The canvas node and its underlying workspaceConfig record are deleted from this environment. Other environments are unaffected, and the persistent files for this workspace become unreachable.",
+      "The canvas node and its underlying workspaceConfig record are deleted from this stage. Other stages are unaffected, and the persistent files for this workspace become unreachable.",
   },
   sandbox: {
-    summary: "Delete this sandbox from the environment.",
+    summary: "Delete this sandbox from the stage.",
     detail:
-      "The canvas node and its underlying sandboxConfig record are deleted from this environment. Other environments are unaffected.",
+      "The canvas node and its underlying sandboxConfig record are deleted from this stage. Other stages are unaffected.",
   },
   skill: {
     summary: "Remove this skill from the canvas.",

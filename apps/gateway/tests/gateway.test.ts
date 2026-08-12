@@ -1094,10 +1094,7 @@ test("routes config-plane CRUD to Convex, not core", () => {
   for (const method of ["GET", "POST", "PUT"]) {
     expect(isConfigHttpPath("/v1/account/onboarding", method)).toBe(true);
     expect(
-      isConfigHttpPath(
-        "/v1/account/projects/p/environments/e/manifest",
-        method,
-      ),
+      isConfigHttpPath("/v1/account/projects/p/stages/e/manifest", method),
     ).toBe(true);
   }
   expect(isConfigHttpPath("/v1/accountx", "GET")).toBe(false);
@@ -1206,15 +1203,15 @@ test("parses agent websocket paths so the upgrade can bind the key's endpoint sc
     matchAgentWebSocketPath("/v1/demo/agents/development/env_123/ws"),
   ).toEqual({
     projectSlug: "demo",
-    environmentSlug: "development",
+    stageSlug: "development",
     endpointId: "env_123",
   });
   expect(
-    matchAgentWebSocketPath("/v1/demo/agents/dev%20env/env%20123/ws"),
+    matchAgentWebSocketPath("/v1/demo/agents/dev%20stage/stage%20123/ws"),
   ).toEqual({
     projectSlug: "demo",
-    environmentSlug: "dev env",
-    endpointId: "env 123",
+    stageSlug: "dev stage",
+    endpointId: "stage 123",
   });
   expect(matchAgentWebSocketPath("/v1/agents/env_123")).toBeNull();
   expect(matchAgentWebSocketPath("/v1/demo/observability/ws")).toBeNull();
@@ -1234,7 +1231,7 @@ test("routes a runtime key to the matching core upstream", async () => {
       return Response.json({
         accountId: "account-1",
         projectSlug: "project",
-        environmentSlug: "production",
+        stageSlug: "production",
         endpointIds: ["endpoint-1"],
       });
     },
@@ -1243,7 +1240,7 @@ test("routes a runtime key to the matching core upstream", async () => {
   expect(calls).toHaveLength(2);
   expect(resolved).toMatchObject({
     coreBaseUrl: "https://prod.example",
-    scope: { environmentSlug: "production" },
+    scope: { stageSlug: "production" },
   });
 });
 

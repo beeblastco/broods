@@ -1,6 +1,6 @@
 "use client";
 
-/** Displays the top header bar with logo, project selector, environment selector, navigation links, and user menu. */
+/** Displays the top header bar with logo, project selector, stage selector, navigation links, and user menu. */
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useTheme } from "next-themes";

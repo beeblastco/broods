@@ -44,7 +44,7 @@ const result = await client.run(api.agents.myAgent, {
 console.log(result.text);
 ```
 
-Runtime calls use an environment runtime API key. After `broods deploy`, the CLI
+Runtime calls use a stage runtime API key. After `broods deploy`, the CLI
 writes `BROODS_API_KEY` to `.env.local`; the SDK also accepts `apiKey`,
 `BROODS_API_KEY`, `baseUrl`, and `BROODS_BASE_URL`.
 

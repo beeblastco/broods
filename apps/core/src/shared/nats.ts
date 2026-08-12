@@ -355,7 +355,7 @@ export async function ensureObservabilityStream(
 
 /**
  * Gateway read path: a JetStream consumer over the observability stream filtered
- * to one project/environment scope. `startTime` (ISO) replays recent history from
+ * to one project/stage scope. `startTime` (ISO) replays recent history from
  * that point; the ordered consumer then keeps delivering live messages, so this
  * single consumer both backfills the recent window (full fidelity, no Tempo
  * truncation) and tails live. Returns an async-iterable of JsMsg; decode
@@ -366,15 +366,14 @@ export async function readObservabilityStream(options: {
   stream: "logs" | "traces";
   accountId: string;
   project: string;
-  env: string;
+  stage: string;
   startTime?: string;
 }): Promise<ConsumerMessages> {
   await ensureObservabilityStream(options.connection);
   const js = options.connection.jetstream();
-  const subject =
-    options.stream === "logs"
-      ? logsSubjectWildcard(options.accountId, options.project, options.env)
-      : tracesSubjectWildcard(options.accountId, options.project, options.env);
+  const wildcard =
+    options.stream === "logs" ? logsSubjectWildcard : tracesSubjectWildcard;
+  const subject = wildcard(options.accountId, options.project, options.stage);
   const consumer = await js.consumers.get(OBSERVABILITY_STREAM_NAME, {
     filterSubjects: subject,
     ...consumerStartPolicy(undefined, options.startTime),
@@ -612,41 +611,41 @@ export function subjectToken(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
-// Observability subjects: v1.<accountId>.<project>.<subjectToken(env)>.{logs|traces}.<endpointId>.
-// The env segment is base64url-encoded since environment names are free text; the
+// Observability subjects: v1.<accountId>.<project>.<subjectToken(stage)>.{logs|traces}.<endpointId>.
+// The stage segment is base64url-encoded since stage names are free text; the
 // gateway reconstructs it from the token scope rather than parsing the subject.
 
 export function logsSubject(
   accountId: string,
   project: string,
-  env: string,
+  stage: string,
   endpointId: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(env)}.logs.${endpointId}`;
+  return `v1.${accountId}.${project}.${subjectToken(stage)}.logs.${endpointId}`;
 }
 
 export function tracesSubject(
   accountId: string,
   project: string,
-  env: string,
+  stage: string,
   endpointId: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(env)}.traces.${endpointId}`;
+  return `v1.${accountId}.${project}.${subjectToken(stage)}.traces.${endpointId}`;
 }
 
-// Wildcards cover all endpoints in a project/environment (dashboard tab / CLI `dev` scope).
+// Wildcards cover all endpoints in a project/stage (dashboard tab / CLI `dev` scope).
 export function logsSubjectWildcard(
   accountId: string,
   project: string,
-  env: string,
+  stage: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(env)}.logs.>`;
+  return `v1.${accountId}.${project}.${subjectToken(stage)}.logs.>`;
 }
 
 export function tracesSubjectWildcard(
   accountId: string,
   project: string,
-  env: string,
+  stage: string,
 ): string {
-  return `v1.${accountId}.${project}.${subjectToken(env)}.traces.>`;
+  return `v1.${accountId}.${project}.${subjectToken(stage)}.traces.>`;
 }

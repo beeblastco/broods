@@ -58,7 +58,7 @@ export function isWebSocketPath(pathname: string): boolean {
 export function matchAgentWebSocketPath(pathname: string): {
   endpointId: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
 } | null {
   const scoped = pathname.match(
     /^\/v1\/([^/]+)\/agents\/([^/]+)\/([^/]+)\/ws$/,
@@ -66,7 +66,7 @@ export function matchAgentWebSocketPath(pathname: string): {
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
-      environmentSlug: decodeURIComponent(scoped[2]),
+      stageSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
     };
   }

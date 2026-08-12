@@ -80,7 +80,7 @@ describe("runtime ingress", () => {
         publicDeploymentIngress: {
           accountId: accountId,
           endpointId: "endpoint-one",
-          environmentSlug: "development",
+          stageSlug: "development",
           projectSlug: "demo",
           ignored: "not-returned",
         },
@@ -98,7 +98,7 @@ describe("runtime ingress", () => {
     ).toEqual({
       accountId: accountId,
       endpointId: "endpoint-one",
-      environmentSlug: "development",
+      stageSlug: "development",
       projectSlug: "demo",
     });
   });
@@ -119,7 +119,7 @@ describe("runtime ingress", () => {
         publicDeploymentIngress: {
           accountId: accountId,
           endpointId: "endpoint-one",
-          environmentSlug: "development",
+          stageSlug: "development",
           projectSlug: "demo",
         },
       },
@@ -142,7 +142,7 @@ describe("runtime ingress", () => {
       {
         accountId: 42,
         endpointId: "endpoint-one",
-        environmentSlug: "development",
+        stageSlug: "development",
         projectSlug: "demo",
       },
     ],

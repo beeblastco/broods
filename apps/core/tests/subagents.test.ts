@@ -934,7 +934,7 @@ describe("SubagentCoordinator", () => {
       eventId: "event-x",
       endpointId: "env-1d88x06b",
       projectSlug: "channel-telegram",
-      environmentSlug: "development",
+      stageSlug: "development",
       filesystemNamespace: () => "ns",
       resolvedWorkspaces: () => [],
       agentSandbox: () => undefined,
@@ -945,13 +945,13 @@ describe("SubagentCoordinator", () => {
 
     const ephemeral = createEphemeralChildSession(childSession, []);
 
-    // Without the deployment scope, runAgentLoop stamps empty project/environment/
+    // Without the deployment scope, runAgentLoop stamps empty project/stage/
     // endpoint_id on the subtask span: publishSpan early-returns (no live span) AND
-    // the dashboard's project+environment-scoped Tempo backfill never matches it, so
+    // the dashboard's project+stage-scoped Tempo backfill never matches it, so
     // subagents are invisible in tracing and a reload doesn't bring them back.
     expect(ephemeral.endpointId).toBe("env-1d88x06b");
     expect(ephemeral.projectSlug).toBe("channel-telegram");
-    expect(ephemeral.environmentSlug).toBe("development");
+    expect(ephemeral.stageSlug).toBe("development");
     expect(ephemeral.accountId).toBe("account_1");
   });
 

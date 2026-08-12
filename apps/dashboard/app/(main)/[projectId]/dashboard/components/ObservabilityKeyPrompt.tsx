@@ -10,7 +10,7 @@ interface Props {
   onGenerate: () => void;
 }
 
-/** Shown on the Monitoring/Tracing tabs when an environment has no runtime API key yet. */
+/** Shown on the Monitoring/Tracing tabs when a stage has no runtime API key yet. */
 export function ObservabilityKeyPrompt({
   generating,
   error,
@@ -24,8 +24,8 @@ export function ObservabilityKeyPrompt({
       <div className="flex flex-col gap-1">
         <p className="text-sm font-medium">Generate a viewing key</p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          Streaming logs and traces needs this environment&apos;s runtime API
-          key. Generate one here to view them — no CLI required.
+          Streaming logs and traces needs this stage&apos;s runtime API key.
+          Generate one here to view them — no CLI required.
         </p>
       </div>
 

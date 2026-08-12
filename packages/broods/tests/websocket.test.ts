@@ -46,7 +46,7 @@ afterEach(() => {
   delete process.env.BROODS_DASHBOARD_URL;
   delete process.env.BROODS_TOKEN;
   delete process.env.BROODS_PROJECT;
-  delete process.env.BROODS_ENVIRONMENT;
+  delete process.env.BROODS_STAGE;
   delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_HOST;
   delete process.env.BROODS_API_KEY;
@@ -142,7 +142,7 @@ test("websocket client subscribes to the core service and forwards server messag
     {
       endpointId: "agent_1",
       projectSlug: "demo",
-      environmentSlug: "development",
+      stageSlug: "development",
       events: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
       sessionId: "session_1",
       system: {
@@ -326,10 +326,10 @@ test("websocket client can build scoped URLs from generated agent references", a
       name: "chat",
       id: "agent_123",
       project: "demo",
-      environment: "development",
+      stage: "development",
       endpointId: "env_123",
       projectSlug: "demo",
-      environmentSlug: "development",
+      stageSlug: "development",
     },
     input: "hello",
   });

@@ -25,7 +25,8 @@ interface LoginCallback {
 const VALUE_OPTIONS = new Set([
   "--base-url",
   "--dashboard-url",
-  "--env",
+  "--stage",
+  "--from",
   "--level",
   "--limit",
   "--project",
@@ -317,7 +318,7 @@ function waitForCallback(expectedState: string): Promise<{
  * Race a promise against a timeout so a stalled browser login surfaces an
  * actionable error instead of hanging the CLI forever. The most common cause is
  * the dashboard's cliAuth Convex functions not being deployed in the target
- * environment, which makes /cli-auth/start return a 500 in the browser and never
+ * stage, which makes /cli-auth/start return a 500 in the browser and never
  * redirect back to the local callback.
  */
 async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
