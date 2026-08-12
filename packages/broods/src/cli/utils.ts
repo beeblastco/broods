@@ -3,6 +3,7 @@
  */
 
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -167,7 +168,8 @@ export async function promptConfirm(question: string): Promise<boolean> {
 export async function loginWithBrowser(
   dashboardUrl: string,
 ): Promise<StoredAuthConfig> {
-  const state = crypto.randomUUID();
+  // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
+  const state = randomUUID();
   const { code, close } = await waitForCallback(state);
 
   try {
