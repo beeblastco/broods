@@ -2,23 +2,24 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "./_generated/dataModel";
-import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import type { OrgRole } from "./model/ownership/org";
+import { getProjectForRole } from "./model/ownership/project";
 import schema from "./schema";
+import { listStagesForProject } from "./stage";
 
 const modules = import.meta.glob("./**/*.ts");
+
+const OWNER_AUTH_ID = "auth_owner";
+const MEMBER_AUTH_ID = "auth_member";
+const ADMIN_AUTH_ID = "auth_admin";
+const STRANGER_AUTH_ID = "auth_stranger";
 
 const accessTest = () => convexTest(schema, modules);
 
 type T = ReturnType<typeof accessTest>;
 
-const OWNER_AUTH_ID = "auth_owner";
-const MEMBER_AUTH_ID = "auth_member";
-const ADMIN_AUTH_ID = "auth_admin";
-
-// `stage.list` feeds the whole stage-scoped UI (canvas, dashboard, sandbox).
-// Reading it behind an "admin" floor left plain members with no stage id, so
-// every stage-keyed query skipped and the canvas rendered empty.
+// `stage.list` feeds every stage-keyed screen (canvas, dashboard, sandbox). An
+// "admin" floor there left members with no stage id and a blank canvas.
 
 async function seedOrgProject(t: T): Promise<Id<"projects">> {
   return await t.run(async (ctx) => {
@@ -35,6 +36,22 @@ async function seedOrgProject(t: T): Promise<Id<"projects">> {
       orgId: orgId,
       name: "demo-app",
       slug: "demo-app",
+      updatedAt: now,
+    });
+    await ctx.db.insert("stages", {
+      authId: OWNER_AUTH_ID,
+      projectId: projectId,
+      name: "Development",
+      kind: "development" as const,
+      isDefault: true,
+      updatedAt: now,
+    });
+    await ctx.db.insert("stages", {
+      authId: OWNER_AUTH_ID,
+      projectId: projectId,
+      name: "Production",
+      kind: "production" as const,
+      isDefault: false,
       updatedAt: now,
     });
 
@@ -60,16 +77,42 @@ async function seedOrgProject(t: T): Promise<Id<"projects">> {
   });
 }
 
-describe("project visibility by org role", () => {
-  test("a member can read the project stage.list resolves through", async () => {
+describe("stage listing by org role", () => {
+  test("a member sees the project's stages, default first", async () => {
     const t = accessTest();
     const projectId = await seedOrgProject(t);
 
-    const project = await t.run(
-      async (ctx) => await getOwnedProject(ctx, MEMBER_AUTH_ID, projectId),
+    const stages = await t.run(
+      async (ctx) => await listStagesForProject(ctx, MEMBER_AUTH_ID, projectId),
     );
 
-    expect(project?._id).toBe(projectId);
+    expect(stages.map((stage) => stage.name)).toEqual([
+      "Development",
+      "Production",
+    ]);
+  });
+
+  test("the project owner sees them without an org membership row", async () => {
+    const t = accessTest();
+    const projectId = await seedOrgProject(t);
+
+    const stages = await t.run(
+      async (ctx) => await listStagesForProject(ctx, OWNER_AUTH_ID, projectId),
+    );
+
+    expect(stages).toHaveLength(2);
+  });
+
+  test("a non-member of the org sees nothing", async () => {
+    const t = accessTest();
+    const projectId = await seedOrgProject(t);
+
+    const stages = await t.run(
+      async (ctx) =>
+        await listStagesForProject(ctx, STRANGER_AUTH_ID, projectId),
+    );
+
+    expect(stages).toEqual([]);
   });
 
   test("a member is still barred from admin-gated paths like stage.remove", async () => {
@@ -83,16 +126,5 @@ describe("project visibility by org role", () => {
 
     expect(asMember).toBeNull();
     expect(asAdmin?._id).toBe(projectId);
-  });
-
-  test("a non-member of the org sees nothing", async () => {
-    const t = accessTest();
-    const projectId = await seedOrgProject(t);
-
-    const project = await t.run(
-      async (ctx) => await getOwnedProject(ctx, "auth_stranger", projectId),
-    );
-
-    expect(project).toBeNull();
   });
 });

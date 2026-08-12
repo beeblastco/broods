@@ -4,7 +4,7 @@
 
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import {
@@ -392,6 +392,35 @@ async function hasStageContents(
   return Boolean(variable);
 }
 
+/**
+ * Stage listing for any org member. Split from the `list` query so the role
+ * boundary is testable: convex-test cannot run the query itself, which needs
+ * the WorkOS AuthKit component.
+ */
+export async function listStagesForProject(
+  ctx: QueryCtx | MutationCtx,
+  authId: string,
+  projectId: Id<"projects">,
+): Promise<Doc<"stages">[]> {
+  // Return empty rather than throwing so a just-deleted project doesn't crash
+  // reactive subscribers (header selector, settings) before they navigate away.
+  const project = await getOwnedProject(ctx, authId, projectId);
+  if (!project) return [];
+
+  const stages = await ctx.db
+    .query("stages")
+    .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+    .collect();
+
+  return stages.sort((a, b) =>
+    a.isDefault !== b.isDefault
+      ? a.isDefault
+        ? -1
+        : 1
+      : a.name.localeCompare(b.name),
+  );
+}
+
 export const list = query({
   args: { projectId: v.id("projects") },
   returns: v.array(stageDoc),
@@ -399,23 +428,7 @@ export const list = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Return empty rather than throwing so a just-deleted project doesn't crash
-    // reactive subscribers (header selector, settings) before they navigate away.
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
-    if (!project) return [];
-
-    const stages = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
-      .collect();
-
-    return stages.sort((a, b) =>
-      a.isDefault !== b.isDefault
-        ? a.isDefault
-          ? -1
-          : 1
-        : a.name.localeCompare(b.name),
-    );
+    return listStagesForProject(ctx, authUser.id, projectId);
   },
 });
 
