@@ -3,8 +3,8 @@
  * deploy-key ConvexHttpClient. Fire-and-forget safe — errors are caught and
  * logged; they never propagate into the agent execution path.
  *
- * endpointId, project, and environment are passed when present for full
- * deployment-scoped usage attribution.
+ * endpointId is the only deployment scope on the row; it already identifies one
+ * project/stage pair, so neither slug is sent.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

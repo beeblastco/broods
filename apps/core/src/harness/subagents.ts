@@ -481,9 +481,9 @@ export class SubagentCoordinator {
         ? await this.admitChildConversation(task, promptMessage)
         : undefined;
     // Initialize an isolated child session using the generated conversation key.
-    // Inherit the parent's deployment scope (endpoint/project/environment) so the
+    // Inherit the parent's deployment scope (endpoint/project/stage) so the
     // child's spans and logs publish to the same live dashboard subscription and
-    // its usage rows are counted in the right environment.
+    // its usage rows are counted in the right stage.
     const childSession = new Session(
       task.eventId,
       task.conversationKey,
@@ -493,7 +493,7 @@ export class SubagentCoordinator {
       undefined,
       this.parentSession.endpointId,
       this.parentSession.projectSlug,
-      this.parentSession.environmentSlug,
+      this.parentSession.stageSlug,
       ownerGeneration,
     );
     let finalResponse: JSONValue | undefined;
@@ -710,7 +710,7 @@ export class SubagentCoordinator {
       publicConversationKey: task.publicConversationKey,
       endpointId: this.parentSession.endpointId,
       projectSlug: this.parentSession.projectSlug,
-      environmentSlug: this.parentSession.environmentSlug,
+      stageSlug: this.parentSession.stageSlug,
     }).catch((error) => {
       logError("Subagent queued ingress dispatch failed", {
         taskId: task.taskId,
@@ -972,15 +972,15 @@ export function createEphemeralChildSession(
     conversationKey: childSession.conversationKey,
     eventId: childSession.eventId,
     // Carry the deployment scope through to the child run. runAgentLoop reads
-    // these off the session to stamp project/environment/endpoint_id on the
+    // these off the session to stamp project/stage/endpoint_id on the
     // subtask span and to build the live NATS subject. Omitting them (the prior
     // bug) left subagent spans with only account_id, so publishSpan early-returned
-    // (no live span) AND the dashboard's project+environment-scoped Tempo backfill
+    // (no live span) AND the dashboard's project+stage-scoped Tempo backfill
     // never matched them — subagents were invisible in tracing and a reload didn't
     // bring them back.
     endpointId: childSession.endpointId,
     projectSlug: childSession.projectSlug,
-    environmentSlug: childSession.environmentSlug,
+    stageSlug: childSession.stageSlug,
     filesystemNamespace: () => childSession.filesystemNamespace(),
     resolvedWorkspaces: () => childSession.resolvedWorkspaces(),
     agentSandbox: () => childSession.agentSandbox(),

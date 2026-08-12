@@ -9,7 +9,7 @@
  */
 
 import { Button } from "@/app/components/ui/button";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -32,19 +32,19 @@ const VIEWS: Array<{ id: SandboxView; label: string }> = [
 export default function SandboxPage() {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
-  const { environmentId } = useEnvironment();
-  const environments = useQuery(api.environment.list, {
+  const { stageId } = useStage();
+  const stages = useQuery(api.stage.list, {
     projectId: projectId,
-  }) as Doc<"environments">[] | undefined;
-  const activeEnv =
-    environments?.find((env) => env._id === environmentId) ??
-    environments?.find((env) => env.isDefault) ??
-    environments?.[0] ??
+  }) as Doc<"stages">[] | undefined;
+  const activeStage =
+    stages?.find((stage) => stage._id === stageId) ??
+    stages?.find((stage) => stage.isDefault) ??
+    stages?.[0] ??
     null;
-  const activeEnvId = activeEnv?._id ?? null;
+  const activeStageId = activeStage?._id ?? null;
   const instances = useQuery(
     api.sandboxInstances.listForActiveOrg,
-    activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
   const snapshots = useQuery(api.sandboxSnapshots.listForActiveOrg, {});
   const account = useQuery(api.org.getActiveAccount, {});
@@ -54,7 +54,7 @@ export default function SandboxPage() {
     VIEWS.find((tab) => tab.id === view)?.label ?? "Sandboxes";
 
   const loading =
-    environments === undefined ||
+    stages === undefined ||
     instances === undefined ||
     snapshots === undefined ||
     account === undefined;

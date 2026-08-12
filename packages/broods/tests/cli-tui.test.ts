@@ -17,7 +17,7 @@ const AGENT: AgentReference = {
   name: "helper",
   id: "agent_1",
   project: "demo",
-  environment: "dev",
+  stage: "dev",
 };
 
 type RunBody = { conversationKey: string; events: ModelMessage[] };

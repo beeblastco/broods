@@ -7,7 +7,7 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { deleteEnvironmentContents } from "../environment";
+import { deleteStageContents } from "../stage";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 const accountScopedTables = [
@@ -167,7 +167,7 @@ export async function deleteAccountContentsBatch(
 }
 
 /**
- * Delete a project, its environments + their contents, and its workspace files
+ * Delete a project, its stages + their contents, and its workspace files
  * (including stored blobs).
  * @param projectId the project to purge
  */
@@ -175,13 +175,13 @@ export async function purgeProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<void> {
-  const environments = await ctx.db
-    .query("environments")
+  const stages = await ctx.db
+    .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
     .collect();
-  for (const environment of environments) {
-    await deleteEnvironmentContents(ctx, environment);
-    await ctx.db.delete(environment._id);
+  for (const stage of stages) {
+    await deleteStageContents(ctx, stage);
+    await ctx.db.delete(stage._id);
   }
 
   const files = await ctx.db

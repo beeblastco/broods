@@ -164,7 +164,7 @@ describe("account webhook ingress", () => {
         accountId: "acct_test",
         endpointId: "endpoint-development",
         projectSlug: "project-one",
-        environmentSlug: "development",
+        stageSlug: "development",
       }),
     });
     let processingScope: ReturnType<typeof getObservabilityContext> = null;
@@ -188,7 +188,7 @@ describe("account webhook ingress", () => {
       accountId: "acct_test",
       endpointId: "endpoint-development",
       project: "project-one",
-      environment: "development",
+      stage: "development",
     });
     expect(getObservabilityContext()).toBeNull();
     expect(handledEvents).toHaveLength(1);
@@ -211,7 +211,7 @@ describe("account webhook ingress", () => {
       channelName: "telegram",
       endpointId: "endpoint-development",
       projectSlug: "project-one",
-      environmentSlug: "development",
+      stageSlug: "development",
     });
   });
 

@@ -75,7 +75,7 @@ const ingressStatusResultValidator = v.object({
     v.object({
       accountId: v.string(),
       endpointId: v.string(),
-      environmentSlug: v.string(),
+      stageSlug: v.string(),
       projectSlug: v.string(),
     }),
   ),
@@ -84,7 +84,7 @@ const ingressStatusResultValidator = v.object({
 type PublicDeploymentIngress = {
   accountId: string;
   endpointId: string;
-  environmentSlug: string;
+  stageSlug: string;
   projectSlug: string;
 };
 
@@ -114,7 +114,7 @@ function publicDeploymentIngressFromDelivery(
   if (
     typeof value.accountId !== "string" ||
     typeof value.endpointId !== "string" ||
-    typeof value.environmentSlug !== "string" ||
+    typeof value.stageSlug !== "string" ||
     typeof value.projectSlug !== "string"
   ) {
     return undefined;
@@ -123,7 +123,7 @@ function publicDeploymentIngressFromDelivery(
   return {
     accountId: value.accountId,
     endpointId: value.endpointId,
-    environmentSlug: value.environmentSlug,
+    stageSlug: value.stageSlug,
     projectSlug: value.projectSlug,
   };
 }

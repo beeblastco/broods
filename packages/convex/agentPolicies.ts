@@ -11,7 +11,7 @@ import {
   query,
 } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { resolveActiveAccountForAuthId } from "./model/agentSync";
 import { isPlainObject } from "./model/objects";
@@ -37,13 +37,13 @@ const POLICY_ACTIONS = new Set([
 ]);
 
 /**
- * Lists active policies for a project environment.
+ * Lists active policies for a project stage.
  * @param projectId project containing the policies
- * @param environmentId environment containing the policies
+ * @param stageId stage containing the policies
  * @returns active policy documents
  */
-export const listForEnvironment = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+export const listForStage = query({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(policyDoc),
   handler: async (ctx, args) => {
     // Check authenticated user
@@ -54,33 +54,27 @@ export const listForEnvironment = query({
 
     const project = await getOwnedProject(ctx, user.id, args.projectId);
     if (!project) throw new Error("Project not found.");
-    const environment = await getOwnedEnvironment(
-      ctx,
-      user.id,
-      args.environmentId,
-    );
-    if (!environment || environment.projectId !== args.projectId)
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, args.stageId);
+    if (!stage || stage.projectId !== args.projectId)
+      throw new Error("Stage not found.");
 
     return await ctx.db
       .query("agentPolicies")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", args.environmentId),
-      )
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", args.stageId))
       .filter((q) => q.eq(q.field("status"), "active"))
       .collect();
   },
 });
 
 /**
- * Counts how many agent configs in an environment reference each policy.
+ * Counts how many agent configs in a stage reference each policy.
  * Policy assignments live in `extraConfig.policy.policyIds` on `agentConfigs`.
  * @param projectId project containing the agents
- * @param environmentId environment containing the agents
+ * @param stageId stage containing the agents
  * @returns record mapping policy id to the number of agents referencing it
  */
 export const usageCounts = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.record(v.string(), v.number()),
   handler: async (ctx, args) => {
     // Check authenticated user
@@ -91,20 +85,14 @@ export const usageCounts = query({
 
     const project = await getOwnedProject(ctx, user.id, args.projectId);
     if (!project) throw new Error("Project not found.");
-    const environment = await getOwnedEnvironment(
-      ctx,
-      user.id,
-      args.environmentId,
-    );
-    if (!environment || environment.projectId !== args.projectId)
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, args.stageId);
+    if (!stage || stage.projectId !== args.projectId)
+      throw new Error("Stage not found.");
 
     const agents = await ctx.db
       .query("agentConfigs")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q
-          .eq("projectId", args.projectId)
-          .eq("environmentId", args.environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", args.projectId).eq("stageId", args.stageId),
       )
       .collect();
 
@@ -125,14 +113,14 @@ export const usageCounts = query({
 });
 
 /**
- * Creates a dashboard-owned policy in one environment.
+ * Creates a dashboard-owned policy in one stage.
  * @param args policy fields
  * @returns created policy id
  */
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     name: v.string(),
     description: v.optional(v.string()),
     document: v.any(),
@@ -152,29 +140,25 @@ export const create = mutation({
       "admin",
     );
     if (!project) throw new Error("Project not found.");
-    const environment = await getOwnedEnvironment(
-      ctx,
-      user.id,
-      args.environmentId,
-    );
-    if (!environment || environment.projectId !== args.projectId)
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, args.stageId);
+    if (!stage || stage.projectId !== args.projectId)
+      throw new Error("Stage not found.");
     const account = await resolveActiveAccountForAuthId(ctx, user.id);
     if (!account) throw new Error("Broods account not provisioned.");
 
-    // CLI sync adopts policies by exact (environmentId, name), so a
+    // CLI sync adopts policies by exact (stageId, name), so a
     // duplicate dashboard name could be claimed non-deterministically by an
     // unrelated manifest entry on the next `broods deploy`.
     const duplicate = await ctx.db
       .query("agentPolicies")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", args.environmentId).eq("name", args.name.trim()),
+      .withIndex("by_stageId_and_name", (q) =>
+        q.eq("stageId", args.stageId).eq("name", args.name.trim()),
       )
       .filter((q) => q.eq(q.field("status"), "active"))
       .first();
     if (duplicate)
       throw new Error(
-        `A policy named "${args.name.trim()}" already exists in this environment.`,
+        `A policy named "${args.name.trim()}" already exists in this stage.`,
       );
 
     const document = normalizePolicyDocument(args.document);
@@ -183,7 +167,7 @@ export const create = mutation({
     return await ctx.db.insert("agentPolicies", {
       accountId: account._id,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       name: args.name.trim(),
       description: args.description?.trim() || undefined,
       document: document,
@@ -318,7 +302,7 @@ export const createInternal = internalMutation({
     description: v.optional(v.string()),
     document: v.any(),
     projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
+    stageId: v.optional(v.id("stages")),
     managedBy: v.optional(v.union(v.literal("cli"), v.literal("dashboard"))),
   },
   returns: v.id("agentPolicies"),
@@ -331,7 +315,7 @@ export const createInternal = internalMutation({
     return await ctx.db.insert("agentPolicies", {
       accountId: args.accountId,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       name: args.name,
       description: args.description,
       document: document,
@@ -416,7 +400,7 @@ async function requireEditablePolicy(
     !policy ||
     policy.status !== "active" ||
     !policy.projectId ||
-    !policy.environmentId
+    !policy.stageId
   ) {
     throw new Error("Policy not found.");
   }
@@ -427,12 +411,8 @@ async function requireEditablePolicy(
     "admin",
   );
   if (!project) throw new Error("Policy not found.");
-  const environment = await getOwnedEnvironment(
-    ctx,
-    authId,
-    policy.environmentId,
-  );
-  if (!environment || environment.projectId !== policy.projectId)
+  const stage = await getOwnedStage(ctx, authId, policy.stageId);
+  if (!stage || stage.projectId !== policy.projectId)
     throw new Error("Policy not found.");
 
   return policy;

@@ -1456,7 +1456,7 @@ describe("runAgentLoop", () => {
         agentId: "agent_test",
         endpointId: "env-1234",
         projectSlug: "project-one",
-        environmentSlug: "development",
+        stageSlug: "development",
         conversationKey: "direct:conversation",
         eventId: "direct-event",
         filesystemNamespace: () => "fs-test",

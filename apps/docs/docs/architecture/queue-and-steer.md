@@ -431,7 +431,7 @@ history concurrently with an active turn.
 Ingress authorization completes before envelope creation:
 
 - account secrets retain account/agent ownership checks;
-- deployment keys retain project, environment, endpoint, and agent scope;
+- deployment keys retain project, stage, endpoint, and agent scope;
 - channel ingress retains provider-native authentication and the configured
   account/agent route;
 - gateway control frames inherit the authenticated socket's deployment scope.
@@ -441,8 +441,8 @@ cannot steer by presenting another tenant's raw conversation key, event ID,
 status URL, NATS subject, or connection ID. Status reads and idempotent retries
 repeat the same authorization checks.
 
-An environment runtime/deployment key is resolved server-side to its account,
-project, environment, endpoint, and agent. The HTTP path must match that scope;
+A stage runtime/deployment key is resolved server-side to its account,
+project, stage, endpoint, and agent. The HTTP path must match that scope;
 WebSocket control and attach inherit the already-authenticated socket scope.
 Neither payload can replace the derived account or redirect work to another
 deployment.
@@ -472,7 +472,7 @@ Deployment-key attach authorization is parent-bound. The server-issued child
 async-result row proves the task was created by the runtime. Core authorizes the
 status read only after the child event/conversation scope, durable parent ingress
 status, active public parent, and a dedicated server-derived public-deployment
-ingress marker all match the authenticated account/project/environment/endpoint.
+ingress marker all match the authenticated account/project/stage/endpoint.
 Generic endpoint metadata on account-authenticated, channel, cron, or internal
 work is not authorization provenance. The gateway then checks the returned
 conversation key before selecting the NATS subject. A zero-buffer processing

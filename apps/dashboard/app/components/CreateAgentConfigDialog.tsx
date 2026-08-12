@@ -65,13 +65,13 @@ const providerOptions: Array<{
 
 export function CreateAgentConfigDialog({
   projectId,
-  environmentId,
+  stageId,
   open,
   onOpenChange,
   initialCanvasPosition,
 }: {
   projectId: Id<"projects">;
-  environmentId: Id<"environments"> | null;
+  stageId: Id<"stages"> | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialCanvasPosition?: { x: number; y: number } | null;
@@ -102,13 +102,13 @@ export function CreateAgentConfigDialog({
   }
 
   async function handleCreate() {
-    if (!name.trim() || !modelId.trim() || !environmentId) return;
+    if (!name.trim() || !modelId.trim() || !stageId) return;
 
     setIsCreating(true);
     try {
       await createAgentConfig({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name.trim(),
         provider: provider,
         modelId: modelId.trim(),
@@ -235,7 +235,7 @@ export function CreateAgentConfigDialog({
               disabled={
                 !name.trim() ||
                 !modelId.trim() ||
-                !environmentId ||
+                !stageId ||
                 (provider === "custom" && !customBaseUrl.trim()) ||
                 isCreating
               }

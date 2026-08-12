@@ -46,7 +46,7 @@ export type ConfigAuditResource = {
 export type ConfigAuditEventInput = {
   accountId: Id<"accounts">;
   projectId?: Id<"projects">;
-  environmentId?: Id<"environments">;
+  stageId?: Id<"stages">;
   actor: ConfigAuditActor;
   action: string;
   resource: ConfigAuditResource;
@@ -67,7 +67,7 @@ export async function insertConfigAuditEvent(
   return await db.insert("configAuditEvents", {
     accountId: event.accountId,
     projectId: event.projectId,
-    environmentId: event.environmentId,
+    stageId: event.stageId,
     actor: stripUndefined(event.actor),
     action: event.action,
     resource: stripUndefined(event.resource),

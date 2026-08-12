@@ -158,14 +158,14 @@ export async function pushEncryptedConfigToAgentRow(
 export async function refreshAgentConfigsForEnvironmentVariable(
   ctx: MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   name: string,
   value: string | undefined,
 ): Promise<void> {
   const configs = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .collect();
 
@@ -199,7 +199,7 @@ export async function refreshAgentConfigsForEnvironmentVariable(
 }
 
 /**
- * Resolves the project + environment an account's API-created agents belong
+ * Resolves the project + stage an account's API-created agents belong
  * to, creating them when the org has none.
  *
  * Scoped by `orgId`, never by `authId` alone: an owner with orgs A and B has
@@ -213,7 +213,7 @@ async function ensureCanvasTarget(
   orgId: Id<"orgs">,
   account: Doc<"accounts">,
   authId: string,
-): Promise<{ project: Doc<"projects">; environment: Doc<"environments"> }> {
+): Promise<{ project: Doc<"projects">; stage: Doc<"stages"> }> {
   const now = Date.now();
 
   // Oldest project in the org, so repeated calls converge on one target
@@ -236,17 +236,17 @@ async function ensureCanvasTarget(
       }),
     ))!;
 
-  // by_projectId, not by_authId_and_projectId: the environment may have been
+  // by_projectId, not by_authId_and_projectId: the stage may have been
   // created by a different org member than the one we're syncing as.
-  const existingEnvironment = await ctx.db
-    .query("environments")
+  const existingStage = await ctx.db
+    .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", project._id))
     .first();
 
-  const environment =
-    existingEnvironment ??
+  const stage =
+    existingStage ??
     (await ctx.db.get(
-      await ctx.db.insert("environments", {
+      await ctx.db.insert("stages", {
         authId: authId,
         projectId: project._id,
         name: "Development",
@@ -256,13 +256,13 @@ async function ensureCanvasTarget(
       }),
     ))!;
 
-  return { project: project, environment: environment };
+  return { project: project, stage: stage };
 }
 
 /**
  * Reverse sync: when an `agents` row is inserted via the API path (not via
  * the canvas), provision a matching `agentConfigs` row + canvas node on the
- * account's project/environment so the agent appears on the canvas
+ * account's project/stage so the agent appears on the canvas
  * immediately. This is what puts an API-created agent under a project at all
  * — `agentConfigs.projectId` is the only link between the account plane and
  * the project plane. Silently no-ops when:
@@ -309,7 +309,7 @@ export async function backSyncCanvasFromAgentRow(
   const user = await ctx.db.get(membership.userId);
   if (!user) return;
 
-  const { project, environment } = await ensureCanvasTarget(
+  const { project, stage } = await ensureCanvasTarget(
     ctx,
     orgId,
     account,
@@ -344,7 +344,7 @@ export async function backSyncCanvasFromAgentRow(
     description: agent.description,
     agentId: agentRowId,
     projectId: project._id,
-    environmentId: environment._id,
+    stageId: stage._id,
     provider: flat?.provider,
     modelId: flat?.modelId ?? "gpt-4.1-mini",
     systemPrompt: flat?.systemPrompt,
@@ -363,8 +363,8 @@ export async function backSyncCanvasFromAgentRow(
 
   const layout = await ctx.db
     .query("canvasLayouts")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", project._id).eq("environmentId", environment._id),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", project._id).eq("stageId", stage._id),
     )
     .unique();
 
@@ -389,7 +389,7 @@ export async function backSyncCanvasFromAgentRow(
     await ctx.db.insert("canvasLayouts", {
       authId: user.authId,
       projectId: project._id,
-      environmentId: environment._id,
+      stageId: stage._id,
       nodes: [nextNode],
       edges: [],
       updatedAt: now,
@@ -400,7 +400,7 @@ export async function backSyncCanvasFromAgentRow(
   // as locked canvas nodes/edges next to the agent node.
   await syncApiAgentCanvasWiring(ctx, {
     projectId: project._id,
-    environmentId: environment._id,
+    stageId: stage._id,
   });
 }
 
@@ -478,11 +478,11 @@ export async function mirrorAgentRowOntoConfig(
   if (
     linkedConfig.managedBy !== "cli" &&
     linkedConfig.projectId &&
-    linkedConfig.environmentId
+    linkedConfig.stageId
   ) {
     await syncApiAgentCanvasWiring(ctx, {
       projectId: linkedConfig.projectId,
-      environmentId: linkedConfig.environmentId,
+      stageId: linkedConfig.stageId,
     });
   }
 }

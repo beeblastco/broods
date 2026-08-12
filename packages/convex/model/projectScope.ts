@@ -15,28 +15,24 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 type Ctx = QueryCtx | MutationCtx;
 
-/** The (project, environment) pair every environment-scoped resource hangs off. */
-export type ProjectEnvironmentScope = {
+/** The (project, stage) pair every stage-scoped resource hangs off. */
+export type ProjectStageScope = {
   projectId: Id<"projects">;
-  environmentId: Id<"environments">;
+  stageId: Id<"stages">;
 };
 
-/** Environment names are matched case- and whitespace-insensitively everywhere. */
-export function environmentNameEquals(left: string, right: string): boolean {
+/** Stage names are matched case- and whitespace-insensitively everywhere. */
+export function stageNameEquals(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
 }
 
 // Resolve-only: an unknown name yields null rather than creating a project,
 // which is what separates every read path from the CLI's ensure path.
-export async function resolveProjectEnvironment(
+export async function resolveProject(
   ctx: Ctx,
   account: Doc<"accounts">,
   project: string,
-  environment: string,
-): Promise<{
-  projectDoc: Doc<"projects">;
-  environmentDoc: Doc<"environments">;
-} | null> {
+): Promise<Doc<"projects"> | null> {
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) return null;
   const name = project.trim();
@@ -46,29 +42,40 @@ export async function resolveProjectEnvironment(
     .query("projects")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
-  const projectDoc = projects.find(
-    (entry) => entry.name === name || entry.slug === name,
+
+  return (
+    projects.find((entry) => entry.name === name || entry.slug === name) ?? null
   );
+}
+
+export async function resolveProjectStage(
+  ctx: Ctx,
+  account: Doc<"accounts">,
+  project: string,
+  stage: string,
+): Promise<{
+  projectDoc: Doc<"projects">;
+  stageDoc: Doc<"stages">;
+} | null> {
+  const projectDoc = await resolveProject(ctx, account, project);
   if (!projectDoc) return null;
 
-  const environments = await ctx.db
-    .query("environments")
+  const stages = await ctx.db
+    .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
     .collect();
-  const environmentDoc = environments.find((entry) =>
-    environmentNameEquals(entry.name, environment),
-  );
-  if (!environmentDoc) return null;
+  const stageDoc = stages.find((entry) => stageNameEquals(entry.name, stage));
+  if (!stageDoc) return null;
 
   return {
     projectDoc: projectDoc,
-    environmentDoc: environmentDoc,
+    stageDoc: stageDoc,
   };
 }
 
 /**
  * The agents that `accountId` owns and that belong to `projectId`, across
- * every environment.
+ * every stage.
  *
  * Both halves are required. `agentConfigs.agentId` is a loose `v.string()`,
  * so a stale or hand-edited row can name an agent on another account; without
@@ -81,12 +88,10 @@ export async function agentsInProject(
   projectId: Id<"projects">,
   accountId: Id<"accounts">,
 ): Promise<Doc<"agents">[]> {
-  // Prefix scan on the compound index: every environment of this project.
+  // Prefix scan on the compound index: every stage of this project.
   const configs = await ctx.db
     .query("agentConfigs")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId),
-    )
+    .withIndex("by_projectId_and_stageId", (q) => q.eq("projectId", projectId))
     .collect();
 
   const agents: Doc<"agents">[] = [];

@@ -43,7 +43,7 @@ export const record = internalMutation({
   args: {
     accountId: v.id("accounts"),
     projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
+    stageId: v.optional(v.id("stages")),
     actor: auditActorValidator,
     action: v.string(),
     resource: auditResourceValidator,
@@ -55,7 +55,7 @@ export const record = internalMutation({
     return await insertConfigAuditEvent(ctx.db, {
       accountId: args.accountId,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       actor: args.actor as ConfigAuditActor,
       action: args.action,
       resource: args.resource as ConfigAuditResource,

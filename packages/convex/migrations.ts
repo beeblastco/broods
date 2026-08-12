@@ -10,7 +10,7 @@ import { v } from "convex/values";
 
 /**
  * Strip the deprecated per-agent `publicAccessEnabled` / `webSocketEnabled`
- * fields. Public access is now an environment-wide runtime key, so these are
+ * fields. Public access is now a stage-wide runtime key, so these are
  * unused; clearing them lets the schema drop the fields.
  * @returns count of agent configs patched
  */
@@ -42,7 +42,7 @@ export const clearDeprecatedAgentConfigToggles = internalMutation({
 
 /**
  * Delete legacy per-agent `agentDeployments` rows (those keyed by `agentConfigId`
- * instead of project/environment). They predate the env-scoped key model and are
+ * instead of project/stage). They predate the stage-scoped key model and are
  * never resolved by `getByApiKeyHash` (it requires `accountId`); removing them
  * lets the schema drop the `agentConfigId` field and `by_agentConfigId` index.
  * @returns count of legacy rows deleted
@@ -55,7 +55,7 @@ export const deleteLegacyAgentDeployments = internalMutation({
     let deleted = 0;
     for (const row of rows) {
       const record = row as Record<string, unknown>;
-      // Env-scoped rows set projectId; legacy rows only have agentConfigId.
+      // Stage-scoped rows set projectId; legacy rows only have agentConfigId.
       if (record.projectId !== undefined) continue;
       await ctx.db.delete(row._id);
       deleted += 1;
@@ -65,34 +65,33 @@ export const deleteLegacyAgentDeployments = internalMutation({
   },
 });
 
-// Drop custom tools no environment owns: unscoped rows from the old
-// account-scoped path, tombstones, and rows whose environment is gone.
+// Drop custom tools no stage owns: unscoped rows from the old
+// account-scoped path, tombstones, and rows whose stage is gone.
 export const deleteOrphanedTools = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   returns: v.object({
     unscoped: v.number(),
     softDeleted: v.number(),
-    danglingEnvironment: v.number(),
+    danglingStage: v.number(),
     kept: v.number(),
   }),
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("accountTools").collect();
     let unscoped = 0;
     let softDeleted = 0;
-    let danglingEnvironment = 0;
+    let danglingStage = 0;
     let kept = 0;
 
     for (const row of rows) {
-      let reason: "unscoped" | "softDeleted" | "danglingEnvironment" | null =
-        null;
+      let reason: "unscoped" | "softDeleted" | "danglingStage" | null = null;
       if (row.status === "deleted") reason = "softDeleted";
-      else if (!row.environmentId || !row.projectId) reason = "unscoped";
+      else if (!row.stageId || !row.projectId) reason = "unscoped";
       else {
-        // `create` rejects a pair whose environment sits under another project;
+        // `create` rejects a pair whose stage sits under another project;
         // a row that holds one anyway is scope corruption, not a live tool.
-        const environment = await ctx.db.get(row.environmentId);
-        if (!environment || environment.projectId !== row.projectId)
-          reason = "danglingEnvironment";
+        const stage = await ctx.db.get(row.stageId);
+        if (!stage || stage.projectId !== row.projectId)
+          reason = "danglingStage";
       }
 
       if (!reason) {
@@ -101,14 +100,14 @@ export const deleteOrphanedTools = internalMutation({
       }
       if (reason === "unscoped") unscoped += 1;
       if (reason === "softDeleted") softDeleted += 1;
-      if (reason === "danglingEnvironment") danglingEnvironment += 1;
+      if (reason === "danglingStage") danglingStage += 1;
       if (args.dryRun !== true) await ctx.db.delete(row._id);
     }
 
     return {
       unscoped: unscoped,
       softDeleted: softDeleted,
-      danglingEnvironment: danglingEnvironment,
+      danglingStage: danglingStage,
       kept: kept,
     };
   },

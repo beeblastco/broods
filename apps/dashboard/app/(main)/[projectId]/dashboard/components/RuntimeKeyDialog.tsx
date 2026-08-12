@@ -1,6 +1,6 @@
 "use client";
 
-/** Reveals an environment's runtime API key (fp_agent_…) with copy controls, a .env snippet, and a WebSocket streaming example. */
+/** Reveals a stage's runtime API key (fp_agent_…) with copy controls, a .env snippet, and a WebSocket streaming example. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -31,7 +31,7 @@ import { type ReactNode, useState } from "react";
 interface DialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The plaintext runtime key (fp_agent_…) for the active environment. */
+  /** The plaintext runtime key (fp_agent_…) for the active stage. */
   apiKey: string;
   /** Whether the key was just minted (changes the framing copy). */
   justCreated?: boolean;
@@ -375,9 +375,8 @@ export function RuntimeKeyDialog({
             {justCreated ? "Your runtime API key is ready" : "Runtime API key"}
           </DialogTitle>
           <DialogDescription>
-            This key authenticates runtime calls for this environment — agent
-            runs, streaming, and the observability views. Treat it like a
-            password.
+            This key authenticates runtime calls for this stage — agent runs,
+            streaming, and the observability views. Treat it like a password.
           </DialogDescription>
         </DialogHeader>
 

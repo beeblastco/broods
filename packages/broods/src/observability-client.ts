@@ -16,7 +16,7 @@ export interface ObservabilityClientOptions {
   baseUrl: string;
   apiKey: string;
   project: string;
-  environment: string;
+  stage: string;
 }
 
 export interface ObservabilitySubscribeOptions {
@@ -35,13 +35,13 @@ const WS_CONNECTING = 0;
 function buildObservabilityUrl(
   baseUrl: string,
   project: string,
-  environment: string,
+  stage: string,
   apiKey: string,
 ): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
 
   return (
-    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(environment)}/observability/ws` +
+    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws` +
     `?token=${encodeURIComponent(apiKey)}`
   );
 }
@@ -109,13 +109,13 @@ async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
 ): AsyncGenerator<ObservabilityLogEntry> {
-  const { baseUrl, apiKey, project, environment } = options;
+  const { baseUrl, apiKey, project, stage } = options;
   const { backfill = 0, minLevel, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
 
-  const url = buildObservabilityUrl(baseUrl, project, environment, apiKey);
+  const url = buildObservabilityUrl(baseUrl, project, stage, apiKey);
   const displayUrl = url.slice(0, url.indexOf("?"));
   const WebSocketImpl = resolveWebSocket();
 

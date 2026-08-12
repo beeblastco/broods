@@ -27,7 +27,7 @@ function NavLinksInner() {
   const params = useParams<{ projectId?: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId;
-  const envParam = searchParams.get("env");
+  const stageParam = searchParams.get("stage");
   // Link queues the partial prefetch on viewport entry; navigation intent
   // upgrades it to the full tree.
   const warmProjectRoute = useCallback(
@@ -39,7 +39,7 @@ function NavLinksInner() {
     <nav className="flex items-center gap-1">
       {projectId &&
         NAV_ITEMS.map(({ segment, label }) => {
-          const href = `/${projectId}${segment}${envParam ? `?env=${envParam}` : ""}`;
+          const href = `/${projectId}${segment}${stageParam ? `?stage=${stageParam}` : ""}`;
           const isActive =
             segment === ""
               ? pathname === `/${projectId}`

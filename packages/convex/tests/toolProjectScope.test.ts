@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-/** Custom tools belong to one environment: they clone, delete and collide like any other node. */
+/** Custom tools belong to one stage: they clone, delete and collide like any other node. */
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
@@ -14,14 +14,14 @@ const TOOL_NAME = "system_report";
 type Scope = {
   accountId: Id<"accounts">;
   projectId: Id<"projects">;
-  environmentId: Id<"environments">;
+  stageId: Id<"stages">;
 };
 
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
-/** An org, account, project and one environment — the scope a tool hangs off. */
-async function seedScope(tt: T, environment = "Development"): Promise<Scope> {
+/** An org, account, project and one stage — the scope a tool hangs off. */
+async function seedScope(tt: T, stage = "Development"): Promise<Scope> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
     const orgId = await ctx.db.insert("orgs", {
@@ -46,10 +46,10 @@ async function seedScope(tt: T, environment = "Development"): Promise<Scope> {
       slug: "tool-custom-stream",
       updatedAt: now,
     });
-    const environmentId = await ctx.db.insert("environments", {
+    const stageId = await ctx.db.insert("stages", {
       authId: "auth_owner@example.com",
       projectId: projectId,
-      name: environment,
+      name: stage,
       kind: "development" as const,
       isDefault: true,
       updatedAt: now,
@@ -58,7 +58,7 @@ async function seedScope(tt: T, environment = "Development"): Promise<Scope> {
     return {
       accountId: accountId,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
     };
   });
 }
@@ -71,7 +71,7 @@ async function seedTool(
   return await tt.mutation(internal.accountTools.create, {
     accountId: scope.accountId,
     projectId: scope.projectId,
-    environmentId: scope.environmentId,
+    stageId: scope.stageId,
     name: name,
     description: "Reports host facts.",
     inputSchema: { type: "object", properties: {} },
@@ -81,12 +81,12 @@ async function seedTool(
   });
 }
 
-describe("custom tools are scoped to an environment", () => {
-  test("the same tool name in two environments stays two rows", async () => {
+describe("custom tools are scoped to a stage", () => {
+  test("the same tool name in two stages stays two rows", async () => {
     const tt = t();
     const first = await seedScope(tt);
     const second = await tt.run(async (ctx) => {
-      const environmentId = await ctx.db.insert("environments", {
+      const stageId = await ctx.db.insert("stages", {
         authId: "auth_owner@example.com",
         projectId: first.projectId,
         name: "Production",
@@ -95,7 +95,7 @@ describe("custom tools are scoped to an environment", () => {
         updatedAt: Date.now(),
       });
 
-      return { ...first, environmentId: environmentId };
+      return { ...first, stageId: stageId };
     });
 
     const firstId = await seedTool(tt, first);
@@ -103,8 +103,8 @@ describe("custom tools are scoped to an environment", () => {
 
     // Account-scoped matching used to make the second sync overwrite the first.
     expect(firstId).not.toEqual(secondId);
-    const listed = await tt.query(internal.accountTools.listForEnvironment, {
-      environmentId: first.environmentId,
+    const listed = await tt.query(internal.accountTools.listForStage, {
+      stageId: first.stageId,
     });
     expect(listed.map((row) => row._id)).toEqual([firstId]);
   });
@@ -126,7 +126,7 @@ describe("custom tools are scoped to an environment", () => {
       tt.mutation(internal.accountTools.create, {
         accountId: scope.accountId,
         projectId: foreignProjectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: TOOL_NAME,
         description: "d",
         inputSchema: {},
@@ -136,7 +136,7 @@ describe("custom tools are scoped to an environment", () => {
     ).rejects.toThrow(/Project not found/);
   });
 
-  test("create refuses an environment from another project", async () => {
+  test("create refuses a stage from another project", async () => {
     const tt = t();
     const scope = await seedScope(tt);
     const sibling = await tt.run(async (ctx) => {
@@ -156,17 +156,17 @@ describe("custom tools are scoped to an environment", () => {
       tt.mutation(internal.accountTools.create, {
         accountId: scope.accountId,
         projectId: sibling,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: TOOL_NAME,
         description: "d",
         inputSchema: {},
         bundleStorageKey: "k",
         sha256: "b".repeat(64),
       }),
-    ).rejects.toThrow(/Environment not found/);
+    ).rejects.toThrow(/Stage not found/);
   });
 
-  test("resolveScope finds the environment by name, and nothing else", async () => {
+  test("resolveScope finds the stage by name, and nothing else", async () => {
     const tt = t();
     const scope = await seedScope(tt);
 
@@ -174,17 +174,17 @@ describe("custom tools are scoped to an environment", () => {
       await tt.query(internal.accountTools.resolveScope, {
         accountId: scope.accountId,
         project: "tool-custom-stream",
-        environment: "development",
+        stage: "development",
       }),
     ).toEqual({
       projectId: scope.projectId,
-      environmentId: scope.environmentId,
+      stageId: scope.stageId,
     });
     expect(
       await tt.query(internal.accountTools.resolveScope, {
         accountId: scope.accountId,
         project: "tool-custom-stream",
-        environment: "staging",
+        stage: "staging",
       }),
     ).toBeNull();
   });
@@ -207,7 +207,7 @@ describe("migrations.deleteOrphanedTools", () => {
         createdAt: now,
         updatedAt: now,
       };
-      // Written by the old account-scoped REST API: no environment owns it.
+      // Written by the old account-scoped REST API: no stage owns it.
       await ctx.db.insert("accountTools", {
         ...base,
         name: "legacy",
@@ -216,7 +216,7 @@ describe("migrations.deleteOrphanedTools", () => {
       await ctx.db.insert("accountTools", {
         ...base,
         projectId: scope.projectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: "tombstone",
         status: "deleted" as const,
       });
@@ -228,7 +228,7 @@ describe("migrations.deleteOrphanedTools", () => {
     expect(dry).toEqual({
       unscoped: 1,
       softDeleted: 1,
-      danglingEnvironment: 0,
+      danglingStage: 0,
       kept: 1,
     });
     // A dry run must not touch anything.
@@ -243,18 +243,18 @@ describe("migrations.deleteOrphanedTools", () => {
     expect(remaining.map((row) => row._id)).toEqual([keptId]);
   });
 
-  test("drops rows whose environment was deleted", async () => {
+  test("drops rows whose stage was deleted", async () => {
     const tt = t();
     const scope = await seedScope(tt);
     await seedTool(tt, scope);
-    await tt.run(async (ctx) => await ctx.db.delete(scope.environmentId));
+    await tt.run(async (ctx) => await ctx.db.delete(scope.stageId));
 
     expect(
       await tt.mutation(internal.migrations.deleteOrphanedTools, {}),
     ).toEqual({
       unscoped: 0,
       softDeleted: 0,
-      danglingEnvironment: 1,
+      danglingStage: 1,
       kept: 0,
     });
   });
@@ -266,7 +266,7 @@ describe("migrations.deleteOrphanedTools", () => {
     const toolId = await tt.mutation(internal.toolService.upsertForNode, {
       accountId: scope.accountId,
       projectId: scope.projectId,
-      environmentId: scope.environmentId,
+      stageId: scope.stageId,
       nodeId: nodeId,
       name: TOOL_NAME,
       sourceCode: "export default () => 1;",
@@ -287,7 +287,7 @@ describe("migrations.deleteOrphanedTools", () => {
       await tt.mutation(internal.toolService.upsertForNode, {
         accountId: scope.accountId,
         projectId: scope.projectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         nodeId: nodeId,
         name: TOOL_NAME,
         sourceCode: "export default () => 2;",
@@ -303,7 +303,7 @@ describe("migrations.deleteOrphanedTools", () => {
     expect(row?.projectId).toEqual(scope.projectId);
   });
 
-  test("drops rows whose environment sits under another project", async () => {
+  test("drops rows whose stage sits under another project", async () => {
     const tt = t();
     const scope = await seedScope(tt);
     const toolId = await seedTool(tt, scope);
@@ -325,7 +325,7 @@ describe("migrations.deleteOrphanedTools", () => {
     ).toEqual({
       unscoped: 0,
       softDeleted: 0,
-      danglingEnvironment: 1,
+      danglingStage: 1,
       kept: 0,
     });
   });

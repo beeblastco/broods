@@ -214,7 +214,7 @@ describe("logging helpers", () => {
       observabilityAttributes({
         accountId: "acct_1",
         project: "project-one",
-        environment: "development",
+        stage: "development",
         endpointId: "env-1234",
         agentId: "agent-1",
         conversationKey: "conversation-1",
@@ -222,7 +222,7 @@ describe("logging helpers", () => {
     ).toEqual({
       account_id: "acct_1",
       project: "project-one",
-      environment: "development",
+      stage: "development",
       endpoint_id: "env-1234",
       agent_id: "agent-1",
       conversation_key: "conversation-1",

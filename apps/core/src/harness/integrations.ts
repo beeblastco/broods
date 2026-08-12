@@ -118,7 +118,7 @@ type DirectIngressEvent =
 type PublicEndpointPath = {
   endpointId: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   mode: "sync" | "async";
 };
 
@@ -129,10 +129,10 @@ export interface DirectInboundEvent {
   // Per-deployment id from the runtime key, when the request authenticated with a
   // deployment key. Scopes realtime telemetry to the dashboard's deployment view.
   endpointId?: string;
-  // Project and environment slugs from the runtime key scope, forwarded to the
+  // Project and stage slugs from the runtime key scope, forwarded to the
   // harness so it can build NATS observability subjects for live streaming.
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   // Dedicated server-derived proof that this ingress entered through a public
   // deployment route. Generic deployment fields also exist on channel/cron work.
   publicDeploymentIngress?: PublicDeploymentIngress;
@@ -166,7 +166,7 @@ export type IngressDispatchScope = Pick<
   | "publicConversationKey"
   | "endpointId"
   | "projectSlug"
-  | "environmentSlug"
+  | "stageSlug"
 >;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
@@ -205,7 +205,7 @@ export interface ChannelInboundEvent {
   agentConfig?: AgentConfig;
   endpointId?: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -223,7 +223,7 @@ export interface ChannelContextEvent {
   agentConfig?: AgentConfig;
   endpointId?: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   eventId: string;
   conversationKey: string;
   content: UserContent;
@@ -654,16 +654,15 @@ async function handleHttpRequest(
     return jsonResponse(200, {
       accountId: auth.account.accountId,
       projectSlug: auth.projectSlug,
-      environmentSlug: auth.environmentSlug,
+      stageSlug: auth.stageSlug,
       endpointIds: [auth.endpointId],
     });
   }
 
-  // A project+environment runtime key works on both the root direct API and the
-  // scoped /v1/{project}/agents/{environment}/{endpointId} URL the dashboard
-  // advertises. When the scoped path is present it must match the key's
-  // environment; the agent itself is chosen by the request body's agentId and
-  // loaded against the key's account.
+  // A project+stage runtime key works on both the root direct API and the scoped
+  // /v1/{project}/agents/{stage}/{endpointId} URL the dashboard advertises. When
+  // the scoped path is present it must match the key's stage; the agent itself is
+  // chosen by the request body's agentId and loaded against the key's account.
   if (auth?.kind === "deployment") {
     if (publicEndpoint && !deploymentMatchesPath(auth, publicEndpoint)) {
       return unauthorizedResponse();
@@ -703,7 +702,7 @@ async function handleHttpRequest(
           ...parsed,
           endpointId: auth.endpointId,
           projectSlug: auth.projectSlug,
-          environmentSlug: auth.environmentSlug,
+          stageSlug: auth.stageSlug,
           publicDeploymentIngress: publicDeploymentIngress(auth),
           statusUrl: statusUrl,
         });
@@ -713,7 +712,7 @@ async function handleHttpRequest(
         ...parsed,
         endpointId: auth.endpointId,
         projectSlug: auth.projectSlug,
-        environmentSlug: auth.environmentSlug,
+        stageSlug: auth.stageSlug,
         publicDeploymentIngress: publicDeploymentIngress(auth),
       });
     } catch (err) {
@@ -1028,7 +1027,7 @@ async function handleChannelWebhook(
     setObservabilityContext({
       accountId: account.accountId,
       project: deployment.projectSlug,
-      environment: deployment.environmentSlug,
+      stage: deployment.stageSlug,
       endpointId: deployment.endpointId,
       agentId: agent.agentId,
       conversationKey: `webhook:${adapter.name}:${agent.agentId}`,
@@ -1193,7 +1192,7 @@ async function handleChannelWebhook(
               ? {
                   endpointId: targetDeployment.endpointId,
                   projectSlug: targetDeployment.projectSlug,
-                  environmentSlug: targetDeployment.environmentSlug,
+                  stageSlug: targetDeployment.stageSlug,
                 }
               : {}),
           }),
@@ -1310,7 +1309,7 @@ async function handleChannelWebhook(
               ? {
                   endpointId: targetDeployment.endpointId,
                   projectSlug: targetDeployment.projectSlug,
-                  environmentSlug: targetDeployment.environmentSlug,
+                  stageSlug: targetDeployment.stageSlug,
                 }
               : {}),
           },
@@ -1438,13 +1437,13 @@ async function processChannelMessage(
     event.agentId &&
     event.endpointId &&
     event.projectSlug &&
-    event.environmentSlug,
+    event.stageSlug,
   );
   if (hasDeploymentScope) {
     setObservabilityContext({
       accountId: event.accountId!,
       project: event.projectSlug!,
-      environment: event.environmentSlug!,
+      stage: event.stageSlug!,
       endpointId: event.endpointId!,
       agentId: event.agentId!,
       conversationKey: event.conversationKey,
@@ -1688,7 +1687,7 @@ function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
   if (scoped?.[1] && scoped[2] && scoped[3]) {
     return {
       projectSlug: decodeURIComponent(scoped[1]),
-      environmentSlug: decodeURIComponent(scoped[2]),
+      stageSlug: decodeURIComponent(scoped[2]),
       endpointId: decodeURIComponent(scoped[3]),
       mode: scoped[4] === "async" ? "async" : "sync",
     };
@@ -1713,8 +1712,7 @@ function deploymentMatchesPath(
     auth.endpointId === endpoint.endpointId &&
     (endpoint.projectSlug === undefined ||
       auth.projectSlug === endpoint.projectSlug) &&
-    (endpoint.environmentSlug === undefined ||
-      auth.environmentSlug === endpoint.environmentSlug)
+    (endpoint.stageSlug === undefined || auth.stageSlug === endpoint.stageSlug)
   );
 }
 
@@ -1724,7 +1722,7 @@ function publicDeploymentIngress(
   return {
     accountId: auth.account.accountId,
     endpointId: auth.endpointId,
-    environmentSlug: auth.environmentSlug,
+    stageSlug: auth.stageSlug,
     projectSlug: auth.projectSlug,
   };
 }

@@ -33,7 +33,7 @@ export async function randomProjectName(): Promise<string> {
 
 /**
  * Dialog that creates a new project and navigates to its Development canvas on
- * success. Initializing Production is left to the environment selector, since a
+ * success. Initializing Production is left to the stage selector, since a
  * project this new has no Development configuration to copy into it.
  */
 export function CreateProjectDialog({

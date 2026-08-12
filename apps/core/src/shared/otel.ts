@@ -25,7 +25,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface ObservabilityContext {
   accountId: string;
   project: string;
-  environment: string;
+  stage: string;
   endpointId: string;
   agentId: string;
   conversationKey: string;
@@ -169,7 +169,7 @@ export function observabilityAttributes(
     ObservabilityContext,
     | "accountId"
     | "project"
-    | "environment"
+    | "stage"
     | "endpointId"
     | "agentId"
     | "conversationKey"
@@ -178,7 +178,7 @@ export function observabilityAttributes(
   return {
     account_id: ctx.accountId,
     project: ctx.project,
-    environment: ctx.environment,
+    stage: ctx.stage,
     endpoint_id: ctx.endpointId,
     agent_id: ctx.agentId,
     conversation_key: ctx.conversationKey,

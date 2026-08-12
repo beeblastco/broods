@@ -1,6 +1,6 @@
 "use client";
 
-/** Environments panel: manage runtime variables for the environment currently selected in the header. */
+/** Environment variables panel: manage runtime variables for the stage currently selected in the header. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -25,19 +25,17 @@ type EnvironmentVariable = FunctionReturnType<
 const FIELD_CLASS = "h-8 min-w-0 flex-1 font-mono text-xs";
 
 interface Props {
-  /** Project that owns the environment. */
+  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active environment whose variables are managed, or null while none is selected. */
-  environmentId: Id<"environments"> | null;
+  /** Active stage whose variables are managed, or null while none is selected. */
+  stageId: Id<"stages"> | null;
 }
 
-/** Lists, adds, and removes runtime variables for the active environment. */
-export function EnvironmentsPanel({ projectId, environmentId }: Props) {
+/** Lists, adds, and removes runtime variables for the active stage. */
+export function EnvironmentVariablesPanel({ projectId, stageId }: Props) {
   const variables = useQuery(
     api.environmentVariables.list,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   );
   const setVariable = useMutation(api.environmentVariables.set);
   const removeVariable = useMutation(api.environmentVariables.remove);
@@ -49,11 +47,11 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
   const [busy, setBusy] = useState(false);
   // Plaintext values revealed via the eye icon, keyed by variable id. Each reveal is audited server-side.
   const [revealedState, setRevealedState] = useState<{
-    environmentId: Id<"environments"> | null;
+    stageId: Id<"stages"> | null;
     values: Record<string, string>;
-  }>({ environmentId: null, values: {} });
+  }>({ stageId: null, values: {} });
   const revealed =
-    revealedState.environmentId === environmentId ? revealedState.values : {};
+    revealedState.stageId === stageId ? revealedState.values : {};
 
   // Variable pending delete confirmation.
   const [deletingVar, setDeletingVar] = useState<EnvironmentVariable | null>(
@@ -62,40 +60,40 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
   const [isDeletingVar, setIsDeletingVar] = useState(false);
 
   async function toggleReveal(variableId: Id<"environmentVariables">) {
-    if (!environmentId) return;
+    if (!stageId) return;
     if (revealed[variableId] !== undefined) {
       setRevealedState((prev) => {
         const next = {
-          ...(prev.environmentId === environmentId ? prev.values : {}),
+          ...(prev.stageId === stageId ? prev.values : {}),
         };
         delete next[variableId];
 
-        return { environmentId: environmentId, values: next };
+        return { stageId: stageId, values: next };
       });
 
       return;
     }
     const { value: plaintext } = await revealVariable({
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       variableId: variableId,
     });
     setRevealedState((prev) => ({
-      environmentId: environmentId,
+      stageId: stageId,
       values: {
-        ...(prev.environmentId === environmentId ? prev.values : {}),
+        ...(prev.stageId === stageId ? prev.values : {}),
         [variableId]: plaintext,
       },
     }));
   }
 
   async function handleAdd() {
-    if (!name.trim() || busy || !environmentId) return;
+    if (!name.trim() || busy || !stageId) return;
     setBusy(true);
     try {
       await setVariable({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name.trim(),
         value: value,
       });
@@ -118,11 +116,11 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
     }
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
-      <Section description="Runtime variables for this environment.">
+      <Section description="Environment variables for this stage.">
         <p className="text-sm text-muted-foreground">
-          Select an environment to manage its variables.
+          Select a stage to manage its variables.
         </p>
       </Section>
     );
@@ -130,7 +128,7 @@ export function EnvironmentsPanel({ projectId, environmentId }: Props) {
 
   return (
     <>
-      <Section description="Runtime variables for this environment.">
+      <Section description="Environment variables for this stage.">
         {variables && variables.length === 0 && (
           <p className="text-sm text-muted-foreground">No variables yet.</p>
         )}

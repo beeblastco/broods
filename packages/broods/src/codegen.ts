@@ -10,8 +10,8 @@ import type { ResourceAliases } from "./manifest.ts";
 import type { CompiledChannel } from "./manifest.ts";
 
 /**
- * The environment's deployment endpoint, used to embed the scoped invoke URL
- * (`/v1/{projectSlug}/agents/{environmentSlug}/{endpointId}`) into each generated
+ * The stage's deployment endpoint, used to embed the scoped invoke URL
+ * (`/v1/{projectSlug}/agents/{stageSlug}/{endpointId}`) into each generated
  * agent reference so the SDK posts to the same path the dashboard shows.
  */
 export type GeneratedEndpoint =
@@ -19,7 +19,7 @@ export type GeneratedEndpoint =
       accountId: string;
       endpointId: string;
       projectSlug: string;
-      environmentSlug: string;
+      stageSlug: string;
     }
   | null
   | undefined;
@@ -123,15 +123,15 @@ function apiFile(
   channels: CompiledChannel[],
 ): string {
   const agents = Object.keys(ids.agents);
-  // When the environment has a runtime key, embed its authoritative slugs +
+  // When the stage has a runtime key, embed its authoritative slugs +
   // endpointId so the SDK posts to the scoped /v1 URL the dashboard advertises.
   const scope = endpoint
-    ? `, endpointId: ${JSON.stringify(endpoint.endpointId)}, projectSlug: ${JSON.stringify(endpoint.projectSlug)}, environmentSlug: ${JSON.stringify(endpoint.environmentSlug)}`
+    ? `, endpointId: ${JSON.stringify(endpoint.endpointId)}, projectSlug: ${JSON.stringify(endpoint.projectSlug)}, stageSlug: ${JSON.stringify(endpoint.stageSlug)}`
     : "";
   const agentEntries = agents
     .map(
       (name) =>
-        `    ${propertyKey(aliases.agent?.[name] ?? name)}: { kind: "agent", name: ${JSON.stringify(name)}, id: ids.agents[${JSON.stringify(name)}], project: ${JSON.stringify(manifest.project)}, environment: ${JSON.stringify(manifest.environment)}${scope} },`,
+        `    ${propertyKey(aliases.agent?.[name] ?? name)}: { kind: "agent", name: ${JSON.stringify(name)}, id: ids.agents[${JSON.stringify(name)}], project: ${JSON.stringify(manifest.project)}, stage: ${JSON.stringify(manifest.stage)}${scope} },`,
     )
     .join("\n");
   const channelEntries = endpoint

@@ -45,19 +45,19 @@ export default function HomePage() {
           }
         }
 
-        // A `broods` deep link (?project=&env=) jumps straight to that
-        // project's architecture view with the same environment selected.
+        // A `broods` deep link (?project=&stage=) jumps straight to that
+        // project's architecture view with the same stage selected.
         const params = new URLSearchParams(window.location.search);
         const project = params.get("project");
         if (project) {
           const target = await convex.query(api.project.resolveTarget, {
             project: project,
-            environment: params.get("env") ?? undefined,
+            stage: params.get("stage") ?? undefined,
           });
           if (target) {
             const next = new URLSearchParams();
-            if (target.environmentId) {
-              next.set("env", target.environmentId);
+            if (target.stageId) {
+              next.set("stage", target.stageId);
             }
             const tab = params.get("tab");
             const trace = params.get("trace");

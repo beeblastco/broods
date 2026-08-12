@@ -71,16 +71,16 @@ export interface AgentReference<Name extends string = string> {
   readonly name: Name;
   readonly id: string;
   readonly project: string;
-  readonly environment: string;
+  readonly stage: string;
   /**
-   * Authoritative scope of the environment's runtime key, embedded by codegen
+   * Authoritative scope of the stage's runtime key, embedded by codegen
    * from the deploy response. When present the client posts to the scoped URL
-   * `/v1/{projectSlug}/agents/{environmentSlug}/{endpointId}` (matching the
+   * `/v1/{projectSlug}/agents/{stageSlug}/{endpointId}` (matching the
    * dashboard); when absent it falls back to the base URL.
    */
   readonly endpointId?: string;
   readonly projectSlug?: string;
-  readonly environmentSlug?: string;
+  readonly stageSlug?: string;
 }
 
 export interface ChannelReference {
@@ -499,15 +499,15 @@ export class BroodsClient {
 
   /**
    * Scoped invoke URL for a deployed agent. When codegen embedded the runtime
-   * key's scope, this is `/v1/{projectSlug}/agents/{environmentSlug}/{endpointId}`
+   * key's scope, this is `/v1/{projectSlug}/agents/{stageSlug}/{endpointId}`
    * (the same URL the dashboard shows, so core can validate the key against the
    * path); otherwise it falls back to the base URL.
    */
   private scopedUrl(ref: AgentReference, suffix = ""): string {
-    if (ref.projectSlug && ref.environmentSlug && ref.endpointId) {
+    if (ref.projectSlug && ref.stageSlug && ref.endpointId) {
       return (
         `${this.baseUrl}/v1/${encodeURIComponent(ref.projectSlug)}` +
-        `/agents/${encodeURIComponent(ref.environmentSlug)}/${encodeURIComponent(ref.endpointId)}${suffix}`
+        `/agents/${encodeURIComponent(ref.stageSlug)}/${encodeURIComponent(ref.endpointId)}${suffix}`
       );
     }
 

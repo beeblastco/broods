@@ -18,7 +18,7 @@ export interface AgentDeploymentScope {
   accountId: string;
   endpointId: string;
   projectSlug: string;
-  environmentSlug: string;
+  stageSlug: string;
 }
 
 /**
@@ -114,13 +114,13 @@ interface ChannelRecordStore {
 }
 
 /**
- * Project + environment scoped runtime keys, keyed by the dashboard/CLI-issued
- * API key hash. The key authorizes the account/environment scope; the agent is
+ * Project + stage scoped runtime keys, keyed by the dashboard/CLI-issued
+ * API key hash. The key authorizes the account/stage scope; the agent is
  * chosen per request by id.
  */
 interface AgentDeploymentStore {
   getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
-  /** Resolve the environment deployment containing one linked runtime agent. */
+  /** Resolve the stage deployment containing one linked runtime agent. */
   getByAgentId?(
     accountId: string,
     agentId: string,

@@ -24,7 +24,7 @@ import {
 
 interface Props {
   projectSlug: string | undefined;
-  environmentSlug: string | undefined;
+  stageSlug: string | undefined;
   apiKey: string | undefined;
 }
 
@@ -737,7 +737,7 @@ function renderSpanRows(
   return rows;
 }
 
-export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
+export function TracingPanel({ projectSlug, stageSlug, apiKey }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -752,7 +752,7 @@ export function TracingPanel({ projectSlug, environmentSlug, apiKey }: Props) {
   const { entries, status, error, refresh } = useObservabilityStream({
     stream: "traces",
     projectSlug: projectSlug,
-    environmentSlug: environmentSlug,
+    stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 100,
   });

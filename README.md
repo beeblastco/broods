@@ -41,7 +41,18 @@ bunx broods dev
 bunx broods run my-agent "Hello!"
 ```
 
-See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough.
+Check what a command will act on, and switch organization or stage:
+
+```bash
+bunx broods status                              # login, org, plan, project, stage
+bunx broods org list                            # organizations you can select
+bunx broods org use my-team                     # switch org, repoint BROODS_API_KEY
+bunx broods stage create staging --from development   # clone a stage to work on
+bunx broods stage use staging
+```
+
+See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough,
+and the [CLI reference](apps/docs/docs/cli.md) for every command.
 
 For self-hosted deployments, see the [Deployment guide](apps/docs/docs/deployment.md).
 

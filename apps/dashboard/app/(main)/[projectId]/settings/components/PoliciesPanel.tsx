@@ -14,7 +14,7 @@ import { useState } from "react";
 
 interface Props {
   projectId: Id<"projects">;
-  environmentId: Id<"environments"> | null;
+  stageId: Id<"stages"> | null;
 }
 
 const DEFAULT_POLICY_DOCUMENT = {
@@ -28,18 +28,14 @@ const DEFAULT_POLICY_DOCUMENT = {
   ],
 };
 
-export function PoliciesPanel({ projectId, environmentId }: Props) {
+export function PoliciesPanel({ projectId, stageId }: Props) {
   const policies = useQuery(
-    api.agentPolicies.listForEnvironment,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    api.agentPolicies.listForStage,
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
   const usageCounts = useQuery(
     api.agentPolicies.usageCounts,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Record<string, number> | undefined;
   const createPolicy = useMutation(api.agentPolicies.create);
   const updatePolicy = useMutation(api.agentPolicies.update);
@@ -77,7 +73,7 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
   }
 
   async function savePolicy() {
-    if (!environmentId || !name.trim()) return;
+    if (!stageId || !name.trim()) return;
     let document: unknown;
     try {
       document = JSON.parse(documentText);
@@ -92,7 +88,7 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
       if (editing === "new") {
         await createPolicy({
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           name: name.trim(),
           description: description.trim() || undefined,
           document: document,
@@ -131,11 +127,11 @@ export function PoliciesPanel({ projectId, environmentId }: Props) {
     }
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
       <Section description="Reusable runtime authorization policies for agents.">
         <p className="text-sm text-muted-foreground">
-          Select an environment to manage policies.
+          Select a stage to manage policies.
         </p>
       </Section>
     );

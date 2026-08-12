@@ -182,7 +182,7 @@ encoding, not encryption, and must not contain or be treated as confidential
 data. Public direct requests cannot choose the reserved `subagent~` event
 namespace. A deployment-key status/attach request succeeds only when the child
 status row, its child agent/conversation scope, the durable parent ingress row,
-the active public parent, and the key's account/project/environment/endpoint
+the active public parent, and the key's account/project/stage/endpoint
 deployment scope all agree. The client does not provide parent scope. This
 permits a virtual or predefined private child to be observed through its
 already-authorized parent without making the child publicly runnable or exposing

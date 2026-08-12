@@ -95,22 +95,22 @@ const DEFAULT_SOURCE = [
 
 export function ToolConfigTab({
   projectId,
-  environmentId,
+  stageId,
   nodeId,
   nodeLabel,
 }: {
   projectId: Id<"projects"> | undefined;
-  environmentId: Id<"environments"> | null;
+  stageId: Id<"stages"> | null;
   nodeId: string;
   nodeLabel: string;
 }) {
-  const canQueryTool = !!projectId && !!environmentId;
+  const canQueryTool = !!projectId && !!stageId;
   const toolService = useQuery(
     api.toolService.getByNode,
     canQueryTool
       ? {
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           nodeId: nodeId,
         }
       : "skip",
@@ -161,8 +161,8 @@ export function ToolConfigTab({
   const hasUnsavedChanges = sourceCode !== currentSource;
 
   async function handleDownload() {
-    if (!projectId || !environmentId) {
-      setDownloadError("Select an environment before downloading this bundle.");
+    if (!projectId || !stageId) {
+      setDownloadError("Select a stage before downloading this bundle.");
 
       return;
     }
@@ -172,7 +172,7 @@ export function ToolConfigTab({
     try {
       const url = await bundleUrlForNode({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         nodeId: nodeId,
       });
       window.open(url, "_blank", "noopener,noreferrer");
@@ -196,8 +196,8 @@ export function ToolConfigTab({
   }
 
   async function handleSave() {
-    if (!projectId || !environmentId) {
-      setSaveError("Select an environment before editing this tool.");
+    if (!projectId || !stageId) {
+      setSaveError("Select a stage before editing this tool.");
 
       return;
     }
@@ -217,7 +217,7 @@ export function ToolConfigTab({
       setSourceCode(formatted);
       await upsertToolService({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         nodeId: nodeId,
         nodeLabel: nodeLabel,
         sourceCode: formatted,
@@ -241,11 +241,11 @@ export function ToolConfigTab({
     );
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
-          Select an environment before editing this tool.
+          Select a stage before editing this tool.
         </p>
       </div>
     );
@@ -304,7 +304,7 @@ export function ToolConfigTab({
           onSave={async (value) => {
             await upsertToolService({
               projectId: projectId,
-              environmentId: environmentId,
+              stageId: stageId,
               nodeId: nodeId,
               nodeLabel: nodeLabel,
               inputSchema: value ?? {},

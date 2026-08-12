@@ -169,19 +169,19 @@ function aggregateUsage(
 
 /**
  * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
- * caller's project/environment. Re-groups the 5-minute rollups into the
+ * caller's project/stage. Re-groups the 5-minute rollups into the
  * requested range. Subscribed via `useQuery`, so totals update live.
  * @returns time-bucketed usage grouped by (modelProvider, modelId) plus totals
  */
 export const fetchUsageStats = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.optional(v.id("environments")),
+    stageId: v.optional(v.id("stages")),
     range: usageRange,
   },
   returns: usageStats,
   handler: async (ctx, args) => {
-    const { projectId, environmentId, range } = args;
+    const { projectId, stageId, range } = args;
 
     // Check authenticated user
     const authUser = await authKit.getAuthUser(ctx);
@@ -197,7 +197,7 @@ export const fetchUsageStats = query({
       ctx,
       authUser.id,
       projectId,
-      environmentId,
+      stageId,
     );
     const base = {
       range: range,
@@ -250,7 +250,7 @@ export const fetchUsageStats = query({
 export const searchHistory = action({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.optional(v.id("environments")),
+    stageId: v.optional(v.id("stages")),
     query: v.optional(v.string()),
   },
   returns: v.array(v.any()),

@@ -18,7 +18,7 @@ re-run `bun install` in the demo if you built afterwards.
 
 Use `.env.local` for local runtime settings. SDK clients automatically read the
 runtime key from `BROODS_API_KEY`, which `bun run dev`/`bun run deploy`
-writes for the selected environment.
+writes for the selected stage.
 WebSocket demos use the same `BROODS_BASE_URL` or `BROODS_HOST` override as
 HTTP clients. The hosted SDK default is `gateway.broods.app`.
 

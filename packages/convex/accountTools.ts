@@ -1,12 +1,12 @@
 /**
  * Internal custom tool metadata API consumed by core's Convex storage adapter.
- * Tools are scoped to one (projectId, environmentId); the runtime resolves them
- * by `_id`, so a per-environment row already yields a per-environment tool.
+ * Tools are scoped to one (projectId, stageId); the runtime resolves them
+ * by `_id`, so a per-stage row already yields a per-stage tool.
  */
 
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { resolveProjectEnvironment } from "./model/projectScope";
+import { resolveProjectStage } from "./model/projectScope";
 import { accountToolsFields } from "./schema";
 
 const accountToolDoc = v.object({
@@ -53,41 +53,41 @@ export const resolveScope = internalQuery({
   args: {
     accountId: v.id("accounts"),
     project: v.string(),
-    environment: v.string(),
+    stage: v.string(),
   },
   returns: v.union(
     v.object({
       projectId: v.id("projects"),
-      environmentId: v.id("environments"),
+      stageId: v.id("stages"),
     }),
     v.null(),
   ),
   handler: async (ctx, args) => {
     const account = await ctx.db.get(args.accountId);
     if (!account) return null;
-    const resolved = await resolveProjectEnvironment(
+    const resolved = await resolveProjectStage(
       ctx,
       account,
       args.project,
-      args.environment,
+      args.stage,
     );
     if (!resolved) return null;
 
     return {
       projectId: resolved.projectDoc._id,
-      environmentId: resolved.environmentDoc._id,
+      stageId: resolved.stageDoc._id,
     };
   },
 });
 
-export const listForEnvironment = internalQuery({
-  args: { environmentId: v.id("environments") },
+export const listForStage = internalQuery({
+  args: { stageId: v.id("stages") },
   returns: v.array(accountToolDoc),
   handler: async (ctx, args) => {
     return await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_status", (q) =>
-        q.eq("environmentId", args.environmentId).eq("status", "active"),
+      .withIndex("by_stageId_and_status", (q) =>
+        q.eq("stageId", args.stageId).eq("status", "active"),
       )
       .collect();
   },
@@ -97,7 +97,7 @@ export const create = internalMutation({
   args: {
     accountId: v.id("accounts"),
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     name: v.string(),
     description: v.string(),
     inputSchema: v.any(),
@@ -122,9 +122,9 @@ export const create = internalMutation({
     ) {
       throw new Error(`Project not found: ${args.projectId}`);
     }
-    const environment = await ctx.db.get(args.environmentId);
-    if (!environment || environment.projectId !== args.projectId) {
-      throw new Error(`Environment not found: ${args.environmentId}`);
+    const stage = await ctx.db.get(args.stageId);
+    if (!stage || stage.projectId !== args.projectId) {
+      throw new Error(`Stage not found: ${args.stageId}`);
     }
 
     const now = Date.now();
@@ -132,7 +132,7 @@ export const create = internalMutation({
     return await ctx.db.insert("accountTools", {
       accountId: args.accountId,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       name: args.name,
       description: args.description,
       inputSchema: args.inputSchema,

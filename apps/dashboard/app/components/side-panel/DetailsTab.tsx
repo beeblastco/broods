@@ -49,15 +49,15 @@ import {
 import { useRef, useState } from "react";
 
 /**
- * Public (hash-free) view of an environment's runtime deployment, as returned by
- * `agentDeployments.getForEnvironment`. The key is environment-wide; the agent is
+ * Public (hash-free) view of a stage's runtime deployment, as returned by
+ * `agentDeployments.getForStage`. The key is stage-wide; the agent is
  * selected per request by its Agent ID.
  */
-export type EnvironmentDeployment = {
+export type StageDeployment = {
   _id: Id<"agentDeployments">;
   endpointId: string;
   projectSlug: string;
-  environmentSlug: string;
+  stageSlug: string;
   keyHint?: string;
   updatedAt: number;
 };
@@ -114,7 +114,7 @@ const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
 export function DetailsTab({
   agentConfig,
   projectId,
-  environmentId,
+  stageId,
   activeDeployment,
   deploymentApiKey,
   editName,
@@ -135,8 +135,8 @@ export function DetailsTab({
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   projectId: Id<"projects"> | undefined;
-  environmentId: Id<"environments"> | null | undefined;
-  activeDeployment: EnvironmentDeployment | undefined;
+  stageId: Id<"stages"> | null | undefined;
+  activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
   editName: string;
   setEditName: (name: string) => void;
@@ -222,19 +222,19 @@ export function DetailsTab({
   );
 
   const coreEndpoint = resolveCoreEndpoint();
-  const envPrefix = activeDeployment?.environmentSlug
-    ? `/${activeDeployment.environmentSlug}`
+  const stagePrefix = activeDeployment?.stageSlug
+    ? `/${activeDeployment.stageSlug}`
     : "";
   const projectPrefix = activeDeployment?.projectSlug
     ? `/${activeDeployment.projectSlug}`
     : "";
   const endpointUrl =
     activeDeployment && coreEndpoint.ok
-      ? `${coreEndpoint.httpBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}`
+      ? `${coreEndpoint.httpBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${activeDeployment.endpointId}`
       : "";
   const websocketUrl =
     activeDeployment && coreEndpoint.ok
-      ? `${coreEndpoint.websocketBaseUrl}/v1${projectPrefix}/agents${envPrefix}/${activeDeployment.endpointId}/ws`
+      ? `${coreEndpoint.websocketBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${activeDeployment.endpointId}/ws`
       : "";
 
   // Per-agent public-endpoint opt-in (issue #65). Stored as a top-level scalar
@@ -243,10 +243,8 @@ export function DetailsTab({
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
   const policyOptions = useQuery(
-    api.agentPolicies.listForEnvironment,
-    projectId && environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    api.agentPolicies.listForStage,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
   const policyConfig = agentConfig
     ? (readAgentBranch(
@@ -681,7 +679,7 @@ export function DetailsTab({
               })}
               {policyOptions && policyOptions.length === 0 && (
                 <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                  No policies in this environment.
+                  No policies in this stage.
                 </p>
               )}
             </div>
@@ -707,7 +705,7 @@ export function DetailsTab({
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-[11px] text-muted-foreground">
             {publicAccess
-              ? "This agent is reachable over HTTP/SSE and WebSocket with the environment's runtime API key. Select the agent per request with its Agent ID below."
+              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
               : "Secured by default — this agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
           </p>
         </div>
@@ -719,7 +717,7 @@ export function DetailsTab({
               No runtime API key yet
             </span>
             <p className="text-[11px] text-muted-foreground">
-              Generate the environment&apos;s key to reveal the endpoint URLs.{" "}
+              Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
               <code>broods deploy</code> also mints it automatically.
             </p>
             <Button
@@ -828,7 +826,7 @@ export function DetailsTab({
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                  API Key (environment-wide)
+                  API Key (stage-wide)
                 </span>
                 <Button
                   variant="ghost"
@@ -1027,10 +1025,10 @@ export function DetailsTab({
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rotate the environment API key?</DialogTitle>
+            <DialogTitle>Rotate the stage API key?</DialogTitle>
             <DialogDescription>
-              This key is environment-wide. Every agent, channel webhook, and
-              SDK client authenticating with the current key stops working the
+              This key is stage-wide. Every agent, channel webhook, and SDK
+              client authenticating with the current key stops working the
               moment it is rotated, until you redeploy them with the new one.
               The old key cannot be recovered.
             </DialogDescription>
@@ -1049,12 +1047,12 @@ export function DetailsTab({
                 setRotateError(null);
                 try {
                   // Close only on a confirmed rotation. A rejected mutation or
-                  // an unconfigured environment must not read as success — the
+                  // an unconfigured stage must not read as success — the
                   // user would redeploy against a key that never changed.
                   const rotated = await onRotateKey?.();
                   if (rotated === false) {
                     setRotateError(
-                      "This environment is not ready to issue a key yet. Save the agent first, then rotate.",
+                      "This stage is not ready to issue a key yet. Save the agent first, then rotate.",
                     );
 
                     return;
