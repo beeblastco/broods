@@ -142,9 +142,9 @@ test("does not include the runtime key in connection errors", async () => {
 
 test("resolves the scope a runtime key actually grants", async () => {
   const calls: Array<{ url: string; auth: string | undefined }> = [];
-  const fetchImpl = (async (url: string, init?: RequestInit) => {
+  const fetchImpl: typeof fetch = async (input, init) => {
     calls.push({
-      url: String(url),
+      url: String(input),
       auth: new Headers(init?.headers).get("Authorization") ?? undefined,
     });
 
@@ -157,7 +157,7 @@ test("resolves the scope a runtime key actually grants", async () => {
       }),
       { status: 200 },
     );
-  }) as unknown as typeof fetch;
+  };
 
   const scope = await fetchObservabilityScope(
     "https://app.example/",
@@ -175,16 +175,16 @@ test("resolves the scope a runtime key actually grants", async () => {
 });
 
 test("falls back to the configured names when the scope lookup fails", async () => {
-  const failing = (async () =>
-    new Response("nope", { status: 500 })) as unknown as typeof fetch;
+  const failing: typeof fetch = async () =>
+    new Response("nope", { status: 500 });
 
   expect(
     await fetchObservabilityScope("https://app.example", "rk", failing),
   ).toBeNull();
 
-  const throwing = (async () => {
+  const throwing: typeof fetch = async () => {
     throw new Error("network down");
-  }) as unknown as typeof fetch;
+  };
 
   expect(
     await fetchObservabilityScope("https://app.example", "rk", throwing),

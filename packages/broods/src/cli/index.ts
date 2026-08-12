@@ -1554,12 +1554,8 @@ async function resolveProjectStage(
   return { project: project, stage: stage };
 }
 
-/**
- * The runtime key, not `.env.local`, decides which project/stage the socket may
- * read. `BROODS_PROJECT` holds a display name, which diverges from the slug as
- * soon as a name is taken — and the gateway matches on the slug. Ask core for
- * the real scope so the path cannot disagree with the key.
- */
+// The gateway matches the socket path on the key's slug, but BROODS_PROJECT
+// holds a display name. Ask core so the two cannot disagree.
 async function resolveObservabilityTarget(
   args: string[],
   credentials: { baseUrl: string; apiKey: string },

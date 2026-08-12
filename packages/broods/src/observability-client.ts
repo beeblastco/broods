@@ -78,11 +78,8 @@ function resolveWebSocket(): new (url: string) => WebSocket {
 }
 
 /**
- * Ask core which project/stage a runtime key reads. The gateway compares the
- * socket path against this and closes on a mismatch, and a rejected handshake
- * carries no status the WebSocket API can report, so callers that guess the
- * path get an empty stream instead of an error. Returns null when the lookup
- * itself fails; callers fall back to what they were configured with.
+ * Ask core which project/stage a runtime key reads. Null when the lookup fails,
+ * so callers fall back to whatever they were configured with.
  */
 export async function fetchObservabilityScope(
   baseUrl: string,
@@ -103,9 +100,13 @@ export async function fetchObservabilityScope(
     );
     if (!response.ok) return null;
     const scope = (await response.json()) as ObservabilityScope;
+    // An empty slug builds a path that matches nothing, which is the silent
+    // failure this lookup exists to prevent.
     if (
       typeof scope?.projectSlug !== "string" ||
-      typeof scope?.stageSlug !== "string"
+      typeof scope?.stageSlug !== "string" ||
+      scope.projectSlug === "" ||
+      scope.stageSlug === ""
     )
       return null;
 
