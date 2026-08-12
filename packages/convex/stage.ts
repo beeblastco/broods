@@ -401,12 +401,7 @@ export const list = query({
 
     // Return empty rather than throwing so a just-deleted project doesn't crash
     // reactive subscribers (header selector, settings) before they navigate away.
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
+    const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) return [];
 
     const stages = await ctx.db
