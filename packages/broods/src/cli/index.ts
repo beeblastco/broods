@@ -96,7 +96,7 @@ Project:
   deploy               Sync Production once and write BROODS_API_KEY to .env.local
 
 Account:
-  login                Authenticate with WorkOS through the dashboard
+  login                Authenticate through the dashboard
   status               Show the login, server, org, plan, project and stage in use
   org                  List, switch or create organizations
   stage                List, switch or create stages
@@ -138,8 +138,8 @@ ${GLOBAL_OPTIONS}`,
   dev: `Usage: broods dev [--once] [options]
 
 Watches broods/, syncs the current stage (BROODS_STAGE, default Development)
-and live-tails agent logs like \`convex dev\`. Confirms before deleting, and
-auto-pushes env("NAME") values from .env.local.
+and live-tails agent logs. Confirms before deleting, and auto-pushes
+env("NAME") values from .env.local.
 
 Options:
   --once                Sync a single time and exit (no watch, no log stream)
@@ -172,7 +172,7 @@ Options:
 ${GLOBAL_OPTIONS}`,
   login: `Usage: broods login [options]
 
-Authenticates with WorkOS through the dashboard and stores the token in
+Authenticates through the dashboard and stores the token in
 ~/.broods/config.json.
 
 Options:
