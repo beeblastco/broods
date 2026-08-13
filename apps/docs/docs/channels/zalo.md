@@ -26,16 +26,29 @@ export const myAgent = defineAgent({
 
 ## Webhook
 
-Register the agent-scoped webhook URL with Zalo:
+Register the webhook URL `broods dev` printed for the stage. The URL never names
+an agent: the credentials that verify the request choose which agent receives.
+
+Production takes the bare form:
 
 ```bash
 curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "'"$BROODS_BASE_URL"'/webhooks/<ACCOUNT_ID>/<AGENT_ID>/zalo",
+    "url": "'"$BROODS_BASE_URL"'/webhooks/<ACCOUNT_ID>/zalo",
     "secret_token": "YOUR_WEBHOOK_SECRET"
   }'
 ```
+
+A stage other than production is registered through its own endpoint id, so two
+stages sharing one bot never receive each other's messages:
+
+```text
+{BROODS_BASE_URL}/webhooks/<ACCOUNT_ID>/dev/<ENDPOINT_ID>/zalo
+```
+
+Zalo stores one webhook URL per bot, so registering a stage URL moves that bot's
+traffic to that stage. Give each developer their own bot to run both at once.
 
 ## Supported Behavior
 

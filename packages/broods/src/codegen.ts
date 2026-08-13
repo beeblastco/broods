@@ -20,6 +20,8 @@ export type GeneratedEndpoint =
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
+      /** Absent is treated as production, which keeps the bare webhook path. */
+      stageKind?: "development" | "production" | "custom";
     }
   | null
   | undefined;
@@ -137,7 +139,14 @@ function apiFile(
   const channelEntries = endpoint
     ? channels
         .map((channel) => {
-          const path = `/webhooks/${encodeURIComponent(endpoint.accountId)}/${encodeURIComponent(channel.type)}`;
+          const account = encodeURIComponent(endpoint.accountId);
+          // Only production keeps the bare path; any other stage is addressed
+          // through its own endpointId so the two never contend.
+          const path =
+            endpoint.stageKind === undefined ||
+            endpoint.stageKind === "production"
+              ? `/webhooks/${account}/${encodeURIComponent(channel.type)}`
+              : `/webhooks/${account}/dev/${encodeURIComponent(endpoint.endpointId)}/${encodeURIComponent(channel.type)}`;
 
           return `    ${propertyKey(channel.alias)}: { kind: "channel", type: ${JSON.stringify(channel.type)}, agentName: ${JSON.stringify(channel.agentName)}, agentId: ids.agents[${JSON.stringify(channel.agentName)}], accountId: ${JSON.stringify(endpoint.accountId)}, webhookPath: ${JSON.stringify(path)} },`;
         })

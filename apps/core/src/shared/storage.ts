@@ -3,6 +3,7 @@
  * domain records and configuration codecs live in `./domain/`.
  */
 
+import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
@@ -94,6 +95,11 @@ interface AccountStore {
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
   list(accountId: string): Promise<AgentRecord[]>;
+  /** Agents of one stage, for the stage-scoped webhook URL. */
+  listForEndpoint(
+    accountId: string,
+    endpointId: string,
+  ): Promise<AgentRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
@@ -142,7 +148,7 @@ interface CronStore {
     accountId: string,
     cronId: string,
     runId: string,
-    result: unknown,
+    result: JSONValue,
   ): Promise<void>;
   failRun(
     accountId: string,

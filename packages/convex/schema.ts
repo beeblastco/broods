@@ -1124,6 +1124,7 @@ export default defineSchema({
       "status",
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
+    .index("by_endpointId", ["endpointId"])
     .index("by_authId", ["authId"]),
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])

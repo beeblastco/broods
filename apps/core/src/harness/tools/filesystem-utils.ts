@@ -10,7 +10,6 @@
  */
 
 import type { JSONObject } from "@ai-sdk/provider";
-import type { Tool } from "ai";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { isMissingS3Error, listS3Prefix, readS3Text } from "../../shared/s3.ts";
@@ -31,6 +30,7 @@ import type {
   SandboxRunResult,
   SandboxRuntime,
 } from "../sandbox/types.ts";
+import { isFatalSandboxSetupError, toolError, toolText } from "./utils.ts";
 
 export const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 
@@ -57,34 +57,6 @@ const ABSOLUTE_WRITE_PATTERNS = [
   // git clone's destination is its last positional argument.
   /(?:^|[\s;&|()])git\s+clone\s[^;&|]*?\s(?<path>\/[^\s"'`;&|)<>]*)(?=\s*(?:$|[;&|]))/g,
 ];
-
-// Model-facing tool result shape (matches the AI SDK toModelOutput contract).
-export type ToolModelResult = Awaited<
-  ReturnType<
-    NonNullable<Tool<Record<string, unknown>, unknown>["toModelOutput"]>
-  >
->;
-export const toolText = (value: string): ToolModelResult => ({
-  type: "text",
-  value: value,
-});
-export const toolError = (value: string): ToolModelResult => {
-  if (isFatalSandboxSetupError(value)) {
-    throw new Error(`Sandbox setup failed: ${value}`);
-  }
-
-  return { type: "error-text", value: value };
-};
-export const toolJson = (value: JSONObject): ToolModelResult => ({
-  type: "json",
-  value: value,
-});
-
-function isFatalSandboxSetupError(value: string): boolean {
-  return /base maximum allocated memory limit|allocated memory limit|resource limit|quota exceeded|invalid namespace: must match/i.test(
-    value,
-  );
-}
 
 // What a bash call picked to run on. The two are orthogonal, not two spellings of
 // one field: `workspace` names a mount, `sandbox` says "no mount, my own machine".
@@ -257,7 +229,10 @@ export async function runSandbox(
       ? { namespace: namespace, workspaceRoot: workspaceRootFor(config) }
       : {}),
     ...(reservationKey
-      ? { reservationKey: reservationKey, workspaceRoot: workspaceRootFor(config) }
+      ? {
+          reservationKey: reservationKey,
+          workspaceRoot: workspaceRootFor(config),
+        }
       : {}),
     ...(options?.metadata ? { metadata: options.metadata } : {}),
     timeoutSeconds: boundedInteger(
@@ -410,7 +385,7 @@ export async function s3ReadNumbered(
   rel: string,
   offset?: number,
   limit?: number,
-): Promise<ToolModelResult> {
+): Promise<string> {
   const target = await resolveS3ReadTarget(
     workspaceReadContext(ws.config.storage, ws.namespace),
   );
@@ -447,7 +422,7 @@ export async function s3Glob(
   ws: ResolvedWorkspace,
   pattern: string,
   path?: string,
-): Promise<ToolModelResult> {
+): Promise<string> {
   const target = await resolveS3ReadTarget(
     workspaceReadContext(ws.config.storage, ws.namespace),
   );

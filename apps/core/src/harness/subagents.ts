@@ -52,6 +52,10 @@ import type {
   RunSubagentTaskDispatch,
   RunSubagentTaskInput,
 } from "./tools/run-subagent.tool.ts";
+import {
+  modelValueToUserParts,
+  prependTextToUserParts,
+} from "./tools/utils.ts";
 
 const DEFAULT_SUBAGENT_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -1040,21 +1044,23 @@ function completionToParentMessage(
     `status: ${completion.status}`,
   ].join("\n");
   const visible = completion.visibleResult ?? completion.response;
-  const result =
-    completion.status === "completed"
-      ? visible === undefined
-        ? "(no result)"
-        : formatModelValue(visible)
-      : completion.error;
+  const resultParts =
+    completion.status === "completed" && visible !== undefined
+      ? modelValueToUserParts(visible)
+      : [];
+  const prefix = `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n`;
 
   return {
     role: "user",
-    content: [
-      {
-        type: "text",
-        text: `Subagent and async agent result injected into parent conversation.\n${metadata}\n\nResult:\n${result ?? "(no result)"}`,
-      },
-    ],
+    content:
+      resultParts.length > 0
+        ? prependTextToUserParts(prefix, resultParts)
+        : [
+            {
+              type: "text",
+              text: `${prefix}${completion.error ?? "(no result)"}`,
+            },
+          ],
   };
 }
 
@@ -1078,17 +1084,6 @@ function createSubagentPublisher(
     },
     process.env.NATS_TOKEN?.trim() || undefined,
   );
-}
-
-function formatModelValue(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
 }
 
 function bestEffortSubagentPublisher(

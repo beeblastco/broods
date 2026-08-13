@@ -25,6 +25,174 @@ afterEach(() => {
 });
 
 describe("AsyncToolCoordinator", () => {
+  it("injects file and image outputs as native user file parts", async () => {
+    const { completionToParentMessage } =
+      await import("../src/harness/async-tools.ts");
+    const message = completionToParentMessage({
+      resultId: "async_tool_1",
+      toolName: "render",
+      input: {},
+      status: "completed",
+      response: {
+        type: "content",
+        value: [
+          {
+            type: "file-data",
+            data: "JVBERi0=",
+            mediaType: "application/pdf",
+            filename: "report.pdf",
+          },
+          {
+            type: "image-url",
+            url: "https://example.com/preview.png",
+          },
+        ],
+      },
+    });
+
+    expect(message.content).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("Async tool result injected"),
+      },
+      {
+        type: "file",
+        data: { type: "data", data: "JVBERi0=" },
+        mediaType: "application/pdf",
+        filename: "report.pdf",
+      },
+      {
+        type: "file",
+        data: {
+          type: "url",
+          url: new URL("https://example.com/preview.png"),
+        },
+        mediaType: "image",
+      },
+    ]);
+  });
+
+  it("preserves binary and URL file parts across async persistence", async () => {
+    runtime.mutate = mutationMock as never;
+    const { AsyncToolCoordinator } =
+      await import("../src/harness/async-tools.ts");
+    const persistModelMessages = mock(
+      async (_messages: UserModelMessage[]) => [],
+    );
+    const coordinator = new AsyncToolCoordinator(
+      {
+        conversationKey: "conversation-1",
+        eventId: "event-1",
+        persistModelMessages: persistModelMessages,
+      } as never,
+      Date.now() + 1_000,
+    );
+    const arrayBuffer = new Uint8Array([3, 4]).buffer;
+    const tools = coordinator.dispatch(
+      {
+        attachments: tool({
+          description: "Return attachments.",
+          inputSchema: jsonSchema({ type: "object" }),
+          execute: async () => ({
+            type: "content" as const,
+            value: [
+              {
+                type: "file" as const,
+                data: {
+                  type: "data" as const,
+                  data: new Uint8Array([1, 2]),
+                },
+                mediaType: "application/octet-stream",
+                filename: "bytes.bin",
+              },
+              {
+                type: "file" as const,
+                data: { type: "data" as const, data: arrayBuffer },
+                mediaType: "application/octet-stream",
+                filename: "buffer.bin",
+              },
+              {
+                type: "file" as const,
+                data: {
+                  type: "url" as const,
+                  url: new URL("https://example.com/report.pdf"),
+                },
+                mediaType: "application/pdf",
+              },
+            ],
+          }),
+        }),
+      },
+      new Map([["attachments", "built-in" as const]]),
+    );
+
+    const pending = await (
+      tools.attachments as unknown as TestToolExecute
+    ).execute(
+      {},
+      { toolCallId: "tool-call-files", messages: [], context: undefined },
+    );
+    await expect(coordinator.waitForIdle()).resolves.toBe("idle");
+    await expect(coordinator.drainCompletionsToParent()).resolves.toBe(1);
+
+    const resultId = (pending as { resultId: string }).resultId;
+    const persisted = {
+      type: "content",
+      value: [
+        {
+          type: "file-data",
+          data: "AQI=",
+          mediaType: "application/octet-stream",
+          filename: "bytes.bin",
+        },
+        {
+          type: "file-data",
+          data: "AwQ=",
+          mediaType: "application/octet-stream",
+          filename: "buffer.bin",
+        },
+        {
+          type: "file-url",
+          url: "https://example.com/report.pdf",
+          mediaType: "application/pdf",
+        },
+      ],
+    };
+    expect(mutationMock).toHaveBeenCalledWith("updateAsyncToolResult", {
+      resultId: resultId,
+      status: "completed",
+      response: persisted,
+      onlyWhenProcessing: true,
+    });
+    const content = persistModelMessages.mock.calls[0]?.[0]?.[0]?.content;
+    expect(content).toEqual([
+      {
+        type: "text",
+        text: expect.stringContaining("Async tool result injected"),
+      },
+      {
+        type: "file",
+        data: { type: "data", data: "AQI=" },
+        mediaType: "application/octet-stream",
+        filename: "bytes.bin",
+      },
+      {
+        type: "file",
+        data: { type: "data", data: "AwQ=" },
+        mediaType: "application/octet-stream",
+        filename: "buffer.bin",
+      },
+      {
+        type: "file",
+        data: {
+          type: "url",
+          url: new URL("https://example.com/report.pdf"),
+        },
+        mediaType: "application/pdf",
+      },
+    ]);
+  });
+
   it("returns a pending result immediately and injects the completed output later", async () => {
     runtime.mutate = mutationMock as never;
     const { AsyncToolCoordinator } =

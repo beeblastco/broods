@@ -7,15 +7,44 @@ import {
   jsonSchema,
   tool,
   type JSONSchema7,
-  type JSONValue,
   type ModelMessage,
   type SystemModelMessage,
   type ToolSet,
 } from "ai";
+import { toToolResultOutput } from "./utils.ts";
 
 const MAX_SUBAGENT_TASKS = 10;
 const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
 type RunSubagentMode = "ephemeral" | "persistent";
+
+interface RunSubagentInput {
+  tasks: RunSubagentTaskInput[];
+}
+
+export interface RunSubagentTaskInput {
+  agentId?: string;
+  prompt: string;
+  conversationKey?: string;
+}
+
+export type RunSubagentTaskDispatch = {
+  taskId: string;
+  agentId: string;
+  description?: string;
+  conversationKey: string;
+  statusPath: string;
+  status: "running";
+};
+
+export type RunSubagentDispatchResult = {
+  tasks: RunSubagentTaskDispatch[];
+};
+
+export type RunSubagentDispatch = (
+  tasks: RunSubagentTaskInput[],
+  parentMessages: ModelMessage[],
+  parentEphemeralSystem?: SystemModelMessage[],
+) => Promise<RunSubagentDispatchResult>;
 
 export function buildRunSubagentInputSchema(
   mode?: RunSubagentMode,
@@ -60,31 +89,6 @@ export function buildRunSubagentInputSchema(
   };
 }
 
-export interface RunSubagentTaskInput {
-  agentId?: string;
-  prompt: string;
-  conversationKey?: string;
-}
-
-export interface RunSubagentTaskDispatch {
-  taskId: string;
-  agentId: string;
-  description?: string;
-  conversationKey: string;
-  statusPath: string;
-  status: "running";
-}
-
-export interface RunSubagentDispatchResult {
-  tasks: RunSubagentTaskDispatch[];
-}
-
-export type RunSubagentDispatch = (
-  tasks: RunSubagentTaskInput[],
-  parentMessages: ModelMessage[],
-  parentEphemeralSystem?: SystemModelMessage[],
-) => Promise<RunSubagentDispatchResult>;
-
 export default function runSubagentTool(context: {
   dispatchSubagents: RunSubagentDispatch;
   mode?: RunSubagentMode;
@@ -101,18 +105,17 @@ export default function runSubagentTool(context: {
             ]
           : []),
       ].join(" "),
-      inputSchema: jsonSchema(buildRunSubagentInputSchema(context.mode)),
-      execute: async function(input, options) {
+      inputSchema: jsonSchema<RunSubagentInput>(
+        buildRunSubagentInputSchema(context.mode),
+      ),
+      toModelOutput: toToolResultOutput,
+      execute: async function (input, options) {
         const tasks = normalizeInput(input, context.mode);
 
         // Keep the tool as a thin AI SDK adapter. The dispatcher starts child
         // runs and coordinates later parent continuation outside this file.
         return context.dispatchSubagents(tasks, options.messages);
       },
-      toModelOutput: ({ output }) => ({
-        type: "json",
-        value: output as unknown as JSONValue,
-      }),
     }),
   };
 }

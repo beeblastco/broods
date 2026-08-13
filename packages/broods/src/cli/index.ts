@@ -1245,8 +1245,18 @@ function printChannelEndpoints(
     aliasesByType.set(channel.type, aliases);
   }
 
+  // A stage that is not production gets its own URL, so pasting it into the
+  // provider moves traffic to this stage instead of contending for the account.
+  const isProduction =
+    deployment.stageKind === undefined || deployment.stageKind === "production";
   for (const [type, aliases] of aliasesByType) {
-    const url = client.accountWebhookUrl(deployment.accountId, type);
+    const url = isProduction
+      ? client.accountWebhookUrl(deployment.accountId, type)
+      : client.stageWebhookUrl(
+          deployment.accountId,
+          deployment.endpointId,
+          type,
+        );
     console.log(
       `Channel ${aliases.join(", ")} (${type}): ${url}${type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`,
     );

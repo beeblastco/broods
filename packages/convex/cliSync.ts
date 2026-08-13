@@ -41,6 +41,7 @@ import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
 import { stageNameEquals, resolveProjectStage } from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
+import { stageKindForName } from "./stage";
 
 const resourceValidator = v.object({
   kind: v.union(
@@ -351,6 +352,11 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       endpointId: v.string(),
       projectSlug: v.string(),
       stageSlug: v.string(),
+      stageKind: v.union(
+        v.literal("development"),
+        v.literal("production"),
+        v.literal("custom"),
+      ),
       keyHint: v.string(),
       apiKey: v.string(),
     }),
@@ -403,6 +409,7 @@ export const ensureRuntimeKeyBySecretHash = internalMutation({
       endpointId: result.endpointId,
       projectSlug: result.projectSlug,
       stageSlug: result.stageSlug,
+      stageKind: stageKindForName(stageDoc),
       keyHint: result.keyHint,
       apiKey: result.rawApiKey,
     };
@@ -908,7 +915,7 @@ async function ensureStage(
     .collect();
   const name = resourceName(stage);
   const existing = stages.find((entry) => stageNameEquals(entry.name, name));
-  const kind = stageKindForName(name);
+  const kind = stageKindForName({ name: name, kind: undefined });
   if (existing) {
     if (existing.kind !== kind || existing.name !== displayStageName(name)) {
       await ctx.db.patch(existing._id, {
@@ -3190,18 +3197,8 @@ function resourceName(value: string): string {
   return trimmed;
 }
 
-function stageKindForName(
-  name: string,
-): "development" | "production" | "custom" {
-  const normalized = name.trim().toLowerCase();
-  if (normalized === "development") return "development";
-  if (normalized === "production") return "production";
-
-  return "custom";
-}
-
 function displayStageName(name: string): string {
-  const kind = stageKindForName(name);
+  const kind = stageKindForName({ name: name, kind: undefined });
   if (kind === "development") return "Development";
   if (kind === "production") return "Production";
 

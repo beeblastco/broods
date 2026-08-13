@@ -2,7 +2,7 @@
  * Cron-job records, input normalization, and patch-merge helpers.
  */
 
-import type { ModelMessage } from "ai";
+import type { JSONValue, ModelMessage } from "ai";
 import { optionalEnv } from "../env.ts";
 import { isPlainObject } from "../object.ts";
 
@@ -40,7 +40,7 @@ export interface CronRunRecord {
   eventId: string;
   conversationKey: string;
   status: CronLastStatus;
-  result?: unknown;
+  result?: JSONValue;
   error?: string;
   startedAt: string;
   completedAt?: string;
@@ -51,8 +51,7 @@ export interface CronRunRecord {
  * single `input` string (wrapped into one user message) or a full `events` list.
  */
 export type CronRunInput =
-  | { input: string; events?: never }
-  | { events: ModelMessage[]; input?: never };
+  { input: string; events?: never } | { events: ModelMessage[]; input?: never };
 
 export type CreateCronInput = {
   name: string;

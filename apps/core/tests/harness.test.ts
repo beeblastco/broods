@@ -155,7 +155,7 @@ const streamTextMock = mock(
   }) => {
     let consumed = false;
     const stream = new ReadableStream({
-      start: async function(controller) {
+      start: async function (controller) {
         if (streamTextScenario === "hard-throw") {
           controller.error(new Error("stream transport failed"));
 
@@ -435,7 +435,7 @@ const streamTextMock = mock(
 
     return {
       stream: stream,
-      consumeStream: async function() {
+      consumeStream: async function () {
         if (consumed) {
           return;
         }
@@ -1753,11 +1753,9 @@ describe("runAgentLoop", () => {
         path: "acct_test/support-flow",
         resources: [],
       }),
-    ).resolves.toEqual({
-      type: "text",
-      value:
-        "Loaded skill acct_test/support-flow: SKILL.md. No sandbox staging path is available for bundled helper files in this turn.",
-    });
+    ).resolves.toBe(
+      "Loaded skill acct_test/support-flow: SKILL.md. No sandbox staging path is available for bundled helper files in this turn.",
+    );
     expect(loadSkillPrompt).toHaveBeenCalledWith(
       ["acct_test/support-flow"],
       "acct_test/support-flow",
@@ -2258,7 +2256,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     accountTools: null as never,
     accountHooks: null as never,
     taskUsage: {
-      record: async function(input) {
+      record: async function (input) {
         writes.push(input);
       },
     },
