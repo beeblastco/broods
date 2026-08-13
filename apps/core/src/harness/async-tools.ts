@@ -3,16 +3,21 @@
  * Keep tool wrapping and parent-result injection outside individual tool files.
  */
 
-import type { ToolSet, UserModelMessage } from "ai";
+import type { JSONValue, ToolSet, UserModelMessage } from "ai";
 import { logError, logInfo, logWarn } from "../shared/log.ts";
 import {
-    createPendingAsyncToolResult,
-    markAsyncToolResultCompleted,
-    markAsyncToolResultFailed,
-    type AsyncToolDelivery,
+  createPendingAsyncToolResult,
+  markAsyncToolResultCompleted,
+  markAsyncToolResultFailed,
+  type AsyncToolDelivery,
 } from "./async-tool-result.ts";
+import { toLifecycleValue } from "./lifecycle.ts";
 import type { Session } from "./session.ts";
 import { isAsyncIterable, type ToolExecute } from "./tool-execute.ts";
+import {
+  modelValueToUserParts,
+  prependTextToUserParts,
+} from "./tools/utils.ts";
 
 const DEFAULT_ASYNC_TOOL_WAIT_BUDGET_MS = 8 * 60 * 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -27,7 +32,7 @@ export interface AsyncToolCompletion {
   toolName: string;
   input: unknown;
   status: "completed" | "failed";
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
 }
 
@@ -322,10 +327,12 @@ export class AsyncToolCoordinator {
       toolCallId: options.toolCallId,
     });
 
-    const response = await resolveToolOutput(options.execute());
+    const response = toLifecycleValue(
+      canonicalizeAsyncToolOutput(await resolveToolOutput(options.execute())),
+    );
     await markAsyncToolResultCompleted({
       resultId: options.resultId,
-      response: response,
+      ...(response !== undefined ? { response: response } : {}),
     });
     await this.completeToolCall({
       resultId: options.resultId,
@@ -390,19 +397,23 @@ export function completionToParentMessage(
     `toolName: ${completion.toolName}`,
     `status: ${completion.status}`,
   ].join("\n");
-  const result =
-    completion.status === "completed"
-      ? formatUnknown(completion.response)
-      : completion.error;
+  const resultParts =
+    completion.status === "completed" && completion.response !== undefined
+      ? modelValueToUserParts(completion.response)
+      : [];
+  const prefix = `Async tool result injected into parent conversation.\n${metadata}\n\nInput:\n${formatUnknown(completion.input)}\n\nResult:\n`;
 
   return {
     role: "user",
-    content: [
-      {
-        type: "text",
-        text: `Async tool result injected into parent conversation.\n${metadata}\n\nInput:\n${formatUnknown(completion.input)}\n\nResult:\n${result ?? "(no result)"}`,
-      },
-    ],
+    content:
+      resultParts.length > 0
+        ? prependTextToUserParts(prefix, resultParts)
+        : [
+            {
+              type: "text",
+              text: `${prefix}${completion.error ?? "(no result)"}`,
+            },
+          ],
   };
 }
 
@@ -419,6 +430,69 @@ async function resolveToolOutput(
   }
 
   return output;
+}
+
+function canonicalizeAsyncToolOutput(output: unknown): unknown {
+  if (
+    !isRecord(output) ||
+    output.type !== "content" ||
+    !Array.isArray(output.value)
+  ) {
+    return output;
+  }
+
+  return {
+    ...output,
+    value: output.value.map(canonicalizeAsyncToolContentPart),
+  };
+}
+
+function canonicalizeAsyncToolContentPart(part: unknown): unknown {
+  if (
+    !isRecord(part) ||
+    part.type !== "file" ||
+    typeof part.mediaType !== "string" ||
+    !isRecord(part.data)
+  ) {
+    return part;
+  }
+
+  const data = part.data;
+  if (
+    data.type === "data" &&
+    (data.data instanceof Uint8Array || data.data instanceof ArrayBuffer)
+  ) {
+    return {
+      type: "file-data",
+      data: Buffer.from(
+        data.data instanceof ArrayBuffer
+          ? new Uint8Array(data.data)
+          : data.data,
+      ).toString("base64"),
+      mediaType: part.mediaType,
+      ...(typeof part.filename === "string" ? { filename: part.filename } : {}),
+      ...(isRecord(part.providerOptions)
+        ? { providerOptions: part.providerOptions }
+        : {}),
+    };
+  }
+
+  if (data.type === "url" && data.url instanceof URL) {
+    return {
+      type: "file-url",
+      url: data.url.href,
+      mediaType: part.mediaType,
+      ...(isRecord(part.providerOptions)
+        ? { providerOptions: part.providerOptions }
+        : {}),
+    };
+  }
+
+  return part;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }
 
 function withAsyncToolMetadata(
@@ -459,7 +533,6 @@ function pendingResultText(resultId: string, status: string): string {
   ].join("\n");
 }
 
-// Format the tool result from unknown to string
 function formatUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;

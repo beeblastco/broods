@@ -35,12 +35,11 @@ import {
   sandboxSupportsBackgroundJobs,
   sandboxSupportsJobControls,
   targetsAgentSandbox,
-  toolError,
-  toolText,
   workspaceParamSchema,
   writesOutsideAllowed,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { toolError, toolText, toToolResultOutput } from "./utils.ts";
 
 interface BashInput {
   command: string;
@@ -283,7 +282,12 @@ async function dispatchBackground(
     conversationKey: context.background.conversationKey,
     toolName: "bash",
     toolCallId: toolCallId,
-    input: { kind: "sandbox_job", namespace: ws.namespace, jobId: jobId, command: command },
+    input: {
+      kind: "sandbox_job",
+      namespace: ws.namespace,
+      jobId: jobId,
+      command: command,
+    },
     // Push the result back to the originating channel/WebSocket when known;
     // otherwise it settles for status polling only.
     delivery: context.background.delivery ?? { kind: "async" },
@@ -304,7 +308,9 @@ async function dispatchBackground(
     });
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
-    await markAsyncToolResultFailed({ resultId: resultId, error: error }).catch(() => {});
+    await markAsyncToolResultFailed({ resultId: resultId, error: error }).catch(
+      () => {},
+    );
 
     return toolError(`Error: failed to start background job: ${error}`);
   }
@@ -334,7 +340,8 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
     bash: tool({
       description: description(context),
       inputSchema: jsonSchema(inputSchema(context)),
-      execute: async function(input, options) {
+      toModelOutput: toToolResultOutput,
+      execute: async function (input, options) {
         const {
           command,
           workspace,

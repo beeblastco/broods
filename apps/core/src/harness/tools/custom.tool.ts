@@ -7,6 +7,7 @@ import { jsonSchema, tool, type ToolSet } from "ai";
 import type { AccountToolRecord } from "../../shared/domain/account-tools.ts";
 import { streamAccountTool } from "../bundles/executor.ts";
 import type { ToolContext } from "./index.ts";
+import { toDynamicToolResultOutput } from "./utils.ts";
 
 export default function accountTool(
   record: AccountToolRecord,
@@ -16,6 +17,7 @@ export default function accountTool(
     [record.name]: tool({
       description: record.description,
       inputSchema: jsonSchema(record.inputSchema),
+      toModelOutput: toDynamicToolResultOutput,
       // Declared `async function*` so tool-execute.ts can see this streams. Each
       // yield is a preliminary tool result; the last one is the tool's result.
       execute: async function* (input, options) {

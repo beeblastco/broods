@@ -17,7 +17,7 @@
  * action enum are built from `supportsJobs` to keep the prompt from drifting.
  */
 
-import { jsonSchema, tool, type ToolSet } from "ai";
+import { jsonSchema, tool, type JSONValue, type ToolSet } from "ai";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
   getAsyncToolResult,
@@ -31,7 +31,7 @@ import type {
   SandboxExecutorConfig,
   SandboxJobStatus,
 } from "../sandbox/types.ts";
-import { toolError, toolText } from "./filesystem-utils.ts";
+import { toolError, toToolResultOutput } from "./utils.ts";
 
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
 
@@ -57,7 +57,7 @@ export interface AsyncStatusContext {
   supportsJobs: boolean;
 }
 
-export default function asyncStatusTool(context: AsyncStatusContext): ToolSet {
+export default function asyncStatusTool(context: AsyncStatusContext) {
   return {
     async_status: tool({
       description: context.supportsJobs
@@ -75,7 +75,7 @@ Usage notes:
 - Pass the statusId returned when the async tool started.
 - Reports whether it is running, completed, or failed.
 The result is delivered back into the conversation automatically when it finishes; polling here is optional and just surfaces the result.`,
-      inputSchema: jsonSchema({
+      inputSchema: jsonSchema<AsyncStatusInput>({
         type: "object",
         properties: {
           statusId: {
@@ -97,8 +97,9 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      execute: async function(input) {
-        const { statusId, action = "status" } = input as AsyncStatusInput;
+      toModelOutput: toToolResultOutput,
+      execute: async function (input) {
+        const { statusId, action = "status" } = input;
         const record = await getAsyncToolResult(statusId);
         // Resolve only within the caller's own conversation (both missing and
         // foreign rows return the same not-found, so it is not an oracle).
@@ -115,26 +116,31 @@ The result is delivered back into the conversation automatically when it finishe
           const settledLogs =
             action === "logs" ? settledJobLogs(record.response) : undefined;
           if (settledLogs !== undefined) {
-            return toolText(
-              settledLogs.length > 0 ? settledLogs : "(no output)",
-            );
+            return settledLogs.length > 0 ? settledLogs : "(no output)";
           }
 
-          return toolText(`completed\n${formatUnknown(record.response)}`);
+          return {
+            status: record.status,
+            response: record.response ?? null,
+          };
         }
         if (record.status === "failed") {
           await markAsyncToolResultObserved(statusId);
 
-          return toolText(`failed\n${record.error ?? "(no error detail)"}`);
+          return {
+            status: record.status,
+            error: record.error ?? null,
+          };
         }
 
         // Still processing. A sandbox-job row can be polled live; any other async
         // tool is delivered automatically when its in-flight work completes.
         const job = sandboxJobRef(record.input);
         if (!job) {
-          return toolText(
-            "running — this result will be delivered automatically when it completes.",
-          );
+          return {
+            status: "processing",
+            delivery: "automatic",
+          };
         }
 
         const sandbox = sandboxForNamespace(context, job.namespace);
@@ -155,9 +161,7 @@ The result is delivered back into the conversation automatically when it finishe
               outputLimitBytes: JOB_LOG_LIMIT_BYTES,
             });
 
-            return toolText(
-              logs.logs.length > 0 ? logs.logs : "(no output yet)",
-            );
+            return logs.logs.length > 0 ? logs.logs : "(no output yet)";
           }
           if (action === "stop") {
             if (!executor.stopJob)
@@ -169,32 +173,29 @@ The result is delivered back into the conversation automatically when it finishe
               namespace: job.namespace,
             });
 
-            return toolText(
-              await settleTerminalJob(statusId, executor, job, stopped),
-            );
+            return settleTerminalJob(statusId, executor, job, stopped);
           }
 
           if (!executor.jobStatus) {
-            return toolText(
-              "running — this sandbox does not support live job status; the result will be delivered automatically when it completes.",
-            );
+            return {
+              status: "processing",
+              jobId: job.jobId,
+              liveStatus: "unsupported",
+              delivery: "automatic",
+            };
           }
           const status = await executor.jobStatus({
             jobId: job.jobId,
             namespace: job.namespace,
           });
           if (status.state === "running") {
-            return toolText(`running (job ${job.jobId})`);
+            return { status: "processing", jobId: job.jobId };
           }
           if (status.state === "unknown") {
-            return toolText(
-              `unknown — no record of job ${job.jobId} in the sandbox`,
-            );
+            return { status: "unknown", jobId: job.jobId };
           }
 
-          return toolText(
-            await settleTerminalJob(statusId, executor, job, status),
-          );
+          return settleTerminalJob(statusId, executor, job, status);
         } catch (cause) {
           return toolError(
             cause instanceof Error ? cause.message : String(cause),
@@ -202,18 +203,17 @@ The result is delivered back into the conversation automatically when it finishe
         }
       },
     }),
-  };
+  } satisfies ToolSet;
 }
 
-// Settle the row with the job's real terminal state (a job that already finished
-// keeps its own exit code rather than being recorded as killed) and return a
-// human-readable summary including the captured logs.
+// Preserve the job's terminal state and exit code, and include captured logs
+// in the structured terminal status.
 async function settleTerminalJob(
   resultId: string,
   executor: SandboxExecutor,
   job: SandboxJobRef,
   status: SandboxJobStatus,
-): Promise<string> {
+): Promise<JSONValue> {
   const logs = executor.jobLogs
     ? (
         await executor.jobLogs({
@@ -242,7 +242,12 @@ async function settleTerminalJob(
   // auto-delivery resume from re-injecting the same result.
   await markAsyncToolResultObserved(resultId);
 
-  return `${status.state} (exit ${status.exitCode ?? "unknown"})\n${logs}`;
+  return {
+    status: status.state,
+    jobId: job.jobId,
+    exitCode: status.exitCode ?? null,
+    logs: logs,
+  };
 }
 
 function sandboxJobRef(input: unknown): SandboxJobRef | undefined {
@@ -268,18 +273,9 @@ function sandboxForNamespace(
   )?.sandbox;
 }
 
-function formatUnknown(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 // A settled background-job response carries the captured logs (see
 // settleTerminalJob); non-job async tools return undefined here.
-function settledJobLogs(response: unknown): string | undefined {
+function settledJobLogs(response: JSONValue | undefined): string | undefined {
   if (!response || typeof response !== "object") return undefined;
   const logs = (response as { logs?: unknown }).logs;
 

@@ -303,15 +303,15 @@ describe("createTools", () => {
     // so omitting workspace does NOT prompt — it falls straight through to a clean
     // read-only error.
     expect(await needsApproval(tools.write)).toBe(false);
-    expect(
-      await (
+    await expect(
+      (
         tools.write as unknown as { execute(i: unknown): Promise<unknown> }
       ).execute({
         file_path: "a.txt",
         content: "x",
         workspace: "ro",
       }),
-    ).toEqual({ type: "error-text", value: "Error: workspace is read-only" });
+    ).rejects.toThrow("Error: workspace is read-only");
     expect(await needsApproval(tools.write, { workspace: "rw" })).toBe(false);
   });
 
@@ -439,25 +439,6 @@ describe("createTools", () => {
     expect(
       (
         tools.run_subagent as {
-          toModelOutput(options: {
-            toolCallId: string;
-            input: unknown;
-            output: unknown;
-          }): unknown;
-        }
-      ).toModelOutput({
-        toolCallId: "tool-call-1",
-        input: {},
-        output: { tasks: [{ taskId: "subagent_1", status: "running" }] },
-      }),
-    ).toEqual({
-      type: "json",
-      value: { tasks: [{ taskId: "subagent_1", status: "running" }] },
-    });
-
-    expect(
-      (
-        tools.run_subagent as {
           execute(input: unknown, options: unknown): Promise<unknown>;
         }
       ).execute(
@@ -516,6 +497,37 @@ describe("createTools", () => {
         },
       ),
     ).rejects.toThrow("tasks[0].description is not supported");
+  });
+
+  it("exposes parent subagent tools only for a persistent session", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const dispatch = mock(async () => ({ tasks: [] }));
+    const context = createToolContext(
+      undefined,
+      "google",
+      dispatch,
+    ) as unknown as Record<string, unknown>;
+    context.session = { eventId: "acct:acct_test:agent:parent:event" };
+
+    expect(
+      Object.keys(
+        await createTools(context as never, {
+          subagent: { enabled: true, mode: "persistent" },
+        }),
+      ),
+    ).toEqual([
+      "run_subagent",
+      "get_subagent_status",
+      "update_subagent",
+      "stop_subagent",
+    ]);
+    expect(
+      Object.keys(
+        await createTools(context as never, {
+          subagent: { enabled: true, mode: "ephemeral" },
+        }),
+      ),
+    ).toEqual(["run_subagent"]);
   });
 
   it("exposes subagent conversation keys in persistent mode", async () => {
@@ -793,7 +805,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
     agents: {} as never,
     channelRecords: {} as never,
     agentDeployments: {
-      getByApiKeyHash: async function() {
+      getByApiKeyHash: async function () {
         return null;
       },
     },
@@ -802,14 +814,14 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
     workspaceConfigs: {} as never,
     agentPolicies: {} as never,
     accountTools: {
-      getById: async function(accountId: string, toolId: string) {
+      getById: async function (accountId: string, toolId: string) {
         const record = accountTool as { accountId: string; toolId: string };
 
         return record.accountId === accountId && record.toolId === toolId
           ? accountTool
           : null;
       },
-      list: async function() {
+      list: async function () {
         return [accountTool];
       },
       create: mock() as never,
@@ -818,7 +830,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
-    taskUsage: { record: async function() {} },
+    taskUsage: { record: async function () {} },
   } as Storage;
 }
 

@@ -45,6 +45,7 @@ import {
   sandboxSupportsJobControls,
 } from "./filesystem-utils.ts";
 import globTool from "./glob.tool.ts";
+import getSubagentStatusTool from "./get-subagent-status.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import memoryTool from "./memory.tool.ts";
@@ -53,6 +54,8 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import stopSubagentTool from "./stop-subagent.tool.ts";
+import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
 
 // Runtime dependencies shared by tool factories. Model-facing input schemas
@@ -212,6 +215,27 @@ export async function createTools(
         mode: resolveSubagentMode(agentConfig),
       }),
     );
+    if (
+      resolveSubagentMode(agentConfig) === "persistent" &&
+      context.accountId &&
+      context.session
+    ) {
+      Object.assign(
+        tools,
+        getSubagentStatusTool({
+          accountId: context.accountId,
+          eventId: context.session.eventId,
+        }),
+        updateSubagentTool({
+          accountId: context.accountId,
+          eventId: context.session.eventId,
+        }),
+        stopSubagentTool({
+          accountId: context.accountId,
+          eventId: context.session.eventId,
+        }),
+      );
+    }
   }
 
   const allowedSkillPaths = agentConfig.skills?.allowed ?? [];
