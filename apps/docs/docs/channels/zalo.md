@@ -66,20 +66,18 @@ flowchart TD
   Adapter --> Auth["Check X-Bot-Api-Secret-Token"]
   Auth --> Allow["Check allowedUserIds and allowedGroupIds when configured"]
   Allow --> Type{"Text event?"}
-  Type -- "No, private chat" --> Notice["Reply explaining what was dropped"]
-  Type -- "No, group" --> Drop["Drop quietly"]
+  Type -- No --> Drop["Drop quietly"]
   Type -- Yes --> Addressed{"Group without the bot name?"}
   Addressed -- Yes --> Context["Store as context"]
   Addressed -- No --> Agent["Run agent"]
   Agent --> Reply["sendMessage"]
-  Notice --> Zalo
   Reply --> Zalo
 ```
 
 - Text messages in private chats and groups are supported.
 - Outbound replies are split into 2000-character chunks for the Zalo Bot API text limit.
 - Typing indicators use `sendChatAction`.
-- Media, stickers, voice, and messages Zalo marks unsupported do not run the agent. In a private chat the sender gets a short reply saying so rather than silence. In a group they are dropped quietly, because most of what a group posts was never addressed to the agent.
+- Media, stickers, voice, and messages Zalo marks unsupported are ignored and do not run the agent.
 - Bot-originated messages are ignored, as are senders outside `allowedUserIds` and groups outside `allowedGroupIds`.
 - Reactions are not supported by the official Zalo Bot API adapter.
 
@@ -87,4 +85,4 @@ flowchart TD
 
 Zalo does not deliver a message containing a URL to a bot. It sends `message.unsupported.received` with every content field stripped, so the address is not in the webhook at all and the Bot API has no way to fetch it afterward. Surrounding the link with words does not help.
 
-The adapter answers these by asking the sender to paste the address as plain text. Nothing else is recoverable.
+These messages are ignored because nothing is recoverable from the webhook.

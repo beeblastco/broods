@@ -1088,35 +1088,6 @@ async function handleChannelWebhook(
       return toResponse(parsed.response);
     }
 
-    // Accepted, no agent run, but the sender is told why.
-    // Example: Zalo strips the content of link and media messages before delivery.
-    if (parsed.kind === "notify") {
-      const response = parsed.ack ?? { statusCode: 200 };
-      logInfo(`Channel webhook notified without agent run: ${parsed.reason}`, {
-        channel: adapter.name,
-        accountId: account.accountId,
-        agentId: agent.agentId,
-        reason: parsed.reason,
-        statusCode: response.statusCode,
-      });
-      waitUntil(
-        adapter
-          .actions(parsed.message)
-          .sendText(parsed.text)
-          .catch((err: unknown) => {
-            logWarn("Channel notify reply failed", {
-              channel: adapter.name,
-              accountId: account.accountId,
-              agentId: agent.agentId,
-              reason: parsed.reason,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }),
-      );
-
-      return toResponse(response);
-    }
-
     // Webhook is valid enough to accept, but should not run the agent.
     // Example: unsupported Pancake event, wrong page ID, hidden/removed or page-originated message.
     if (parsed.kind === "ignore") {

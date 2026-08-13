@@ -16,9 +16,6 @@ const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_TEXT_LIMIT = 2000;
 const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
 const ZALO_MENTION_WORD = /[\p{L}\p{N}]/u;
-const ZALO_UNREADABLE_NOTICE =
-  "I could not read that message. Zalo delivered it without any content, which is what happens when a message carries a link. Please send the address as plain text.";
-const ZALO_TEXT_ONLY_NOTICE = "I can only read text messages right now.";
 
 interface ZaloWebhookEnvelope {
   ok?: boolean;
@@ -109,6 +106,11 @@ export function createZaloChannel(
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)
           : "missing";
+      if (eventName !== "message.text.received") {
+
+        return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
+      }
+
       const message = update.message;
       const chatId = message?.chat?.id;
       const senderId = message?.from?.id;
@@ -152,7 +154,7 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
-      const source = {
+      const source: Record<string, unknown> = {
         chatId: chatId,
         chatType: chatType,
         messageId: messageId,
@@ -160,10 +162,8 @@ export function createZaloChannel(
         senderName: message.from?.display_name ?? message.from?.name,
         eventName: eventName,
         date: message.date,
-      } satisfies ZaloSource;
+      };
 
-      // Everything a reply needs to route. Only `content` separates a message
-      // the agent runs from a notice sent in place of one.
       const inbound = {
         eventId: `${ZALO_INTEGRATION_PREFIX}${eventName}:${chatId}:${senderId}:${messageId}`,
         conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
@@ -180,26 +180,6 @@ export function createZaloChannel(
         source: source,
       };
 
-      // Zalo empties the payload of anything it will not hand a bot, links most of
-      // all. Private senders are told; groups are not, having not asked.
-      if (eventName !== "message.text.received") {
-        if (chatType !== "PRIVATE") {
-
-          return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
-        }
-
-        return {
-          kind: "notify",
-          reason: `unsupported_event:${eventName} ${describeZaloUpdate(update)}`,
-          text:
-            eventName === "message.unsupported.received"
-              ? ZALO_UNREADABLE_NOTICE
-              : ZALO_TEXT_ONLY_NOTICE,
-          message: { ...inbound, content: "" },
-          ack: { statusCode: 200, body: "ok" },
-        };
-      }
-
       const text =
         typeof message.text === "string" ? message.text.trim() : undefined;
       if (!text) {
@@ -207,9 +187,8 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, "missing_text");
       }
 
-      // Only a message addressed to the agent runs it; the rest is stored so a
-      // later mention still sees what the group said. Without a configured
-      // botName a mention cannot be recognised, so every message runs the agent.
+      // Unaddressed group messages become context. Without `botName`, every
+      // group message runs the agent because mentions cannot be recognised.
       const groupBotName = chatType === "GROUP" ? botName : undefined;
       const mention = groupBotName
         ? findZaloBotMention(text, groupBotName)
@@ -257,6 +236,42 @@ export function createZaloActions(
       return;
     },
   };
+}
+
+async function callZaloApi(
+  botToken: string,
+  method: "sendMessage" | "sendChatAction",
+  body: Record<string, unknown>,
+): Promise<ZaloApiResponse> {
+  const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const bodyText = await response.text();
+  const parsed = parseJsonBody(bodyText);
+
+  if (!response.ok || parsed?.ok === false) {
+    throw new Error(
+      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
+    );
+  }
+
+  return parsed ?? { ok: true };
+}
+
+function chunkZaloText(text: string): string[] {
+  if (text.length === 0) {
+
+    return [""];
+  }
+
+  const chunks: string[] = [];
+  for (let offset = 0; offset < text.length; offset += ZALO_TEXT_LIMIT) {
+    chunks.push(text.slice(offset, offset + ZALO_TEXT_LIMIT));
+  }
+
+  return chunks;
 }
 
 function describeZaloUpdate(update: ZaloUpdate): string {
@@ -313,20 +328,6 @@ function describeZaloUpdate(update: ZaloUpdate): string {
   return `details=${JSON.stringify(details)}`;
 }
 
-function ignoreZaloUpdate(
-  update: ZaloUpdate,
-  reason: string,
-): ChannelParseResult {
-  return {
-    kind: "ignore",
-    reason: `${reason} ${describeZaloUpdate(update)}`,
-  };
-}
-
-function isZaloChatType(value: unknown): value is ZaloChatType {
-  return ZALO_CHAT_TYPES.includes(value as ZaloChatType);
-}
-
 // A bare substring would let "brooding" address a bot named "Brood", so a
 // mention must sit on non-alphanumeric edges and may carry a leading "@".
 function findZaloBotMention(
@@ -346,6 +347,7 @@ function findZaloBotMention(
       isZaloMentionEdge(lowered[start - 1]) &&
       isZaloMentionEdge(lowered[end])
     ) {
+
       return { index: start, length: end - start };
     }
   }
@@ -353,8 +355,50 @@ function findZaloBotMention(
   return null;
 }
 
+function formatZaloError(
+  body: ZaloApiResponse | null,
+  bodyText: string,
+): string {
+  return (
+    body?.description ??
+    body?.error_code?.toString() ??
+    (bodyText || "unknown_error")
+  );
+}
+
+function ignoreZaloUpdate(
+  update: ZaloUpdate,
+  reason: string,
+): ChannelParseResult {
+  return {
+    kind: "ignore",
+    reason: `${reason} ${describeZaloUpdate(update)}`,
+  };
+}
+
+function isZaloChatType(value: unknown): value is ZaloChatType {
+  return ZALO_CHAT_TYPES.includes(value as ZaloChatType);
+}
+
 function isZaloMentionEdge(char: string | undefined): boolean {
   return char === undefined || !ZALO_MENTION_WORD.test(char);
+}
+
+function parseJsonBody(text: string): ZaloApiResponse | null {
+  if (!text) {
+
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+
+    return parsed && typeof parsed === "object"
+      ? (parsed as ZaloApiResponse)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function stripZaloBotMention(text: string, mention: ZaloBotMention): string {
@@ -362,32 +406,6 @@ function stripZaloBotMention(text: string, mention: ZaloBotMention): string {
   const after = text.slice(mention.index + mention.length).trimStart();
 
   return `${before} ${after}`.trim();
-}
-
-function verifyWebhookSecret(
-  header: string | undefined,
-  secret: string,
-): boolean {
-  if (!header) return false;
-  const actual = Buffer.from(header);
-  const expected = Buffer.from(secret);
-
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
-function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
-  if (raw && typeof raw === "object") {
-    const envelope = raw as ZaloWebhookEnvelope;
-    if (
-      envelope.ok === true &&
-      envelope.result &&
-      typeof envelope.result === "object"
-    ) {
-      return envelope.result as ZaloUpdate;
-    }
-  }
-
-  return (raw && typeof raw === "object" ? raw : {}) as ZaloUpdate;
 }
 
 function toZaloSource(source: Record<string, unknown>): ZaloSource {
@@ -413,64 +431,32 @@ function toZaloSource(source: Record<string, unknown>): ZaloSource {
   };
 }
 
-function chunkZaloText(text: string): string[] {
-  if (text.length === 0) {
-    return [""];
+function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
+  if (raw && typeof raw === "object") {
+    const envelope = raw as ZaloWebhookEnvelope;
+    if (
+      envelope.ok === true &&
+      envelope.result &&
+      typeof envelope.result === "object"
+    ) {
+
+      return envelope.result as ZaloUpdate;
+    }
   }
 
-  const chunks: string[] = [];
-  for (let offset = 0; offset < text.length; offset += ZALO_TEXT_LIMIT) {
-    chunks.push(text.slice(offset, offset + ZALO_TEXT_LIMIT));
-  }
-
-  return chunks;
+  return (raw && typeof raw === "object" ? raw : {}) as ZaloUpdate;
 }
 
-async function callZaloApi(
-  botToken: string,
-  method: "sendMessage" | "sendChatAction",
-  body: Record<string, unknown>,
-): Promise<ZaloApiResponse> {
-  const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const bodyText = await response.text();
-  const parsed = parseJsonBody(bodyText);
+function verifyWebhookSecret(
+  header: string | undefined,
+  secret: string,
+): boolean {
+  if (!header) {
 
-  if (!response.ok || parsed?.ok === false) {
-    throw new Error(
-      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
-    );
+    return false;
   }
+  const actual = Buffer.from(header);
+  const expected = Buffer.from(secret);
 
-  return parsed ?? { ok: true };
-}
-
-function parseJsonBody(text: string): ZaloApiResponse | null {
-  if (!text) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(text) as unknown;
-
-    return parsed && typeof parsed === "object"
-      ? (parsed as ZaloApiResponse)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatZaloError(
-  body: ZaloApiResponse | null,
-  bodyText: string,
-): string {
-  return (
-    body?.description ??
-    body?.error_code?.toString() ??
-    (bodyText || "unknown_error")
-  );
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

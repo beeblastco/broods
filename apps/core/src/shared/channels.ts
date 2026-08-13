@@ -88,19 +88,6 @@ export interface ParsedChannelCleanup {
 }
 
 /**
- * A webhook the agent will not answer, whose sender still needs telling why.
- * The message routes the reply only; its content is empty by construction,
- * because the provider handed over nothing to run.
- */
-export interface ParsedChannelNotify {
-  kind: "notify";
-  reason: string;
-  text: string;
-  message: InboundMessage;
-  ack?: ChannelResponse;
-}
-
-/**
  * Channel parse results describe what the webhook should do before the agent runs.
  * Some providers need an immediate HTTP response, while others can be acknowledged and processed later.
  */
@@ -108,7 +95,6 @@ export type ChannelParseResult =
   | ParsedChannelMessage
   | ParsedChannelContext
   | ParsedChannelCleanup
-  | ParsedChannelNotify
   | { kind: "ignore"; reason?: string; response?: ChannelResponse }
   | { kind: "response"; reason?: string; response: ChannelResponse };
 

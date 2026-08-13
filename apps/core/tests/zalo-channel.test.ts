@@ -122,11 +122,22 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
   });
 
-  it("ignores unknown chat types, blank text, bot messages, and unknown senders", async () => {
+  it("ignores unsupported events, invalid messages, and unknown senders", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
       allowedUserIds: new Set(["user-1"]),
     });
 
+    expectIgnoreReason(
+      await adapter.parse(
+        createZaloRequest(
+          validUpdate({
+            eventName: "message.unsupported.received",
+            text: null,
+          }),
+        ),
+      ),
+      "unsupported_event:message.unsupported.received",
+    );
     expectIgnoreReason(
       await adapter.parse(
         createZaloRequest(validUpdate({ chatType: "CHANNEL" })),
@@ -148,7 +159,7 @@ describe("zalo channel adapter", () => {
     expect(richLink.reason).toContain('"textFields":["url"]');
     expectIgnoreReason(
       await adapter.parse(createZaloRequest({ event_name: 42 })),
-      "missing_message_id",
+      "unsupported_event:missing",
     );
     expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ isBot: true }))),
@@ -163,72 +174,6 @@ describe("zalo channel adapter", () => {
     expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ messageId: null }))),
       "missing_message_id",
-    );
-  });
-
-  it("notifies the sender when Zalo delivers a message without content", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret");
-    const parsed = await adapter.parse(
-      createZaloRequest(
-        validUpdate({ eventName: "message.unsupported.received", text: null }),
-      ),
-    );
-
-    expect(parsed.kind).toBe("notify");
-    if (parsed.kind !== "notify") {
-      throw new Error("Expected Zalo unsupported event to notify the sender");
-    }
-
-    expect(parsed.reason).toContain(
-      "unsupported_event:message.unsupported.received",
-    );
-    expect(parsed.reason).toContain('"textType":"undefined"');
-    expect(parsed.text).toContain("link");
-    // The notice routes to the same conversation a real message would, so a
-    // reply lands in the chat that sent the unreadable message.
-    expect(parsed.message.content).toBe("");
-    expect(parsed.message.conversationKey).toBe("zalo:chat-1");
-    expect(parsed.message.identity?.channelId).toBe("chat-1");
-    expect(parsed.message.source).toEqual({
-      chatId: "chat-1",
-      chatType: "PRIVATE",
-      messageId: "message-1",
-      senderId: "user-1",
-      senderName: "Ada",
-      eventName: "message.unsupported.received",
-      date: 1713916800,
-    });
-    expect(() => adapter.actions(parsed.message)).not.toThrow();
-  });
-
-  it("notifies with a text-only notice for media events", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret");
-    const parsed = await adapter.parse(
-      createZaloRequest(validUpdate({ eventName: "message.image.received" })),
-    );
-
-    expect(parsed.kind).toBe("notify");
-    if (parsed.kind !== "notify") {
-      throw new Error("Expected Zalo image event to notify the sender");
-    }
-    expect(parsed.text).toBe("I can only read text messages right now.");
-  });
-
-  it("stays silent about unsupported group messages", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret");
-
-    expectIgnoreReason(
-      await adapter.parse(
-        createZaloRequest(
-          validUpdate({
-            eventName: "message.unsupported.received",
-            chatType: "GROUP",
-            chatId: "group-1",
-            text: null,
-          }),
-        ),
-      ),
-      "unsupported_event:message.unsupported.received",
     );
   });
 
@@ -444,7 +389,9 @@ function validUpdate(
         ? {}
         : { message_id: overrides.messageId ?? "message-1" }),
       date: 1713916800,
-      ...(overrides.text === null ? {} : { text: overrides.text ?? "hello zalo" }),
+      ...(overrides.text === null
+        ? {}
+        : { text: overrides.text ?? "hello zalo" }),
       chat: {
         id: overrides.chatId ?? "chat-1",
         chat_type: overrides.chatType ?? "PRIVATE",
