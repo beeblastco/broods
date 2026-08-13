@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import type { Id } from "./_generated/dataModel";
-import { uniqueProjectSlug } from "./lib/slug";
+import { uniqueProjectSlug, type ProjectOwner } from "./lib/slug";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -14,22 +14,23 @@ type T = ReturnType<typeof t>;
 // leaked one org's naming into another, so `client-lamy` reused in a second org
 // silently became `client-lamy-1` and every slug-keyed path read the wrong name.
 
-async function orgId(tt: T, slug: string): Promise<Id<"orgs">> {
-  return await tt.run(async (ctx) => {
-    return await ctx.db.insert("orgs", {
-      name: slug,
-      slug: slug,
-      ownerAuthId: "auth_owner",
-      plan: "free" as const,
-      createdAt: Date.now(),
-    });
-  });
+async function seedOrg(tt: T, slug: string): Promise<Id<"orgs">> {
+  return await tt.run(
+    async (ctx) =>
+      await ctx.db.insert("orgs", {
+        name: slug,
+        slug: slug,
+        ownerAuthId: "auth_owner",
+        plan: "free",
+        createdAt: Date.now(),
+      }),
+  );
 }
 
 async function seedProject(
   tt: T,
   name: string,
-  owner: { authId: string; orgId?: Id<"orgs"> },
+  owner: ProjectOwner,
 ): Promise<void> {
   await tt.run(async (ctx) => {
     await ctx.db.insert("projects", {
@@ -45,15 +46,15 @@ async function seedProject(
 async function slugFor(
   tt: T,
   name: string,
-  owner: { authId: string; orgId?: Id<"orgs"> },
+  owner: ProjectOwner,
 ): Promise<string> {
   return await tt.run(async (ctx) => await uniqueProjectSlug(ctx, owner, name));
 }
 
 test("the same name in another org keeps the unsuffixed slug", async () => {
   const tt = t();
-  const personal = await orgId(tt, "personal");
-  const beeblast = await orgId(tt, "beeblast");
+  const personal = await seedOrg(tt, "personal");
+  const beeblast = await seedOrg(tt, "beeblast");
   await seedProject(tt, "client-lamy", {
     authId: "auth_owner",
     orgId: personal,
@@ -69,7 +70,7 @@ test("the same name in another org keeps the unsuffixed slug", async () => {
 
 test("a sibling in the same org still forces a suffix", async () => {
   const tt = t();
-  const beeblast = await orgId(tt, "beeblast");
+  const beeblast = await seedOrg(tt, "beeblast");
   await seedProject(tt, "client-lamy", {
     authId: "auth_owner",
     orgId: beeblast,
@@ -101,7 +102,7 @@ test("orgId-less projects stay scoped to their owner", async () => {
 // creeps back in through the other direction.
 test("an org project does not block an orgId-less slug", async () => {
   const tt = t();
-  const beeblast = await orgId(tt, "beeblast");
+  const beeblast = await seedOrg(tt, "beeblast");
   await seedProject(tt, "client-lamy", {
     authId: "auth_owner",
     orgId: beeblast,

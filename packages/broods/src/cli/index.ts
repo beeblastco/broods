@@ -319,7 +319,8 @@ async function main(): Promise<void> {
   }
 }
 
-/** COMMAND_HELP page for a command; the top-level page covers a typo'd key. */
+// Falls back to the top-level page so a mistyped key still prints something
+// useful instead of "undefined" inside an error message.
 function commandHelp(command: string): string {
   return COMMAND_HELP[command] ?? HELP;
 }
