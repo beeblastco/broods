@@ -2372,11 +2372,12 @@ function createZaloChannelFromConfig(
     return null;
   }
 
-  return createZaloChannel(
-    channel.botToken,
-    channel.webhookSecret,
-    channel.allowedUserIds?.length
-      ? new Set(channel.allowedUserIds)
-      : undefined,
-  );
+  return createZaloChannel(channel.botToken, channel.webhookSecret, {
+    ...(channel.allowedUserIds?.length
+      ? { allowedUserIds: new Set(channel.allowedUserIds) }
+      : {}),
+    ...(channel.allowedGroupIds?.length
+      ? { allowedGroupIds: new Set(channel.allowedGroupIds) }
+      : {}),
+  });
 }

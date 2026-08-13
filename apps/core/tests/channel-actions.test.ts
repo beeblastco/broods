@@ -567,7 +567,7 @@ describe("zalo channel actions", () => {
     const actions = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     ).actions(
       createMessage({
         chatId: "chat-1",
@@ -590,6 +590,7 @@ describe("zalo channel actions", () => {
     expect(fetchMock.calls[0]!.init?.headers).toEqual({
       "Content-Type": "application/json",
     });
+    expect(fetchMock.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
       chat_id: "chat-1",
       text: "a".repeat(2000),
@@ -607,12 +608,41 @@ describe("zalo channel actions", () => {
     });
   });
 
+  it("keeps supplementary Unicode characters intact across text chunks", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ ok: true, result: { message_id: "reply-1" } }),
+      jsonResponse({ ok: true, result: { message_id: "reply-2" } }),
+    );
+    const actions = createZaloChannel("bot-token", "zalo-secret").actions(
+      createMessage({
+        chatId: "chat-1",
+        chatType: "GROUP",
+        messageId: "message-1",
+        senderId: "user-1",
+        eventName: "message.text.received",
+      }),
+    );
+
+    await actions.sendText(`${"a".repeat(1999)}😀b`);
+
+    expect(fetchMock.calls).toHaveLength(2);
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+      chat_id: "chat-1",
+      text: "a".repeat(1999),
+    });
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      chat_id: "chat-1",
+      text: "😀b",
+    });
+  });
+
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     );
     const actions = adapter.actions(
       createMessage({
@@ -636,6 +666,18 @@ describe("zalo channel actions", () => {
         createMessage({
           chatId: "chat-1",
           chatType: "GROUP",
+          messageId: "message-1",
+          senderId: "user-1",
+          eventName: "message.text.received",
+        }),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      adapter.actions(
+        createMessage({
+          chatId: "chat-1",
+          chatType: "CHANNEL",
           messageId: "message-1",
           senderId: "user-1",
           eventName: "message.text.received",

@@ -14,6 +14,7 @@ import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
+const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
 // Message events Zalo delivers, each mapped to the reason its payload is
 // unusable. Anything else arrives as message.unsupported.received.
 const ZALO_MESSAGE_EVENTS: Record<string, string> = {
@@ -22,6 +23,7 @@ const ZALO_MESSAGE_EVENTS: Record<string, string> = {
   "message.sticker.received": "missing_sticker_url",
   "message.voice.received": "missing_voice_url",
 };
+const ZALO_REQUEST_TIMEOUT_MS = 10_000;
 const ZALO_TEXT_LIMIT = 2000;
 // .aac is the only audio format the Zalo Bot API deals in.
 const ZALO_VOICE_EXTENSION = ".aac";
@@ -57,14 +59,21 @@ interface ZaloMessage {
   voice_url?: string;
 }
 
+type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
+
 export interface ZaloSource {
   chatId: string;
-  chatType: "PRIVATE";
+  chatType: ZaloChatType;
   messageId: string;
   senderId: string;
   senderName?: string;
   eventName: string;
   date?: number;
+}
+
+interface ZaloChannelOptions {
+  allowedUserIds?: ReadonlySet<string>;
+  allowedGroupIds?: ReadonlySet<string>;
 }
 
 interface ZaloUpdate {
@@ -119,8 +128,10 @@ export function createZaloActions(
 export function createZaloChannel(
   botToken: string,
   webhookSecret: string,
-  allowedUserIds?: ReadonlySet<string>,
+  options: ZaloChannelOptions = {},
 ): ChannelAdapter {
+  const { allowedUserIds, allowedGroupIds } = options;
+
   return {
     name: "zalo",
 
@@ -144,10 +155,7 @@ export function createZaloChannel(
       const missingContentReason = ZALO_MESSAGE_EVENTS[eventName];
       if (!missingContentReason) {
 
-        return ignoreZaloUpdate(
-          update,
-          `unsupported_event:${eventName}`,
-        );
+        return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
       }
 
       const message = update.message;
@@ -172,7 +180,7 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, missingContentReason);
       }
-      if (chatType !== "PRIVATE") {
+      if (!isZaloChatType(chatType)) {
 
         return ignoreZaloUpdate(
           update,
@@ -183,21 +191,30 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, "bot_message");
       }
+      if (
+        chatType === "GROUP" &&
+        allowedGroupIds?.size &&
+        !allowedGroupIds.has(chatId)
+      ) {
+        logWarn("Zalo group not in allow list", { chatId: chatId });
 
+        return ignoreZaloUpdate(update, `group_not_allowed:${chatId}`);
+      }
       if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
         logWarn("Zalo sender not in allow list", { senderId: senderId });
 
         return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
+      const senderName = message.from?.display_name ?? message.from?.name;
       const source: ZaloSource = {
         chatId: chatId,
         chatType: chatType,
         messageId: messageId,
         senderId: senderId,
-        senderName: message.from?.display_name ?? message.from?.name,
         eventName: eventName,
-        date: message.date,
+        ...(senderName ? { senderName: senderName } : {}),
+        ...(typeof message.date === "number" ? { date: message.date } : {}),
       };
 
       return {
@@ -211,11 +228,7 @@ export function createZaloChannel(
           identity: {
             channelId: chatId,
             ...(senderId ? { actorId: senderId } : {}),
-            ...((message.from?.display_name ?? message.from?.name)
-              ? {
-                  actorName: message.from?.display_name ?? message.from?.name,
-                }
-              : {}),
+            ...(senderName ? { actorName: senderName } : {}),
           },
           // Spread so the typed source reaches a Record<string, unknown> field.
           source: { ...source },
@@ -234,51 +247,61 @@ async function callZaloApi(
   method: "sendChatAction" | "sendMessage" | "sendPhoto",
   body: Record<string, unknown>,
 ): Promise<ZaloApiResponse> {
-  const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const bodyText = await response.text();
-  const parsed = parseJsonBody(bodyText);
+  const controller = new AbortController();
+  const timeout = setTimeout((): void => {
+    controller.abort();
+  }, ZALO_REQUEST_TIMEOUT_MS);
 
-  if (!response.ok || parsed?.ok === false) {
-    throw new Error(
-      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
-    );
+  try {
+    const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const bodyText = await response.text();
+    const parsed = parseJsonBody(bodyText);
+
+    if (!response.ok || parsed?.ok === false) {
+      throw new Error(
+        `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
+      );
+    }
+
+    return parsed ?? { ok: true };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return parsed ?? { ok: true };
 }
 
 function chunkZaloText(text: string): string[] {
   if (text.length === 0) {
+
     return [""];
   }
 
   const chunks: string[] = [];
-  for (let offset = 0; offset < text.length; offset += ZALO_TEXT_LIMIT) {
-    chunks.push(text.slice(offset, offset + ZALO_TEXT_LIMIT));
+  for (let offset = 0; offset < text.length; ) {
+    let end = Math.min(offset + ZALO_TEXT_LIMIT, text.length);
+    const previousCodeUnit = text.charCodeAt(end - 1);
+    const nextCodeUnit = text.charCodeAt(end);
+    if (
+      end < text.length &&
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      end -= 1;
+    }
+    chunks.push(text.slice(offset, end));
+    offset = end;
   }
 
   return chunks;
 }
 
-function formatZaloError(
-  body: ZaloApiResponse | null,
-  bodyText: string,
-): string {
-  return (
-    body?.description ??
-    body?.error_code?.toString() ??
-    (bodyText || "unknown_error")
-  );
-}
-
-function ignoreZaloUpdate(
-  update: ZaloUpdate,
-  reason: string,
-): ChannelParseResult {
+function describeZaloUpdate(update: ZaloUpdate): string {
   const message = update.message;
   const messageRecord =
     message && typeof message === "object"
@@ -329,14 +352,37 @@ function ignoreZaloUpdate(
     textLength: typeof text === "string" ? text.length : null,
   };
 
+  return `details=${JSON.stringify(details)}`;
+}
+
+function formatZaloError(
+  body: ZaloApiResponse | null,
+  bodyText: string,
+): string {
+  return (
+    body?.description ??
+    body?.error_code?.toString() ??
+    (bodyText || "unknown_error")
+  );
+}
+
+function ignoreZaloUpdate(
+  update: ZaloUpdate,
+  reason: string,
+): ChannelParseResult {
   return {
     kind: "ignore",
-    reason: `${reason} details=${JSON.stringify(details)}`,
+    reason: `${reason} ${describeZaloUpdate(update)}`,
   };
+}
+
+function isZaloChatType(value: unknown): value is ZaloChatType {
+  return ZALO_CHAT_TYPES.includes(value as ZaloChatType);
 }
 
 function parseJsonBody(text: string): ZaloApiResponse | null {
   if (!text) {
+
     return null;
   }
 
@@ -354,7 +400,7 @@ function parseJsonBody(text: string): ZaloApiResponse | null {
 function toZaloSource(source: Record<string, unknown>): ZaloSource {
   if (
     typeof source.chatId !== "string" ||
-    source.chatType !== "PRIVATE" ||
+    !isZaloChatType(source.chatType) ||
     typeof source.messageId !== "string" ||
     typeof source.senderId !== "string" ||
     typeof source.eventName !== "string"
@@ -393,7 +439,10 @@ function verifyWebhookSecret(
   header: string | undefined,
   secret: string,
 ): boolean {
-  if (!header) return false;
+  if (!header) {
+
+    return false;
+  }
   const actual = Buffer.from(header);
   const expected = Buffer.from(secret);
 

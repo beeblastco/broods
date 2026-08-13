@@ -7,6 +7,10 @@ export const zalo = defineZaloChannel({
     process.env.ZALO_ALLOWED_USER_IDS?.split(",")
       .map((value) => value.trim())
       .filter(Boolean) ?? [],
+  allowedGroupIds:
+    process.env.ZALO_ALLOWED_GROUP_IDS?.split(",")
+      .map((value) => value.trim())
+      .filter(Boolean) ?? [],
 });
 
 export const agent = defineAgent({

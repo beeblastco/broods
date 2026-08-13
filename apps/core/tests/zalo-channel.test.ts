@@ -21,7 +21,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     );
 
     expect(
@@ -47,7 +47,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     );
     const parsed = await adapter.parse(
       createZaloRequest(
@@ -89,7 +89,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      new Set(["user-1"]),
+      { allowedUserIds: new Set(["user-1"]) },
     );
     const parsed = await adapter.parse(
       createZaloRequest({
@@ -118,7 +118,9 @@ describe("zalo channel adapter", () => {
   });
 
   it("accepts any private sender when the allow list is empty", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", new Set());
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedUserIds: new Set(),
+    });
 
     expect(
       (
@@ -129,17 +131,18 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
   });
 
-  it("ignores unsupported events, groups, blank text, bot messages, and unknown senders", async () => {
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      new Set(["user-1"]),
-    );
+  it("ignores unsupported events, invalid messages, and unknown senders", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedUserIds: new Set(["user-1"]),
+    });
 
     expectIgnoreReason(
       await adapter.parse(
         createZaloRequest(
-          validUpdate({ eventName: "message.unsupported.received" }),
+          validUpdate({
+            eventName: "message.unsupported.received",
+            text: null,
+          }),
         ),
       ),
       "unsupported_event:message.unsupported.received",
@@ -163,9 +166,9 @@ describe("zalo channel adapter", () => {
     );
     expectIgnoreReason(
       await adapter.parse(
-        createZaloRequest(validUpdate({ chatType: "GROUP" })),
+        createZaloRequest(validUpdate({ chatType: "CHANNEL" })),
       ),
-      "unsupported_chat_type:GROUP",
+      "unsupported_chat_type:CHANNEL",
     );
     expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ text: "   " }))),
@@ -197,6 +200,56 @@ describe("zalo channel adapter", () => {
     expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ messageId: null }))),
       "missing_message_id",
+    );
+  });
+
+  it("accepts group messages delivered by Zalo", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret");
+    const parsed = await adapter.parse(
+      createZaloRequest(
+        validUpdate({ chatType: "GROUP", chatId: "group-1", text: "standup?" }),
+      ),
+    );
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected Zalo group message to be accepted");
+    }
+    expect(parsed.message.conversationKey).toBe("zalo:group-1");
+    expect(parsed.message.identity?.channelId).toBe("group-1");
+    expect(parsed.message.content).toBe("standup?");
+    expect(parsed.message.source.chatType).toBe("GROUP");
+  });
+
+  it("ignores groups outside the group allow list", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedGroupIds: new Set(["group-1"]),
+    });
+
+    expect(
+      (
+        await adapter.parse(
+          createZaloRequest(
+            validUpdate({ chatType: "GROUP", chatId: "group-1" }),
+          ),
+        )
+      ).kind,
+    ).toBe("message");
+    expectIgnoreReason(
+      await adapter.parse(
+        createZaloRequest(validUpdate({ chatType: "GROUP", chatId: "group-9" })),
+      ),
+      "group_not_allowed:group-9",
+    );
+  });
+
+  it("leaves private chats untouched by the group allow list", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedGroupIds: new Set(["group-1"]),
+    });
+
+    expect((await adapter.parse(createZaloRequest(validUpdate()))).kind).toBe(
+      "message",
     );
   });
 
@@ -413,6 +466,7 @@ function validUpdate(
     eventName?: string;
     text?: unknown;
     chatType?: string;
+    chatId?: string;
     senderId?: string;
     messageId?: string | null;
     isBot?: boolean;
@@ -426,10 +480,12 @@ function validUpdate(
         ? {}
         : { message_id: overrides.messageId ?? "message-1" }),
       date: 1713916800,
-      text: overrides.text ?? "hello zalo",
+      ...(overrides.text === null
+        ? {}
+        : { text: overrides.text ?? "hello zalo" }),
       ...overrides.media,
       chat: {
-        id: "chat-1",
+        id: overrides.chatId ?? "chat-1",
         chat_type: overrides.chatType ?? "PRIVATE",
       },
       from: {
