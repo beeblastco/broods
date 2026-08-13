@@ -22,11 +22,6 @@ describe("agent config validation", () => {
     ).toThrow(
       "config.channels.zalo.trace must be one of: enabled, disabled",
     );
-    expect(() =>
-      normalizeAgentConfig({
-        channels: { zalo: { id: "support", botName: "   " } },
-      }),
-    ).toThrow("config.channels.zalo.botName must not be blank");
     expect(isChannelTraceEnabled({}, "zalo")).toBe(true);
     expect(
       isChannelTraceEnabled(

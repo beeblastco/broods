@@ -2257,6 +2257,5 @@ function createZaloChannelFromConfig(
     ...(channel.allowedGroupIds?.length
       ? { allowedGroupIds: new Set(channel.allowedGroupIds) }
       : {}),
-    ...(channel.botName ? { botName: channel.botName } : {}),
   });
 }

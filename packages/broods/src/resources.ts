@@ -283,7 +283,6 @@ export interface ZaloChannelInput extends ChannelIdentityInput {
   webhookSecret: ChannelSecret;
   allowedUserIds?: readonly (string | EnvRef)[];
   allowedGroupIds?: readonly (string | EnvRef)[];
-  botName?: string | EnvRef;
 }
 
 export type TelegramChannelDefinition = ChannelDefinition<

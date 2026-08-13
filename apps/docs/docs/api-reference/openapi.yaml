@@ -3887,11 +3887,6 @@ components:
               items:
                 type: string
               description: Optional Zalo group chat IDs the agent answers in. When omitted or empty, any group is accepted. Private chats are unaffected.
-            botName:
-              type: string
-              minLength: 1
-              pattern: '\S'
-              description: Name the agent answers to in group chats, matched case-insensitively with an optional leading `@` and non-alphanumeric boundaries. Must not be blank. Group messages that do not mention it are stored as context instead of running the agent. When omitted, every group message runs the agent.
             trace:
               type: string
               enum: [enabled, disabled]

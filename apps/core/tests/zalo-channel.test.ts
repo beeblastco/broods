@@ -177,7 +177,7 @@ describe("zalo channel adapter", () => {
     );
   });
 
-  it("runs the agent on every group message when no bot name is configured", async () => {
+  it("accepts group messages delivered by Zalo", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
     const parsed = await adapter.parse(
       createZaloRequest(
@@ -193,125 +193,6 @@ describe("zalo channel adapter", () => {
     expect(parsed.message.identity?.channelId).toBe("group-1");
     expect(parsed.message.content).toBe("standup?");
     expect(parsed.message.source.chatType).toBe("GROUP");
-  });
-
-  it("stores unaddressed group messages as context and runs on a mention", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      botName: "Brood",
-    });
-
-    const chatter = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "lunch at noon",
-        }),
-      ),
-    );
-    expect(chatter.kind).toBe("context");
-    if (chatter.kind !== "context") {
-      throw new Error("Expected unaddressed Zalo group message to be context");
-    }
-    expect(chatter.message.content).toBe("lunch at noon");
-
-    const addressed = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "@Brood what is on the calendar?",
-        }),
-      ),
-    );
-    expect(addressed.kind).toBe("message");
-    if (addressed.kind !== "message") {
-      throw new Error("Expected mentioned Zalo group message to run the agent");
-    }
-    expect(addressed.message.content).toBe("what is on the calendar?");
-
-    const lowercased = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "@brood remind me later",
-        }),
-      ),
-    );
-    expect(lowercased.kind).toBe("message");
-    if (lowercased.kind !== "message") {
-      throw new Error("Expected a mixed-case mention to run the agent");
-    }
-    expect(lowercased.message.content).toBe("remind me later");
-  });
-
-  it("matches the bot name as a mention, not a substring", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      botName: "Brood",
-    });
-
-    const embedded = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "I am brooding",
-        }),
-      ),
-    );
-    expect(embedded.kind).toBe("context");
-    if (embedded.kind !== "context") {
-      throw new Error("Expected an embedded bot name to stay unaddressed");
-    }
-    expect(embedded.message.content).toBe("I am brooding");
-
-    const mixed = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "brooding @Brood help",
-        }),
-      ),
-    );
-    expect(mixed.kind).toBe("message");
-    if (mixed.kind !== "message") {
-      throw new Error("Expected a real mention to run the agent");
-    }
-    expect(mixed.message.content).toBe("brooding help");
-  });
-
-  it("treats a blank bot name as no bot name", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      botName: "   ",
-    });
-    const parsed = await adapter.parse(
-      createZaloRequest(
-        validUpdate({
-          chatType: "GROUP",
-          chatId: "group-1",
-          text: "no mention anywhere",
-        }),
-      ),
-    );
-
-    expect(parsed.kind).toBe("message");
-    if (parsed.kind !== "message") {
-      throw new Error("Expected a blank bot name to gate nothing");
-    }
-    expect(parsed.message.content).toBe("no mention anywhere");
-  });
-
-  it("keeps the bot name gate out of private chats", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      botName: "Brood",
-    });
-    const parsed = await adapter.parse(
-      createZaloRequest(validUpdate({ text: "no mention here" })),
-    );
-
-    expect(parsed.kind).toBe("message");
   });
 
   it("ignores groups outside the group allow list", async () => {

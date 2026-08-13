@@ -15,7 +15,6 @@ import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_TEXT_LIMIT = 2000;
 const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
-const ZALO_MENTION_WORD = /[\p{L}\p{N}]/u;
 
 interface ZaloWebhookEnvelope {
   ok?: boolean;
@@ -52,11 +51,6 @@ interface ZaloApiResponse<T = unknown> {
 
 export type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
 
-interface ZaloBotMention {
-  index: number;
-  length: number;
-}
-
 export interface ZaloSource {
   chatId: string;
   chatType: ZaloChatType;
@@ -67,14 +61,9 @@ export interface ZaloSource {
   date?: number;
 }
 
-/**
- * Zalo ships no mention entities, so `botName` is the only way to tell a group
- * message meant for the agent from the rest of the room.
- */
 export interface ZaloChannelOptions {
   allowedUserIds?: ReadonlySet<string>;
   allowedGroupIds?: ReadonlySet<string>;
-  botName?: string;
 }
 
 export function createZaloChannel(
@@ -83,8 +72,6 @@ export function createZaloChannel(
   options: ZaloChannelOptions = {},
 ): ChannelAdapter {
   const { allowedUserIds, allowedGroupIds } = options;
-  // A blank name would match on whitespace and address the agent to everything.
-  const botName = options.botName?.trim() || undefined;
 
   return {
     name: "zalo",
@@ -187,23 +174,10 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, "missing_text");
       }
 
-      // Unaddressed group messages become context. Without `botName`, every
-      // group message runs the agent because mentions cannot be recognised.
-      const groupBotName = chatType === "GROUP" ? botName : undefined;
-      const mention = groupBotName
-        ? findZaloBotMention(text, groupBotName)
-        : null;
-      const runAgent = !groupBotName || mention !== null;
-      const content = mention ? stripZaloBotMention(text, mention) : text;
-      if (!content) {
-
-        return ignoreZaloUpdate(update, "missing_text");
-      }
-
       return {
-        kind: runAgent ? "message" : "context",
+        kind: "message",
         ack: { statusCode: 200, body: "ok" },
-        message: { ...inbound, content: content },
+        message: { ...inbound, content: text },
       };
     },
 
@@ -328,33 +302,6 @@ function describeZaloUpdate(update: ZaloUpdate): string {
   return `details=${JSON.stringify(details)}`;
 }
 
-// A bare substring would let "brooding" address a bot named "Brood", so a
-// mention must sit on non-alphanumeric edges and may carry a leading "@".
-function findZaloBotMention(
-  text: string,
-  botName: string,
-): ZaloBotMention | null {
-  const lowered = text.toLowerCase();
-  const name = botName.toLowerCase();
-  for (
-    let at = lowered.indexOf(name);
-    at >= 0;
-    at = lowered.indexOf(name, at + 1)
-  ) {
-    const start = at > 0 && lowered[at - 1] === "@" ? at - 1 : at;
-    const end = at + name.length;
-    if (
-      isZaloMentionEdge(lowered[start - 1]) &&
-      isZaloMentionEdge(lowered[end])
-    ) {
-
-      return { index: start, length: end - start };
-    }
-  }
-
-  return null;
-}
-
 function formatZaloError(
   body: ZaloApiResponse | null,
   bodyText: string,
@@ -380,10 +327,6 @@ function isZaloChatType(value: unknown): value is ZaloChatType {
   return ZALO_CHAT_TYPES.includes(value as ZaloChatType);
 }
 
-function isZaloMentionEdge(char: string | undefined): boolean {
-  return char === undefined || !ZALO_MENTION_WORD.test(char);
-}
-
 function parseJsonBody(text: string): ZaloApiResponse | null {
   if (!text) {
 
@@ -399,13 +342,6 @@ function parseJsonBody(text: string): ZaloApiResponse | null {
   } catch {
     return null;
   }
-}
-
-function stripZaloBotMention(text: string, mention: ZaloBotMention): string {
-  const before = text.slice(0, mention.index).trimEnd();
-  const after = text.slice(mention.index + mention.length).trimStart();
-
-  return `${before} ${after}`.trim();
 }
 
 function toZaloSource(source: Record<string, unknown>): ZaloSource {
