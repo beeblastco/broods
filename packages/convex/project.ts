@@ -237,7 +237,11 @@ export const getOrCreateDefault = mutation({
       orgId: orgId ?? undefined,
       name: name,
       description: undefined,
-      slug: await uniqueProjectSlug(ctx, authUser.id, name),
+      slug: await uniqueProjectSlug(
+        ctx,
+        { authId: authUser.id, orgId: orgId ?? undefined },
+        name,
+      ),
       updatedAt: now,
     });
 
@@ -346,7 +350,11 @@ export const create = mutation({
       orgId: orgId ?? undefined,
       name: trimmedName,
       description: description?.trim() || undefined,
-      slug: await uniqueProjectSlug(ctx, authUser.id, trimmedName),
+      slug: await uniqueProjectSlug(
+        ctx,
+        { authId: authUser.id, orgId: orgId ?? undefined },
+        trimmedName,
+      ),
       updatedAt: now,
     });
 
@@ -384,10 +392,16 @@ export const update = mutation({
     const trimmedName = name.trim();
     if (!trimmedName) throw new Error("Project name is required.");
 
+    // The project's own org, not the caller's active one: an admin renaming
+    // from elsewhere must not re-namespace it.
     const slug =
       trimmedName === project.name
         ? project.slug
-        : await uniqueProjectSlug(ctx, authUser.id, trimmedName);
+        : await uniqueProjectSlug(
+            ctx,
+            { authId: project.authId, orgId: project.orgId },
+            trimmedName,
+          );
 
     await ctx.db.patch(projectId, {
       name: trimmedName,

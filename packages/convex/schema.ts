@@ -1100,7 +1100,10 @@ export default defineSchema({
   projects: defineTable(projectsFields)
     .index("by_authId", ["authId"])
     .index("by_authId_and_slug", ["authId", "slug"])
-    .index("by_orgId", ["orgId"]),
+    // by_orgId looks redundant against the composite but is not: its callers
+    // read in creation order, which prefixing the slug would silently reorder.
+    .index("by_orgId", ["orgId"])
+    .index("by_orgId_and_slug", ["orgId", "slug"]),
   stages: defineTable(stagesFields)
     .index("by_projectId", ["projectId"])
     .index("by_authId_and_projectId", ["authId", "projectId"]),

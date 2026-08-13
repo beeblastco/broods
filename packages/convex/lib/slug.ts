@@ -2,7 +2,14 @@
  * Slug helpers for project naming.
  */
 
+import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
+
+/** Who a project belongs to, which is also the namespace its slug is unique in. */
+export interface ProjectOwner {
+  authId: string;
+  orgId?: Id<"orgs">;
+}
 
 export function slugifyName(name: string): string {
   const slug = name
@@ -17,7 +24,7 @@ export function slugifyName(name: string): string {
 
 export async function uniqueProjectSlug(
   ctx: QueryCtx,
-  authId: string,
+  owner: ProjectOwner,
   baseName: string,
 ): Promise<string> {
   const baseSlug = slugifyName(baseName);
@@ -25,14 +32,36 @@ export async function uniqueProjectSlug(
 
   while (true) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
+    if (!(await slugTaken(ctx, owner, candidate))) return candidate;
+    suffix += 1;
+  }
+}
+
+// Orgs are separate namespaces, so only a sibling in the same org may force a
+// suffix. Legacy rows predate org scoping and stay keyed to their owner.
+async function slugTaken(
+  ctx: QueryCtx,
+  owner: ProjectOwner,
+  slug: string,
+): Promise<boolean> {
+  const orgId = owner.orgId;
+  if (orgId) {
+    const sibling = await ctx.db
       .query("projects")
-      .withIndex("by_authId_and_slug", (q) =>
-        q.eq("authId", authId).eq("slug", candidate),
+      .withIndex("by_orgId_and_slug", (q) =>
+        q.eq("orgId", orgId).eq("slug", slug),
       )
       .first();
 
-    if (!existing) return candidate;
-    suffix += 1;
+    return sibling !== null;
   }
+
+  const owned = await ctx.db
+    .query("projects")
+    .withIndex("by_authId_and_slug", (q) =>
+      q.eq("authId", owner.authId).eq("slug", slug),
+    )
+    .collect();
+
+  return owned.some((project) => project.orgId === undefined);
 }

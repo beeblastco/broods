@@ -76,55 +76,164 @@ const SERVICE_REGIONS = [
   { region: "ap-southeast-1", label: "ap-southeast-1 (Singapore)" },
 ] as const;
 
+// Options every command accepts, appended to each command's own help so a
+// reader never has to jump back to the top-level page for them.
+const GLOBAL_OPTIONS = `Global options:
+  --project <name>      Project name override (default: package name or folder)
+  --stage <name>        Target stage override (BROODS_STAGE otherwise)
+  --base-url <url>      broods API base URL for sync/env calls (default: discovered at login)
+  --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
+  -h, --help            Show this help`;
+
 const HELP = `broods v${VERSION}
 
-Usage: broods <command>
+Usage: broods <command> [subcommand] [options]
 
-Commands:
+Project:
   init                 Create a broods/ project shell
-  login                Authenticate with WorkOS through the dashboard
-  status               Show the login, server, org, plan, project and stage the next command uses
-  org list             List the organizations this login can act on
-  org use <name>       Switch the CLI to another organization (slug, name or id)
-  org create <name>    Create an organization and switch to it
-  stage list           List the project's stages
-  stage use <name>     Point .env.local at another stage and refresh BROODS_API_KEY
-  stage create <name>  Create a stage; --from <stage> clones its architecture and env vars
-  dev                  Watch + sync the current stage (BROODS_STAGE, default Development) AND
-                       live-tail agent logs (like \`convex dev\`); confirms before deleting;
-                       auto-pushes env("NAME") values from .env.local
-  dev --once           Sync the current stage a single time and exit (no watch, no log stream)
+  dev                  Watch + sync the current stage and live-tail agent logs
   diff                 Show local desired state vs remote state
-  deploy               Sync Production once; writes BROODS_API_KEY to .env.local. Ignores
-                       BROODS_STAGE by design — pass --stage to deploy anywhere else
-                       (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
-  env set <name>       Store an encrypted environment variable
-  env get <name>       Reveal a variable's value (audited)
-  env list             List environment variable names (values stay hidden)
-  env rm <name>        Remove an environment variable
+  deploy               Sync Production once and write BROODS_API_KEY to .env.local
+
+Account:
+  login                Authenticate through the dashboard
+  status               Show the login, server, org, plan, project and stage in use
+  org                  List, switch or create organizations
+  stage                List, switch or create stages
+  env                  Store, reveal, list or remove encrypted environment variables
+
+Runtime:
+  agent                Inspect the agents declared in the current scope
+  run <agent> [prompt] Chat with an agent in a terminal UI
+  logs                 Backfill recent logs then live-tail
   stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
-  logs                 Backfill recent logs then live-tail; all levels, default 100 lines
-                       (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
-  agent list           List the agents in the current project/stage scope
-  agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
-  run <agent> [prompt] Chat with an agent in a terminal UI (reasoning, tool cards, y/n approvals)
-                       A prompt is sent as the first turn; redirected output streams plain text
 
 Options:
-  --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
-  --base-url <url>      broods API base URL for sync/env calls (default: discovered at login)
-  --project <name>      Project name override (default: package name or folder)
-  --stage <name>        Target stage override (BROODS_STAGE otherwise; \`deploy\` defaults to production)
-  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
-  --from <stage>        Source stage for \`stage create\` to clone
-  --use                 Switch to the stage \`stage create\` just made
+  -h, --help           Show help for a command (e.g. \`broods org --help\`)
+  -v, --version        Print the CLI version
+
+Run \`broods <command> --help\` to see a command's subcommands and flags.`;
+
+// One page per command, printed by `broods <command> --help` and by the
+// grouped commands when they are invoked with no subcommand at all.
+const COMMAND_HELP: Record<string, string> = {
+  agent: `Usage: broods agent <list|get> [name]
+
+Subcommands:
+  list                 List the agents in the current project/stage scope
+  get <name>           Show an agent's model, sandbox, workspaces, tools and channels
+
+${GLOBAL_OPTIONS}`,
+  deploy: `Usage: broods deploy [options]
+
+Syncs Production once and writes BROODS_API_KEY to .env.local. Ignores
+BROODS_STAGE by design — pass --stage to deploy anywhere else.
+
+Options:
   --prune               Allow deploy to delete undeclared remote resources
-  --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
-  --errors              Show WARN/ERROR only (same as --level warn)
+  --rotate-key          Mint a fresh runtime API key and write it to .env.local
+  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  dev: `Usage: broods dev [--once] [options]
+
+Watches broods/, syncs the current stage (BROODS_STAGE, default Development)
+and live-tails agent logs. Confirms before deleting, and auto-pushes
+env("NAME") values from .env.local.
+
+Options:
+  --once                Sync a single time and exit (no watch, no log stream)
+  --level <lvl>         Minimum level for the log tail INFO|WARN|ERROR (default: no filter)
+  --errors              Tail WARN/ERROR only (same as --level warn)
+
+${GLOBAL_OPTIONS}`,
+  diff: `Usage: broods diff [options]
+
+Shows local desired state against the remote state of the current stage.
+
+${GLOBAL_OPTIONS}`,
+  env: `Usage: broods env <set|get|list|rm> [name]
+
+Subcommands:
+  set <name>           Store an encrypted environment variable (value read from the prompt)
+  get <name>           Reveal a variable's value (audited)
+  list                 List environment variable names (values stay hidden)
+  rm <name>            Remove an environment variable
+
+${GLOBAL_OPTIONS}`,
+  init: `Usage: broods init [options]
+
+Creates the broods/ project shell and .env.local defaults.
+
+Options:
+  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+  --force               Overwrite existing starter files
+
+${GLOBAL_OPTIONS}`,
+  login: `Usage: broods login [options]
+
+Authenticates through the dashboard and stores the token in
+~/.broods/config.json.
+
+Options:
+  --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+
+${GLOBAL_OPTIONS}`,
+  logs: `Usage: broods logs [options]
+
+Backfills recent logs then live-tails. All levels, 100 lines by default.
+
+Options:
+  -n, --limit <n>       Backfill line count (default 100)
   --level <lvl>         Minimum log level INFO|WARN|ERROR (default: no filter)
-  -n, --limit <n>       Backfill line count (with \`logs\`, default 100)
-  --json                Print logs as raw JSON (with \`logs\`, applies to backfill output)
-  --force               Allow init to overwrite starter files`;
+  --errors              Show WARN/ERROR only (same as --level warn)
+  --json                Print the backfill as raw JSON
+
+${GLOBAL_OPTIONS}`,
+  org: `Usage: broods org <list|use|create> [name]
+
+Subcommands:
+  list                 List the organizations this login can act on
+  use <name>           Switch the CLI to another organization (slug, name or id)
+  create <name>        Create an organization and switch to it
+
+Only orgs where you are owner or admin can be selected from the CLI.
+
+${GLOBAL_OPTIONS}`,
+  run: `Usage: broods run <agent> [prompt]
+
+Chats with an agent in a terminal UI (reasoning, tool cards, y/n approvals).
+A prompt is sent as the first turn; redirected output streams plain text and
+therefore requires a prompt.
+
+${GLOBAL_OPTIONS}`,
+  stage: `Usage: broods stage <list|use|create> [name]
+
+Subcommands:
+  list                 List the project's stages
+  use <name>           Point .env.local at another stage and refresh BROODS_API_KEY
+  create <name>        Create a stage in the current project
+
+Options:
+  --from <stage>        Clone the source stage's architecture and env vars
+  --use                 Switch to the stage \`stage create\` just made
+
+${GLOBAL_OPTIONS}`,
+  status: `Usage: broods status [options]
+
+Shows the login, server, org, plan, project and stage the next command uses.
+
+${GLOBAL_OPTIONS}`,
+  stream: `Usage: broods stream [options]
+
+Streams live logs for the whole project/stage until Ctrl+C. No backfill.
+
+Options:
+  --level <lvl>         Minimum log level INFO|WARN|ERROR (default: no filter)
+  --errors              Show WARN/ERROR only (same as --level warn)
+
+${GLOBAL_OPTIONS}`,
+};
 
 async function main(): Promise<void> {
   const [, , command, ...args] = process.argv;
@@ -144,6 +253,13 @@ async function main(): Promise<void> {
   }
 
   assertNoPreRenameConfig(args);
+
+  const help = COMMAND_HELP[command];
+  if (help && (hasFlag(args, "--help") || hasFlag(args, "-h"))) {
+    console.log(help);
+
+    return;
+  }
 
   switch (command) {
     case "init":
@@ -203,6 +319,12 @@ async function main(): Promise<void> {
   }
 }
 
+// Falls back to the top-level page so a mistyped key still prints something
+// useful instead of "undefined" inside an error message.
+function commandHelp(command: string): string {
+  return COMMAND_HELP[command] ?? HELP;
+}
+
 async function init(args: string[]): Promise<void> {
   const force = hasFlag(args, "--force");
   const root = resolve(process.cwd(), PROJECT_DIR);
@@ -228,11 +350,6 @@ async function init(args: string[]): Promise<void> {
 }
 
 async function login(args: string[]): Promise<void> {
-  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
-    console.log("Usage: broods login [--dashboard-url <url>]");
-
-    return;
-  }
   const runtime = loadBroodsRuntimeConfig();
   const dashboardUrl =
     optionValue(args, "--dashboard-url") ??
@@ -289,11 +406,6 @@ async function writeRuntimeKeyForLogin(
 }
 
 async function status(args: string[]): Promise<void> {
-  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
-    console.log("Usage: broods status [--project <name>] [--stage <name>]");
-
-    return;
-  }
   const runtime = loadBroodsRuntimeConfig();
   const scope = targetScope(args);
   const dashboardUrl =
@@ -377,11 +489,21 @@ async function status(args: string[]): Promise<void> {
 }
 
 async function orgCommand(args: string[]): Promise<void> {
-  const subcommand = args[0] ?? "list";
-  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
-    console.log("Usage: broods org <list|use|create> [name]");
+  const [subcommand, needle] = positionalArgs(args);
+  if (!subcommand) {
+    console.log(commandHelp("org"));
 
     return;
+  }
+  const isList = subcommand === "list" || subcommand === "ls";
+  const isUse = subcommand === "use" || subcommand === "select";
+  const isCreate = subcommand === "create" || subcommand === "new";
+  // Reject a typo before the login round trip, or it surfaces as a network
+  // error instead of the usage the caller actually needs.
+  if (!isList && !isUse && !isCreate) {
+    throw new Error(
+      `Unknown org subcommand: ${subcommand}\n\n${commandHelp("org")}`,
+    );
   }
 
   const runtime = loadBroodsRuntimeConfig();
@@ -396,7 +518,7 @@ async function orgCommand(args: string[]): Promise<void> {
   });
   const context = await client.getOnboarding();
 
-  if (subcommand === "list" || subcommand === "ls") {
+  if (isList) {
     for (const org of context.orgs) {
       const marker = org.id === context.currentOrgId ? "*" : " ";
       const disabled =
@@ -410,11 +532,10 @@ async function orgCommand(args: string[]): Promise<void> {
     return;
   }
 
-  if (subcommand === "use" || subcommand === "select") {
+  if (isUse) {
     const selectable = context.orgs.filter(
       (org) => org.accountStatus === "active",
     );
-    const needle = positionalArgs(args.slice(1))[0];
     const selected = needle
       ? selectable.find(
           (org) =>
@@ -436,32 +557,34 @@ async function orgCommand(args: string[]): Promise<void> {
     return;
   }
 
-  if (subcommand === "create" || subcommand === "new") {
-    const name =
-      positionalArgs(args.slice(1))[0] ??
-      (await promptText("Organization name", inferProjectName(process.cwd())));
-    if (!name.trim()) throw new Error("Organization name is required.");
-    await applyOrgSelection(
-      client,
-      auth,
-      await client.createOnboardingOrg(name),
-      args,
-    );
-
-    return;
-  }
-
-  throw new Error("Usage: broods org <list|use|create> [name]");
+  const name =
+    needle ??
+    (await promptText("Organization name", inferProjectName(process.cwd())));
+  if (!name.trim()) throw new Error("Organization name is required.");
+  await applyOrgSelection(
+    client,
+    auth,
+    await client.createOnboardingOrg(name),
+    args,
+  );
 }
 
 async function stageCommand(args: string[]): Promise<void> {
-  const subcommand = args[0] ?? "list";
-  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
-    console.log(
-      "Usage: broods stage <list|use|create> [name] [--from <stage>] [--use]",
-    );
+  const [subcommand, needle] = positionalArgs(args);
+  if (!subcommand) {
+    console.log(commandHelp("stage"));
 
     return;
+  }
+  const isList = subcommand === "list" || subcommand === "ls";
+  const isUse = subcommand === "use" || subcommand === "select";
+  const isCreate = subcommand === "create" || subcommand === "new";
+  // Reject a typo before the login round trip, or it surfaces as a network
+  // error instead of the usage the caller actually needs.
+  if (!isList && !isUse && !isCreate) {
+    throw new Error(
+      `Unknown stage subcommand: ${subcommand}\n\n${commandHelp("stage")}`,
+    );
   }
 
   const runtime = loadBroodsRuntimeConfig();
@@ -476,7 +599,7 @@ async function stageCommand(args: string[]): Promise<void> {
     token: auth.token,
   });
 
-  if (subcommand === "list" || subcommand === "ls") {
+  if (isList) {
     const stages = await client.listStages(scope.project);
     if (stages.length === 0) {
       console.log(
@@ -491,9 +614,8 @@ async function stageCommand(args: string[]): Promise<void> {
     return;
   }
 
-  if (subcommand === "use" || subcommand === "select") {
+  if (isUse) {
     const stages = await client.listStages(scope.project);
-    const needle = positionalArgs(args.slice(1))[0];
     const selected = needle
       ? stages.find((stage) => stageNameEquals(stage.name, needle))
       : await promptSelect("Select stage", stages, (stage) =>
@@ -516,43 +638,33 @@ async function stageCommand(args: string[]): Promise<void> {
     return;
   }
 
-  if (subcommand === "create" || subcommand === "new") {
-    const name =
-      positionalArgs(args.slice(1))[0] ??
-      (await promptText("Stage name", "staging"));
-    if (!name.trim()) throw new Error("Stage name is required.");
-    const from = optionValue(args, "--from");
-    const created = await client.createStage(scope.project, name, from);
+  const name = needle ?? (await promptText("Stage name", "staging"));
+  if (!name.trim()) throw new Error("Stage name is required.");
+  const from = optionValue(args, "--from");
+  const created = await client.createStage(scope.project, name, from);
+  console.log(
+    `Created stage ${created.stage.name} in ${scope.project}${created.clonedFrom ? ` from ${created.clonedFrom}` : ""}`,
+  );
+  if (created.clonedFrom) {
     console.log(
-      `Created stage ${created.stage.name} in ${scope.project}${created.clonedFrom ? ` from ${created.clonedFrom}` : ""}`,
+      `  ${created.stage.agentCount} agent(s), ${created.stage.variableCount} env var(s) copied`,
     );
-    if (created.clonedFrom) {
-      console.log(
-        `  ${created.stage.agentCount} agent(s), ${created.stage.variableCount} env var(s) copied`,
-      );
-    }
-    if (hasFlag(args, "--use")) {
-      const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
-      await writeEnvValue("BROODS_STAGE", created.stage.name);
-      console.log(`Stage: ${created.stage.name} (wrote BROODS_STAGE)`);
-      warnShellShadowedEnv("BROODS_STAGE", stageShadowed);
-      await syncRuntimeKeyForScope(client, {
-        project: scope.project,
-        stage: created.stage.name,
-      });
-
-      return;
-    }
+  }
+  if (!hasFlag(args, "--use")) {
     console.log(
       `Switch to it with \`broods stage use ${created.stage.name}\`.`,
     );
 
     return;
   }
-
-  throw new Error(
-    "Usage: broods stage <list|use|create> [name] [--from <stage>] [--use]",
-  );
+  const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
+  await writeEnvValue("BROODS_STAGE", created.stage.name);
+  console.log(`Stage: ${created.stage.name} (wrote BROODS_STAGE)`);
+  warnShellShadowedEnv("BROODS_STAGE", stageShadowed);
+  await syncRuntimeKeyForScope(client, {
+    project: scope.project,
+    stage: created.stage.name,
+  });
 }
 
 async function diff(args: string[]): Promise<void> {
@@ -1436,14 +1548,25 @@ async function clearDeclinedDeletes(): Promise<void> {
 }
 
 async function envCommand(args: string[]): Promise<void> {
-  const subcommand = args[0];
-  const name = args[1];
+  const [subcommand, name] = positionalArgs(args);
+  if (!subcommand) {
+    console.log(commandHelp("env"));
+
+    return;
+  }
   const isList = subcommand === "list" || subcommand === "ls";
   const isRemove = subcommand === "rm" || subcommand === "remove";
   const isGet = subcommand === "get";
   const needsName = subcommand === "set" || isRemove || isGet;
-  if ((needsName && !name) || (!isList && !needsName)) {
-    throw new Error("Usage: broods env <set|get|list|rm> [name]");
+  if (!isList && !needsName) {
+    throw new Error(
+      `Unknown env subcommand: ${subcommand}\n\n${commandHelp("env")}`,
+    );
+  }
+  if (needsName && !name) {
+    throw new Error(
+      `broods env ${subcommand} needs a variable name.\n\n${commandHelp("env")}`,
+    );
   }
 
   const { manifest, config } = await compileProject({
@@ -1685,18 +1808,26 @@ async function logs(args: string[]): Promise<void> {
  * remote deploy ids, so no extra backend endpoint is needed.
  */
 async function agentCommand(args: string[]): Promise<void> {
-  const subcommand = args[0];
+  const [subcommand, name] = positionalArgs(args);
+  if (!subcommand) {
+    console.log(commandHelp("agent"));
+
+    return;
+  }
   if (subcommand === "list" || subcommand === "ls") {
     await agentList(args);
 
     return;
   }
   if (subcommand === "get") {
-    await agentGet(args[1], args);
+    await agentGet(name, args);
 
     return;
   }
-  throw new Error("Usage: broods agent <list|get> [name]");
+
+  throw new Error(
+    `Unknown agent subcommand: ${subcommand}\n\n${commandHelp("agent")}`,
+  );
 }
 
 /** Compile the local manifest and pair each agent with its remote deploy id. */
@@ -1751,7 +1882,7 @@ async function agentGet(
   name: string | undefined,
   args: string[],
 ): Promise<void> {
-  if (!name) throw new Error("Usage: broods agent get <name>");
+  if (!name) throw new Error(`Missing agent name.\n\n${commandHelp("agent")}`);
   const { manifest, agents } = await loadAgentsWithIds(args);
   const agent = agents.find((entry) => entry.name === name);
   if (!agent) throw new Error(`Unknown local agent: ${name}`);
@@ -1834,7 +1965,7 @@ function agentModelLabel(config: Record<string, unknown>): string {
 async function run(args: string[]): Promise<void> {
   const [agentName, ...promptParts] = positionalArgs(args);
   if (!agentName) {
-    throw new Error("Usage: broods run <agent> [prompt]");
+    throw new Error(`Missing agent name.\n\n${commandHelp("run")}`);
   }
   // The terminal UI needs a terminal to draw into. Redirected output falls back
   // to plain text, which in turn needs a prompt since nothing can be typed.
