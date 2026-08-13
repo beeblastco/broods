@@ -18,7 +18,7 @@ import {
 import { syncApiAgentCanvasWiring } from "./model/apiCanvasSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
-import { agentsInProject } from "./model/projectScope";
+import { agentsInProject, agentsInStage } from "./model/projectScope";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -94,6 +94,34 @@ export const list = internalQuery({
       .query("agents")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
       .collect();
+  },
+});
+
+// An endpointId belonging to another account resolves empty, so a guessed
+// stage URL cannot reach across accounts.
+export const listForEndpoint = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+  },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args) => {
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
+      .first();
+    if (!deployment) return [];
+    if (deployment.accountId !== args.accountId) return [];
+    if (deployment.status !== "active") return [];
+
+    return await agentsInStage(
+      ctx,
+      {
+        projectId: deployment.projectId,
+        stageId: deployment.stageId,
+      },
+      args.accountId,
+    );
   },
 });
 

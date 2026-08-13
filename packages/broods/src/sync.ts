@@ -29,6 +29,8 @@ export interface RemoteManifestResponse {
     endpointId: string;
     projectSlug: string;
     stageSlug: string;
+    /** Decides the webhook URL shape; only production keeps the bare one. */
+    stageKind?: "development" | "production" | "custom";
     keyHint: string;
     apiKey: string;
   } | null;

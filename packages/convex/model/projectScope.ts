@@ -94,19 +94,23 @@ export async function agentsInProject(
     .withIndex("by_projectId_and_stageId", (q) => q.eq("projectId", projectId))
     .collect();
 
-  const agents: Doc<"agents">[] = [];
-  for (const config of configs) {
-    if (!config.agentId) continue;
-    const normalized = ctx.db.normalizeId("agents", config.agentId);
-    if (!normalized) continue;
-    const agent = await ctx.db.get(normalized);
-    if (!agent) continue;
-    if (agent.accountId !== accountId) continue;
+  return await agentsForConfigs(ctx, configs, accountId);
+}
 
-    agents.push(agent);
-  }
+/** The agents of exactly one stage, which is what a stage webhook URL routes on. */
+export async function agentsInStage(
+  ctx: Ctx,
+  scope: ProjectStageScope,
+  accountId: Id<"accounts">,
+): Promise<Doc<"agents">[]> {
+  const configs = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", scope.projectId).eq("stageId", scope.stageId),
+    )
+    .collect();
 
-  return agents;
+  return await agentsForConfigs(ctx, configs, accountId);
 }
 
 /** The crons whose agent belongs to `projectId` and is owned by `accountId`. */
@@ -127,4 +131,26 @@ export async function cronsInProject(
     .collect();
 
   return crons.filter((cron) => agentIds.has(cron.agentId));
+}
+
+// `agentConfigs.agentId` is a loose `v.string()`, so the accountId check is
+// what stops a stale row naming another account's agent from surfacing here.
+async function agentsForConfigs(
+  ctx: Ctx,
+  configs: Doc<"agentConfigs">[],
+  accountId: Id<"accounts">,
+): Promise<Doc<"agents">[]> {
+  const agents: Doc<"agents">[] = [];
+  for (const config of configs) {
+    if (!config.agentId) continue;
+    const normalized = ctx.db.normalizeId("agents", config.agentId);
+    if (!normalized) continue;
+    const agent = await ctx.db.get(normalized);
+    if (!agent) continue;
+    if (agent.accountId !== accountId) continue;
+
+    agents.push(agent);
+  }
+
+  return agents;
 }

@@ -172,6 +172,22 @@ export class BroodsClient {
     return `${this.baseUrl}/webhooks/${segments.join("/")}`;
   }
 
+  /**
+   * Return the provider webhook URL pinned to one stage. Production keeps the
+   * bare account URL from `accountWebhookUrl`.
+   */
+  stageWebhookUrl(
+    accountId: string,
+    endpointId: string,
+    channelType: ChannelReference["type"],
+  ): string {
+    const segments = [accountId, "dev", endpointId, channelType].map(
+      encodeURIComponent,
+    );
+
+    return `${this.baseUrl}/webhooks/${segments.join("/")}`;
+  }
+
   agent<const Name extends string>(ref: AgentReference<Name>): AgentHandle;
   agent(name: string, agentId: string): AgentHandle;
   agent(refOrName: AgentReference | string, agentId?: string): AgentHandle {

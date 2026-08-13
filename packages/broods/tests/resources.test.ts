@@ -1733,6 +1733,51 @@ export const support = defineAgent({ name: "support", channels: [github] });
   expect(api).toContain('stageSlug: "development"');
 });
 
+test("writeGeneratedFiles marks the webhook path of a stage that is not production", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineGitHubChannel, env } from "${RESOURCES_MODULE}";
+export const github = defineGitHubChannel({ appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
+export const support = defineAgent({ name: "support", channels: [github] });
+`,
+  );
+  const { manifest, resourceAliases, channels } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
+  await writeGeneratedFiles(
+    manifest,
+    {
+      agents: { support: "agent/123" },
+      workspaces: {},
+      sandboxes: {},
+      crons: {},
+      skills: {},
+      tools: {},
+      hooks: {},
+    },
+    cwd,
+    resourceAliases,
+    {
+      accountId: "account/123",
+      endpointId: "stage-abcd1234",
+      projectSlug: "typed-app",
+      stageSlug: "na-test",
+      stageKind: "development",
+    },
+    channels,
+  );
+
+  const api = await readFile(
+    join(cwd, "broods", "_generated", "api.ts"),
+    "utf8",
+  );
+  expect(api).toContain(
+    'webhookPath: "/webhooks/account%2F123/dev/stage-abcd1234/github"',
+  );
+});
+
 test("writeGeneratedFiles only exposes ids for locally declared resources", async () => {
   const cwd = await fixtureProject(
     "",
