@@ -13,8 +13,9 @@ import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
-const ZALO_TEXT_LIMIT = 2000;
 const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
+const ZALO_REQUEST_TIMEOUT_MS = 10_000;
+const ZALO_TEXT_LIMIT = 2000;
 
 interface ZaloWebhookEnvelope {
   ok?: boolean;
@@ -141,14 +142,15 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
-      const source: Record<string, unknown> = {
+      const senderName = message.from?.display_name ?? message.from?.name;
+      const source: ZaloSource = {
         chatId: chatId,
         chatType: chatType,
         messageId: messageId,
         senderId: senderId,
-        senderName: message.from?.display_name ?? message.from?.name,
         eventName: eventName,
-        date: message.date,
+        ...(senderName ? { senderName: senderName } : {}),
+        ...(typeof message.date === "number" ? { date: message.date } : {}),
       };
 
       const inbound = {
@@ -158,13 +160,9 @@ export function createZaloChannel(
         identity: {
           channelId: chatId,
           ...(senderId ? { actorId: senderId } : {}),
-          ...((message.from?.display_name ?? message.from?.name)
-            ? {
-                actorName: message.from?.display_name ?? message.from?.name,
-              }
-            : {}),
+          ...(senderName ? { actorName: senderName } : {}),
         },
-        source: source,
+        source: { ...source },
       };
 
       const text =
@@ -217,21 +215,31 @@ async function callZaloApi(
   method: "sendMessage" | "sendChatAction",
   body: Record<string, unknown>,
 ): Promise<ZaloApiResponse> {
-  const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const bodyText = await response.text();
-  const parsed = parseJsonBody(bodyText);
+  const controller = new AbortController();
+  const timeout = setTimeout((): void => {
+    controller.abort();
+  }, ZALO_REQUEST_TIMEOUT_MS);
 
-  if (!response.ok || parsed?.ok === false) {
-    throw new Error(
-      `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
-    );
+  try {
+    const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const bodyText = await response.text();
+    const parsed = parseJsonBody(bodyText);
+
+    if (!response.ok || parsed?.ok === false) {
+      throw new Error(
+        `Zalo ${method} failed (${response.status}): ${formatZaloError(parsed, bodyText)}`,
+      );
+    }
+
+    return parsed ?? { ok: true };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return parsed ?? { ok: true };
 }
 
 function chunkZaloText(text: string): string[] {
@@ -241,8 +249,21 @@ function chunkZaloText(text: string): string[] {
   }
 
   const chunks: string[] = [];
-  for (let offset = 0; offset < text.length; offset += ZALO_TEXT_LIMIT) {
-    chunks.push(text.slice(offset, offset + ZALO_TEXT_LIMIT));
+  for (let offset = 0; offset < text.length; ) {
+    let end = Math.min(offset + ZALO_TEXT_LIMIT, text.length);
+    const previousCodeUnit = text.charCodeAt(end - 1);
+    const nextCodeUnit = text.charCodeAt(end);
+    if (
+      end < text.length &&
+      previousCodeUnit >= 0xd800 &&
+      previousCodeUnit <= 0xdbff &&
+      nextCodeUnit >= 0xdc00 &&
+      nextCodeUnit <= 0xdfff
+    ) {
+      end -= 1;
+    }
+    chunks.push(text.slice(offset, end));
+    offset = end;
   }
 
   return chunks;

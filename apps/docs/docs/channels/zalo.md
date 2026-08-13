@@ -63,9 +63,7 @@ flowchart TD
   Auth --> Allow["Check allowedUserIds and allowedGroupIds when configured"]
   Allow --> Type{"Text event?"}
   Type -- No --> Drop["Drop quietly"]
-  Type -- Yes --> Addressed{"Group without the bot name?"}
-  Addressed -- Yes --> Context["Store as context"]
-  Addressed -- No --> Agent["Run agent"]
+  Type -- Yes --> Agent["Run agent"]
   Agent --> Reply["sendMessage"]
   Reply --> Zalo
 ```
