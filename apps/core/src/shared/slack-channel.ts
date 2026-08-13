@@ -7,7 +7,6 @@ import {
   SlackAdapter,
   SlackFormatConverter,
   type SlackEvent,
-  type SlackThreadId,
 } from "@chat-adapter/slack";
 import {
   assertSlackOk,
@@ -240,6 +239,14 @@ async function parseEventCallback(
   const actorName = payload.event.user
     ? await resolveSlackUserName(payload.event.user, resolveUserName)
     : undefined;
+  const source: SlackSource = {
+    teamId: payload.team_id,
+    channelId: channelId,
+    messageTs: ts,
+    threadTs: replyThreadTs,
+    inThreadTs: payload.event.thread_ts,
+    userId: payload.event.user,
+  };
 
   return {
     kind: runAgent ? "message" : "context",
@@ -266,14 +273,8 @@ async function parseEventCallback(
         ...(payload.event.user ? { actorId: payload.event.user } : {}),
         ...(actorName ? { actorName: actorName } : {}),
       },
-      source: {
-        teamId: payload.team_id,
-        channelId: channelId,
-        messageTs: ts,
-        threadTs: replyThreadTs,
-        inThreadTs: payload.event.thread_ts,
-        userId: payload.event.user,
-      } satisfies SlackSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
@@ -368,6 +369,13 @@ function parseSlashCommand(
   }
 
   const text = payload.text ?? "";
+  const source: SlackSource = {
+    teamId: teamId,
+    channelId: channelId,
+    responseUrl: payload.responseUrl,
+    commandToken: command,
+    userId: payload.userId,
+  };
 
   return {
     kind: "message",
@@ -385,13 +393,8 @@ function parseSlashCommand(
         channelId: channelId,
         ...(payload.userId ? { actorId: payload.userId } : {}),
       },
-      source: {
-        teamId: teamId,
-        channelId: channelId,
-        responseUrl: payload.responseUrl,
-        commandToken: command,
-        userId: payload.userId,
-      } satisfies SlackSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
@@ -406,7 +409,7 @@ function createSlackActions(
     ? slack.encodeThreadId({
         channel: source.channelId,
         threadTs: source.threadTs,
-      } satisfies SlackThreadId)
+      })
     : undefined;
   const formatter = new SlackFormatConverter();
 

@@ -75,6 +75,13 @@ export function createTelegramChannel(
       }
 
       const parsed = transport.parseMessage(message);
+      const source: TelegramSource = {
+        chatId: message.chat.id,
+        messageId: parsed.id,
+        threadId: parsed.threadId,
+        fromUserId: message.from?.id,
+        fromUsername: message.from?.username,
+      };
 
       return {
         kind: "message",
@@ -93,13 +100,8 @@ export function createTelegramChannel(
               ? { actorName: message.from.username }
               : {}),
           },
-          source: {
-            chatId: message.chat.id,
-            messageId: parsed.id,
-            threadId: parsed.threadId,
-            fromUserId: message.from?.id,
-            fromUsername: message.from?.username,
-          } satisfies TelegramSource,
+          // Spread so the typed source reaches a Record<string, unknown> field.
+          source: { ...source },
         },
       };
     },

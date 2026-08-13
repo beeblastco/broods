@@ -285,6 +285,18 @@ export function createDiscordChannel(
       // Without this the two paths disagree and /new clears the wrong conversation.
       const thread = toDiscordInteractionThread(payload);
       const threadId = discord.encodeThreadId(thread);
+      const source: DiscordSource = {
+        applicationId: payload.application_id,
+        interactionToken: payload.token,
+        interactionId: payload.id,
+        guildId: payload.guild_id,
+        channelId: thread.channelId,
+        ...(thread.threadId ? { threadId: threadId } : {}),
+        ...(resolvedCommand.commandToken
+          ? { commandToken: resolvedCommand.commandToken }
+          : {}),
+        userId: payload.member?.user?.id ?? payload.user?.id,
+      };
 
       return {
         kind: "message",
@@ -308,18 +320,8 @@ export function createDiscordChannel(
               ? { actorId: payload.member?.user?.id ?? payload.user?.id }
               : {}),
           },
-          source: {
-            applicationId: payload.application_id,
-            interactionToken: payload.token,
-            interactionId: payload.id,
-            guildId: payload.guild_id,
-            channelId: thread.channelId,
-            ...(thread.threadId ? { threadId: threadId } : {}),
-            ...(resolvedCommand.commandToken
-              ? { commandToken: resolvedCommand.commandToken }
-              : {}),
-            userId: payload.member?.user?.id ?? payload.user?.id,
-          } satisfies DiscordSource,
+          // Spread so the typed source reaches a Record<string, unknown> field.
+          source: { ...source },
         },
       };
     },
@@ -354,7 +356,7 @@ function createDiscordActions(
       guildId: source.guildId ?? "@me",
       channelId:
         source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
-    } satisfies DiscordThreadId);
+    });
 
   return {
     sendText: async function(text) {
@@ -477,6 +479,15 @@ function parseForwardedGatewayEvent(
     };
   }
 
+  const source: DiscordSource = {
+    applicationId: "broods-discord-gateway",
+    guildId: data.guild_id,
+    channelId: thread.channelId,
+    ...(thread.threadId ? { threadId: threadId } : {}),
+    messageId: data.id,
+    userId: data.author.id,
+  };
+
   return {
     kind: runAgent ? "message" : "context",
     ack: gatewayAck().response,
@@ -494,14 +505,8 @@ function parseForwardedGatewayEvent(
           ? { actorName: data.author.global_name || data.author.username }
           : {}),
       },
-      source: {
-        applicationId: "broods-discord-gateway",
-        guildId: data.guild_id,
-        channelId: thread.channelId,
-        ...(thread.threadId ? { threadId: threadId } : {}),
-        messageId: data.id,
-        userId: data.author.id,
-      } satisfies DiscordSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }

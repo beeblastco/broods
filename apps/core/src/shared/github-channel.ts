@@ -261,13 +261,21 @@ function parseIssuesEvent(
     if (!isBotAssignee(payload, botUserName)) {
       return { kind: "ignore" };
     }
-    const thread = {
+    const thread: GitHubThreadId = {
       owner: owner,
       repo: repo,
       prNumber: issueNumber,
       type: "issue",
-    } satisfies GitHubThreadId;
+    };
     const threadId = github.encodeThreadId(thread);
+    const source: GitHubSource = {
+      owner: owner,
+      repo: repo,
+      installationId: installationId,
+      threadId: threadId,
+      issueNumber: issueNumber,
+      target: "issue",
+    };
 
     return {
       kind: "message",
@@ -287,14 +295,8 @@ function parseIssuesEvent(
           },
         ],
         identity: githubIdentity(repoFullName, issueNumber, payload.sender),
-        source: {
-          owner: owner,
-          repo: repo,
-          installationId: installationId,
-          threadId: threadId,
-          issueNumber: issueNumber,
-          target: "issue",
-        } satisfies GitHubSource,
+        // Spread so the typed source reaches a Record<string, unknown> field.
+        source: { ...source },
       },
     };
   }
@@ -304,13 +306,21 @@ function parseIssuesEvent(
   if (options?.triggerOnIssueOpen === false) {
     return { kind: "ignore" };
   }
-  const thread = {
+  const thread: GitHubThreadId = {
     owner: owner,
     repo: repo,
     prNumber: issueNumber,
     type: "issue",
-  } satisfies GitHubThreadId;
+  };
   const threadId = github.encodeThreadId(thread);
+  const source: GitHubSource = {
+    owner: owner,
+    repo: repo,
+    installationId: installationId,
+    threadId: threadId,
+    issueNumber: issueNumber,
+    target: "issue",
+  };
 
   return {
     kind: "message",
@@ -330,14 +340,8 @@ function parseIssuesEvent(
         },
       ],
       identity: githubIdentity(repoFullName, issueNumber, payload.sender),
-      source: {
-        owner: owner,
-        repo: repo,
-        installationId: installationId,
-        threadId: threadId,
-        issueNumber: issueNumber,
-        target: "issue",
-      } satisfies GitHubSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
@@ -383,12 +387,12 @@ function parseIssueCommentEvent(
   }
 
   const resource = payload.issue?.pull_request ? "pr" : "issue";
-  const thread = {
+  const thread: GitHubThreadId = {
     owner: owner,
     repo: repo,
     prNumber: issueNumber,
     type: resource === "issue" ? "issue" : "pr",
-  } satisfies GitHubThreadId;
+  };
   const threadId = github.encodeThreadId(thread);
 
   return buildCommentMessage({
@@ -444,6 +448,16 @@ async function buildCommentMessage(options: {
     ...(contextEvent ? [contextEvent] : []),
     { role: "user", content: [{ type: "text", text: options.body }] },
   ];
+  const source: GitHubSource = {
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    threadId: options.threadId,
+    messageId: String(options.commentId),
+    issueNumber: options.issueNumber,
+    commentId: options.commentId,
+    target: options.target,
+  };
 
   return {
     kind: "message",
@@ -459,16 +473,8 @@ async function buildCommentMessage(options: {
         options.issueNumber,
         options.payload.sender,
       ),
-      source: {
-        owner: options.owner,
-        repo: options.repo,
-        installationId: options.installationId,
-        threadId: options.threadId,
-        messageId: String(options.commentId),
-        issueNumber: options.issueNumber,
-        commentId: options.commentId,
-        target: options.target,
-      } satisfies GitHubSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
@@ -501,12 +507,21 @@ function parsePullRequestEvent(
     if (!isBotAssignee(payload, botUserName)) {
       return { kind: "ignore" };
     }
-    const thread = {
+    const thread: GitHubThreadId = {
       owner: owner,
       repo: repo,
       prNumber: pullNumber,
-    } satisfies GitHubThreadId;
+    };
     const threadId = github.encodeThreadId(thread);
+    const source: GitHubSource = {
+      owner: owner,
+      repo: repo,
+      installationId: installationId,
+      threadId: threadId,
+      issueNumber: pullNumber,
+      pullNumber: pullNumber,
+      target: "pull_request",
+    };
 
     return {
       kind: "message",
@@ -526,15 +541,8 @@ function parsePullRequestEvent(
           },
         ],
         identity: githubIdentity(repoFullName, pullNumber, payload.sender),
-        source: {
-          owner: owner,
-          repo: repo,
-          installationId: installationId,
-          threadId: threadId,
-          issueNumber: pullNumber,
-          pullNumber: pullNumber,
-          target: "pull_request",
-        } satisfies GitHubSource,
+        // Spread so the typed source reaches a Record<string, unknown> field.
+        source: { ...source },
       },
     };
   }
@@ -544,8 +552,21 @@ function parsePullRequestEvent(
   if (options?.triggerOnPROpen === false) {
     return { kind: "ignore" };
   }
-  const thread = { owner: owner, repo: repo, prNumber: pullNumber } satisfies GitHubThreadId;
+  const thread: GitHubThreadId = {
+    owner: owner,
+    repo: repo,
+    prNumber: pullNumber,
+  };
   const threadId = github.encodeThreadId(thread);
+  const source: GitHubSource = {
+    owner: owner,
+    repo: repo,
+    installationId: installationId,
+    threadId: threadId,
+    issueNumber: pullNumber,
+    pullNumber: pullNumber,
+    target: "pull_request",
+  };
 
   return {
     kind: "message",
@@ -565,15 +586,8 @@ function parsePullRequestEvent(
         },
       ],
       identity: githubIdentity(repoFullName, pullNumber, payload.sender),
-      source: {
-        owner: owner,
-        repo: repo,
-        installationId: installationId,
-        threadId: threadId,
-        issueNumber: pullNumber,
-        pullNumber: pullNumber,
-        target: "pull_request",
-      } satisfies GitHubSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
@@ -619,12 +633,12 @@ function parseReviewCommentEvent(
   }
 
   const rootCommentId = payload.comment?.in_reply_to_id ?? commentId;
-  const thread = {
+  const thread: GitHubThreadId = {
     owner: owner,
     repo: repo,
     prNumber: pullNumber,
     reviewCommentId: rootCommentId,
-  } satisfies GitHubThreadId;
+  };
   const threadId = github.encodeThreadId(thread);
 
   return buildReviewCommentMessage({
@@ -677,6 +691,17 @@ async function buildReviewCommentMessage(options: {
     ...(contextEvent ? [contextEvent] : []),
     { role: "user", content: [{ type: "text", text: options.body }] },
   ];
+  const source: GitHubSource = {
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    threadId: options.threadId,
+    messageId: String(options.commentId),
+    issueNumber: options.pullNumber,
+    pullNumber: options.pullNumber,
+    commentId: options.commentId,
+    target: "pull_request_review_comment",
+  };
 
   return {
     kind: "message",
@@ -692,17 +717,8 @@ async function buildReviewCommentMessage(options: {
         options.pullNumber,
         options.payload.sender,
       ),
-      source: {
-        owner: options.owner,
-        repo: options.repo,
-        installationId: options.installationId,
-        threadId: options.threadId,
-        messageId: String(options.commentId),
-        issueNumber: options.pullNumber,
-        pullNumber: options.pullNumber,
-        commentId: options.commentId,
-        target: "pull_request_review_comment",
-      } satisfies GitHubSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }

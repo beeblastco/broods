@@ -199,6 +199,18 @@ function parsePancakeWebhook(
     tagIds: normalizePancakeTagIds(conversation.tags),
   });
 
+  const source: PancakeSource = {
+    pageId: pageId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    messageType: message.type,
+    postId: payload.data?.post?.id,
+    fromId: message.from?.id ?? conversation.from?.id,
+    fromName: message.from?.name ?? conversation.from?.name,
+    pageCustomerId: message.from?.page_customer_id,
+    tagIds: normalizePancakeTagIds(conversation.tags),
+  };
+
   return {
     kind: "message",
     ack: { statusCode: 200 },
@@ -217,17 +229,8 @@ function parsePancakeWebhook(
           ? { actorName: message.from?.name ?? conversation.from?.name }
           : {}),
       },
-      source: {
-        pageId: pageId,
-        conversationId: conversation.id,
-        messageId: message.id,
-        messageType: message.type,
-        postId: payload.data?.post?.id,
-        fromId: message.from?.id ?? conversation.from?.id,
-        fromName: message.from?.name ?? conversation.from?.name,
-        pageCustomerId: message.from?.page_customer_id,
-        tagIds: normalizePancakeTagIds(conversation.tags),
-      } satisfies PancakeSource,
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
     },
   };
 }
