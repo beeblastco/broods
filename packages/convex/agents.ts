@@ -97,11 +97,8 @@ export const list = internalQuery({
   },
 });
 
-/**
- * The agents of the stage an endpointId names, for the stage-scoped webhook
- * URL. An endpointId belonging to another account resolves empty, so a guessed
- * URL cannot reach across accounts.
- */
+// An endpointId belonging to another account resolves empty, so a guessed
+// stage URL cannot reach across accounts.
 export const listForEndpoint = internalQuery({
   args: {
     accountId: v.id("accounts"),
