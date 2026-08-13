@@ -472,7 +472,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo) addressed to the account's production stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage — every agent of the account is a candidate, so only `/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -523,7 +523,7 @@ paths:
         "401":
           description: Provider authentication failed
         "404":
-          description: Unknown account or channel, or no stage of this account is deployed at that endpointId
+          description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
 
   /accounts:
     post:

@@ -110,6 +110,7 @@ describe("stage runtime key wire", () => {
       "endpointId",
       "keyHint",
       "projectSlug",
+      "stageKind",
       "stageSlug",
     ]);
     expect(deployment!.stageSlug).toBe("production");

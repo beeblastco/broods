@@ -97,11 +97,7 @@ export async function agentsInProject(
   return await agentsForConfigs(ctx, configs, accountId);
 }
 
-/**
- * The agents of exactly one stage. The stage-scoped webhook URL routes on
- * this, so a sibling stage sharing the same channel credentials is excluded
- * rather than left to a tie-break.
- */
+/** The agents of exactly one stage, which is what a stage webhook URL routes on. */
 export async function agentsInStage(
   ctx: Ctx,
   scope: ProjectStageScope,

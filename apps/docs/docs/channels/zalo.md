@@ -29,6 +29,8 @@ export const myAgent = defineAgent({
 Register the webhook URL `broods dev` printed for the stage. The URL never names
 an agent: the credentials that verify the request choose which agent receives.
 
+Production takes the bare form:
+
 ```bash
 curl "https://bot-api.zaloplatforms.com/bot<YOUR_ZALO_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \

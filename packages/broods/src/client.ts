@@ -174,8 +174,7 @@ export class BroodsClient {
 
   /**
    * Return the provider webhook URL pinned to one stage. Production keeps the
-   * bare account URL; every other stage is reached through this one, so two
-   * stages sharing a provider app can never receive each other's traffic.
+   * bare account URL from `accountWebhookUrl`.
    */
   stageWebhookUrl(
     accountId: string,

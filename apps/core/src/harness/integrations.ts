@@ -318,6 +318,13 @@ interface HttpRoutingContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
+// `endpointId` absent means the bare production URL, which scans the account.
+interface WebhookRoute {
+  accountId: string;
+  channelName: string;
+  endpointId?: string;
+}
+
 class DirectNotFoundError extends Error {}
 
 class StatusUrlConfigError extends Error {}
@@ -2063,36 +2070,45 @@ function isObservabilityScopePath(rawPath: string): boolean {
   return rawPath === "/v1/internal/observability-scope";
 }
 
-// `endpointId` absent means the bare production URL, which scans the account.
-interface WebhookRoute {
-  accountId: string;
-  channelName: string;
-  endpointId?: string;
+// A malformed escape makes `decodeURIComponent` throw, which would surface as a
+// 500 on a path the router should simply decline.
+function decodePathSegments(segments: string[]): string[] | null {
+  try {
+    return segments.map((segment) => decodeURIComponent(segment));
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Match either webhook shape. The `dev` marker keeps the stage form at four
- * segments, so the retired three-segment agent form still falls through to its
- * own 404 instead of being read as a stage id.
- */
+// The `dev` marker keeps the stage form at four segments, so the retired
+// three-segment agent form still reaches its own 404 instead of a stage lookup.
 function matchWebhookPath(rawPath: string): WebhookRoute | null {
   const stageMatch = rawPath.match(
     /^\/webhooks\/([^/]+)\/dev\/([^/]+)\/([^/]+)$/,
   );
   if (stageMatch?.[1] && stageMatch[2] && stageMatch[3]) {
-    return {
-      accountId: decodeURIComponent(stageMatch[1]),
-      channelName: decodeURIComponent(stageMatch[3]),
-      endpointId: decodeURIComponent(stageMatch[2]),
-    };
+    const decoded = decodePathSegments([
+      stageMatch[1],
+      stageMatch[2],
+      stageMatch[3],
+    ]);
+
+    return decoded
+      ? {
+          accountId: decoded[0]!,
+          channelName: decoded[2]!,
+          endpointId: decoded[1]!,
+        }
+      : null;
   }
 
   const accountMatch = rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)$/);
   if (accountMatch?.[1] && accountMatch[2]) {
-    return {
-      accountId: decodeURIComponent(accountMatch[1]),
-      channelName: decodeURIComponent(accountMatch[2]),
-    };
+    const decoded = decodePathSegments([accountMatch[1], accountMatch[2]]);
+
+    return decoded
+      ? { accountId: decoded[0]!, channelName: decoded[1]! }
+      : null;
   }
 
   return null;

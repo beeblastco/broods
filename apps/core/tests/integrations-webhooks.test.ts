@@ -387,6 +387,24 @@ describe("account webhook ingress", () => {
     });
   });
 
+  it("declines a webhook path whose segments are not decodable", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+      agentLister: async () => [ZALO_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(zaloUpdate(), undefined, "/webhooks/%ZZ/zalo"),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      code: "unknown_webhook_url",
+    });
+  });
+
   it("accepts Zalo webhook senders when allowedUserIds is omitted or empty", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     for (const allowedUserIds of [undefined, []]) {
