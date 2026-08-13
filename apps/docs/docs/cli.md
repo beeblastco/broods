@@ -39,6 +39,23 @@ The dashboard tracks its own active organization, separate from the CLI's. After
 `?project=…&stage=…` deep link resolves against the organization the browser is
 still on.
 
+## Help
+
+`broods` on its own lists the commands, grouped by what they act on. Each
+command carries its own page, reached with `--help` — or, for the commands that
+take a subcommand, by typing the command alone:
+
+```bash
+broods            # the command list
+broods org        # org's subcommands and flags
+broods deploy -h  # deploy's flags
+```
+
+`org`, `stage`, `env` and `agent` print their page instead of guessing a
+default, so `broods org` no longer lists organizations — that is
+`broods org list`. An unrecognized subcommand prints the same page alongside the
+error.
+
 ## status
 
 ```bash
