@@ -11,9 +11,6 @@ export const zalo = defineZaloChannel({
     process.env.ZALO_ALLOWED_GROUP_IDS?.split(",")
       .map((value) => value.trim())
       .filter(Boolean) ?? [],
-  ...(process.env.ZALO_BOT_NAME?.trim()
-    ? { botName: process.env.ZALO_BOT_NAME.trim() }
-    : {}),
 });
 
 export const agent = defineAgent({
