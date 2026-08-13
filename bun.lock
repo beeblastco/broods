@@ -175,7 +175,7 @@
     },
     "packages/broods": {
       "name": "broods",
-      "version": "0.10.1",
+      "version": "0.11.0",
       "bin": {
         "broods": "dist/cli/index.js",
       },
