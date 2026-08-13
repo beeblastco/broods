@@ -7,7 +7,6 @@ import {
   SlackAdapter,
   SlackFormatConverter,
   type SlackEvent,
-  type SlackThreadId,
 } from "@chat-adapter/slack";
 import {
   assertSlackOk,
@@ -34,6 +33,17 @@ import {
   SLACK_INTEGRATION_PREFIX,
 } from "./runtime-keys.ts";
 
+// Minimum gap between reasoning task_update flushes. Each flush blocks the
+// model stream on one Slack API round trip (~200ms), so this bounds the
+// streaming slowdown to roughly one round trip per interval.
+const REASONING_FLUSH_INTERVAL_MS = 500;
+
+// Cap on the text a single task accumulates in the card, whether appended
+// delta-by-delta (reasoning details) or set once (tool output).
+const SLACK_TASK_TEXT_LIMIT = 1200;
+
+type SlackUserNameResolver = (userId: string) => Promise<string | null>;
+
 interface SlackEventEnvelope {
   authorizations?: Array<{ user_id?: string; is_bot?: boolean }>;
   challenge?: string;
@@ -54,607 +64,6 @@ export interface SlackSource {
   responseUrl?: string;
   commandToken?: string;
   userId?: string;
-}
-
-type SlackUserNameResolver = (userId: string) => Promise<string | null>;
-
-export function createSlackChannel(
-  botToken: string,
-  signingSecret: string,
-  allowedChannelIds: Set<string> | null,
-  reactionEmoji = "eyes",
-  apiUrl?: string,
-  userNameResolver?: SlackUserNameResolver,
-): ChannelAdapter {
-  const slack = new SlackAdapter({
-    apiUrl: apiUrl,
-    botToken: botToken,
-    signingSecret: signingSecret,
-    mode: "webhook",
-    logger: new ConsoleLogger("error").child("slack"),
-  });
-
-  return {
-    name: "slack",
-
-    canHandle: function(req) {
-      return "x-slack-signature" in req.headers;
-    },
-
-    authenticate: async function(req) {
-      try {
-        await verifySlackSignature(req.body, req.headers, { signingSecret: signingSecret });
-
-        return true;
-      } catch (err) {
-        logWarn("Slack request signature verification failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-
-        return false;
-      }
-    },
-
-    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
-      const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
-
-      if (payload.kind === "url_verification") {
-        return {
-          kind: "response",
-          reason: "url_verification",
-          response: {
-            statusCode: 200,
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ challenge: payload.challenge }),
-          },
-        };
-      }
-
-      if (payload.kind === "slash_command") {
-        return parseSlashCommand(payload, allowedChannelIds);
-      }
-
-      if (
-        (req.headers["content-type"] ?? "").includes(
-          "application/x-www-form-urlencoded",
-        )
-      ) {
-        return {
-          kind: "ignore",
-          reason: `unsupported_slack_payload:${payload.kind}`,
-        };
-      }
-
-      return parseEventCallback(
-        req.body,
-        allowedChannelIds,
-        userNameResolver ?? createSlackUserNameResolver(slack),
-      );
-    },
-
-    actions: function(msg): ChannelActions {
-      return createSlackActions(
-        botToken,
-        slack,
-        toSlackSource(msg.source),
-        reactionEmoji,
-      );
-    },
-
-    // Slack is the one provider where the reply has two places it can land, so
-    // it is the one that can honour the record. A slash command still answers
-    // through its response URL, which carries no thread either way.
-    applyThreadPolicy: function(source, policy) {
-      const slackSource = toSlackSource(source);
-      const threadTs =
-        policy === "always-thread"
-          ? (slackSource.inThreadTs ?? slackSource.messageTs)
-          : slackSource.inThreadTs;
-
-      return { ...source, threadTs: threadTs };
-    },
-  };
-}
-
-async function parseEventCallback(
-  body: string,
-  allowedChannelIds: Set<string> | null,
-  resolveUserName: SlackUserNameResolver,
-): Promise<ChannelParseResult> {
-  const payload = JSON.parse(body) as SlackEventEnvelope;
-
-  if (
-    payload.type === "url_verification" &&
-    typeof payload.challenge === "string"
-  ) {
-    return {
-      kind: "response",
-      reason: "url_verification",
-      response: {
-        statusCode: 200,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ challenge: payload.challenge }),
-      },
-    };
-  }
-
-  if (
-    payload.type !== "event_callback" ||
-    !isSlackMessageEvent(payload.event) ||
-    !payload.event_id ||
-    !payload.team_id
-  ) {
-    return { kind: "ignore", reason: "invalid_event_callback" };
-  }
-
-  if (!isSupportedSlackEvent(payload.event)) {
-    return {
-      kind: "ignore",
-      reason: getUnsupportedSlackEventReason(payload.event),
-    };
-  }
-
-  const channelId = payload.event.channel;
-  const ts = payload.event.ts;
-  if (!channelId || !ts) {
-    return { kind: "ignore", reason: "missing_channel_or_timestamp" };
-  }
-
-  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
-    logWarn("Slack channel not in allow list", { channelId: channelId });
-
-    return { kind: "ignore", reason: "channel_not_allowed" };
-  }
-
-  if (
-    payload.event.type === "message" &&
-    mentionsSlackBot(payload.event.text ?? "", payload)
-  ) {
-    return {
-      kind: "ignore",
-      reason: "message_with_mention_wait_for_app_mention",
-    };
-  }
-
-  const isGroupChannel =
-    payload.event.channel_type !== "im" &&
-    payload.event.channel_type !== "app_home";
-  const runAgent =
-    payload.event.type === "app_mention" ||
-    payload.event.channel_type === "im" ||
-    payload.event.channel_type === "app_home";
-  const botUserIds = runAgent ? getSlackBotUserIds(payload) : new Set<string>();
-  const rawText =
-    payload.event.type === "app_mention" && botUserIds.size === 0
-      ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
-      : (payload.event.text ?? "");
-  const text = await formatSlackMessageText(
-    rawText,
-    payload.event.user,
-    isGroupChannel,
-    botUserIds,
-    resolveUserName,
-  );
-  const threadTs = payload.event.thread_ts ?? ts;
-  const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
-  const actorName = payload.event.user
-    ? await resolveSlackUserName(payload.event.user, resolveUserName)
-    : undefined;
-
-  return {
-    kind: runAgent ? "message" : "context",
-    ack: { statusCode: 200 },
-    message: {
-      // Use team:channel:ts as the eventId so that duplicate Slack deliveries
-      // (app_mention + message for the same mention) dedupe naturally via
-      // session.claim().  ts is unique per message within a channel.
-      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
-      conversationKey: getSlackConversationKey(
-        payload.team_id,
-        channelId,
-        payload.event,
-        threadTs,
-      ),
-      channelName: "slack",
-      content: [{ type: "text", text: text }],
-      identity: {
-        workspaceRef: payload.team_id,
-        channelId: channelId,
-        ...(payload.event.thread_ts
-          ? { threadId: payload.event.thread_ts }
-          : {}),
-        ...(payload.event.user ? { actorId: payload.event.user } : {}),
-        ...(actorName ? { actorName: actorName } : {}),
-      },
-      source: {
-        teamId: payload.team_id,
-        channelId: channelId,
-        messageTs: ts,
-        threadTs: replyThreadTs,
-        inThreadTs: payload.event.thread_ts,
-        userId: payload.event.user,
-      } satisfies SlackSource,
-    },
-  };
-}
-
-function isSlackMessageEvent(
-  event: SlackEvent | undefined,
-): event is SlackEvent {
-  return Boolean(event && "type" in event && typeof event.type === "string");
-}
-
-function isSupportedSlackEvent(event: SlackEvent): boolean {
-  if (event.subtype || event.bot_id) {
-    return false;
-  }
-
-  if (event.type === "app_mention") {
-    return true;
-  }
-
-  return (
-    event.type === "message" &&
-    isSupportedSlackMessageChannel(event.channel_type)
-  );
-}
-
-function getUnsupportedSlackEventReason(event: SlackEvent): string {
-  if (event.bot_id) return "bot_message";
-  if (event.subtype) return `unsupported_subtype:${event.subtype}`;
-  if (event.type === "message")
-    return `unsupported_message_channel:${event.channel_type ?? "unknown"}`;
-
-  return `unsupported_event:${event.type ?? "unknown"}`;
-}
-
-function isSupportedSlackMessageChannel(
-  channelType: string | undefined,
-): boolean {
-  return (
-    channelType === "channel" ||
-    channelType === "group" ||
-    channelType === "mpim" ||
-    channelType === "im" ||
-    channelType === "app_home"
-  );
-}
-
-function getSlackConversationKey(
-  teamId: string,
-  channelId: string,
-  event: SlackEvent,
-  threadTs: string,
-): string {
-  if (event.channel_type === "im" || event.channel_type === "app_home") {
-    return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
-  }
-
-  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${threadTs}`;
-}
-
-function getSlackReplyThreadTs(
-  event: SlackEvent,
-  messageTs: string,
-): string | undefined {
-  if (
-    event.type === "app_mention" ||
-    (event.type === "message" &&
-      event.channel_type !== "im" &&
-      event.channel_type !== "app_home")
-  ) {
-    return event.thread_ts ?? messageTs;
-  }
-
-  return event.thread_ts;
-}
-
-function parseSlashCommand(
-  payload: SlackSlashCommandPayload,
-  allowedChannelIds: Set<string> | null,
-): ChannelParseResult {
-  const teamId = payload.teamId;
-  const channelId = payload.channelId;
-  const command = payload.command;
-
-  if (!teamId || !channelId || !command) {
-    return { kind: "ignore", reason: "invalid_slash_command" };
-  }
-
-  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
-    logWarn("Slack slash command channel not in allow list", { channelId: channelId });
-
-    return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
-  }
-
-  const text = payload.text ?? "";
-
-  return {
-    kind: "message",
-    ack: { statusCode: 200 },
-    message: {
-      eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${payload.triggerId ?? `${teamId}:${channelId}:${command}:${text}`}`,
-      // Slack does not send thread context on a slash command, so it can only
-      // ever address the channel conversation. `@bot /new` inside a thread is
-      // the threaded equivalent, and that arrives as an app_mention.
-      conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
-      channelName: "slack",
-      content: [{ type: "text", text: text }],
-      identity: {
-        workspaceRef: teamId,
-        channelId: channelId,
-        ...(payload.userId ? { actorId: payload.userId } : {}),
-      },
-      source: {
-        teamId: teamId,
-        channelId: channelId,
-        responseUrl: payload.responseUrl,
-        commandToken: command,
-        userId: payload.userId,
-      } satisfies SlackSource,
-    },
-  };
-}
-
-function createSlackActions(
-  botToken: string,
-  slack: SlackAdapter,
-  source: SlackSource,
-  reactionEmoji: string,
-): ChannelActions {
-  const threadId = source.threadTs
-    ? slack.encodeThreadId({
-        channel: source.channelId,
-        threadTs: source.threadTs,
-      } satisfies SlackThreadId)
-    : undefined;
-  const formatter = new SlackFormatConverter();
-
-  return {
-    sendText: async function(text) {
-      if (source.responseUrl) {
-        await sendSlackWebhookResponse(
-          source.responseUrl,
-          formatter.toResponseUrlText({ markdown: text }),
-        );
-
-        return;
-      }
-
-      try {
-        await postSlackMessage({
-          token: botToken,
-          channel: source.channelId,
-          markdownText: text,
-          threadTs: source.threadTs,
-          unfurlLinks: false,
-          unfurlMedia: false,
-        });
-      } catch (err) {
-        throw normalizeSlackApiError("chat.postMessage", err);
-      }
-    },
-
-    sendTyping: async function() {
-      return;
-    },
-
-    reactToMessage: async function() {
-      if (!source.messageTs) {
-        return;
-      }
-
-      try {
-        assertSlackOk(
-          "reactions.add",
-          await callSlackApi(
-            "reactions.add",
-            {
-              channel: source.channelId,
-              timestamp: source.messageTs,
-              name: reactionEmoji,
-            },
-            { token: botToken, contentType: "json" },
-          ),
-        );
-      } catch (err) {
-        throw normalizeSlackApiError("reactions.add", err);
-      }
-    },
-
-    ...(threadId && source.userId
-      ? {
-          stream: async (textStream, options) => {
-            const result = await slack.stream(
-              threadId,
-              toSlackStream(textStream),
-              {
-                ...options,
-                recipientTeamId: source.teamId,
-                recipientUserId: source.userId!,
-                taskDisplayMode: "plan",
-              },
-            );
-
-            return result?.id ?? null;
-          },
-        }
-      : {}),
-  };
-}
-
-function toSlackSource(source: Record<string, unknown>): SlackSource {
-  if (
-    typeof source.teamId !== "string" ||
-    typeof source.channelId !== "string"
-  ) {
-    throw new Error("Invalid Slack source payload");
-  }
-
-  return {
-    teamId: source.teamId,
-    channelId: source.channelId,
-    threadTs: typeof source.threadTs === "string" ? source.threadTs : undefined,
-    inThreadTs:
-      typeof source.inThreadTs === "string" ? source.inThreadTs : undefined,
-    messageTs:
-      typeof source.messageTs === "string" ? source.messageTs : undefined,
-    responseUrl:
-      typeof source.responseUrl === "string" ? source.responseUrl : undefined,
-    commandToken:
-      typeof source.commandToken === "string" ? source.commandToken : undefined,
-    userId: typeof source.userId === "string" ? source.userId : undefined,
-  };
-}
-
-function normalizeSlackApiError(method: string, err: unknown): Error {
-  if (err instanceof SlackApiError) {
-    return new Error(
-      `Slack ${method} failed (${err.status ?? 200}): ${err.response?.error ?? "unknown_error"}`,
-    );
-  }
-
-  return err instanceof Error ? err : new Error(String(err));
-}
-
-async function sendSlackWebhookResponse(
-  url: string,
-  text: string,
-): Promise<void> {
-  try {
-    await sendSlackResponseUrl(url, {
-      text: text,
-      responseType: "in_channel",
-    });
-  } catch (err) {
-    if (err instanceof SlackApiError) {
-      throw new Error(`Slack response_url failed (${err.status ?? 0})`);
-    }
-    throw err;
-  }
-}
-
-/**
- * Convert Slack mrkdwn mention syntax into readable names for the model. Bot
- * mentions that only target the app are removed from the user text.
- */
-async function normalizeSlackMentions(
-  text: string,
-  omittedUserIds: Set<string>,
-  resolveUserName: SlackUserNameResolver,
-): Promise<string> {
-  const mentionedUserIds = [
-    ...new Set(
-      [...text.matchAll(/<@([^>]+)>/g)]
-        .map((match) => match[1])
-        .filter(
-          (userId): userId is string =>
-            typeof userId === "string" && userId.length > 0,
-        ),
-    ),
-  ];
-  const names = new Map<string, string>();
-
-  await Promise.all(
-    mentionedUserIds.map(async (userId) => {
-      if (omittedUserIds.has(userId)) return;
-      names.set(userId, await resolveSlackUserName(userId, resolveUserName));
-    }),
-  );
-
-  return cleanSlackText(
-    text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
-      if (omittedUserIds.has(userId)) return "";
-
-      return `@${names.get(userId) ?? userId}`;
-    }),
-  );
-}
-
-function hasSlackMention(text: string): boolean {
-  return /<@[^>]+>/.test(text);
-}
-
-function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
-  const botUserIds = getSlackBotUserIds(payload);
-  if (botUserIds.size === 0 || !hasSlackMention(text)) {
-    return false;
-  }
-
-  for (const [, mentionedUserId] of text.matchAll(/<@([^>]+)>/g)) {
-    if (mentionedUserId && botUserIds.has(mentionedUserId)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * Prefix a group-channel message with the sender's user identifier so the
- * agent knows who is talking when multiple users are in the conversation.
- * DMs and app_home messages are not prefixed because there is only one user.
- * A command keeps its bare text so its leading token still parses.
- */
-async function formatSlackMessageText(
-  text: string,
-  userId: string | undefined,
-  isGroupChannel: boolean,
-  omittedUserIds: Set<string>,
-  resolveUserName: SlackUserNameResolver,
-): Promise<string> {
-  const normalized = await normalizeSlackMentions(
-    text,
-    omittedUserIds,
-    resolveUserName,
-  );
-  if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
-    return normalized;
-  }
-
-  return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
-}
-
-function getSlackBotUserIds(payload: SlackEventEnvelope): Set<string> {
-  return new Set(
-    (payload.authorizations ?? [])
-      .filter((authorization) => authorization.is_bot !== false)
-      .map((authorization) => authorization.user_id)
-      .filter(
-        (userId): userId is string =>
-          typeof userId === "string" && userId.length > 0,
-      ),
-  );
-}
-
-function createSlackUserNameResolver(
-  slack: SlackAdapter,
-): SlackUserNameResolver {
-  return async (userId) => {
-    const user = await slack.getUser(userId);
-
-    return user?.userName ?? user?.fullName ?? null;
-  };
-}
-
-async function resolveSlackUserName(
-  userId: string,
-  resolveUserName: SlackUserNameResolver,
-): Promise<string> {
-  const resolved = await resolveUserName(userId);
-
-  return cleanSlackName(resolved) || userId;
-}
-
-function cleanSlackName(value: string | null): string {
-  return (value ?? "").replace(/^@+/, "").trim();
-}
-
-function cleanSlackText(value: string): string {
-  return value
-    .replace(/[ \t]+([,.!?;:])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
 }
 
 /**
@@ -934,6 +343,316 @@ export async function* toSlackStream(
   }
 }
 
+export function createSlackChannel(
+  botToken: string,
+  signingSecret: string,
+  allowedChannelIds: Set<string> | null,
+  reactionEmoji = "eyes",
+  apiUrl?: string,
+  userNameResolver?: SlackUserNameResolver,
+): ChannelAdapter {
+  const slack = new SlackAdapter({
+    apiUrl: apiUrl,
+    botToken: botToken,
+    signingSecret: signingSecret,
+    mode: "webhook",
+    logger: new ConsoleLogger("error").child("slack"),
+  });
+
+  return {
+    name: "slack",
+
+    canHandle: function(req) {
+      return "x-slack-signature" in req.headers;
+    },
+
+    authenticate: async function(req) {
+      try {
+        await verifySlackSignature(req.body, req.headers, { signingSecret: signingSecret });
+
+        return true;
+      } catch (err) {
+        logWarn("Slack request signature verification failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+
+        return false;
+      }
+    },
+
+    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
+      const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
+
+      if (payload.kind === "url_verification") {
+        return {
+          kind: "response",
+          reason: "url_verification",
+          response: {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ challenge: payload.challenge }),
+          },
+        };
+      }
+
+      if (payload.kind === "slash_command") {
+        return parseSlashCommand(payload, allowedChannelIds);
+      }
+
+      if (
+        (req.headers["content-type"] ?? "").includes(
+          "application/x-www-form-urlencoded",
+        )
+      ) {
+        return {
+          kind: "ignore",
+          reason: `unsupported_slack_payload:${payload.kind}`,
+        };
+      }
+
+      return parseEventCallback(
+        req.body,
+        allowedChannelIds,
+        userNameResolver ?? createSlackUserNameResolver(slack),
+      );
+    },
+
+    actions: function(msg): ChannelActions {
+      return createSlackActions(
+        botToken,
+        slack,
+        toSlackSource(msg.source),
+        reactionEmoji,
+      );
+    },
+
+    // Slack is the one provider where the reply has two places it can land, so
+    // it is the one that can honour the record. A slash command still answers
+    // through its response URL, which carries no thread either way.
+    applyThreadPolicy: function(source, policy) {
+      const slackSource = toSlackSource(source);
+      const threadTs =
+        policy === "always-thread"
+          ? (slackSource.inThreadTs ?? slackSource.messageTs)
+          : slackSource.inThreadTs;
+
+      return { ...source, threadTs: threadTs };
+    },
+  };
+}
+
+/**
+ * Prefix a group-channel message with the sender's user identifier so the
+ * agent knows who is talking when multiple users are in the conversation.
+ * DMs and app_home messages are not prefixed because there is only one user.
+ * A command keeps its bare text so its leading token still parses.
+ */
+async function formatSlackMessageText(
+  text: string,
+  userId: string | undefined,
+  isGroupChannel: boolean,
+  omittedUserIds: Set<string>,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
+  const normalized = await normalizeSlackMentions(
+    text,
+    omittedUserIds,
+    resolveUserName,
+  );
+  if (!isGroupChannel || !userId || !normalized || parseCommand(normalized)) {
+    return normalized;
+  }
+
+  return `${await resolveSlackUserName(userId, resolveUserName)}: ${normalized}`;
+}
+
+/**
+ * Convert Slack mrkdwn mention syntax into readable names for the model. Bot
+ * mentions that only target the app are removed from the user text.
+ */
+async function normalizeSlackMentions(
+  text: string,
+  omittedUserIds: Set<string>,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
+  const mentionedUserIds = [
+    ...new Set(
+      [...text.matchAll(/<@([^>]+)>/g)]
+        .map((match) => match[1])
+        .filter(
+          (userId): userId is string =>
+            typeof userId === "string" && userId.length > 0,
+        ),
+    ),
+  ];
+  const names = new Map<string, string>();
+
+  await Promise.all(
+    mentionedUserIds.map(async (userId) => {
+      if (omittedUserIds.has(userId)) return;
+      names.set(userId, await resolveSlackUserName(userId, resolveUserName));
+    }),
+  );
+
+  return cleanSlackText(
+    text.replace(/<@([^>]+)>/g, (_match, userId: string) => {
+      if (omittedUserIds.has(userId)) return "";
+
+      return `@${names.get(userId) ?? userId}`;
+    }),
+  );
+}
+
+async function parseEventCallback(
+  body: string,
+  allowedChannelIds: Set<string> | null,
+  resolveUserName: SlackUserNameResolver,
+): Promise<ChannelParseResult> {
+  const payload = JSON.parse(body) as SlackEventEnvelope;
+
+  if (
+    payload.type === "url_verification" &&
+    typeof payload.challenge === "string"
+  ) {
+    return {
+      kind: "response",
+      reason: "url_verification",
+      response: {
+        statusCode: 200,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge: payload.challenge }),
+      },
+    };
+  }
+
+  if (
+    payload.type !== "event_callback" ||
+    !isSlackMessageEvent(payload.event) ||
+    !payload.event_id ||
+    !payload.team_id
+  ) {
+    return { kind: "ignore", reason: "invalid_event_callback" };
+  }
+
+  if (!isSupportedSlackEvent(payload.event)) {
+    return {
+      kind: "ignore",
+      reason: getUnsupportedSlackEventReason(payload.event),
+    };
+  }
+
+  const channelId = payload.event.channel;
+  const ts = payload.event.ts;
+  if (!channelId || !ts) {
+    return { kind: "ignore", reason: "missing_channel_or_timestamp" };
+  }
+
+  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
+    logWarn("Slack channel not in allow list", { channelId: channelId });
+
+    return { kind: "ignore", reason: "channel_not_allowed" };
+  }
+
+  if (
+    payload.event.type === "message" &&
+    mentionsSlackBot(payload.event.text ?? "", payload)
+  ) {
+    return {
+      kind: "ignore",
+      reason: "message_with_mention_wait_for_app_mention",
+    };
+  }
+
+  const isGroupChannel =
+    payload.event.channel_type !== "im" &&
+    payload.event.channel_type !== "app_home";
+  const runAgent =
+    payload.event.type === "app_mention" ||
+    payload.event.channel_type === "im" ||
+    payload.event.channel_type === "app_home";
+  const botUserIds = runAgent ? getSlackBotUserIds(payload) : new Set<string>();
+  const rawText =
+    payload.event.type === "app_mention" && botUserIds.size === 0
+      ? (payload.event.text ?? "").replace(/<@[^>]+>\s*/, "")
+      : (payload.event.text ?? "");
+  const text = await formatSlackMessageText(
+    rawText,
+    payload.event.user,
+    isGroupChannel,
+    botUserIds,
+    resolveUserName,
+  );
+  const threadTs = payload.event.thread_ts ?? ts;
+  const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
+  const actorName = payload.event.user
+    ? await resolveSlackUserName(payload.event.user, resolveUserName)
+    : undefined;
+  const source: SlackSource = {
+    teamId: payload.team_id,
+    channelId: channelId,
+    messageTs: ts,
+    threadTs: replyThreadTs,
+    inThreadTs: payload.event.thread_ts,
+    userId: payload.event.user,
+  };
+
+  return {
+    kind: runAgent ? "message" : "context",
+    ack: { statusCode: 200 },
+    message: {
+      // Use team:channel:ts as the eventId so that duplicate Slack deliveries
+      // (app_mention + message for the same mention) dedupe naturally via
+      // session.claim().  ts is unique per message within a channel.
+      eventId: `${SLACK_INTEGRATION_PREFIX}${payload.team_id}:${channelId}:${ts}`,
+      conversationKey: getSlackConversationKey(
+        payload.team_id,
+        channelId,
+        payload.event,
+        threadTs,
+      ),
+      channelName: "slack",
+      content: [{ type: "text", text: text }],
+      identity: {
+        workspaceRef: payload.team_id,
+        channelId: channelId,
+        ...(payload.event.thread_ts
+          ? { threadId: payload.event.thread_ts }
+          : {}),
+        ...(payload.event.user ? { actorId: payload.event.user } : {}),
+        ...(actorName ? { actorName: actorName } : {}),
+      },
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
+    },
+  };
+}
+
+async function resolveSlackUserName(
+  userId: string,
+  resolveUserName: SlackUserNameResolver,
+): Promise<string> {
+  const resolved = await resolveUserName(userId);
+
+  return cleanSlackName(resolved) || userId;
+}
+
+async function sendSlackWebhookResponse(
+  url: string,
+  text: string,
+): Promise<void> {
+  try {
+    await sendSlackResponseUrl(url, {
+      text: text,
+      responseType: "in_channel",
+    });
+  } catch (err) {
+    if (err instanceof SlackApiError) {
+      throw new Error(`Slack response_url failed (${err.status ?? 0})`);
+    }
+    throw err;
+  }
+}
+
 function appendBufferedSlackText(
   current: string,
   text: string,
@@ -947,12 +666,112 @@ function appendBufferedSlackText(
   return `${current}${text}`;
 }
 
-function taskId(prefix: string, value: unknown): string {
-  return `${prefix}:${stringValue(value) ?? "default"}`;
+function cleanSlackName(value: string | null): string {
+  return (value ?? "").replace(/^@+/, "").trim();
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
+function cleanSlackText(value: string): string {
+  return value
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function createSlackActions(
+  botToken: string,
+  slack: SlackAdapter,
+  source: SlackSource,
+  reactionEmoji: string,
+): ChannelActions {
+  const threadId = source.threadTs
+    ? slack.encodeThreadId({
+        channel: source.channelId,
+        threadTs: source.threadTs,
+      })
+    : undefined;
+  const formatter = new SlackFormatConverter();
+
+  return {
+    sendText: async function(text) {
+      if (source.responseUrl) {
+        await sendSlackWebhookResponse(
+          source.responseUrl,
+          formatter.toResponseUrlText({ markdown: text }),
+        );
+
+        return;
+      }
+
+      try {
+        await postSlackMessage({
+          token: botToken,
+          channel: source.channelId,
+          markdownText: text,
+          threadTs: source.threadTs,
+          unfurlLinks: false,
+          unfurlMedia: false,
+        });
+      } catch (err) {
+        throw normalizeSlackApiError("chat.postMessage", err);
+      }
+    },
+
+    sendTyping: async function() {
+      return;
+    },
+
+    reactToMessage: async function() {
+      if (!source.messageTs) {
+        return;
+      }
+
+      try {
+        assertSlackOk(
+          "reactions.add",
+          await callSlackApi(
+            "reactions.add",
+            {
+              channel: source.channelId,
+              timestamp: source.messageTs,
+              name: reactionEmoji,
+            },
+            { token: botToken, contentType: "json" },
+          ),
+        );
+      } catch (err) {
+        throw normalizeSlackApiError("reactions.add", err);
+      }
+    },
+
+    ...(threadId && source.userId
+      ? {
+          stream: async (textStream, options) => {
+            const result = await slack.stream(
+              threadId,
+              toSlackStream(textStream),
+              {
+                ...options,
+                recipientTeamId: source.teamId,
+                recipientUserId: source.userId!,
+                taskDisplayMode: "plan",
+              },
+            );
+
+            return result?.id ?? null;
+          },
+        }
+      : {}),
+  };
+}
+
+function createSlackUserNameResolver(
+  slack: SlackAdapter,
+): SlackUserNameResolver {
+  return async (userId) => {
+    const user = await slack.getUser(userId);
+
+    return user?.userName ?? user?.fullName ?? null;
+  };
 }
 
 function formatToolOutput(value: unknown): string {
@@ -965,21 +784,64 @@ function formatToolOutput(value: unknown): string {
   }
 }
 
-// Cap on the text a single task accumulates in the card, whether appended
-// delta-by-delta (reasoning details) or set once (tool output).
-const SLACK_TASK_TEXT_LIMIT = 1200;
+function getSlackBotUserIds(payload: SlackEventEnvelope): Set<string> {
+  return new Set(
+    (payload.authorizations ?? [])
+      .filter((authorization) => authorization.is_bot !== false)
+      .map((authorization) => authorization.user_id)
+      .filter(
+        (userId): userId is string =>
+          typeof userId === "string" && userId.length > 0,
+      ),
+  );
+}
 
-// Minimum gap between reasoning task_update flushes. Each flush blocks the
-// model stream on one Slack API round trip (~200ms), so this bounds the
-// streaming slowdown to roughly one round trip per interval.
-const REASONING_FLUSH_INTERVAL_MS = 500;
+function getSlackConversationKey(
+  teamId: string,
+  channelId: string,
+  event: SlackEvent,
+  threadTs: string,
+): string {
+  if (event.channel_type === "im" || event.channel_type === "app_home") {
+    return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`;
+  }
 
-function truncateForSlackTask(value: string): string {
-  const normalized = value.trim();
+  return `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}:${threadTs}`;
+}
 
-  return normalized.length <= SLACK_TASK_TEXT_LIMIT
-    ? normalized
-    : `${normalized.slice(0, SLACK_TASK_TEXT_LIMIT - 3)}...`;
+function getSlackReplyThreadTs(
+  event: SlackEvent,
+  messageTs: string,
+): string | undefined {
+  if (
+    event.type === "app_mention" ||
+    (event.type === "message" &&
+      event.channel_type !== "im" &&
+      event.channel_type !== "app_home")
+  ) {
+    return event.thread_ts ?? messageTs;
+  }
+
+  return event.thread_ts;
+}
+
+function getUnsupportedSlackEventReason(event: SlackEvent): string {
+  if (event.bot_id) return "bot_message";
+  if (event.subtype) return `unsupported_subtype:${event.subtype}`;
+  if (event.type === "message")
+    return `unsupported_message_channel:${event.channel_type ?? "unknown"}`;
+
+  return `unsupported_event:${event.type ?? "unknown"}`;
+}
+
+function hasSlackMention(text: string): boolean {
+  return /<@[^>]+>/.test(text);
+}
+
+function isSlackMessageEvent(
+  event: SlackEvent | undefined,
+): event is SlackEvent {
+  return Boolean(event && "type" in event && typeof event.type === "string");
 }
 
 function isStreamChunk(value: unknown): value is StreamChunk {
@@ -999,4 +861,145 @@ function isStreamChunk(value: unknown): value is StreamChunk {
     default:
       return false;
   }
+}
+
+function isSupportedSlackEvent(event: SlackEvent): boolean {
+  if (event.subtype || event.bot_id) {
+    return false;
+  }
+
+  if (event.type === "app_mention") {
+    return true;
+  }
+
+  return (
+    event.type === "message" &&
+    isSupportedSlackMessageChannel(event.channel_type)
+  );
+}
+
+function isSupportedSlackMessageChannel(
+  channelType: string | undefined,
+): boolean {
+  return (
+    channelType === "channel" ||
+    channelType === "group" ||
+    channelType === "mpim" ||
+    channelType === "im" ||
+    channelType === "app_home"
+  );
+}
+
+function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
+  const botUserIds = getSlackBotUserIds(payload);
+  if (botUserIds.size === 0 || !hasSlackMention(text)) {
+    return false;
+  }
+
+  for (const [, mentionedUserId] of text.matchAll(/<@([^>]+)>/g)) {
+    if (mentionedUserId && botUserIds.has(mentionedUserId)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizeSlackApiError(method: string, err: unknown): Error {
+  if (err instanceof SlackApiError) {
+    return new Error(
+      `Slack ${method} failed (${err.status ?? 200}): ${err.response?.error ?? "unknown_error"}`,
+    );
+  }
+
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+function parseSlashCommand(
+  payload: SlackSlashCommandPayload,
+  allowedChannelIds: Set<string> | null,
+): ChannelParseResult {
+  const teamId = payload.teamId;
+  const channelId = payload.channelId;
+  const command = payload.command;
+
+  if (!teamId || !channelId || !command) {
+    return { kind: "ignore", reason: "invalid_slash_command" };
+  }
+
+  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
+    logWarn("Slack slash command channel not in allow list", { channelId: channelId });
+
+    return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
+  }
+
+  const text = payload.text ?? "";
+  const source: SlackSource = {
+    teamId: teamId,
+    channelId: channelId,
+    responseUrl: payload.responseUrl,
+    commandToken: command,
+    userId: payload.userId,
+  };
+
+  return {
+    kind: "message",
+    ack: { statusCode: 200 },
+    message: {
+      eventId: `${SLACK_COMMAND_INTEGRATION_PREFIX}${payload.triggerId ?? `${teamId}:${channelId}:${command}:${text}`}`,
+      // Slack does not send thread context on a slash command, so it can only
+      // ever address the channel conversation. `@bot /new` inside a thread is
+      // the threaded equivalent, and that arrives as an app_mention.
+      conversationKey: `${SLACK_INTEGRATION_PREFIX}${teamId}:${channelId}`,
+      channelName: "slack",
+      content: [{ type: "text", text: text }],
+      identity: {
+        workspaceRef: teamId,
+        channelId: channelId,
+        ...(payload.userId ? { actorId: payload.userId } : {}),
+      },
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
+    },
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function taskId(prefix: string, value: unknown): string {
+  return `${prefix}:${stringValue(value) ?? "default"}`;
+}
+
+function toSlackSource(source: Record<string, unknown>): SlackSource {
+  if (
+    typeof source.teamId !== "string" ||
+    typeof source.channelId !== "string"
+  ) {
+    throw new Error("Invalid Slack source payload");
+  }
+
+  return {
+    teamId: source.teamId,
+    channelId: source.channelId,
+    threadTs: typeof source.threadTs === "string" ? source.threadTs : undefined,
+    inThreadTs:
+      typeof source.inThreadTs === "string" ? source.inThreadTs : undefined,
+    messageTs:
+      typeof source.messageTs === "string" ? source.messageTs : undefined,
+    responseUrl:
+      typeof source.responseUrl === "string" ? source.responseUrl : undefined,
+    commandToken:
+      typeof source.commandToken === "string" ? source.commandToken : undefined,
+    userId: typeof source.userId === "string" ? source.userId : undefined,
+  };
+}
+
+function truncateForSlackTask(value: string): string {
+  const normalized = value.trim();
+
+  return normalized.length <= SLACK_TASK_TEXT_LIMIT
+    ? normalized
+    : `${normalized.slice(0, SLACK_TASK_TEXT_LIMIT - 3)}...`;
 }

@@ -75,6 +75,13 @@ export function createTelegramChannel(
       }
 
       const parsed = transport.parseMessage(message);
+      const source: TelegramSource = {
+        chatId: message.chat.id,
+        messageId: parsed.id,
+        threadId: parsed.threadId,
+        fromUserId: message.from?.id,
+        fromUsername: message.from?.username,
+      };
 
       return {
         kind: "message",
@@ -93,13 +100,8 @@ export function createTelegramChannel(
               ? { actorName: message.from.username }
               : {}),
           },
-          source: {
-            chatId: message.chat.id,
-            messageId: parsed.id,
-            threadId: parsed.threadId,
-            fromUserId: message.from?.id,
-            fromUsername: message.from?.username,
-          } satisfies TelegramSource,
+          // Spread so the typed source reaches a Record<string, unknown> field.
+          source: { ...source },
         },
       };
     },
@@ -138,16 +140,8 @@ export function createTelegramChannel(
   };
 }
 
-function verifyWebhookSecret(
-  header: string | undefined,
-  secret: string,
-): boolean {
-  if (!header) return false;
-  const a = Buffer.from(header);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length) return false;
-
-  return timingSafeEqual(a, b);
+function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
+  return update.message ?? update.edited_message ?? null;
 }
 
 function splitTelegramRawText(text: string): string[] {
@@ -176,10 +170,6 @@ function splitTelegramRawText(text: string): string[] {
   return chunks;
 }
 
-function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
-  return update.message ?? update.edited_message ?? null;
-}
-
 function toTelegramSource(source: Record<string, unknown>): TelegramSource {
   if (
     typeof source.chatId !== "number" ||
@@ -198,4 +188,16 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
     fromUsername:
       typeof source.fromUsername === "string" ? source.fromUsername : undefined,
   };
+}
+
+function verifyWebhookSecret(
+  header: string | undefined,
+  secret: string,
+): boolean {
+  if (!header) return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length) return false;
+
+  return timingSafeEqual(a, b);
 }
