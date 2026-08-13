@@ -5,6 +5,7 @@
 
 import { context as otelContextApi } from "@opentelemetry/api";
 import type {
+  JSONValue,
   SystemModelMessage,
   ToolModelMessage,
   UserContent,
@@ -184,7 +185,7 @@ export interface AsyncToolCompletionInboundEvent {
   accountId: string;
   resultId: string;
   status: "completed" | "failed";
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
 }
 
@@ -195,7 +196,7 @@ export interface SandboxJobCompletionInboundEvent {
   resultId: string;
   token: string;
   status: "completed" | "failed";
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
 }
 
@@ -261,6 +262,10 @@ export interface IntegrationRoutingOptions {
     agentId: string,
   ) => Promise<AgentRecord | null>;
   agentLister?: (accountId: string) => Promise<AgentRecord[]>;
+  stageAgentLister?: (
+    accountId: string,
+    endpointId: string,
+  ) => Promise<AgentRecord[]>;
   channelRecordLoader?: (
     accountId: string,
     platform: string,
@@ -288,6 +293,10 @@ interface HttpRoutingContext {
   accountLoader(accountId: string): Promise<AccountRecord | null>;
   agentLoader(accountId: string, agentId: string): Promise<AgentRecord | null>;
   agentLister(accountId: string): Promise<AgentRecord[]>;
+  stageAgentLister(
+    accountId: string,
+    endpointId: string,
+  ): Promise<AgentRecord[]>;
   channelRecordLoader(
     accountId: string,
     platform: string,
@@ -335,6 +344,10 @@ export function createIncomingEventRouter(
   const agentLister =
     options.agentLister ??
     ((accountId: string) => getStorage().agents.list(accountId));
+  const stageAgentLister =
+    options.stageAgentLister ??
+    ((accountId: string, endpointId: string) =>
+      getStorage().agents.listForEndpoint(accountId, endpointId));
   const channelRecordLoader =
     options.channelRecordLoader ??
     ((accountId: string, platform: string, externalId: string) =>
@@ -363,6 +376,7 @@ export function createIncomingEventRouter(
       accountLoader: accountLoader,
       agentLoader: agentLoader,
       agentLister: agentLister,
+      stageAgentLister: stageAgentLister,
       channelRecordLoader: channelRecordLoader,
       deploymentLoader: deploymentLoader,
       asyncAgentResultLoader: asyncAgentResultLoader,
@@ -483,35 +497,34 @@ async function handleHttpRequest(
     }
   }
 
-  // One webhook shape: /webhooks/{account}/{channel}. The agent is never named
-  // in the URL — the credentials that verify the request pick the receiving
-  // agent, and the channel record picks who runs.
-  const accountWebhookMatch = request.path.match(
-    /^\/webhooks\/([^/]+)\/([^/]+)$/,
-  );
+  // Two webhook shapes, neither naming an agent: the bare one production keeps,
+  // and a `/dev/{endpointId}/` one that pins delivery to a single stage.
+  const webhookRoute = matchWebhookPath(request.path);
   // Answer a wrong webhook shape here rather than letting it fall through to
   // the generic 401, which reads as "bad credentials" to a provider that is
   // really just pointed at the retired /webhooks/{account}/{agent}/{channel}.
-  if (!accountWebhookMatch && request.path.startsWith("/webhooks/")) {
-    logWarn("Webhook path does not match /webhooks/{account}/{channel}", {
+  if (!webhookRoute && request.path.startsWith("/webhooks/")) {
+    logWarn("Webhook path does not match a known webhook shape", {
       method: request.method,
       rawPath: request.path,
     });
 
     return errorResponse(
       404,
-      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} — the agent is chosen by credentials and channel records, never named in the URL.",
+      "Unknown webhook URL. Provider webhooks are /webhooks/{accountId}/{channel} for a production stage, or /webhooks/{accountId}/dev/{endpointId}/{channel} for any other stage — the agent is chosen by credentials and channel records, never named in the URL.",
       { code: "unknown_webhook_url" },
     );
   }
-  if (accountWebhookMatch?.[1] && accountWebhookMatch[2]) {
-    const accountId = decodeURIComponent(accountWebhookMatch[1]);
-    const channelName = decodeURIComponent(accountWebhookMatch[2]);
+  if (webhookRoute) {
+    const accountId = webhookRoute.accountId;
+    const channelName = webhookRoute.channelName;
+    const endpointId = webhookRoute.endpointId;
     const agentId = "(by channel)";
     logInfo("Webhook request matched account route", {
       accountId: accountId,
       agentId: agentId,
       channel: channelName,
+      endpointId: endpointId ?? "(production)",
       method: request.method,
       rawPath: request.path,
     });
@@ -549,6 +562,7 @@ async function handleHttpRequest(
         account.accountId,
         channelName,
         channelRequest,
+        endpointId,
       );
     } catch (err) {
       logError("Webhook agent load failed", {
@@ -573,6 +587,19 @@ async function handleHttpRequest(
       // not take this request — a different message from nobody declaring it.
       return integrationNotConfigured(
         holder.configured ? `Webhook ${channelName}` : channelName,
+      );
+    }
+    if (holder.kind === "unknown-stage") {
+      logWarn("Webhook stage endpoint not found", {
+        accountId: account.accountId,
+        channel: channelName,
+        endpointId: endpointId,
+      });
+
+      return errorResponse(
+        404,
+        `No stage of this account is deployed at ${endpointId}. Re-copy the webhook URL that broods printed for the stage.`,
+        { code: "unknown_webhook_stage" },
       );
     }
     if (holder.kind === "unverified") {
@@ -775,18 +802,29 @@ async function findChannelCredentialHolder(
   accountId: string,
   channelName: string,
   request: ChannelRequest,
+  endpointId?: string,
 ): Promise<ChannelCredentialHolder> {
   let listed: AgentRecord[];
   try {
-    listed = await context.agentLister(accountId);
+    // A stage-scoped URL narrows the scan to that stage, so a sibling stage
+    // holding the same provider credentials is never a candidate.
+    listed = endpointId
+      ? await context.stageAgentLister(accountId, endpointId)
+      : await context.agentLister(accountId);
   } catch (err) {
     logWarn("Channel credential holder lookup failed", {
       accountId: accountId,
       channel: channelName,
+      endpointId: endpointId,
       error: err instanceof Error ? err.message : String(err),
     });
 
     return { kind: "unavailable" };
+  }
+  // A stage URL that resolves to nothing named a stage of another account, or
+  // one that is gone. Say that, rather than reporting the channel unconfigured.
+  if (endpointId && listed.length === 0) {
+    return { kind: "unknown-stage" };
   }
   // Cap the agents that actually configure this channel, not the raw list — an
   // account whose 30th agent owns the Slack app must still be reachable. Sort
@@ -931,6 +969,7 @@ type ChannelTarget =
 type ChannelCredentialHolder =
   | { kind: "holder"; agent: AgentRecord }
   | { kind: "unconfigured"; configured: boolean }
+  | { kind: "unknown-stage" }
   | { kind: "unverified" }
   | { kind: "unavailable" };
 
@@ -1970,7 +2009,9 @@ function parseAsyncToolCompletionPayload(
     accountId: account.accountId,
     resultId: decodeURIComponent(rawResultId),
     status: record.status,
-    ...(record.response !== undefined ? { response: record.response } : {}),
+    ...(record.response !== undefined
+      ? { response: record.response as JSONValue }
+      : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
@@ -2011,13 +2052,50 @@ function parseSandboxJobCompletionPayload(
     resultId: decodeURIComponent(rawResultId),
     token: token,
     status: record.status,
-    ...(record.response !== undefined ? { response: record.response } : {}),
+    ...(record.response !== undefined
+      ? { response: record.response as JSONValue }
+      : {}),
     ...(typeof record.error === "string" ? { error: record.error } : {}),
   };
 }
 
 function isObservabilityScopePath(rawPath: string): boolean {
   return rawPath === "/v1/internal/observability-scope";
+}
+
+// `endpointId` absent means the bare production URL, which scans the account.
+interface WebhookRoute {
+  accountId: string;
+  channelName: string;
+  endpointId?: string;
+}
+
+/**
+ * Match either webhook shape. The `dev` marker keeps the stage form at four
+ * segments, so the retired three-segment agent form still falls through to its
+ * own 404 instead of being read as a stage id.
+ */
+function matchWebhookPath(rawPath: string): WebhookRoute | null {
+  const stageMatch = rawPath.match(
+    /^\/webhooks\/([^/]+)\/dev\/([^/]+)\/([^/]+)$/,
+  );
+  if (stageMatch?.[1] && stageMatch[2] && stageMatch[3]) {
+    return {
+      accountId: decodeURIComponent(stageMatch[1]),
+      channelName: decodeURIComponent(stageMatch[3]),
+      endpointId: decodeURIComponent(stageMatch[2]),
+    };
+  }
+
+  const accountMatch = rawPath.match(/^\/webhooks\/([^/]+)\/([^/]+)$/);
+  if (accountMatch?.[1] && accountMatch[2]) {
+    return {
+      accountId: decodeURIComponent(accountMatch[1]),
+      channelName: decodeURIComponent(accountMatch[2]),
+    };
+  }
+
+  return null;
 }
 
 function unauthorizedResponse(): Response {

@@ -118,6 +118,17 @@ test("client resolves generated channel webhook paths against its configured hos
   ).toBe("https://hooks.example.com/webhooks/account_1/github");
 });
 
+test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
+  const client = new BroodsClient({ host: "hooks.example.com" });
+
+  expect(client.accountWebhookUrl("account_1", "zalo")).toBe(
+    "https://hooks.example.com/webhooks/account_1/zalo",
+  );
+  expect(client.stageWebhookUrl("account_1", "stage-abcd1234", "zalo")).toBe(
+    "https://hooks.example.com/webhooks/account_1/dev/stage-abcd1234/zalo",
+  );
+});
+
 test("client reads apiKey from the shared SDK environment variable", async () => {
   process.env.BROODS_API_KEY = "env-key";
   const headers: HeadersInit[] = [];
