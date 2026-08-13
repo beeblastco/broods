@@ -6,6 +6,7 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { logError, logInfo } from "../../shared/log.ts";
 import type { Session } from "../session.ts";
+import { toToolResultOutput } from "./utils.ts";
 
 export type LoadSkillPrompt = (
   skillPath: string,
@@ -44,7 +45,8 @@ export default function loadSkillTool(
         required: ["path"],
         additionalProperties: false,
       } as const),
-      execute: async function(input) {
+      toModelOutput: toToolResultOutput,
+      execute: async function (input) {
         const skillPath = (input as { path?: unknown }).path;
         const resources = (input as { resources?: unknown }).resources;
         if (typeof skillPath !== "string") {
@@ -75,10 +77,7 @@ export default function loadSkillTool(
             ? `. Skill files are staged for sandbox execution at ${result.stagedPath}.`
             : ". No sandbox staging path is available for bundled helper files in this turn.";
 
-          return {
-            type: "text",
-            value: `Loaded skill ${result.path}: ${result.loadedPaths.join(", ")}${staged}`,
-          };
+          return `Loaded skill ${result.path}: ${result.loadedPaths.join(", ")}${staged}`;
         } catch (err) {
           logError("load_skill failed", {
             accountId: session.accountId,

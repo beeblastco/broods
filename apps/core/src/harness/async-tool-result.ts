@@ -1,5 +1,6 @@
 /** Async tool result, fan-in, callback, delivery, and observed state in Convex. */
 
+import type { JSONValue } from "ai";
 import type { ChannelIdentity } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 export type AsyncToolStatus = "processing" | "completed" | "failed";
@@ -27,7 +28,7 @@ export interface AsyncToolResultRecord {
   status: AsyncToolStatus;
   createdAt: string;
   updatedAt: string;
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
   delivery?: AsyncToolDelivery;
   observed?: boolean;
@@ -111,7 +112,7 @@ export async function markAsyncToolResultObserved(
 }
 export async function markAsyncToolResultCompleted(options: {
   resultId: string;
-  response: unknown;
+  response?: JSONValue;
 }): Promise<void> {
   await runtime.mutate("updateAsyncToolResult", {
     resultId: options.resultId,
@@ -134,7 +135,7 @@ export async function markAsyncToolResultFailed(options: {
 export function settleAsyncToolResultFromCallback(options: {
   resultId: string;
   status: "completed" | "failed";
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
 }): Promise<AsyncToolResultRecord | null> {
   return runtime.mutate("updateAsyncToolResult", {
