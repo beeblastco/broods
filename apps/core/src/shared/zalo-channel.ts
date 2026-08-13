@@ -23,17 +23,11 @@ const ZALO_MESSAGE_EVENTS = new Set([
   "message.sticker.received",
   "message.voice.received",
 ]);
-// Zalo names no media type for a voice note, so it is read off the URL. An
-// unknown extension degrades to a link rather than guessing wrong at the model.
-const ZALO_VOICE_MEDIA_TYPES: Record<string, string> = {
-  aac: "audio/aac",
-  m4a: "audio/mp4",
-  mp3: "audio/mpeg",
-  mp4: "audio/mp4",
-  ogg: "audio/ogg",
-  wav: "audio/wav",
-  webm: "audio/webm",
-};
+// Zalo names no media type for a voice note, and .aac is the only audio format
+// the Bot API deals in. Anything else degrades to a link rather than telling the
+// model a media type Zalo never sent.
+const ZALO_VOICE_EXTENSION = ".aac";
+const ZALO_VOICE_MEDIA_TYPE = "audio/aac";
 
 interface ZaloWebhookEnvelope {
   ok?: boolean;
@@ -298,9 +292,9 @@ function zaloMissingContentReason(eventName: string): string {
 }
 
 function zaloVoiceMediaType(url: string): string | undefined {
-  const extension = new URL(url).pathname.split(".").pop()?.toLowerCase();
-
-  return extension ? ZALO_VOICE_MEDIA_TYPES[extension] : undefined;
+  return new URL(url).pathname.toLowerCase().endsWith(ZALO_VOICE_EXTENSION)
+    ? ZALO_VOICE_MEDIA_TYPE
+    : undefined;
 }
 
 function ignoreZaloUpdate(

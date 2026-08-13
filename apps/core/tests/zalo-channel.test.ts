@@ -261,8 +261,20 @@ describe("zalo channel adapter", () => {
     ]);
   });
 
-  it("falls back to a link when a voice note has no known media type", async () => {
+  it("falls back to a link for any voice note that is not .aac", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret");
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.voice.received",
+          media: { voice_url: "https://zalo.example/note.mp3" },
+        }),
+      ),
+    ).toEqual([
+      { type: "text", text: "Voice message: https://zalo.example/note.mp3" },
+    ]);
 
     expect(
       await parsedContent(
