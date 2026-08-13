@@ -16,10 +16,23 @@ import type {
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-interface GitHubRepository {
-  full_name?: string;
-  name?: string;
-  owner?: { login?: string };
+const GITHUB_API_VERSION = "2022-11-28";
+const MAX_CONTEXT_BODY_CHARS = 8000;
+const MAX_CONTEXT_COMMENTS = 50;
+const MAX_CONTEXT_COMMENT_CHARS = 2000;
+
+interface GitHubCommentRef {
+  id?: number;
+  in_reply_to_id?: number;
+  body?: string | null;
+  created_at?: string;
+  path?: string;
+  line?: number | null;
+  original_line?: number | null;
+  user?: {
+    login?: string;
+    type?: string;
+  };
 }
 
 interface GitHubIssueRef {
@@ -39,32 +52,10 @@ interface GitHubPullRequestRef {
   state?: string;
 }
 
-interface GitHubCommentRef {
-  id?: number;
-  in_reply_to_id?: number;
-  body?: string | null;
-  created_at?: string;
-  path?: string;
-  line?: number | null;
-  original_line?: number | null;
-  user?: {
-    login?: string;
-    type?: string;
-  };
-}
-
-interface GitHubWebhookPayload {
-  action?: string;
-  repository?: GitHubRepository;
-  issue?: GitHubIssueRef;
-  pull_request?: GitHubPullRequestRef;
-  comment?: GitHubCommentRef;
-  assignee?: { login?: string; type?: string };
-  installation?: { id?: number };
-  sender?: {
-    login?: string;
-    type?: string;
-  };
+interface GitHubRepository {
+  full_name?: string;
+  name?: string;
+  owner?: { login?: string };
 }
 
 export interface GitHubSource {
@@ -80,10 +71,19 @@ export interface GitHubSource {
     "issue" | "issue_comment" | "pull_request" | "pull_request_review_comment";
 }
 
-const GITHUB_API_VERSION = "2022-11-28";
-const MAX_CONTEXT_COMMENTS = 50;
-const MAX_CONTEXT_BODY_CHARS = 8000;
-const MAX_CONTEXT_COMMENT_CHARS = 2000;
+interface GitHubWebhookPayload {
+  action?: string;
+  repository?: GitHubRepository;
+  issue?: GitHubIssueRef;
+  pull_request?: GitHubPullRequestRef;
+  comment?: GitHubCommentRef;
+  assignee?: { login?: string; type?: string };
+  installation?: { id?: number };
+  sender?: {
+    login?: string;
+    type?: string;
+  };
+}
 
 class BroodsGitHubAdapter extends GitHubAdapter {
   verifyWebhookSignature(
@@ -233,6 +233,565 @@ export function createGitHubChannel(
   };
 }
 
+async function buildCommentMessage(options: {
+  payload: GitHubWebhookPayload;
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  };
+  resource: "issue" | "pr";
+  owner: string;
+  repo: string;
+  repoFullName: string;
+  installationId: number;
+  issueNumber: number;
+  commentId: number;
+  threadId: string;
+  eventId: string;
+  body: string;
+  target: "issue_comment";
+}): Promise<ChannelParseResult> {
+  const contextEvent = await hydrateGitHubThreadContext({
+    apiUrl: options.options.apiUrl,
+    appId: options.options.appId,
+    privateKey: options.options.privateKey,
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    resource: options.resource,
+    number: options.issueNumber,
+    currentCommentId: options.commentId,
+    currentCommentCreatedAt: options.payload.comment?.created_at,
+  });
+  const events: ChannelIngressEvent[] = [
+    ...(contextEvent ? [contextEvent] : []),
+    { role: "user", content: [{ type: "text", text: options.body }] },
+  ];
+  const source: GitHubSource = {
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    threadId: options.threadId,
+    messageId: String(options.commentId),
+    issueNumber: options.issueNumber,
+    commentId: options.commentId,
+    target: options.target,
+  };
+
+  return {
+    kind: "message",
+    ack: { statusCode: 200 },
+    message: {
+      eventId: options.eventId,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:${options.resource}:${options.issueNumber}`,
+      channelName: "github",
+      content: [{ type: "text", text: options.body }],
+      events: events,
+      identity: githubIdentity(
+        options.repoFullName,
+        options.issueNumber,
+        options.payload.sender,
+      ),
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
+    },
+  };
+}
+
+async function buildReviewCommentMessage(options: {
+  payload: GitHubWebhookPayload;
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  };
+  owner: string;
+  repo: string;
+  repoFullName: string;
+  installationId: number;
+  pullNumber: number;
+  commentId: number;
+  threadId: string;
+  eventId: string;
+  body: string;
+}): Promise<ChannelParseResult> {
+  const contextEvent = await hydrateGitHubThreadContext({
+    apiUrl: options.options.apiUrl,
+    appId: options.options.appId,
+    privateKey: options.options.privateKey,
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    resource: "pr",
+    number: options.pullNumber,
+    currentCommentId: options.commentId,
+    currentCommentCreatedAt: options.payload.comment?.created_at,
+    includeReviewComments: true,
+  });
+  const events: ChannelIngressEvent[] = [
+    ...(contextEvent ? [contextEvent] : []),
+    { role: "user", content: [{ type: "text", text: options.body }] },
+  ];
+  const source: GitHubSource = {
+    owner: options.owner,
+    repo: options.repo,
+    installationId: options.installationId,
+    threadId: options.threadId,
+    messageId: String(options.commentId),
+    issueNumber: options.pullNumber,
+    pullNumber: options.pullNumber,
+    commentId: options.commentId,
+    target: "pull_request_review_comment",
+  };
+
+  return {
+    kind: "message",
+    ack: { statusCode: 200 },
+    message: {
+      eventId: options.eventId,
+      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:pr:${options.pullNumber}`,
+      channelName: "github",
+      content: [{ type: "text", text: options.body }],
+      events: events,
+      identity: githubIdentity(
+        options.repoFullName,
+        options.pullNumber,
+        options.payload.sender,
+      ),
+      // Spread so the typed source reaches a Record<string, unknown> field.
+      source: { ...source },
+    },
+  };
+}
+
+async function createGitHubRestClient(options: {
+  apiUrl?: string;
+  appId: string;
+  privateKey: string;
+  installationId: number;
+}) {
+  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(
+    /\/+$/,
+    "",
+  );
+  const appJwt = createGitHubAppJwt(options.appId, options.privateKey);
+  const tokenResponse = await fetch(
+    `${baseApiUrl}/app/installations/${options.installationId}/access_tokens`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${appJwt}`,
+        "X-GitHub-Api-Version": GITHUB_API_VERSION,
+      },
+    },
+  );
+  if (!tokenResponse.ok) {
+    throw new Error(
+      `installation token request failed (${tokenResponse.status})`,
+    );
+  }
+  const tokenJson = (await tokenResponse.json()) as { token?: unknown };
+  if (typeof tokenJson.token !== "string" || tokenJson.token.length === 0) {
+    throw new Error("installation token response did not include a token");
+  }
+
+  return {
+    get: async function<T>(path: string): Promise<T> {
+      const response = await fetch(`${baseApiUrl}${path}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${tokenJson.token}`,
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`GitHub GET ${path} failed (${response.status})`);
+      }
+
+      return (await response.json()) as T;
+    },
+  };
+}
+
+async function hydrateGitHubThreadContext(options: {
+  apiUrl?: string;
+  appId: string;
+  privateKey: string;
+  owner: string;
+  repo: string;
+  installationId: number;
+  resource: "issue" | "pr";
+  number: number;
+  currentCommentId: number;
+  currentCommentCreatedAt?: string;
+  includeReviewComments?: boolean;
+}): Promise<ChannelIngressEvent | null> {
+  try {
+    const client = await createGitHubRestClient(options);
+    const thread =
+      options.resource === "issue"
+        ? await client.get<GitHubIssueRef>(
+            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`,
+          )
+        : await client.get<GitHubPullRequestRef>(
+            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`,
+          );
+    const issueComments = await client.get<GitHubCommentRef[]>(
+      `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}/comments?per_page=100`,
+    );
+    const reviewComments = options.includeReviewComments
+      ? await client.get<GitHubCommentRef[]>(
+          `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
+        )
+      : [];
+
+    const content = formatGitHubThreadContext({
+      owner: options.owner,
+      repo: options.repo,
+      resource: options.resource,
+      number: options.number,
+      thread: thread,
+      issueComments: issueComments,
+      reviewComments: reviewComments,
+      currentCommentId: options.currentCommentId,
+      currentCommentCreatedAt: options.currentCommentCreatedAt,
+    });
+
+    return content ? { role: "system", content: content, persist: false } : null;
+  } catch (error) {
+    logWarn(
+      "GitHub thread context hydration failed; continuing with current comment only",
+      {
+        owner: options.owner,
+        repo: options.repo,
+        resource: options.resource,
+        number: options.number,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+
+    return null;
+  }
+}
+
+function base64UrlEncode(value: string | Buffer): string {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/=/g, "")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_");
+}
+
+function createGitHubActions(
+  appId: string,
+  privateKey: string,
+  source: GitHubSource,
+  apiUrl?: string,
+): ChannelActions {
+  const github = new GitHubAdapter({
+    apiUrl: apiUrl,
+    appId: appId,
+    installationId: source.installationId,
+    privateKey: normalizePrivateKey(privateKey),
+    logger: new ConsoleLogger("error").child("github"),
+    webhookSecret: "not-used-for-outbound-actions",
+  });
+
+  return {
+    sendText: async function(text) {
+      await github.postMessage(source.threadId, { markdown: text });
+    },
+
+    sendTyping: async function() {
+      await github.startTyping(source.threadId);
+    },
+
+    reactToMessage: async function() {
+      if (!source.messageId) {
+        return;
+      }
+      await github.addReaction(source.threadId, source.messageId, "eyes");
+    },
+
+    stream: async (textStream, options) => {
+      const result = await github.stream(
+        source.threadId,
+        fromFullStream(textStream),
+        options,
+      );
+
+      return result.id;
+    },
+  };
+}
+
+function createGitHubAppJwt(appId: string, privateKey: string): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64UrlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = base64UrlEncode(
+    JSON.stringify({
+      iat: now - 60,
+      exp: now + 9 * 60,
+      iss: appId,
+    }),
+  );
+  const unsigned = `${header}.${payload}`;
+  const signature = createSign("RSA-SHA256")
+    .update(unsigned)
+    .end()
+    .sign(normalizePrivateKey(privateKey));
+
+  return `${unsigned}.${base64UrlEncode(signature)}`;
+}
+
+function formatGitHubThreadContext(options: {
+  owner: string;
+  repo: string;
+  resource: "issue" | "pr";
+  number: number;
+  thread: GitHubIssueRef | GitHubPullRequestRef;
+  issueComments: GitHubCommentRef[];
+  reviewComments: GitHubCommentRef[];
+  currentCommentId: number;
+  currentCommentCreatedAt?: string;
+}): string {
+  const title = safeText(options.thread.title) || "(untitled)";
+  const body = truncateText(
+    safeText(options.thread.body),
+    MAX_CONTEXT_BODY_CHARS,
+  );
+  const comments = [
+    ...options.issueComments.map((comment) => ({
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.created_at,
+      author: comment.user?.login,
+      label: "comment",
+    })),
+    ...options.reviewComments.map((comment) => ({
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.created_at,
+      author: comment.user?.login,
+      label: formatReviewCommentLabel(comment),
+    })),
+  ]
+    .filter((comment) =>
+      isPriorGitHubComment(
+        comment,
+        options.currentCommentId,
+        options.currentCommentCreatedAt,
+      ),
+    )
+    .sort((left, right) =>
+      (left.createdAt ?? "").localeCompare(right.createdAt ?? ""),
+    )
+    .slice(-MAX_CONTEXT_COMMENTS);
+
+  const lines = [
+    "<github_thread_context>",
+    `Repository: ${options.owner}/${options.repo}`,
+    `Thread: ${options.resource === "issue" ? "Issue" : "Pull request"} #${options.number}`,
+    `Title: ${title}`,
+    `State: ${safeText(options.thread.state) || "unknown"}`,
+    `Author: ${safeText(options.thread.user?.login) || "unknown"}`,
+    "",
+    "Body:",
+    body || "(empty)",
+  ];
+
+  if (comments.length > 0) {
+    lines.push(
+      "",
+      `Prior comments (${comments.length}${comments.length === MAX_CONTEXT_COMMENTS ? " most recent" : ""}):`,
+    );
+    for (const comment of comments) {
+      lines.push(
+        "",
+        `- ${comment.label} by ${safeText(comment.author) || "unknown"} at ${safeText(comment.createdAt) || "unknown time"}:`,
+        truncateText(safeText(comment.body), MAX_CONTEXT_COMMENT_CHARS) ||
+          "(empty)",
+      );
+    }
+  } else {
+    lines.push("", "Prior comments: (none)");
+  }
+
+  lines.push("</github_thread_context>");
+
+  return lines.join("\n");
+}
+
+function formatReviewCommentLabel(comment: GitHubCommentRef): string {
+  const path = safeText(comment.path);
+  const line = comment.line ?? comment.original_line;
+
+  return path
+    ? `review comment on ${path}${line ? `:${line}` : ""}`
+    : "review comment";
+}
+
+function formatTitleAndBody(
+  prefix: string,
+  title: string | undefined,
+  body: string | null | undefined,
+): string {
+  const lines = [`${prefix}: ${title ?? "(untitled)"}`];
+  if (body?.trim()) {
+    lines.push("");
+    lines.push(body.trim());
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * The repository is the channel and an issue or PR is a thread in it, so a
+ * policy can scope the agent per repo the same way it scopes per chat channel.
+ */
+function githubIdentity(
+  repoFullName: string,
+  resourceNumber: number,
+  sender: GitHubWebhookPayload["sender"],
+): ChannelIdentity {
+  const owner = repoFullName.split("/")[0];
+
+  return {
+    ...(owner ? { workspaceRef: owner } : {}),
+    channelId: repoFullName,
+    threadId: String(resourceNumber),
+    ...(sender?.login
+      ? { actorId: sender.login, actorName: sender.login }
+      : {}),
+  };
+}
+
+function isBotActor(type: string | undefined): boolean {
+  return type === "Bot";
+}
+
+function isBotAssignee(
+  payload: GitHubWebhookPayload,
+  botUserName: string | undefined,
+): boolean {
+  if (!botUserName) return false;
+  const assignee = payload.assignee;
+  if (!assignee?.login) return false;
+  if (isBotActor(assignee.type)) return false;
+
+  return assignee.login.toLowerCase() === botUserName.toLowerCase();
+}
+
+function isGitHubTarget(value: unknown): value is GitHubSource["target"] {
+  return (
+    value === "issue" ||
+    value === "issue_comment" ||
+    value === "pull_request" ||
+    value === "pull_request_review_comment"
+  );
+}
+
+function isPriorGitHubComment(
+  comment: { id?: number; createdAt?: string },
+  currentCommentId: number,
+  currentCommentCreatedAt?: string,
+): boolean {
+  if (comment.id === currentCommentId) {
+    return false;
+  }
+  if (currentCommentCreatedAt && comment.createdAt) {
+    return comment.createdAt < currentCommentCreatedAt;
+  }
+
+  return true;
+}
+
+function isRelevantAction(action: string | undefined): boolean {
+  return (
+    action === "opened" ||
+    action === "edited" ||
+    action === "reopened" ||
+    action === "created"
+  );
+}
+
+function normalizePrivateKey(value: string): string {
+  return value.includes("BEGIN")
+    ? value
+    : Buffer.from(value, "base64").toString("utf8");
+}
+
+function parseIssueCommentEvent(
+  github: GitHubAdapter,
+  payload: GitHubWebhookPayload,
+  deliveryId: string,
+  owner: string,
+  repo: string,
+  repoFullName: string,
+  options: {
+    apiUrl?: string;
+    appId: string;
+    privateKey: string;
+    botUserName?: string;
+  },
+): Promise<ChannelParseResult> | ChannelParseResult {
+  if (!isRelevantAction(payload.action)) {
+    return { kind: "ignore" };
+  }
+
+  if (
+    isBotActor(payload.comment?.user?.type) ||
+    isBotActor(payload.sender?.type)
+  ) {
+    return { kind: "ignore" };
+  }
+
+  const issueNumber = payload.issue?.number;
+  const installationId = payload.installation?.id;
+  const body = payload.comment?.body?.trim();
+  const commentId = payload.comment?.id;
+  if (!issueNumber || !installationId || !body || !commentId) {
+    return { kind: "ignore" };
+  }
+
+  if (
+    options.botUserName &&
+    !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)
+  ) {
+    return { kind: "ignore" };
+  }
+
+  const resource = payload.issue?.pull_request ? "pr" : "issue";
+  const thread: GitHubThreadId = {
+    owner: owner,
+    repo: repo,
+    prNumber: issueNumber,
+    type: resource === "issue" ? "issue" : "pr",
+  };
+  const threadId = github.encodeThreadId(thread);
+
+  return buildCommentMessage({
+    payload: payload,
+    options: options,
+    resource: resource,
+    owner: owner,
+    repo: repo,
+    repoFullName: repoFullName,
+    installationId: installationId,
+    issueNumber: issueNumber,
+    commentId: commentId,
+    threadId: threadId,
+    eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
+    body: body,
+    target: "issue_comment",
+  });
+}
+
 function parseIssuesEvent(
   github: GitHubAdapter,
   payload: GitHubWebhookPayload,
@@ -340,139 +899,6 @@ function parseIssuesEvent(
         },
       ],
       identity: githubIdentity(repoFullName, issueNumber, payload.sender),
-      // Spread so the typed source reaches a Record<string, unknown> field.
-      source: { ...source },
-    },
-  };
-}
-
-function parseIssueCommentEvent(
-  github: GitHubAdapter,
-  payload: GitHubWebhookPayload,
-  deliveryId: string,
-  owner: string,
-  repo: string,
-  repoFullName: string,
-  options: {
-    apiUrl?: string;
-    appId: string;
-    privateKey: string;
-    botUserName?: string;
-  },
-): Promise<ChannelParseResult> | ChannelParseResult {
-  if (!isRelevantAction(payload.action)) {
-    return { kind: "ignore" };
-  }
-
-  if (
-    isBotActor(payload.comment?.user?.type) ||
-    isBotActor(payload.sender?.type)
-  ) {
-    return { kind: "ignore" };
-  }
-
-  const issueNumber = payload.issue?.number;
-  const installationId = payload.installation?.id;
-  const body = payload.comment?.body?.trim();
-  const commentId = payload.comment?.id;
-  if (!issueNumber || !installationId || !body || !commentId) {
-    return { kind: "ignore" };
-  }
-
-  if (
-    options.botUserName &&
-    !body.toLowerCase().includes(`@${options.botUserName.toLowerCase()}`)
-  ) {
-    return { kind: "ignore" };
-  }
-
-  const resource = payload.issue?.pull_request ? "pr" : "issue";
-  const thread: GitHubThreadId = {
-    owner: owner,
-    repo: repo,
-    prNumber: issueNumber,
-    type: resource === "issue" ? "issue" : "pr",
-  };
-  const threadId = github.encodeThreadId(thread);
-
-  return buildCommentMessage({
-    payload: payload,
-    options: options,
-    resource: resource,
-    owner: owner,
-    repo: repo,
-    repoFullName: repoFullName,
-    installationId: installationId,
-    issueNumber: issueNumber,
-    commentId: commentId,
-    threadId: threadId,
-    eventId: `${GITHUB_INTEGRATION_PREFIX}${deliveryId}`,
-    body: body,
-    target: "issue_comment",
-  });
-}
-
-async function buildCommentMessage(options: {
-  payload: GitHubWebhookPayload;
-  options: {
-    apiUrl?: string;
-    appId: string;
-    privateKey: string;
-    botUserName?: string;
-  };
-  resource: "issue" | "pr";
-  owner: string;
-  repo: string;
-  repoFullName: string;
-  installationId: number;
-  issueNumber: number;
-  commentId: number;
-  threadId: string;
-  eventId: string;
-  body: string;
-  target: "issue_comment";
-}): Promise<ChannelParseResult> {
-  const contextEvent = await hydrateGitHubThreadContext({
-    apiUrl: options.options.apiUrl,
-    appId: options.options.appId,
-    privateKey: options.options.privateKey,
-    owner: options.owner,
-    repo: options.repo,
-    installationId: options.installationId,
-    resource: options.resource,
-    number: options.issueNumber,
-    currentCommentId: options.commentId,
-    currentCommentCreatedAt: options.payload.comment?.created_at,
-  });
-  const events: ChannelIngressEvent[] = [
-    ...(contextEvent ? [contextEvent] : []),
-    { role: "user", content: [{ type: "text", text: options.body }] },
-  ];
-  const source: GitHubSource = {
-    owner: options.owner,
-    repo: options.repo,
-    installationId: options.installationId,
-    threadId: options.threadId,
-    messageId: String(options.commentId),
-    issueNumber: options.issueNumber,
-    commentId: options.commentId,
-    target: options.target,
-  };
-
-  return {
-    kind: "message",
-    ack: { statusCode: 200 },
-    message: {
-      eventId: options.eventId,
-      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:${options.resource}:${options.issueNumber}`,
-      channelName: "github",
-      content: [{ type: "text", text: options.body }],
-      events: events,
-      identity: githubIdentity(
-        options.repoFullName,
-        options.issueNumber,
-        options.payload.sender,
-      ),
       // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
     },
@@ -656,92 +1082,8 @@ function parseReviewCommentEvent(
   });
 }
 
-async function buildReviewCommentMessage(options: {
-  payload: GitHubWebhookPayload;
-  options: {
-    apiUrl?: string;
-    appId: string;
-    privateKey: string;
-    botUserName?: string;
-  };
-  owner: string;
-  repo: string;
-  repoFullName: string;
-  installationId: number;
-  pullNumber: number;
-  commentId: number;
-  threadId: string;
-  eventId: string;
-  body: string;
-}): Promise<ChannelParseResult> {
-  const contextEvent = await hydrateGitHubThreadContext({
-    apiUrl: options.options.apiUrl,
-    appId: options.options.appId,
-    privateKey: options.options.privateKey,
-    owner: options.owner,
-    repo: options.repo,
-    installationId: options.installationId,
-    resource: "pr",
-    number: options.pullNumber,
-    currentCommentId: options.commentId,
-    currentCommentCreatedAt: options.payload.comment?.created_at,
-    includeReviewComments: true,
-  });
-  const events: ChannelIngressEvent[] = [
-    ...(contextEvent ? [contextEvent] : []),
-    { role: "user", content: [{ type: "text", text: options.body }] },
-  ];
-  const source: GitHubSource = {
-    owner: options.owner,
-    repo: options.repo,
-    installationId: options.installationId,
-    threadId: options.threadId,
-    messageId: String(options.commentId),
-    issueNumber: options.pullNumber,
-    pullNumber: options.pullNumber,
-    commentId: options.commentId,
-    target: "pull_request_review_comment",
-  };
-
-  return {
-    kind: "message",
-    ack: { statusCode: 200 },
-    message: {
-      eventId: options.eventId,
-      conversationKey: `${GITHUB_INTEGRATION_PREFIX}${options.repoFullName}:pr:${options.pullNumber}`,
-      channelName: "github",
-      content: [{ type: "text", text: options.body }],
-      events: events,
-      identity: githubIdentity(
-        options.repoFullName,
-        options.pullNumber,
-        options.payload.sender,
-      ),
-      // Spread so the typed source reaches a Record<string, unknown> field.
-      source: { ...source },
-    },
-  };
-}
-
-/**
- * The repository is the channel and an issue or PR is a thread in it, so a
- * policy can scope the agent per repo the same way it scopes per chat channel.
- */
-function githubIdentity(
-  repoFullName: string,
-  resourceNumber: number,
-  sender: GitHubWebhookPayload["sender"],
-): ChannelIdentity {
-  const owner = repoFullName.split("/")[0];
-
-  return {
-    ...(owner ? { workspaceRef: owner } : {}),
-    channelId: repoFullName,
-    threadId: String(resourceNumber),
-    ...(sender?.login
-      ? { actorId: sender.login, actorName: sender.login }
-      : {}),
-  };
+function safeText(value: string | null | undefined): string {
+  return value?.trim() ?? "";
 }
 
 function toGitHubSource(source: Record<string, unknown>): GitHubSource {
@@ -772,350 +1114,8 @@ function toGitHubSource(source: Record<string, unknown>): GitHubSource {
   };
 }
 
-function isRelevantAction(action: string | undefined): boolean {
-  return (
-    action === "opened" ||
-    action === "edited" ||
-    action === "reopened" ||
-    action === "created"
-  );
-}
-
-function isBotAssignee(
-  payload: GitHubWebhookPayload,
-  botUserName: string | undefined,
-): boolean {
-  if (!botUserName) return false;
-  const assignee = payload.assignee;
-  if (!assignee?.login) return false;
-  if (isBotActor(assignee.type)) return false;
-
-  return assignee.login.toLowerCase() === botUserName.toLowerCase();
-}
-
-function isBotActor(type: string | undefined): boolean {
-  return type === "Bot";
-}
-
-function isGitHubTarget(value: unknown): value is GitHubSource["target"] {
-  return (
-    value === "issue" ||
-    value === "issue_comment" ||
-    value === "pull_request" ||
-    value === "pull_request_review_comment"
-  );
-}
-
-async function hydrateGitHubThreadContext(options: {
-  apiUrl?: string;
-  appId: string;
-  privateKey: string;
-  owner: string;
-  repo: string;
-  installationId: number;
-  resource: "issue" | "pr";
-  number: number;
-  currentCommentId: number;
-  currentCommentCreatedAt?: string;
-  includeReviewComments?: boolean;
-}): Promise<ChannelIngressEvent | null> {
-  try {
-    const client = await createGitHubRestClient(options);
-    const thread =
-      options.resource === "issue"
-        ? await client.get<GitHubIssueRef>(
-            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}`,
-          )
-        : await client.get<GitHubPullRequestRef>(
-            `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}`,
-          );
-    const issueComments = await client.get<GitHubCommentRef[]>(
-      `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/issues/${options.number}/comments?per_page=100`,
-    );
-    const reviewComments = options.includeReviewComments
-      ? await client.get<GitHubCommentRef[]>(
-          `/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/pulls/${options.number}/comments?per_page=100`,
-        )
-      : [];
-
-    const content = formatGitHubThreadContext({
-      owner: options.owner,
-      repo: options.repo,
-      resource: options.resource,
-      number: options.number,
-      thread: thread,
-      issueComments: issueComments,
-      reviewComments: reviewComments,
-      currentCommentId: options.currentCommentId,
-      currentCommentCreatedAt: options.currentCommentCreatedAt,
-    });
-
-    return content ? { role: "system", content: content, persist: false } : null;
-  } catch (error) {
-    logWarn(
-      "GitHub thread context hydration failed; continuing with current comment only",
-      {
-        owner: options.owner,
-        repo: options.repo,
-        resource: options.resource,
-        number: options.number,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    );
-
-    return null;
-  }
-}
-
-async function createGitHubRestClient(options: {
-  apiUrl?: string;
-  appId: string;
-  privateKey: string;
-  installationId: number;
-}) {
-  const baseApiUrl = (options.apiUrl ?? "https://api.github.com").replace(
-    /\/+$/,
-    "",
-  );
-  const appJwt = createGitHubAppJwt(options.appId, options.privateKey);
-  const tokenResponse = await fetch(
-    `${baseApiUrl}/app/installations/${options.installationId}/access_tokens`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${appJwt}`,
-        "X-GitHub-Api-Version": GITHUB_API_VERSION,
-      },
-    },
-  );
-  if (!tokenResponse.ok) {
-    throw new Error(
-      `installation token request failed (${tokenResponse.status})`,
-    );
-  }
-  const tokenJson = (await tokenResponse.json()) as { token?: unknown };
-  if (typeof tokenJson.token !== "string" || tokenJson.token.length === 0) {
-    throw new Error("installation token response did not include a token");
-  }
-
-  return {
-    get: async function<T>(path: string): Promise<T> {
-      const response = await fetch(`${baseApiUrl}${path}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${tokenJson.token}`,
-          "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`GitHub GET ${path} failed (${response.status})`);
-      }
-
-      return (await response.json()) as T;
-    },
-  };
-}
-
-function formatGitHubThreadContext(options: {
-  owner: string;
-  repo: string;
-  resource: "issue" | "pr";
-  number: number;
-  thread: GitHubIssueRef | GitHubPullRequestRef;
-  issueComments: GitHubCommentRef[];
-  reviewComments: GitHubCommentRef[];
-  currentCommentId: number;
-  currentCommentCreatedAt?: string;
-}): string {
-  const title = safeText(options.thread.title) || "(untitled)";
-  const body = truncateText(
-    safeText(options.thread.body),
-    MAX_CONTEXT_BODY_CHARS,
-  );
-  const comments = [
-    ...options.issueComments.map((comment) => ({
-      id: comment.id,
-      body: comment.body,
-      createdAt: comment.created_at,
-      author: comment.user?.login,
-      label: "comment",
-    })),
-    ...options.reviewComments.map((comment) => ({
-      id: comment.id,
-      body: comment.body,
-      createdAt: comment.created_at,
-      author: comment.user?.login,
-      label: formatReviewCommentLabel(comment),
-    })),
-  ]
-    .filter((comment) =>
-      isPriorGitHubComment(
-        comment,
-        options.currentCommentId,
-        options.currentCommentCreatedAt,
-      ),
-    )
-    .sort((left, right) =>
-      (left.createdAt ?? "").localeCompare(right.createdAt ?? ""),
-    )
-    .slice(-MAX_CONTEXT_COMMENTS);
-
-  const lines = [
-    "<github_thread_context>",
-    `Repository: ${options.owner}/${options.repo}`,
-    `Thread: ${options.resource === "issue" ? "Issue" : "Pull request"} #${options.number}`,
-    `Title: ${title}`,
-    `State: ${safeText(options.thread.state) || "unknown"}`,
-    `Author: ${safeText(options.thread.user?.login) || "unknown"}`,
-    "",
-    "Body:",
-    body || "(empty)",
-  ];
-
-  if (comments.length > 0) {
-    lines.push(
-      "",
-      `Prior comments (${comments.length}${comments.length === MAX_CONTEXT_COMMENTS ? " most recent" : ""}):`,
-    );
-    for (const comment of comments) {
-      lines.push(
-        "",
-        `- ${comment.label} by ${safeText(comment.author) || "unknown"} at ${safeText(comment.createdAt) || "unknown time"}:`,
-        truncateText(safeText(comment.body), MAX_CONTEXT_COMMENT_CHARS) ||
-          "(empty)",
-      );
-    }
-  } else {
-    lines.push("", "Prior comments: (none)");
-  }
-
-  lines.push("</github_thread_context>");
-
-  return lines.join("\n");
-}
-
-function isPriorGitHubComment(
-  comment: { id?: number; createdAt?: string },
-  currentCommentId: number,
-  currentCommentCreatedAt?: string,
-): boolean {
-  if (comment.id === currentCommentId) {
-    return false;
-  }
-  if (currentCommentCreatedAt && comment.createdAt) {
-    return comment.createdAt < currentCommentCreatedAt;
-  }
-
-  return true;
-}
-
-function formatReviewCommentLabel(comment: GitHubCommentRef): string {
-  const path = safeText(comment.path);
-  const line = comment.line ?? comment.original_line;
-
-  return path
-    ? `review comment on ${path}${line ? `:${line}` : ""}`
-    : "review comment";
-}
-
-function createGitHubAppJwt(appId: string, privateKey: string): string {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64UrlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const payload = base64UrlEncode(
-    JSON.stringify({
-      iat: now - 60,
-      exp: now + 9 * 60,
-      iss: appId,
-    }),
-  );
-  const unsigned = `${header}.${payload}`;
-  const signature = createSign("RSA-SHA256")
-    .update(unsigned)
-    .end()
-    .sign(normalizePrivateKey(privateKey));
-
-  return `${unsigned}.${base64UrlEncode(signature)}`;
-}
-
-function base64UrlEncode(value: string | Buffer): string {
-  return Buffer.from(value)
-    .toString("base64")
-    .replace(/=/g, "")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-}
-
 function truncateText(value: string, maxChars: number): string {
   return value.length > maxChars
     ? `${value.slice(0, maxChars).trimEnd()}\n...(truncated)`
     : value;
-}
-
-function safeText(value: string | null | undefined): string {
-  return value?.trim() ?? "";
-}
-
-function formatTitleAndBody(
-  prefix: string,
-  title: string | undefined,
-  body: string | null | undefined,
-): string {
-  const lines = [`${prefix}: ${title ?? "(untitled)"}`];
-  if (body?.trim()) {
-    lines.push("");
-    lines.push(body.trim());
-  }
-
-  return lines.join("\n");
-}
-
-function createGitHubActions(
-  appId: string,
-  privateKey: string,
-  source: GitHubSource,
-  apiUrl?: string,
-): ChannelActions {
-  const github = new GitHubAdapter({
-    apiUrl: apiUrl,
-    appId: appId,
-    installationId: source.installationId,
-    privateKey: normalizePrivateKey(privateKey),
-    logger: new ConsoleLogger("error").child("github"),
-    webhookSecret: "not-used-for-outbound-actions",
-  });
-
-  return {
-    sendText: async function(text) {
-      await github.postMessage(source.threadId, { markdown: text });
-    },
-
-    sendTyping: async function() {
-      await github.startTyping(source.threadId);
-    },
-
-    reactToMessage: async function() {
-      if (!source.messageId) {
-        return;
-      }
-      await github.addReaction(source.threadId, source.messageId, "eyes");
-    },
-
-    stream: async (textStream, options) => {
-      const result = await github.stream(
-        source.threadId,
-        fromFullStream(textStream),
-        options,
-      );
-
-      return result.id;
-    },
-  };
-}
-
-function normalizePrivateKey(value: string): string {
-  return value.includes("BEGIN")
-    ? value
-    : Buffer.from(value, "base64").toString("utf8");
 }

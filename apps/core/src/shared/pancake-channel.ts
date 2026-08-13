@@ -18,16 +18,6 @@ import type {
 import { logInfo, logWarn } from "./log.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
-interface PancakeWebhookPayload {
-  page_id?: string;
-  event_type?: string;
-  data?: {
-    conversation?: PancakeConversation;
-    message?: PancakeMessage;
-    post?: PancakePost | null;
-  };
-}
-
 interface PancakeConversation {
   id?: string;
   type?: string;
@@ -71,6 +61,33 @@ export interface PancakeSource {
   tagIds?: string[];
 }
 
+interface PancakeWebhookPayload {
+  page_id?: string;
+  event_type?: string;
+  data?: {
+    conversation?: PancakeConversation;
+    message?: PancakeMessage;
+    post?: PancakePost | null;
+  };
+}
+
+export function createPancakeActions(
+  pageAccessToken: string,
+  source: PancakeSource,
+  senderId?: string,
+): ChannelActions {
+  return {
+    sendText: (text) =>
+      sendPancakeMessage(pageAccessToken, source, text, senderId),
+    sendTyping: async function() {
+      return;
+    },
+    reactToMessage: async function() {
+      return;
+    },
+  };
+}
+
 export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
@@ -106,6 +123,119 @@ export function createPancakeChannel(
       );
     },
   };
+}
+
+async function sendPancakeMessage(
+  pageAccessToken: string,
+  source: PancakeSource,
+  text: string,
+  senderId?: string,
+): Promise<void> {
+  const url = new URL(
+    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(
+      source.conversationId,
+    )}/messages`,
+  );
+  url.searchParams.set("page_access_token", pageAccessToken);
+
+  const payload =
+    source.messageType === "COMMENT"
+      ? {
+          action: "reply_comment",
+          message_id: source.messageId,
+          message: text,
+          ...(senderId ? { sender_id: senderId } : {}),
+        }
+      : {
+          action: "reply_inbox",
+          message: text,
+          ...(senderId ? { sender_id: senderId } : {}),
+        };
+
+  logInfo("Pancake send message request", {
+    pageId: source.pageId,
+    conversationId: source.conversationId,
+    messageType: source.messageType,
+    replyToMessageId: source.messageId,
+    hasSenderId: Boolean(senderId),
+    textLength: text.length,
+  });
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const bodyText = await response.text();
+  const body = parseJsonBody(bodyText);
+
+  if (!response.ok || body?.success === false) {
+    logWarn("Pancake send message failed", {
+      pageId: source.pageId,
+      conversationId: source.conversationId,
+      status: response.status,
+      error: formatPancakeError(body, bodyText),
+    });
+    throw new Error(
+      `Pancake send message failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
+    );
+  }
+
+  logInfo("Pancake send message succeeded", {
+    pageId: source.pageId,
+    conversationId: source.conversationId,
+    status: response.status,
+    responseMessage: body?.message,
+  });
+}
+
+function formatPancakeError(
+  body: { message?: string } | null,
+  bodyText: string,
+): string {
+  return body?.message ?? (bodyText || "unknown_error");
+}
+
+function hashEventText(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+function isPancakeMessageType(
+  value: unknown,
+): value is PancakeSource["messageType"] {
+  return value === "INBOX" || value === "COMMENT";
+}
+
+function normalizePancakeTagIds(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((tag) => {
+    if (typeof tag === "string" || typeof tag === "number") {
+      return [String(tag)];
+    }
+
+    return [];
+  });
+}
+
+function parseJsonBody(
+  text: string,
+): { success?: boolean; message?: string } | null {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+
+    return parsed && typeof parsed === "object"
+      ? (parsed as { success?: boolean; message?: string })
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function parsePancakeWebhook(
@@ -235,87 +365,6 @@ function parsePancakeWebhook(
   };
 }
 
-export function createPancakeActions(
-  pageAccessToken: string,
-  source: PancakeSource,
-  senderId?: string,
-): ChannelActions {
-  return {
-    sendText: (text) =>
-      sendPancakeMessage(pageAccessToken, source, text, senderId),
-    sendTyping: async function() {
-      return;
-    },
-    reactToMessage: async function() {
-      return;
-    },
-  };
-}
-
-async function sendPancakeMessage(
-  pageAccessToken: string,
-  source: PancakeSource,
-  text: string,
-  senderId?: string,
-): Promise<void> {
-  const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(
-      source.conversationId,
-    )}/messages`,
-  );
-  url.searchParams.set("page_access_token", pageAccessToken);
-
-  const payload =
-    source.messageType === "COMMENT"
-      ? {
-          action: "reply_comment",
-          message_id: source.messageId,
-          message: text,
-          ...(senderId ? { sender_id: senderId } : {}),
-        }
-      : {
-          action: "reply_inbox",
-          message: text,
-          ...(senderId ? { sender_id: senderId } : {}),
-        };
-
-  logInfo("Pancake send message request", {
-    pageId: source.pageId,
-    conversationId: source.conversationId,
-    messageType: source.messageType,
-    replyToMessageId: source.messageId,
-    hasSenderId: Boolean(senderId),
-    textLength: text.length,
-  });
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const bodyText = await response.text();
-  const body = parseJsonBody(bodyText);
-
-  if (!response.ok || body?.success === false) {
-    logWarn("Pancake send message failed", {
-      pageId: source.pageId,
-      conversationId: source.conversationId,
-      status: response.status,
-      error: formatPancakeError(body, bodyText),
-    });
-    throw new Error(
-      `Pancake send message failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
-    );
-  }
-
-  logInfo("Pancake send message succeeded", {
-    pageId: source.pageId,
-    conversationId: source.conversationId,
-    status: response.status,
-    responseMessage: body?.message,
-  });
-}
-
 function toPancakeSource(source: Record<string, unknown>): PancakeSource {
   if (
     typeof source.pageId !== "string" ||
@@ -339,53 +388,4 @@ function toPancakeSource(source: Record<string, unknown>): PancakeSource {
         ? source.pageCustomerId
         : undefined,
   };
-}
-
-function normalizePancakeTagIds(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((tag) => {
-    if (typeof tag === "string" || typeof tag === "number") {
-      return [String(tag)];
-    }
-
-    return [];
-  });
-}
-
-function isPancakeMessageType(
-  value: unknown,
-): value is PancakeSource["messageType"] {
-  return value === "INBOX" || value === "COMMENT";
-}
-
-function hashEventText(text: string): string {
-  return createHash("sha256").update(text).digest("hex").slice(0, 12);
-}
-
-function parseJsonBody(
-  text: string,
-): { success?: boolean; message?: string } | null {
-  if (!text) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(text) as unknown;
-
-    return parsed && typeof parsed === "object"
-      ? (parsed as { success?: boolean; message?: string })
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatPancakeError(
-  body: { message?: string } | null,
-  bodyText: string,
-): string {
-  return body?.message ?? (bodyText || "unknown_error");
 }

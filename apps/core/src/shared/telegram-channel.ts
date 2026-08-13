@@ -140,16 +140,8 @@ export function createTelegramChannel(
   };
 }
 
-function verifyWebhookSecret(
-  header: string | undefined,
-  secret: string,
-): boolean {
-  if (!header) return false;
-  const a = Buffer.from(header);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length) return false;
-
-  return timingSafeEqual(a, b);
+function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
+  return update.message ?? update.edited_message ?? null;
 }
 
 function splitTelegramRawText(text: string): string[] {
@@ -178,10 +170,6 @@ function splitTelegramRawText(text: string): string[] {
   return chunks;
 }
 
-function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
-  return update.message ?? update.edited_message ?? null;
-}
-
 function toTelegramSource(source: Record<string, unknown>): TelegramSource {
   if (
     typeof source.chatId !== "number" ||
@@ -200,4 +188,16 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
     fromUsername:
       typeof source.fromUsername === "string" ? source.fromUsername : undefined,
   };
+}
+
+function verifyWebhookSecret(
+  header: string | undefined,
+  secret: string,
+): boolean {
+  if (!header) return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(secret);
+  if (a.length !== b.length) return false;
+
+  return timingSafeEqual(a, b);
 }

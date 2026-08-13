@@ -18,32 +18,14 @@ import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 // conversation to the thread, with the parent channel as its channel scope.
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
-interface DiscordInteractionOption {
-  name?: string;
-  value?: string | number | boolean;
-  options?: DiscordInteractionOption[];
-}
-
-interface DiscordInteractionPayload {
-  id?: string;
-  type?: number;
-  token?: string;
-  application_id?: string;
-  guild_id?: string;
-  channel_id?: string;
-  channel?: {
-    id?: string;
-    type?: number;
-    parent_id?: string | null;
-  };
-  data?: {
-    name?: string;
-    options?: DiscordInteractionOption[];
-  };
-  member?: {
-    user?: { id?: string };
-  };
-  user?: { id?: string };
+/**
+ * Identity used to decide whether a guild message is addressed to the agent.
+ * Without `botUserId` Discord messages cannot be attributed to a mention, so the
+ * adapter keeps answering every message rather than going silent.
+ */
+export interface DiscordChannelOptions {
+  botUserId?: string;
+  mentionRoleIds?: string[];
 }
 
 interface DiscordForwardedEventPayload {
@@ -80,6 +62,40 @@ interface DiscordGatewayMessageData {
   timestamp?: string;
 }
 
+interface DiscordInteractionOption {
+  name?: string;
+  value?: string | number | boolean;
+  options?: DiscordInteractionOption[];
+}
+
+interface DiscordInteractionPayload {
+  id?: string;
+  type?: number;
+  token?: string;
+  application_id?: string;
+  guild_id?: string;
+  channel_id?: string;
+  channel?: {
+    id?: string;
+    type?: number;
+    parent_id?: string | null;
+  };
+  data?: {
+    name?: string;
+    options?: DiscordInteractionOption[];
+  };
+  member?: {
+    user?: { id?: string };
+  };
+  user?: { id?: string };
+}
+
+interface DiscordSlashCommandContext {
+  channelId: string;
+  initialResponseSent: boolean;
+  interactionToken: string;
+}
+
 export interface DiscordSource {
   applicationId: string;
   interactionToken?: string;
@@ -90,22 +106,6 @@ export interface DiscordSource {
   messageId?: string;
   commandToken?: string;
   userId?: string;
-}
-
-/**
- * Identity used to decide whether a guild message is addressed to the agent.
- * Without `botUserId` Discord messages cannot be attributed to a mention, so the
- * adapter keeps answering every message rather than going silent.
- */
-export interface DiscordChannelOptions {
-  botUserId?: string;
-  mentionRoleIds?: string[];
-}
-
-interface DiscordSlashCommandContext {
-  channelId: string;
-  initialResponseSent: boolean;
-  interactionToken: string;
 }
 
 // Chat SDK's direct Discord webhook path is `handleWebhook()` + ChatInstance.
@@ -403,6 +403,95 @@ function createDiscordActions(
   };
 }
 
+/**
+ * Prefix the sender so the agent knows who is talking in a multi-person guild
+ * channel, and turn `<@id>` mentions into readable names. Mentions that only
+ * target the bot are dropped, and a command keeps its bare text so the leading
+ * token still parses.
+ */
+function formatDiscordMessageText(
+  content: string,
+  data: DiscordGatewayMessageData,
+  omittedUserIds: Set<string>,
+): string {
+  const names = new Map<string, string>();
+  for (const mention of data.mentions ?? []) {
+    const name = mention.global_name || mention.username;
+    if (mention.id && name) {
+      names.set(mention.id, name);
+    }
+  }
+  const normalized = content
+    .replace(/<@!?([^>\s]+)>/g, (match, userId: string) => {
+      if (omittedUserIds.has(userId)) return "";
+      const name = names.get(userId);
+
+      return name ? `@${name}` : match;
+    })
+    .replace(/[ \t]+([,.!?;:])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  const author = data.author?.global_name || data.author?.username;
+  if (!normalized || !author || parseCommand(normalized)) {
+    return normalized;
+  }
+
+  return `${author}: ${normalized}`;
+}
+
+function gatewayAck(): Extract<ChannelParseResult, { kind: "response" }> {
+  return {
+    kind: "response",
+    response: {
+      statusCode: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ok: true }),
+    },
+  };
+}
+
+function isGatewayMessage(
+  data: DiscordGatewayMessageData,
+): data is Required<
+  Pick<
+    DiscordGatewayMessageData,
+    "author" | "channel_id" | "content" | "guild_id" | "id"
+  >
+> &
+  DiscordGatewayMessageData {
+  return Boolean(
+    data &&
+    typeof data.id === "string" &&
+    typeof data.channel_id === "string" &&
+    typeof data.content === "string" &&
+    (typeof data.guild_id === "string" || data.guild_id === null) &&
+    data.author &&
+    typeof data.author.id === "string" &&
+    typeof data.author.username === "string" &&
+    typeof data.author.bot === "boolean",
+  );
+}
+
+function mentionsDiscordBot(
+  data: DiscordGatewayMessageData,
+  options: DiscordChannelOptions,
+): boolean {
+  if (
+    options.botUserId &&
+    (data.mentions ?? []).some((mention) => mention.id === options.botUserId)
+  ) {
+    return true;
+  }
+
+  const roleIds = options.mentionRoleIds ?? [];
+
+  return (
+    roleIds.length > 0 &&
+    (data.mention_roles ?? []).some((roleId) => roleIds.includes(roleId))
+  );
+}
+
 function parseForwardedGatewayEvent(
   discord: BroodsDiscordAdapter,
   event: DiscordForwardedEventPayload,
@@ -511,82 +600,22 @@ function parseForwardedGatewayEvent(
   };
 }
 
-function mentionsDiscordBot(
-  data: DiscordGatewayMessageData,
-  options: DiscordChannelOptions,
-): boolean {
-  if (
-    options.botUserId &&
-    (data.mentions ?? []).some((mention) => mention.id === options.botUserId)
-  ) {
-    return true;
-  }
-
-  const roleIds = options.mentionRoleIds ?? [];
-
-  return (
-    roleIds.length > 0 &&
-    (data.mention_roles ?? []).some((roleId) => roleIds.includes(roleId))
-  );
-}
-
-/**
- * Prefix the sender so the agent knows who is talking in a multi-person guild
- * channel, and turn `<@id>` mentions into readable names. Mentions that only
- * target the bot are dropped, and a command keeps its bare text so the leading
- * token still parses.
- */
-function formatDiscordMessageText(
-  content: string,
-  data: DiscordGatewayMessageData,
-  omittedUserIds: Set<string>,
-): string {
-  const names = new Map<string, string>();
-  for (const mention of data.mentions ?? []) {
-    const name = mention.global_name || mention.username;
-    if (mention.id && name) {
-      names.set(mention.id, name);
-    }
-  }
-  const normalized = content
-    .replace(/<@!?([^>\s]+)>/g, (match, userId: string) => {
-      if (omittedUserIds.has(userId)) return "";
-      const name = names.get(userId);
-
-      return name ? `@${name}` : match;
-    })
-    .replace(/[ \t]+([,.!?;:])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-
-  const author = data.author?.global_name || data.author?.username;
-  if (!normalized || !author || parseCommand(normalized)) {
-    return normalized;
-  }
-
-  return `${author}: ${normalized}`;
-}
-
-function isGatewayMessage(
-  data: DiscordGatewayMessageData,
-): data is Required<
-  Pick<
+function toDiscordGatewayThread(
+  data: Required<Pick<DiscordGatewayMessageData, "channel_id" | "guild_id">> &
     DiscordGatewayMessageData,
-    "author" | "channel_id" | "content" | "guild_id" | "id"
-  >
-> &
-  DiscordGatewayMessageData {
-  return Boolean(
-    data &&
-    typeof data.id === "string" &&
-    typeof data.channel_id === "string" &&
-    typeof data.content === "string" &&
-    (typeof data.guild_id === "string" || data.guild_id === null) &&
-    data.author &&
-    typeof data.author.id === "string" &&
-    typeof data.author.username === "string" &&
-    typeof data.author.bot === "boolean",
-  );
+): DiscordThreadId {
+  if (data.thread?.id && data.thread.parent_id) {
+    return {
+      guildId: data.guild_id ?? "@me",
+      channelId: data.thread.parent_id,
+      threadId: data.thread.id,
+    };
+  }
+
+  return {
+    guildId: data.guild_id ?? "@me",
+    channelId: data.channel_id,
+  };
 }
 
 function toDiscordInteractionThread(
@@ -608,49 +637,6 @@ function toDiscordInteractionThread(
   return {
     guildId: payload.guild_id ?? "@me",
     channelId: channelId,
-  };
-}
-
-function toDiscordGatewayThread(
-  data: Required<Pick<DiscordGatewayMessageData, "channel_id" | "guild_id">> &
-    DiscordGatewayMessageData,
-): DiscordThreadId {
-  if (data.thread?.id && data.thread.parent_id) {
-    return {
-      guildId: data.guild_id ?? "@me",
-      channelId: data.thread.parent_id,
-      threadId: data.thread.id,
-    };
-  }
-
-  return {
-    guildId: data.guild_id ?? "@me",
-    channelId: data.channel_id,
-  };
-}
-
-function gatewayAck(): Extract<ChannelParseResult, { kind: "response" }> {
-  return {
-    kind: "response",
-    response: {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ok: true }),
-    },
-  };
-}
-
-function unsupportedInteractionResponse(): ChannelParseResult {
-  return {
-    kind: "response",
-    response: {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: 4,
-        data: { content: "Unsupported interaction.", flags: 64 },
-      }),
-    },
   };
 }
 
@@ -684,5 +670,19 @@ function toDiscordSource(source: Record<string, unknown>): DiscordSource {
     commandToken:
       typeof source.commandToken === "string" ? source.commandToken : undefined,
     userId: typeof source.userId === "string" ? source.userId : undefined,
+  };
+}
+
+function unsupportedInteractionResponse(): ChannelParseResult {
+  return {
+    kind: "response",
+    response: {
+      statusCode: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: 4,
+        data: { content: "Unsupported interaction.", flags: 64 },
+      }),
+    },
   };
 }
