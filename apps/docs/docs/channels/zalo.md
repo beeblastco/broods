@@ -74,9 +74,7 @@ flowchart TD
   Zalo["Zalo Bot webhook<br/>text · image · sticker · voice"] --> Adapter["zalo-channel.ts"]
   Adapter --> Auth["Check X-Bot-Api-Secret-Token"]
   Auth --> Allow["Check allowedUserIds and allowedGroupIds when configured"]
-  Allow --> Type{"Supported message event?"}
-  Type -- No --> Drop["Drop quietly"]
-  Type -- Yes --> Agent["Run agent"]
+  Allow --> Agent["Run agent"]
   Agent --> Reply["sendMessage / sendPhoto"]
   Reply --> Zalo
 ```
@@ -89,9 +87,3 @@ flowchart TD
 - Typing indicators use `sendChatAction`.
 - Outbound images use `sendPhoto`. Zalo fetches the picture itself, so the image must be an absolute `http(s)` URL that Zalo can reach — a local path, a `data:` URL, or a private link is rejected. An optional caption is truncated to 2000 characters.
 - Reactions are not supported by the official Zalo Bot API adapter.
-
-### Links Never Arrive
-
-Zalo does not deliver a message containing a URL to a bot. It sends `message.unsupported.received` with every content field stripped, so the address is not in the webhook at all and the Bot API has no way to fetch it afterward. Surrounding the link with words does not help.
-
-These messages are ignored because nothing is recoverable from the webhook.

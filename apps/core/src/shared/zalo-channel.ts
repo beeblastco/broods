@@ -59,7 +59,7 @@ interface ZaloMessage {
   voice_url?: string;
 }
 
-export type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
+type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
 
 export interface ZaloSource {
   chatId: string;
@@ -71,7 +71,7 @@ export interface ZaloSource {
   date?: number;
 }
 
-export interface ZaloChannelOptions {
+interface ZaloChannelOptions {
   allowedUserIds?: ReadonlySet<string>;
   allowedGroupIds?: ReadonlySet<string>;
 }
