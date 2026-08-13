@@ -16,7 +16,9 @@ import {
   type SubagentToolInput,
 } from "./utils.ts";
 
-export default function stopSubagentTool(context: SubagentToolContext) {
+export default function stopSubagentTool(
+  context: SubagentToolContext,
+): ToolSet {
   return {
     stop_subagent: tool({
       description:
@@ -53,5 +55,5 @@ export default function stopSubagentTool(context: SubagentToolContext) {
         );
       },
     }),
-  } satisfies ToolSet;
+  };
 }

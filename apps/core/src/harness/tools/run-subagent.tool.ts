@@ -92,7 +92,7 @@ export function buildRunSubagentInputSchema(
 export default function runSubagentTool(context: {
   dispatchSubagents: RunSubagentDispatch;
   mode?: RunSubagentMode;
-}) {
+}): ToolSet {
   return {
     run_subagent: tool({
       description: [
@@ -117,7 +117,7 @@ export default function runSubagentTool(context: {
         return context.dispatchSubagents(tasks, options.messages);
       },
     }),
-  } satisfies ToolSet;
+  };
 }
 
 function normalizeInput(

@@ -92,7 +92,7 @@ export class AsyncToolCoordinator {
           source ? this.wrapTool(toolName, entry, source) : entry,
         ];
       }),
-    ) satisfies ToolSet;
+    );
   };
 
   get pendingCount(): number {

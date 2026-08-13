@@ -57,7 +57,7 @@ export interface AsyncStatusContext {
   supportsJobs: boolean;
 }
 
-export default function asyncStatusTool(context: AsyncStatusContext) {
+export default function asyncStatusTool(context: AsyncStatusContext): ToolSet {
   return {
     async_status: tool({
       description: context.supportsJobs
@@ -203,7 +203,7 @@ The result is delivered back into the conversation automatically when it finishe
         }
       },
     }),
-  } satisfies ToolSet;
+  };
 }
 
 // Preserve the job's terminal state and exit code, and include captured logs

@@ -22,7 +22,9 @@ interface UpdateSubagentInput extends SubagentToolInput {
   message: string;
 }
 
-export default function updateSubagentTool(context: SubagentToolContext) {
+export default function updateSubagentTool(
+  context: SubagentToolContext,
+): ToolSet {
   return {
     update_subagent: tool({
       description:
@@ -92,5 +94,5 @@ export default function updateSubagentTool(context: SubagentToolContext) {
         );
       },
     }),
-  } satisfies ToolSet;
+  };
 }

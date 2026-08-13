@@ -14,7 +14,9 @@ import {
   type SubagentToolInput,
 } from "./utils.ts";
 
-export default function getSubagentStatusTool(context: SubagentToolContext) {
+export default function getSubagentStatusTool(
+  context: SubagentToolContext,
+): ToolSet {
   return {
     get_subagent_status: tool({
       description:
@@ -41,5 +43,5 @@ export default function getSubagentStatusTool(context: SubagentToolContext) {
         };
       },
     }),
-  } satisfies ToolSet;
+  };
 }
