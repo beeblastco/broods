@@ -355,7 +355,7 @@ async function captureZaloCalls(
   globalThis.fetch = (async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
-  ) => {
+  ): Promise<Response> => {
     calls.push({
       url: String(input),
       body: JSON.parse(String(init?.body)) as unknown,

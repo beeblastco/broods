@@ -201,7 +201,7 @@ export function createZaloActions(
         });
       }
     },
-    sendImage: async function(url, caption) {
+    sendImage: async function(url, caption): Promise<void> {
       await callZaloApi(botToken, "sendPhoto", {
         chat_id: source.chatId,
         photo: zaloPhotoUrl(url),
