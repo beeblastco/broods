@@ -13,9 +13,8 @@ export type ChannelIngressEvent =
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
-  // Optional image delivery, by a URL the provider fetches for itself. Channels
-  // omit it when the provider has no image send method, so callers must check
-  // for it and fall back to sending a link.
+  // Optional image delivery, by a URL the provider fetches for itself. Callers
+  // check for it and fall back to a link when the provider has no image send.
   sendImage?(url: string, caption?: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;

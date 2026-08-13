@@ -1570,6 +1570,7 @@ function rewriteUserContentText(
   text: string,
 ): UserContent {
   if (typeof content === "string") {
+
     return text;
   }
   const attachments = content.filter((part) => part.type !== "text");

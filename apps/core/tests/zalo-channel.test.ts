@@ -290,7 +290,7 @@ describe("zalo channel adapter", () => {
   });
 
   it("sends an image through sendPhoto with the caption truncated", async () => {
-    const calls = await captureZaloCalls(async (actions) => {
+    const calls = await captureZaloCalls(async (actions): Promise<void> => {
       await actions.sendImage?.(
         "https://cdn.example.com/chart.png",
         "x".repeat(2100),
@@ -318,7 +318,7 @@ describe("zalo channel adapter", () => {
   });
 
   it("rejects image URLs Zalo could not fetch", async () => {
-    const calls = await captureZaloCalls(async (actions) => {
+    const calls = await captureZaloCalls(async (actions): Promise<void> => {
       await expect(
         actions.sendImage?.("/workspace/chart.png"),
       ).rejects.toThrow("absolute http(s) image URL");

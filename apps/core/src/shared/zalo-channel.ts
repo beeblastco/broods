@@ -15,17 +15,15 @@ import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_TEXT_LIMIT = 2000;
-// The message events Zalo delivers. Everything else arrives as
-// message.unsupported.received and is ignored.
-const ZALO_MESSAGE_EVENTS = new Set([
-  "message.text.received",
-  "message.image.received",
-  "message.sticker.received",
-  "message.voice.received",
-]);
-// Zalo names no media type for a voice note, and .aac is the only audio format
-// the Bot API deals in. Anything else degrades to a link rather than telling the
-// model a media type Zalo never sent.
+// Message events Zalo delivers, each mapped to the reason its payload is
+// unusable. Anything else arrives as message.unsupported.received.
+const ZALO_MESSAGE_EVENTS: Record<string, string> = {
+  "message.text.received": "missing_text",
+  "message.image.received": "missing_photo",
+  "message.sticker.received": "missing_sticker_url",
+  "message.voice.received": "missing_voice_url",
+};
+// .aac is the only audio format the Zalo Bot API deals in.
 const ZALO_VOICE_EXTENSION = ".aac";
 const ZALO_VOICE_MEDIA_TYPE = "audio/aac";
 
@@ -69,7 +67,9 @@ interface ZaloApiResponse<T = unknown> {
   description?: string;
 }
 
-export interface ZaloSource {
+// A type, not an interface: `InboundMessage.source` is Record<string, unknown>,
+// which only an anonymous object type is assignable to.
+export type ZaloSource = {
   chatId: string;
   chatType: "PRIVATE";
   messageId: string;
@@ -77,7 +77,7 @@ export interface ZaloSource {
   senderName?: string;
   eventName: string;
   date?: number;
-}
+};
 
 export function createZaloChannel(
   botToken: string,
@@ -104,7 +104,8 @@ export function createZaloChannel(
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)
           : "missing";
-      if (!ZALO_MESSAGE_EVENTS.has(eventName)) {
+      const missingContentReason = ZALO_MESSAGE_EVENTS[eventName];
+      if (!missingContentReason) {
 
         return ignoreZaloUpdate(
           update,
@@ -132,7 +133,7 @@ export function createZaloChannel(
       }
       if (!content) {
 
-        return ignoreZaloUpdate(update, zaloMissingContentReason(eventName));
+        return ignoreZaloUpdate(update, missingContentReason);
       }
       if (chatType !== "PRIVATE") {
 
@@ -152,6 +153,16 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
       }
 
+      const source: ZaloSource = {
+        chatId: chatId,
+        chatType: chatType,
+        messageId: messageId,
+        senderId: senderId,
+        senderName: message.from?.display_name ?? message.from?.name,
+        eventName: eventName,
+        date: message.date,
+      };
+
       return {
         kind: "message",
         ack: { statusCode: 200, body: "ok" },
@@ -169,15 +180,7 @@ export function createZaloChannel(
                 }
               : {}),
           },
-          source: {
-            chatId: chatId,
-            chatType: chatType,
-            messageId: messageId,
-            senderId: senderId,
-            senderName: message.from?.display_name ?? message.from?.name,
-            eventName: eventName,
-            date: message.date,
-          } satisfies ZaloSource,
+          source: source,
         },
       };
     },
@@ -202,9 +205,16 @@ export function createZaloActions(
       }
     },
     sendImage: async function(url, caption): Promise<void> {
+      // Zalo fetches the picture itself, so it only ever accepts a public URL.
+      const photo = zaloHttpUrl(url);
+      if (!photo) {
+        throw new Error(
+          "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
+        );
+      }
       await callZaloApi(botToken, "sendPhoto", {
         chat_id: source.chatId,
-        photo: zaloPhotoUrl(url),
+        photo: photo,
         ...(caption ? { caption: caption.slice(0, ZALO_TEXT_LIMIT) } : {}),
       });
     },
@@ -220,10 +230,8 @@ export function createZaloActions(
   };
 }
 
-// Zalo hands every attachment over as a URL it hosts, never as bytes, so inbound
-// media becomes AI SDK URL parts. They stay strings rather than URL objects: the
-// conversation is persisted as JSON, and the SDK reads a stored URL string back
-// as a URL instead of as inline data.
+// Zalo hosts every attachment as a URL, so inbound media becomes AI SDK URL
+// parts — strings, because the conversation is persisted as JSON.
 function zaloMessageContent(
   eventName: string,
   message: ZaloMessage | undefined,
@@ -244,15 +252,17 @@ function zaloMessageContent(
         return null;
       }
 
-      return [
-        ...(caption ? [{ type: "text" as const, text: caption }] : []),
-        { type: "image" as const, image: photo },
-      ];
+      return caption
+        ? [
+            { type: "text", text: caption },
+            { type: "image", image: photo },
+          ]
+        : [{ type: "image", image: photo }];
     }
     case "message.sticker.received": {
       const sticker = zaloHttpUrl(message?.url);
 
-      return sticker ? [{ type: "image" as const, image: sticker }] : null;
+      return sticker ? [{ type: "image", image: sticker }] : null;
     }
     case "message.voice.received": {
       const voice = zaloHttpUrl(message?.voice_url);
@@ -260,41 +270,26 @@ function zaloMessageContent(
 
         return null;
       }
-      // A voice note the model cannot be told the type of goes over as its link,
-      // so the turn still carries the message instead of failing the run.
-      const mediaType = zaloVoiceMediaType(voice);
+      // An audio type Zalo never sends goes over as a link, so the turn survives
+      // instead of failing at the provider.
+      const isVoiceNote = new URL(voice)
+        .pathname.toLowerCase()
+        .endsWith(ZALO_VOICE_EXTENSION);
 
-      return mediaType
-        ? [{ type: "file" as const, data: voice, mediaType: mediaType }]
-        : [{ type: "text" as const, text: `Voice message: ${voice}` }];
+      return isVoiceNote
+        ? [
+            {
+              type: "file",
+              data: voice,
+              mediaType: ZALO_VOICE_MEDIA_TYPE,
+            },
+          ]
+        : [{ type: "text", text: `Voice message: ${voice}` }];
     }
     default:
 
       return null;
   }
-}
-
-function zaloMissingContentReason(eventName: string): string {
-  switch (eventName) {
-    case "message.image.received":
-
-      return "missing_photo";
-    case "message.sticker.received":
-
-      return "missing_sticker_url";
-    case "message.voice.received":
-
-      return "missing_voice_url";
-    default:
-
-      return "missing_text";
-  }
-}
-
-function zaloVoiceMediaType(url: string): string | undefined {
-  return new URL(url).pathname.toLowerCase().endsWith(ZALO_VOICE_EXTENSION)
-    ? ZALO_VOICE_MEDIA_TYPE
-    : undefined;
 }
 
 function ignoreZaloUpdate(
@@ -421,6 +416,7 @@ function chunkZaloText(text: string): string[] {
 
 function zaloHttpUrl(raw: unknown): string | null {
   if (typeof raw !== "string" || !URL.canParse(raw)) {
+
     return null;
   }
   const url = new URL(raw);
@@ -428,18 +424,6 @@ function zaloHttpUrl(raw: unknown): string | null {
   return url.protocol === "http:" || url.protocol === "https:"
     ? url.toString()
     : null;
-}
-
-// Zalo fetches the photo itself, so it only ever accepts a public absolute URL.
-function zaloPhotoUrl(raw: string): string {
-  const url = zaloHttpUrl(raw);
-  if (!url) {
-    throw new Error(
-      "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
-    );
-  }
-
-  return url;
 }
 
 async function callZaloApi(
