@@ -1,14 +1,14 @@
 /**
- * Project + environment scoped deploy keys for the `broods` CLI. Unlike the org
+ * Project + stage scoped deploy keys for the `broods` CLI. Unlike the org
  * Bearer secret (Settings → API Access), a deploy key authorizes only one
- * project/environment. The plaintext token is returned once at creation; only its
+ * project/stage. The plaintext token is returned once at creation; only its
  * SHA-256 hash is stored.
  */
 
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
 
@@ -56,26 +56,26 @@ function deployKeyHint(token: string): string {
 }
 
 export const list = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(deployKeyDoc),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted environment doesn't
+    // Return empty rather than throwing so a just-deleted stage doesn't
     // crash reactive subscribers before they unmount.
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
       return [];
     }
 
     return ctx.db
       .query("deployKeys")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
   },
@@ -84,7 +84,7 @@ export const list = query({
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     name: v.string(),
   },
   returns: v.object({
@@ -92,7 +92,7 @@ export const create = mutation({
     token: v.string(),
     keyHint: v.string(),
   }),
-  handler: async (ctx, { projectId, environmentId, name }) => {
+  handler: async (ctx, { projectId, stageId, name }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
@@ -105,9 +105,9 @@ export const create = mutation({
       throw new Error("Project is not linked to an organization.");
     }
 
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
 
     // A deploy key resolves to the project's org account, so that account must
@@ -128,7 +128,7 @@ export const create = mutation({
     const _id = await ctx.db.insert("deployKeys", {
       accountId: account._id,
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       name: name.trim() || "Deploy key",
       keyHash: keyHash,
       keyHint: deployKeyHint(token),
@@ -161,12 +161,8 @@ export const remove = mutation({
       "admin",
     );
     if (!project) throw new Error("Deploy key not found.");
-    const environment = await getOwnedEnvironment(
-      ctx,
-      user.id,
-      deployKey.environmentId,
-    );
-    if (!environment || environment.projectId !== deployKey.projectId)
+    const stage = await getOwnedStage(ctx, user.id, deployKey.stageId);
+    if (!stage || stage.projectId !== deployKey.projectId)
       throw new Error("Deploy key not found.");
 
     await ctx.db.delete(deployKeyId);

@@ -14,7 +14,7 @@ Shared Convex backend for the broods monorepo, used by two workspaces:
 
 ## Tables
 
-Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `environments`,
+Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `stages`,
 `agentConfigs`, `canvasLayouts`, `agentDeployments`, `toolServices`,
 `deployKeys`.
 
@@ -34,11 +34,11 @@ document or limit the model's context window.
 Sensitive config (agent configs, sandbox credentials) is stored as encrypted
 blobs — core encrypts before writing; the dashboard never reads the plaintext.
 Environment variables are the exception: their values can be revealed on demand
-by the environment owner (`environmentVariables.reveal` / CLI `env get`), and
+by the stage owner (`environmentVariables.reveal` / CLI `env get`), and
 each reveal is recorded in the `environmentVariableReveals` audit table. Config
 mutations write account-visible rows to `configAuditEvents`, which the dashboard
 reads reactively.
-Environment runtime API keys are also stored AES-GCM encrypted alongside their
+Stage runtime API keys are also stored AES-GCM encrypted alongside their
 authentication hash. Owners can recover them through the dashboard or CLI login
 without rotating.
 

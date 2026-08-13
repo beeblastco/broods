@@ -28,7 +28,14 @@ export const myAgent = defineAgent({
 After `broods dev` or `broods deploy`, the CLI prints the webhook URL to register with Telegram:
 
 ```text
-Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../agent_.../telegram
+Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../telegram
+```
+
+A stage that is not production prints its own URL instead, carrying the stage's
+endpoint id so its traffic stays separate from production's:
+
+```text
+Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/stage_.../telegram
 ```
 
 - `botToken`: Provided by BotFather.

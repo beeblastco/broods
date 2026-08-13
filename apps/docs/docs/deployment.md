@@ -123,6 +123,19 @@ Provider webhooks use the deployed gateway URL:
 {BROODS_BASE_URL}/webhooks/{accountId}/zalo
 ```
 
+That form belongs to the account's production stage. Any other stage is
+addressed through its own endpoint id, which `broods dev` prints after a sync:
+
+```text
+{BROODS_BASE_URL}/webhooks/{accountId}/dev/{endpointId}/zalo
+```
+
+The distinction matters when two stages share one provider app. The bare URL
+picks a receiving agent from whichever credentials verify the request, so a
+second stage holding the same bot token is a candidate for the same traffic.
+The stage URL is delivered only to the stage it names, so pasting it into the
+provider moves traffic to that stage instead of contending for the account.
+
 Reference the [API Reference](/api-reference) for the complete agent config shape.
 
 ## Live Probes

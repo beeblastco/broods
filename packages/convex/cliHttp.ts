@@ -12,18 +12,18 @@ import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
-import type { ProjectEnvironmentScope } from "./model/projectScope";
+import type { ProjectStageScope } from "./model/projectScope";
 
 type RouteParts =
-  | { kind: "manifest"; project: string; environment: string }
-  | { kind: "logs"; project: string; environment: string }
-  | { kind: "runtimeKey"; project: string; environment: string }
-  | { kind: "envList"; project: string; environment: string }
-  | { kind: "env"; project: string; environment: string; name: string }
+  | { kind: "manifest"; project: string; stage: string }
+  | { kind: "logs"; project: string; stage: string }
+  | { kind: "runtimeKey"; project: string; stage: string }
+  | { kind: "envList"; project: string; stage: string }
+  | { kind: "env"; project: string; stage: string; name: string }
   | {
       kind: "resource";
       project: string;
-      environment: string;
+      stage: string;
       resourceKind: "agent" | "workspace" | "sandbox" | "cron";
       name: string;
     };
@@ -55,13 +55,13 @@ export const handle = httpAction(async (ctx, req) => {
     if (!route) return json({ error: "Not found" }, 404);
 
     // Resolve the token to an account secret hash, enforcing deploy-key scope
-    // against the route's project/environment. Cron sync runs natively
+    // against the route's project/stage. Cron sync runs natively
     // against the crons table + EventBridge Scheduler (awsCrons), so it
     // works for org secrets and scoped deploy keys alike.
     const resolved = await ctx.runQuery(internal.cliSync.resolveCliAuth, {
       tokenHash: auth.secretHash,
       project: route.project,
-      environment: route.environment,
+      stage: route.stage,
     });
     const cliResolved = resolved
       ? null
@@ -90,7 +90,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
         },
       );
 
@@ -99,7 +99,7 @@ export const handle = httpAction(async (ctx, req) => {
 
     if (route.kind === "logs" && req.method === "GET") {
       // Logs now stream via the gateway (NATS live tail + Loki backfill).
-      // Use wss://gateway.broods.app/v1/<project>/<env>/observability/ws instead.
+      // Use wss://gateway.broods.app/v1/<project>/<stage>/observability/ws instead.
       return json(
         {
           error:
@@ -111,14 +111,14 @@ export const handle = httpAction(async (ctx, req) => {
 
     if (route.kind === "runtimeKey" && req.method === "GET") {
       // Reconnect path: recover the existing runtime key (minting one if the
-      // environment has none yet) so the CLI can write BROODS_API_KEY
+      // stage has none yet) so the CLI can write BROODS_API_KEY
       // without a redeploy.
       const deployment = await ctx.runMutation(
         internal.cliSync.ensureRuntimeKeyBySecretHash,
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
         },
       );
 
@@ -128,9 +128,9 @@ export const handle = httpAction(async (ctx, req) => {
             keyHint: deployment.keyHint,
             endpointId: deployment.endpointId,
             projectSlug: deployment.projectSlug,
-            environmentSlug: deployment.environmentSlug,
+            stageSlug: deployment.stageSlug,
           })
-        : json({ error: "Project or environment not found" }, 404);
+        : json({ error: "Project or stage not found" }, 404);
     }
 
     if (route.kind === "manifest" && req.method === "PUT") {
@@ -145,7 +145,7 @@ export const handle = httpAction(async (ctx, req) => {
       }
       if (!manifestMatchesRoute(manifest, route)) {
         return json(
-          { error: "Manifest project/environment must match the request path" },
+          { error: "Manifest project/stage must match the request path" },
           400,
         );
       }
@@ -155,7 +155,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
         },
       );
       const externalIds = await syncExternalResources(
@@ -170,7 +170,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
           resources: originalManifest.resources as never,
           ids: externalIds,
           prune: body.prune === true,
@@ -191,7 +191,7 @@ export const handle = httpAction(async (ctx, req) => {
       await syncSkillNodeFiles(ctx, {
         secretHash: secretHash,
         project: route.project,
-        environment: route.environment,
+        stage: route.stage,
         manifest: originalManifest,
       });
 
@@ -207,18 +207,18 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
         },
       );
 
-      // Ensure the environment has a recoverable runtime API key so the CLI
+      // Ensure the stage has a recoverable runtime API key so the CLI
       // can write BROODS_API_KEY locally on first or later deploys.
       const deployment = await ctx.runMutation(
         internal.cliSync.ensureRuntimeKeyBySecretHash,
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
           rotate: body.rotateRuntimeKey === true,
           auditSync: {
             resourceCount: originalManifest.resources.length,
@@ -252,7 +252,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
         },
       );
 
@@ -265,7 +265,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
           name: route.name,
           revealedByCliTokenId:
             "cliTokenId" in authResult ? authResult.cliTokenId : undefined,
@@ -287,7 +287,7 @@ export const handle = httpAction(async (ctx, req) => {
         {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
           name: route.name,
         },
       );
@@ -303,7 +303,7 @@ export const handle = httpAction(async (ctx, req) => {
       await ctx.runMutation(internal.cliSync.setEnvBySecretHash, {
         secretHash: secretHash,
         project: route.project,
-        environment: route.environment,
+        stage: route.stage,
         name: route.name,
         value: body.value,
       });
@@ -318,7 +318,7 @@ export const handle = httpAction(async (ctx, req) => {
         await ctx.runMutation(internal.cliSync.deleteResourceBySecretHash, {
           secretHash: secretHash,
           project: route.project,
-          environment: route.environment,
+          stage: route.stage,
           kind: route.resourceKind,
           name: route.name,
         });
@@ -345,23 +345,23 @@ function parseRoute(pathname: string): RouteParts | null {
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "manifest"
   ) {
-    return { kind: "manifest", project: parts[3], environment: parts[5] };
+    return { kind: "manifest", project: parts[3], stage: parts[5] };
   }
   if (
     parts.length === 8 &&
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "env"
   ) {
     return {
       kind: "env",
       project: parts[3],
-      environment: parts[5],
+      stage: parts[5],
       name: parts[7],
     };
   }
@@ -370,44 +370,44 @@ function parseRoute(pathname: string): RouteParts | null {
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "logs"
   ) {
-    return { kind: "logs", project: parts[3], environment: parts[5] };
+    return { kind: "logs", project: parts[3], stage: parts[5] };
   }
   if (
     parts.length === 7 &&
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "runtime-key"
   ) {
-    return { kind: "runtimeKey", project: parts[3], environment: parts[5] };
+    return { kind: "runtimeKey", project: parts[3], stage: parts[5] };
   }
   if (
     parts.length === 7 &&
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "env"
   ) {
-    return { kind: "envList", project: parts[3], environment: parts[5] };
+    return { kind: "envList", project: parts[3], stage: parts[5] };
   }
   if (
     parts.length === 9 &&
     parts[0] === "v1" &&
     parts[1] === "account" &&
     parts[2] === "projects" &&
-    parts[4] === "environments" &&
+    parts[4] === "stages" &&
     parts[6] === "resources" &&
     isResourceKind(parts[7])
   ) {
     return {
       kind: "resource",
       project: parts[3],
-      environment: parts[5],
+      stage: parts[5],
       resourceKind: parts[7],
       name: parts[8],
     };
@@ -421,12 +421,9 @@ function manifestMatchesRoute(
   route: Extract<RouteParts, { kind: "manifest" }>,
 ): boolean {
   if (!manifest || typeof manifest !== "object") return false;
-  const candidate = manifest as { project?: unknown; environment?: unknown };
+  const candidate = manifest as { project?: unknown; stage?: unknown };
 
-  return (
-    candidate.project === route.project &&
-    candidate.environment === route.environment
-  );
+  return candidate.project === route.project && candidate.stage === route.stage;
 }
 
 function numberSearchParam(url: URL, name: string): number | undefined {
@@ -463,7 +460,7 @@ async function syncSkillNodeFiles(
   options: {
     secretHash: string;
     project: string;
-    environment: string;
+    stage: string;
     manifest: CliManifest;
   },
 ): Promise<void> {
@@ -503,7 +500,7 @@ async function syncSkillNodeFiles(
     await ctx.runMutation(internal.cliSync.replaceSkillNodeFilesBySecretHash, {
       secretHash: options.secretHash,
       project: options.project,
-      environment: options.environment,
+      stage: options.stage,
       skillName: resource.name,
       files: storedFiles,
     });
@@ -560,7 +557,7 @@ type ExternalIds = Pick<GeneratedIds, "skills" | "tools" | "hooks">;
 async function syncExternalResources(
   ctx: ActionCtx,
   accountId: string,
-  scope: ProjectEnvironmentScope,
+  scope: ProjectStageScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<ExternalIds> {
@@ -619,18 +616,17 @@ async function syncSkillResources(
 async function syncToolResources(
   ctx: ActionCtx,
   accountId: Id<"accounts">,
-  scope: ProjectEnvironmentScope,
+  scope: ProjectStageScope,
   manifest: CliManifest,
   prune: boolean,
 ): Promise<Record<string, string>> {
   const desired = manifest.resources.filter((entry) => entry.kind === "tool");
   if (desired.length === 0) return {};
-  // Scoped to the environment, not the account: two projects may each define a
+  // Scoped to the stage, not the account: two projects may each define a
   // tool called `system_report` without overwriting one another.
-  const existingTools = await ctx.runQuery(
-    internal.accountTools.listForEnvironment,
-    { environmentId: scope.environmentId },
-  );
+  const existingTools = await ctx.runQuery(internal.accountTools.listForStage, {
+    stageId: scope.stageId,
+  });
   const existing = new Map(existingTools.map((tool) => [tool.name, tool]));
   const desiredNames = new Set(desired.map((resource) => resource.name));
   const ids: Record<string, string> = {};
@@ -696,7 +692,7 @@ async function syncToolResources(
       const toolId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
         projectId: scope.projectId,
-        environmentId: scope.environmentId,
+        stageId: scope.stageId,
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
@@ -923,11 +919,9 @@ async function syncCrons(
   }
 
   if (prune === true) {
-    const environmentAgentIds = new Set<string>(
-      Object.values(ids.agents ?? {}),
-    );
+    const stageAgentIds = new Set<string>(Object.values(ids.agents ?? {}));
     for (const job of existing) {
-      if (!environmentAgentIds.has(job.agentId) || desiredNames.has(job.name))
+      if (!stageAgentIds.has(job.agentId) || desiredNames.has(job.name))
         continue;
       await ctx.runAction(internal.awsCrons.remove, {
         accountId: accountId,

@@ -18,7 +18,7 @@ import {
 import { syncApiAgentCanvasWiring } from "./model/apiCanvasSync";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
-import { agentsInProject } from "./model/projectScope";
+import { agentsInProject, agentsInStage } from "./model/projectScope";
 import { agentsFields } from "./schema";
 
 const agentDoc = v.object({
@@ -97,6 +97,34 @@ export const list = internalQuery({
   },
 });
 
+// An endpointId belonging to another account resolves empty, so a guessed
+// stage URL cannot reach across accounts.
+export const listForEndpoint = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    endpointId: v.string(),
+  },
+  returns: v.array(agentDoc),
+  handler: async (ctx, args) => {
+    const deployment = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_endpointId", (q) => q.eq("endpointId", args.endpointId))
+      .first();
+    if (!deployment) return [];
+    if (deployment.accountId !== args.accountId) return [];
+    if (deployment.status !== "active") return [];
+
+    return await agentsInStage(
+      ctx,
+      {
+        projectId: deployment.projectId,
+        stageId: deployment.stageId,
+      },
+      args.accountId,
+    );
+  },
+});
+
 /**
  * Look up an account's agent by name. Names are unique per account (enforced
  * on create/rename), so config-plane clients can adopt an existing agent
@@ -168,7 +196,7 @@ export const create = internalMutation({
     });
 
     // Back-sync to the dashboard's canvas so API-created agents appear on
-    // the org owner's default project/environment. Safe no-op when the
+    // the org owner's default project/stage. Safe no-op when the
     // canvas surface isn't provisioned (no org owner / no projects).
     await backSyncCanvasFromAgentRow(ctx, agentRowId);
 
@@ -351,10 +379,10 @@ export const remove = internalMutation({
     if (linkedConfig) {
       const layout = await ctx.db
         .query("canvasLayouts")
-        .withIndex("by_projectId_and_environmentId", (q) =>
+        .withIndex("by_projectId_and_stageId", (q) =>
           q
             .eq("projectId", linkedConfig.projectId)
-            .eq("environmentId", linkedConfig.environmentId),
+            .eq("stageId", linkedConfig.stageId),
         )
         .unique();
       if (layout) {
@@ -387,10 +415,10 @@ export const remove = internalMutation({
 
       // Recompute the API-managed wiring so workspace/sandbox/skill nodes
       // no remaining API agent references disappear with their agent.
-      if (linkedConfig.projectId && linkedConfig.environmentId) {
+      if (linkedConfig.projectId && linkedConfig.stageId) {
         await syncApiAgentCanvasWiring(ctx, {
           projectId: linkedConfig.projectId,
-          environmentId: linkedConfig.environmentId,
+          stageId: linkedConfig.stageId,
         });
       }
     }

@@ -15,14 +15,14 @@ import { decoder, mapWithConcurrency, parseJson } from "./utils.ts";
 export type ObservabilityScope = {
   accountId: string;
   projectSlug: string;
-  environmentSlug: string;
+  stageSlug: string;
   endpointIds: string[];
 };
 
 export type ObservabilityGatewayData = {
   kind: "observability";
   project: string;
-  env: string;
+  stage: string;
   token: string;
   scope: ObservabilityScope;
 };
@@ -378,7 +378,7 @@ async function fetchLokiBackfill(
   scope: ObservabilityScope,
   limit: number,
 ): Promise<ObservabilityLogEntry[]> {
-  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",environment="${scope.environmentSlug}"}`;
+  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",stage="${scope.stageSlug}"}`;
   const url = new URL(`${lokiUrl}/loki/api/v1/query_range`);
   url.searchParams.set("query", selector);
   url.searchParams.set("limit", String(limit));
@@ -431,7 +431,7 @@ async function fetchTempoBackfill(
   const start = end - 90 * 24 * 60 * 60;
   url.searchParams.set(
     "tags",
-    `account_id=${scope.accountId} project=${scope.projectSlug} environment=${scope.environmentSlug}`,
+    `account_id=${scope.accountId} project=${scope.projectSlug} stage=${scope.stageSlug}`,
   );
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("start", String(start));
@@ -494,7 +494,7 @@ async function startLiveSubscription(
       stream: stream,
       accountId: scope.accountId,
       project: scope.projectSlug,
-      env: scope.environmentSlug,
+      stage: scope.stageSlug,
       startTime: new Date(
         liveOnly ? Date.now() : Date.now() - OBS_REPLAY_WINDOW_MS,
       ).toISOString(),

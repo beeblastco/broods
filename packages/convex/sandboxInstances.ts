@@ -30,7 +30,7 @@ const sandboxInstanceDoc = v.object({
 export const listForActiveOrg = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   },
   returns: v.array(sandboxInstanceDoc),
   handler: async (ctx, args) => {
@@ -39,11 +39,11 @@ export const listForActiveOrg = query({
 
     return await ctx.db
       .query("sandboxInstances")
-      .withIndex("by_accountId_projectId_and_environmentId", (q) =>
+      .withIndex("by_accountId_projectId_and_stageId", (q) =>
         q
           .eq("accountId", account._id)
           .eq("projectId", args.projectId)
-          .eq("environmentId", args.environmentId),
+          .eq("stageId", args.stageId),
       )
       .take(100);
   },
@@ -68,7 +68,7 @@ export const upsert = internalMutation({
   args: {
     accountId: v.id("accounts"),
     projectId: v.optional(v.id("projects")),
-    environmentId: v.optional(v.id("environments")),
+    stageId: v.optional(v.id("stages")),
     provider: sandboxInstancesFields.provider,
     reservationKey: v.string(),
     externalId: v.string(),
@@ -106,7 +106,7 @@ export const upsert = internalMutation({
       status: "running" as const,
       lastUsedAt: now,
       ...(args.projectId ? { projectId: args.projectId } : {}),
-      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      ...(args.stageId ? { stageId: args.stageId } : {}),
       ...(args.sandboxConfigId
         ? { sandboxConfigId: args.sandboxConfigId }
         : {}),
@@ -142,7 +142,7 @@ export const upsert = internalMutation({
     await ctx.db.insert("sandboxInstances", {
       accountId: args.accountId,
       ...(args.projectId ? { projectId: args.projectId } : {}),
-      ...(args.environmentId ? { environmentId: args.environmentId } : {}),
+      ...(args.stageId ? { stageId: args.stageId } : {}),
       provider: args.provider,
       reservationKey: args.reservationKey,
       createdAt: now,

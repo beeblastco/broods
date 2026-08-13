@@ -472,7 +472,7 @@ paths:
       tags:
         - Direct API
       summary: Channel provider webhook
-      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
+      description: Ingress for provider webhooks (telegram, github, slack, discord, pancake, zalo). This is the production URL form and it is not pinned to a stage — every agent of the account is a candidate, so only `/webhooks/{accountId}/dev/{endpointId}/{channelName}` guarantees one stage. Authentication is provider-native (signature or secret) per channel; the response shape is channel-specific. The URL names no agent — whichever of the account's agents holds credentials that verify the request receives it, and a channel record binds each place to the agent that answers there. See the Channels documentation.
       parameters:
         - name: accountId
           in: path
@@ -492,6 +492,38 @@ paths:
           description: Provider authentication failed
         "404":
           description: Unknown account or channel, or no agent holds credentials for it
+
+  /webhooks/{accountId}/dev/{endpointId}/{channelName}:
+    post:
+      tags:
+        - Direct API
+      summary: Channel provider webhook for one stage
+      description: The same ingress pinned to a single stage. Only agents of the stage `endpointId` names are candidates, so two stages sharing one provider app never receive each other's traffic. `broods dev` prints this URL for any stage that is not production; the bare form above stays production's.
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: endpointId
+          in: path
+          required: true
+          description: The stage's endpoint id, stable across renames and runtime key rotation.
+          schema:
+            type: string
+        - name: channelName
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [telegram, github, slack, discord, pancake, zalo]
+      responses:
+        "200":
+          description: Provider-specific acknowledgement
+        "401":
+          description: Provider authentication failed
+        "404":
+          description: Unknown account or channel, or no stage of this account is deployed at that endpointId (`unknown_webhook_stage`). An unknown endpointId never falls back to the account-wide credential scan.
 
   /accounts:
     post:
@@ -1511,7 +1543,7 @@ paths:
                       properties:
                         workspace:
                           type: object
-                          description: The injected <workspace> guidance prompt.
+                          description: The injected <workspace> guidance prompt. Belongs to the default Broods loop, so an agent that sets harness never receives it regardless of this value.
                           properties:
                             enabled: { type: boolean }
                         memory:
@@ -1664,19 +1696,85 @@ paths:
       responses:
         "200": { description: File or folder deleted }
 
+  /v1/workspaces/{workspaceId}/download-links:
+    post:
+      tags: [Workspaces]
+      summary: Create a shareable download link for a workspace file
+      description: |
+        Mints a capability token for one file and returns the path to redeem it.
+        Prefer this over the presigned URL from `GET .../files?path=`: that URL is
+        ~1.4 KB, expires in five minutes, and carries AWS signature material whose
+        `+` characters many chat clients corrupt. A download link is short, URL-safe
+        and lives as long as you ask for.
+
+        Join `downloadPath` to the same base URL you called here — the service sits
+        behind the gateway, which strips Host, so it cannot know its public origin.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - {
+            name: workspaceId,
+            in: path,
+            required: true,
+            schema: { type: string },
+          }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string }
+                expiresInSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 604800
+                  default: 86400
+      responses:
+        "200":
+          description: Download link created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  downloadPath: { type: string, example: /v1/downloads/abc123 }
+                  path: { type: string }
+                  expiresInSeconds: { type: integer }
+        "400": { description: Invalid path or expiresInSeconds }
+        "404": { description: Workspace or file not found }
+
+  /v1/downloads/{token}:
+    get:
+      tags: [Workspaces]
+      summary: Redeem a download link
+      description: |
+        Redirects to a freshly minted presigned S3 URL. Unauthenticated by design —
+        the token is the whole credential — so treat the link as a secret. Unknown,
+        expired and revoked tokens all answer 404 so the route cannot be used to
+        probe for files.
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        "302": { description: Redirect to the file }
+        "404": { description: Unknown, expired or revoked token }
+
   /v1/tools:
     post:
       tags: [Tools]
       summary: Create uploaded custom tool
       description: >-
         Upload an already-bundled JavaScript tool bundle and model-facing manifest.
-        A tool belongs to one project environment, so `project` and `environment`
-        are required; two environments may each define a tool of the same name.
+        A tool belongs to one project stage, so `project` and `stage`
+        are required; two stages may each define a tool of the same name.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
         - {
-            name: environment,
+            name: stage,
             in: query,
             required: true,
             schema: { type: string },
@@ -1694,17 +1792,17 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or environment }
-        "404": { description: Project or environment not found }
+        "400": { description: Missing project or stage }
+        "404": { description: Project or stage not found }
     get:
       tags: [Tools]
       summary: List uploaded custom tools
-      description: Lists the tools of one project environment. Both query parameters are required.
+      description: Lists the tools of one project stage. Both query parameters are required.
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
         - {
-            name: environment,
+            name: stage,
             in: query,
             required: true,
             schema: { type: string },
@@ -1721,8 +1819,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/AccountTool"
-        "400": { description: Missing project or environment }
-        "404": { description: Project or environment not found }
+        "400": { description: Missing project or stage }
+        "404": { description: Project or stage not found }
 
   /v1/tools/{toolId}:
     get:
@@ -2960,7 +3058,7 @@ components:
           $ref: "#/components/schemas/AgentPolicyConfig"
         publicAccess:
           type: boolean
-          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the environment runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
+          description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
         sandbox:
           type: string
           description: Id of the agent-level sandbox config (POST /v1/sandboxes). Powers stateless bash and is the default sandbox for workspaces that don't set their own.
@@ -3108,7 +3206,7 @@ components:
           type: string
           description: >-
             Trusted runtime attribute or dotted path. Examples include accountId,
-            project, environment, agentId, channel, channelId, threadId, actorId,
+            project, stage, agentId, channel, channelId, threadId, actorId,
             actorName, actorRoles, toolName, toolId, filePath, workspaceName,
             sandboxPermissionMode, tool.input.command, tool.input.file_path, and
             tool.inputKeys. On an array attribute such as actorRoles, `contains`
@@ -3593,7 +3691,7 @@ components:
           example: qs78zwc4z4q5ysxm74fgrhd13s88xxt
         projectId:
           type: string
-        environmentId:
+        stageId:
           type: string
         name:
           type: string
@@ -3661,7 +3759,7 @@ components:
 
     ChannelsConfig:
       type: object
-      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{channel}`.
+      description: Channel webhook configuration. Webhook URLs follow the pattern `/webhooks/{accountId}/{channel}` for a production stage, or `/webhooks/{accountId}/dev/{endpointId}/{channel}` for any other stage.
       properties:
         telegram:
           type: object

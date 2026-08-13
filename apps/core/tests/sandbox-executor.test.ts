@@ -1625,7 +1625,6 @@ describe("createSandboxExecutor", () => {
         token: "tok",
         teamId: "team_1",
         projectId: "prj_1",
-        runtime: "node24",
         persistent: false,
         networkPolicy: {
           allow: ["api.example.com"],
@@ -1642,6 +1641,36 @@ describe("createSandboxExecutor", () => {
       }),
     );
     expect(vercelStopMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a Vercel managed image without the legacy runtime option", async () => {
+    const {
+      createSandboxExecutor,
+    } = require("../src/harness/sandbox/index.ts");
+    const executor = createSandboxExecutor({
+      provider: "vercel",
+      options: {
+        token: "tok",
+        teamId: "team_1",
+        projectId: "prj_1",
+        image: "vercel/sandbox/python:3.14",
+      },
+    });
+
+    await executor.run({
+      code: "python --version",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+
+    expect(vercelCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: "vercel/sandbox/python:3.14",
+      }),
+    );
+    expect(vercelCreateMock.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "runtime",
+    );
   });
 
   it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {

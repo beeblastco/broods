@@ -3,6 +3,7 @@
  * domain records and configuration codecs live in `./domain/`.
  */
 
+import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
@@ -18,7 +19,7 @@ export interface AgentDeploymentScope {
   accountId: string;
   endpointId: string;
   projectSlug: string;
-  environmentSlug: string;
+  stageSlug: string;
 }
 
 /**
@@ -94,6 +95,11 @@ interface AccountStore {
 interface AgentStore {
   getById(accountId: string, agentId: string): Promise<AgentRecord | null>;
   list(accountId: string): Promise<AgentRecord[]>;
+  /** Agents of one stage, for the stage-scoped webhook URL. */
+  listForEndpoint(
+    accountId: string,
+    endpointId: string,
+  ): Promise<AgentRecord[]>;
   removeAllForAccount(accountId: string): Promise<number>;
 }
 
@@ -114,13 +120,13 @@ interface ChannelRecordStore {
 }
 
 /**
- * Project + environment scoped runtime keys, keyed by the dashboard/CLI-issued
- * API key hash. The key authorizes the account/environment scope; the agent is
+ * Project + stage scoped runtime keys, keyed by the dashboard/CLI-issued
+ * API key hash. The key authorizes the account/stage scope; the agent is
  * chosen per request by id.
  */
 interface AgentDeploymentStore {
   getByApiKeyHash(apiKeyHash: string): Promise<AgentDeploymentScope | null>;
-  /** Resolve the environment deployment containing one linked runtime agent. */
+  /** Resolve the stage deployment containing one linked runtime agent. */
   getByAgentId?(
     accountId: string,
     agentId: string,
@@ -142,7 +148,7 @@ interface CronStore {
     accountId: string,
     cronId: string,
     runId: string,
-    result: unknown,
+    result: JSONValue,
   ): Promise<void>;
   failRun(
     accountId: string,

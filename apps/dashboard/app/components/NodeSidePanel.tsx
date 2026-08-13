@@ -37,7 +37,7 @@ import {
   type AgentHealthStatus,
 } from "@/app/hooks/useAgentHealth";
 import { useConnectedAgentConfig } from "@/app/hooks/useConnectedAgentConfig";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import {
   applyModelReasoning,
   fromNestedAgentConfig,
@@ -189,14 +189,13 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const isWorkspace = nodeType === "workspace";
   const isSandbox = nodeType === "sandbox";
   const isSkill = nodeType === "skill";
-  const { environmentId } = useEnvironment();
+  const { stageId } = useStage();
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const agentConfigId = nodeData?.agentConfigId as
     Id<"agentConfigs"> | undefined;
   const nodeId = node?.id;
-  const canQueryToolStatus =
-    isTool && !!projectId && !!environmentId && !!nodeId;
+  const canQueryToolStatus = isTool && !!projectId && !!stageId && !!nodeId;
 
   // Time from the canvas click to this panel being on screen — mostly its own
   // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
@@ -237,25 +236,23 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     applyAgentConfigUpdate,
   );
   const removeConfig = useMutation(api.agentConfig.remove);
-  const ensureDeployment = useMutation(
-    api.agentDeployments.ensureForEnvironment,
-  );
+  const ensureDeployment = useMutation(api.agentDeployments.ensureForStage);
   const rotateDeployment = useMutation(api.agentDeployments.rotate);
 
-  // The environment's runtime API key (shared by every agent in it). The agent
+  // The stage's runtime API key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
   // the first `broods deploy`.
   const activeDeployment =
     useQuery(
-      api.agentDeployments.getForEnvironment,
-      isAgent && projectId && environmentId
-        ? { projectId: projectId, environmentId: environmentId }
+      api.agentDeployments.getForStage,
+      isAgent && projectId && stageId
+        ? { projectId: projectId, stageId: stageId }
         : "skip",
     ) ?? undefined;
   const revealedDeploymentApiKey = useQuery(
-    api.agentDeployments.revealKeyForEnvironment,
-    isAgent && projectId && environmentId
-      ? { projectId: projectId, environmentId: environmentId }
+    api.agentDeployments.revealKeyForStage,
+    isAgent && projectId && stageId
+      ? { projectId: projectId, stageId: stageId }
       : "skip",
   );
 
@@ -264,7 +261,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     canQueryToolStatus
       ? {
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           nodeId: nodeId,
         }
       : "skip",
@@ -554,8 +551,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const resourceId = nodeData?.resourceId as string | undefined;
   const resourceOwnership = useQuery(
     api.canvas.resourceOwnership,
-    (isWorkspace || isSandbox) && projectId && environmentId
-      ? { projectId: projectId, environmentId: environmentId }
+    (isWorkspace || isSandbox) && projectId && stageId
+      ? { projectId: projectId, stageId: stageId }
       : "skip",
   );
   const codeOwner = isAgent
@@ -571,12 +568,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       resourceOwnership === undefined);
 
   // Warn when a dashboard-owned node is named the same as a code-managed resource
-  // of the same kind: the next `broods deploy` resolves by (environment,
+  // of the same kind: the next `broods deploy` resolves by (stage,
   // name) and would adopt + overwrite this resource with the code definition.
   const cliManagedNames = useQuery(
     api.canvas.cliManagedResourceNames,
-    (isAgent || isWorkspace || isSandbox) && projectId && environmentId
-      ? { projectId: projectId, environmentId: environmentId }
+    (isAgent || isWorkspace || isSandbox) && projectId && stageId
+      ? { projectId: projectId, stageId: stageId }
       : "skip",
   );
   const currentResourceName = isAgent
@@ -612,7 +609,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, updateConfig],
   );
 
-  // Mint the environment's runtime key on demand, or rotate it. Both return the
+  // Mint the stage's runtime key on demand, or rotate it. Both return the
   // plaintext once; we remember it locally so the panel can reveal/copy it until
   // the key is rotated again. `rotate` also lands here via `handleRotateKey`.
   const ensureRuntimeKey = useCallback(
@@ -620,18 +617,18 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       // Returns whether the key was actually minted. The caller needs to tell a
       // real rotation apart from this early return, or a no-op reads as success
       // and the user redeploys with a key that never changed.
-      if (!isAgent || !projectId || !environmentId) return false;
+      if (!isAgent || !projectId || !stageId) return false;
 
       setIsSavingKey(true);
       try {
         const result = rotate
           ? await rotateDeployment({
               projectId: projectId,
-              environmentId: environmentId,
+              stageId: stageId,
             })
           : await ensureDeployment({
               projectId: projectId,
-              environmentId: environmentId,
+              stageId: stageId,
             });
         if (result?.rawApiKey) {
           setDeploymentApiKey(result.rawApiKey);
@@ -642,7 +639,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         setIsSavingKey(false);
       }
     },
-    [isAgent, projectId, environmentId, ensureDeployment, rotateDeployment],
+    [isAgent, projectId, stageId, ensureDeployment, rotateDeployment],
   );
   const handleGenerateKey = useCallback(
     () => ensureRuntimeKey(false),
@@ -863,7 +860,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 key={`${agentConfigId ?? "agent-details"}-${selectedProvider}-${agentConfig?.modelId ?? ""}`}
                 agentConfig={agentConfig}
                 projectId={projectId}
-                environmentId={environmentId}
+                stageId={stageId}
                 activeDeployment={activeDeployment}
                 deploymentApiKey={resolvedDeploymentApiKey}
                 editName={editName}
@@ -885,7 +882,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             ) : isTool && node ? (
               <ToolDetailsTab
                 projectId={projectId}
-                environmentId={environmentId}
+                stageId={stageId}
                 nodeId={node.id}
                 nodeLabel={editName || nodeData.label}
                 editName={editName}
@@ -995,7 +992,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             >
               <ToolConfigTab
                 projectId={projectId}
-                environmentId={environmentId}
+                stageId={stageId}
                 nodeId={node.id}
                 nodeLabel={editName || nodeData.label}
               />
@@ -1035,7 +1032,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               ) : node ? (
                 <ToolTestTab
                   projectId={projectId}
-                  environmentId={environmentId}
+                  stageId={stageId}
                   nodeId={node.id}
                 />
               ) : null}

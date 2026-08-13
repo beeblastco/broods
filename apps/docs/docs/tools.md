@@ -78,7 +78,7 @@ tier does and does not give you.
 | `options.messages`             | The conversation so far. Long conversations arrive truncated from the front — the most recent messages that fit 512 KB are forwarded, because the whole history would otherwise ride every call. |
 | `options.experimental_context` | Forwarded verbatim from the AI SDK.                                                                                                                                                              |
 
-**Secrets reach a tool through `options.context.config`, not `process.env`.** Put `env("NAME")` under the enabling agent's `tools.<tool>.config`; the value is resolved per environment and stored with the encrypted agent config, then merged over the tool's own `defaultConfig`. Neither tier gives a bundle the runner's environment: the sandbox child's `process.env` is scrubbed to `PATH`, `HOME`, `TMPDIR` and `NODE_ENV`, and the isolate has no `process` at all.
+**Secrets reach a tool through `options.context.config`, not `process.env`.** Put `env("NAME")` under the enabling agent's `tools.<tool>.config`; the value is resolved per stage and stored with the encrypted agent config, then merged over the tool's own `defaultConfig`. Neither tier gives a bundle the runner's environment: the sandbox child's `process.env` is scrubbed to `PATH`, `HOME`, `TMPDIR` and `NODE_ENV`, and the isolate has no `process` at all.
 
 ```mermaid
 sequenceDiagram
@@ -246,7 +246,7 @@ The CLI bundles the tool source into ESM, hashes it, and uploads it on sync. Age
 
 Omitting a tool disables it. Setting `enabled: false` also disables it. Set `needsApproval: true` when the tool should require the AI SDK approval flow before execution.
 Set `async: true` when a local `execute` tool may take long enough that the parent agent should keep working while the result is produced.
-For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Keep `defaultConfig` non-secret because it is account-wide tool metadata. Put `env("NAME")` values under the enabling agent's `tools.<tool>.config`; that agent config is resolved per environment and encrypted at rest. The compiler rejects environment references in `defaultConfig` instead of leaving a marker object for the tool to receive. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
+For uploaded tools, `config` is merged over the upload-time `defaultConfig` and passed to `ctx.config`. Keep `defaultConfig` non-secret because it is account-wide tool metadata. Put `env("NAME")` values under the enabling agent's `tools.<tool>.config`; that agent config is resolved per stage and encrypted at rest. The compiler rejects environment references in `defaultConfig` instead of leaving a marker object for the tool to receive. Pure-compute / fetch-only bundles run in the V8 isolate tier; node/npm/native bundles run in the tool-runner Lambda (sandbox tier). Only detached-async uploaded tools are deferred to #82.
 
 See [`packages/demos/tool-custom-async-sse`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-async-sse) for a runnable direct SSE example that uploads `test_async`, enables `config.tools.<toolId>.async`, and asks the agent to call the uploaded tool. [`packages/demos/tool-custom-stream`](https://github.com/beeblastco/broods/tree/dev/packages/demos/tool-custom-stream) demonstrates async-generator streaming.
 
@@ -279,15 +279,15 @@ Bundle size is capped per tier: **1 MB** on the isolate tier, **10 MB** on the s
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 
-A tool belongs to one project environment. Two environments may each define a tool
-of the same name without colliding, and an environment only ever sees its own — so
-the collection endpoints require `?project=<slug>&environment=<name>`. Omitting
+A tool belongs to one project stage. Two stages may each define a tool
+of the same name without colliding, and a stage only ever sees its own — so
+the collection endpoints require `?project=<slug>&stage=<name>`. Omitting
 either is a `400`; naming one that does not exist is a `404`.
 
 Tool management endpoints (raw API):
 
-- `GET /v1/tools?project=<slug>&environment=<name>`
-- `POST /v1/tools?project=<slug>&environment=<name>`
+- `GET /v1/tools?project=<slug>&stage=<name>`
+- `POST /v1/tools?project=<slug>&stage=<name>`
 - `GET /v1/tools/{toolId}`
 - `PATCH /v1/tools/{toolId}`
 - `DELETE /v1/tools/{toolId}`
@@ -295,7 +295,7 @@ Tool management endpoints (raw API):
 ```ts
 const tools = await account.listTools({
   project: "acme",
-  environment: "Production",
+  stage: "Production",
 });
 ```
 

@@ -3,6 +3,7 @@
  */
 
 import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -25,7 +26,8 @@ interface LoginCallback {
 const VALUE_OPTIONS = new Set([
   "--base-url",
   "--dashboard-url",
-  "--env",
+  "--stage",
+  "--from",
   "--level",
   "--limit",
   "--project",
@@ -166,7 +168,8 @@ export async function promptConfirm(question: string): Promise<boolean> {
 export async function loginWithBrowser(
   dashboardUrl: string,
 ): Promise<StoredAuthConfig> {
-  const state = crypto.randomUUID();
+  // The bin runs under a `node` shebang, and Node 18 has no global `crypto`.
+  const state = randomUUID();
   const { code, close } = await waitForCallback(state);
 
   try {
@@ -317,7 +320,7 @@ function waitForCallback(expectedState: string): Promise<{
  * Race a promise against a timeout so a stalled browser login surfaces an
  * actionable error instead of hanging the CLI forever. The most common cause is
  * the dashboard's cliAuth Convex functions not being deployed in the target
- * environment, which makes /cli-auth/start return a 500 in the browser and never
+ * stage, which makes /cli-auth/start return a 500 in the browser and never
  * redirect back to the local callback.
  */
 async function waitWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

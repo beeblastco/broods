@@ -144,7 +144,7 @@ describe("direct API ingress", () => {
             accountId: "acct_other",
             endpointId: "endpoint-other",
             projectSlug: "project-other",
-            environmentSlug: "environment-other",
+            stageSlug: "stage-other",
           },
           events: [
             {
@@ -180,7 +180,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -244,7 +244,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -322,7 +322,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -362,7 +362,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -619,7 +619,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -1164,7 +1164,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -1227,7 +1227,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -1237,7 +1237,7 @@ describe("direct API ingress", () => {
     expect(handledEvents).toHaveLength(1);
     expect(handledEvents[0]?.endpointId).toBe("env-endpoint");
     expect(handledEvents[0]?.projectSlug).toBe("demo");
-    expect(handledEvents[0]?.environmentSlug).toBe("development");
+    expect(handledEvents[0]?.stageSlug).toBe("development");
     expect(handledEvents[0]?.statusUrl).toBe(
       "https://gateway.broods.app/status/one?agentId=agent_test",
     );
@@ -1395,7 +1395,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
         ingressStatusLoader: async () =>
@@ -1454,7 +1454,7 @@ describe("direct API ingress", () => {
                 account: TEST_ACCOUNT,
                 endpointId: "env-endpoint",
                 projectSlug: "demo",
-                environmentSlug: "development",
+                stageSlug: "development",
               }
             : null,
       },
@@ -1505,7 +1505,7 @@ describe("direct API ingress", () => {
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
-    ["environmentSlug", "environment-other"],
+    ["stageSlug", "stage-other"],
   ] as const) {
     it(`requires the public deployment ingress ${field} to match exactly`, async () => {
       const eventId = scopedDirectEventId(
@@ -1636,7 +1636,7 @@ describe("direct API ingress", () => {
     ["accountId", "acct_other"],
     ["endpointId", "endpoint-other"],
     ["projectSlug", "project-other"],
-    ["environmentSlug", "environment-other"],
+    ["stageSlug", "stage-other"],
   ] as const) {
     it(`rejects subagent status when the parent ingress ${field} does not match`, async () => {
       const fixture = subagentStatusFixture();
@@ -1680,7 +1680,7 @@ describe("direct API ingress", () => {
           accountId: TEST_ACCOUNT.accountId,
           endpointId: "other-endpoint",
           projectSlug: "demo",
-          environmentSlug: "development",
+          stageSlug: "development",
         }),
         ingressStatusLoader: async () =>
           ingressStatus(fixture.parentEventId, "parent-conversation"),
@@ -1920,7 +1920,7 @@ async function routeIncomingEvent(
         accountId: TEST_ACCOUNT.accountId,
         endpointId: "env-endpoint",
         projectSlug: "demo",
-        environmentSlug: "development",
+        stageSlug: "development",
       })),
   });
 
@@ -1953,7 +1953,7 @@ async function deploymentStatusRequest(
         account: TEST_ACCOUNT,
         endpointId: "env-endpoint",
         projectSlug: "demo",
-        environmentSlug: "development",
+        stageSlug: "development",
       }),
     },
   );
@@ -1981,14 +1981,14 @@ function deploymentIngress(
     accountId: string;
     endpointId: string;
     projectSlug: string;
-    environmentSlug: string;
+    stageSlug: string;
   }> = {},
 ) {
   return {
     accountId: TEST_ACCOUNT.accountId,
     endpointId: "env-endpoint",
     projectSlug: "demo",
-    environmentSlug: "development",
+    stageSlug: "development",
     ...overrides,
   };
 }

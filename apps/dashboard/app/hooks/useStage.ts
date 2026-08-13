@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * URL-based environment selection hook.
- * Reads and writes the active environment ID via the ?env= search param so the
+ * URL-based stage selection hook.
+ * Reads and writes the active stage ID via the ?stage= search param so the
  * selection is shareable, bookmarkable, and survives page refreshes.
  */
 import type { Id } from "@broods/convex/_generated/dataModel";
@@ -10,24 +10,24 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useTransition } from "react";
 
 /**
- * Returns the current environment ID from the URL and a setter that updates the URL.
- * Setting null removes the env param, causing EnvironmentSelector to auto-select the default.
+ * Returns the current stage ID from the URL and a setter that updates the URL.
+ * Setting null removes the stage param, causing StageSelector to auto-select the default.
  */
-export function useEnvironment() {
+export function useStage() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
   const [, startTransition] = useTransition();
 
-  const environmentId = searchParams.get("env") as Id<"environments"> | null;
+  const stageId = searchParams.get("stage") as Id<"stages"> | null;
 
-  const setEnvironmentId = useCallback(
-    (id: Id<"environments"> | null) => {
+  const setStageId = useCallback(
+    (id: Id<"stages"> | null) => {
       const next = new URLSearchParams(searchParams.toString());
       if (id) {
-        next.set("env", id);
+        next.set("stage", id);
       } else {
-        next.delete("env");
+        next.delete("stage");
       }
       const query = next.toString();
       // Wrap in startTransition so the URL change is non-urgent and avoids
@@ -39,5 +39,5 @@ export function useEnvironment() {
     [searchParams, pathname, router, startTransition],
   );
 
-  return { environmentId: environmentId, setEnvironmentId: setEnvironmentId };
+  return { stageId: stageId, setStageId: setStageId };
 }

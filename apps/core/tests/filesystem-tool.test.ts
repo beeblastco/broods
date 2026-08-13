@@ -85,8 +85,8 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: (error: unknown) =>
     Boolean(
       error &&
-        typeof error === "object" &&
-        (error as { name?: string }).name === "NoSuchKey",
+      typeof error === "object" &&
+      (error as { name?: string }).name === "NoSuchKey",
     ),
   // Full surface so transitive importers keep working (mock.module replaces the module).
   readS3Bytes: mock(async () => new Uint8Array()),
@@ -249,9 +249,8 @@ async function approvalStatus(
     agentSandboxPermissionMode?: unknown;
   },
 ) {
-  const { compatibilityApprovalStatus } = await import(
-    "../src/harness/policy.ts"
-  );
+  const { compatibilityApprovalStatus } =
+    await import("../src/harness/policy.ts");
 
   return compatibilityApprovalStatus(toolName, input, {
     configuredApprovals: new Map(),
@@ -266,8 +265,7 @@ async function approvalStatus(
 // The compiled bash the tool sent lands in the body of the exec POST to the VM.
 function lastSandboxExec() {
   const call = microvmFetchMock.mock.calls.at(-1) as
-    | [string, { body: string }]
-    | undefined;
+    [string, { body: string }] | undefined;
 
   return { payload: JSON.parse(call![1].body) };
 }
@@ -291,9 +289,7 @@ async function tool(
   return mod.default(ctx)[name.replace("-", "_")] as {
     description: string;
     inputSchema: unknown;
-    execute(
-      input: Record<string, unknown>,
-    ): Promise<{ type: string; value: string }>;
+    execute(input: Record<string, unknown>): Promise<string>;
   };
 }
 
@@ -301,7 +297,7 @@ describe("sandbox tool set", () => {
   it("bash routes to the mounted internet function when a workspace is attached", async () => {
     const bash = await tool("bash", workspaceCtx());
     const result = await bash.execute({ command: "echo hi" });
-    expect(result).toEqual({ type: "text", value: "shell:echo hi" });
+    expect(result).toBe("shell:echo hi");
     expect(lastSandboxExec()).toMatchObject({
       payload: {
         runtime: "bash",
@@ -363,9 +359,8 @@ describe("sandbox tool set", () => {
   });
 
   it("treats persistent Lambda MicroVM sandboxes as background-capable", async () => {
-    const { sandboxSupportsBackgroundJobs } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { sandboxSupportsBackgroundJobs } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     expect(
       sandboxSupportsBackgroundJobs({
         provider: "lambda",
@@ -376,26 +371,20 @@ describe("sandbox tool set", () => {
 
   it("bash rejects commands using runtimes outside the sandbox allow-list", async () => {
     const bash = await tool("bash", workspaceCtx({ runtimes: ["bash"] }));
-    const result = await bash.execute({ command: "node script.js" });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: this sandbox does not allow node commands",
-    });
+    await expect(bash.execute({ command: "node script.js" })).rejects.toThrow(
+      "Error: this sandbox does not allow node commands",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
   it("bash rejects parent directory traversal", async () => {
     const bash = await tool("bash", workspaceCtx());
-    await expect(bash.execute({ command: "cd .. && ls" })).resolves.toEqual({
-      type: "error-text",
-      value: "Error: parent directory traversal is not allowed",
-    });
+    await expect(bash.execute({ command: "cd .. && ls" })).rejects.toThrow(
+      "Error: parent directory traversal is not allowed",
+    );
     await expect(
       bash.execute({ command: "cat ../secrets.env" }),
-    ).resolves.toEqual({
-      type: "error-text",
-      value: "Error: parent directory traversal is not allowed",
-    });
+    ).rejects.toThrow("Error: parent directory traversal is not allowed");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -411,10 +400,9 @@ describe("sandbox tool set", () => {
       // bash reads this as `../secrets.env`, so the escapes must come off first.
       "cat \\.\\./secrets.env",
     ]) {
-      await expect(bash.execute({ command: command })).resolves.toEqual({
-        type: "error-text",
-        value: "Error: parent directory traversal is not allowed",
-      });
+      await expect(bash.execute({ command: command })).rejects.toThrow(
+        "Error: parent directory traversal is not allowed",
+      );
     }
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
@@ -430,7 +418,7 @@ describe("sandbox tool set", () => {
       'echo "loading..."',
     ]) {
       const result = await bash.execute({ command: command });
-      expect(result.type).toBe("text");
+      expect(result).toBeString();
     }
   });
 
@@ -445,19 +433,20 @@ describe("sandbox tool set", () => {
       "ls -la /usr/lib",
     ]) {
       const result = await bash.execute({ command: command });
-      expect(result.type).toBe("text");
+      expect(result).toBeString();
     }
     expect(sandboxExecPayloads()).toHaveLength(3);
   });
 
   it("bash rejects writes that would be lost, naming a workspace path to use", async () => {
     const bash = await tool("bash", workspaceCtx());
-    const result = await bash.execute({
+    const result = bash.execute({
       command: "echo report > /srv/report.txt",
     });
-    expect(result.type).toBe("error-text");
-    expect(result.value).toContain("/srv/report.txt is outside the workspace");
-    expect(result.value).toContain("./report.txt");
+    await expect(result).rejects.toThrow(
+      "/srv/report.txt is outside the workspace",
+    );
+    await expect(result).rejects.toThrow("./report.txt");
 
     for (const command of [
       "cp result.json /opt/result.json",
@@ -474,9 +463,9 @@ describe("sandbox tool set", () => {
       "echo x >| /srv/f",
       "ln -s target /srv/link",
     ]) {
-      const blocked = await bash.execute({ command: command });
-      expect(blocked.type).toBe("error-text");
-      expect(blocked.value).toContain("outside the workspace");
+      await expect(bash.execute({ command: command })).rejects.toThrow(
+        "outside the workspace",
+      );
     }
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
@@ -486,7 +475,7 @@ describe("sandbox tool set", () => {
     const ok = await bash.execute({
       command: "curl -sS https://api.github.com/zen -o out.txt",
     });
-    expect(ok.type).toBe("text");
+    expect(ok).toBeString();
     expect(lastSandboxExec().payload.code).toContain(
       "https://api.github.com/zen",
     );
@@ -499,7 +488,7 @@ describe("sandbox tool set", () => {
       "git clone https://github.com/a/b ./b",
     ]) {
       const scratch = await bash.execute({ command: command });
-      expect(scratch.type).toBe("text");
+      expect(scratch).toBeString();
     }
   });
 
@@ -514,42 +503,32 @@ describe("sandbox tool set", () => {
     const result = await bash.execute({
       command: "echo report > /srv/report.txt",
     });
-    expect(result.type).toBe("text");
+    expect(result).toBeString();
     // Containment is a separate concern from durability, so `..` stays blocked —
     // including embedded, where relaxing the write guard would otherwise expose it.
     await expect(
       bash.execute({ command: "cat sub/../../../etc/shadow" }),
-    ).resolves.toEqual({
-      type: "error-text",
-      value: "Error: parent directory traversal is not allowed",
-    });
+    ).rejects.toThrow("Error: parent directory traversal is not allowed");
     await expect(
       bash.execute({ command: "cat ../secrets.env" }),
-    ).resolves.toEqual({
-      type: "error-text",
-      value: "Error: parent directory traversal is not allowed",
-    });
+    ).rejects.toThrow("Error: parent directory traversal is not allowed");
   });
 
   it("bash still guards an own sandbox that is not reserved", async () => {
     // Nothing outside the mount survives the call, so the write is still a loss.
     const bash = await tool("bash", ownSandboxCtx());
-    const result = await bash.execute({
-      command: "echo report > /srv/report.txt",
-    });
-    expect(result.type).toBe("error-text");
-    expect(result.value).toContain("outside the workspace");
+    await expect(
+      bash.execute({ command: "echo report > /srv/report.txt" }),
+    ).rejects.toThrow("outside the workspace");
   });
 
   it("bash guards a workspace that borrows someone else's sandbox", async () => {
     // The sandbox is the workspace's execution layer, not the agent's machine —
     // reserved or not, the workspace is all the agent gets to keep.
     const bash = await tool("bash", borrowedSandboxCtx());
-    const result = await bash.execute({
-      command: "echo report > /srv/report.txt",
-    });
-    expect(result.type).toBe("error-text");
-    expect(result.value).toContain("outside the workspace");
+    await expect(
+      bash.execute({ command: "echo report > /srv/report.txt" }),
+    ).rejects.toThrow("outside the workspace");
   });
 
   it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
@@ -618,7 +597,7 @@ describe("sandbox tool set", () => {
       command: "echo hi",
       sandbox: true,
     });
-    expect(result.type).toBe("text");
+    expect(result).toBeString();
     expect(lastSandboxExec().payload.namespace).toBeUndefined();
 
     // When a workspace already mounts that sandbox, the workspace is the way in.
@@ -640,7 +619,7 @@ describe("sandbox tool set", () => {
         "python3 script.py 2>/dev/null",
       ].join("\n"),
     });
-    expect(result.type).toBe("text");
+    expect(result).toBeString();
     expect(lastSandboxExec().payload.code).toContain("python3 script.py");
   });
 
@@ -709,11 +688,9 @@ describe("sandbox tool set", () => {
         },
       ],
     } as never);
-    const result = await bash.execute({ command: "pwd", workspace: "unknown" });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "unknown workspace unknown",
-    });
+    await expect(
+      bash.execute({ command: "pwd", workspace: "unknown" }),
+    ).rejects.toThrow("unknown workspace unknown");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -723,10 +700,7 @@ describe("read-only S3-direct workspace", () => {
     readS3TextMock.mockImplementationOnce(async () => "alpha\nbeta\ngamma\n");
     const read = await tool("read", readonlyCtx());
     const result = await read.execute({ file_path: "notes/a.txt" });
-    expect(result).toEqual({
-      type: "text",
-      value: "     1\talpha\n     2\tbeta\n     3\tgamma\n",
-    });
+    expect(result).toBe("     1\talpha\n     2\tbeta\n     3\tgamma\n");
     expect(readS3TextMock).toHaveBeenCalledWith(
       "filesystem-bucket",
       `${NS}/notes/a.txt`,
@@ -739,11 +713,9 @@ describe("read-only S3-direct workspace", () => {
       throw Object.assign(new Error("nope"), { name: "NoSuchKey" });
     });
     const read = await tool("read", readonlyCtx());
-    const result = await read.execute({ file_path: "missing.txt" });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: file not found: missing.txt",
-    });
+    await expect(read.execute({ file_path: "missing.txt" })).rejects.toThrow(
+      "Error: file not found: missing.txt",
+    );
   });
 
   it("glob lists matching files from S3 sorted by mtime, newest first", async () => {
@@ -755,7 +727,7 @@ describe("read-only S3-direct workspace", () => {
     ]);
     const glob = await tool("glob", readonlyCtx());
     const result = await glob.execute({ pattern: "**/*.ts" });
-    expect(result).toEqual({ type: "text", value: "src/new.ts\nold.ts\n" });
+    expect(result).toBe("src/new.ts\nold.ts\n");
     expect(listS3PrefixMock).toHaveBeenCalledWith(
       "filesystem-bucket",
       `${NS}/`,
@@ -765,11 +737,9 @@ describe("read-only S3-direct workspace", () => {
 
   it("does not expose write/edit on a read-only workspace (errors if forced)", async () => {
     const write = await tool("write", readonlyCtx());
-    const result = await write.execute({ file_path: "a.txt", content: "x" });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: workspace is read-only",
-    });
+    await expect(
+      write.execute({ file_path: "a.txt", content: "x" }),
+    ).rejects.toThrow("Error: workspace is read-only");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -795,11 +765,9 @@ describe("read-only mount workspace (default)", () => {
 
   it("still does not expose write/edit (the mount is read-only)", async () => {
     const write = await tool("write", readonlyMountCtx());
-    const result = await write.execute({ file_path: "a.txt", content: "x" });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: workspace is read-only",
-    });
+    await expect(
+      write.execute({ file_path: "a.txt", content: "x" }),
+    ).rejects.toThrow("Error: workspace is read-only");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 });
@@ -881,13 +849,13 @@ describe("write/edit approval policy", () => {
 
   it("bash refuses a selection that names both a workspace and the sandbox", async () => {
     const bash = await tool("bash", borrowedSandboxCtx());
-    const result = await bash.execute({
-      command: "echo hi",
-      workspace: "notes",
-      sandbox: true,
-    });
-    expect(result.type).toBe("error-text");
-    expect(result.value).toContain("not both");
+    await expect(
+      bash.execute({
+        command: "echo hi",
+        workspace: "notes",
+        sandbox: true,
+      }),
+    ).rejects.toThrow("not both");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -970,7 +938,7 @@ describe("memory tool", () => {
     expect(payload.code).not.toContain(">>");
     expect(payload.code).not.toContain("mv ");
     expect(payload.code).not.toContain(".tmp");
-    expect(result.type).toBe("text");
+    expect(result).toBeString();
 
     const entryB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(
       payload.code,
@@ -990,15 +958,13 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       readonlyMountCtx() as unknown as Record<string, unknown>,
     );
-    const result = await memory_save.execute({
-      title: "x",
-      description: "d",
-      content: "y",
-    });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: workspace is read-only",
-    });
+    await expect(
+      memory_save.execute({
+        title: "x",
+        description: "d",
+        content: "y",
+      }),
+    ).rejects.toThrow("Error: workspace is read-only");
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -1013,15 +979,15 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       ctx as unknown as Record<string, unknown>,
     );
-    const result = await memory_save.execute({
-      title: "x",
-      description: "d",
-      content: "y",
-    });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: the memory harness is disabled for workspace notes",
-    });
+    await expect(
+      memory_save.execute({
+        title: "x",
+        description: "d",
+        content: "y",
+      }),
+    ).rejects.toThrow(
+      "Error: the memory harness is disabled for workspace notes",
+    );
     expect(microvmFetchMock).not.toHaveBeenCalled();
   });
 
@@ -1042,23 +1008,20 @@ describe("memory tool", () => {
     const memory_save = await memorySave(
       workspaceCtx() as unknown as Record<string, unknown>,
     );
-    const result = await memory_save.execute({
-      title: "   ",
-      description: "d",
-      content: "y",
-    });
-    expect(result).toEqual({
-      type: "error-text",
-      value: "Error: title must not be empty",
-    });
+    await expect(
+      memory_save.execute({
+        title: "   ",
+        description: "d",
+        content: "y",
+      }),
+    ).rejects.toThrow("Error: title must not be empty");
   });
 });
 
 describe("toWorkspaceRelative", () => {
   it("normalizes leading slashes and dots to workspace-relative paths", async () => {
-    const { toWorkspaceRelative } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     expect(toWorkspaceRelative("/src/index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("./src/./index.ts")).toBe("src/index.ts");
     expect(toWorkspaceRelative("")).toBe(".");
@@ -1067,9 +1030,8 @@ describe("toWorkspaceRelative", () => {
   });
 
   it("rejects directory traversal anywhere in the path", async () => {
-    const { toWorkspaceRelative } = await import(
-      "../src/harness/tools/filesystem-utils.ts"
-    );
+    const { toWorkspaceRelative } =
+      await import("../src/harness/tools/filesystem-utils.ts");
     for (const path of [
       "../etc/passwd",
       "a/../../b",

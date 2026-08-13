@@ -1,6 +1,6 @@
 {
   "name": "broods",
-  "version": "0.8.1",
+  "version": "0.10.0",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "type": "module",
   "license": "MIT",

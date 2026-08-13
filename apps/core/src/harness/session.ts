@@ -185,11 +185,11 @@ export class Session {
     // for deployment-key traffic and resolved channel integrations.
     // Used to scope realtime telemetry to the dashboard's deployment view.
     public readonly endpointId?: string,
-    // Project and environment slugs from the runtime key scope. Present for
+    // Project and stage slugs from the runtime key scope. Present for
     // deployment-key traffic and resolved channel integrations. Used to build
     // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
     public readonly projectSlug?: string,
-    public readonly environmentSlug?: string,
+    public readonly stageSlug?: string,
     // Monotonic Convex fencing token. Present for every coordinator-admitted run;
     // absent only on context-only writes that do not execute a model turn.
     public readonly ownerGeneration?: number,
@@ -591,7 +591,7 @@ export class Session {
           ];
     const memoryToolEnabled = this.isMemoryToolEnabled();
     const workspaceHarnessSystem: SystemModelMessage[] =
-      this.isWorkspaceHarnessEnabled()
+      this.enableDefaultHarness()
         ? [
             {
               role: "system",
@@ -806,7 +806,13 @@ export class Session {
     return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
   }
 
-  private isWorkspaceHarnessEnabled(): boolean {
+  // The <workspace> prompt is the default harness's own guidance. An AI SDK
+  // harness brings its own, and takes over the tools this prompt describes.
+  private enableDefaultHarness(): boolean {
+    if (this.agentConfig.harness !== undefined) {
+      return false;
+    }
+
     return (this.resolvedRuntime?.workspaces ?? []).some((workspace) =>
       workspaceGuidanceEnabled(workspace.config),
     );

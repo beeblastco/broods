@@ -13,7 +13,7 @@ export function applyWebhookEnabledToggle(
     enabled: boolean;
   },
 ): void {
-  // The panel's query args carry the environment, which this mutation never
+  // The panel's query args carry the stage, which this mutation never
   // sees — patch whichever listing the panel currently holds.
   for (const { args: queryArgs, value } of localStore.getAllQueries(
     api.webhooks.listAgentWebhooks,

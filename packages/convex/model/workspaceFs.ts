@@ -19,6 +19,7 @@ import {
   writeS3Object,
 } from "./s3";
 import {
+  normalizeFilePath,
   workspaceNamespace,
   type WorkspaceStorageConfig,
 } from "./workspaceRules";
@@ -270,25 +271,6 @@ export async function renameWorkspacePath(
   if (exact) await deleteS3Object(target.bucket, sourceKey, target.access);
 
   return descendants.length + (exact ? 1 : 0);
-}
-
-/**
- * Validate and normalize a workspace-relative file path.
- * @param value candidate path
- * @returns the normalized path
- * @throws when the path is empty or contains traversal segments
- */
-export function normalizeFilePath(value: unknown): string {
-  if (typeof value !== "string") throw new Error("path is required");
-  const path = value.trim().replace(/^\/+|\/+$/g, "");
-  const parts = path.split("/");
-  if (
-    !path ||
-    parts.some((part) => part.length === 0 || part === "." || part === "..")
-  )
-    throw new Error("Invalid workspace file path");
-
-  return path;
 }
 
 /**

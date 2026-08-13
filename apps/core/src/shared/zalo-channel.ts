@@ -4,6 +4,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
+import type { UserContent } from "ai";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -14,17 +15,25 @@ import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const ZALO_API_BASE = "https://bot-api.zaloplatforms.com";
 const ZALO_CHAT_TYPES = ["PRIVATE", "GROUP"] as const;
+// Message events Zalo delivers, each mapped to the reason its payload is
+// unusable. Anything else arrives as message.unsupported.received.
+const ZALO_MESSAGE_EVENTS: Record<string, string> = {
+  "message.text.received": "missing_text",
+  "message.image.received": "missing_photo",
+  "message.sticker.received": "missing_sticker_url",
+  "message.voice.received": "missing_voice_url",
+};
 const ZALO_REQUEST_TIMEOUT_MS = 10_000;
 const ZALO_TEXT_LIMIT = 2000;
+// .aac is the only audio format the Zalo Bot API deals in.
+const ZALO_VOICE_EXTENSION = ".aac";
+const ZALO_VOICE_MEDIA_TYPE = "audio/aac";
 
-interface ZaloWebhookEnvelope {
+interface ZaloApiResponse<T = unknown> {
   ok?: boolean;
-  result?: unknown;
-}
-
-interface ZaloUpdate {
-  event_name?: string;
-  message?: ZaloMessage;
+  result?: T;
+  error_code?: number;
+  description?: string;
 }
 
 interface ZaloMessage {
@@ -41,13 +50,13 @@ interface ZaloMessage {
   };
   date?: number;
   text?: string;
-}
-
-interface ZaloApiResponse<T = unknown> {
-  ok?: boolean;
-  result?: T;
-  error_code?: number;
-  description?: string;
+  // Media payloads. Zalo sends the picture, sticker and voice note as URLs it
+  // hosts itself, never as bytes.
+  photo?: string;
+  caption?: string;
+  sticker?: string;
+  url?: string;
+  voice_url?: string;
 }
 
 export type ZaloChatType = (typeof ZALO_CHAT_TYPES)[number];
@@ -65,6 +74,55 @@ export interface ZaloSource {
 export interface ZaloChannelOptions {
   allowedUserIds?: ReadonlySet<string>;
   allowedGroupIds?: ReadonlySet<string>;
+}
+
+interface ZaloUpdate {
+  event_name?: string;
+  message?: ZaloMessage;
+}
+
+interface ZaloWebhookEnvelope {
+  ok?: boolean;
+  result?: unknown;
+}
+
+export function createZaloActions(
+  botToken: string,
+  source: ZaloSource,
+): ChannelActions {
+  return {
+    sendText: async function(text) {
+      for (const chunk of chunkZaloText(text)) {
+        await callZaloApi(botToken, "sendMessage", {
+          chat_id: source.chatId,
+          text: chunk,
+        });
+      }
+    },
+    sendImage: async function(url, caption): Promise<void> {
+      // Zalo fetches the picture itself, so it only ever accepts a public URL.
+      const photo = zaloHttpUrl(url);
+      if (!photo) {
+        throw new Error(
+          "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
+        );
+      }
+      await callZaloApi(botToken, "sendPhoto", {
+        chat_id: source.chatId,
+        photo: photo,
+        ...(caption ? { caption: caption.slice(0, ZALO_TEXT_LIMIT) } : {}),
+      });
+    },
+    sendTyping: async function() {
+      await callZaloApi(botToken, "sendChatAction", {
+        chat_id: source.chatId,
+        action: "typing",
+      });
+    },
+    reactToMessage: async function() {
+      return;
+    },
+  };
 }
 
 export function createZaloChannel(
@@ -94,12 +152,14 @@ export function createZaloChannel(
         typeof update.event_name === "string"
           ? update.event_name.slice(0, 128)
           : "missing";
-      if (eventName !== "message.text.received") {
+      const missingContentReason = ZALO_MESSAGE_EVENTS[eventName];
+      if (!missingContentReason) {
 
         return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
       }
 
       const message = update.message;
+      const content = zaloMessageContent(eventName, message);
       const chatId = message?.chat?.id;
       const senderId = message?.from?.id;
       const messageId = message?.message_id;
@@ -115,6 +175,10 @@ export function createZaloChannel(
       if (!senderId) {
 
         return ignoreZaloUpdate(update, "missing_sender_id");
+      }
+      if (!content) {
+
+        return ignoreZaloUpdate(update, missingContentReason);
       }
       if (!isZaloChatType(chatType)) {
 
@@ -153,29 +217,22 @@ export function createZaloChannel(
         ...(typeof message.date === "number" ? { date: message.date } : {}),
       };
 
-      const inbound = {
-        eventId: `${ZALO_INTEGRATION_PREFIX}${eventName}:${chatId}:${senderId}:${messageId}`,
-        conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
-        channelName: "zalo",
-        identity: {
-          channelId: chatId,
-          ...(senderId ? { actorId: senderId } : {}),
-          ...(senderName ? { actorName: senderName } : {}),
-        },
-        source: { ...source },
-      };
-
-      const text =
-        typeof message.text === "string" ? message.text.trim() : undefined;
-      if (!text) {
-
-        return ignoreZaloUpdate(update, "missing_text");
-      }
-
       return {
         kind: "message",
         ack: { statusCode: 200, body: "ok" },
-        message: { ...inbound, content: text },
+        message: {
+          eventId: `${ZALO_INTEGRATION_PREFIX}${update.event_name}:${chatId}:${senderId}:${messageId}`,
+          conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
+          channelName: "zalo",
+          content: content,
+          identity: {
+            channelId: chatId,
+            ...(senderId ? { actorId: senderId } : {}),
+            ...(senderName ? { actorName: senderName } : {}),
+          },
+          // Spread so the typed source reaches a Record<string, unknown> field.
+          source: { ...source },
+        },
       };
     },
 
@@ -185,34 +242,9 @@ export function createZaloChannel(
   };
 }
 
-export function createZaloActions(
-  botToken: string,
-  source: ZaloSource,
-): ChannelActions {
-  return {
-    sendText: async function(text) {
-      for (const chunk of chunkZaloText(text)) {
-        await callZaloApi(botToken, "sendMessage", {
-          chat_id: source.chatId,
-          text: chunk,
-        });
-      }
-    },
-    sendTyping: async function() {
-      await callZaloApi(botToken, "sendChatAction", {
-        chat_id: source.chatId,
-        action: "typing",
-      });
-    },
-    reactToMessage: async function() {
-      return;
-    },
-  };
-}
-
 async function callZaloApi(
   botToken: string,
-  method: "sendMessage" | "sendChatAction",
+  method: "sendChatAction" | "sendMessage" | "sendPhoto",
   body: Record<string, unknown>,
 ): Promise<ZaloApiResponse> {
   const controller = new AbortController();
@@ -396,7 +428,6 @@ function unwrapZaloUpdate(raw: unknown): ZaloUpdate {
       envelope.result &&
       typeof envelope.result === "object"
     ) {
-
       return envelope.result as ZaloUpdate;
     }
   }
@@ -416,4 +447,78 @@ function verifyWebhookSecret(
   const expected = Buffer.from(secret);
 
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function zaloHttpUrl(raw: unknown): string | null {
+  if (typeof raw !== "string" || !URL.canParse(raw)) {
+
+    return null;
+  }
+  const url = new URL(raw);
+
+  return url.protocol === "http:" || url.protocol === "https:"
+    ? url.toString()
+    : null;
+}
+
+// Zalo hosts every attachment as a URL, so inbound media becomes AI SDK URL
+// parts — strings, because the conversation is persisted as JSON.
+function zaloMessageContent(
+  eventName: string,
+  message: ZaloMessage | undefined,
+): UserContent | null {
+  const caption =
+    typeof message?.caption === "string" ? message.caption.trim() : "";
+  switch (eventName) {
+    case "message.text.received": {
+      const text =
+        typeof message?.text === "string" ? message.text.trim() : "";
+
+      return text || null;
+    }
+    case "message.image.received": {
+      const photo = zaloHttpUrl(message?.photo);
+      if (!photo) {
+
+        return null;
+      }
+
+      return caption
+        ? [
+            { type: "text", text: caption },
+            { type: "image", image: photo },
+          ]
+        : [{ type: "image", image: photo }];
+    }
+    case "message.sticker.received": {
+      const sticker = zaloHttpUrl(message?.url);
+
+      return sticker ? [{ type: "image", image: sticker }] : null;
+    }
+    case "message.voice.received": {
+      const voice = zaloHttpUrl(message?.voice_url);
+      if (!voice) {
+
+        return null;
+      }
+      // An audio type Zalo never sends goes over as a link, so the turn survives
+      // instead of failing at the provider.
+      const isVoiceNote = new URL(voice)
+        .pathname.toLowerCase()
+        .endsWith(ZALO_VOICE_EXTENSION);
+
+      return isVoiceNote
+        ? [
+            {
+              type: "file",
+              data: voice,
+              mediaType: ZALO_VOICE_MEDIA_TYPE,
+            },
+          ]
+        : [{ type: "text", text: `Voice message: ${voice}` }];
+    }
+    default:
+
+      return null;
+  }
 }

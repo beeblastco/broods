@@ -34,7 +34,7 @@ export type WebSocketRunInput = {
   sessionId?: string;
   eventId?: string;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   signal?: AbortSignal;
   /** Defaults to "steer": join the live run at its next step boundary. */
   mode?: "reject" | "followup" | "collect" | "steer";
@@ -49,7 +49,7 @@ export type WebSocketAttachInput = Omit<
   endpointId?: string;
   agent?: AgentReference;
   projectSlug?: string;
-  environmentSlug?: string;
+  stageSlug?: string;
   signal?: AbortSignal;
 };
 
@@ -343,19 +343,18 @@ export class BroodsWebSocketClient {
   buildUrl(
     input: Pick<
       WebSocketRunInput,
-      "agent" | "endpointId" | "projectSlug" | "environmentSlug"
+      "agent" | "endpointId" | "projectSlug" | "stageSlug"
     >,
   ): string {
     const endpointId = resolveEndpointId(input);
     const projectSlug = input.projectSlug ?? input.agent?.projectSlug;
-    const environmentSlug =
-      input.environmentSlug ?? input.agent?.environmentSlug;
+    const stageSlug = input.stageSlug ?? input.agent?.stageSlug;
     const projectPrefix = projectSlug ? `/${projectSlug}` : "";
-    const environmentPrefix = environmentSlug ? `/${environmentSlug}` : "";
+    const stagePrefix = stageSlug ? `/${stageSlug}` : "";
     const wsBaseUrl = toWebSocketBaseUrl(this.baseUrl);
 
     return (
-      `${wsBaseUrl}/v1${projectPrefix}/agents${environmentPrefix}/${encodeURIComponent(endpointId)}/ws` +
+      `${wsBaseUrl}/v1${projectPrefix}/agents${stagePrefix}/${encodeURIComponent(endpointId)}/ws` +
       `?token=${encodeURIComponent(this.apiKey)}`
     );
   }

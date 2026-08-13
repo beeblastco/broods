@@ -1,11 +1,20 @@
 /**
  * Zalo channel adapter tests.
- * Cover webhook auth, allow-list filtering, and text message normalization here.
+ * Cover webhook auth, allow-list filtering, text message normalization, and
+ * outbound sends here.
  */
 
 import { describe, expect, it } from "bun:test";
-import type { ChannelParseResult } from "../src/shared/channels.ts";
-import { createZaloChannel } from "../src/shared/zalo-channel.ts";
+import type { UserContent } from "ai";
+import type {
+  ChannelAdapter,
+  ChannelParseResult,
+} from "../src/shared/channels.ts";
+import {
+  createZaloActions,
+  createZaloChannel,
+  type ZaloSource,
+} from "../src/shared/zalo-channel.ts";
 
 describe("zalo channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
@@ -140,6 +149,23 @@ describe("zalo channel adapter", () => {
     );
     expectIgnoreReason(
       await adapter.parse(
+        createZaloRequest(validUpdate({ eventName: "message.image.received" })),
+      ),
+      "missing_photo",
+    );
+    expectIgnoreReason(
+      await adapter.parse(
+        createZaloRequest(
+          validUpdate({
+            eventName: "message.image.received",
+            media: { photo: "/relative/not-a-url.png" },
+          }),
+        ),
+      ),
+      "missing_photo",
+    );
+    expectIgnoreReason(
+      await adapter.parse(
         createZaloRequest(validUpdate({ chatType: "CHANNEL" })),
       ),
       "unsupported_chat_type:CHANNEL",
@@ -226,7 +252,190 @@ describe("zalo channel adapter", () => {
       "message",
     );
   });
+
+  it("normalizes inbound images, stickers, and voice notes into content parts", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret");
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.image.received",
+          media: {
+            photo: "https://zalo.example/photo.jpg",
+            caption: "  look at this  ",
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "text", text: "look at this" },
+      { type: "image", image: "https://zalo.example/photo.jpg" },
+    ]);
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.image.received",
+          media: { photo: "https://zalo.example/photo.jpg" },
+        }),
+      ),
+    ).toEqual([{ type: "image", image: "https://zalo.example/photo.jpg" }]);
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.sticker.received",
+          media: {
+            sticker: "12345",
+            url: "https://stickers.zaloapp.com/12345.png",
+          },
+        }),
+      ),
+    ).toEqual([
+      { type: "image", image: "https://stickers.zaloapp.com/12345.png" },
+    ]);
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.voice.received",
+          media: { voice_url: "https://zalo.example/note.aac" },
+        }),
+      ),
+    ).toEqual([
+      {
+        type: "file",
+        data: "https://zalo.example/note.aac",
+        mediaType: "audio/aac",
+      },
+    ]);
+  });
+
+  it("falls back to a link for any voice note that is not .aac", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret");
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.voice.received",
+          media: { voice_url: "https://zalo.example/note.mp3" },
+        }),
+      ),
+    ).toEqual([
+      { type: "text", text: "Voice message: https://zalo.example/note.mp3" },
+    ]);
+
+    expect(
+      await parsedContent(
+        adapter,
+        validUpdate({
+          eventName: "message.voice.received",
+          media: { voice_url: "https://zalo.example/note" },
+        }),
+      ),
+    ).toEqual([
+      { type: "text", text: "Voice message: https://zalo.example/note" },
+    ]);
+  });
+
+  it("sends an image through sendPhoto with the caption truncated", async () => {
+    const calls = await captureZaloCalls(async (actions): Promise<void> => {
+      await actions.sendImage?.(
+        "https://cdn.example.com/chart.png",
+        "x".repeat(2100),
+      );
+      await actions.sendImage?.("https://cdn.example.com/plain.png");
+    });
+
+    expect(calls).toEqual([
+      {
+        url: "https://bot-api.zaloplatforms.com/botbot-token/sendPhoto",
+        body: {
+          chat_id: "chat-1",
+          photo: "https://cdn.example.com/chart.png",
+          caption: "x".repeat(2000),
+        },
+      },
+      {
+        url: "https://bot-api.zaloplatforms.com/botbot-token/sendPhoto",
+        body: {
+          chat_id: "chat-1",
+          photo: "https://cdn.example.com/plain.png",
+        },
+      },
+    ]);
+  });
+
+  it("rejects image URLs Zalo could not fetch", async () => {
+    const calls = await captureZaloCalls(async (actions): Promise<void> => {
+      await expect(
+        actions.sendImage?.("/workspace/chart.png"),
+      ).rejects.toThrow("absolute http(s) image URL");
+      await expect(
+        actions.sendImage?.("data:image/png;base64,iVBORw0KGgo="),
+      ).rejects.toThrow("absolute http(s) image URL");
+    });
+
+    expect(calls).toEqual([]);
+  });
 });
+
+async function parsedContent(
+  adapter: ChannelAdapter,
+  update: unknown,
+): Promise<UserContent> {
+  const parsed = await adapter.parse(createZaloRequest(update));
+  if (parsed.kind !== "message") {
+    throw new Error(
+      `Expected Zalo update to be accepted, got ${parsed.kind}: ${
+        "reason" in parsed ? parsed.reason : ""
+      }`,
+    );
+  }
+
+  return parsed.message.content;
+}
+
+async function captureZaloCalls(
+  run: (actions: ReturnType<typeof createZaloActions>) => Promise<void>,
+): Promise<{ url: string; body: unknown }[]> {
+  const calls: { url: string; body: unknown }[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
+    calls.push({
+      url: String(input),
+      body: JSON.parse(String(init?.body)) as unknown,
+    });
+
+    return new Response(JSON.stringify({ ok: true, result: {} }), {
+      status: 200,
+    });
+  }) as typeof globalThis.fetch;
+  try {
+    await run(createZaloActions("bot-token", zaloSource()));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  return calls;
+}
+
+function zaloSource(): ZaloSource {
+  return {
+    chatId: "chat-1",
+    chatType: "PRIVATE",
+    messageId: "message-1",
+    senderId: "user-1",
+    eventName: "message.text.received",
+  };
+}
 
 function createZaloRequest(
   body: unknown,
@@ -261,6 +470,7 @@ function validUpdate(
     senderId?: string;
     messageId?: string | null;
     isBot?: boolean;
+    media?: Record<string, unknown>;
   } = {},
 ) {
   return {
@@ -273,6 +483,7 @@ function validUpdate(
       ...(overrides.text === null
         ? {}
         : { text: overrides.text ?? "hello zalo" }),
+      ...overrides.media,
       chat: {
         id: overrides.chatId ?? "chat-1",
         chat_type: overrides.chatType ?? "PRIVATE",

@@ -243,6 +243,17 @@ const agents: Storage["agents"] = {
 
     return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
   },
+  listForEndpoint: async function(accountId, endpointId) {
+    const docs = (await getConvexClient().query(
+      internal.agents.listForEndpoint,
+      {
+        accountId: accountId as any,
+        endpointId: endpointId as any,
+      },
+    )) as ConvexAgentDoc[];
+
+    return docs.map((doc) => agentFromConvex(doc)!).filter(Boolean);
+  },
   removeAllForAccount: async function(accountId) {
     const docs = (await getConvexClient().query(internal.agents.list, {
       accountId: accountId as any,
@@ -365,7 +376,7 @@ interface ConvexSandboxConfigDoc {
   _id: string;
   accountId: string;
   projectId?: string;
-  environmentId?: string;
+  stageId?: string;
   name: string;
   description?: string;
   encryptedConfig?: string;
@@ -398,7 +409,7 @@ function sandboxConfigFromConvex(
     accountId: doc.accountId,
     sandboxId: doc._id,
     ...(doc.projectId ? { projectId: doc.projectId } : {}),
-    ...(doc.environmentId ? { environmentId: doc.environmentId } : {}),
+    ...(doc.stageId ? { stageId: doc.stageId } : {}),
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config: config,

@@ -52,6 +52,9 @@ import {
 } from "./utils.ts";
 
 type VercelSandboxClass = typeof import("@vercel/sandbox").Sandbox;
+type VercelCreateOptions = NonNullable<
+  Parameters<VercelSandboxClass["create"]>[0]
+>;
 
 export class VercelSandboxExecutor implements SandboxExecutor {
   readonly #config: SandboxExecutorConfig;
@@ -416,13 +419,15 @@ function vercelCreateOptions(
   config: SandboxExecutorConfig,
   request: { envVars?: Record<string, string>; timeoutSeconds: number },
   persistent: boolean,
-): Record<string, unknown> {
+): VercelCreateOptions {
   const options = isPlainObject(config.options) ? config.options : {};
   const lifecycle = resolveSandboxLifecycle(config.lifecycle);
+  const image = configString(options.image);
+  const runtime = configString(options.runtime);
 
   return {
     ...vercelAuthOptions(config),
-    runtime: configString(options.runtime) ?? "node24",
+    ...(image ? { image: image } : runtime ? { runtime: runtime } : {}),
     persistent: persistent,
     timeout:
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *

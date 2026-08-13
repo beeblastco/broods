@@ -131,6 +131,29 @@ Set `mode: "ephemeral"` to opt out. Ephemeral keeps child model context in memor
 
 ## Controlling A Running Child
 
+The parent model gets three focused tools for children returned by
+`run_subagent`:
+
+- `get_subagent_status` reads the durable task status and completed result or
+  failure detail
+- `update_subagent` uses mode `steer` to change the active child's direction or
+  mode `continue` to queue a follow-up turn; both require a `message`
+- `stop_subagent` cooperatively stops the active child
+
+Each tool takes the `taskId` and `agentId` returned by `run_subagent`. They are
+exposed only in persistent mode and accept only tasks created by the calling
+parent event, so a child cannot control a sibling and one parent cannot control
+another parent's child.
+
+```json
+{
+  "taskId": "subagent~base64url-parent-event~task-uuid",
+  "agentId": "agent_child",
+  "mode": "steer",
+  "message": "Prioritize the primary sources and report briefly."
+}
+```
+
 Persistent children are admitted through the same conversation coordinator as top-level runs, so they are addressed by the ordinary ingress endpoints — there is no subagent-specific control API. Send stop or steer to the **child's** `conversationKey`, which `run_subagent` returns alongside the `taskId`.
 
 - **cancel** — the child stops cooperatively at its next model step boundary, and the task is recorded as failed with `stoppedByUser` set. A stopped child's partial progress is deliberately **not** injected into the parent: it was cancelled on purpose, so it is not an answer the parent asked for. Genuine failures are still reported to the parent
@@ -182,7 +205,7 @@ encoding, not encryption, and must not contain or be treated as confidential
 data. Public direct requests cannot choose the reserved `subagent~` event
 namespace. A deployment-key status/attach request succeeds only when the child
 status row, its child agent/conversation scope, the durable parent ingress row,
-the active public parent, and the key's account/project/environment/endpoint
+the active public parent, and the key's account/project/stage/endpoint
 deployment scope all agree. The client does not provide parent scope. This
 permits a virtual or predefined private child to be observed through its
 already-authorized parent without making the child publicly runnable or exposing

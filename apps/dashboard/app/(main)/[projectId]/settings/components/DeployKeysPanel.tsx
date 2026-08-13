@@ -1,6 +1,6 @@
 "use client";
 
-/** Deploy keys panel: scoped CLI tokens that deploy only to the active environment. */
+/** Deploy keys panel: scoped CLI tokens that deploy only to the active stage. */
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
 import { Section } from "@/app/components/Section";
 import { Button } from "@/app/components/ui/button";
@@ -12,19 +12,17 @@ import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 
 interface Props {
-  /** Project that owns the environment. */
+  /** Project that owns the stage. */
   projectId: Id<"projects">;
-  /** Active environment the keys are scoped to, or null while none is selected. */
-  environmentId: Id<"environments"> | null;
+  /** Active stage the keys are scoped to, or null while none is selected. */
+  stageId: Id<"stages"> | null;
 }
 
-/** Lists, creates (with one-time reveal), and revokes deploy keys for the active environment. */
-export function DeployKeysPanel({ projectId, environmentId }: Props) {
+/** Lists, creates (with one-time reveal), and revokes deploy keys for the active stage. */
+export function DeployKeysPanel({ projectId, stageId }: Props) {
   const deployKeys = useQuery(
     api.deployKeys.list,
-    environmentId
-      ? { projectId: projectId, environmentId: environmentId }
-      : "skip",
+    stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"deployKeys">[] | undefined;
   const createKey = useMutation(api.deployKeys.create);
   const removeKey = useMutation(api.deployKeys.remove);
@@ -43,13 +41,13 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
   const [isDeletingKey, setIsDeletingKey] = useState(false);
 
   async function handleCreate() {
-    if (!name.trim() || busy || !environmentId) return;
+    if (!name.trim() || busy || !stageId) return;
     setBusy(true);
     setError(null);
     try {
       const result = await createKey({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         name: name.trim(),
       });
       setRevealed(result.token);
@@ -82,11 +80,11 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
     }
   }
 
-  if (!environmentId) {
+  if (!stageId) {
     return (
-      <Section description="Scoped CLI tokens that deploy only to this environment.">
+      <Section description="Scoped CLI tokens that deploy only to this stage.">
         <p className="text-sm text-muted-foreground">
-          Select an environment to manage its deploy keys.
+          Select a stage to manage its deploy keys.
         </p>
       </Section>
     );
@@ -94,7 +92,7 @@ export function DeployKeysPanel({ projectId, environmentId }: Props) {
 
   return (
     <>
-      <Section description="Scoped CLI tokens that deploy only to this environment.">
+      <Section description="Scoped CLI tokens that deploy only to this stage.">
         {revealed && (
           <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3">
             <p className="mb-1 text-xs font-medium text-foreground">

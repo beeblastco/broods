@@ -1,7 +1,8 @@
 "use client";
 
-/** Displays the top header bar with logo, project selector, environment selector, navigation links, and user menu. */
+/** Displays the top header bar with logo, project selector, stage selector, navigation links, and user menu. */
 import { OrgSwitcher } from "@/app/components/header/OrgSwitcher";
+import { Skeleton } from "@/app/components/ui/skeleton";
 import { UserMenu } from "@/app/components/UserMenu";
 import { useTheme } from "next-themes";
 import dynamic from "next/dynamic";
@@ -15,7 +16,16 @@ const ProjectHeaderLeft = dynamic(
     import("@/app/components/header/ProjectHeaderLeft").then(
       (mod) => mod.ProjectHeaderLeft,
     ),
-  { loading: () => <div className="flex items-center gap-3 h-4" /> },
+  {
+    // Mirrors the divider + selector this chunk resolves to, so the left side
+    // of the header lands in one place instead of snapping wider.
+    loading: () => (
+      <div className="flex items-center gap-3 h-4">
+        <div className="h-4 w-px bg-border" />
+        <Skeleton className="h-4 w-24 bg-muted" />
+      </div>
+    ),
+  },
 );
 const ProjectHeaderRight = dynamic(
   () =>

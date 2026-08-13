@@ -27,9 +27,9 @@ interface UseObservabilityStreamOptions {
   stream: "logs" | "traces";
   /** Project slug, used in the WS path. Required to open the socket. */
   projectSlug: string | undefined;
-  /** Environment slug, used in the WS path. Required to open the socket. */
-  environmentSlug: string | undefined;
-  /** Environment runtime API key (fp_…), passed as ?token=. Required to open the socket. */
+  /** Stage slug, used in the WS path. Required to open the socket. */
+  stageSlug: string | undefined;
+  /** Stage runtime API key (fp_…), passed as ?token=. Required to open the socket. */
   apiKey: string | undefined;
   /** Number of historic entries to request as backfill before live stream. 0 = live only. */
   backfill?: number;
@@ -70,7 +70,7 @@ export function useObservabilityStream(
   const {
     stream,
     projectSlug,
-    environmentSlug,
+    stageSlug,
     apiKey,
     backfill = 0,
     minLevel,
@@ -78,7 +78,7 @@ export function useObservabilityStream(
 
   // Cache key for this stream + scope; entries are seeded from / written back to
   // STREAM_CACHE so remounts (tab switches) are instant.
-  const connKey = `${stream}|${projectSlug ?? ""}|${environmentSlug ?? ""}|${apiKey ?? ""}`;
+  const connKey = `${stream}|${projectSlug ?? ""}|${stageSlug ?? ""}|${apiKey ?? ""}`;
 
   const [entries, setEntries] = useState<
     (ObservabilityLogEntry | ObservabilitySpanRow)[]
@@ -87,7 +87,7 @@ export function useObservabilityStream(
   const [error, setError] = useState<string | null>(null);
 
   // Seed from cache when the connection target changes (e.g. switching
-  // environment) so one env's entries never bleed into the next while still
+  // stage) so one stage's entries never bleed into the next while still
   // painting instantly if we've seen this scope before — React's render-time
   // "adjust state when a prop changes" pattern, not an effect.
   const [prevConnKey, setPrevConnKey] = useState(connKey);
@@ -145,7 +145,7 @@ export function useObservabilityStream(
 
       return;
     }
-    if (!projectSlug || !environmentSlug || !apiKey) {
+    if (!projectSlug || !stageSlug || !apiKey) {
       // Not enough info yet — stay idle; will reconnect when props settle.
       setStatus("idle");
 
@@ -159,7 +159,7 @@ export function useObservabilityStream(
 
     const wsUrl =
       `${coreEndpoint.websocketBaseUrl}/v1/${encodeURIComponent(projectSlug)}` +
-      `/${encodeURIComponent(environmentSlug)}/observability/ws` +
+      `/${encodeURIComponent(stageSlug)}/observability/ws` +
       `?token=${encodeURIComponent(apiKey)}`;
 
     const socket = new WebSocket(wsUrl);
@@ -284,7 +284,7 @@ export function useObservabilityStream(
     wsBaseUrl,
     coreErrorMessage,
     projectSlug,
-    environmentSlug,
+    stageSlug,
     apiKey,
     stream,
     backfill,
@@ -301,7 +301,7 @@ export function useObservabilityStream(
   useEffect(() => {
     destroyedRef.current = false;
 
-    if (projectSlug && environmentSlug && apiKey) {
+    if (projectSlug && stageSlug && apiKey) {
       // Connecting to the WebSocket on mount is the effect's purpose; the status
       // setState it performs is intentional external-system synchronization.
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -315,11 +315,11 @@ export function useObservabilityStream(
     };
     // Re-run when connection params change; connect is stable unless they change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectSlug, environmentSlug, apiKey, stream]);
+  }, [projectSlug, stageSlug, apiKey, stream]);
 
   const refresh = useCallback(() => {
-    if (projectSlug && environmentSlug && apiKey) connect();
-  }, [projectSlug, environmentSlug, apiKey, connect]);
+    if (projectSlug && stageSlug && apiKey) connect();
+  }, [projectSlug, stageSlug, apiKey, connect]);
 
   return {
     entries: entries,

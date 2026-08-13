@@ -1,5 +1,6 @@
 /** Async agent status persistence backed by Convex transactions. */
 
+import type { JSONValue } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
 import type { ToolApprovalSummary } from "./harness.ts";
 export type AsyncAgentStatus =
@@ -14,7 +15,7 @@ export interface AsyncAgentResultRecord {
   status: AsyncAgentStatus;
   createdAt: string;
   updatedAt: string;
-  response?: unknown;
+  response?: JSONValue;
   error?: string;
   approvals?: ToolApprovalSummary[];
   expiresAt: number;
@@ -32,7 +33,7 @@ export function getAsyncAgentResult(
 }
 export async function markAsyncAgentResultCompleted(options: {
   eventId: string;
-  response: unknown;
+  response: JSONValue;
 }): Promise<void> {
   await runtime.mutate("updateAsyncAgentResult", {
     eventId: options.eventId,

@@ -63,7 +63,7 @@ beforeEach(() => {
               accountId: ACCOUNT.accountId,
               endpointId: "env-endpoint",
               projectSlug: "demo",
-              environmentSlug: "development",
+              stageSlug: "development",
             }
           : null,
     },
@@ -107,7 +107,7 @@ describe("resolveBearerAuth", () => {
     });
   });
 
-  it("resolves a project/environment runtime API key", async () => {
+  it("resolves a project/stage runtime API key", async () => {
     const auth = await resolveBearerAuth({
       authorization: `Bearer ${DEPLOYMENT_API_KEY}`,
     });
@@ -116,7 +116,7 @@ describe("resolveBearerAuth", () => {
       account: { accountId: "acct_1" },
       endpointId: "env-endpoint",
       projectSlug: "demo",
-      environmentSlug: "development",
+      stageSlug: "development",
     });
   });
 

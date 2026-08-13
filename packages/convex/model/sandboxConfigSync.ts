@@ -4,7 +4,7 @@
  * resolved env values into `encryptedConfig` (core reads it verbatim), so a
  * value change would otherwise stay stale until the next CLI sync. The
  * placeholder source lives in `encryptedSourceConfig`; we re-substitute it with
- * the environment's current values and re-push `encryptedConfig`.
+ * the stage's current values and re-push `encryptedConfig`.
  */
 
 import type { Id } from "../_generated/dataModel";
@@ -17,8 +17,8 @@ import {
 import { loadEnvironmentVariableValues } from "./environmentValues";
 
 /**
- * For every sandbox config in the environment that references `name`, decrypt
- * its placeholder source, re-resolve against the environment's current values,
+ * For every sandbox config in the stage that references `name`, decrypt
+ * its placeholder source, re-resolve against the stage's current values,
  * and re-encrypt `encryptedConfig`. No-ops on rows without a stored source
  * (legacy rows synced before placeholder retention) or when the encryption
  * secret is absent.
@@ -27,7 +27,7 @@ import { loadEnvironmentVariableValues } from "./environmentValues";
 export async function refreshSandboxConfigsForEnvironmentVariable(
   ctx: MutationCtx,
   projectId: Id<"projects">,
-  environmentId: Id<"environments">,
+  stageId: Id<"stages">,
   name: string,
   value: string | undefined,
 ): Promise<void> {
@@ -36,9 +36,7 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
 
   const configs = await ctx.db
     .query("sandboxConfigs")
-    .withIndex("by_environmentId_and_name", (q) =>
-      q.eq("environmentId", environmentId),
-    )
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
   const referencing = configs.filter((config) =>
     config.runtimeVariables?.some((entry) => entry.key === name),
@@ -47,11 +45,7 @@ export async function refreshSandboxConfigsForEnvironmentVariable(
 
   // Read the full value map once: a sandbox may reference several vars, and a
   // partial substitution would leave the others as literal `${OTHER}`.
-  const values = await loadEnvironmentVariableValues(
-    ctx,
-    projectId,
-    environmentId,
-  );
+  const values = await loadEnvironmentVariableValues(ctx, projectId, stageId);
   if (value === undefined) delete values[name];
 
   for (const config of referencing) {

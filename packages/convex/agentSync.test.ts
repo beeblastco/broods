@@ -99,8 +99,8 @@ describe("backSyncCanvasFromAgentRow", () => {
       expect(project?.name).toBe("beeblast-sale-agent-dev");
       expect(project?.orgId).toBe(orgId);
 
-      const environment = await ctx.db.get(config!.environmentId);
-      expect(environment?.projectId).toBe(config!.projectId);
+      const stage = await ctx.db.get(config!.stageId);
+      expect(stage?.projectId).toBe(config!.projectId);
     });
   });
 
@@ -272,15 +272,13 @@ describe("syncApiAgentCanvasWiring", () => {
       return { workspaceId: workspaceId, sandboxId: sandboxId };
     });
 
-  /** The canvas layout of the environment the config was back-synced into. */
+  /** The canvas layout of the stage the config was back-synced into. */
   const layoutFor = (tt: T, config: Doc<"agentConfigs">) =>
     tt.run(async (ctx) =>
       ctx.db
         .query("canvasLayouts")
-        .withIndex("by_projectId_and_environmentId", (q) =>
-          q
-            .eq("projectId", config.projectId)
-            .eq("environmentId", config.environmentId),
+        .withIndex("by_projectId_and_stageId", (q) =>
+          q.eq("projectId", config.projectId).eq("stageId", config.stageId),
         )
         .unique(),
     );
@@ -341,14 +339,14 @@ describe("syncApiAgentCanvasWiring", () => {
       );
     }
 
-    // Referenced account-scoped rows are adopted into the canvas environment
+    // Referenced account-scoped rows are adopted into the canvas stage
     // so the dashboard's save path accepts (and never edits) them.
     await tt.run(async (ctx) => {
       const workspace = await ctx.db.get(workspaceId);
-      expect(workspace!.environmentId).toBe(config!.environmentId);
+      expect(workspace!.stageId).toBe(config!.stageId);
       expect(workspace!.managedBy).toBe("api");
       const sandbox = await ctx.db.get(sandboxId);
-      expect(sandbox!.environmentId).toBe(config!.environmentId);
+      expect(sandbox!.stageId).toBe(config!.stageId);
       expect(sandbox!.managedBy).toBe("api");
     });
   });

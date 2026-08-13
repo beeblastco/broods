@@ -17,12 +17,16 @@ import {
   PROJECT_DIR,
   USER_CONFIG_PATH,
   gatewayUrlForDashboard,
+  stageFromEnv,
+  writeStoredAuth,
+  type StoredAuthConfig,
 } from "../config.ts";
 import { writeGeneratedFiles } from "../codegen.ts";
 import {
   type CliOnboardingContext,
   type CliOnboardingOrg,
   type CliOnboardingProject,
+  type CliStage,
   diffManifests,
   BroodsSyncClient,
   type RemoteManifestResponse,
@@ -32,8 +36,11 @@ import {
   DEFAULT_CORE_BASE_URL,
   type AgentReference,
 } from "../client.ts";
-import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
-import { subscribeObservabilityLogs } from "../observability-client.ts";
+import { isShellOwnedEnv, loadBroodsRuntimeConfig } from "../runtime-config.ts";
+import {
+  fetchObservabilityScope,
+  subscribeObservabilityLogs,
+} from "../observability-client.ts";
 import type {
   LogLevel,
   ObservabilityLogEntry,
@@ -76,20 +83,29 @@ Usage: broods <command>
 Commands:
   init                 Create a broods/ project shell
   login                Authenticate with WorkOS through the dashboard
-  dev                  Watch + sync Development AND live-tail agent logs (like \`convex dev\`);
-                       confirms before deleting; auto-pushes env("NAME") values from .env.local
-  dev --once           Sync Development a single time and exit (no watch, no log stream)
+  status               Show the login, server, org, plan, project and stage the next command uses
+  org list             List the organizations this login can act on
+  org use <name>       Switch the CLI to another organization (slug, name or id)
+  org create <name>    Create an organization and switch to it
+  stage list           List the project's stages
+  stage use <name>     Point .env.local at another stage and refresh BROODS_API_KEY
+  stage create <name>  Create a stage; --from <stage> clones its architecture and env vars
+  dev                  Watch + sync the current stage (BROODS_STAGE, default Development) AND
+                       live-tail agent logs (like \`convex dev\`); confirms before deleting;
+                       auto-pushes env("NAME") values from .env.local
+  dev --once           Sync the current stage a single time and exit (no watch, no log stream)
   diff                 Show local desired state vs remote state
-  deploy               Sync Production once; writes BROODS_API_KEY to .env.local
+  deploy               Sync Production once; writes BROODS_API_KEY to .env.local. Ignores
+                       BROODS_STAGE by design — pass --stage to deploy anywhere else
                        (--prune deletes undeclared remote resources; --rotate-key mints a fresh key)
   env set <name>       Store an encrypted environment variable
   env get <name>       Reveal a variable's value (audited)
   env list             List environment variable names (values stay hidden)
   env rm <name>        Remove an environment variable
-  stream               Stream live logs for the whole project/environment (Ctrl+C to stop)
+  stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
   logs                 Backfill recent logs then live-tail; all levels, default 100 lines
                        (--errors / --level warn filter to WARN+; -n/--limit <n> changes backfill size)
-  agent list           List the agents in the current project/environment scope
+  agent list           List the agents in the current project/stage scope
   agent get <name>     Show an agent's resources (model, sandbox, workspaces, tools, channels)
   run <agent> [prompt] Chat with an agent in a terminal UI (reasoning, tool cards, y/n approvals)
                        A prompt is sent as the first turn; redirected output streams plain text
@@ -98,12 +114,14 @@ Options:
   --dashboard-url <url> Dashboard base URL for login and deep links (default: ${DEFAULT_DASHBOARD_URL})
   --base-url <url>      broods API base URL for sync/env calls (default: discovered at login)
   --project <name>      Project name override (default: package name or folder)
-  --env <name>          Target environment override
+  --stage <name>        Target stage override (BROODS_STAGE otherwise; \`deploy\` defaults to production)
   --region <region>     Broods service region preference (default: ${DEFAULT_SERVICE_REGION})
+  --from <stage>        Source stage for \`stage create\` to clone
+  --use                 Switch to the stage \`stage create\` just made
   --prune               Allow deploy to delete undeclared remote resources
   --rotate-key          Mint a fresh runtime API key on deploy and write it to .env.local
-  --errors              Show WARN/ERROR only (default for \`dev\`, \`stream\`, and \`logs\`)
-  --level <lvl>         Minimum log level INFO|WARN|ERROR (default WARN)
+  --errors              Show WARN/ERROR only (same as --level warn)
+  --level <lvl>         Minimum log level INFO|WARN|ERROR (default: no filter)
   -n, --limit <n>       Backfill line count (with \`logs\`, default 100)
   --json                Print logs as raw JSON (with \`logs\`, applies to backfill output)
   --force               Allow init to overwrite starter files`;
@@ -123,12 +141,29 @@ async function main(): Promise<void> {
       console.log(VERSION);
 
       return;
+  }
+
+  assertNoPreRenameConfig(args);
+
+  switch (command) {
     case "init":
       await init(args);
 
       return;
     case "login":
       await login(args);
+
+      return;
+    case "status":
+      await status(args);
+
+      return;
+    case "org":
+      await orgCommand(args);
+
+      return;
+    case "stage":
+      await stageCommand(args);
 
       return;
     case "diff":
@@ -184,7 +219,7 @@ async function init(args: string[]): Promise<void> {
     dashboardUrl: dashboardUrl,
     baseUrl: gatewayUrlForDashboard(dashboardUrl),
     project: optionValue(args, "--project") ?? inferProjectName(process.cwd()),
-    environment: optionValue(args, "--env") ?? "development",
+    stage: optionValue(args, "--stage") ?? "development",
     region: optionValue(args, "--region") ?? DEFAULT_SERVICE_REGION,
     force: force,
   });
@@ -208,15 +243,12 @@ async function login(args: string[]): Promise<void> {
     optionValue(args, "--project") ??
     process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
-  const environment =
-    optionValue(args, "--env") ??
-    process.env.BROODS_ENVIRONMENT ??
-    "development";
+  const stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
   await writeLocalEnvDefaults({
     dashboardUrl: auth.dashboardUrl ?? dashboardUrl,
     baseUrl: auth.baseUrl,
     project: project,
-    environment: environment,
+    stage: stage,
     region:
       optionValue(args, "--region") ??
       process.env.BROODS_REGION ??
@@ -230,23 +262,23 @@ async function login(args: string[]): Promise<void> {
   if (user) console.log(`User: ${user}`);
   if (org) console.log(`Org: ${org}`);
   if (account) console.log(`Account: ${account}`);
-  await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, environment);
+  await writeRuntimeKeyForLogin(auth.baseUrl, auth.token, project, stage);
 }
 
 /**
- * Best-effort: recover the environment's runtime key after login and write it to
- * .env.local so `dev` can stream right away. Silent when the project/environment
+ * Best-effort: recover the stage's runtime key after login and write it to
+ * .env.local so `dev` can stream right away. Silent when the project/stage
  * is not deployed yet, because login itself should still succeed.
  */
 async function writeRuntimeKeyForLogin(
   baseUrl: string,
   token: string,
   project: string,
-  environment: string,
+  stage: string,
 ): Promise<void> {
   try {
     const client = new BroodsSyncClient({ baseUrl: baseUrl, token: token });
-    const key = await client.getRuntimeKey(project, environment);
+    const key = await client.getRuntimeKey(project, stage);
     if (key?.apiKey) {
       await writeEnvValue("BROODS_API_KEY", key.apiKey);
       console.log(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
@@ -256,10 +288,277 @@ async function writeRuntimeKeyForLogin(
   }
 }
 
+async function status(args: string[]): Promise<void> {
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    console.log("Usage: broods status [--project <name>] [--stage <name>]");
+
+    return;
+  }
+  const runtime = loadBroodsRuntimeConfig();
+  const scope = targetScope(args);
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
+  console.log(`broods v${VERSION}`);
+  console.log(`Dashboard:   ${dashboardUrl}`);
+  console.log(`Project:     ${scope.project}`);
+  console.log(`Stage:       ${scope.stage}`);
+
+  let auth: StoredAuthConfig;
+  try {
+    auth = await requireAuth(optionValue(args, "--base-url"));
+  } catch {
+    printWarning("Not logged in. Run `broods login`.");
+
+    return;
+  }
+  console.log(`Server:      ${auth.baseUrl}`);
+
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const context = await client.getOnboarding();
+  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  if (context.user) console.log(`User:        ${context.user.email}`);
+  console.log(
+    `Org:         ${org ? formatOrgChoice(org) : context.currentOrgId}`,
+  );
+  if (context.account) {
+    console.log(
+      `Account:     ${context.account.username} (${context.account.status})`,
+    );
+  }
+
+  // The runtime key is per stage, so a key that does not match the one this
+  // org/stage serves means `run`, `logs` and `stream` are talking to a
+  // different tenant than `dev` would sync to.
+  const localKey = process.env.BROODS_API_KEY;
+  const keySource = isShellOwnedEnv("BROODS_API_KEY")
+    ? "your shell"
+    : ".env.local";
+  let remoteKey: Awaited<ReturnType<BroodsSyncClient["getRuntimeKey"]>> = null;
+  let keyError: string | null = null;
+  try {
+    remoteKey = await client.getRuntimeKey(scope.project, scope.stage);
+  } catch (error) {
+    keyError = error instanceof Error ? error.message : String(error);
+  }
+  if (keyError) {
+    console.log("Runtime key: unavailable");
+    printWarning(`⚠ Could not read the runtime key: ${keyError}`);
+  } else if (!remoteKey?.apiKey) {
+    console.log("Runtime key: none for this scope");
+    printWarning(
+      `${scope.project}/${scope.stage} does not exist in ${org?.name ?? "this org"} yet. \`broods dev\` will create it.`,
+    );
+  } else if (!localKey) {
+    console.log(`Runtime key: ${remoteKey.keyHint} (not in .env.local)`);
+    printWarning("BROODS_API_KEY is not set locally. Run `broods dev`.");
+  } else if (localKey === remoteKey.apiKey) {
+    console.log(
+      `Runtime key: ${remoteKey.keyHint} (matches this org and stage)`,
+    );
+  } else {
+    console.log(`Runtime key: ${remoteKey.keyHint} expected`);
+    printWarning(
+      `⚠ BROODS_API_KEY from ${keySource} belongs to a different org or stage. Run \`broods stage use ` +
+        `${scope.stage}\` to repoint it.`,
+    );
+  }
+
+  const projects = context.projects.map((entry) => entry.name);
+  if (!projects.includes(scope.project)) {
+    printWarning(
+      `This org has no project named ${scope.project}. It has: ${projects.length > 0 ? projects.join(", ") : "none"}.`,
+    );
+  }
+}
+
+async function orgCommand(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? "list";
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    console.log("Usage: broods org <list|use|create> [name]");
+
+    return;
+  }
+
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
+  const auth = await requireAuthOrLogin(dashboardUrl);
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+  const context = await client.getOnboarding();
+
+  if (subcommand === "list" || subcommand === "ls") {
+    for (const org of context.orgs) {
+      const marker = org.id === context.currentOrgId ? "*" : " ";
+      const disabled =
+        org.accountStatus === "active" ? "" : ` [${org.accountStatus} account]`;
+      console.log(`${marker} ${formatOrgChoice(org)}${disabled}`);
+    }
+    console.log(
+      "\nOnly orgs where you are owner or admin can be selected from the CLI.",
+    );
+
+    return;
+  }
+
+  if (subcommand === "use" || subcommand === "select") {
+    const selectable = context.orgs.filter(
+      (org) => org.accountStatus === "active",
+    );
+    const needle = positionalArgs(args.slice(1))[0];
+    const selected = needle
+      ? selectable.find(
+          (org) =>
+            org.slug === needle || org.name === needle || org.id === needle,
+        )
+      : await promptSelect("Select organization", selectable, formatOrgChoice);
+    if (!selected) {
+      throw new Error(
+        `No selectable organization matches "${needle}". Run \`broods org list\`.`,
+      );
+    }
+    await applyOrgSelection(
+      client,
+      auth,
+      await client.selectOnboardingOrg(selected.id),
+      args,
+    );
+
+    return;
+  }
+
+  if (subcommand === "create" || subcommand === "new") {
+    const name =
+      positionalArgs(args.slice(1))[0] ??
+      (await promptText("Organization name", inferProjectName(process.cwd())));
+    if (!name.trim()) throw new Error("Organization name is required.");
+    await applyOrgSelection(
+      client,
+      auth,
+      await client.createOnboardingOrg(name),
+      args,
+    );
+
+    return;
+  }
+
+  throw new Error("Usage: broods org <list|use|create> [name]");
+}
+
+async function stageCommand(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? "list";
+  if (hasFlag(args, "--help") || hasFlag(args, "-h")) {
+    console.log(
+      "Usage: broods stage <list|use|create> [name] [--from <stage>] [--use]",
+    );
+
+    return;
+  }
+
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
+  const scope = targetScope(args);
+  const auth = await requireAuthOrLogin(dashboardUrl);
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+
+  if (subcommand === "list" || subcommand === "ls") {
+    const stages = await client.listStages(scope.project);
+    if (stages.length === 0) {
+      console.log(
+        `${scope.project} has no stages yet. \`broods dev\` creates Development.`,
+      );
+
+      return;
+    }
+    console.log(`Stages for ${scope.project}:`);
+    for (const stage of stages) console.log(formatStage(stage, scope.stage));
+
+    return;
+  }
+
+  if (subcommand === "use" || subcommand === "select") {
+    const stages = await client.listStages(scope.project);
+    const needle = positionalArgs(args.slice(1))[0];
+    const selected = needle
+      ? stages.find((stage) => stageNameEquals(stage.name, needle))
+      : await promptSelect("Select stage", stages, (stage) =>
+          formatStage(stage, scope.stage).trim(),
+        );
+    if (!selected) {
+      throw new Error(
+        `${scope.project} has no stage "${needle}". Existing: ${stages.map((stage) => stage.name).join(", ")}. Create it with \`broods stage create ${needle} --from ${scope.stage}\`.`,
+      );
+    }
+    const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
+    await writeEnvValue("BROODS_STAGE", selected.name);
+    console.log(`Stage: ${selected.name} (wrote BROODS_STAGE)`);
+    warnShellShadowedEnv("BROODS_STAGE", stageShadowed);
+    await syncRuntimeKeyForScope(client, {
+      project: scope.project,
+      stage: selected.name,
+    });
+
+    return;
+  }
+
+  if (subcommand === "create" || subcommand === "new") {
+    const name =
+      positionalArgs(args.slice(1))[0] ??
+      (await promptText("Stage name", "staging"));
+    if (!name.trim()) throw new Error("Stage name is required.");
+    const from = optionValue(args, "--from");
+    const created = await client.createStage(scope.project, name, from);
+    console.log(
+      `Created stage ${created.stage.name} in ${scope.project}${created.clonedFrom ? ` from ${created.clonedFrom}` : ""}`,
+    );
+    if (created.clonedFrom) {
+      console.log(
+        `  ${created.stage.agentCount} agent(s), ${created.stage.variableCount} env var(s) copied`,
+      );
+    }
+    if (hasFlag(args, "--use")) {
+      const stageShadowed = isShellOwnedEnv("BROODS_STAGE");
+      await writeEnvValue("BROODS_STAGE", created.stage.name);
+      console.log(`Stage: ${created.stage.name} (wrote BROODS_STAGE)`);
+      warnShellShadowedEnv("BROODS_STAGE", stageShadowed);
+      await syncRuntimeKeyForScope(client, {
+        project: scope.project,
+        stage: created.stage.name,
+      });
+
+      return;
+    }
+    console.log(
+      `Switch to it with \`broods stage use ${created.stage.name}\`.`,
+    );
+
+    return;
+  }
+
+  throw new Error(
+    "Usage: broods stage <list|use|create> [name] [--from <stage>] [--use]",
+  );
+}
+
 async function diff(args: string[]): Promise<void> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -269,19 +568,16 @@ async function diff(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  const remote = await client.getManifest(
-    manifest.project,
-    manifest.environment,
-  );
+  const remote = await client.getManifest(manifest.project, manifest.stage);
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
 }
 
 async function deploy(args: string[]): Promise<void> {
   const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "deploy",
-    useRuntimeEnvironment: false,
+    useRuntimeStage: false,
   });
   const auth = await requireAuth(
     optionValue(args, "--base-url") ?? config.baseUrl,
@@ -306,7 +602,7 @@ async function deploy(args: string[]): Promise<void> {
   await ensureGitIgnore();
   await ensureModuleType();
   console.log(
-    `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.environment}`,
+    `Synced ${result.manifest.resources.length} resources to ${manifest.project}/${manifest.stage}`,
   );
   await applyDeploymentKey(result.deployment);
   printChannelEndpoints(channels, result);
@@ -314,7 +610,7 @@ async function deploy(args: string[]): Promise<void> {
 }
 
 /**
- * Persist the environment's recoverable runtime API key after a deploy.
+ * Persist the stage's recoverable runtime API key after a deploy.
  */
 async function applyDeploymentKey(
   deployment: RemoteManifestResponse["deployment"],
@@ -441,16 +737,16 @@ async function streamDevLogs(
     creds = resolveObservabilityCredentials();
   } catch {
     console.log(
-      "· live logs off — no runtime key found for this environment yet. Run `broods dev --once` after login to create or reconnect it.",
+      "· live logs off — no runtime key found for this stage yet. Run `broods dev --once` after login to create or reconnect it.",
     );
 
     return;
   }
 
   let project: string;
-  let environment: string;
+  let stage: string;
   try {
-    ({ project, environment } = await resolveProjectEnv(args));
+    ({ project, stage } = await resolveObservabilityTarget(args, creds));
   } catch {
     return;
   }
@@ -462,7 +758,7 @@ async function streamDevLogs(
         baseUrl: creds.baseUrl,
         apiKey: creds.apiKey,
         project: project,
-        environment: environment,
+        stage: stage,
       },
       { backfill: 0, minLevel: minLevel, signal: signal },
     )) {
@@ -503,16 +799,16 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   const path = resolve(process.cwd(), ".env.local");
   const current = await readTextIfExists(path);
   const values = parseEnv(current);
+  const stageValue = values.BROODS_STAGE;
   const missing = [
     "BROODS_DASHBOARD_URL",
     "BROODS_BASE_URL",
     "BROODS_PROJECT",
-    "BROODS_ENVIRONMENT",
     "BROODS_REGION",
   ].filter((key) => values[key] === undefined);
-  if (missing.length === 0) return;
+  if (missing.length === 0 && stageValue !== undefined) return;
   const needsProject = values.BROODS_PROJECT === undefined;
-  const needsEnvironment = values.BROODS_ENVIRONMENT === undefined;
+  const needsStage = stageValue === undefined;
   const needsRegion = values.BROODS_REGION === undefined;
 
   const runtime = loadBroodsRuntimeConfig();
@@ -524,10 +820,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     optionValue(args, "--project") ??
     process.env.BROODS_PROJECT ??
     inferProjectName(process.cwd());
-  let environment =
-    optionValue(args, "--env") ??
-    process.env.BROODS_ENVIRONMENT ??
-    "development";
+  let stage = optionValue(args, "--stage") ?? stageFromEnv() ?? "development";
   let region =
     optionValue(args, "--region") ??
     process.env.BROODS_REGION ??
@@ -545,9 +838,9 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     if (!project.trim()) throw new Error("Project name is required.");
   }
 
-  if (process.stdin.isTTY && needsEnvironment) {
-    environment = await promptText("Environment", environment);
-    if (!environment.trim()) throw new Error("Environment is required.");
+  if (process.stdin.isTTY && needsStage) {
+    stage = await promptText("Stage", stage);
+    if (!stage.trim()) throw new Error("Stage is required.");
   }
 
   if (process.stdin.isTTY && needsRegion) {
@@ -562,7 +855,7 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     dashboardUrl: dashboardUrl,
     baseUrl: runtime.baseUrl ?? gatewayUrlForDashboard(dashboardUrl),
     project: project,
-    environment: environment,
+    stage: stage,
     region: region,
     force: false,
   });
@@ -607,11 +900,131 @@ async function getOnboardingContextOrFallback(
   }
 }
 
+/**
+ * Persist the switched-to org locally, then repoint BROODS_API_KEY at it so
+ * `run`/`logs` cannot keep serving the org the CLI just left.
+ */
+async function applyOrgSelection(
+  client: BroodsSyncClient,
+  auth: StoredAuthConfig,
+  context: CliOnboardingContext,
+  args: string[],
+): Promise<void> {
+  const org = context.orgs.find((entry) => entry.id === context.currentOrgId);
+  if (!org) {
+    throw new Error("Selected organization is not visible to this login");
+  }
+
+  if (process.env.BROODS_TOKEN) {
+    printWarning(
+      "BROODS_TOKEN is set, so the switch applies to this token only and was not stored.",
+    );
+  } else {
+    await writeStoredAuth({
+      ...auth,
+      org: { id: org.id, name: org.name, slug: org.slug },
+      ...(context.account
+        ? {
+            account: {
+              id: context.account.id,
+              username: context.account.username,
+            },
+          }
+        : {}),
+    });
+  }
+
+  console.log(`Org: ${formatOrgChoice(org)}`);
+  console.log(
+    `Projects: ${context.projects.length > 0 ? context.projects.map((entry) => entry.name).join(", ") : "none yet"}`,
+  );
+  await syncRuntimeKeyForScope(client, targetScope(args));
+}
+
+/**
+ * Rewrite BROODS_API_KEY for the scope the CLI now points at. The switch is
+ * already persisted by the time this runs, so a lookup failure warns and
+ * returns rather than failing the whole command with a stored-but-unreported
+ * org/stage change.
+ */
+async function syncRuntimeKeyForScope(
+  client: BroodsSyncClient,
+  scope: { project: string; stage: string },
+): Promise<void> {
+  let key: Awaited<ReturnType<BroodsSyncClient["getRuntimeKey"]>>;
+  try {
+    key = await client.getRuntimeKey(scope.project, scope.stage);
+  } catch (error) {
+    printWarning(
+      `⚠ Could not read the runtime key for ${scope.project}/${scope.stage} ` +
+        `(${error instanceof Error ? error.message : String(error)}). ` +
+        "BROODS_API_KEY still points at the previous scope — run `broods status` to check it.",
+    );
+
+    return;
+  }
+  if (!key?.apiKey) {
+    printWarning(
+      `⚠ ${scope.project}/${scope.stage} is not synced here yet, so BROODS_API_KEY still points at the previous scope. Run \`broods dev\`.`,
+    );
+
+    return;
+  }
+
+  // A shell export shadows .env.local, so process.env is not proof the file is
+  // current: write it anyway and tell the user their export still wins.
+  const shadowed = isShellOwnedEnv("BROODS_API_KEY");
+  if (!shadowed && process.env.BROODS_API_KEY === key.apiKey) return;
+
+  await writeEnvValue("BROODS_API_KEY", key.apiKey);
+  console.log(`Wrote BROODS_API_KEY (${key.keyHint}) to .env.local`);
+  warnShellShadowedEnv("BROODS_API_KEY", shadowed);
+}
+
+/**
+ * Warn when a shell export overrides the `.env.local` value just written.
+ * `shadowed` has to be sampled before the write, which makes the file and
+ * `process.env` agree again.
+ */
+function warnShellShadowedEnv(name: string, shadowed: boolean): void {
+  if (!shadowed) return;
+  printWarning(
+    `⚠ ${name} is exported in your shell, which wins over .env.local. ` +
+      `Run \`unset ${name}\` or the next broods command keeps the old value.`,
+  );
+}
+
 function formatOrgChoice(org: CliOnboardingOrg): string {
   const suffix =
     org.role === "owner" || org.role === "admin" ? org.role : "member";
+  const plan = org.plan ? `, ${org.plan} plan` : "";
 
-  return `${org.name} (${org.slug}, ${suffix})`;
+  return `${org.name} (${org.slug}, ${suffix}${plan})`;
+}
+
+function formatStage(stage: CliStage, current: string): string {
+  const marker = stageNameEquals(stage.name, current) ? "*" : " ";
+  const region = stage.deploymentRegion ? `, ${stage.deploymentRegion}` : "";
+
+  return `${marker} ${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
+}
+
+/** Stage names match the way the backend matches them: trimmed, case-insensitive. */
+function stageNameEquals(left: string, right: string): boolean {
+  return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+/** The project/stage a command acts on, without compiling the project. */
+function targetScope(args: string[]): { project: string; stage: string } {
+  loadBroodsRuntimeConfig();
+
+  return {
+    project:
+      optionValue(args, "--project") ??
+      process.env.BROODS_PROJECT ??
+      inferProjectName(process.cwd()),
+    stage: optionValue(args, "--stage") ?? stageFromEnv() ?? "development",
+  };
 }
 
 async function selectOnboardingOrg(
@@ -719,7 +1132,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
 }
 
 /**
- * Syncs the dev environment once. Creates/updates are pushed first so they apply
+ * Syncs the dev stage once. Creates/updates are pushed first so they apply
  * immediately; deletions (resources removed from code) are then confirmed
  * interactively before pruning, so an edit-in-progress never silently destroys
  * an agent's history or a workspace's files — and a slow answer never blocks the
@@ -729,7 +1142,7 @@ function runSyncChild(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
 async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const { manifest, config, resourceAliases, channels } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -739,10 +1152,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  const remote = await client.getManifest(
-    manifest.project,
-    manifest.environment,
-  );
+  const remote = await client.getManifest(manifest.project, manifest.stage);
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
@@ -778,7 +1188,7 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
     printDiffEntries(undecided);
     if (
       await promptConfirm(
-        `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.environment}?`,
+        `Delete ${undecided.length} resource(s) from ${manifest.project}/${manifest.stage}?`,
       )
     ) {
       result = await client.putManifest(manifest, true);
@@ -835,8 +1245,18 @@ function printChannelEndpoints(
     aliasesByType.set(channel.type, aliases);
   }
 
+  // A stage that is not production gets its own URL, so pasting it into the
+  // provider moves traffic to this stage instead of contending for the account.
+  const isProduction =
+    deployment.stageKind === undefined || deployment.stageKind === "production";
   for (const [type, aliases] of aliasesByType) {
-    const url = client.accountWebhookUrl(deployment.accountId, type);
+    const url = isProduction
+      ? client.accountWebhookUrl(deployment.accountId, type)
+      : client.stageWebhookUrl(
+          deployment.accountId,
+          deployment.endpointId,
+          type,
+        );
     console.log(
       `Channel ${aliases.join(", ")} (${type}): ${url}${type === "pancake" ? "?secret=<PANCAKE_WEBHOOK_SECRET>" : ""}`,
     );
@@ -846,7 +1266,7 @@ function printChannelEndpoints(
 /**
  * Auto-syncs the env vars an agent config references via `env("NAME")` from the
  * local environment (`.env.local`, already loaded into `process.env`) up to the
- * cloud environment during `dev`. This fulfills the Convex-style `env set` flow
+ * cloud stage during `dev`. This fulfills the Convex-style `env set` flow
  * automatically so the dashboard never needs a manual step for local secrets.
  *
  * Deliberately one-way and set-only: only manifest-referenced names are pushed
@@ -876,9 +1296,9 @@ async function syncLocalEnvVars(
   // just re-pushes once — safe because the set is idempotent.
   const cache = await loadEnvSyncCache();
   const known =
-    cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] ?? {};
+    cache[envCacheKey(scopeKey, manifest.project, manifest.stage)] ?? {};
   const remoteNames = new Set(
-    (await client.listEnv(manifest.project, manifest.environment)).map(
+    (await client.listEnv(manifest.project, manifest.stage)).map(
       (entry) => entry.name,
     ),
   );
@@ -891,16 +1311,11 @@ async function syncLocalEnvVars(
 
   await Promise.all(
     changed.map((name) =>
-      client.setEnv(
-        manifest.project,
-        manifest.environment,
-        name,
-        process.env[name]!,
-      ),
+      client.setEnv(manifest.project, manifest.stage, name, process.env[name]!),
     ),
   );
   for (const name of changed) known[name] = hashEnvValue(process.env[name]!);
-  cache[envCacheKey(scopeKey, manifest.project, manifest.environment)] = known;
+  cache[envCacheKey(scopeKey, manifest.project, manifest.stage)] = known;
   await saveEnvSyncCache(cache);
   printEnvSync(changed);
 }
@@ -911,12 +1326,8 @@ function envSyncScopeKey(baseUrl: string, token: string): string {
   return `${baseUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
 }
 
-function envCacheKey(
-  scopeKey: string,
-  project: string,
-  environment: string,
-): string {
-  return `${scopeKey}:${project}:${environment}`;
+function envCacheKey(scopeKey: string, project: string, stage: string): string {
+  return `${scopeKey}:${project}:${stage}`;
 }
 
 function envSyncCachePath(): string {
@@ -950,12 +1361,12 @@ async function saveEnvSyncCache(cache: EnvSyncCache): Promise<void> {
 async function rememberEnvSyncValue(
   scopeKey: string,
   project: string,
-  environment: string,
+  stage: string,
   name: string,
   value: string,
 ): Promise<void> {
   const cache = await loadEnvSyncCache();
-  const key = envCacheKey(scopeKey, project, environment);
+  const key = envCacheKey(scopeKey, project, stage);
   cache[key] = { ...(cache[key] ?? {}), [name]: hashEnvValue(value) };
   await saveEnvSyncCache(cache);
 }
@@ -964,11 +1375,11 @@ async function rememberEnvSyncValue(
 async function forgetEnvSyncValue(
   scopeKey: string,
   project: string,
-  environment: string,
+  stage: string,
   name: string,
 ): Promise<void> {
   const cache = await loadEnvSyncCache();
-  const key = envCacheKey(scopeKey, project, environment);
+  const key = envCacheKey(scopeKey, project, stage);
   if (!cache[key] || !(name in cache[key])) return;
   delete cache[key][name];
   await saveEnvSyncCache(cache);
@@ -978,7 +1389,7 @@ async function printDevTarget(args: string[]): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -986,7 +1397,7 @@ async function printDevTarget(args: string[]): Promise<void> {
   );
   printDeploymentTarget({
     project: manifest.project,
-    environment: manifest.environment,
+    stage: manifest.stage,
     dashboardUrl:
       optionValue(args, "--dashboard-url") ??
       runtime.dashboardUrl ??
@@ -1037,7 +1448,7 @@ async function envCommand(args: string[]): Promise<void> {
 
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -1048,13 +1459,10 @@ async function envCommand(args: string[]): Promise<void> {
     token: auth.token,
   });
   const scopeKey = envSyncScopeKey(auth.baseUrl, auth.token);
-  const target = `${manifest.project}/${manifest.environment}`;
+  const target = `${manifest.project}/${manifest.stage}`;
 
   if (isList) {
-    const variables = await client.listEnv(
-      manifest.project,
-      manifest.environment,
-    );
+    const variables = await client.listEnv(manifest.project, manifest.stage);
     if (variables.length === 0) {
       console.log(`No environment variables set for ${target}.`);
 
@@ -1067,11 +1475,7 @@ async function envCommand(args: string[]): Promise<void> {
   }
 
   if (isGet) {
-    const value = await client.getEnv(
-      manifest.project,
-      manifest.environment,
-      name!,
-    );
+    const value = await client.getEnv(manifest.project, manifest.stage, name!);
     if (value === null) {
       console.error(`${name} is not set for ${target}`);
       process.exitCode = 1;
@@ -1085,24 +1489,19 @@ async function envCommand(args: string[]): Promise<void> {
   }
 
   if (isRemove) {
-    await client.removeEnv(manifest.project, manifest.environment, name!);
-    await forgetEnvSyncValue(
-      scopeKey,
-      manifest.project,
-      manifest.environment,
-      name!,
-    );
+    await client.removeEnv(manifest.project, manifest.stage, name!);
+    await forgetEnvSyncValue(scopeKey, manifest.project, manifest.stage, name!);
     console.log(`Removed ${name} from ${target}`);
 
     return;
   }
 
   const value = await promptSecret(name!);
-  await client.setEnv(manifest.project, manifest.environment, name!, value);
+  await client.setEnv(manifest.project, manifest.stage, name!, value);
   await rememberEnvSyncValue(
     scopeKey,
     manifest.project,
-    manifest.environment,
+    manifest.stage,
     name!,
     value,
   );
@@ -1144,26 +1543,49 @@ function resolveMinLevel(args: string[]): LogLevel | undefined {
   throw new Error(`Unknown log level: ${raw}. Use INFO, WARN, or ERROR.`);
 }
 
-/** Resolve project + environment for observability commands (same as other commands). */
-async function resolveProjectEnv(
+/** Resolve project + stage for observability commands (same as other commands). */
+async function resolveProjectStage(
   args: string[],
-): Promise<{ project: string; environment: string }> {
+): Promise<{ project: string; stage: string }> {
   loadBroodsRuntimeConfig();
   const project = optionValue(args, "--project") ?? process.env.BROODS_PROJECT;
-  const environment =
-    optionValue(args, "--env") ?? process.env.BROODS_ENVIRONMENT;
+  const stage = optionValue(args, "--stage") ?? stageFromEnv();
   if (!project) {
     throw new Error(
       "Project name is required. Pass --project <name> or set BROODS_PROJECT in .env.local.",
     );
   }
-  if (!environment) {
+  if (!stage) {
     throw new Error(
-      "Environment name is required. Pass --env <name> or set BROODS_ENVIRONMENT in .env.local.",
+      "Stage name is required. Pass --stage <name> or set BROODS_STAGE in .env.local.",
     );
   }
 
-  return { project: project, environment: environment };
+  return { project: project, stage: stage };
+}
+
+// The gateway matches the socket path on the key's slug, but BROODS_PROJECT
+// holds a display name. Ask core so the two cannot disagree.
+async function resolveObservabilityTarget(
+  args: string[],
+  credentials: { baseUrl: string; apiKey: string },
+): Promise<{ project: string; stage: string }> {
+  const configured = await resolveProjectStage(args);
+  const scope = await fetchObservabilityScope(
+    credentials.baseUrl,
+    credentials.apiKey,
+  );
+  if (!scope) return configured;
+  if (
+    scope.projectSlug !== configured.project ||
+    scope.stageSlug !== configured.stage
+  ) {
+    console.log(
+      `· reading ${scope.projectSlug}/${scope.stageSlug} — the runtime key is scoped there, not to ${configured.project}/${configured.stage}.`,
+    );
+  }
+
+  return { project: scope.projectSlug, stage: scope.stageSlug };
 }
 
 /** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
@@ -1174,11 +1596,14 @@ function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   return `${time} ${level} ${entry.eventType} ${entry.message}`;
 }
 
-// `broods stream` — live tail of the whole project/environment log stream
+// `broods stream` — live tail of the whole project/stage log stream
 // until Ctrl-C, no backfill. Flags are documented in HELP.
 async function streamLogs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, environment } = await resolveProjectEnv(args);
+  const { project, stage } = await resolveObservabilityTarget(args, {
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  });
   const minLevel = resolveMinLevel(args);
 
   const controller = new AbortController();
@@ -1186,14 +1611,14 @@ async function streamLogs(args: string[]): Promise<void> {
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Streaming live logs for ${project}/${environment}` +
+    `Streaming live logs for ${project}/${stage}` +
       (minLevel ? ` [${minLevel}+]` : "") +
       " — Ctrl+C to stop",
   );
 
   try {
     for await (const entry of subscribeObservabilityLogs(
-      { baseUrl: baseUrl, apiKey: apiKey, project: project, environment: environment },
+      { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
       { backfill: 0, minLevel: minLevel, signal: controller.signal },
     )) {
       console.log(formatObservabilityEntry(entry));
@@ -1212,7 +1637,10 @@ async function streamLogs(args: string[]): Promise<void> {
 // until Ctrl-C. Flags are documented in HELP.
 async function logs(args: string[]): Promise<void> {
   const { apiKey, baseUrl } = resolveObservabilityCredentials();
-  const { project, environment } = await resolveProjectEnv(args);
+  const { project, stage } = await resolveObservabilityTarget(args, {
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+  });
   const minLevel = resolveMinLevel(args);
   const limit = Number(
     optionValue(args, "--limit") ?? optionValue(args, "-n") ?? 100,
@@ -1224,14 +1652,14 @@ async function logs(args: string[]): Promise<void> {
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Logs for ${project}/${environment}` +
+    `Logs for ${project}/${stage}` +
       (minLevel ? ` [${minLevel}+]` : "") +
       ` (backfill ${limit}) — Ctrl+C to stop`,
   );
 
   try {
     for await (const entry of subscribeObservabilityLogs(
-      { baseUrl: baseUrl, apiKey: apiKey, project: project, environment: environment },
+      { baseUrl: baseUrl, apiKey: apiKey, project: project, stage: stage },
       { backfill: limit, minLevel: minLevel, signal: controller.signal },
     )) {
       if (jsonMode) {
@@ -1282,7 +1710,7 @@ async function loadAgentsWithIds(args: string[]): Promise<{
 }> {
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -1291,7 +1719,7 @@ async function loadAgentsWithIds(args: string[]): Promise<{
   const remote = await new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
-  }).getManifest(manifest.project, manifest.environment);
+  }).getManifest(manifest.project, manifest.stage);
   const agents = manifest.resources
     .filter((resource) => resource.kind === "agent")
     .map((resource) => ({
@@ -1306,13 +1734,11 @@ async function loadAgentsWithIds(args: string[]): Promise<{
 async function agentList(args: string[]): Promise<void> {
   const { manifest, agents } = await loadAgentsWithIds(args);
   if (agents.length === 0) {
-    console.log(
-      `No agents declared in ${manifest.project}/${manifest.environment}.`,
-    );
+    console.log(`No agents declared in ${manifest.project}/${manifest.stage}.`);
 
     return;
   }
-  console.log(`Agents in ${manifest.project}/${manifest.environment}:`);
+  console.log(`Agents in ${manifest.project}/${manifest.stage}:`);
   for (const agent of agents) {
     const model = agentModelLabel(agent.config);
     const access = agent.config.publicAccess === true ? "public" : "private";
@@ -1362,7 +1788,7 @@ async function agentGet(
       : [];
 
   console.log(`Agent: ${agent.name}`);
-  console.log(`  Project/Env:  ${manifest.project}/${manifest.environment}`);
+  console.log(`  Project/Stage: ${manifest.project}/${manifest.stage}`);
   console.log(`  Deployed id:  ${agent.agentId ?? "not deployed"}`);
   console.log(
     `  Public access: ${config.publicAccess === true ? "public (SSE/WebSocket enabled)" : "private (secured by default)"}`,
@@ -1421,7 +1847,7 @@ async function run(args: string[]): Promise<void> {
   }
   const { manifest, config } = await compileProject({
     project: optionValue(args, "--project"),
-    environment: optionValue(args, "--env"),
+    stage: optionValue(args, "--stage"),
     command: "dev",
   });
   const auth = await requireAuth(
@@ -1434,7 +1860,7 @@ async function run(args: string[]): Promise<void> {
   const remote = await new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
-  }).getManifest(manifest.project, manifest.environment);
+  }).getManifest(manifest.project, manifest.stage);
   const agentId = remote?.ids.agents[agentName];
   if (!agentId)
     throw new Error(
@@ -1444,7 +1870,7 @@ async function run(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   })
-    .getRuntimeKey(manifest.project, manifest.environment)
+    .getRuntimeKey(manifest.project, manifest.stage)
     .catch(() => null);
   if (runtimeKey?.apiKey) {
     await writeEnvValue("BROODS_API_KEY", runtimeKey.apiKey);
@@ -1476,12 +1902,10 @@ async function run(args: string[]): Promise<void> {
     name: agentName,
     id: agentId,
     project: manifest.project,
-    environment: manifest.environment,
+    stage: manifest.stage,
     ...(runtimeKey?.endpointId ? { endpointId: runtimeKey.endpointId } : {}),
     ...(runtimeKey?.projectSlug ? { projectSlug: runtimeKey.projectSlug } : {}),
-    ...(runtimeKey?.environmentSlug
-      ? { environmentSlug: runtimeKey.environmentSlug }
-      : {}),
+    ...(runtimeKey?.stageSlug ? { stageSlug: runtimeKey.stageSlug } : {}),
   };
   try {
     if (interactive) {
@@ -1557,7 +1981,7 @@ async function writeLocalEnvDefaults(options: {
   dashboardUrl: string;
   baseUrl?: string;
   project: string;
-  environment: string;
+  stage: string;
   region: string;
   force: boolean;
 }): Promise<void> {
@@ -1570,7 +1994,7 @@ async function writeLocalEnvDefaults(options: {
     BROODS_DASHBOARD_URL: options.dashboardUrl,
     ...(options.baseUrl ? { BROODS_BASE_URL: options.baseUrl } : {}),
     BROODS_PROJECT: options.project,
-    BROODS_ENVIRONMENT: options.environment,
+    BROODS_STAGE: options.stage,
     BROODS_REGION: options.region,
   };
   const lines = current
@@ -1719,6 +2143,25 @@ function starterAgent(): string {
     `  publicAccess: true,\n` +
     `});\n`
   );
+}
+
+// The rename ships no compatibility shim, so the pre-rename flag and key have
+// to fail here. Left alone they resolve to Development, and the command acts
+// on a stage the user never named.
+function assertNoPreRenameConfig(args: string[]): void {
+  if (args.includes("--env")) {
+    throw new Error(
+      "--env was renamed to --stage. Pass --stage <name> instead.",
+    );
+  }
+
+  loadBroodsRuntimeConfig();
+  const legacy = process.env.BROODS_ENVIRONMENT;
+  if (legacy !== undefined && process.env.BROODS_STAGE === undefined) {
+    throw new Error(
+      `BROODS_ENVIRONMENT was renamed to BROODS_STAGE. Rename the key in .env.local (it is currently set to "${legacy}").`,
+    );
+  }
 }
 
 main().catch((error) => {

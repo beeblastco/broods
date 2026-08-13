@@ -14,14 +14,14 @@ export type AuthContext =
   | { kind: "admin" }
   | { kind: "account"; account: AccountRecord; viaServiceToken?: boolean }
   | {
-      // Project + environment scoped runtime key. It does not bind to a single
+      // Project + stage scoped runtime key. It does not bind to a single
       // agent — the agent is chosen per request by id and loaded against this
-      // account, so any deployed agent in the environment is reachable.
+      // account, so any deployed agent in the stage is reachable.
       kind: "deployment";
       account: AccountRecord;
       endpointId: string;
       projectSlug: string;
-      environmentSlug: string;
+      stageSlug: string;
     };
 
 export function extractBearerToken(
@@ -78,7 +78,7 @@ export async function resolveBearerAuth(
       account: account,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
-      environmentSlug: deployment.environmentSlug,
+      stageSlug: deployment.stageSlug,
     };
   }
 

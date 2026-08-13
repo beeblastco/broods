@@ -2,7 +2,7 @@
 
 /** Dashboard page with sidebar navigation and a titled content panel. */
 import { Button } from "@/app/components/ui/button";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -35,13 +35,13 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;
   const project = useQuery(api.project.getById, { projectId: projectId });
-  const { environmentId } = useEnvironment();
-  const environments = useQuery(api.environment.list, {
+  const { stageId } = useStage();
+  const stages = useQuery(api.stage.list, {
     projectId: projectId,
-  }) as Doc<"environments">[] | undefined;
+  }) as Doc<"stages">[] | undefined;
   const activeTab = (searchParams.get("tab") as DashboardTab) || "monitoring";
 
-  // Build a tab href that preserves the current params (e.g. ?env=) so the link is shareable
+  // Build a tab href that preserves the current params (e.g. ?stage=) so the link is shareable
   // and can be opened in a new browser tab.
   const tabHref = (tabId: DashboardTab) => {
     const next = new URLSearchParams(searchParams.toString());
@@ -50,34 +50,34 @@ export default function DashboardPage() {
     return `/${projectId}/dashboard?${next.toString()}`;
   };
 
-  // Resolve the environment to scope analytics to: URL selection, else default, else first.
-  const activeEnv =
-    environments?.find((env) => env._id === environmentId) ??
-    environments?.find((env) => env.isDefault) ??
-    environments?.[0] ??
+  // Resolve the stage to scope analytics to: URL selection, else default, else first.
+  const activeStage =
+    stages?.find((stage) => stage._id === stageId) ??
+    stages?.find((stage) => stage.isDefault) ??
+    stages?.[0] ??
     null;
-  const activeEnvId = activeEnv?._id ?? null;
+  const activeStageId = activeStage?._id ?? null;
 
-  // Fetch the active deployment to get projectSlug, environmentSlug, and endpointId
+  // Fetch the active deployment to get projectSlug, stageSlug, and endpointId
   // for the observability WS and session-storage API key lookup.
   const activeDeployment = useQuery(
-    api.agentDeployments.getForEnvironment,
-    activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
+    api.agentDeployments.getForStage,
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
 
-  const ensureKey = useMutation(api.agentDeployments.ensureForEnvironment);
+  const ensureKey = useMutation(api.agentDeployments.ensureForStage);
   const rotateKey = useMutation(api.agentDeployments.rotate);
   // A key just minted in this view, scoped to its endpoint so switching
-  // environments never serves the wrong environment's key.
+  // stages never serves the wrong stage's key.
   const [generated, setGenerated] = useState<{
     endpointId: string;
     key: string;
   } | null>(null);
   const [generatingKey, setGeneratingKey] = useState(false);
-  // Scoped to the env it occurred in so a stale error never leaks onto another
-  // environment after switching.
+  // Scoped to the stage it occurred in so a stale error never leaks onto another
+  // stage after switching.
   const [keyError, setKeyError] = useState<{
-    envId: string;
+    stageId: string;
     msg: string;
   } | null>(null);
   // Reveal dialog (key + SDK usage). `justCreated` reframes it right after a mint.
@@ -85,30 +85,30 @@ export default function DashboardPage() {
   const [keyJustCreated, setKeyJustCreated] = useState(false);
 
   // The key is stored encrypted at rest, so the owner recovers it here without
-  // re-minting — logs/traces just stream. Null only when the environment has no
+  // re-minting — logs/traces just stream. Null only when the stage has no
   // deployment yet (the prompt then mints one).
   const revealedKey = useQuery(
-    api.agentDeployments.revealKeyForEnvironment,
-    activeEnvId ? { projectId: projectId, environmentId: activeEnvId } : "skip",
+    api.agentDeployments.revealKeyForStage,
+    activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
   const observabilityApiKey =
     (generated && generated.endpointId === activeDeployment?.endpointId
       ? generated.key
       : undefined) ?? revealedKey;
   const currentKeyError =
-    keyError && keyError.envId === activeEnvId ? keyError.msg : null;
+    keyError && keyError.stageId === activeStageId ? keyError.msg : null;
 
-  // Mint the environment's runtime key from the dashboard so a dashboard-first user
+  // Mint the stage's runtime key from the dashboard so a dashboard-first user
   // (project created here, never through the CLI) can stream logs/traces. `ensure`
   // creates one on first call and recovers it thereafter.
   const generateViewingKey = useCallback(async () => {
-    if (!activeEnvId) return;
+    if (!activeStageId) return;
     setGeneratingKey(true);
     setKeyError(null);
     try {
       const result = await ensureKey({
         projectId: projectId,
-        environmentId: activeEnvId,
+        stageId: activeStageId,
       });
       if (result.rawApiKey) {
         setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
@@ -118,36 +118,36 @@ export default function DashboardPage() {
         setKeyDialogOpen(true);
       } else {
         setKeyError({
-          envId: activeEnvId,
+          stageId: activeStageId,
           msg: "Couldn't load the key — try again.",
         });
       }
     } catch (err) {
       setKeyError({
-        envId: activeEnvId,
+        stageId: activeStageId,
         msg: err instanceof Error ? err.message : "Failed to generate key",
       });
     } finally {
       setGeneratingKey(false);
     }
-  }, [activeEnvId, projectId, ensureKey]);
+  }, [activeStageId, projectId, ensureKey]);
 
-  // Rotate the environment's runtime key, surfacing the new plaintext immediately
+  // Rotate the stage's runtime key, surfacing the new plaintext immediately
   // through the same `generated` channel the mint flow uses. Rethrows so the
   // Rotate control can show the failure inline.
   const rotateViewingKey = useCallback(async () => {
-    if (!activeEnvId) return;
+    if (!activeStageId) return;
     const result = await rotateKey({
       projectId: projectId,
-      environmentId: activeEnvId,
+      stageId: activeStageId,
     });
     if (result.rawApiKey) {
       setGenerated({ endpointId: result.endpointId, key: result.rawApiKey });
     }
-  }, [activeEnvId, projectId, rotateKey]);
+  }, [activeStageId, projectId, rotateKey]);
 
   const projectSlug = activeDeployment?.projectSlug;
-  const environmentSlug = activeDeployment?.environmentSlug;
+  const stageSlug = activeDeployment?.stageSlug;
 
   if (project === undefined) {
     return (
@@ -181,7 +181,7 @@ export default function DashboardPage() {
   // While the reveal query is still resolving, hold a quiet loader instead of
   // flashing the "generate a key" prompt — the prompt is only the true-absence state.
   const keyResolving =
-    Boolean(activeEnvId) && revealedKey === undefined && !observabilityApiKey;
+    Boolean(activeStageId) && revealedKey === undefined && !observabilityApiKey;
   const observabilityFallback = keyResolving ? (
     <div className="flex h-full min-h-64 items-center justify-center">
       <p className="text-sm text-muted-foreground">Loading…</p>
@@ -200,7 +200,7 @@ export default function DashboardPage() {
         return observabilityApiKey ? (
           <MonitoringPanel
             projectSlug={projectSlug}
-            environmentSlug={environmentSlug}
+            stageSlug={stageSlug}
             apiKey={observabilityApiKey}
           />
         ) : (
@@ -210,7 +210,7 @@ export default function DashboardPage() {
         return observabilityApiKey ? (
           <TracingPanel
             projectSlug={projectSlug}
-            environmentSlug={environmentSlug}
+            stageSlug={stageSlug}
             apiKey={observabilityApiKey}
           />
         ) : (
@@ -220,9 +220,9 @@ export default function DashboardPage() {
         return (
           <TokensUsagePanel
             projectId={projectId}
-            environmentId={activeEnvId}
+            stageId={activeStageId}
             projectSlug={projectSlug}
-            environmentSlug={environmentSlug}
+            stageSlug={stageSlug}
             apiKey={observabilityApiKey ?? undefined}
           />
         );
@@ -241,7 +241,7 @@ export default function DashboardPage() {
         return observabilityApiKey ? (
           <MonitoringPanel
             projectSlug={projectSlug}
-            environmentSlug={environmentSlug}
+            stageSlug={stageSlug}
             apiKey={observabilityApiKey}
           />
         ) : (

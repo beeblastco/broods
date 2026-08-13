@@ -39,6 +39,11 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: "doc",
+          id: "cli",
+          label: "CLI",
+        },
+        {
+          type: "doc",
           id: "resources",
           label: "Resources & Config",
         },

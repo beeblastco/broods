@@ -12,6 +12,7 @@ import {
 } from "@aws-sdk/client-lambda";
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
+import { emitIsolateLog } from "../isolate/executor.ts";
 import {
   FrameQueue,
   abortSignalFromOptions,
@@ -121,6 +122,14 @@ export async function* streamInLambda(
       if (frame.t === "end") {
         return;
       }
+      if (frame.t === "log") {
+        emitIsolateLog(options.accountId, options.tool.name, frame);
+        continue;
+      }
+      // Only an error frame is fatal. Falling through on anything else would
+      // turn a frame type a newer runner learns to send into a failed tool call
+      // reported as "sandbox execution failed", with no error to explain it.
+      if (frame.t !== "error") continue;
       reportCpu(frame.cpuUsec);
       throw new Error(frame.error || "custom tool sandbox execution failed");
     }

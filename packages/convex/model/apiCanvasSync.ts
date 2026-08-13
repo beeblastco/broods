@@ -8,14 +8,14 @@
  * back-sync only drops a bare agent node, so the Architecture view shows an
  * agent floating with no workspace, sandbox, or skills even though the runtime
  * resolves all of them. This module recomputes the desired wiring for every
- * `managedBy: "api"` agent in an environment and materializes it as locked
+ * `managedBy: "api"` agent in a stage and materializes it as locked
  * `managedBy: "api"` nodes and edges, so the canvas mirrors the API config
  * without ever fighting its owner.
  *
  * Referenced workspace/sandbox rows created through the API are account-scoped
- * (no project/environment). They are adopted into the canvas environment here
+ * (no project/stage). They are adopted into the canvas stage here
  * — without adoption `materializeRuntimeNodes` rejects them on the next
- * dashboard save ("belongs to a different project or environment").
+ * dashboard save ("belongs to a different project or stage").
  */
 
 import type { Doc, Id } from "../_generated/dataModel";
@@ -40,10 +40,10 @@ type CanvasEdge = {
 };
 
 /**
- * Recomputes the desired API-managed wiring for one environment's canvas and
+ * Recomputes the desired API-managed wiring for one stage's canvas and
  * patches the layout: locked workspace/sandbox/skill nodes, agent→resource
  * edges, and pruning of wiring the configs no longer declare. Resources are
- * resolved against each agent's own account, so a mixed environment never
+ * resolved against each agent's own account, so a mixed stage never
  * aliases or prunes another account's wiring. Agents whose blob cannot be
  * decrypted keep their existing wiring untouched.
  */
@@ -51,10 +51,10 @@ export async function syncApiAgentCanvasWiring(
   ctx: MutationCtx,
   options: {
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
   },
 ): Promise<void> {
-  const { projectId, environmentId } = options;
+  const { projectId, stageId } = options;
   // Without the shared secret no blob can be decrypted, so no wiring is known;
   // leave the canvas untouched rather than pruning edges we cannot recompute.
   const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
@@ -64,8 +64,8 @@ export async function syncApiAgentCanvasWiring(
 
   const layout = await ctx.db
     .query("canvasLayouts")
-    .withIndex("by_projectId_and_environmentId", (q) =>
-      q.eq("projectId", projectId).eq("environmentId", environmentId),
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
     )
     .unique();
   if (!layout) {
@@ -99,8 +99,8 @@ export async function syncApiAgentCanvasWiring(
   const configs = (
     await ctx.db
       .query("agentConfigs")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect()
   ).filter((config) => config.managedBy === "api" && config.agentId);
@@ -162,10 +162,10 @@ export async function syncApiAgentCanvasWiring(
   };
 
   /**
-   * Adopt an API-created (account-scoped) row into this environment so canvas
+   * Adopt an API-created (account-scoped) row into this stage so canvas
    * saves accept it; rows owned by another account or living in another
-   * environment cannot be drawn here and are skipped. Dashboard-owned rows in
-   * this environment keep their owner — an API agent may reference a
+   * stage cannot be drawn here and are skipped. Dashboard-owned rows in
+   * this stage keep their owner — an API agent may reference a
    * dashboard-created resource without stealing it.
    */
   const adoptRow = async (
@@ -175,10 +175,10 @@ export async function syncApiAgentCanvasWiring(
     if (row.accountId !== ownerAccountId) {
       return false;
     }
-    if (row.environmentId === undefined) {
+    if (row.stageId === undefined) {
       await ctx.db.patch(row._id, {
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         managedBy: "api",
         updatedAt: Date.now(),
       });
@@ -186,7 +186,7 @@ export async function syncApiAgentCanvasWiring(
       return true;
     }
 
-    return row.environmentId === environmentId;
+    return row.stageId === stageId;
   };
 
   const desiredEdges = new Map<string, CanvasEdge>();

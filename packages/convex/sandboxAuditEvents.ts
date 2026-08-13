@@ -77,9 +77,7 @@ export const insert = internalMutation({
     await ctx.db.insert("sandboxAuditEvents", {
       accountId: args.accountId,
       ...(instance?.projectId ? { projectId: instance.projectId } : {}),
-      ...(instance?.environmentId
-        ? { environmentId: instance.environmentId }
-        : {}),
+      ...(instance?.stageId ? { stageId: instance.stageId } : {}),
       ...(sandboxConfigId ? { sandboxConfigId: sandboxConfigId } : {}),
       reservationKey: args.reservationKey,
       provider: args.provider,

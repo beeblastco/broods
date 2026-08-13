@@ -14,7 +14,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { optionalEnv, positiveIntegerEnv } from "../../shared/env.ts";
-import { logInfo } from "../../shared/log.ts";
+import { logDebug, logError, logInfo, logWarn } from "../../shared/log.ts";
 import {
   FrameQueue,
   abortSignalFromOptions,
@@ -54,7 +54,7 @@ export async function* streamIsolatePayload(
 
     return;
   }
-  yield* streamViaOneShot(runPayload, options.abortSignal);
+  yield* streamViaOneShot(accountId, runPayload, options.abortSignal);
 }
 
 // Pooled by default. The one-shot path pays a Node spawn plus a cold isolate on
@@ -122,6 +122,7 @@ let activeIsolateRuns = 0;
 const isolateWaiters: Array<() => void> = [];
 
 async function* streamViaOneShot(
+  accountId: string | undefined,
   runPayload: Record<string, unknown>,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<unknown, void, void> {
@@ -200,6 +201,13 @@ async function* streamViaOneShot(
     child.stdin.end(JSON.stringify(runPayload) + "\n");
 
     for await (const frame of queue.frames()) {
+      // A log frame is not a result. Counting it as one turns a runner that
+      // logged and then died (OOM, SIGKILL) into a silent `undefined` instead of
+      // the "did not return a result" diagnostic carrying its stderr.
+      if (frame.t === "log") {
+        emitIsolateLog(accountId, runPayload.toolName, frame);
+        continue;
+      }
       sawFrame = true;
       if (frame.t === "chunk") {
         yield frame.output;
@@ -213,6 +221,10 @@ async function* streamViaOneShot(
       if (frame.t === "end") {
         return;
       }
+      // Only an error frame is fatal; a frame type a newer runner learns to
+      // send must not read as a failed call with no error to explain it.
+      if (frame.t !== "error") continue;
+
       throw new Error(frame.error || "custom tool isolate execution failed");
     }
 
@@ -232,6 +244,51 @@ async function* streamViaOneShot(
     child?.kill();
     release();
   }
+}
+
+// Called while iterating a run's frames, so the line inherits that run's
+// observability context — which is what routes it to NATS and `broods logs`.
+export function emitIsolateLog(
+  accountId: string | undefined,
+  toolName: unknown,
+  frame: IsolateFrame,
+): void {
+  const record = isolateLogRecord(accountId, toolName, frame);
+  const emit = {
+    debug: logDebug,
+    info: logInfo,
+    warn: logWarn,
+    error: logError,
+  }[record.level];
+  emit(record.message, record.data);
+}
+
+/** `console.log` has no host equivalent, so it lands on info like Node's does. */
+export function isolateLogRecord(
+  accountId: string | undefined,
+  toolName: unknown,
+  frame: IsolateFrame,
+): {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  data: Record<string, unknown>;
+} {
+  const level =
+    frame.level === "error" ||
+    frame.level === "warn" ||
+    frame.level === "debug"
+      ? frame.level
+      : "info";
+
+  return {
+    level: level,
+    message: frame.message ?? "",
+    data: {
+      accountId: accountId,
+      ...(typeof toolName === "string" ? { toolName: toolName } : {}),
+      source: "user-code",
+    },
+  };
 }
 
 async function acquireIsolateSlot(): Promise<() => void> {
@@ -268,6 +325,8 @@ type IsolateFrame = {
   error?: string;
   toolName?: string;
   cpuMs?: number;
+  level?: string;
+  message?: string;
 };
 
 /**
@@ -510,6 +569,16 @@ async function* streamViaPool(
   }, runnerTimeoutMs() + 2_000);
   try {
     for await (const frame of worker.runCall(request)) {
+      // The worker serves one call at a time, but a frame written around the
+      // terminal frame can still reach the sink of the call that follows it on
+      // the same worker. Emitting that under the wrong run's observability
+      // context would publish one tenant's log line to another tenant's NATS
+      // subject, so a frame that names a different call is dropped.
+      if (frame.callId !== undefined && frame.callId !== callId) continue;
+      if (frame.t === "log") {
+        emitIsolateLog(tenantId, runPayload.toolName, frame);
+        continue;
+      }
       if (frame.t === "meter") {
         logInfo("isolate.usage", {
           accountId: tenantId,

@@ -465,6 +465,7 @@ describe("isolate runner", () => {
       );
 
       expect(result.frames).toEqual([
+        { t: "log", level: "log", message: "hello from the isolate" },
         { t: "chunk", output: { waitedMs: true } },
         {
           t: "chunk",
@@ -485,7 +486,9 @@ describe("isolate runner", () => {
           },
         },
       ]);
-      expect(result.stderr).toContain("[tool:log] hello from the isolate");
+      // Console now rides the frame protocol. Writing to stderr instead is what
+      // lost the pooled worker's logs, so the old channel must stay empty.
+      expect(result.stderr).not.toContain("hello from the isolate");
     },
   );
 

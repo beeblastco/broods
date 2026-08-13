@@ -108,7 +108,7 @@ export interface SandboxConfigRecord {
   accountId: string;
   sandboxId: string;
   projectId?: string;
-  environmentId?: string;
+  stageId?: string;
   name: string;
   description?: string;
   config: SandboxConfig;
@@ -482,11 +482,17 @@ function validateProviderOptions(
       "config.options.functionNames is not supported in account sandbox config",
     );
   }
-  if (
-    provider === "vercel" &&
-    "runtime" in options &&
-    typeof options.runtime !== "string"
-  ) {
-    throw new Error("config.options.runtime must be a string");
+  if (provider === "vercel") {
+    if ("image" in options && typeof options.image !== "string") {
+      throw new Error("config.options.image must be a string");
+    }
+    if ("runtime" in options && typeof options.runtime !== "string") {
+      throw new Error("config.options.runtime must be a string");
+    }
+    if ("image" in options && "runtime" in options) {
+      throw new Error(
+        "config.options.image and config.options.runtime cannot both be set",
+      );
+    }
   }
 }

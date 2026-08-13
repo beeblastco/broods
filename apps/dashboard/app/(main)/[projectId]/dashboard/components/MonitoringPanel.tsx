@@ -17,7 +17,7 @@ import {
 
 interface Props {
   projectSlug: string | undefined;
-  environmentSlug: string | undefined;
+  stageSlug: string | undefined;
   apiKey: string | undefined;
 }
 
@@ -225,11 +225,7 @@ function LogRow({
   );
 }
 
-export function MonitoringPanel({
-  projectSlug,
-  environmentSlug,
-  apiKey,
-}: Props) {
+export function MonitoringPanel({ projectSlug, stageSlug, apiKey }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -240,7 +236,7 @@ export function MonitoringPanel({
   const [toTime, setToTime] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  // Switch to the Tracing tab focused on a log's trace, preserving env/other params.
+  // Switch to the Tracing tab focused on a log's trace, preserving stage/other params.
   const viewTrace = (traceId: string) => {
     const next = new URLSearchParams(searchParams.toString());
     next.set("tab", "tracing");
@@ -251,7 +247,7 @@ export function MonitoringPanel({
   const { entries, status, error, refresh } = useObservabilityStream({
     stream: "logs",
     projectSlug: projectSlug,
-    environmentSlug: environmentSlug,
+    stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
   });

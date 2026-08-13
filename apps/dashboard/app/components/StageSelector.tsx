@@ -1,6 +1,6 @@
 "use client";
 
-/** Dropdown selector for switching between project environments and creating new ones. */
+/** Dropdown selector for switching between project stages and creating new ones. */
 import { Button } from "@/app/components/ui/button";
 import {
   Dialog,
@@ -28,7 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/app/components/ui/select";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { Skeleton } from "@/app/components/ui/skeleton";
+import { useStage } from "@/app/hooks/useStage";
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
@@ -37,7 +38,7 @@ import { ChevronDown, Circle, Copy, Plus } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-type EnvironmentKind = "development" | "production" | "custom";
+type StageKind = "development" | "production" | "custom";
 type DeploymentRegion = "ap-southeast-1" | "eu-west-1" | "us-east-1";
 
 const regionOptions: Array<{
@@ -61,21 +62,21 @@ const regionOptions: Array<{
   },
 ];
 
-/** Infer environment type for legacy rows that predate the explicit kind field. */
-function environmentKind(
-  env: Pick<Doc<"environments">, "name" | "kind"> | null | undefined,
-): EnvironmentKind {
-  if (!env) return "custom";
-  if (env.kind) return env.kind;
-  const normalized = env.name.trim().toLowerCase();
+/** Infer stage type for legacy rows that predate the explicit kind field. */
+function stageKind(
+  stage: Pick<Doc<"stages">, "name" | "kind"> | null | undefined,
+): StageKind {
+  if (!stage) return "custom";
+  if (stage.kind) return stage.kind;
+  const normalized = stage.name.trim().toLowerCase();
   if (normalized === "development") return "development";
   if (normalized === "production") return "production";
 
   return "custom";
 }
 
-/** Color dot indicating environment type: green for Development, purple for Production. */
-export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
+/** Color dot indicating stage type: green for Development, purple for Production. */
+export function StageDot({ kind }: { kind: StageKind }) {
   return (
     <Circle
       className={cn(
@@ -91,24 +92,22 @@ export function EnvironmentDot({ kind }: { kind: EnvironmentKind }) {
 }
 
 /**
- * Dropdown to list, switch, and create project environments. The Initialize
- * Production panel opens only when the user selects a Production environment
+ * Dropdown to list, switch, and create project stages. The Initialize
+ * Production panel opens only when the user selects a Production stage
  * that has no deployment region yet, so nothing else can prompt for one.
  */
-export function EnvironmentSelector() {
+export function StageSelector() {
   const params = useParams<{ projectId?: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
-  const { environmentId, setEnvironmentId } = useEnvironment();
+  const { stageId, setStageId } = useStage();
 
-  const environments = useQuery(
-    api.environment.list,
+  const stages = useQuery(
+    api.stage.list,
     projectId ? { projectId: projectId } : "skip",
-  ) as Doc<"environments">[] | undefined;
-  const ensureDefault = useMutation(api.environment.ensureDefault);
-  const createEnvironment = useMutation(api.environment.create);
-  const initializeProduction = useMutation(
-    api.environment.initializeProduction,
-  );
+  ) as Doc<"stages">[] | undefined;
+  const ensureDefault = useMutation(api.stage.ensureDefault);
+  const createStage = useMutation(api.stage.create);
+  const initializeProduction = useMutation(api.stage.initializeProduction);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [productionOpen, setProductionOpen] = useState(false);
@@ -116,77 +115,77 @@ export function EnvironmentSelector() {
     useState<DeploymentRegion>("eu-west-1");
   const [newName, setNewName] = useState("");
   const [createMode, setCreateMode] = useState<"empty" | "duplicate">("empty");
-  const [duplicateFromId, setDuplicateFromId] =
-    useState<Id<"environments"> | null>(null);
+  const [duplicateFromId, setDuplicateFromId] = useState<Id<"stages"> | null>(
+    null,
+  );
   const [isCreating, setIsCreating] = useState(false);
   const [isInitializingProduction, setIsInitializingProduction] =
     useState(false);
 
-  const developmentEnv = environments?.find(
-    (env) => environmentKind(env) === "development",
+  const developmentStage = stages?.find(
+    (stage) => stageKind(stage) === "development",
   );
-  const productionEnv = environments?.find(
-    (env) => environmentKind(env) === "production",
+  const productionStage = stages?.find(
+    (stage) => stageKind(stage) === "production",
   );
 
-  // Ensure default Development environment exists when project loads.
+  // Ensure default Development stage exists when project loads.
   useEffect(() => {
-    if (!projectId || environments === undefined) return;
-    const defaultEnv = environments.find((env) => env.isDefault);
+    if (!projectId || stages === undefined) return;
+    const defaultStage = stages.find((stage) => stage.isDefault);
     const hasDevelopmentDefault =
-      defaultEnv && environmentKind(defaultEnv) === "development";
-    if (
-      environments.length === 0 ||
-      !developmentEnv ||
-      !hasDevelopmentDefault
-    ) {
+      defaultStage && stageKind(defaultStage) === "development";
+    if (stages.length === 0 || !developmentStage || !hasDevelopmentDefault) {
       ensureDefault({ projectId: projectId }).catch(console.error);
     }
-  }, [projectId, environments, developmentEnv, ensureDefault]);
+  }, [projectId, stages, developmentStage, ensureDefault]);
 
-  // Auto-select the default environment when environments load or selection becomes invalid
+  // Auto-select the default stage when stages load or selection becomes invalid
   useEffect(() => {
-    if (!environments || environments.length === 0) return;
-    const currentValid = environments.some(
-      (e: Doc<"environments">) => e._id === environmentId,
-    );
+    if (!stages || stages.length === 0) return;
+    const currentValid = stages.some((e: Doc<"stages">) => e._id === stageId);
     if (!currentValid) {
-      const defaultEnv =
-        environments.find(
-          (e: Doc<"environments">) =>
-            environmentKind(e) === "development" && e.isDefault,
+      const defaultStage =
+        stages.find(
+          (e: Doc<"stages">) => stageKind(e) === "development" && e.isDefault,
         ) ??
-        environments.find(
-          (e: Doc<"environments">) => environmentKind(e) === "development",
-        ) ??
-        environments.find((e: Doc<"environments">) => e.isDefault) ??
-        environments[0];
-      setEnvironmentId(defaultEnv._id);
+        stages.find((e: Doc<"stages">) => stageKind(e) === "development") ??
+        stages.find((e: Doc<"stages">) => e.isDefault) ??
+        stages[0];
+      setStageId(defaultStage._id);
     }
-  }, [environments, environmentId, setEnvironmentId]);
+  }, [stages, stageId, setStageId]);
 
-  if (!projectId || !environments || environments.length === 0) {
+  if (!projectId) {
     return null;
   }
 
-  const selectedEnv = environments.find(
-    (e: Doc<"environments">) => e._id === environmentId,
-  );
-  const selectedKind = environmentKind(selectedEnv);
+  // Its divider is already painted on a project route: hold the slot instead of
+  // letting the header snap wider when the stages arrive.
+  if (stages === undefined) {
+    return <Skeleton className="h-4 w-20 bg-muted" />;
+  }
 
-  function handleSelectEnvironment(env: Doc<"environments">) {
-    if (environmentKind(env) === "production" && !env.deploymentRegion) {
+  if (stages.length === 0) {
+    return null;
+  }
+
+  const selectedStage = stages.find((e: Doc<"stages">) => e._id === stageId);
+  const selectedKind = stageKind(selectedStage);
+
+  function handleSelectStage(stage: Doc<"stages">) {
+    if (stageKind(stage) === "production" && !stage.deploymentRegion) {
       setProductionOpen(true);
 
       return;
     }
 
-    setEnvironmentId(env._id);
+    setStageId(stage._id);
   }
 
   function handleSelectProductionTarget() {
-    if (productionEnv?.deploymentRegion) {
-      setEnvironmentId(productionEnv._id);
+    if (productionStage?.deploymentRegion) {
+      setStageId(productionStage._id);
 
       return;
     }
@@ -198,7 +197,7 @@ export function EnvironmentSelector() {
     if (!newName.trim() || !projectId) return;
     setIsCreating(true);
     try {
-      const newId = await createEnvironment({
+      const newId = await createStage({
         projectId: projectId,
         name: newName.trim(),
         duplicateFromId:
@@ -206,7 +205,7 @@ export function EnvironmentSelector() {
             ? duplicateFromId
             : undefined,
       });
-      setEnvironmentId(newId);
+      setStageId(newId);
       setCreateOpen(false);
       setNewName("");
       setCreateMode("empty");
@@ -218,16 +217,16 @@ export function EnvironmentSelector() {
 
   async function handleInitializeProduction() {
     if (!projectId) return;
-    const sourceEnvironmentId = developmentEnv?._id;
-    if (!sourceEnvironmentId) return;
+    const sourceStageId = developmentStage?._id;
+    if (!sourceStageId) return;
     setIsInitializingProduction(true);
     try {
       const productionId = await initializeProduction({
         projectId: projectId,
-        sourceEnvironmentId: sourceEnvironmentId,
+        sourceStageId: sourceStageId,
         deploymentRegion: productionRegion,
       });
-      setEnvironmentId(productionId);
+      setStageId(productionId);
       setProductionOpen(false);
     } finally {
       setIsInitializingProduction(false);
@@ -245,8 +244,8 @@ export function EnvironmentSelector() {
             />
           }
         >
-          <EnvironmentDot kind={selectedKind} />
-          {selectedEnv?.name ?? "Environment"}
+          <StageDot kind={selectedKind} />
+          {selectedStage?.name ?? "Stage"}
           <ChevronDown className="size-3.5 text-muted-foreground" />
         </DropdownMenuTrigger>
 
@@ -256,32 +255,32 @@ export function EnvironmentSelector() {
           className="flex max-h-[min(24rem,var(--available-height))] w-56 flex-col overflow-hidden"
         >
           <DropdownMenuGroup className="flex min-h-0 flex-1 flex-col">
-            <DropdownMenuLabel>Environments</DropdownMenuLabel>
+            <DropdownMenuLabel>Stages</DropdownMenuLabel>
             <DropdownMenuSeparator />
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {environments.map((env: Doc<"environments">) => (
+              {stages.map((stage: Doc<"stages">) => (
                 <DropdownMenuItem
-                  key={env._id}
+                  key={stage._id}
                   className={cn(
                     "gap-2 cursor-pointer",
-                    env._id === environmentId
+                    stage._id === stageId
                       ? "bg-accent text-accent-foreground"
                       : "",
                   )}
-                  onClick={() => handleSelectEnvironment(env)}
+                  onClick={() => handleSelectStage(stage)}
                 >
-                  <EnvironmentDot kind={environmentKind(env)} />
-                  {env.name}
+                  <StageDot kind={stageKind(stage)} />
+                  {stage.name}
                 </DropdownMenuItem>
               ))}
 
-              {!productionEnv && (
+              {!productionStage && (
                 <DropdownMenuItem
                   className="gap-2 cursor-pointer"
                   onClick={handleSelectProductionTarget}
                 >
-                  <EnvironmentDot kind="production" />
+                  <StageDot kind="production" />
                   Production
                 </DropdownMenuItem>
               )}
@@ -292,12 +291,12 @@ export function EnvironmentSelector() {
           <DropdownMenuItem
             className="cursor-pointer"
             onClick={() => {
-              setDuplicateFromId(environmentId);
+              setDuplicateFromId(stageId);
               setCreateOpen(true);
             }}
           >
             <Plus className="size-4" />
-            New Environment
+            New Stage
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -305,9 +304,9 @@ export function EnvironmentSelector() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>New Environment</DialogTitle>
+            <DialogTitle>New Stage</DialogTitle>
             <DialogDescription>
-              Name your environment and choose how to initialize it.
+              Name your stage and choose how to initialize it.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -318,9 +317,9 @@ export function EnvironmentSelector() {
           >
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="env-name">Environment name</Label>
+                <Label htmlFor="stage-name">Stage name</Label>
                 <Input
-                  id="env-name"
+                  id="stage-name"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="staging"
@@ -343,7 +342,7 @@ export function EnvironmentSelector() {
                   >
                     <Plus className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                     <div>
-                      <p className="text-sm font-medium">Empty environment</p>
+                      <p className="text-sm font-medium">Empty stage</p>
                       <p className="text-xs text-muted-foreground">
                         Start fresh with no services or config
                       </p>
@@ -364,7 +363,7 @@ export function EnvironmentSelector() {
                     <div>
                       <p className="text-sm font-medium">Duplicate existing</p>
                       <p className="text-xs text-muted-foreground">
-                        Copy all services and config from an environment
+                        Copy all services and config from a stage
                       </p>
                     </div>
                   </button>
@@ -375,24 +374,22 @@ export function EnvironmentSelector() {
                 <div className="grid gap-2">
                   <Label htmlFor="dup-source">Copy from</Label>
                   <Select
-                    items={environments.map((env: Doc<"environments">) => ({
-                      label: env.name,
-                      value: env._id,
+                    items={stages.map((stage: Doc<"stages">) => ({
+                      label: stage.name,
+                      value: stage._id,
                     }))}
                     value={duplicateFromId ?? ""}
                     onValueChange={(val) =>
-                      setDuplicateFromId(
-                        (val || null) as Id<"environments"> | null,
-                      )
+                      setDuplicateFromId((val || null) as Id<"stages"> | null)
                     }
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select environment…" />
+                      <SelectValue placeholder="Select stage…" />
                     </SelectTrigger>
                     <SelectContent>
-                      {environments.map((env: Doc<"environments">) => (
-                        <SelectItem key={env._id} value={env._id}>
-                          {env.name}
+                      {stages.map((stage: Doc<"stages">) => (
+                        <SelectItem key={stage._id} value={stage._id}>
+                          {stage.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -432,7 +429,7 @@ export function EnvironmentSelector() {
             <DialogTitle>Initialize Production</DialogTitle>
             <DialogDescription>
               Copy the current Development configuration into a deployable
-              Production environment.
+              Production stage.
             </DialogDescription>
           </DialogHeader>
 
@@ -488,7 +485,7 @@ export function EnvironmentSelector() {
             <Button
               type="button"
               className="cursor-pointer disabled:cursor-not-allowed"
-              disabled={!developmentEnv || isInitializingProduction}
+              disabled={!developmentStage || isInitializingProduction}
               onClick={handleInitializeProduction}
             >
               {isInitializingProduction

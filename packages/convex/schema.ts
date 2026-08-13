@@ -31,11 +31,11 @@ export const projectsFields = {
   updatedAt: v.number(),
 };
 
-export const environmentsFields = {
+export const stagesFields = {
   authId: v.string(),
   projectId: v.id("projects"),
   name: v.string(),
-  /** Semantic environment role. Optional for legacy rows created before roles existed. */
+  /** Semantic stage role. Optional for legacy rows created before roles existed. */
   kind: v.optional(
     v.union(
       v.literal("development"),
@@ -43,7 +43,7 @@ export const environmentsFields = {
       v.literal("custom"),
     ),
   ),
-  /** Lambda deploy region for promoted/deployable environments. */
+  /** Lambda deploy region for promoted/deployable stages. */
   deploymentRegion: v.optional(
     v.union(
       v.literal("ap-southeast-1"),
@@ -62,7 +62,7 @@ export const agentConfigsFields = {
   description: v.optional(v.string()),
   agentId: v.optional(v.string()),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   provider: v.optional(v.string()),
   modelId: v.optional(v.string()),
   systemPrompt: v.optional(v.string()),
@@ -112,15 +112,15 @@ export const agentRuntimeSecretsFields = {
 export const canvasLayoutsFields = {
   authId: v.string(),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   nodes: v.array(v.any()),
   edges: v.array(v.any()),
   updatedAt: v.number(),
 };
 
 /**
- * Project + environment scoped runtime API key (`fp_agent_…`). One key per
- * environment invokes ANY deployed agent in it; the agent is selected per request
+ * Project + stage scoped runtime API key (`fp_agent_…`). One key per
+ * stage invokes ANY deployed agent in it; the agent is selected per request
  * by id. The SHA-256 hash authenticates runtime calls; the plaintext is also kept
  * AES-GCM encrypted at rest so the owner can recover it for dashboard streaming
  * and CLI reconnect without rotating.
@@ -129,11 +129,11 @@ export const agentDeploymentsFields = {
   authId: v.string(),
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   status: v.union(v.literal("active"), v.literal("revoked")),
   endpointId: v.string(),
   projectSlug: v.string(),
-  environmentSlug: v.string(),
+  stageSlug: v.string(),
   apiKeyHash: v.string(),
   keyHint: v.string(),
   // AES-GCM blob of the plaintext key (owner-recoverable without rotating).
@@ -144,15 +144,15 @@ export const agentDeploymentsFields = {
 };
 
 /**
- * Project + environment scoped CLI/API deploy key. Authorizes the `broods`
- * CLI against exactly one project/environment, unlike the org Bearer secret
+ * Project + stage scoped CLI/API deploy key. Authorizes the `broods`
+ * CLI against exactly one project/stage, unlike the org Bearer secret
  * which grants the whole account. Only the SHA-256 hash is stored.
  */
 export const deployKeysFields = {
   /** Org account this key resolves to (mirrors the project's org account). */
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   name: v.string(),
   /** SHA-256 hex of the plaintext token; the plaintext is shown once at creation. */
   keyHash: v.string(),
@@ -191,7 +191,7 @@ export const cliTokensFields = {
 export const cliExternalResourcesFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   kind: v.union(v.literal("skill"), v.literal("tool"), v.literal("hook")),
   name: v.string(),
   description: v.optional(v.string()),
@@ -206,7 +206,7 @@ export const accountToolsFields = {
   // Optional only so the widened schema deploys against rows written before
   // tools were scoped; `migrations:deleteOrphanedTools` drops what is left.
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   /** Inline source for dashboard-authored tools; CLI tools bundle locally instead. */
   sourceCode: v.optional(v.string()),
   /**
@@ -259,11 +259,11 @@ export const accountHooksFields = {
   deletedAt: v.optional(v.number()),
 };
 
-/** Environment-scoped reusable agent authorization policy. */
+/** Stage-scoped reusable agent authorization policy. */
 export const agentPoliciesFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
   document: v.any(),
@@ -286,7 +286,7 @@ export const agentPoliciesFields = {
 export const channelRecordsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   /** Adapter name: slack, discord, telegram, github, pancake, zalo. */
   platform: v.string(),
   /** Provider id of the place, e.g. a Slack channel id or an owner/repo. */
@@ -371,15 +371,15 @@ export const agentsFields = {
 export const sandboxConfigsFields = {
   accountId: v.id("accounts"),
   /**
-   * Environment scope. Optional for backward compatibility: legacy rows and
+   * Stage scope. Optional for backward compatibility: legacy rows and
    * rows created through the account-management REST API are account-scoped
-   * (env unset) and shared, while CLI- and dashboard-managed rows are scoped
-   * to one `(projectId, environmentId)` so the same name can repeat — and stay
-   * isolated — across environments. The runtime resolves sandboxes by `_id`,
-   * so a per-environment row already yields a per-environment resource.
+   * (stage unset) and shared, while CLI- and dashboard-managed rows are scoped
+   * to one `(projectId, stageId)` so the same name can repeat — and stay
+   * isolated — across stages. The runtime resolves sandboxes by `_id`, so a
+   * per-stage row already yields a per-stage resource.
    */
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
   encryptedConfig: v.optional(v.string()),
@@ -429,9 +429,9 @@ export const sandboxProviderValidator = v.union(
  */
 export const sandboxInstancesFields = {
   accountId: v.id("accounts"),
-  /** Environment scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
+  /** Stage scope; optional like `sandboxConfigsFields` for account-scoped/legacy rows. */
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   provider: sandboxProviderValidator,
   /** Stable reservation key used by broods reconnects. */
   reservationKey: v.string(),
@@ -494,7 +494,7 @@ export const sandboxInstancesFields = {
 
 /**
  * Sandbox snapshot/image registry, mirrored from broods. Account-scoped because
- * a built image is reusable across environments. `status` follows the unified
+ * a built image is reusable across stages. `status` follows the unified
  * (Daytona-aligned) build model mapped from AWS MicroVM image versions and
  * workdir images; broods owns the build pipeline and dual-writes status here.
  */
@@ -538,7 +538,7 @@ export const sandboxAuditActionValidator = v.union(
 export const sandboxAuditEventsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   sandboxConfigId: v.optional(v.id("sandboxConfigs")),
   reservationKey: v.string(),
   provider: sandboxProviderValidator,
@@ -571,13 +571,13 @@ export const sandboxAuditEventsFields = {
 export const workspaceConfigsFields = {
   accountId: v.id("accounts"),
   /**
-   * Environment scope. Optional for backward compatibility (see
-   * `sandboxConfigsFields`). A per-environment row gives the workspace its own
+   * Stage scope. Optional for backward compatibility (see
+   * `sandboxConfigsFields`). A per-stage row gives the workspace its own
    * `_id`, and the runtime filesystem namespace keys off that `_id`
-   * (`accountId:workspaceId`), so two environments never share files.
+   * (`accountId:workspaceId`), so two stages never share files.
    */
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   name: v.string(),
   description: v.optional(v.string()),
   config: v.any(),
@@ -589,10 +589,10 @@ export const workspaceConfigsFields = {
   updatedAt: v.number(),
 };
 
-/** CLI-managed runtime variables scoped to a project environment. */
+/** CLI-managed runtime variables scoped to a project stage. */
 export const environmentVariablesFields = {
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   name: v.string(),
   ciphertext: v.string(),
   iv: v.string(),
@@ -617,7 +617,7 @@ export const accountEnvVarsFields = {
  */
 export const environmentVariableRevealsFields = {
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   environmentVariableId: v.id("environmentVariables"),
   name: v.string(),
   source: v.union(v.literal("dashboard"), v.literal("cli")),
@@ -629,7 +629,7 @@ export const environmentVariableRevealsFields = {
   revealedByCliTokenId: v.optional(v.id("cliTokens")),
   /** WorkOS authId attached to the CLI token used for the reveal. */
   revealedByCliAuthId: v.optional(v.string()),
-  /** Project/environment deploy key used for the reveal, when authenticated by a deploy key. */
+  /** Project/stage deploy key used for the reveal, when authenticated by a deploy key. */
   revealedByDeployKeyId: v.optional(v.id("deployKeys")),
   revealedAt: v.number(),
 };
@@ -671,7 +671,7 @@ export const configAuditResourceKindValidator = v.union(
 export const configAuditEventsFields = {
   accountId: v.id("accounts"),
   projectId: v.optional(v.id("projects")),
-  environmentId: v.optional(v.id("environments")),
+  stageId: v.optional(v.id("stages")),
   actor: v.object({
     kind: configAuditActorKindValidator,
     id: v.optional(v.string()),
@@ -750,6 +750,24 @@ export const workspaceFilesFields = {
   sizeBytes: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
+};
+
+/**
+ * Capability link for one file in a workspace's S3 namespace, redeemed with no
+ * credential of its own. It exists because a presigned S3 URL cannot survive the
+ * trip: 1.4 KB of it is an STS token whose `+` characters chat clients mangle.
+ */
+export const workspaceDownloadTokensFields = {
+  accountId: v.id("accounts"),
+  workspaceId: v.id("workspaceConfigs"),
+  /** Workspace-relative path, already normalized when the token was minted. */
+  path: v.string(),
+  /** Name offered to whoever follows the link. */
+  filename: v.string(),
+  /** SHA-256 hex of the token; the token itself only ever exists in the URL. */
+  tokenHash: v.string(),
+  expiresAt: v.number(),
+  createdAt: v.number(),
 };
 
 /** Async job tracking for the harness-processing /async endpoint. */
@@ -1083,33 +1101,34 @@ export default defineSchema({
     .index("by_authId", ["authId"])
     .index("by_authId_and_slug", ["authId", "slug"])
     .index("by_orgId", ["orgId"]),
-  environments: defineTable(environmentsFields)
+  stages: defineTable(stagesFields)
     .index("by_projectId", ["projectId"])
     .index("by_authId_and_projectId", ["authId", "projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_authId", ["authId"])
-    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
+    .index("by_projectId_and_stageId", ["projectId", "stageId"])
     .index("by_agentId", ["agentId"]),
   agentRuntimeSecrets: defineTable(agentRuntimeSecretsFields).index(
     "by_agentConfigId",
     ["agentConfigId"],
   ),
   canvasLayouts: defineTable(canvasLayoutsFields).index(
-    "by_projectId_and_environmentId",
-    ["projectId", "environmentId"],
+    "by_projectId_and_stageId",
+    ["projectId", "stageId"],
   ),
   agentDeployments: defineTable(agentDeploymentsFields)
-    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-    .index("by_projectId_and_environmentId_and_status", [
+    .index("by_projectId_and_stageId", ["projectId", "stageId"])
+    .index("by_projectId_and_stageId_and_status", [
       "projectId",
-      "environmentId",
+      "stageId",
       "status",
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
+    .index("by_endpointId", ["endpointId"])
     .index("by_authId", ["authId"]),
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
-    .index("by_projectId_and_environmentId", ["projectId", "environmentId"]),
+    .index("by_projectId_and_stageId", ["projectId", "stageId"]),
   cliAuthCodes: defineTable(cliAuthCodesFields)
     .index("by_codeHash", ["codeHash"])
     .index("by_accountId", ["accountId"])
@@ -1119,8 +1138,8 @@ export default defineSchema({
     .index("by_accountId", ["accountId"])
     .index("by_authId", ["authId"]),
   cliExternalResources: defineTable(cliExternalResourcesFields)
-    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-    .index("by_environmentId_kind_and_name", ["environmentId", "kind", "name"])
+    .index("by_projectId_and_stageId", ["projectId", "stageId"])
+    .index("by_stageId_kind_and_name", ["stageId", "kind", "name"])
     .index("by_accountId", ["accountId"]),
   orgs: defineTable(orgsFields)
     .index("by_slug", ["slug"])
@@ -1138,16 +1157,16 @@ export default defineSchema({
   accountTools: defineTable(accountToolsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_environmentId_and_status", ["environmentId", "status"])
-    .index("by_environmentId_and_name", ["environmentId", "name"])
-    .index("by_environmentId_and_nodeId", ["environmentId", "nodeId"]),
+    .index("by_stageId_and_status", ["stageId", "status"])
+    .index("by_stageId_and_name", ["stageId", "name"])
+    .index("by_stageId_and_nodeId", ["stageId", "nodeId"]),
   accountHooks: defineTable(accountHooksFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_environmentId_and_name", ["environmentId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"]),
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
@@ -1160,21 +1179,21 @@ export default defineSchema({
       "externalId",
       "status",
     ])
-    .index("by_environmentId_and_name", ["environmentId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"]),
   sandboxConfigs: defineTable(sandboxConfigsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])
-    .index("by_environmentId_and_name", ["environmentId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"]),
   workspaceConfigs: defineTable(workspaceConfigsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_name", ["accountId", "name"])
-    .index("by_environmentId_and_name", ["environmentId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"]),
   sandboxInstances: defineTable(sandboxInstancesFields)
     .index("by_accountId", ["accountId"])
-    .index("by_accountId_projectId_and_environmentId", [
+    .index("by_accountId_projectId_and_stageId", [
       "accountId",
       "projectId",
-      "environmentId",
+      "stageId",
     ])
     .index("by_reservationKey", ["reservationKey"]),
   sandboxSnapshots: defineTable(sandboxSnapshotsFields)
@@ -1187,31 +1206,27 @@ export default defineSchema({
       "reservationKey",
       "createdAt",
     ])
-    .index("by_accountId_projectId_environmentId_and_createdAt", [
+    .index("by_accountId_projectId_stageId_and_createdAt", [
       "accountId",
       "projectId",
-      "environmentId",
+      "stageId",
       "createdAt",
     ]),
   environmentVariables: defineTable(environmentVariablesFields)
-    .index("by_projectId_and_environmentId", ["projectId", "environmentId"])
-    .index("by_environmentId_and_name", ["environmentId", "name"]),
+    .index("by_projectId_and_stageId", ["projectId", "stageId"])
+    .index("by_stageId_and_name", ["stageId", "name"]),
   accountEnvVars: defineTable(accountEnvVarsFields).index(
     "by_accountId_and_name",
     ["accountId", "name"],
   ),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
-    .index("by_environmentId", ["environmentId"])
+    .index("by_stageId", ["stageId"])
     .index("by_environmentVariableId", ["environmentVariableId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
   configAuditEvents: defineTable(configAuditEventsFields)
     .index("by_account", ["accountId"])
-    .index("by_account_project_environment", [
-      "accountId",
-      "projectId",
-      "environmentId",
-    ]),
+    .index("by_account_project_stage", ["accountId", "projectId", "stageId"]),
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),
@@ -1226,6 +1241,11 @@ export default defineSchema({
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
     .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
     .index("by_authId", ["authId"]),
+  workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_accountId", ["accountId"])
+    .index("by_workspaceId", ["workspaceId"])
+    .index("by_expiresAt", ["expiresAt"]),
   asyncResults: defineTable(asyncResultsFields)
     .index("by_accountId", ["accountId"])
     .index("by_eventId", ["eventId"]),

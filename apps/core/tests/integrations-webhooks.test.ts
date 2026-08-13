@@ -164,7 +164,7 @@ describe("account webhook ingress", () => {
         accountId: "acct_test",
         endpointId: "endpoint-development",
         projectSlug: "project-one",
-        environmentSlug: "development",
+        stageSlug: "development",
       }),
     });
     let processingScope: ReturnType<typeof getObservabilityContext> = null;
@@ -188,7 +188,7 @@ describe("account webhook ingress", () => {
       accountId: "acct_test",
       endpointId: "endpoint-development",
       project: "project-one",
-      environment: "development",
+      stage: "development",
     });
     expect(getObservabilityContext()).toBeNull();
     expect(handledEvents).toHaveLength(1);
@@ -211,7 +211,7 @@ describe("account webhook ingress", () => {
       channelName: "telegram",
       endpointId: "endpoint-development",
       projectSlug: "project-one",
-      environmentSlug: "development",
+      stageSlug: "development",
     });
   });
 
@@ -306,6 +306,102 @@ describe("account webhook ingress", () => {
       content: "hello zalo",
       events: [{ role: "user", content: "hello zalo" }],
       channelName: "zalo",
+    });
+  });
+
+  it("routes a stage webhook URL to that stage even when a sibling shares credentials", async () => {
+    // Both stages hold the same bot secret, so both verify. The account scan
+    // sorts on agentId and would take `agent_aaa`; the URL must win instead.
+    const productionAgent = { ...ZALO_AGENT, agentId: "agent_aaa" };
+    const stageAgent = { ...ZALO_AGENT, agentId: "agent_zzz" };
+    const handledEvents: ChannelInboundEvent[] = [];
+    const listedEndpoints: string[] = [];
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => stageAgent,
+      agentLister: async () => [productionAgent, stageAgent],
+      stageAgentLister: async (_accountId, endpointId) => {
+        listedEndpoints.push(endpointId);
+
+        return endpointId === "stage-abcd1234" ? [stageAgent] : [];
+      },
+    });
+
+    const response = await routeIncomingEvent(
+      createZaloEvent(undefined, undefined, "stage-abcd1234"),
+      createHandlers({
+        handleChannelRequest: async (event) => {
+          handledEvents.push(event);
+        },
+      }),
+    );
+
+    expect(response.statusCode).toBe(200);
+    await response.afterResponse;
+
+    expect(listedEndpoints).toEqual(["stage-abcd1234"]);
+    expect(handledEvents).toHaveLength(1);
+    expect(handledEvents[0]!.agentId).toBe("agent_zzz");
+  });
+
+  it("does not fall back to the account scan when a stage webhook URL is unknown", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+      // An endpointId from another account resolves empty upstream. Falling
+      // back here would hand that traffic to whoever the account scan picked.
+      agentLister: async () => [ZALO_AGENT],
+      stageAgentLister: async () => [],
+    });
+
+    const response = await routeIncomingEvent(
+      createZaloEvent(undefined, undefined, "stage-someoneelse"),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      code: "unknown_webhook_stage",
+    });
+  });
+
+  it("still rejects the retired agent-scoped webhook shape", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+      agentLister: async () => [ZALO_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(
+        zaloUpdate(),
+        { "x-bot-api-secret-token": "zalo-secret" },
+        "/webhooks/acct_test/agent_test/zalo",
+      ),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      code: "unknown_webhook_url",
+    });
+  });
+
+  it("declines a webhook path whose segments are not decodable", async () => {
+    const routeIncomingEvent = createIncomingEventRouter({
+      accountLoader: async () => TEST_ACCOUNT,
+      agentLoader: async () => ZALO_AGENT,
+      agentLister: async () => [ZALO_AGENT],
+    });
+
+    const response = await routeIncomingEvent(
+      createTelegramEvent(zaloUpdate(), undefined, "/webhooks/%ZZ/zalo"),
+      createHandlers(),
+    );
+
+    expect(response.statusCode).toBe(404);
+    expect(responseJson(response)).toMatchObject({
+      code: "unknown_webhook_url",
     });
   });
 
@@ -472,8 +568,13 @@ function createZaloEvent(
   headers: Record<string, string> = {
     "x-bot-api-secret-token": "zalo-secret",
   },
+  endpointId?: string,
 ): ReturnType<typeof coreRequest> {
-  return createTelegramEvent(body, headers, "/webhooks/acct_test/zalo");
+  const path = endpointId
+    ? `/webhooks/acct_test/dev/${endpointId}/zalo`
+    : "/webhooks/acct_test/zalo";
+
+  return createTelegramEvent(body, headers, path);
 }
 
 function createTelegramEvent(

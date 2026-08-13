@@ -16,7 +16,15 @@ export interface ObservabilityClientOptions {
   baseUrl: string;
   apiKey: string;
   project: string;
-  environment: string;
+  stage: string;
+}
+
+/** What a runtime key actually grants, as core resolves it. */
+export interface ObservabilityScope {
+  accountId: string;
+  projectSlug: string;
+  stageSlug: string;
+  endpointIds: string[];
 }
 
 export interface ObservabilitySubscribeOptions {
@@ -35,13 +43,13 @@ const WS_CONNECTING = 0;
 function buildObservabilityUrl(
   baseUrl: string,
   project: string,
-  environment: string,
+  stage: string,
   apiKey: string,
 ): string {
   const wsBase = toWebSocketBaseUrl(baseUrl);
 
   return (
-    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(environment)}/observability/ws` +
+    `${wsBase}/v1/${encodeURIComponent(project)}/${encodeURIComponent(stage)}/observability/ws` +
     `?token=${encodeURIComponent(apiKey)}`
   );
 }
@@ -67,6 +75,45 @@ function resolveWebSocket(): new (url: string) => WebSocket {
   if (!impl) throw new Error("WebSocket is not available in this environment.");
 
   return impl;
+}
+
+/**
+ * Ask core which project/stage a runtime key reads. Null when the lookup fails,
+ * so callers fall back to whatever they were configured with.
+ */
+export async function fetchObservabilityScope(
+  baseUrl: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<ObservabilityScope | null> {
+  try {
+    const response = await fetchImpl(
+      `${baseUrl.replace(/\/+$/, "")}/v1/internal/observability-scope`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) return null;
+    const scope = (await response.json()) as ObservabilityScope;
+    // An empty slug builds a path that matches nothing, which is the silent
+    // failure this lookup exists to prevent.
+    if (
+      typeof scope?.projectSlug !== "string" ||
+      typeof scope?.stageSlug !== "string" ||
+      scope.projectSlug === "" ||
+      scope.stageSlug === ""
+    )
+      return null;
+
+    return scope;
+  } catch {
+    return null;
+  }
 }
 
 /** Continuously stream logs, reconnecting transient socket failures until aborted. */
@@ -109,13 +156,13 @@ async function* subscribeObservabilityLogsOnce(
   options: ObservabilityClientOptions,
   subscribeOptions: ObservabilitySubscribeOptions,
 ): AsyncGenerator<ObservabilityLogEntry> {
-  const { baseUrl, apiKey, project, environment } = options;
+  const { baseUrl, apiKey, project, stage } = options;
   const { backfill = 0, minLevel, signal } = subscribeOptions;
   const liveOnly = subscribeOptions.liveOnly ?? backfill <= 0;
 
   if (signal?.aborted) return;
 
-  const url = buildObservabilityUrl(baseUrl, project, environment, apiKey);
+  const url = buildObservabilityUrl(baseUrl, project, stage, apiKey);
   const displayUrl = url.slice(0, url.indexOf("?"));
   const WebSocketImpl = resolveWebSocket();
 

@@ -10,35 +10,35 @@ import { getOwnedProject } from "./model/ownership/project";
 
 /**
  * Active deployment endpointIds for a project, optionally narrowed to a single
- * environment. Returns `[]` when the caller does not own the project.
+ * stage. Returns `[]` when the caller does not own the project.
  * @param ctx QueryCtx for the reactive query calling this helper
  * @param authId WorkOS auth id of the caller
  * @param projectId project to scope to
- * @param environmentId optional environment to narrow to
+ * @param stageId optional stage to narrow to
  * @returns active endpointId strings
  */
 export async function projectEndpointIds(
   ctx: QueryCtx,
   authId: string,
   projectId: Id<"projects">,
-  environmentId?: Id<"environments">,
+  stageId?: Id<"stages">,
 ): Promise<string[]> {
   const project = await getOwnedProject(ctx, authId, projectId);
   if (!project) return [];
 
-  const deployments = environmentId
+  const deployments = stageId
     ? await ctx.db
         .query("agentDeployments")
-        .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+        .withIndex("by_projectId_and_stageId_and_status", (q) =>
           q
             .eq("projectId", projectId)
-            .eq("environmentId", environmentId)
+            .eq("stageId", stageId)
             .eq("status", "active"),
         )
         .collect()
     : await ctx.db
         .query("agentDeployments")
-        .withIndex("by_projectId_and_environmentId_and_status", (q) =>
+        .withIndex("by_projectId_and_stageId_and_status", (q) =>
           q.eq("projectId", projectId),
         )
         .collect();

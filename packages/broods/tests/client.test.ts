@@ -12,7 +12,7 @@ afterEach(() => {
   delete process.env.BROODS_DASHBOARD_URL;
   delete process.env.BROODS_TOKEN;
   delete process.env.BROODS_PROJECT;
-  delete process.env.BROODS_ENVIRONMENT;
+  delete process.env.BROODS_STAGE;
   delete process.env.BROODS_BASE_URL;
   delete process.env.BROODS_HOST;
   delete process.env.BROODS_API_KEY;
@@ -116,6 +116,17 @@ test("client resolves generated channel webhook paths against its configured hos
       webhookPath: "/webhooks/account_1/github",
     }),
   ).toBe("https://hooks.example.com/webhooks/account_1/github");
+});
+
+test("stageWebhookUrl marks the stage so a sibling cannot receive its traffic", () => {
+  const client = new BroodsClient({ host: "hooks.example.com" });
+
+  expect(client.accountWebhookUrl("account_1", "zalo")).toBe(
+    "https://hooks.example.com/webhooks/account_1/zalo",
+  );
+  expect(client.stageWebhookUrl("account_1", "stage-abcd1234", "zalo")).toBe(
+    "https://hooks.example.com/webhooks/account_1/dev/stage-abcd1234/zalo",
+  );
 });
 
 test("client reads apiKey from the shared SDK environment variable", async () => {
@@ -253,10 +264,10 @@ test("client starts async runs through generated scoped agent references", async
       name: "search",
       id: "agent_1",
       project: "demo",
-      environment: "development",
+      stage: "development",
       endpointId: "env_123",
       projectSlug: "demo",
-      environmentSlug: "development",
+      stageSlug: "development",
     },
     {
       eventId: "request-1",
@@ -445,7 +456,7 @@ test("client creates cron jobs using agent references", async () => {
       name: "support",
       id: "agent_1",
       project: "app",
-      environment: "development",
+      stage: "development",
     },
     input: "run",
     scheduleExpression: "rate(1 day)",

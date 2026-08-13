@@ -19,7 +19,7 @@ import {
   normalizeAccountToolUpload,
 } from "./model/accountTools";
 import { putToolBundle } from "./model/bundles";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { accountToolsFields } from "./schema";
 
@@ -37,29 +37,25 @@ const toolDoc = v.object({
 export const getByNode = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
   },
   returns: v.union(v.null(), toolDoc),
-  handler: async (ctx, { projectId, environmentId, nodeId }) => {
+  handler: async (ctx, { projectId, stageId, nodeId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    // Resolve ownership without throwing: a deleted project/environment should
+    // Resolve ownership without throwing: a deleted project/stage should
     // yield null for this reactive query rather than crashing the canvas.
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) return null;
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return null;
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
 
     const tool = await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_nodeId", (q) =>
-        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
+      .withIndex("by_stageId_and_nodeId", (q) =>
+        q.eq("stageId", stageId).eq("nodeId", nodeId),
       )
       .first();
 
@@ -67,30 +63,26 @@ export const getByNode = query({
   },
 });
 
-/** Every tool in an environment, CLI-synced and dashboard-authored alike. */
-export const listForEnvironment = query({
+/** Every tool in a stage, CLI-synced and dashboard-authored alike. */
+export const listForStage = query({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
   },
   returns: v.array(toolDoc),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) return [];
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) return [];
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return [];
 
     return await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_status", (q) =>
-        q.eq("environmentId", environmentId).eq("status", "active"),
+      .withIndex("by_stageId_and_status", (q) =>
+        q.eq("stageId", stageId).eq("status", "active"),
       )
       .collect();
   },
@@ -104,7 +96,7 @@ export const listForEnvironment = query({
 export const saveForNode = action({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
     nodeLabel: v.string(),
     sourceCode: v.optional(v.string()),
@@ -116,7 +108,7 @@ export const saveForNode = action({
   handler: async (ctx, args): Promise<Id<"accountTools">> => {
     const context = await ctx.runQuery(internal.toolService.nodeContext, {
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       nodeId: args.nodeId,
     });
 
@@ -170,7 +162,7 @@ export const saveForNode = action({
     return await ctx.runMutation(internal.toolService.upsertForNode, {
       accountId: context.accountId,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       nodeId: args.nodeId,
       name: args.nodeLabel,
       sourceCode: sourceCode,
@@ -196,17 +188,14 @@ export const saveForNode = action({
 export const bundleUrlForNode = action({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
   },
   returns: v.string(),
-  handler: async (
-    ctx,
-    { projectId, environmentId, nodeId },
-  ): Promise<string> => {
+  handler: async (ctx, { projectId, stageId, nodeId }): Promise<string> => {
     const tool = await ctx.runQuery(api.toolService.getByNode, {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       nodeId: nodeId,
     });
     if (!tool) throw new Error("Tool configuration not found.");
@@ -225,19 +214,16 @@ export const bundleUrlForNode = action({
 export const execute = action({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
     input: v.optional(v.any()),
     timeoutMs: v.optional(v.number()),
   },
   returns: v.any(),
-  handler: async (
-    ctx,
-    { projectId, environmentId, nodeId, input, timeoutMs },
-  ) => {
+  handler: async (ctx, { projectId, stageId, nodeId, input, timeoutMs }) => {
     const tool = await ctx.runQuery(api.toolService.getByNode, {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       nodeId: nodeId,
     });
     if (!tool) throw new Error("Tool configuration not found.");
@@ -318,26 +304,22 @@ export const execute = action({
 export const nodeContext = internalQuery({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
   },
   returns: v.object({
     accountId: v.id("accounts"),
     existing: v.union(v.null(), toolDoc),
   }),
-  handler: async (ctx, { projectId, environmentId, nodeId }) => {
+  handler: async (ctx, { projectId, stageId, nodeId }) => {
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
     const project = await getOwnedProject(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
-    const environment = await getOwnedEnvironment(
-      ctx,
-      authUser.id,
-      environmentId,
-    );
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
     if (!project.orgId) throw new Error("Project is not linked to an org");
     const account = await ctx.db
@@ -348,8 +330,8 @@ export const nodeContext = internalQuery({
 
     const existing = await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_nodeId", (q) =>
-        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
+      .withIndex("by_stageId_and_nodeId", (q) =>
+        q.eq("stageId", stageId).eq("nodeId", nodeId),
       )
       .first();
 
@@ -361,7 +343,7 @@ export const upsertForNode = internalMutation({
   args: {
     accountId: v.id("accounts"),
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
     name: v.string(),
     sourceCode: v.string(),
@@ -379,8 +361,8 @@ export const upsertForNode = internalMutation({
     const now = Date.now();
     const existing = await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_nodeId", (q) =>
-        q.eq("environmentId", args.environmentId).eq("nodeId", args.nodeId),
+      .withIndex("by_stageId_and_nodeId", (q) =>
+        q.eq("stageId", args.stageId).eq("nodeId", args.nodeId),
       )
       .first();
 
@@ -412,7 +394,7 @@ export const upsertForNode = internalMutation({
     return await ctx.db.insert("accountTools", {
       accountId: args.accountId,
       projectId: args.projectId,
-      environmentId: args.environmentId,
+      stageId: args.stageId,
       nodeId: args.nodeId,
       name: toolName(args.name) || "tool",
       description: args.description ?? "",
@@ -435,15 +417,15 @@ export const upsertForNode = internalMutation({
 /** Remove a canvas-authored tool when its node is deleted. */
 export const removeForNode = internalMutation({
   args: {
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     nodeId: v.string(),
   },
   returns: v.null(),
-  handler: async (ctx, { environmentId, nodeId }) => {
+  handler: async (ctx, { stageId, nodeId }) => {
     const existing = await ctx.db
       .query("accountTools")
-      .withIndex("by_environmentId_and_nodeId", (q) =>
-        q.eq("environmentId", environmentId).eq("nodeId", nodeId),
+      .withIndex("by_stageId_and_nodeId", (q) =>
+        q.eq("stageId", stageId).eq("nodeId", nodeId),
       )
       .first();
     if (existing) await ctx.db.delete(existing._id);

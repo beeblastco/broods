@@ -1,7 +1,7 @@
 "use client";
 
 import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
-import { useEnvironment } from "@/app/hooks/useEnvironment";
+import { useStage } from "@/app/hooks/useStage";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { NodeProps } from "@xyflow/react";
@@ -12,14 +12,14 @@ import { useParams } from "next/navigation";
 /** Tool node representing an external tool on the canvas. */
 export function ToolNode({ id, data }: NodeProps) {
   const { projectId } = useParams<{ projectId: string }>();
-  const { environmentId } = useEnvironment();
+  const { stageId } = useStage();
 
   const toolService = useQuery(
     api.toolService.getByNode,
-    projectId && environmentId
+    projectId && stageId
       ? {
           projectId: projectId as Id<"projects">,
-          environmentId: environmentId,
+          stageId: stageId,
           nodeId: id,
         }
       : "skip",

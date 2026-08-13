@@ -82,6 +82,8 @@ State is resilient within the run but never outlives it: a hook that throws or r
 | `onMessageReceived` | `channel.message.received` | `{ drop?, text? }` — drop discards the message; text rewrites what the agent sees |
 | `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                |
 
+`onMessageReceived` sees `event.text` only, so a message that arrives as an attachment (a Zalo picture or voice note) reads as its caption, or as an empty string when it has none. `drop` still discards the whole message, and a `text` rewrite replaces only the text — the attachment stays on the message.
+
 Related: `config.subagent.visibility` (`"full"｜"result"｜"none"`) is the no-code way to control what the parent sees from a subagent; `onSubagentFinish` overrides it for custom shaping.
 
 ## Hooks and subagents
@@ -101,3 +103,4 @@ Channel hooks (`onMessageReceived` / `onMessageSending`) never fire for subagent
 - **Non-fatal.** A hook that throws or times out is logged and skipped; the agent run continues with unmutated state. Hooks are wall-clock bounded.
 - **Streaming caveat.** `onFinish` output transforms change the delivered/stored final result; tokens already streamed over SSE cannot be recalled.
 - **Return is field-scoped.** Only the fields listed for an event are honored; anything else is dropped, and the return is size-capped.
+- **`console` is wired to the log pipeline.** `console.log`/`info` land at INFO, `warn` and `error` at their own levels, and `debug` at DEBUG. They carry the run's tenant context, so they appear in `broods logs`, `broods stream`, and the dashboard Monitoring tab alongside harness logs, tagged `source: "user-code"`. DEBUG is the exception: like every DEBUG line it goes to stdout and OTLP but is not published to the live stream.

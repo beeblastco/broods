@@ -346,7 +346,7 @@ export function toPublicSandboxConfigResponse(
     accountId: doc.accountId,
     sandboxId: doc._id,
     ...(doc.projectId ? { projectId: doc.projectId } : {}),
-    ...(doc.environmentId ? { environmentId: doc.environmentId } : {}),
+    ...(doc.stageId ? { stageId: doc.stageId } : {}),
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     config: redactSandboxConfigSecrets(config),
@@ -520,12 +520,18 @@ function validateProviderOptions(
       "config.options.functionNames is not supported in account sandbox config",
     );
   }
-  if (
-    provider === "vercel" &&
-    "runtime" in options &&
-    typeof options.runtime !== "string"
-  ) {
-    throw new Error("config.options.runtime must be a string");
+  if (provider === "vercel") {
+    if ("image" in options && typeof options.image !== "string") {
+      throw new Error("config.options.image must be a string");
+    }
+    if ("runtime" in options && typeof options.runtime !== "string") {
+      throw new Error("config.options.runtime must be a string");
+    }
+    if ("image" in options && "runtime" in options) {
+      throw new Error(
+        "config.options.image and config.options.runtime cannot both be set",
+      );
+    }
   }
 }
 

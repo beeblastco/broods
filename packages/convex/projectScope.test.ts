@@ -34,8 +34,8 @@ async function seed(tt: T) {
         slug: name,
         updatedAt: now,
       });
-    const mkEnv = async (projectId: Id<"projects">) =>
-      await ctx.db.insert("environments", {
+    const mkStage = async (projectId: Id<"projects">) =>
+      await ctx.db.insert("stages", {
         authId: "auth_owner",
         projectId: projectId,
         name: "Development",
@@ -51,7 +51,7 @@ async function seed(tt: T) {
       });
     const mkConfig = async (
       projectId: Id<"projects">,
-      environmentId: Id<"environments">,
+      stageId: Id<"stages">,
       agentId: string | undefined,
       name: string,
     ) =>
@@ -60,7 +60,7 @@ async function seed(tt: T) {
         name: name,
         agentId: agentId,
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         updatedAt: now,
       });
     const mkCron = async (agentId: Id<"agents">, name: string) =>
@@ -79,9 +79,9 @@ async function seed(tt: T) {
 
     const projectA = await mkProject("sale-agent");
     const projectB = await mkProject("other");
-    const envA1 = await mkEnv(projectA);
-    const envA2 = await mkEnv(projectA);
-    const envB = await mkEnv(projectB);
+    const stageA1 = await mkStage(projectA);
+    const stageA2 = await mkStage(projectA);
+    const stageB = await mkStage(projectB);
 
     const agentA1 = await mkAgent("beeblast-agent-cust1");
     const agentA2 = await mkAgent("beeblast-agent-cust2");
@@ -106,13 +106,13 @@ async function seed(tt: T) {
       updatedAt: now,
     });
 
-    await mkConfig(projectA, envA1, agentA1, "cust1");
-    // Second environment of the same project: must still be found.
-    await mkConfig(projectA, envA2, agentA2, "cust2");
-    await mkConfig(projectB, envB, agentB, "other");
+    await mkConfig(projectA, stageA1, agentA1, "cust1");
+    // Second stage of the same project: must still be found.
+    await mkConfig(projectA, stageA2, agentA2, "cust2");
+    await mkConfig(projectB, stageB, agentB, "other");
     // A config row whose agentId never resolves must not crash the scan.
-    await mkConfig(projectA, envA1, "not-a-real-id", "dangling");
-    await mkConfig(projectA, envA1, foreignAgent, "foreign");
+    await mkConfig(projectA, stageA1, "not-a-real-id", "dangling");
+    await mkConfig(projectA, stageA1, foreignAgent, "foreign");
 
     const cronA1 = await mkCron(agentA1, "cron-a1");
     await mkCron(agentB, "cron-b");
@@ -134,7 +134,7 @@ async function seed(tt: T) {
 }
 
 describe("agentsInProject", () => {
-  test("returns the project's agents across every environment", async () => {
+  test("returns the project's agents across every stage", async () => {
     const tt = t();
     const s = await seed(tt);
 

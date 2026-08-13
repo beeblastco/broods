@@ -52,7 +52,7 @@ On the first run this does everything for you:
 1. **Creates** a `broods/` project shell with a starter agent (same as `broods init`)
 2. **Opens your browser** to log in via WorkOS if you haven't authenticated yet (same as `broods login`)
 3. **Auto-pushes** `OPENAI_API_KEY` from `.env.local` to the cloud
-4. **Compiles and syncs** your resources to the `development` environment
+4. **Compiles and syncs** your resources to the `development` stage
 5. **Watches** `broods/` for changes and **live-tails** agent logs
 
 ```text
@@ -160,10 +160,37 @@ console.log(status.response);
 broods deploy
 ```
 
-This syncs to your `production` environment and writes the production runtime key to `.env.local`.
+This syncs to your `production` stage and writes the production runtime key to `.env.local`.
+
+## 7. Check Where You Are Pointed
+
+A sync lands in an organization, a project, and a stage. The organization lives on
+your CLI login token and is shared by every project directory on the machine, so
+confirm it before syncing somewhere shared:
+
+```bash
+broods status
+```
+
+```text
+broods v0.8.1
+Dashboard:   https://dashboard.broods.app
+Project:     my-agent-project
+Stage:       development
+Server:      https://gateway.broods.app
+User:        you@example.com
+Org:         my-team (my-team, owner, free plan)
+Account:     my-team (active)
+Runtime key: fp_agent_…vK8s (matches this org and stage)
+```
+
+Switch organizations with `broods org use <name>`, and work on a copy of an
+existing stage with `broods stage create staging --from development`. See the
+[CLI reference](cli.md) for the full picture.
 
 ## Next Steps
 
+- [CLI](cli.md) — Command reference, organizations, and stages
 - [Resource Configuration](resources.md) — Full reference for `defineAgent`, `defineSandbox`, `defineWorkspace`, channels, skills, tools, and cron jobs
 - [SDK & Runtime API](sdk.md) — Typed SDK usage, curl equivalents, and WebSocket streaming
 - [Workspace & Sandbox](workspace/index.md) — Persistent files, compute, and permission modes

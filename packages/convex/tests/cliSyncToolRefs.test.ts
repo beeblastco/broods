@@ -10,7 +10,7 @@ import schema from "../schema";
 const modules = import.meta.glob("../**/*.ts");
 
 const PROJECT = "tool-custom-sandbox";
-const ENVIRONMENT = "development";
+const STAGE = "development";
 const SECRET_HASH = "hash-tool-refs";
 const TOOL_NAME = "system_report";
 
@@ -66,7 +66,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
   });
 }
 
-/** The uploaded tool row plus the CLI's name → id record for the environment. */
+/** The uploaded tool row plus the CLI's name → id record for the stage. */
 async function seedUploadedTool(
   tt: T,
   accountId: Id<"accounts">,
@@ -90,7 +90,7 @@ async function seedUploadedTool(
   await tt.mutation(internal.cliSync.recordExternalResourcesBySecretHash, {
     secretHash: SECRET_HASH,
     project: PROJECT,
-    environment: ENVIRONMENT,
+    stage: STAGE,
     resources: [toolResource],
     ids: { skills: {}, tools: { [TOOL_NAME]: toolId }, hooks: {} },
   });
@@ -98,17 +98,17 @@ async function seedUploadedTool(
   return toolId;
 }
 
-/** Give a seeded tool the project/environment scope a real CLI upload has. */
-async function scopeToolToEnvironment(
+/** Give a seeded tool the project/stage scope a real CLI upload has. */
+async function scopeToolToStage(
   tt: T,
   toolId: Id<"accountTools">,
 ): Promise<void> {
   await tt.run(async (ctx) => {
-    const environment = await ctx.db.query("environments").first();
-    if (!environment) throw new Error("Environment not seeded");
+    const stage = await ctx.db.query("stages").first();
+    if (!stage) throw new Error("Stage not seeded");
     await ctx.db.patch(toolId, {
-      projectId: environment.projectId,
-      environmentId: environment._id,
+      projectId: stage.projectId,
+      stageId: stage._id,
     });
   });
 }
@@ -138,7 +138,7 @@ const syncTools = (tt: T, tools: Record<string, unknown>) =>
     manifest: {
       version: 1 as const,
       project: PROJECT,
-      environment: ENVIRONMENT,
+      stage: STAGE,
       resources: [toolResource, agentResource(tools)],
     },
   });
@@ -166,7 +166,7 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     const read = await tt.query(internal.cliSync.getManifestBySecretHash, {
       secretHash: SECRET_HASH,
       project: PROJECT,
-      environment: ENVIRONMENT,
+      stage: STAGE,
     });
     const agent = (
       read!.manifest as { resources: Array<{ kind: string; config: unknown }> }
@@ -214,8 +214,8 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     const accountId = await seedAccount(tt);
     const toolId = await seedUploadedTool(tt, accountId);
     // The shared helper writes the pre-scope row shape. A tool the CLI actually
-    // uploaded carries its environment, which is what the canvas reads.
-    await scopeToolToEnvironment(tt, toolId);
+    // uploaded carries its stage, which is what the canvas reads.
+    await scopeToolToStage(tt, toolId);
 
     await syncTools(tt, { [TOOL_NAME]: { enabled: true } });
 
@@ -234,7 +234,7 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     const tool = await tt.run(async (ctx) => await ctx.db.get(toolId));
 
     // Every tool panel resolves through `getByNode`, which reads the
-    // `by_environmentId_and_nodeId` index. Without this link the CLI's own node
+    // `by_stageId_and_nodeId` index. Without this link the CLI's own node
     // never matched its row, so the config, details and test tabs opened empty
     // on a tool the runtime executed fine.
     expect(toolNode).toBeDefined();

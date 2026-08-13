@@ -74,7 +74,10 @@ export type ToolRunnerFrame =
   | { t: "chunk"; output: unknown }
   | { t: "final"; result: unknown; cpuUsec?: number }
   | { t: "end" }
-  | { t: "error"; error: string; cpuUsec?: number };
+  | { t: "error"; error: string; cpuUsec?: number }
+  // A `console.*` line from the bundle. The host re-emits it through its own
+  // logger; only the isolate tier produces these today.
+  | { t: "log"; level: string; message: string };
 
 // Push/pull buffer that parses incoming NDJSON text into frames as whole lines
 // arrive, letting a consumer await the next frame until the stream closes.
@@ -195,7 +198,8 @@ export function parseToolRunnerFrame(line: string): ToolRunnerFrame | null {
       (parsed.t === "chunk" ||
         parsed.t === "final" ||
         parsed.t === "end" ||
-        parsed.t === "error")
+        parsed.t === "error" ||
+        parsed.t === "log")
     ) {
       return parsed;
     }

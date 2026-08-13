@@ -12,7 +12,7 @@ import { useState } from "react";
 
 export function ToolDetailsTab({
   projectId,
-  environmentId,
+  stageId,
   nodeId,
   nodeLabel,
   editName,
@@ -22,7 +22,7 @@ export function ToolDetailsTab({
   isSavingName,
 }: {
   projectId: Id<"projects"> | undefined;
-  environmentId: Id<"environments"> | null;
+  stageId: Id<"stages"> | null;
   nodeId: string;
   nodeLabel: string;
   editName: string;
@@ -31,13 +31,13 @@ export function ToolDetailsTab({
   nameChanged: boolean;
   isSavingName: boolean;
 }) {
-  const canQueryTool = !!projectId && !!environmentId;
+  const canQueryTool = !!projectId && !!stageId;
   const toolService = useQuery(
     api.toolService.getByNode,
     canQueryTool
       ? {
           projectId: projectId,
-          environmentId: environmentId,
+          stageId: stageId,
           nodeId: nodeId,
         }
       : "skip",
@@ -55,11 +55,11 @@ export function ToolDetailsTab({
   // `null` means the node has never been saved, so there is no source to
   // toggle; only a saved tool can be enabled or disabled.
   const switchDisabled =
-    isSavingStatus || !projectId || !environmentId || !toolService;
+    isSavingStatus || !projectId || !stageId || !toolService;
 
   async function handleEnabledChange(nextEnabled: boolean) {
-    if (!projectId || !environmentId) {
-      setStatusError("Select an environment before toggling this tool.");
+    if (!projectId || !stageId) {
+      setStatusError("Select a stage before toggling this tool.");
 
       return;
     }
@@ -69,7 +69,7 @@ export function ToolDetailsTab({
     try {
       await upsertToolService({
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         nodeId: nodeId,
         nodeLabel: nodeLabel,
         disabled: !nextEnabled,

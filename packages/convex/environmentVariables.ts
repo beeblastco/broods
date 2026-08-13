@@ -1,5 +1,5 @@
 /**
- * Public CRUD for per-environment runtime variables, mirrored into the CLI
+ * Public CRUD for per-stage runtime variables, mirrored into the CLI
  * sync model. Scoped to the authenticated project owner.
  */
 
@@ -7,7 +7,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedEnvironment } from "./model/ownership/environment";
+import { getOwnedStage } from "./model/ownership/stage";
 import {
   decryptAgentConfigBlob,
   encryptAgentConfigBlob,
@@ -26,7 +26,7 @@ const environmentVariableDoc = v.object({
   _id: v.id("environmentVariables"),
   _creationTime: v.number(),
   projectId: v.id("projects"),
-  environmentId: v.id("environments"),
+  stageId: v.id("stages"),
   name: v.string(),
   value: v.string(),
   updatedAt: v.number(),
@@ -47,7 +47,7 @@ function maskEnvironmentVariable(variable: {
   _id: Id<"environmentVariables">;
   _creationTime: number;
   projectId: Id<"projects">;
-  environmentId: Id<"environments">;
+  stageId: Id<"stages">;
   name: string;
   updatedAt: number;
 }) {
@@ -55,7 +55,7 @@ function maskEnvironmentVariable(variable: {
     _id: variable._id,
     _creationTime: variable._creationTime,
     projectId: variable.projectId,
-    environmentId: variable.environmentId,
+    stageId: variable.stageId,
     name: variable.name,
     value: "********",
     updatedAt: variable.updatedAt,
@@ -68,7 +68,7 @@ async function recordEnvironmentVariableAudit(
   actor: ConfigAuditActor,
   input: {
     projectId: Id<"projects">;
-    environmentId: Id<"environments">;
+    stageId: Id<"stages">;
     variableId?: Id<"environmentVariables">;
     action: string;
     name: string;
@@ -81,7 +81,7 @@ async function recordEnvironmentVariableAudit(
   await insertConfigAuditEvent(ctx.db, {
     accountId: accountId,
     projectId: input.projectId,
-    environmentId: input.environmentId,
+    stageId: input.stageId,
     actor: actor,
     action: input.action,
     resource: {
@@ -95,26 +95,26 @@ async function recordEnvironmentVariableAudit(
 }
 
 export const list = query({
-  args: { projectId: v.id("projects"), environmentId: v.id("environments") },
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(environmentVariableDoc),
-  handler: async (ctx, { projectId, environmentId }) => {
+  handler: async (ctx, { projectId, stageId }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    // Return empty rather than throwing so a just-deleted environment doesn't
+    // Return empty rather than throwing so a just-deleted stage doesn't
     // crash reactive subscribers before they unmount.
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
       return [];
     }
 
     const variables = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_projectId_and_environmentId", (q) =>
-        q.eq("projectId", projectId).eq("environmentId", environmentId),
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
       )
       .collect();
 
@@ -123,27 +123,27 @@ export const list = query({
 });
 
 /**
- * Upserts a variable by name within an environment: patches the value when the
+ * Upserts a variable by name within a stage: patches the value when the
  * name already exists, otherwise inserts a new row.
  */
 export const set = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     name: v.string(),
     value: v.string(),
   },
   returns: v.id("environmentVariables"),
-  handler: async (ctx, { projectId, environmentId, name, value }) => {
+  handler: async (ctx, { projectId, stageId, name, value }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
 
     const trimmedName = name.trim();
@@ -151,8 +151,8 @@ export const set = mutation({
 
     const existing = await ctx.db
       .query("environmentVariables")
-      .withIndex("by_environmentId_and_name", (q) =>
-        q.eq("environmentId", environmentId).eq("name", trimmedName),
+      .withIndex("by_stageId_and_name", (q) =>
+        q.eq("stageId", stageId).eq("name", trimmedName),
       )
       .unique();
 
@@ -172,20 +172,20 @@ export const set = mutation({
       await refreshAgentConfigsForEnvironmentVariable(
         ctx,
         projectId,
-        environmentId,
+        stageId,
         trimmedName,
         value,
       );
       await refreshSandboxConfigsForEnvironmentVariable(
         ctx,
         projectId,
-        environmentId,
+        stageId,
         trimmedName,
         value,
       );
       await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
         projectId: projectId,
-        environmentId: environmentId,
+        stageId: stageId,
         variableId: existing._id,
         action: "updated",
         name: trimmedName,
@@ -197,7 +197,7 @@ export const set = mutation({
 
     const variableId = await ctx.db.insert("environmentVariables", {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       name: trimmedName,
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
@@ -208,20 +208,20 @@ export const set = mutation({
     await refreshAgentConfigsForEnvironmentVariable(
       ctx,
       projectId,
-      environmentId,
+      stageId,
       trimmedName,
       value,
     );
     await refreshSandboxConfigsForEnvironmentVariable(
       ctx,
       projectId,
-      environmentId,
+      stageId,
       trimmedName,
       value,
     );
     await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       variableId: variableId,
       action: "created",
       name: trimmedName,
@@ -236,29 +236,29 @@ export const set = mutation({
  * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
  * reveal, writing an audit record of the reveal. A mutation (not a query) so the
  * audit insert and decryption happen atomically for the owning user.
- * @throws when the caller does not own the environment or the variable is gone
+ * @throws when the caller does not own the stage or the variable is gone
  */
 export const reveal = mutation({
   args: {
     projectId: v.id("projects"),
-    environmentId: v.id("environments"),
+    stageId: v.id("stages"),
     variableId: v.id("environmentVariables"),
   },
   returns: v.object({ value: v.string() }),
-  handler: async (ctx, { projectId, environmentId, variableId }) => {
+  handler: async (ctx, { projectId, stageId, variableId }) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
     if (!user) {
       throw new Error("User not found or not authenticated");
     }
 
-    const environment = await getOwnedEnvironment(ctx, user.id, environmentId);
-    if (!environment || environment.projectId !== projectId) {
-      throw new Error("Environment not found.");
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
     }
 
     const variable = await ctx.db.get(variableId);
-    if (!variable || variable.environmentId !== environmentId) {
+    if (!variable || variable.stageId !== stageId) {
       throw new Error("Variable not found.");
     }
 
@@ -271,7 +271,7 @@ export const reveal = mutation({
 
     await ctx.db.insert("environmentVariableReveals", {
       projectId: projectId,
-      environmentId: environmentId,
+      stageId: stageId,
       environmentVariableId: variableId,
       name: variable.name,
       source: "dashboard",
@@ -296,31 +296,27 @@ export const remove = mutation({
     const variable = await ctx.db.get(variableId);
     if (!variable) throw new Error("Variable not found.");
 
-    const environment = await getOwnedEnvironment(
-      ctx,
-      user.id,
-      variable.environmentId,
-    );
-    if (!environment) throw new Error("Variable not found.");
+    const stage = await getOwnedStage(ctx, user.id, variable.stageId);
+    if (!stage) throw new Error("Variable not found.");
 
     await ctx.db.delete(variableId);
     await refreshAgentConfigsForEnvironmentVariable(
       ctx,
       variable.projectId,
-      variable.environmentId,
+      variable.stageId,
       variable.name,
       undefined,
     );
     await refreshSandboxConfigsForEnvironmentVariable(
       ctx,
       variable.projectId,
-      variable.environmentId,
+      variable.stageId,
       variable.name,
       undefined,
     );
     await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
       projectId: variable.projectId,
-      environmentId: variable.environmentId,
+      stageId: variable.stageId,
       variableId: variableId,
       action: "deleted",
       name: variable.name,

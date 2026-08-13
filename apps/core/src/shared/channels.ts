@@ -13,6 +13,9 @@ export type ChannelIngressEvent =
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
+  // Optional image delivery, by a URL the provider fetches for itself. Callers
+  // check for it and fall back to a link when the provider has no image send.
+  sendImage?(url: string, caption?: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;
   // Optional native SDK/platform streaming. Channels omit it when the provider
