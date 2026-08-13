@@ -7,6 +7,7 @@ import { timingSafeEqual } from "node:crypto";
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelImage,
   ChannelParseResult,
 } from "./channels.ts";
 import { logWarn } from "./log.ts";
@@ -181,6 +182,15 @@ export function createZaloActions(
         });
       }
     },
+    sendImage: async function(image: ChannelImage) {
+      await callZaloApi(botToken, "sendPhoto", {
+        chat_id: source.chatId,
+        photo: zaloPhotoUrl(image.url),
+        ...(image.caption
+          ? { caption: image.caption.slice(0, ZALO_TEXT_LIMIT) }
+          : {}),
+      });
+    },
     sendTyping: async function() {
       await callZaloApi(botToken, "sendChatAction", {
         chat_id: source.chatId,
@@ -315,9 +325,21 @@ function chunkZaloText(text: string): string[] {
   return chunks;
 }
 
+// Zalo fetches the photo itself, so it only ever accepts a public absolute URL.
+function zaloPhotoUrl(raw: string): string {
+  const url = URL.canParse(raw) ? new URL(raw) : null;
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) {
+    throw new Error(
+      "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
+    );
+  }
+
+  return url.toString();
+}
+
 async function callZaloApi(
   botToken: string,
-  method: "sendMessage" | "sendChatAction",
+  method: "sendChatAction" | "sendMessage" | "sendPhoto",
   body: Record<string, unknown>,
 ): Promise<ZaloApiResponse> {
   const response = await fetch(`${ZALO_API_BASE}/bot${botToken}/${method}`, {
