@@ -11,17 +11,12 @@ export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
 
-/** One outbound image, addressed by a URL the provider fetches for itself. */
-export interface ChannelImage {
-  url: string;
-  caption?: string;
-}
-
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
-  // Optional image delivery. Channels omit it when the provider has no image
-  // send method, so callers must check for it and fall back to sending a link.
-  sendImage?(image: ChannelImage): Promise<void>;
+  // Optional image delivery, by a URL the provider fetches for itself. Channels
+  // omit it when the provider has no image send method, so callers must check
+  // for it and fall back to sending a link.
+  sendImage?(url: string, caption?: string): Promise<void>;
   sendTyping(): Promise<void>;
   reactToMessage(): Promise<void>;
   // Optional native SDK/platform streaming. Channels omit it when the provider

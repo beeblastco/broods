@@ -20,7 +20,6 @@ import type {
   ChannelActions,
   ChannelAdapter,
   ChannelIdentity,
-  ChannelImage,
   ChannelRequest,
   ChannelResponse,
   InboundMessage,
@@ -1643,7 +1642,7 @@ export async function sendChannelReply(options: {
   source: Record<string, unknown>;
   text: string;
   // When set, `text` becomes the image caption instead of its own message.
-  image?: Pick<ChannelImage, "url">;
+  imageUrl?: string;
 }): Promise<void> {
   const registry = createChannelRegistry(options.config);
   const adapter = registry.webhookChannels.find(
@@ -1681,16 +1680,13 @@ export async function sendChannelReply(options: {
     source: options.source,
   };
   const actions = adapter.actions(message);
-  if (options.image) {
+  if (options.imageUrl) {
     if (!actions.sendImage) {
       throw new Error(
         `Channel ${options.channelName} cannot send images; send a link instead`,
       );
     }
-    await actions.sendImage({
-      url: options.image.url,
-      ...(text ? { caption: text } : {}),
-    });
+    await actions.sendImage(options.imageUrl, text || undefined);
 
     return;
   }
