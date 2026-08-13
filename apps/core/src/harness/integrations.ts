@@ -1536,7 +1536,7 @@ async function processChannelMessage(
         return;
       }
       if (typeof mutation?.text === "string") {
-        content = mutation.text;
+        content = rewriteUserContentText(content, mutation.text);
         // The turn is persisted and built from the ingress events, not from
         // `content` (handler.ts appendIngressEvents) — a rewrite that only
         // touches `content` is computed and then dropped.
@@ -1601,12 +1601,29 @@ export function rewriteLatestUserIngressText(
     const event = events[i]!;
     if (event.role !== "user") continue;
     const next = [...events];
-    next[i] = { ...event, content: text };
+    next[i] = { ...event, content: rewriteUserContentText(event.content, text) };
 
     return next;
   }
 
   return events;
+}
+
+// A hook rewrites text only, so any image or file the channel delivered stays on
+// the message — otherwise redacting the caption drops the attachment with it.
+function rewriteUserContentText(
+  content: UserContent,
+  text: string,
+): UserContent {
+  if (typeof content === "string") {
+
+    return text;
+  }
+  const attachments = content.filter((part) => part.type !== "text");
+
+  return attachments.length > 0
+    ? [{ type: "text", text: text }, ...attachments]
+    : text;
 }
 
 function resolveCommandToken(
@@ -1687,6 +1704,8 @@ export async function sendChannelReply(options: {
   channelName: string;
   source: Record<string, unknown>;
   text: string;
+  // When set, `text` becomes the image caption instead of its own message.
+  imageUrl?: string;
 }): Promise<void> {
   const registry = createChannelRegistry(options.config);
   const adapter = registry.webhookChannels.find(
@@ -1723,7 +1742,18 @@ export async function sendChannelReply(options: {
     content: text,
     source: options.source,
   };
-  await adapter.actions(message).sendText(text);
+  const actions = adapter.actions(message);
+  if (options.imageUrl) {
+    if (!actions.sendImage) {
+      throw new Error(
+        `Channel ${options.channelName} cannot send images; send a link instead`,
+      );
+    }
+    await actions.sendImage(options.imageUrl, text || undefined);
+
+    return;
+  }
+  await actions.sendText(text);
 }
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {

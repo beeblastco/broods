@@ -315,6 +315,34 @@ describe("channel.message.received rewrite reaches the session", () => {
     ]);
   });
 
+  it("keeps attachments when a rewrite replaces the text", async () => {
+    const { rewriteLatestUserIngressText } =
+      await import("../src/harness/integrations.ts");
+
+    expect(
+      rewriteLatestUserIngressText(
+        [
+          {
+            role: "user" as const,
+            content: [
+              { type: "text" as const, text: "my card is 4111 1111" },
+              { type: "image" as const, image: "https://zalo.example/x.jpg" },
+            ],
+          },
+        ],
+        "my card is [redacted]",
+      ),
+    ).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "my card is [redacted]" },
+          { type: "image", image: "https://zalo.example/x.jpg" },
+        ],
+      },
+    ]);
+  });
+
   it("leaves events untouched when none are user messages", async () => {
     const { rewriteLatestUserIngressText } =
       await import("../src/harness/integrations.ts");
