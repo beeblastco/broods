@@ -219,8 +219,12 @@ export async function createTools(
     Object.assign(
       tools,
       // send-image can deliver a workspace file, so it takes the same workspace
-      // list the sandbox tools read from.
-      sendImageTool({ ...context.channel, workspaces: workspaces }),
+      // list the sandbox tools read from, plus the account that seals the link.
+      sendImageTool({
+        ...context.channel,
+        workspaces: workspaces,
+        ...(context.accountId ? { accountId: context.accountId } : {}),
+      }),
       sendReactionsTool(context.channel),
       sendStickerTool(context.channel),
     );

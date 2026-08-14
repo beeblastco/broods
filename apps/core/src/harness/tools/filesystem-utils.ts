@@ -13,12 +13,16 @@ import type { JSONObject } from "@ai-sdk/provider";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
-  getS3ObjectUrl,
   isMissingS3Error,
   listS3Prefix,
   readS3Text,
   s3ObjectExists,
 } from "../../shared/s3.ts";
+import { getHarnessPublicUrl, requireEnv } from "../../shared/env.ts";
+import {
+  MEDIA_PATH_PREFIX,
+  sealMediaTicket,
+} from "../../shared/media-ticket.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -466,14 +470,21 @@ export async function s3Glob(
 }
 
 // A workspace file as a URL an outside service can fetch, for the chat providers
-// that pull media themselves instead of taking an upload. The presign cannot
-// outlive the credentials that signed it, so a bring-your-own bucket clamps to
-// its assumed session.
-export async function s3PresignedUrl(
+// that pull media themselves instead of taking an upload. A presigned S3 link
+// cannot be used: Zalo stores the URL and re-fetches it whenever a viewer opens
+// the picture, so any expiry turns into a broken image in chat history. The
+// sealed ticket points at the file for as long as the file exists.
+export async function workspaceMediaUrl(
   ws: ResolvedWorkspace,
   rel: string,
-  expiresInSeconds: number,
+  accountId: string,
 ): Promise<string> {
+  const baseUrl = getHarnessPublicUrl();
+  if (!baseUrl) {
+    return toolError(
+      "Error: sending a workspace file needs PUBLIC_BASE_URL configured",
+    );
+  }
   const target = await resolveS3ReadTarget(
     workspaceReadContext(ws.config.storage, ws.namespace),
   );
@@ -484,18 +495,17 @@ export async function s3PresignedUrl(
   if (!exists) {
     return toolError(`Error: file not found: ${rel}`);
   }
-  const secondsLeft = target.credentialsExpireAt
-    ? Math.floor((target.credentialsExpireAt.getTime() - Date.now()) / 1000)
-    : expiresInSeconds;
-  const expiry = Math.min(expiresInSeconds, secondsLeft);
-  if (expiry <= 0) {
-    return toolError("Error: workspace storage credentials have expired");
-  }
+  const token = sealMediaTicket(
+    {
+      accountId: accountId,
+      workspaceId: ws.workspaceId,
+      namespace: ws.namespace,
+      path: rel,
+    },
+    requireEnv("SERVICE_AUTH_SECRET"),
+  );
 
-  return getS3ObjectUrl(target.bucket, key, {
-    expiresInSeconds: expiry,
-    ...(target.access ? { access: target.access } : {}),
-  });
+  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
 export function formatRunText(result: SandboxRunResult): string {

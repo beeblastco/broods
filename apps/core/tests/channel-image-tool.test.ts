@@ -6,16 +6,18 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
+import { openMediaTicket } from "../src/shared/media-ticket.ts";
 
-const getS3ObjectUrlMock = mock(
-  async (_bucket: string, _key: string) => "https://signed.example/photo",
-);
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => true);
 
 mock.module("../src/shared/s3.ts", () => ({
-  getS3ObjectUrl: getS3ObjectUrlMock,
   s3ObjectExists: s3ObjectExistsMock,
   // Full surface so transitive importers keep working (mock.module replaces the module).
+  headS3Object: mock(async () => ({
+    contentLength: 1,
+    contentType: "image/png",
+  })),
+  getS3ObjectUrl: mock(async () => "https://signed.example/photo"),
   readS3Text: mock(async () => ""),
   readS3Bytes: mock(async () => new Uint8Array()),
   listS3Prefix: mock(async () => []),
@@ -28,12 +30,15 @@ mock.module("../src/shared/s3.ts", () => ({
 }));
 
 const ORIGINAL_ENV = { ...process.env };
+const ACCOUNT = "acct_1";
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
+const SECRET = "service-auth-secret";
 
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
-  getS3ObjectUrlMock.mockClear();
+  process.env.PUBLIC_BASE_URL = "https://gateway.test";
+  process.env.SERVICE_AUTH_SECRET = SECRET;
   s3ObjectExistsMock.mockClear();
 });
 
@@ -43,11 +48,17 @@ afterEach(() => {
 });
 
 describe("sendImageTool", () => {
-  it("sends a workspace file as a presigned URL", async (): Promise<void> => {
+  it("sends a workspace file as a durable media link", async (): Promise<void> => {
     const { sendImageTool } =
       await import("../src/harness/tools/channel.tool.ts");
-    const sendImage = mock(async function (): Promise<void> {});
-    const tools = sendImageTool(channelContext(sendImage));
+    let sentUrl = "";
+    let sentCaption: string | undefined;
+    const tools = sendImageTool(
+      channelContext(async function (url, caption): Promise<void> {
+        sentUrl = url;
+        sentCaption = caption;
+      }),
+    );
 
     const result = await execute(tools["send-image"], {
       file_path: "profile.jpeg",
@@ -58,10 +69,21 @@ describe("sendImageTool", () => {
       "filesystem-bucket",
       `${NS}/profile.jpeg`,
     ]);
-    expect(sendImage).toHaveBeenCalledWith(
-      "https://signed.example/photo",
-      "[safe] here you go",
-    );
+    expect(sentCaption).toBe("[safe] here you go");
+    expect(sentUrl.startsWith("https://gateway.test/media/")).toBe(true);
+    // The link must survive on its own: everything the media route needs to find
+    // the file again is sealed into the token, with no expiry to run out.
+    expect(
+      openMediaTicket(
+        sentUrl.slice("https://gateway.test/media/".length),
+        SECRET,
+      ),
+    ).toEqual({
+      accountId: ACCOUNT,
+      workspaceId: "ws_a",
+      namespace: NS,
+      path: "profile.jpeg",
+    });
     expect(result).toContain("Image sent");
   });
 
@@ -120,6 +142,7 @@ function channelContext(
     transformText: async function (text: string): Promise<string> {
       return `[safe] ${text}`;
     },
+    accountId: ACCOUNT,
     workspaces: [
       {
         name: "notes",

@@ -107,6 +107,7 @@ if (import.meta.main) {
     DEFAULT_REQUEST_BUDGET_MS,
   );
   const { handler: accountHandler } = await import("./accounts/handler.ts");
+  const { handleMediaRequest, routesToMedia } = await import("./media.ts");
   const { drainInProcessWorkers, handler: harnessHandler } =
     await import("./harness/handler.ts");
   const { prewarmIsolatePool, shutdownIsolatePool } =
@@ -140,6 +141,10 @@ if (import.meta.main) {
       };
 
       try {
+        if (routesToMedia(request.method, url.pathname)) {
+          return await handleMediaRequest(coreRequest);
+        }
+
         return routesToAccountManage(request.method, url.pathname)
           ? await accountHandler(coreRequest)
           : await harnessHandler(coreRequest, ctx);

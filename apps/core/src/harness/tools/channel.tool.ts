@@ -12,23 +12,21 @@ import type {
 } from "../ingress.ts";
 import {
   resolveWorkspace,
-  s3PresignedUrl,
   toWorkspaceRelative,
+  workspaceMediaUrl,
   workspaceParamSchema,
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
-
-// How long a workspace image stays fetchable. Providers download and rehost the
-// picture when the message is sent, so this only has to outlive that fetch.
-const WORKSPACE_IMAGE_URL_TTL_SECONDS = 3600;
 
 export interface ChannelToolContext {
   actions: ChannelActions;
   channelName: string;
   transformText(text: string): Promise<string | null>;
   // Attached workspaces, so send-image can take a workspace file instead of a
-  // public URL. Empty/absent => URL only.
+  // public URL. Needs the owning account to seal the media link, so both arrive
+  // together or not at all.
   workspaces?: ResolvedWorkspace[];
+  accountId?: string;
 }
 
 interface SendImageInput {
@@ -52,7 +50,10 @@ export function sendImageTool(context: ChannelToolContext): ToolSet {
   if (!sendImage) {
     return {};
   }
-  const workspaces = context.workspaces ?? [];
+  // A workspace file can only be handed over as a media link, which has to name
+  // its account; without one the tool stays URL-only rather than half-working.
+  const accountId = context.accountId;
+  const workspaces = accountId ? (context.workspaces ?? []) : [];
 
   return {
     "send-image": tool({
@@ -61,7 +62,7 @@ export function sendImageTool(context: ChannelToolContext): ToolSet {
       execute: async function (input): Promise<string> {
         const { url, file_path, workspace, caption } = input;
         const photo = await resolveImageUrl(
-          workspaces,
+          { workspaces: workspaces, accountId: accountId },
           url,
           file_path,
           workspace,
@@ -179,25 +180,25 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
   };
 }
 
-// A workspace file has no address of its own, so it is handed over as a
-// short-lived presigned URL — every provider fetches the picture itself rather
-// than accepting an upload.
+// A workspace file has no address of its own, so it is handed over as a durable
+// media link — every provider fetches the picture itself rather than accepting
+// an upload, and Zalo re-fetches it long after the message was sent.
 async function resolveImageUrl(
-  workspaces: ResolvedWorkspace[],
+  source: { workspaces: ResolvedWorkspace[]; accountId?: string },
   url: string | undefined,
   filePath: string | undefined,
   workspace: string | undefined,
 ): Promise<string> {
   if (filePath) {
-    const ws = resolveWorkspace(workspaces, workspace);
-    if (!ws) {
+    const ws = resolveWorkspace(source.workspaces, workspace);
+    if (!ws || !source.accountId) {
       return toolError("Error: no workspace attached");
     }
 
-    return await s3PresignedUrl(
+    return await workspaceMediaUrl(
       ws,
       toWorkspaceRelative(filePath),
-      WORKSPACE_IMAGE_URL_TTL_SECONDS,
+      source.accountId,
     );
   }
   if (!url) {
