@@ -29,6 +29,15 @@ Cron jobs store the selected agent and the run payload directly. The payload mir
 
 This keeps the add-on small. Developers who need custom workflow code can deploy their own Lambda, worker, or scheduler and call the existing direct/async API.
 
+### Conversation Binding
+
+`conversationKey` decides which conversation the run continues in, and with it where the answer goes:
+
+- **A live channel session** — a key such as `slack:T123:C456` that an agent already ran in. The cron resumes that exact session, reuses the config it stored (channel-record instructions and deny lists included), and its final text is delivered back to that channel.
+- **Anything else**, including the `cron:<cronId>` default — its own direct conversation. The result is readable through the async status API; nothing is pushed anywhere.
+
+A cron never reaches a conversation belonging to another account or agent, and a run that arrives while the conversation is mid-turn is skipped and recorded as a failed run rather than interleaved.
+
 ## Code-First Configuration
 
 Define cron jobs as resources alongside your agents:
@@ -117,6 +126,28 @@ curl -X DELETE "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
 ```
 
 List jobs with `GET /v1/crons` or fetch one with `GET /v1/crons/{cronId}`. Responses include the run state: `status`, `lastInvokedAt`, `lastStatus`, and `lastError`. Paused jobs are skipped at invoke time.
+
+## Agent-Scheduled Tasks
+
+An agent can schedule its own recurring work with the `schedule_task` tool. It is off by default — a scheduled task starts billable runs long after the turn that asked for it — and turns on per agent:
+
+```ts title="broods/index.ts"
+export const support = defineAgent({
+  name: "support",
+  provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
+  model: { provider: "openai", modelId: "gpt-5.5" },
+  scheduler: { enabled: true },
+});
+```
+
+The tool takes `name`, `instructions`, `schedule`, and an optional `timezone`, and creates a normal cron job through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things it fixes for the model:
+
+- **The agent is always itself.** A scheduled task cannot be pointed at another agent.
+- **The conversation is always the calling one.** The cron stores the conversation key of the session the tool ran in, so an agent asked in Slack to summarize every morning answers in that Slack conversation. See [Conversation Binding](#conversation-binding).
+
+Only recurring `cron(...)` and `rate(...)` expressions are accepted. A one-time `at(...)` schedule is refused: EventBridge keeps a fired one-time schedule until something deletes it, and no runtime path reclaims it.
+
+The tool creates tasks and nothing else. Pausing and deleting stay with the account owner, on the dashboard or through the account API, so an agent cannot quietly cancel work someone else scheduled. Withhold the tool from one channel with `denyTools: ["schedule_task"]` on that channel record.
 
 ## SDK and Dynamic Creation
 

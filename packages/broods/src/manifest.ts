@@ -306,6 +306,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "workspaces",
   "subagent",
   "skills",
+  "scheduler",
   "policy",
   "publicAccess",
 ]);

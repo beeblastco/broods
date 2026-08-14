@@ -10,7 +10,12 @@ import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
 import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
-import type { CronRecord, CronRunRecord } from "./domain/cron.ts";
+import type {
+  CreateCronInput,
+  CronRecord,
+  CronRunRecord,
+  CronSummary,
+} from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
 
@@ -135,6 +140,9 @@ interface AgentDeploymentStore {
 
 /** Account-scoped cron job schedules. */
 interface CronStore {
+  // Creates the crons row and its EventBridge schedule in the config plane;
+  // the runtime path for it is the schedule_task tool.
+  create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;

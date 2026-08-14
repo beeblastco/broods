@@ -31,6 +31,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
+    accountAgentScopedKey,
     publicConversationKeyFromScoped,
     scopedDirectConversationKey,
     scopedDirectEventId,
@@ -65,6 +66,7 @@ import {
 } from "./hook-dispatcher.ts";
 import {
     acceptIngress,
+    getConversationDispatchTarget,
     getIngressStatus,
     prepareSessionMessage,
     type AppliedIngress,
@@ -2184,22 +2186,47 @@ async function createCronDirectEvent(
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
+  // A cron whose conversationKey names an existing channel session resumes that
+  // session and answers where it answers; the config it stored carries any
+  // channel-record narrowing. Anything else stays a direct api: conversation.
+  const sessionConversationKey = accountAgentScopedKey(
+    job.accountId,
+    job.agentId,
+    publicConversationKey,
+  );
+  const channelTarget = await getConversationDispatchTarget({
+    accountId: job.accountId,
+    agentId: job.agentId,
+    conversationKey: sessionConversationKey,
+  });
 
   return {
     accountId: job.accountId,
     agentId: job.agentId,
-    agentConfig: toRuntimeAgentConfig(agent.config),
+    agentConfig: channelTarget
+      ? channelTarget.agentConfig
+      : toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
     publicEventId: publicEventId,
-    conversationKey: scopedDirectConversationKey(
-      job.accountId,
-      job.agentId,
-      publicConversationKey,
-    ),
+    conversationKey: channelTarget
+      ? sessionConversationKey
+      : scopedDirectConversationKey(
+          job.accountId,
+          job.agentId,
+          publicConversationKey,
+        ),
     publicConversationKey: publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
     requestedMode: "reject",
     idempotencyKey: publicEventId,
+    ...(channelTarget
+      ? {
+          replyTarget: {
+            channelName: channelTarget.channelName,
+            source: channelTarget.source,
+          },
+        }
+      : {}),
     ...(deployment
       ? {
           endpointId: deployment.endpointId,
@@ -2207,7 +2234,7 @@ async function createCronDirectEvent(
           stageSlug: deployment.stageSlug,
         }
       : {}),
-  } satisfies DirectInboundEvent;
+  };
 }
 
 async function listCurrentParentToolResults(

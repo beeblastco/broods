@@ -33,6 +33,15 @@ export interface CronRecord {
   lastError?: string;
 }
 
+/**
+ * Public cron shape the config plane returns from create/update. It withholds
+ * the EventBridge Scheduler names a stored record carries.
+ */
+export type CronSummary = Omit<
+  CronRecord,
+  "schedulerName" | "schedulerGroupName"
+>;
+
 export interface CronRunRecord {
   accountId: string;
   cronId: string;

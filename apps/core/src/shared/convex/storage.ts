@@ -26,7 +26,7 @@ import type {
   ChannelRecord,
   ChannelRecordConfig,
 } from "../domain/channel-record.ts";
-import type { CronRecord } from "../domain/cron.ts";
+import type { CronRecord, CronSummary } from "../domain/cron.ts";
 import type {
   SandboxConfig,
   SandboxConfigRecord,
@@ -294,6 +294,14 @@ const agentDeployments: Storage["agentDeployments"] = {
 };
 
 const crons: Storage["crons"] = {
+  // awsCrons.create is a Node action that inserts the row and creates the
+  // EventBridge schedule, rolling the row back when the schedule fails.
+  create: async function(accountId, input) {
+    return (await getConvexClient().action(internal.awsCrons.create, {
+      accountId: accountId as any,
+      input: input,
+    })) as CronSummary;
+  },
   getById: async function(accountId, cronId) {
     const doc = await getConvexClient().query(internal.cron.getById, {
       accountId: accountId as any,

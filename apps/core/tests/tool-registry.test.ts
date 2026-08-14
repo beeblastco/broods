@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
+import type { Session } from "../src/harness/session.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
 import {
   resetStorageForTests,
@@ -14,6 +15,7 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+import type { CronSummary } from "../src/shared/domain/cron.ts";
 
 interface ChannelTestTool {
   execute: ToolExecuteFunction<
@@ -901,6 +903,68 @@ describe("createTools", () => {
       }),
     ).rejects.toThrow("config.tools.bash is not a supported tool");
   });
+
+  it("withholds schedule_task until the agent opts into the scheduler", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    expect(await createTools(schedulerToolContext(), {})).toEqual({});
+    expect(
+      await createTools(createToolContext(), {
+        scheduler: { enabled: true },
+      }),
+    ).toEqual({});
+  });
+
+  it("schedules a cron bound to the calling conversation", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const create = mock(async function (): Promise<CronSummary> {
+      return cronSummary();
+    });
+    setStorageForTests(storageWithCronCreate(create));
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    expect(Object.keys(tools)).toEqual(["schedule_task"]);
+    expect(
+      await channelToolExecute(tools.schedule_task, {
+        name: "daily-standup",
+        instructions: "Post the standup summary.",
+        schedule: "cron(0 9 * * ? *)",
+        timezone: "Asia/Ho_Chi_Minh",
+      }),
+    ).toContain("Scheduled task 'daily-standup' (cron_test)");
+    expect(create).toHaveBeenCalledWith("acct_test", {
+      name: "daily-standup",
+      agentId: "agent_test",
+      input: "Post the standup summary.",
+      conversationKey: "slack:T1:C1",
+      scheduleExpression: "cron(0 9 * * ? *)",
+      timezone: "Asia/Ho_Chi_Minh",
+    });
+  });
+
+  it("refuses a one-time schedule the scheduler would never reclaim", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const create = mock(async function (): Promise<CronSummary> {
+      return cronSummary();
+    });
+    setStorageForTests(storageWithCronCreate(create));
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    await expect(
+      channelToolExecute(tools.schedule_task, {
+        name: "one-off",
+        instructions: "Remind me once.",
+        schedule: "at(2026-08-14T09:00:00)",
+      }),
+    ).rejects.toThrow(/recurring cron\(\.\.\.\) or rate\(\.\.\.\) expression/);
+    expect(create).not.toHaveBeenCalled();
+  });
 });
 
 function createToolContext(
@@ -923,6 +987,31 @@ function createToolContext(
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
     ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
+  };
+}
+
+/** Tool context for a Slack-scoped session that may schedule tasks. */
+function schedulerToolContext(): Omit<ToolContext, "config"> {
+  return {
+    ...createToolContext(),
+    conversationKey: "acct:acct_test:agent:agent_test:slack:T1:C1",
+    session: { agentId: "agent_test" } as unknown as Session,
+  };
+}
+
+function cronSummary(): CronSummary {
+  return {
+    accountId: "acct_test",
+    cronId: "cron_test",
+    name: "daily-standup",
+    agentId: "agent_test",
+    events: [{ role: "user", content: "Post the standup summary." }],
+    conversationKey: "slack:T1:C1",
+    scheduleExpression: "cron(0 9 * * ? *)",
+    timezone: "Asia/Ho_Chi_Minh",
+    status: "active",
+    createdAt: "2026-08-14T00:00:00.000Z",
+    updatedAt: "2026-08-14T00:00:00.000Z",
   };
 }
 
@@ -965,6 +1054,22 @@ async function channelToolExecute(
     messages: [],
     context: {},
   });
+}
+
+function storageWithCronCreate(create: Storage["crons"]["create"]): Storage {
+  return {
+    accounts: {} as never,
+    agents: {} as never,
+    channelRecords: {} as never,
+    agentDeployments: {} as never,
+    crons: { create: create } as unknown as Storage["crons"],
+    sandboxConfigs: {} as never,
+    workspaceConfigs: {} as never,
+    agentPolicies: {} as never,
+    accountTools: {} as never,
+    accountHooks: {} as never,
+    taskUsage: {} as never,
+  };
 }
 
 function storageWithAccountTool(accountTool: AccountToolRecord): Storage {

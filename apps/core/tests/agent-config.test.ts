@@ -189,6 +189,18 @@ describe("agent config validation", () => {
     ).toThrow("config.subagent.stream must be a boolean");
   });
 
+  it("keeps the scheduler opt-in a boolean on config and patches", () => {
+    expect(normalizeAgentConfig({ scheduler: { enabled: true } })).toEqual({
+      scheduler: { enabled: true },
+    });
+    expect(() =>
+      normalizeAgentConfig({ scheduler: { enabled: "yes" } }),
+    ).toThrow("config.scheduler.enabled must be a boolean");
+    expect(() =>
+      normalizeAgentConfigPatch({ scheduler: { enabled: "yes" } }),
+    ).toThrow("config.scheduler.enabled must be a boolean");
+  });
+
   it("uses one non-empty string-array policy for config and patches", () => {
     expect(() => normalizeAgentConfig({ skills: { allowed: [""] } })).toThrow(
       "config.skills.allowed must be an array of non-empty strings",
