@@ -25,19 +25,20 @@ export type ObservabilityLogEntry = {
   data?: unknown;
 };
 
-// Root span kind is "task" (one per top-level invocation); a "subtask" is a
+// Root span kind is "task" (one per top-level invocation), "cron" when the
+// scheduler started that invocation instead of a person, or "subtask" for a
 // subagent's root span. A subtask is its OWN top-level trace (its own traceId),
 // linked back to the parent via the parent.trace_id / parent.task_id attributes
 // rather than nested under the parent span — the dashboard renders it as a sibling
 // task row with a jump-to-parent link. Children ("model.step", "tool.call", and
 // "phase" timeline spans like cold start, context prepare, and compaction) share
-// the traceId of the task or subtask they belong to.
+// the traceId of the root they belong to.
 export type ObservabilitySpanRow = {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
   name: string;
-  kind: "task" | "subtask" | "model.step" | "tool.call" | "phase";
+  kind: "task" | "cron" | "subtask" | "model.step" | "tool.call" | "phase";
   startTimeMs: number;
   endTimeMs: number;
   durationMs: number;
@@ -139,4 +140,9 @@ export function isObservabilityClientMessage(
   }
 
   return false;
+}
+
+/** Whether a span is a top-level run, each of which owns its own trace. */
+export function isRootSpanKind(kind: ObservabilitySpanRow["kind"]): boolean {
+  return kind === "task" || kind === "cron" || kind === "subtask";
 }

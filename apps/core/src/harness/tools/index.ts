@@ -298,11 +298,13 @@ export async function createTools(
   // schedule writes a cron bound to this conversation, so a scheduled run
   // resumes the same session and replies wherever this one does.
   // list/update/cancel reach every task of this agent, whichever conversation
-  // created it.
+  // created it. A run the scheduler started gets none of them: it reads its own
+  // stored instructions as a fresh request, so each one acts on its own schedule.
   if (
     agentConfig.scheduler?.enabled === true &&
     context.accountId &&
-    context.session?.agentId
+    context.session?.agentId &&
+    context.session.trigger !== "cron"
   ) {
     const accountId = context.accountId;
     const agentId = context.session.agentId;

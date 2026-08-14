@@ -319,11 +319,14 @@ function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">) {
     RoleArn: target.roleArn,
     // Templated EventBridge PutEvents target: Input becomes the event
     // detail; Source must match the cron-run bus rule in sst.config.ts.
+    // `<aws.scheduler.scheduled-time>` is substituted by Scheduler before the
+    // target is invoked, so core can report how long the hops to it took.
     EventBridgeParameters: { DetailType: "cron-run", Source: "broods.crons" },
     Input: JSON.stringify({
       kind: "cron",
       accountId: job.accountId,
       cronId: job._id,
+      scheduledTime: "<aws.scheduler.scheduled-time>",
     }),
   };
 }

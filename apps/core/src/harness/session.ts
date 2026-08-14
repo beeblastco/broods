@@ -59,6 +59,10 @@ import {
 } from "./ingress.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
+// What started a run when it was not a person asking: so far only the scheduler
+// firing a cron. It names the root trace span and withholds every schedule tool.
+export type RunTrigger = "cron";
+
 export type ConversationIngressEvent =
   // `metadata` is opaque hook data persisted on the stored-event envelope,
   // never inside the model message. See StoredEventBase.
@@ -163,6 +167,9 @@ interface StoredConversationEventPage {
 export class Session {
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
+  // One clock reading for the whole run: the system prompt is rebuilt before
+  // every step, so a moving timestamp would break the provider's prompt cache.
+  private readonly startedAt = new Date();
   private loadedSkillPrompts: SystemModelMessage[] = [];
   private subagentMetadataPromise: Promise<SubagentMetadata[]> | undefined;
   // Resolved sandbox + workspace records (from the agent's `sandbox`/`workspaces`
@@ -197,6 +204,8 @@ export class Session {
     // Bound to the current inbound message so model-facing channel tools retain
     // the credential holder and exact provider reply target.
     public readonly channelActions?: ChannelActions,
+    // Absent for the ordinary channel/API paths, where a person is waiting.
+    public readonly trigger?: RunTrigger,
   ) {}
 
   async claim(): Promise<boolean> {
@@ -616,6 +625,17 @@ export class Session {
           },
         ]
       : [];
+    // Scheduling is the one surface that needs a clock: without one the model
+    // guesses the date behind an at(...) expression.
+    const schedulerSystem: SystemModelMessage[] =
+      this.agentConfig.scheduler?.enabled === true
+        ? [
+            {
+              role: "system",
+              content: formatSchedulerSystemPrompt(this.startedAt),
+            },
+          ]
+        : [];
     const skillsSystem: SystemModelMessage[] =
       skillMetadata.length > 0
         ? [
@@ -640,6 +660,7 @@ export class Session {
       ...memorySystem,
       ...workspaceHarnessSystem,
       ...memoryHarnessSystem,
+      ...schedulerSystem,
       ...skillsSystem,
       ...subagentSystem,
       ...this.loadedSkillPrompts,
@@ -976,6 +997,15 @@ ${workspaceList}
 Guidance:
 ${guidance}
 </workspace>`;
+}
+
+function formatSchedulerSystemPrompt(now: Date): string {
+  return `<scheduler>
+The current time is ${now.toISOString()} (UTC). Work every schedule expression out from that instant — never guess today's date — and pass the timezone the person is speaking in so their own wall clock is what fires.
+
+- A task is scheduled only once the tool has returned. Tell the person what the tool returned, not what you meant to do.
+- list_schedules is what is actually pending; this conversation is not.
+</scheduler>`;
 }
 
 function formatSkillsSystemPrompt(skills: SkillMetadata[]): string {

@@ -13,7 +13,11 @@ import {
   toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
-import { isOneTimeSchedule, type CronRecord } from "../shared/domain/cron.ts";
+import {
+  isOneTimeSchedule,
+  withScheduledRunContext,
+  type CronRecord,
+} from "../shared/domain/cron.ts";
 import {
     booleanEnv,
     getHarnessPublicUrl,
@@ -116,6 +120,9 @@ interface CronInvocation {
   kind: "cron";
   accountId: string;
   cronId: string;
+  // The instant Scheduler meant to fire, substituted into the target payload by
+  // awsCrons. Absent on schedules created before that was added.
+  scheduledTime?: string;
 }
 
 interface DirectTurn {
@@ -294,15 +301,19 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
   }
 
   await crons.markStarted(job.accountId, job.cronId);
+  const firedAt = scheduledFireTime(event.scheduledTime);
 
   try {
-    const result = await startScheduledAgentRun(job);
+    const result = await startScheduledAgentRun(job, firedAt);
     logInfo("Cron agent run invoked", {
       accountId: job.accountId,
       cronId: job.cronId,
       agentId: job.agentId,
       eventId: result.eventId,
       conversationKey: result.conversationKey,
+      // Cost of the Scheduler → bus → API destination → gateway hops, which
+      // nothing else reports: without it a late reply reads as a slow model.
+      dispatchLagMs: Date.now() - firedAt.getTime(),
     });
     await crons.markCompleted(job.accountId, job.cronId);
   } catch (err) {
@@ -1545,6 +1556,7 @@ async function prepareDirectTurn(
           event.replyTarget.source,
         ) ?? undefined)
       : undefined,
+    event.cronRun ? "cron" : undefined,
   );
   try {
     const ephemeralSystem = await session.appendIngressEvents(event.events);
@@ -2154,8 +2166,9 @@ export async function settleCronRun(
 
 async function startScheduledAgentRun(
   job: CronRecord,
+  firedAt: Date,
 ): Promise<{ eventId: string; conversationKey: string }> {
-  const event = await createCronDirectEvent(job);
+  const event = await createCronDirectEvent(job, firedAt);
   const run = await getStorage().crons.createRun({
     accountId: job.accountId,
     cronId: job.cronId,
@@ -2197,6 +2210,16 @@ async function startScheduledAgentRun(
 }
 
 /**
+ * When the schedule was meant to fire, falling back to now when the payload
+ * carries no usable instant — including the unsubstituted template literal.
+ */
+function scheduledFireTime(scheduledTime: string | undefined): Date {
+  const parsed = scheduledTime ? new Date(scheduledTime) : null;
+
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+}
+
+/**
  * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
  * throw here would cost the run its reply.
  */
@@ -2217,16 +2240,8 @@ async function removeOneShotCron(
 
 async function createCronDirectEvent(
   job: CronRecord,
+  firedAt: Date,
 ): Promise<DirectInboundEvent> {
-  const agent = await getStorage().agents.getById(job.accountId, job.agentId);
-  if (!agent || agent.status !== "active") {
-    throw new Error(`Agent not found: ${job.agentId}`);
-  }
-  const deployment = await getStorage().agentDeployments.getByAgentId?.(
-    job.accountId,
-    job.agentId,
-  );
-
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
   // A cron whose conversationKey names an existing channel session resumes that
@@ -2237,11 +2252,18 @@ async function createCronDirectEvent(
     job.agentId,
     publicConversationKey,
   );
-  const channelTarget = await getConversationDispatchTarget({
-    accountId: job.accountId,
-    agentId: job.agentId,
-    conversationKey: sessionConversationKey,
-  });
+  const [agent, deployment, channelTarget] = await Promise.all([
+    getStorage().agents.getById(job.accountId, job.agentId),
+    getStorage().agentDeployments.getByAgentId?.(job.accountId, job.agentId),
+    getConversationDispatchTarget({
+      accountId: job.accountId,
+      agentId: job.agentId,
+      conversationKey: sessionConversationKey,
+    }),
+  ]);
+  if (!agent || agent.status !== "active") {
+    throw new Error(`Agent not found: ${job.agentId}`);
+  }
 
   return {
     accountId: job.accountId,
@@ -2259,7 +2281,10 @@ async function createCronDirectEvent(
           publicConversationKey,
         ),
     publicConversationKey: publicConversationKey,
-    events: job.events as DirectInboundEvent["events"],
+    events: withScheduledRunContext(
+      job,
+      firedAt,
+    ) as DirectInboundEvent["events"],
     requestedMode: "reject",
     idempotencyKey: publicEventId,
     ...(channelTarget

@@ -4,6 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
@@ -159,6 +160,25 @@ describe("handleScheduledCron", () => {
     );
     expect(removed).toEqual(["cron_1"]);
   });
+
+  it("frames the stored instructions with the schedule that fired", async () => {
+    await expect(
+      invokeCron({ scheduledTime: "2026-08-14T09:00:00Z" }),
+    ).rejects.toThrow("Cron conversation is already processing another turn");
+
+    const [event] = admitted[0]?.events as ModelMessage[];
+    expect(event?.role).toBe("user");
+    expect(event?.content).toContain(
+      '<scheduled-task name="daily-standup" schedule="cron(0 9 * * ? *)">',
+    );
+    expect(event?.content).toContain(
+      "The scheduler started this run at 2026-08-14T09:00:00.000Z",
+    );
+    expect(event?.content).toContain(
+      "A scheduled run has no scheduling tools at all",
+    );
+    expect(event?.content).toContain("Post the standup summary.");
+  });
 });
 
 describe("settleCronRun", () => {
@@ -251,10 +271,13 @@ function cron(): CronRecord {
   };
 }
 
-function invokeCron(): Promise<Response> {
+function invokeCron(
+  overrides: { scheduledTime?: string } = {},
+): Promise<Response> {
   return handler({
     kind: "cron",
     accountId: "acct_1",
     cronId: "cron_1",
+    ...overrides,
   } as Parameters<typeof handler>[0]);
 }

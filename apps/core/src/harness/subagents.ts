@@ -487,7 +487,8 @@ export class SubagentCoordinator {
     // Initialize an isolated child session using the generated conversation key.
     // Inherit the parent's deployment scope (endpoint/project/stage) so the
     // child's spans and logs publish to the same live dashboard subscription and
-    // its usage rows are counted in the right stage.
+    // its usage rows are counted in the right stage. The trigger is inherited
+    // too: a child of a scheduled run must not reach the schedule tools either.
     const childSession = new Session(
       task.eventId,
       task.conversationKey,
@@ -499,6 +500,8 @@ export class SubagentCoordinator {
       this.parentSession.projectSlug,
       this.parentSession.stageSlug,
       ownerGeneration,
+      undefined,
+      this.parentSession.trigger,
     );
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;

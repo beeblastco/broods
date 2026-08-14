@@ -196,6 +196,52 @@ describe("session system context", () => {
     );
   });
 
+  it("gives a scheduling agent one clock reading for the whole run", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../src/harness/session.ts");
+    const session = new Session("event", "conversation", "acct", "agent", {
+      scheduler: { enabled: true },
+    });
+
+    const first = await session.createEphemeralTurnContext([
+      { role: "user", content: "remind me at 8:45 tonight" },
+    ]);
+    const second = await session.createEphemeralTurnContext([
+      { role: "user", content: "and again tomorrow" },
+    ]);
+    const schedulerPrompt = first.system.find((message) =>
+      message.content.includes("<scheduler>"),
+    )?.content;
+
+    expect(schedulerPrompt).toMatch(
+      /The current time is \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)/,
+    );
+    expect(schedulerPrompt).toContain(
+      "list_schedules is what is actually pending",
+    );
+    // A timestamp that moved between steps would invalidate the prompt cache.
+    expect(
+      second.system.find((message) => message.content.includes("<scheduler>"))
+        ?.content,
+    ).toBe(schedulerPrompt);
+  });
+
+  it("withholds the scheduling clock until the agent opts in", async () => {
+    process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
+    const { Session } = await import("../src/harness/session.ts");
+    const session = new Session("event", "conversation", "acct", "agent", {});
+
+    const turnContext = await session.createEphemeralTurnContext([
+      { role: "user", content: "hello" },
+    ]);
+
+    expect(
+      turnContext.system.some((message) =>
+        message.content.includes("<scheduler>"),
+      ),
+    ).toBe(false);
+  });
+
   it("loads existing workspace memory separately from optional harness guidance", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Remember stable project facts.");

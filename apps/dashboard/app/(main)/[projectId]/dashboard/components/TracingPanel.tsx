@@ -3,6 +3,7 @@
 /** Tracing panel: full-height task timelines with an indented span tree, a waterfall bar column, and model/tool span details. */
 import { Badge } from "@/app/components/ui/badge";
 import {
+  isRootSpanKind,
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
@@ -150,6 +151,8 @@ function statusColor(status: ObservabilitySpanRow["status"]): string {
 function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task")
     return "bg-violet-500/15 text-violet-700 dark:text-violet-300";
+  if (kind === "cron")
+    return "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300";
   if (kind === "subtask")
     return "bg-fuchsia-500/15 text-fuchsia-700 dark:text-fuchsia-300";
   if (kind === "model.step")
@@ -163,6 +166,7 @@ function kindBadge(kind: ObservabilitySpanRow["kind"]): string {
 /** Solid waterfall-bar fill per kind; mirrors the badge hues. */
 function kindBarColor(kind: ObservabilitySpanRow["kind"]): string {
   if (kind === "task") return "bg-violet-500/70";
+  if (kind === "cron") return "bg-indigo-500/70";
   if (kind === "subtask") return "bg-fuchsia-500/70";
   if (kind === "model.step") return "bg-sky-500/70";
   if (kind === "phase") return "bg-teal-500/70";
@@ -185,14 +189,11 @@ interface SpanGroup {
 
 /** Group spans into per-task trees keyed by parent span, newest task first. */
 function groupSpans(spans: ObservabilitySpanRow[]): SpanGroup[] {
-  // Tasks and subagent subtasks are both top-level roots (each its own trace).
-  const tasks = spans.filter(
-    (span) => span.kind === "task" || span.kind === "subtask",
-  );
+  const tasks = spans.filter((span) => isRootSpanKind(span.kind));
   const childrenByTrace = new Map<string, ObservabilitySpanRow[]>();
 
   for (const span of spans) {
-    if (span.kind === "task" || span.kind === "subtask") continue;
+    if (isRootSpanKind(span.kind)) continue;
     const children = childrenByTrace.get(span.traceId) ?? [];
     children.push(span);
     childrenByTrace.set(span.traceId, children);
@@ -456,7 +457,7 @@ function SpanDetails({
       className="grid gap-3 border-l-2 border-border/50 bg-background/50 py-3 pr-4"
       style={{ paddingLeft: depth * 18 + 28 }}
     >
-      {span.kind === "task" && (
+      {(span.kind === "task" || span.kind === "cron") && (
         <div className="text-[11px] font-mono text-muted-foreground">
           trace: {span.traceId} · agent: {span.agentId ?? "unknown"} ·{" "}
           {span.conversationKey ?? "no conversation"}
@@ -569,8 +570,8 @@ function SpanRow({
   highlighted: boolean;
   onFocusTrace: (traceId: string) => void;
 }) {
-  // Tasks and subagent subtasks are both roots: own duration bar, anchor id, subtitle.
-  const isRoot = span.kind === "task" || span.kind === "subtask";
+  // Every root gets its own duration bar, anchor id, and subtitle.
+  const isRoot = isRootSpanKind(span.kind);
   const stale = isStale(span, taskRunning);
   const parentTraceId =
     span.kind === "subtask" ? span.attributes?.["parent.trace_id"] : undefined;
@@ -687,7 +688,7 @@ function renderSpanRows(
   const key = spanKey(span);
   const isExpanded = expanded.has(key);
   const children = group.childrenByParent.get(span.spanId) ?? [];
-  const isRoot = span.kind === "task" || span.kind === "subtask";
+  const isRoot = isRootSpanKind(span.kind);
   // A root is judged on its own freshness; a child on its enclosing root's liveness.
   const spanRunning = isRoot ? isTaskRunning(span) : enclosingRootLive;
   const childRootLive = isRoot ? isTaskRunning(span) : enclosingRootLive;

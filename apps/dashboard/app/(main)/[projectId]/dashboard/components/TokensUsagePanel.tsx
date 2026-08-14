@@ -3,6 +3,7 @@
 /** Usage panel: live Convex usage rollups — tokens, activity, and compute — as charts and tables. */
 import { Section } from "@/app/components/Section";
 import {
+  isRootSpanKind,
   useObservabilityStream,
   type ObservabilitySpanRow,
 } from "@/app/hooks/useObservabilityStream";
@@ -89,17 +90,17 @@ const STALE_RUNNING_TASK_MS = 20 * 60 * 1000;
 /**
  * In-progress overlay taken straight off the live trace stream: Convex usage is
  * only written when a task finalizes, so a long run would otherwise show nothing
- * until it ends. Each model step is scoped to its own root span (a task OR a
- * subagent subtask, which share the parent's traceId) so a finished subtask stops
- * counting the moment its usage row lands in Convex — no double counting. Sandbox
- * CPU is read off the running roots, which the harness re-publishes with live
- * role-split CPU on each step.
+ * until it ends. Each model step is scoped to its own root span (a task, a cron
+ * run, or a subagent subtask, which share the parent's traceId) so a finished
+ * subtask stops counting the moment its usage row lands in Convex — no double
+ * counting. Sandbox CPU is read off the running roots, which the harness
+ * re-publishes with live role-split CPU on each step.
  */
 function liveOverlayFromTraces(spans: ObservabilitySpanRow[]): LiveOverlay {
   const freshAfter = Date.now() - STALE_RUNNING_TASK_MS;
   const runningRoots = spans.filter(
     (span) =>
-      (span.kind === "task" || span.kind === "subtask") &&
+      isRootSpanKind(span.kind) &&
       span.status === "running" &&
       span.startTimeMs >= freshAfter,
   );

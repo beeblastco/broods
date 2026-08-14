@@ -288,12 +288,13 @@ export async function runAgentLoop(
   const agentSandbox = session.agentSandbox();
   // A subagent run is its own top-level trace, distinguished by kind "subtask" and
   // linked to the parent via parent.trace_id/parent.task_id attributes (set below).
-  // A normal run is a "task". Both are roots, so each gets its own scaled waterfall.
+  // A run the scheduler started is a "cron", anything a person asked for a "task".
+  // All three are roots, so each gets its own scaled waterfall.
   const subagentParent = options.subagentParent;
-  const rootSpanName = subagentParent ? "agent.subtask" : "agent.task";
   const rootSpanKind: ObservabilitySpanRow["kind"] = subagentParent
     ? "subtask"
-    : "task";
+    : (session.trigger ?? "task");
+  const rootSpanName = `agent.${rootSpanKind}`;
   const tracer = getTracer();
   const otelRootSpan = tracer.startSpan(rootSpanName, {
     startTime: runStartedAt,
