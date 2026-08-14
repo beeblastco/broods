@@ -13,7 +13,7 @@ import {
   toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
-import type { CronRecord } from "../shared/domain/cron.ts";
+import { isOneTimeSchedule, type CronRecord } from "../shared/domain/cron.ts";
 import {
     booleanEnv,
     getHarnessPublicUrl,
@@ -31,6 +31,7 @@ import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
+    accountAgentScopedKey,
     publicConversationKeyFromScoped,
     scopedDirectConversationKey,
     scopedDirectEventId,
@@ -65,6 +66,7 @@ import {
 } from "./hook-dispatcher.ts";
 import {
     acceptIngress,
+    getConversationDispatchTarget,
     getIngressStatus,
     prepareSessionMessage,
     type AppliedIngress,
@@ -312,6 +314,11 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       error: error,
     });
     await crons.markFailed(job.accountId, job.cronId, error);
+    // The schedule is spent whether or not the run started, so retire the job
+    // here too — the settle path never reached it.
+    if (isOneTimeSchedule(job.scheduleExpression)) {
+      await removeOneShotCron(job.accountId, job.cronId);
+    }
     throw err;
   }
 }
@@ -738,6 +745,9 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
+  // Scoped to the whole request so the catch below can tell a throw that
+  // follows a terminal result from one that replaces it.
+  let didSettle = false;
   try {
     await createPendingAsyncAgentResult({
       eventId: event.asyncResultEventId ?? event.eventId,
@@ -752,6 +762,7 @@ async function handleAsyncWorkerRequest(
     ({ session } = turn);
     const { turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      didSettle = true;
       await settleAsyncFailure(
         event,
         "Request did not produce pending model input",
@@ -759,12 +770,14 @@ async function handleAsyncWorkerRequest(
       await session.settleIngress("failed", {
         error: "Request did not produce pending model input",
       });
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: "Request did not produce pending model input",
+      });
       transferred = await dispatchNextIngress(session, event);
 
       return;
     }
 
-    let didSettle = false;
     let terminalSettled = false;
     let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
     result = await runAgentLoopUntilSubagentsIdle(
@@ -785,14 +798,9 @@ async function handleAsyncWorkerRequest(
               }),
             ),
           );
-          if (event.cronRun) {
-            await getStorage().crons.completeRun(
-              event.accountId,
-              event.cronRun.cronId,
-              event.cronRun.runId,
-              response,
-            );
-          }
+          await settleCronRun(event.accountId, event.cronRun, {
+            result: response,
+          });
           await pushReplyToChannel(
             session!,
             event,
@@ -812,14 +820,9 @@ async function handleAsyncWorkerRequest(
           terminalSettled = true;
           await session!.settleIngress("failed", { error: error });
           await settleAsyncFailure(event, error);
-          if (event.cronRun) {
-            await getStorage().crons.failRun(
-              event.accountId,
-              event.cronRun.cronId,
-              event.cronRun.runId,
-              error,
-            );
-          }
+          await settleCronRun(event.accountId, event.cronRun, {
+            error: error,
+          });
           await pushReplyToChannel(
             session!,
             event,
@@ -851,6 +854,7 @@ async function handleAsyncWorkerRequest(
     );
 
     if (result.didFail && !didSettle) {
+      didSettle = true;
       terminalSettled = true;
       await session
         .settleIngress("failed", {
@@ -861,14 +865,9 @@ async function handleAsyncWorkerRequest(
         event,
         result.failureText ?? AGENT_PROCESSING_FAILED,
       );
-      if (event.cronRun) {
-        await getStorage().crons.failRun(
-          event.accountId,
-          event.cronRun.cronId,
-          event.cronRun.runId,
-          result.failureText ?? AGENT_PROCESSING_FAILED,
-        );
-      }
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: result.failureText ?? AGENT_PROCESSING_FAILED,
+      });
     }
     if (result.hasDetachedCallbacks) {
       await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
@@ -896,13 +895,12 @@ async function handleAsyncWorkerRequest(
       event,
       err instanceof Error ? err.message : "Async request failed",
     );
-    if (event.cronRun) {
-      await getStorage().crons.failRun(
-        event.accountId,
-        event.cronRun.cronId,
-        event.cronRun.runId,
-        err instanceof Error ? err.message : "Async request failed",
-      );
+    // A throw after the run already settled must not overwrite its recorded
+    // outcome — and for a one-time job the run row is gone with the cron.
+    if (!didSettle) {
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: err instanceof Error ? err.message : "Async request failed",
+      });
     }
     throw err;
   } finally {
@@ -2130,6 +2128,30 @@ function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
 
+/**
+ * Records a cron run's outcome, and retires a one-time job with it: EventBridge
+ * already dropped that schedule, so the row can never fire again.
+ */
+export async function settleCronRun(
+  accountId: string,
+  cronRun: DirectInboundEvent["cronRun"],
+  outcome: { result: JSONValue } | { error: string },
+): Promise<void> {
+  if (!cronRun) return;
+  const crons = getStorage().crons;
+  if ("error" in outcome) {
+    await crons.failRun(accountId, cronRun.cronId, cronRun.runId, outcome.error);
+  } else {
+    await crons.completeRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.result,
+    );
+  }
+  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
+}
+
 async function startScheduledAgentRun(
   job: CronRecord,
 ): Promise<{ eventId: string; conversationKey: string }> {
@@ -2140,7 +2162,11 @@ async function startScheduledAgentRun(
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
   });
-  event.cronRun = { cronId: job.cronId, runId: run.runId };
+  event.cronRun = {
+    cronId: job.cronId,
+    runId: run.runId,
+    ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
+  };
   try {
     const ownedEvent = await admitInternalContinuation(
       event,
@@ -2170,6 +2196,25 @@ async function startScheduledAgentRun(
   };
 }
 
+/**
+ * Best effort: a throw here would cost the run its reply, while a stranded row
+ * is recoverable from the dashboard or by `awsCrons:sweepSpentCrons`.
+ */
+async function removeOneShotCron(
+  accountId: string,
+  cronId: string,
+): Promise<void> {
+  await getStorage()
+    .crons.remove(accountId, cronId)
+    .catch((err) => {
+      logError("One-time cron cleanup failed", {
+        accountId: accountId,
+        cronId: cronId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+}
+
 async function createCronDirectEvent(
   job: CronRecord,
 ): Promise<DirectInboundEvent> {
@@ -2184,22 +2229,47 @@ async function createCronDirectEvent(
 
   const publicEventId = `${job.cronId}-${crypto.randomUUID()}`;
   const publicConversationKey = job.conversationKey ?? `cron:${job.cronId}`;
+  // A cron whose conversationKey names an existing channel session resumes that
+  // session and answers where it answers; the config it stored carries any
+  // channel-record narrowing. Anything else stays a direct api: conversation.
+  const sessionConversationKey = accountAgentScopedKey(
+    job.accountId,
+    job.agentId,
+    publicConversationKey,
+  );
+  const channelTarget = await getConversationDispatchTarget({
+    accountId: job.accountId,
+    agentId: job.agentId,
+    conversationKey: sessionConversationKey,
+  });
 
   return {
     accountId: job.accountId,
     agentId: job.agentId,
-    agentConfig: toRuntimeAgentConfig(agent.config),
+    agentConfig: channelTarget
+      ? channelTarget.agentConfig
+      : toRuntimeAgentConfig(agent.config),
     eventId: scopedDirectEventId(job.accountId, job.agentId, publicEventId),
     publicEventId: publicEventId,
-    conversationKey: scopedDirectConversationKey(
-      job.accountId,
-      job.agentId,
-      publicConversationKey,
-    ),
+    conversationKey: channelTarget
+      ? sessionConversationKey
+      : scopedDirectConversationKey(
+          job.accountId,
+          job.agentId,
+          publicConversationKey,
+        ),
     publicConversationKey: publicConversationKey,
     events: job.events as DirectInboundEvent["events"],
     requestedMode: "reject",
     idempotencyKey: publicEventId,
+    ...(channelTarget
+      ? {
+          replyTarget: {
+            channelName: channelTarget.channelName,
+            source: channelTarget.source,
+          },
+        }
+      : {}),
     ...(deployment
       ? {
           endpointId: deployment.endpointId,
@@ -2207,7 +2277,7 @@ async function createCronDirectEvent(
           stageSlug: deployment.stageSlug,
         }
       : {}),
-  } satisfies DirectInboundEvent;
+  };
 }
 
 async function listCurrentParentToolResults(

@@ -86,13 +86,16 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
+  "cancel_scheduled_task",
   "edit",
   "glob",
   "grep",
+  "list_scheduled_tasks",
   "load_skill",
   "memory_save",
   "read",
   "run_subagent",
+  "schedule_task",
   "write",
 ]);
 
@@ -145,6 +148,7 @@ export interface AgentConfig {
   denyTools?: string[];
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
+  scheduler?: AgentSchedulerConfig;
   policy?: AgentPolicyConfig;
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
   // runtime key). Off by default: when not `true` the deployment (public-key)
@@ -219,6 +223,15 @@ export const MODEL_CONFIG_SETTING_KEYS = [
 export interface AgentSkillsConfig {
   enabled?: boolean;
   allowed?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * Opt-in for the `schedule_task` tool. Off by default: a scheduled task starts
+ * billable agent runs long after the turn that asked for it.
+ */
+export interface AgentSchedulerConfig {
+  enabled?: boolean;
   [key: string]: unknown;
 }
 
@@ -546,6 +559,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     denyTools,
     skills,
     subagent,
+    scheduler,
     policy,
     publicAccess,
   } = config;
@@ -563,6 +577,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(denyTools !== undefined ? { denyTools: denyTools } : {}),
     ...(skills !== undefined ? { skills: skills } : {}),
     ...(subagent !== undefined ? { subagent: subagent } : {}),
+    ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
     ...(policy !== undefined ? { policy: policy } : {}),
     ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
   });
@@ -643,6 +658,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
+  normalizeSchedulerConfig(config.scheduler);
   const policy = normalizeAgentPolicyConfig(config.policy);
   if (policy) {
     config.policy = policy;
@@ -1272,6 +1288,18 @@ function normalizeSubagentConfig(value: unknown): void {
     "result",
     "none",
   ]);
+}
+
+function normalizeSchedulerConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.scheduler must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {

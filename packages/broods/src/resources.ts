@@ -505,7 +505,7 @@ const _providerKeyParity: KeysEqual<
 void _providerKeyParity;
 
 export type AgentDefinitionConfig = EnvRefString<
-  Pick<AgentConfig, "agent" | "model" | "session" | "tools">
+  Pick<AgentConfig, "agent" | "model" | "scheduler" | "session" | "tools">
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;
   hooks?: AgentHooks & {

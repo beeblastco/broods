@@ -22,6 +22,7 @@ import {
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { workspaceMemoryHarnessEnabled } from "../../shared/domain/workspace-config.ts";
 import { logWarn } from "../../shared/log.ts";
+import { publicConversationKeyFromScoped } from "../../shared/runtime-keys.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { getStorage } from "../../shared/storage.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -62,6 +63,12 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import {
+  cancelScheduledTaskTool,
+  listScheduledTasksTool,
+  scheduleTaskTool,
+  type ScheduledTaskContext,
+} from "./scheduled-tasks.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
@@ -284,6 +291,33 @@ export async function createTools(
           resourcePaths,
         ),
       ),
+    );
+  }
+
+  // schedule_task writes a cron bound to this conversation, so a scheduled run
+  // resumes the same session and replies wherever this one does. list/cancel
+  // reach every task of this agent, whichever conversation created it.
+  if (
+    agentConfig.scheduler?.enabled === true &&
+    context.accountId &&
+    context.session?.agentId
+  ) {
+    const accountId = context.accountId;
+    const agentId = context.session.agentId;
+    const scheduledTaskContext: ScheduledTaskContext = {
+      accountId: accountId,
+      agentId: agentId,
+      conversationKey: publicConversationKeyFromScoped(
+        context.conversationKey,
+        accountId,
+        agentId,
+      ),
+    };
+    Object.assign(
+      tools,
+      cancelScheduledTaskTool(scheduledTaskContext),
+      listScheduledTasksTool(scheduledTaskContext),
+      scheduleTaskTool(scheduledTaskContext),
     );
   }
 

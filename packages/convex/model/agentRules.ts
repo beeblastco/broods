@@ -39,6 +39,7 @@ export type AgentConfig = Record<string, unknown> & {
     stream?: boolean;
     [key: string]: unknown;
   };
+  scheduler?: { enabled?: boolean; [key: string]: unknown };
   policy?: AgentPolicyConfig;
   publicAccess?: boolean;
 };
@@ -75,13 +76,16 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
+  "cancel_scheduled_task",
   "edit",
   "glob",
   "grep",
+  "list_scheduled_tasks",
   "load_skill",
   "memory_save",
   "read",
   "run_subagent",
+  "schedule_task",
   "write",
 ]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
@@ -149,6 +153,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeToolsConfig(config.tools);
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
+  normalizeSchedulerConfig(config.scheduler);
   const policy = normalizeAgentPolicyConfig(config.policy);
   if (policy) {
     config.policy = policy;
@@ -673,6 +678,14 @@ function normalizeSubagentConfig(value: unknown): void {
     "ephemeral",
     "persistent",
   ]);
+}
+
+function normalizeSchedulerConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new Error("config.scheduler must be an object");
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
 }
 
 function normalizeAgentPolicyConfig(

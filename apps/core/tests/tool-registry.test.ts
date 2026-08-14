@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { SessionMessageResult } from "../src/harness/ingress.ts";
+import type { Session } from "../src/harness/session.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
 import {
   resetStorageForTests,
@@ -14,6 +15,7 @@ import {
   type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+import type { CronRecord, CronSummary } from "../src/shared/domain/cron.ts";
 
 interface ChannelTestTool {
   execute: ToolExecuteFunction<
@@ -901,6 +903,155 @@ describe("createTools", () => {
       }),
     ).rejects.toThrow("config.tools.bash is not a supported tool");
   });
+
+  it("withholds the scheduled task tools until the agent opts in", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    expect(await createTools(schedulerToolContext(), {})).toEqual({});
+    expect(
+      await createTools(createToolContext(), {
+        scheduler: { enabled: true },
+      }),
+    ).toEqual({});
+  });
+
+  it("schedules a cron bound to the calling conversation", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const create = mock(async function (): Promise<CronSummary> {
+      return cronSummary();
+    });
+    setStorageForTests(storageWithCronCreate(create));
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "cancel_scheduled_task",
+      "list_scheduled_tasks",
+      "schedule_task",
+    ]);
+    expect(
+      await channelToolExecute(tools.schedule_task, {
+        name: "daily-standup",
+        instructions: "Post the standup summary.",
+        schedule: "cron(0 9 * * ? *)",
+        timezone: "Asia/Ho_Chi_Minh",
+      }),
+    ).toContain("Scheduled task 'daily-standup' (cron_test)");
+    expect(create).toHaveBeenCalledWith("acct_test", {
+      name: "daily-standup",
+      agentId: "agent_test",
+      input: "Post the standup summary.",
+      conversationKey: "slack:T1:C1",
+      scheduleExpression: "cron(0 9 * * ? *)",
+      timezone: "Asia/Ho_Chi_Minh",
+    });
+  });
+
+  it("schedules a one-time task and rejects a malformed expression", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const create = mock(async function (): Promise<CronSummary> {
+      return {
+        ...cronSummary(),
+        scheduleExpression: "at(2027-01-01T09:00:00)",
+      };
+    });
+    setStorageForTests(storageWithCronCreate(create));
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    await channelToolExecute(tools.schedule_task, {
+      name: "one-off",
+      instructions: "Remind me once.",
+      schedule: "at(2027-01-01T09:00:00)",
+    });
+    expect(create).toHaveBeenCalledWith("acct_test", {
+      name: "one-off",
+      agentId: "agent_test",
+      input: "Remind me once.",
+      conversationKey: "slack:T1:C1",
+      scheduleExpression: "at(2027-01-01T09:00:00)",
+    });
+
+    await expect(
+      channelToolExecute(tools.schedule_task, {
+        name: "broken",
+        instructions: "Never mind.",
+        schedule: "every monday",
+      }),
+    ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists only the calling agent's scheduled tasks", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    setStorageForTests(
+      storageWithCrons([
+        cronRecord({ cronId: "cron_mine", name: "daily-standup" }),
+        cronRecord({
+          cronId: "cron_other",
+          name: "someone-else",
+          agentId: "agent_other",
+        }),
+      ]),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    expect(await channelToolExecute(tools.list_scheduled_tasks, {})).toEqual({
+      tasks: [
+        {
+          cronId: "cron_mine",
+          name: "daily-standup",
+          schedule: "cron(0 9 * * ? *)",
+          status: "active",
+          conversationKey: "slack:T1:C1",
+        },
+      ],
+    });
+  });
+
+  it("cancels its own scheduled task and refuses another agent's", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const remove = mock(async function (): Promise<boolean> {
+      return true;
+    });
+    setStorageForTests(
+      storageWithCrons(
+        [
+          cronRecord({ cronId: "cron_mine", name: "daily-standup" }),
+          cronRecord({ cronId: "cron_other", agentId: "agent_other" }),
+        ],
+        remove,
+      ),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    expect(
+      await channelToolExecute(tools.cancel_scheduled_task, {
+        cronId: "cron_mine",
+      }),
+    ).toBe("Cancelled scheduled task 'daily-standup' (cron_mine).");
+    expect(remove).toHaveBeenCalledWith("acct_test", "cron_mine");
+
+    await expect(
+      channelToolExecute(tools.cancel_scheduled_task, {
+        cronId: "cron_other",
+      }),
+    ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
+    await expect(
+      channelToolExecute(tools.cancel_scheduled_task, { cronId: "nope" }),
+    ).rejects.toThrow("No scheduled task nope belongs to this agent");
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
 });
 
 function createToolContext(
@@ -923,6 +1074,41 @@ function createToolContext(
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
     ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
+  };
+}
+
+/** Tool context for a Slack-scoped session that may schedule tasks. */
+function schedulerToolContext(): Omit<ToolContext, "config"> {
+  return {
+    ...createToolContext(),
+    conversationKey: "acct:acct_test:agent:agent_test:slack:T1:C1",
+    session: { agentId: "agent_test" } as unknown as Session,
+  };
+}
+
+function cronRecord(overrides: Partial<CronRecord> = {}): CronRecord {
+  return {
+    ...cronSummary(),
+    timezone: undefined,
+    schedulerName: "acct_test-abc",
+    schedulerGroupName: "broods-crons",
+    ...overrides,
+  };
+}
+
+function cronSummary(): CronSummary {
+  return {
+    accountId: "acct_test",
+    cronId: "cron_test",
+    name: "daily-standup",
+    agentId: "agent_test",
+    events: [{ role: "user", content: "Post the standup summary." }],
+    conversationKey: "slack:T1:C1",
+    scheduleExpression: "cron(0 9 * * ? *)",
+    timezone: "Asia/Ho_Chi_Minh",
+    status: "active",
+    createdAt: "2026-08-14T00:00:00.000Z",
+    updatedAt: "2026-08-14T00:00:00.000Z",
   };
 }
 
@@ -965,6 +1151,53 @@ async function channelToolExecute(
     messages: [],
     context: {},
   });
+}
+
+function storageWithCronCreate(create: Storage["crons"]["create"]): Storage {
+  return storageWithCronStore({ create: create });
+}
+
+function storageWithCrons(
+  crons: CronRecord[],
+  remove: Storage["crons"]["remove"] = async function (): Promise<boolean> {
+    return true;
+  },
+): Storage {
+  return storageWithCronStore({
+    getById: async function (accountId: string, cronId: string) {
+      return (
+        crons.find(
+          (cron) => cron.accountId === accountId && cron.cronId === cronId,
+        ) ?? null
+      );
+    },
+    // Mirrors the by_accountId_and_agentId index: the store scopes the read,
+    // so a leak here would show up as a task the caller does not own.
+    list: async function (accountId: string, agentId?: string) {
+      return crons.filter(
+        (cron) =>
+          cron.accountId === accountId &&
+          (agentId === undefined || cron.agentId === agentId),
+      );
+    },
+    remove: remove,
+  });
+}
+
+function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
+  return {
+    accounts: {} as never,
+    agents: {} as never,
+    channelRecords: {} as never,
+    agentDeployments: {} as never,
+    crons: crons as Storage["crons"],
+    sandboxConfigs: {} as never,
+    workspaceConfigs: {} as never,
+    agentPolicies: {} as never,
+    accountTools: {} as never,
+    accountHooks: {} as never,
+    taskUsage: {} as never,
+  };
 }
 
 function storageWithAccountTool(accountTool: AccountToolRecord): Storage {

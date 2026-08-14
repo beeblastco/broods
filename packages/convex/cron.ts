@@ -125,14 +125,35 @@ export const getById = internalQuery({
   handler: (ctx, { accountId, cronId }) => getOwned(ctx, accountId, cronId),
 });
 
+/** Every cron job of an account, or only one agent's when `agentId` is given. */
 export const list = internalQuery({
-  args: { accountId: v.id("accounts") },
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.optional(v.id("agents")),
+  },
   returns: v.array(cronDoc),
-  handler: (ctx, { accountId }) =>
-    ctx.db
-      .query("crons")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .collect(),
+  handler: (ctx, { accountId, agentId }) =>
+    agentId
+      ? ctx.db
+          .query("crons")
+          .withIndex("by_accountId_and_agentId", (q) =>
+            q.eq("accountId", accountId).eq("agentId", agentId),
+          )
+          .collect()
+      : ctx.db
+          .query("crons")
+          .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+          .collect(),
+});
+
+/**
+ * Every cron job across accounts, bounded. Only the maintenance sweep uses
+ * this; account-facing reads go through `list`.
+ */
+export const listAll = internalQuery({
+  args: { limit: v.number() },
+  returns: v.array(cronDoc),
+  handler: (ctx, { limit }) => ctx.db.query("crons").take(limit),
 });
 
 export const listByStatus = internalQuery({
@@ -370,6 +391,31 @@ export const listRuns = internalQuery({
       )
       .order("desc")
       .take(limit ?? 20);
+  },
+});
+
+/**
+ * Deletes one bounded batch of a cron job's run history. The caller repeats
+ * until it returns less than `limit`, so a long-lived job's history never has
+ * to fit in a single transaction.
+ */
+export const removeRuns = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.id("crons"),
+    limit: v.number(),
+  },
+  returns: v.number(),
+  handler: async (ctx, { accountId, cronId, limit }) => {
+    const runs = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", accountId).eq("cronId", cronId),
+      )
+      .take(limit);
+    for (const run of runs) await ctx.db.delete(run._id);
+
+    return runs.length;
   },
 });
 

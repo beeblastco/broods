@@ -3074,6 +3074,8 @@ components:
           $ref: "#/components/schemas/SkillsConfig"
         subagent:
           $ref: "#/components/schemas/SubagentConfig"
+        scheduler:
+          $ref: "#/components/schemas/SchedulerConfig"
         policy:
           $ref: "#/components/schemas/AgentPolicyConfig"
         publicAccess:
@@ -3602,6 +3604,13 @@ components:
           items:
             type: string
           description: Account-scoped skill paths (e.g., `acct_.../support-flow`)
+
+    SchedulerConfig:
+      type: object
+      description: When enabled, the runtime exposes `schedule_task`, `list_scheduled_tasks`, and `cancel_scheduled_task`, which manage cron jobs for this agent bound to the calling conversation. Off by default.
+      properties:
+        enabled:
+          type: boolean
 
     SubagentConfig:
       type: object

@@ -33,6 +33,15 @@ export interface CronRecord {
   lastError?: string;
 }
 
+/**
+ * Public cron shape the config plane returns from create/update. It withholds
+ * the EventBridge Scheduler names a stored record carries.
+ */
+export type CronSummary = Omit<
+  CronRecord,
+  "schedulerName" | "schedulerGroupName"
+>;
+
 export interface CronRunRecord {
   accountId: string;
   cronId: string;
@@ -98,6 +107,15 @@ export interface NormalizedCronUpdate {
   scheduleExpression?: string;
   timezone?: string | null;
   status?: CronStatus;
+}
+
+/**
+ * Whether a schedule fires exactly once. EventBridge deletes such a schedule
+ * itself once it has run, so the stored job is dropped with it. Mirrored in
+ * packages/convex/model/cronRules.ts.
+ */
+export function isOneTimeSchedule(expression: string): boolean {
+  return expression.startsWith("at(");
 }
 
 export function isCronsConfigured(): boolean {
