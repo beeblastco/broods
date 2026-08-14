@@ -8,7 +8,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 
-export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60;
+export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 // Expired rows are dead weight, not a security boundary — redeeming always
 // re-checks expiresAt. One bounded sweep per mint keeps the table from growing.

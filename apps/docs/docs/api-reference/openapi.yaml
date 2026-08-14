@@ -1749,7 +1749,7 @@ paths:
                 expiresInSeconds:
                   type: integer
                   minimum: 1
-                  maximum: 604800
+                  maximum: 2592000
                   default: 86400
       responses:
         "200":
