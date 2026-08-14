@@ -745,6 +745,9 @@ async function handleAsyncWorkerRequest(
 ): Promise<void> {
   let session: Session | undefined;
   let transferred = false;
+  // Scoped to the whole request so the catch below can tell a throw that
+  // follows a terminal result from one that replaces it.
+  let didSettle = false;
   try {
     await createPendingAsyncAgentResult({
       eventId: event.asyncResultEventId ?? event.eventId,
@@ -771,7 +774,6 @@ async function handleAsyncWorkerRequest(
       return;
     }
 
-    let didSettle = false;
     let terminalSettled = false;
     let result: Awaited<ReturnType<typeof runAgentLoopUntilSubagentsIdle>>;
     result = await runAgentLoopUntilSubagentsIdle(
@@ -888,9 +890,13 @@ async function handleAsyncWorkerRequest(
       event,
       err instanceof Error ? err.message : "Async request failed",
     );
-    await settleCronRun(event.accountId, event.cronRun, {
-      error: err instanceof Error ? err.message : "Async request failed",
-    });
+    // A throw after the run already settled must not overwrite its recorded
+    // outcome — and for a one-time job the run row is gone with the cron.
+    if (!didSettle) {
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: err instanceof Error ? err.message : "Async request failed",
+      });
+    }
     throw err;
   } finally {
     if (session && !transferred) {
