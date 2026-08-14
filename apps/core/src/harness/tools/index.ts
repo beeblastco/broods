@@ -67,6 +67,7 @@ import {
   cancelScheduleTool,
   listSchedulesTool,
   scheduleTool,
+  updateScheduleTool,
   type ScheduleContext,
 } from "./schedule.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
@@ -295,8 +296,9 @@ export async function createTools(
   }
 
   // schedule writes a cron bound to this conversation, so a scheduled run
-  // resumes the same session and replies wherever this one does. list/cancel
-  // reach every task of this agent, whichever conversation created it.
+  // resumes the same session and replies wherever this one does.
+  // list/update/cancel reach every task of this agent, whichever conversation
+  // created it.
   if (
     agentConfig.scheduler?.enabled === true &&
     context.accountId &&
@@ -318,6 +320,7 @@ export async function createTools(
       cancelScheduleTool(scheduledTaskContext),
       listSchedulesTool(scheduledTaskContext),
       scheduleTool(scheduledTaskContext),
+      updateScheduleTool(scheduledTaskContext),
     );
   }
 

@@ -86,6 +86,7 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "read",
   "run_subagent",
   "schedule",
+  "update_schedule",
   "write",
 ]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;

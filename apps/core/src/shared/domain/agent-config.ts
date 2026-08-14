@@ -96,6 +96,7 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "read",
   "run_subagent",
   "schedule",
+  "update_schedule",
   "write",
 ]);
 

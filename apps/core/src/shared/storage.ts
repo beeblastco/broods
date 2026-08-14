@@ -15,6 +15,7 @@ import type {
   CronRecord,
   CronRunRecord,
   CronSummary,
+  UpdateCronInput,
 } from "./domain/cron.ts";
 import type { SandboxConfigRecord } from "./domain/sandbox-config.ts";
 import type { WorkspaceConfigRecord } from "./domain/workspace-config.ts";
@@ -146,6 +147,14 @@ interface CronStore {
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
+  // Patches the EventBridge schedule before the row, so a rejected expression
+  // leaves the stored job untouched. Null means the job is gone: either it
+  // never existed, or it was deleted while the patch was in flight.
+  update(
+    accountId: string,
+    cronId: string,
+    patch: UpdateCronInput,
+  ): Promise<CronSummary | null>;
   markStarted(accountId: string, cronId: string): Promise<void>;
   markCompleted(accountId: string, cronId: string): Promise<void>;
   markFailed(accountId: string, cronId: string, error: string): Promise<void>;
