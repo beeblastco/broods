@@ -2197,8 +2197,8 @@ async function startScheduledAgentRun(
 }
 
 /**
- * Best effort: a throw here would cost the run its reply, while a stranded row
- * is recoverable from the dashboard or by `awsCrons:sweepSpentCrons`.
+ * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
+ * throw here would cost the run its reply.
  */
 async function removeOneShotCron(
   accountId: string,

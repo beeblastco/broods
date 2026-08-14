@@ -14,10 +14,8 @@ import { randomBytes } from "node:crypto";
 import {
   CreateScheduleCommand,
   DeleteScheduleCommand,
-  ListSchedulesCommand,
   ResourceNotFoundException,
   UpdateScheduleCommand,
-  type ListSchedulesCommandOutput,
 } from "@aws-sdk/client-scheduler";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -35,8 +33,6 @@ import {
 // Run rows are deleted with their cron in batches: a long-lived job can hold
 // more history than one Convex transaction may touch.
 const CRON_RUN_DELETE_BATCH_SIZE = 100;
-// How many cron rows one maintenance sweep reads.
-const CRON_SWEEP_SCAN_LIMIT = 1000;
 
 /**
  * Resolved EventBridge Scheduler target configuration from the deployment
@@ -235,126 +231,6 @@ export const remove = internalAction({
     return true;
   },
 });
-
-/**
- * Retire cron jobs that can never fire again, and the schedules no job owns.
- * Three kinds of litter, all from before one-time jobs cleaned up after
- * themselves: a spent `at(...)` job, a job whose agent was deleted, and an
- * EventBridge schedule whose row is gone. Defaults to a dry run — pass
- * `dryRun: false` to actually delete.
- * @param dryRun false to delete; anything else only reports
- * @param limit how many cron rows to scan
- * @returns counts per kind, and whether the scan saw every row
- */
-export const sweepSpentCrons = internalAction({
-  args: { dryRun: v.optional(v.boolean()), limit: v.optional(v.number()) },
-  returns: v.object({
-    scanned: v.number(),
-    spentOneTime: v.number(),
-    missingAgent: v.number(),
-    orphanSchedules: v.number(),
-    complete: v.boolean(),
-  }),
-  handler: async (ctx, args) => {
-    const limit = args.limit ?? CRON_SWEEP_SCAN_LIMIT;
-    const crons: Doc<"crons">[] = await ctx.runQuery(internal.cron.listAll, {
-      limit: limit,
-    });
-    const complete = crons.length < limit;
-    const remaining = new Set<string>();
-    // Many jobs share one agent, and an agent id is never reused, so one read
-    // per agent answers the whole scan.
-    const agentExists = new Map<string, boolean>();
-    let spentOneTime = 0;
-    let missingAgent = 0;
-
-    for (const cron of crons) {
-      const spent =
-        isOneTimeSchedule(cron.scheduleExpression) &&
-        cron.lastInvokedAt !== undefined;
-      // A spent job goes either way, so its agent never has to be read.
-      if (!spent) {
-        let exists = agentExists.get(cron.agentId);
-        if (exists === undefined) {
-          exists =
-            (await ctx.runQuery(internal.agents.getById, {
-              accountId: cron.accountId,
-              agentId: cron.agentId,
-            })) !== null;
-          agentExists.set(cron.agentId, exists);
-        }
-        if (exists) {
-          remaining.add(cron.schedulerName);
-          continue;
-        }
-      }
-      if (spent) spentOneTime += 1;
-      else missingAgent += 1;
-      if (args.dryRun === false) await deleteCronEverywhere(ctx, cron);
-      else remaining.add(cron.schedulerName);
-    }
-
-    return {
-      scanned: crons.length,
-      spentOneTime: spentOneTime,
-      missingAgent: missingAgent,
-      // A truncated scan cannot tell an orphan schedule from one whose row it
-      // never read, and deleting on that guess would kill live jobs.
-      orphanSchedules: complete
-        ? await sweepOrphanSchedules(ctx, remaining, args.dryRun === false)
-        : 0,
-      complete: complete,
-    };
-  },
-});
-
-/**
- * Delete every schedule in the group that no cron row names. The caller must
- * have read every cron row first.
- * @param remaining scheduler names still owned by a cron row
- * @param apply false to only count
- * @returns how many schedules were orphaned
- */
-async function sweepOrphanSchedules(
-  ctx: ActionCtx,
-  remaining: Set<string>,
-  apply: boolean,
-): Promise<number> {
-  const target = schedulerTargetEnv();
-  const scheduler = await schedulerClient();
-  let nextToken: string | undefined = undefined;
-  let orphans = 0;
-
-  do {
-    const page: ListSchedulesCommandOutput = await scheduler.send(
-      new ListSchedulesCommand({
-        GroupName: target.groupName,
-        ...(nextToken ? { NextToken: nextToken } : {}),
-      }),
-    );
-    for (const schedule of page.Schedules ?? []) {
-      if (!schedule.Name || remaining.has(schedule.Name)) continue;
-      // A cron created after the row scan is missing from `remaining`, so read
-      // the row again: without this the sweep deletes a live job's schedule.
-      const owner = await ctx.runQuery(internal.cron.getBySchedulerName, {
-        schedulerName: schedule.Name,
-      });
-      if (owner) continue;
-      orphans += 1;
-      if (apply) {
-        await scheduler.send(
-          new DeleteScheduleCommand({
-            Name: schedule.Name,
-            GroupName: target.groupName,
-          }),
-        );
-      }
-    }
-    nextToken = page.NextToken;
-  } while (nextToken);
-
-  return orphans;
-}
 
 /**
  * Remove one cron job everywhere it exists: its EventBridge schedule, its run
