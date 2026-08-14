@@ -15,6 +15,7 @@ import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { resolveActiveAccountForAuthId } from "./model/agentSync";
 import { isPlainObject } from "./model/objects";
+import { AGENT_POLICY_ACTIONS } from "./model/policyRules";
 import { agentPoliciesFields } from "./schema";
 
 const policyDoc = v.object({
@@ -27,14 +28,9 @@ const policyStatusValidator = v.union(
   v.literal("active"),
   v.literal("deleted"),
 );
-const POLICY_ACTIONS = new Set([
-  "tool.call",
-  "workspace.read",
-  "workspace.write",
-  "workspace.exec",
-  "subagent.run",
-  "skill.load",
-]);
+// Sourced from the CRUD normalizer rather than restated: this copy had gone
+// stale and silently refused every `agent.invoke` rule the runtime supports.
+const POLICY_ACTIONS = new Set<string>(AGENT_POLICY_ACTIONS);
 
 /**
  * Lists active policies for a project stage.
