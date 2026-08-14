@@ -8,6 +8,7 @@
 
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isRootSpanKind } from "../../../../packages/broods/src/observability-contracts";
 import type {
   LogLevel,
   ObservabilityClientMessage,
@@ -17,6 +18,7 @@ import type {
 } from "../../../../packages/broods/src/observability-contracts";
 
 // Re-export for consumers.
+export { isRootSpanKind };
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
 export type ObservabilityStreamStatus =

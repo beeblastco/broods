@@ -38,6 +38,12 @@ This keeps the add-on small. Developers who need custom workflow code can deploy
 
 A cron never reaches a conversation belonging to another account or agent, and a run that arrives while the conversation is mid-turn is skipped and recorded as a failed run rather than interleaved.
 
+### What A Fired Run Sees
+
+The stored instructions arrive as a user turn that nobody typed, so the runtime frames them before the model reads them: the first user message is prefixed with the task name, the schedule and its timezone, the instant the scheduler fired, when the task was set up, whether it fires again, and the fact that nobody is sitting in the conversation waiting on a reply. The instructions themselves are passed through untouched. Its trace root is `agent.cron`, not `agent.task`, and the log line for the dispatch carries `dispatchLagMs` — how long the Scheduler → event bus → API destination → gateway hops took, so a late answer can be attributed to the pipeline or to the run itself.
+
+A fired run carries **no scheduling tools at all** — not `schedule`, `update_schedule`, `list_schedules`, or `cancel_schedule` — however the agent is configured. A model reading its own stored instructions takes them for a fresh request, so every one of those tools is a way for it to act on the schedule it is currently running. A subagent dispatched by a fired run inherits the same restriction. Scheduling stays with the turns a person actually asked for.
+
 ## Code-First Configuration
 
 Define cron jobs as resources alongside your agents:
@@ -109,7 +115,7 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 
 A one-time `at(...)` job is **self-deleting**: EventBridge drops the schedule as soon as it has fired, and the runtime deletes the cron job and its run history once that single run settles. `GET /v1/crons/{cronId}` returns 404 from then on, so read the result through the conversation or the async status API rather than the job. Recurring jobs are never deleted on their own.
 
-`timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. This only controls schedule evaluation; it is not injected into the agent prompt.
+`timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. It controls schedule evaluation, and the fired run is told which timezone its schedule was read in — it never changes how the agent itself is configured.
 
 Pause a job:
 
@@ -159,6 +165,8 @@ Both recurring and one-time schedules are accepted, so "every weekday at 9" and 
 `update_schedule` changes only the fields it is given, so "make that 10am instead" retimes a job without restating its instructions. Setting `status` to `paused` stops a job firing while keeping it and its history; `active` resumes it. That is the difference from `cancel_schedule`, which is permanent.
 
 Instructions are the one field `update_schedule` will not change from anywhere. A job answers in the conversation that created it, so rewriting its instructions from a second conversation would put text of the model's choosing into a conversation the current turn is not in — which `schedule` itself cannot do, since it always binds to the calling conversation. Renaming, retiming and pausing carry no such content and work from any conversation; an instruction rewrite has to come from the one the job answers in. `list_schedules` reports each job's `conversationKey` so the model can tell which that is.
+
+Turning the scheduler on also gives the agent a clock: one `<scheduler>` system message per run carrying the current UTC instant, so "8:45 tonight" resolves against a real time instead of a guessed date. A schedule counts as set only once the tool has returned, and `list_schedules` — not the conversation — is what is actually pending.
 
 Withhold any of them from one channel with `denyTools: ["cancel_schedule"]` (or the other names) on that channel record.
 

@@ -248,6 +248,32 @@ export function applyCronPatch(
   };
 }
 
+/**
+ * Frames a fired job's stored instructions for the model. They arrive as a user
+ * turn nobody typed, so the first user message says what fired and when.
+ */
+export function withScheduledRunContext(
+  job: CronRecord,
+  firedAt: Date,
+): ModelMessage[] {
+  const header = scheduledRunHeader(job, firedAt);
+  let framed = false;
+  const events = job.events.map((event): ModelMessage => {
+    if (framed || event.role !== "user") return event;
+    framed = true;
+
+    return {
+      ...event,
+      content:
+        typeof event.content === "string"
+          ? `${header}\n\n${event.content}`
+          : [{ type: "text", text: header }, ...event.content],
+    };
+  });
+
+  return framed ? events : [{ role: "user", content: header }, ...events];
+}
+
 /** Collapses a one-of `input`/`events` payload into the stored events list. */
 function runPayloadToEvents(payload: {
   input?: unknown;
@@ -312,6 +338,23 @@ function normalizeTimezone(value: unknown): string {
 function normalizeCronStatus(value: unknown): CronStatus {
   if (value === "active" || value === "paused") return value;
   throw new Error("status must be active or paused");
+}
+
+function scheduledRunHeader(job: CronRecord, firedAt: Date): string {
+  const attributes = [
+    `name="${job.name}"`,
+    `schedule="${job.scheduleExpression}"`,
+    ...(job.timezone ? [`timezone="${job.timezone}"`] : []),
+  ].join(" ");
+  const cadence = isOneTimeSchedule(job.scheduleExpression)
+    ? "This was a one-time task: it is spent now and will not fire again."
+    : "It keeps firing on this schedule until someone cancels it.";
+
+  return `<scheduled-task ${attributes}>
+The scheduler started this run at ${firedAt.toISOString()}. The instructions below are the ones stored when the task was set up on ${job.createdAt} — nobody typed them just now, and nobody is waiting on a prompt. Carry them out, then answer in this conversation the way you normally would.
+${job.description ? `Why it exists: ${job.description}\n` : ""}${cadence}
+A scheduled run has no scheduling tools at all: it cannot list, create, change, or cancel a schedule. Say what needs changing and leave it to the next person who asks.
+</scheduled-task>`;
 }
 
 function requireString(

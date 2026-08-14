@@ -950,6 +950,16 @@ describe("createTools", () => {
     });
   });
 
+  it("withholds every schedule tool from a run the scheduler started", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    expect(
+      await createTools(schedulerToolContext({ trigger: "cron" }), {
+        scheduler: { enabled: true },
+      }),
+    ).toEqual({});
+  });
+
   it("schedules a one-time task and rejects a malformed expression", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const create = mock(async function (): Promise<CronSummary> {
@@ -1262,11 +1272,13 @@ function createToolContext(
 }
 
 /** Tool context for a Slack-scoped session that may schedule tasks. */
-function schedulerToolContext(): Omit<ToolContext, "config"> {
+function schedulerToolContext(
+  session: Partial<Session> = {},
+): Omit<ToolContext, "config"> {
   return {
     ...createToolContext(),
     conversationKey: "acct:acct_test:agent:agent_test:slack:T1:C1",
-    session: { agentId: "agent_test" } as unknown as Session,
+    session: { agentId: "agent_test", ...session } as unknown as Session,
   };
 }
 

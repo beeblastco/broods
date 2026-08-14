@@ -587,6 +587,7 @@ function spanKind(name: string): ObservabilitySpanRow["kind"] {
   if (name === "tool.call") return "tool.call";
   if (name.startsWith("phase.")) return "phase";
   if (name === "agent.subtask") return "subtask";
+  if (name === "agent.cron") return "cron";
 
   return "task";
 }
