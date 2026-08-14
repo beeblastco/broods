@@ -511,7 +511,7 @@ function createGitHubActions(
       await github.startTyping(source.threadId);
     },
 
-    supportsReactions: true,
+    supportsReactions: Boolean(source.messageId),
     reactToMessage: async function(emoji) {
       if (!source.messageId) {
         return;

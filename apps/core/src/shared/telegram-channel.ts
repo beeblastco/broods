@@ -19,6 +19,7 @@ import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
+const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 
 export interface TelegramSource {
   chatId: number;
@@ -184,22 +185,31 @@ async function callTelegramBotApi(
   method: "sendSticker",
   body: Record<string, unknown>,
 ): Promise<void> {
-  const response = await fetch(
-    `${(apiUrl ?? "https://api.telegram.org").replace(/\/+$/, "")}/bot${botToken}/${method}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-  const result = (await response.json()) as {
-    ok?: boolean;
-    description?: string;
-  };
-  if (!response.ok || result.ok !== true) {
-    throw new Error(
-      `Telegram ${method} failed (${response.status}): ${result.description ?? "unknown error"}`,
+  const controller = new AbortController();
+  const timeout = setTimeout((): void => {
+    controller.abort();
+  }, TELEGRAM_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `${(apiUrl ?? "https://api.telegram.org").replace(/\/+$/, "")}/bot${botToken}/${method}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      },
     );
+    const result = (await response.json()) as {
+      ok?: boolean;
+      description?: string;
+    };
+    if (!response.ok || result.ok !== true) {
+      throw new Error(
+        `Telegram ${method} failed (${response.status}): ${result.description ?? "unknown error"}`,
+      );
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

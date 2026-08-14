@@ -392,7 +392,7 @@ function createDiscordActions(
       await discord.startTyping(threadId);
     },
 
-    supportsReactions: true,
+    supportsReactions: typeof source.messageId === "string",
     reactToMessage: async function(emoji) {
       if (typeof source.messageId !== "string") {
         return;

@@ -421,6 +421,10 @@ describe("slack channel actions", () => {
     const stickerBody = Object.fromEntries(
       new URLSearchParams(String(fetchMock.calls[2]!.init?.body)),
     );
+    expect(stickerBody).toMatchObject({
+      channel: "C1",
+      thread_ts: "1713916800.000001",
+    });
     expect(JSON.parse(stickerBody.blocks!)).toEqual([
       {
         type: "image",
@@ -457,6 +461,66 @@ describe("slack channel actions", () => {
     expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
       text: "```\nName  | Value\n------|------\nAlpha | Beta\n```",
       response_type: "in_channel",
+    });
+  });
+
+  it("keeps Slack image and sticker tools on the slash-command response URL", async () => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      new Response("", { status: 200 }),
+      new Response("", { status: 200 }),
+      new Response("", { status: 200 }),
+    );
+    const responseUrl = "https://hooks.slack.test/response";
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+    ).actions(
+      createMessage({
+        teamId: "T1",
+        channelId: "C1",
+        responseUrl: responseUrl,
+      }),
+    );
+
+    await actions.sendImage?.("https://cdn.example.com/chart.png", "Chart");
+    await actions.sendSticker?.("party_parrot");
+    await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
+
+    expect(fetchMock.calls.map((call) => toUrl(call.input))).toEqual([
+      responseUrl,
+      responseUrl,
+      responseUrl,
+    ]);
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+      text: "Chart",
+      response_type: "in_channel",
+      blocks: [
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: "Chart" },
+        },
+        {
+          type: "image",
+          image_url: "https://cdn.example.com/chart.png",
+          alt_text: "Chart",
+        },
+      ],
+    });
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      text: ":party_parrot:",
+      response_type: "in_channel",
+    });
+    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toMatchObject({
+      response_type: "in_channel",
+      blocks: [
+        {
+          type: "image",
+          image_url: "https://cdn.example.com/sticker.gif",
+          alt_text: "Sticker",
+        },
+      ],
     });
   });
 

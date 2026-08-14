@@ -649,10 +649,12 @@ async function resolveSlackUserName(
 async function sendSlackWebhookResponse(
   url: string,
   text: string,
+  blocks?: unknown[],
 ): Promise<void> {
   try {
     await sendSlackResponseUrl(url, {
       text: text,
+      ...(blocks ? { blocks: blocks } : {}),
       responseType: "in_channel",
     });
   } catch (err) {
@@ -738,6 +740,11 @@ function createSlackActions(
       const text = /^[a-z0-9_+-]+$/i.test(emojiName)
         ? `:${emojiName}:`
         : value;
+      if (source.responseUrl) {
+        await sendSlackWebhookResponse(source.responseUrl, text);
+
+        return;
+      }
       await postSlackMessage({
         token: botToken,
         apiUrl: apiUrl,
@@ -772,7 +779,7 @@ function createSlackActions(
       return;
     },
 
-    supportsReactions: true,
+    supportsReactions: Boolean(source.messageTs),
     reactToMessage: async function(emoji) {
       if (!source.messageTs) {
         return;
@@ -819,12 +826,19 @@ async function postSlackCard(
   source: SlackSource,
   card: CardElement,
 ): Promise<void> {
+  const text = cardToFallbackText(card) || "Image";
+  const blocks = cardToBlockKit(card);
+  if (source.responseUrl) {
+    await sendSlackWebhookResponse(source.responseUrl, text, blocks);
+
+    return;
+  }
   await postSlackMessage({
     token: botToken,
     apiUrl: apiUrl,
     channel: source.channelId,
-    text: cardToFallbackText(card) || "Image",
-    blocks: cardToBlockKit(card),
+    text: text,
+    blocks: blocks,
     threadTs: source.threadTs,
     unfurlLinks: false,
     unfurlMedia: false,

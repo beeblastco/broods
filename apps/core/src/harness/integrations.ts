@@ -1048,8 +1048,22 @@ function channelReplySource(
 function channelRuntimeAgentConfig(
   target: { agent: AgentRecord; record?: ChannelRecord },
   channelName: string,
+  credentialHolderConfig: AgentConfig,
 ): AgentConfig {
-  const config = toChannelRuntimeAgentConfig(target.agent.config, channelName);
+  const targetConfig = toChannelRuntimeAgentConfig(
+    target.agent.config,
+    channelName,
+  );
+  const credentialChannel = credentialHolderConfig.channels?.[channelName];
+  const config = credentialChannel
+    ? {
+        ...targetConfig,
+        channels: {
+          ...targetConfig.channels,
+          [channelName]: credentialChannel,
+        },
+      }
+    : targetConfig;
 
   return target.record
     ? applyChannelRecord(config, target.record, channelName)
@@ -1234,7 +1248,11 @@ async function handleChannelWebhook(
             source: message.source,
             accountId: account.accountId,
             agentId: target.agent.agentId,
-            agentConfig: channelRuntimeAgentConfig(target, message.channelName),
+            agentConfig: channelRuntimeAgentConfig(
+              target,
+              message.channelName,
+              agent.config,
+            ),
             ...(targetDeployment
               ? {
                   endpointId: targetDeployment.endpointId,
@@ -1304,7 +1322,11 @@ async function handleChannelWebhook(
     });
 
     const identity = identityWithChannelRoles(message.identity, target.record);
-    const targetConfig = channelRuntimeAgentConfig(target, message.channelName);
+    const targetConfig = channelRuntimeAgentConfig(
+      target,
+      message.channelName,
+      agent.config,
+    );
     const refusal = await refuseChannelInvoke(
       targetConfig,
       account,
