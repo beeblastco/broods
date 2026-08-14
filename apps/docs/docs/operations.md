@@ -300,7 +300,7 @@ sweep what earlier versions left behind. Both default to reporting only.
 
 ```bash
 # Run rows whose cron job is already deleted. Repeat with the returned cursor
-# until isDone, dropping dryRun to actually delete.
+# until isDone, then re-run with '{"dryRun": false}' to actually delete.
 bunx convex run migrations:deleteOrphanedCronRuns '{"dryRun": true}'
 
 # Cron jobs that can never fire again — a spent at(...) job, or one whose agent

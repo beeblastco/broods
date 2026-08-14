@@ -762,11 +762,15 @@ async function handleAsyncWorkerRequest(
     ({ session } = turn);
     const { turnContext } = turn;
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
+      didSettle = true;
       await settleAsyncFailure(
         event,
         "Request did not produce pending model input",
       );
       await session.settleIngress("failed", {
+        error: "Request did not produce pending model input",
+      });
+      await settleCronRun(event.accountId, event.cronRun, {
         error: "Request did not produce pending model input",
       });
       transferred = await dispatchNextIngress(session, event);
@@ -850,6 +854,7 @@ async function handleAsyncWorkerRequest(
     );
 
     if (result.didFail && !didSettle) {
+      didSettle = true;
       terminalSettled = true;
       await session
         .settleIngress("failed", {
@@ -2192,8 +2197,8 @@ async function startScheduledAgentRun(
 }
 
 /**
- * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
- * throw here would cost the run its reply.
+ * Best effort: a throw here would cost the run its reply, while a stranded row
+ * is recoverable from the dashboard or by `awsCrons:sweepSpentCrons`.
  */
 async function removeOneShotCron(
   accountId: string,

@@ -86,12 +86,26 @@ describe("deleteOrphanedCronRuns", () => {
     ).toHaveLength(3);
   });
 
-  test("deletes only the runs whose cron is gone", async () => {
+  test("keeps every run when dryRun is left out", async () => {
     const tt = t();
     await seed(tt);
 
     expect(
       await tt.mutation(internal.migrations.deleteOrphanedCronRuns, {}),
+    ).toMatchObject({ orphaned: 2, isDone: true });
+    expect(
+      await tt.run(async (ctx) => await ctx.db.query("cronRuns").collect()),
+    ).toHaveLength(3);
+  });
+
+  test("deletes only the runs whose cron is gone", async () => {
+    const tt = t();
+    await seed(tt);
+
+    expect(
+      await tt.mutation(internal.migrations.deleteOrphanedCronRuns, {
+        dryRun: false,
+      }),
     ).toMatchObject({ orphaned: 2, isDone: true });
     const left = await tt.run(
       async (ctx) => await ctx.db.query("cronRuns").collect(),

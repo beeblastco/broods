@@ -269,13 +269,16 @@ export const sweepSpentCrons = internalAction({
       const spent =
         isOneTimeSchedule(cron.scheduleExpression) &&
         cron.lastInvokedAt !== undefined;
-      const agent = await ctx.runQuery(internal.agents.getById, {
-        accountId: cron.accountId,
-        agentId: cron.agentId,
-      });
-      if (!spent && agent) {
-        remaining.add(cron.schedulerName);
-        continue;
+      // A spent job goes either way, so its agent never has to be read.
+      if (!spent) {
+        const agent = await ctx.runQuery(internal.agents.getById, {
+          accountId: cron.accountId,
+          agentId: cron.agentId,
+        });
+        if (agent) {
+          remaining.add(cron.schedulerName);
+          continue;
+        }
       }
       if (spent) spentOneTime += 1;
       else missingAgent += 1;
@@ -290,7 +293,7 @@ export const sweepSpentCrons = internalAction({
       // A truncated scan cannot tell an orphan schedule from one whose row it
       // never read, and deleting on that guess would kill live jobs.
       orphanSchedules: complete
-        ? await sweepOrphanSchedules(remaining, args.dryRun === false)
+        ? await sweepOrphanSchedules(ctx, remaining, args.dryRun === false)
         : 0,
       complete: complete,
     };
@@ -305,6 +308,7 @@ export const sweepSpentCrons = internalAction({
  * @returns how many schedules were orphaned
  */
 async function sweepOrphanSchedules(
+  ctx: ActionCtx,
   remaining: Set<string>,
   apply: boolean,
 ): Promise<number> {
@@ -322,6 +326,12 @@ async function sweepOrphanSchedules(
     );
     for (const schedule of page.Schedules ?? []) {
       if (!schedule.Name || remaining.has(schedule.Name)) continue;
+      // A cron created after the row scan is missing from `remaining`, so read
+      // the row again: without this the sweep deletes a live job's schedule.
+      const owner = await ctx.runQuery(internal.cron.getBySchedulerName, {
+        schedulerName: schedule.Name,
+      });
+      if (owner) continue;
       orphans += 1;
       if (apply) {
         await scheduler.send(
