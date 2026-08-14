@@ -58,13 +58,8 @@ export async function resolveActiveAccountForAuthId(
  * Idempotent: if `agentId` is already set and the row it names belongs to the
  * owning account, this returns it unchanged.
  *
- * `accountId` names that owning account explicitly, and callers that already
- * authenticated as one must pass it. The caller's active org is dashboard
- * state that can name a different account than the credential just used, which
- * would file the agent under a tenant that owns neither the project nor the
- * runtime key that invokes it — the harness then looks the agent up under the
- * project's account and finds nothing. Dashboard callers, whose active org is
- * the credential, omit it.
+ * Callers that authenticated as an account must pass `accountId`: the active
+ * org is dashboard state and can name a different tenant than the credential.
  */
 export async function ensureAgentsRowForConfig(
   ctx: MutationCtx,

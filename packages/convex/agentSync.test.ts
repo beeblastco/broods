@@ -513,4 +513,74 @@ describe("ensureAgentsRowForConfig", () => {
       expect(agent?.accountId).toBe(personal.accountId);
     });
   });
+
+  test("recreates an agent already mis-filed under another account", async () => {
+    const tt = t();
+    const personal = await seedOrg(tt, {
+      orgName: "personal",
+      slug: "personal",
+      username: "personal-account",
+      email: "owner@example.com",
+    });
+    const beeblast = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+
+    const seeded = await tt.run(async (ctx) => {
+      const now = Date.now();
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner@example.com",
+        orgId: personal.orgId,
+        name: "sched-test",
+        slug: "sched-test",
+        updatedAt: now,
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: "auth_owner@example.com",
+        projectId: projectId,
+        name: "development",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: now,
+      });
+      // The row an earlier, pre-fix sync left under the wrong tenant.
+      const strayAgentId = await ctx.db.insert("agents", {
+        accountId: beeblast.accountId,
+        name: "scheduled-task-agent",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const configId = await ctx.db.insert("agentConfigs", {
+        authId: "auth_owner@example.com",
+        name: "scheduled-task-agent",
+        agentId: strayAgentId,
+        projectId: projectId,
+        stageId: stageId,
+        updatedAt: now,
+      });
+
+      return { configId: configId, strayAgentId: strayAgentId };
+    });
+
+    const agentId = await tt.run(async (ctx) =>
+      ensureAgentsRowForConfig(
+        ctx,
+        seeded.configId,
+        "auth_owner@example.com",
+        personal.accountId,
+      ),
+    );
+
+    expect(agentId).not.toBe(seeded.strayAgentId);
+    await tt.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId!);
+      expect(agent?.accountId).toBe(personal.accountId);
+      // The config now points at the replacement, not the stray row.
+      const config = await ctx.db.get(seeded.configId);
+      expect(config?.agentId).toBe(agentId);
+    });
+  });
 });
