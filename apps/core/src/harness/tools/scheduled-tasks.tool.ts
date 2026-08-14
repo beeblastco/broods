@@ -41,9 +41,69 @@ interface ScheduledTaskSummary {
   lastInvokedAt?: string;
 }
 
-export default function scheduledTaskTools(
+export function cancelScheduledTaskTool(
   context: ScheduledTaskContext,
 ): ToolSet {
+  return {
+    cancel_scheduled_task: tool({
+      description:
+        "Cancels one of your scheduled tasks for good, by the cronId that schedule_task or list_scheduled_tasks reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
+      inputSchema: jsonSchema<CancelScheduledTaskInput>({
+        type: "object",
+        properties: {
+          cronId: {
+            type: "string",
+            minLength: 1,
+            description: "Id of the scheduled task to cancel.",
+          },
+        },
+        required: ["cronId"],
+        additionalProperties: false,
+      }),
+      execute: async function (input): Promise<string> {
+        const cronId = input.cronId.trim();
+        // A malformed id is a rejected argument in the config plane, not a
+        // miss, so treat any lookup failure as "no such task".
+        const existing = await getStorage()
+          .crons.getById(context.accountId, cronId)
+          .catch(() => null);
+        if (!existing || existing.agentId !== context.agentId) {
+          return toolError(`No scheduled task ${cronId} belongs to this agent`);
+        }
+        await getStorage().crons.remove(context.accountId, cronId);
+
+        return toolText(
+          `Cancelled scheduled task '${existing.name}' (${cronId}).`,
+        );
+      },
+    }),
+  };
+}
+
+export function listScheduledTasksTool(context: ScheduledTaskContext): ToolSet {
+  return {
+    list_scheduled_tasks: tool({
+      description:
+        "Lists every scheduled task you own, including ones scheduled from other conversations and ones an account owner created for you. `conversationKey` tells you where each task answers.",
+      inputSchema: jsonSchema<Record<string, never>>({
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      }),
+      execute: async function (): Promise<{ tasks: ScheduledTaskSummary[] }> {
+        const crons = await getStorage().crons.list(context.accountId);
+
+        return {
+          tasks: crons
+            .filter((cron) => cron.agentId === context.agentId)
+            .map(toScheduledTaskSummary),
+        };
+      },
+    }),
+  };
+}
+
+export function scheduleTaskTool(context: ScheduledTaskContext): ToolSet {
   return {
     schedule_task: tool({
       description:
@@ -99,58 +159,6 @@ export default function scheduledTaskTools(
           `Scheduled task '${created.name}' (${created.cronId}) on ${created.scheduleExpression}${
             created.timezone ? ` in ${created.timezone}` : " in UTC"
           }. It runs in this conversation.`,
-        );
-      },
-    }),
-
-    list_scheduled_tasks: tool({
-      description:
-        "Lists every scheduled task you own, including ones scheduled from other conversations and ones an account owner created for you. `conversationKey` tells you where each task answers.",
-      inputSchema: jsonSchema<Record<string, never>>({
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      }),
-      execute: async function (): Promise<{ tasks: ScheduledTaskSummary[] }> {
-        const crons = await getStorage().crons.list(context.accountId);
-
-        return {
-          tasks: crons
-            .filter((cron) => cron.agentId === context.agentId)
-            .map(toScheduledTaskSummary),
-        };
-      },
-    }),
-
-    cancel_scheduled_task: tool({
-      description:
-        "Cancels one of your scheduled tasks for good, by the cronId that schedule_task or list_scheduled_tasks reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
-      inputSchema: jsonSchema<CancelScheduledTaskInput>({
-        type: "object",
-        properties: {
-          cronId: {
-            type: "string",
-            minLength: 1,
-            description: "Id of the scheduled task to cancel.",
-          },
-        },
-        required: ["cronId"],
-        additionalProperties: false,
-      }),
-      execute: async function (input): Promise<string> {
-        const cronId = input.cronId.trim();
-        // A malformed id is a rejected argument in the config plane, not a
-        // miss, so treat any lookup failure as "no such task".
-        const existing = await getStorage()
-          .crons.getById(context.accountId, cronId)
-          .catch(() => null);
-        if (!existing || existing.agentId !== context.agentId) {
-          return toolError(`No scheduled task ${cronId} belongs to this agent`);
-        }
-        await getStorage().crons.remove(context.accountId, cronId);
-
-        return toolText(
-          `Cancelled scheduled task '${existing.name}' (${cronId}).`,
         );
       },
     }),

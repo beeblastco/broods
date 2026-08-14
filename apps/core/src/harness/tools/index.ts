@@ -63,7 +63,12 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import scheduledTaskTools from "./scheduled-tasks.tool.ts";
+import {
+  cancelScheduledTaskTool,
+  listScheduledTasksTool,
+  scheduleTaskTool,
+  type ScheduledTaskContext,
+} from "./scheduled-tasks.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
@@ -299,17 +304,20 @@ export async function createTools(
   ) {
     const accountId = context.accountId;
     const agentId = context.session.agentId;
+    const scheduledTaskContext: ScheduledTaskContext = {
+      accountId: accountId,
+      agentId: agentId,
+      conversationKey: publicConversationKeyFromScoped(
+        context.conversationKey,
+        accountId,
+        agentId,
+      ),
+    };
     Object.assign(
       tools,
-      scheduledTaskTools({
-        accountId: accountId,
-        agentId: agentId,
-        conversationKey: publicConversationKeyFromScoped(
-          context.conversationKey,
-          accountId,
-          agentId,
-        ),
-      }),
+      cancelScheduledTaskTool(scheduledTaskContext),
+      listScheduledTasksTool(scheduledTaskContext),
+      scheduleTaskTool(scheduledTaskContext),
     );
   }
 
