@@ -938,9 +938,17 @@ function channelToolContext(): ChannelToolContext {
     },
     channelName: "test",
     transformText: async function (text: string): Promise<string> {
+
       return text;
     },
   };
+}
+
+function isChannelTestTool(
+  candidate: ToolSet[string] | undefined,
+): candidate is ToolSet[string] & ChannelTestTool {
+
+  return typeof candidate?.execute === "function";
 }
 
 async function channelToolExecute(
@@ -957,12 +965,6 @@ async function channelToolExecute(
     messages: [],
     context: {},
   });
-}
-
-function isChannelTestTool(
-  candidate: ToolSet[string] | undefined,
-): candidate is ToolSet[string] & ChannelTestTool {
-  return typeof candidate?.execute === "function";
 }
 
 function storageWithAccountTool(accountTool: AccountToolRecord): Storage {

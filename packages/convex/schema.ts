@@ -848,7 +848,7 @@ export const runtimeConversationCoordinatorsFields = {
     v.object({
       agentConfig: v.any(),
       channelName: v.string(),
-      source: v.any(),
+      source: v.record(v.string(), v.any()),
     }),
   ),
   nextSequence: v.number(),
