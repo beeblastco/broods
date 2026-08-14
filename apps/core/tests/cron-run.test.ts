@@ -3,7 +3,7 @@
  * Cover which conversation a cron run resumes and where its answer is delivered.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import type { AgentRecord } from "../src/shared/domain/agents.ts";
 import type { CronRecord, CronRunRecord } from "../src/shared/domain/cron.ts";
@@ -35,14 +35,18 @@ const originalMutate = runtime.mutate;
 
 let channelTarget: typeof CHANNEL_TARGET | null;
 let conversationKey: string | undefined;
+let scheduleExpression: string;
 let admitted: Record<string, unknown>[];
 let failures: string[];
+let removed: string[];
 
 beforeEach(() => {
   channelTarget = null;
   conversationKey = undefined;
+  scheduleExpression = "cron(0 9 * * ? *)";
   admitted = [];
   failures = [];
+  removed = [];
   setStorageForTests({
     agents: {
       getById: async function (accountId: string, agentId: string) {
@@ -80,6 +84,14 @@ beforeEach(() => {
         error: string,
       ): Promise<void> {
         failures.push(error);
+      },
+      remove: async function (
+        _accountId: string,
+        cronId: string,
+      ): Promise<boolean> {
+        removed.push(cronId);
+
+        return true;
       },
     },
   } as unknown as Storage);
@@ -136,6 +148,89 @@ describe("handleScheduledCron", () => {
       "acct:acct_1:agent:agent_1:api:nightly-maintenance",
     );
     expect(admitted[0]?.delivery).toMatchObject({ kind: "async" });
+    expect(removed).toEqual([]);
+  });
+
+  it("retires a one-time job whose run could not even start", async () => {
+    scheduleExpression = "at(2027-01-01T09:00:00)";
+
+    await expect(invokeCron()).rejects.toThrow(
+      "Cron conversation is already processing another turn",
+    );
+    expect(removed).toEqual(["cron_1"]);
+  });
+});
+
+describe("settleCronRun", () => {
+  it("retires a one-time job once its run settles", async () => {
+    const { settleCronRun } = await import("../src/harness/handler.ts");
+    const completeRun = mock(async function (): Promise<void> {});
+    const remove = mock(async function (): Promise<boolean> {
+      return true;
+    });
+    setStorageForTests({
+      crons: { completeRun: completeRun, remove: remove },
+    } as unknown as Storage);
+
+    await settleCronRun(
+      "acct_1",
+      { cronId: "cron_1", runId: "run_1", oneShot: true },
+      { result: "done" },
+    );
+
+    expect(completeRun).toHaveBeenCalledWith(
+      "acct_1",
+      "cron_1",
+      "run_1",
+      "done",
+    );
+    expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
+  });
+
+  it("retires a one-time job whose run failed, and keeps a recurring one", async () => {
+    const { settleCronRun } = await import("../src/harness/handler.ts");
+    const failRun = mock(async function (): Promise<void> {});
+    const remove = mock(async function (): Promise<boolean> {
+      return true;
+    });
+    setStorageForTests({
+      crons: { failRun: failRun, remove: remove },
+    } as unknown as Storage);
+
+    await settleCronRun(
+      "acct_1",
+      { cronId: "cron_1", runId: "run_1", oneShot: true },
+      { error: "model refused" },
+    );
+    await settleCronRun(
+      "acct_1",
+      { cronId: "cron_2", runId: "run_2" },
+      { error: "model refused" },
+    );
+
+    expect(failRun).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith("acct_1", "cron_1");
+  });
+
+  it("keeps the run alive when the cleanup delete fails", async () => {
+    const { settleCronRun } = await import("../src/harness/handler.ts");
+    setStorageForTests({
+      crons: {
+        completeRun: async function (): Promise<void> {},
+        remove: async function (): Promise<boolean> {
+          throw new Error("scheduler unreachable");
+        },
+      },
+    } as unknown as Storage);
+
+    expect(
+      await settleCronRun(
+        "acct_1",
+        { cronId: "cron_1", runId: "run_1", oneShot: true },
+        { result: "done" },
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -147,7 +242,7 @@ function cron(): CronRecord {
     agentId: "agent_1",
     events: [{ role: "user", content: "Post the standup summary." }],
     ...(conversationKey ? { conversationKey: conversationKey } : {}),
-    scheduleExpression: "cron(0 9 * * ? *)",
+    scheduleExpression: scheduleExpression,
     status: "active",
     schedulerName: "acct_1-abc",
     schedulerGroupName: "broods-crons",

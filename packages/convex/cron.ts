@@ -373,6 +373,31 @@ export const listRuns = internalQuery({
   },
 });
 
+/**
+ * Deletes one bounded batch of a cron job's run history. The caller repeats
+ * until it returns less than `limit`, so a long-lived job's history never has
+ * to fit in a single transaction.
+ */
+export const removeRuns = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.id("crons"),
+    limit: v.number(),
+  },
+  returns: v.number(),
+  handler: async (ctx, { accountId, cronId, limit }) => {
+    const runs = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", accountId).eq("cronId", cronId),
+      )
+      .take(limit);
+    for (const run of runs) await ctx.db.delete(run._id);
+
+    return runs.length;
+  },
+});
+
 export const remove = internalMutation({
   args: {
     accountId: v.id("accounts"),

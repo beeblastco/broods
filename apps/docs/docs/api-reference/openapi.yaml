@@ -3607,7 +3607,7 @@ components:
 
     SchedulerConfig:
       type: object
-      description: When enabled, the runtime exposes `schedule_task`, which creates a recurring cron job for this agent bound to the calling conversation. Off by default.
+      description: When enabled, the runtime exposes `schedule_task`, `list_scheduled_tasks`, and `cancel_scheduled_task`, which manage cron jobs for this agent bound to the calling conversation. Off by default.
       properties:
         enabled:
           type: boolean

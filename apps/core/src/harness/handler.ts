@@ -13,7 +13,7 @@ import {
   toRuntimeAgentConfig,
   type AgentConfig,
 } from "../shared/domain/agent-config.ts";
-import type { CronRecord } from "../shared/domain/cron.ts";
+import { isOneTimeSchedule, type CronRecord } from "../shared/domain/cron.ts";
 import {
     booleanEnv,
     getHarnessPublicUrl,
@@ -314,6 +314,11 @@ async function handleScheduledCron(event: CronInvocation): Promise<void> {
       error: error,
     });
     await crons.markFailed(job.accountId, job.cronId, error);
+    // The schedule is spent whether or not the run started, so retire the job
+    // here too — the settle path never reached it.
+    if (isOneTimeSchedule(job.scheduleExpression)) {
+      await removeOneShotCron(job.accountId, job.cronId);
+    }
     throw err;
   }
 }
@@ -787,14 +792,9 @@ async function handleAsyncWorkerRequest(
               }),
             ),
           );
-          if (event.cronRun) {
-            await getStorage().crons.completeRun(
-              event.accountId,
-              event.cronRun.cronId,
-              event.cronRun.runId,
-              response,
-            );
-          }
+          await settleCronRun(event.accountId, event.cronRun, {
+            result: response,
+          });
           await pushReplyToChannel(
             session!,
             event,
@@ -814,14 +814,9 @@ async function handleAsyncWorkerRequest(
           terminalSettled = true;
           await session!.settleIngress("failed", { error: error });
           await settleAsyncFailure(event, error);
-          if (event.cronRun) {
-            await getStorage().crons.failRun(
-              event.accountId,
-              event.cronRun.cronId,
-              event.cronRun.runId,
-              error,
-            );
-          }
+          await settleCronRun(event.accountId, event.cronRun, {
+            error: error,
+          });
           await pushReplyToChannel(
             session!,
             event,
@@ -863,14 +858,9 @@ async function handleAsyncWorkerRequest(
         event,
         result.failureText ?? AGENT_PROCESSING_FAILED,
       );
-      if (event.cronRun) {
-        await getStorage().crons.failRun(
-          event.accountId,
-          event.cronRun.cronId,
-          event.cronRun.runId,
-          result.failureText ?? AGENT_PROCESSING_FAILED,
-        );
-      }
+      await settleCronRun(event.accountId, event.cronRun, {
+        error: result.failureText ?? AGENT_PROCESSING_FAILED,
+      });
     }
     if (result.hasDetachedCallbacks) {
       await continueDetachedAsyncToolsIfReady(event, event.agentConfig);
@@ -898,14 +888,9 @@ async function handleAsyncWorkerRequest(
       event,
       err instanceof Error ? err.message : "Async request failed",
     );
-    if (event.cronRun) {
-      await getStorage().crons.failRun(
-        event.accountId,
-        event.cronRun.cronId,
-        event.cronRun.runId,
-        err instanceof Error ? err.message : "Async request failed",
-      );
-    }
+    await settleCronRun(event.accountId, event.cronRun, {
+      error: err instanceof Error ? err.message : "Async request failed",
+    });
     throw err;
   } finally {
     if (session && !transferred) {
@@ -2132,6 +2117,30 @@ function asyncToolContinuationEventId(parentEventId: string): string {
   return `${parentEventId}:async-tools`;
 }
 
+/**
+ * Records a cron run's outcome, and retires a one-time job with it: EventBridge
+ * already dropped that schedule, so the row can never fire again.
+ */
+export async function settleCronRun(
+  accountId: string,
+  cronRun: DirectInboundEvent["cronRun"],
+  outcome: { result: JSONValue } | { error: string },
+): Promise<void> {
+  if (!cronRun) return;
+  const crons = getStorage().crons;
+  if ("error" in outcome) {
+    await crons.failRun(accountId, cronRun.cronId, cronRun.runId, outcome.error);
+  } else {
+    await crons.completeRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.result,
+    );
+  }
+  if (cronRun.oneShot) await removeOneShotCron(accountId, cronRun.cronId);
+}
+
 async function startScheduledAgentRun(
   job: CronRecord,
 ): Promise<{ eventId: string; conversationKey: string }> {
@@ -2142,7 +2151,11 @@ async function startScheduledAgentRun(
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
   });
-  event.cronRun = { cronId: job.cronId, runId: run.runId };
+  event.cronRun = {
+    cronId: job.cronId,
+    runId: run.runId,
+    ...(isOneTimeSchedule(job.scheduleExpression) ? { oneShot: true } : {}),
+  };
   try {
     const ownedEvent = await admitInternalContinuation(
       event,
@@ -2170,6 +2183,25 @@ async function startScheduledAgentRun(
     eventId: event.publicEventId,
     conversationKey: event.publicConversationKey,
   };
+}
+
+/**
+ * Best effort: a stranded cron row is recoverable from the dashboard, whereas a
+ * throw here would cost the run its reply.
+ */
+async function removeOneShotCron(
+  accountId: string,
+  cronId: string,
+): Promise<void> {
+  await getStorage()
+    .crons.remove(accountId, cronId)
+    .catch((err) => {
+      logError("One-time cron cleanup failed", {
+        accountId: accountId,
+        cronId: cronId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 }
 
 async function createCronDirectEvent(

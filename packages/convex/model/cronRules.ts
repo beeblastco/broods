@@ -146,6 +146,16 @@ export function normalizeSchedulerGroupName(value: unknown): string {
 }
 
 /**
+ * Whether a schedule fires exactly once. Mirrors `isOneTimeSchedule` in core's
+ * src/shared/domain/cron.ts.
+ * @param expression a normalized schedule expression
+ * @returns true for an at(...) schedule
+ */
+export function isOneTimeSchedule(expression: string): boolean {
+  return expression.startsWith("at(");
+}
+
+/**
  * Parse the ?limit= query value for run listings.
  * @param value the raw query value
  * @returns the parsed limit, or undefined when absent

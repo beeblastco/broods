@@ -154,7 +154,9 @@ export interface DirectInboundEvent {
   // channel (a background job launched from Telegram/Slack/etc.). The worker
   // rebuilds the sender from the agent config via sendChannelReply.
   replyTarget?: { channelName: string; source: Record<string, unknown> };
-  cronRun?: { cronId: string; runId: string };
+  // `oneShot` marks a cron whose schedule fires once: the job is deleted when
+  // this run settles, because EventBridge has already dropped the schedule.
+  cronRun?: { cronId: string; runId: string; oneShot?: boolean };
 }
 
 /** The scope a queued envelope needs to be rebuilt into its own run. */

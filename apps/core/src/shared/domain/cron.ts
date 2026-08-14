@@ -109,6 +109,15 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
+/**
+ * Whether a schedule fires exactly once. EventBridge deletes such a schedule
+ * itself once it has run, so the stored job is dropped with it. Mirrored in
+ * packages/convex/model/cronRules.ts.
+ */
+export function isOneTimeSchedule(expression: string): boolean {
+  return expression.startsWith("at(");
+}
+
 export function isCronsConfigured(): boolean {
   return Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 }

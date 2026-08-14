@@ -86,9 +86,11 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
+  "cancel_scheduled_task",
   "edit",
   "glob",
   "grep",
+  "list_scheduled_tasks",
   "load_skill",
   "memory_save",
   "read",

@@ -107,6 +107,8 @@ Supported schedule expressions are AWS EventBridge Scheduler expressions: `cron(
 | Yearly, Jan 1 09:00     | `cron(0 9 1 1 ? *)`       |
 | Once, at a fixed time   | `at(2027-01-01T09:00:00)` |
 
+A one-time `at(...)` job is **self-deleting**: EventBridge drops the schedule as soon as it has fired, and the runtime deletes the cron job and its run history once that single run settles. `GET /v1/crons/{cronId}` returns 404 from then on, so read the result through the conversation or the async status API rather than the job. Recurring jobs are never deleted on their own.
+
 `timezone` maps to EventBridge Scheduler `ScheduleExpressionTimezone`. When omitted, schedules are evaluated in UTC. Use an IANA timezone such as `Europe/Amsterdam` when account owners expect local wall-clock time. This only controls schedule evaluation; it is not injected into the agent prompt.
 
 Pause a job:
@@ -118,7 +120,7 @@ curl -X PATCH "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
   -d '{ "status": "paused" }'
 ```
 
-Delete a job:
+Delete a job, and its run history with it:
 
 ```bash
 curl -X DELETE "$BROODS_BASE_URL/v1/crons/$CRON_ID" \
@@ -129,7 +131,7 @@ List jobs with `GET /v1/crons` or fetch one with `GET /v1/crons/{cronId}`. Respo
 
 ## Agent-Scheduled Tasks
 
-An agent can schedule its own recurring work with the `schedule_task` tool. It is off by default — a scheduled task starts billable runs long after the turn that asked for it — and turns on per agent:
+An agent can manage its own scheduled work with three tools. They are off by default — a scheduled task starts billable runs long after the turn that asked for it — and turn on together, per agent:
 
 ```ts title="broods/index.ts"
 export const support = defineAgent({
@@ -140,14 +142,20 @@ export const support = defineAgent({
 });
 ```
 
-The tool takes `name`, `instructions`, `schedule`, and an optional `timezone`, and creates a normal cron job through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things it fixes for the model:
+| Tool                     | Input                                            | What it does                                                                    |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `schedule_task`          | `name`, `instructions`, `schedule`, `timezone?`  | Creates a cron job for this agent, bound to the calling conversation             |
+| `list_scheduled_tasks`   | —                                                | Every task owned by this agent, with its schedule, status, and conversation      |
+| `cancel_scheduled_task`  | `cronId`                                         | Deletes one of this agent's tasks, run history included                          |
 
-- **The agent is always itself.** A scheduled task cannot be pointed at another agent.
+These are normal cron jobs through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things `schedule_task` fixes for the model:
+
+- **The agent is always itself.** A scheduled task cannot be pointed at another agent, and `list`/`cancel` reach only that agent's own jobs.
 - **The conversation is always the calling one.** The cron stores the conversation key of the session the tool ran in, so an agent asked in Slack to summarize every morning answers in that Slack conversation. See [Conversation Binding](#conversation-binding).
 
-Only recurring `cron(...)` and `rate(...)` expressions are accepted. A one-time `at(...)` schedule is refused: EventBridge keeps a fired one-time schedule until something deletes it, and no runtime path reclaims it.
+Both recurring and one-time schedules are accepted, so "every weekday at 9" and "remind me on Friday" are the same tool. A one-time task disappears by itself once it has run; a recurring one lives until it is cancelled. `list_scheduled_tasks` is what the model should read before answering "what have you got scheduled" — its own memory of the conversation is not the source of truth.
 
-The tool creates tasks and nothing else. Pausing and deleting stay with the account owner, on the dashboard or through the account API, so an agent cannot quietly cancel work someone else scheduled. Withhold the tool from one channel with `denyTools: ["schedule_task"]` on that channel record.
+Withhold any of them from one channel with `denyTools: ["cancel_scheduled_task"]` (or the other names) on that channel record.
 
 ## SDK and Dynamic Creation
 

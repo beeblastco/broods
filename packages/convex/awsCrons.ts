@@ -23,11 +23,16 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { schedulerClient } from "./model/aws";
 import {
+  isOneTimeSchedule,
   normalizeCreateCronInput,
   normalizeSchedulerGroupName,
   normalizeUpdateCronInput,
   toCronResponse,
 } from "./model/cronRules";
+
+// Run rows are deleted with their cron in batches: a long-lived job can hold
+// more history than one Convex transaction may touch.
+const CRON_RUN_DELETE_BATCH_SIZE = 100;
 
 /**
  * Resolved EventBridge Scheduler target configuration from the deployment
@@ -114,6 +119,9 @@ export const create = internalAction({
             ? { ScheduleExpressionTimezone: created.timezone }
             : {}),
           State: created.status === "active" ? "ENABLED" : "DISABLED",
+          ActionAfterCompletion: scheduleActionAfterCompletion(
+            created.scheduleExpression,
+          ),
           FlexibleTimeWindow: { Mode: "OFF" },
           Target: scheduleTarget(target, created),
         }),
@@ -169,6 +177,8 @@ export const update = internalAction({
         ScheduleExpression: scheduleExpression,
         ...(timezone ? { ScheduleExpressionTimezone: timezone } : {}),
         State: status === "active" ? "ENABLED" : "DISABLED",
+        ActionAfterCompletion:
+          scheduleActionAfterCompletion(scheduleExpression),
         FlexibleTimeWindow: { Mode: "OFF" },
         Target: scheduleTarget(target, existing),
       }),
@@ -233,6 +243,15 @@ export const remove = internalAction({
         throw err;
       }
     }
+    // Run rows are only reachable through their cron, so they go with it.
+    let deleted = 0;
+    do {
+      deleted = await ctx.runMutation(internal.cron.removeRuns, {
+        accountId: args.accountId,
+        cronId: existing._id,
+        limit: CRON_RUN_DELETE_BATCH_SIZE,
+      });
+    } while (deleted === CRON_RUN_DELETE_BATCH_SIZE);
     await ctx.runMutation(internal.cron.remove, {
       accountId: args.accountId,
       cronId: existing._id,
@@ -297,6 +316,14 @@ function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">) {
       cronId: job._id,
     }),
   };
+}
+
+/**
+ * EventBridge reclaims a one-time schedule itself once it has fired; core then
+ * drops the row when the run settles, so a fired job leaves nothing behind.
+ */
+function scheduleActionAfterCompletion(expression: string): "DELETE" | "NONE" {
+  return isOneTimeSchedule(expression) ? "DELETE" : "NONE";
 }
 
 function scheduleDescription(job: Doc<"crons">): string {

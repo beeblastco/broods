@@ -63,7 +63,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import scheduleTaskTool from "./schedule-task.tool.ts";
+import scheduledTaskTools from "./scheduled-tasks.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
@@ -290,7 +290,8 @@ export async function createTools(
   }
 
   // schedule_task writes a cron bound to this conversation, so a scheduled run
-  // resumes the same session and replies wherever this one does.
+  // resumes the same session and replies wherever this one does. list/cancel
+  // reach every task of this agent, whichever conversation created it.
   if (
     agentConfig.scheduler?.enabled === true &&
     context.accountId &&
@@ -300,7 +301,7 @@ export async function createTools(
     const agentId = context.session.agentId;
     Object.assign(
       tools,
-      scheduleTaskTool({
+      scheduledTaskTools({
         accountId: accountId,
         agentId: agentId,
         conversationKey: publicConversationKeyFromScoped(

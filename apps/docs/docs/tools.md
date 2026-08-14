@@ -39,7 +39,7 @@ Provider-defined tool names come from the provider package, not from core. With 
 
 `async_status` is not configured directly: it is registered automatically whenever any `config.tools` entry has `async: true` or a workspace has a persistent sandbox. It is the model-facing polling surface for the async lifecycle described below (`statusId` + actions `status`/`logs`/`stop`).
 
-Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule_task` uses `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
+Sandbox tools come from a referenced `sandbox` (+ `workspaces`) — see [Workspace & Sandbox](workspace/index.md). Skills use `config.skills`; see [Skills](skills.md). Subagents use `config.subagent`. `schedule_task`, `list_scheduled_tasks`, and `cancel_scheduled_task` use `config.scheduler`; see [Cron Jobs](crons.md#agent-scheduled-tasks).
 
 ## Runtime Behavior
 
