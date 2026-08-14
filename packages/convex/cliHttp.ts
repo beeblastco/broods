@@ -333,8 +333,14 @@ export const handle = httpAction(async (ctx, req) => {
     if (error instanceof SyntaxError || error instanceof URIError) {
       return json({ error: "Request body or path is invalid" }, 400);
     }
+    // Most failures here are the caller's own manifest failing validation. Hand
+    // the reason back or `broods dev` reports an unactionable 500.
+    const detail = error instanceof Error ? error.message : "";
 
-    return json({ error: "CLI request failed" }, 500);
+    return json(
+      { error: "CLI request failed", ...(detail ? { detail: detail } : {}) },
+      500,
+    );
   }
 });
 
