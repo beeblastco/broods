@@ -2,10 +2,6 @@
 
 `@broods/core` — the agent harness. one Bun container (Vercel AI SDK) serving the whole runtime behind the gateway.
 
-**off Lambda.** source in `src/`, not `functions/`. no Lambda runtime, no `afterResponse`, no Function-URL discovery. do not bring any of it back. Convex persistence, the AWS data plane (S3/STS/Scheduler) and the MicroVM tool-exec plane all stay. `sst.config.ts` provision that data plane + the container IAM user, never the runtime process.
-
-paths relative to `apps/core/`.
-
 ## Flow
 
 ```
