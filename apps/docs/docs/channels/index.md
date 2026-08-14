@@ -24,11 +24,15 @@ Channel tools are automatic; do not add them to `config.tools`.
 | Tool | Use |
 | --- | --- |
 | `send-message` | Message another session |
-| `send-image` | Send an image |
+| `send-image` | Send an image, from a workspace file or a public URL |
 | `send-sticker` | Send a sticker |
 | `send-reactions` | React to a message |
 
 `send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
+
+`send-image` takes `file_path` for an image in an attached workspace, or `url` for one already published on the web. `file_path` appears only when the agent has a workspace attached.
+
+Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

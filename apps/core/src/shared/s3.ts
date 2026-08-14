@@ -22,6 +22,11 @@ export interface S3ObjectInfo {
   etag?: string;
 }
 
+export interface S3ObjectHead {
+  contentLength?: number;
+  contentType?: string;
+}
+
 // Per-call S3 access for reads against a bring-your-own bucket: short-lived
 // assume-role credentials plus the bucket's region/endpoint. Omitted (the common
 // case) => the default client on the harness's own role against the managed bucket.
@@ -184,6 +189,37 @@ export async function ensureS3DirectoryMarkers(
   }
 }
 
+// Object metadata without the body, or null when the key does not exist. The
+// media route needs the size and content type before it decides to stream.
+export async function headS3Object(
+  bucket: string,
+  key: string,
+  access?: S3Access,
+): Promise<S3ObjectHead | null> {
+  try {
+    const result = await awsClient(access).send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      }),
+    );
+
+    return {
+      ...(result.ContentLength !== undefined
+        ? { contentLength: result.ContentLength }
+        : {}),
+      ...(result.ContentType !== undefined
+        ? { contentType: result.ContentType }
+        : {}),
+    };
+  } catch (err) {
+    if (isMissingS3Error(err)) {
+      return null;
+    }
+    throw err;
+  }
+}
+
 export async function s3ObjectExists(
   bucket: string,
   key: string,
@@ -191,22 +227,15 @@ export async function s3ObjectExists(
 ): Promise<boolean> {
   logInfo("s3.exists start", { bucket: bucket, key: key });
   try {
-    await awsClient(access).send(
-      new HeadObjectCommand({
-        Bucket: bucket,
-        Key: key,
-      }),
-    );
-    logInfo("s3.exists result", { bucket: bucket, key: key, exists: true });
+    const head = await headS3Object(bucket, key, access);
+    logInfo("s3.exists result", {
+      bucket: bucket,
+      key: key,
+      exists: head !== null,
+    });
 
-    return true;
+    return head !== null;
   } catch (err) {
-    if (isMissingS3Error(err)) {
-      logInfo("s3.exists result", { bucket: bucket, key: key, exists: false });
-
-      return false;
-    }
-
     const details: Record<string, unknown> = {
       bucket: bucket,
       key: key,
@@ -268,7 +297,11 @@ export async function listS3Prefix(
       continuationToken = result.NextContinuationToken;
     } while (continuationToken);
 
-    logInfo("s3.list success", { bucket: bucket, prefix: prefix, count: objects.length });
+    logInfo("s3.list success", {
+      bucket: bucket,
+      prefix: prefix,
+      count: objects.length,
+    });
   } catch (err) {
     logError("s3.list failed", {
       bucket: bucket,

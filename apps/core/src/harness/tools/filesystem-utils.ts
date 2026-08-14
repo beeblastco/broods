@@ -12,7 +12,17 @@
 import type { JSONObject } from "@ai-sdk/provider";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import { isMissingS3Error, listS3Prefix, readS3Text } from "../../shared/s3.ts";
+import {
+  isMissingS3Error,
+  listS3Prefix,
+  readS3Text,
+  s3ObjectExists,
+} from "../../shared/s3.ts";
+import { getHarnessPublicUrl, requireEnv } from "../../shared/env.ts";
+import {
+  MEDIA_PATH_PREFIX,
+  sealMediaTicket,
+} from "../../shared/media-ticket.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -457,6 +467,45 @@ export async function s3Glob(
   return toolText(
     matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n",
   );
+}
+
+// A workspace file as a URL an outside service can fetch, for the chat providers
+// that pull media themselves instead of taking an upload. A presigned S3 link
+// cannot be used: Zalo stores the URL and re-fetches it whenever a viewer opens
+// the picture, so any expiry turns into a broken image in chat history. The
+// sealed ticket points at the file for as long as the file exists.
+export async function workspaceMediaUrl(
+  ws: ResolvedWorkspace,
+  rel: string,
+  accountId: string,
+): Promise<string> {
+  const baseUrl = getHarnessPublicUrl();
+  if (!baseUrl) {
+    return toolError(
+      "Error: sending a workspace file needs PUBLIC_BASE_URL configured",
+    );
+  }
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(ws.config.storage, ws.namespace),
+  );
+  const key = `${target.prefix}${rel}`;
+  const exists = target.access
+    ? await s3ObjectExists(target.bucket, key, target.access)
+    : await s3ObjectExists(target.bucket, key);
+  if (!exists) {
+    return toolError(`Error: file not found: ${rel}`);
+  }
+  const token = sealMediaTicket(
+    {
+      accountId: accountId,
+      workspaceId: ws.workspaceId,
+      namespace: ws.namespace,
+      path: rel,
+    },
+    requireEnv("SERVICE_AUTH_SECRET"),
+  );
+
+  return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
 }
 
 export function formatRunText(result: SandboxRunResult): string {

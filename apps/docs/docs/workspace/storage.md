@@ -100,7 +100,7 @@ curl -X POST "$BROODS_BASE_URL/v1/workspaces/$WORKSPACE_ID/download-links" \
 
 The response carries a `downloadPath` such as `/v1/downloads/K3n8…`. Join it to the
 same base URL you called, and the result is short, URL-safe and valid for as long as
-you asked (default 24 hours, maximum 7 days). Following it redirects to a presigned
+you asked (default 24 hours, maximum 30 days). Following it redirects to a presigned
 URL minted at that moment — the browser receives the signature directly, so no chat
 client ever sees it.
 

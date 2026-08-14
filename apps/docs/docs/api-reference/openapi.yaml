@@ -467,6 +467,26 @@ paths:
         "404":
           description: Unknown resultId or invalid token
 
+  /media/{ticket}:
+    get:
+      tags:
+        - Direct API
+      summary: Workspace media link
+      description: Serves one workspace file to a chat provider that fetches media by URL rather than accepting an upload. `send-image` mints the link; the sealed ticket in the path names the workspace and file and is the only credential, so the route is unauthenticated and carries no account parameter. The link does not expire — it stays good while the file exists, because providers such as Zalo store the URL and re-fetch it every time a viewer opens the picture. Rotating the service secret revokes every issued link. A bad ticket, a deleted workspace and a missing file all answer 404 alike.
+      parameters:
+        - name: ticket
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file, with its content type and an immutable cache header
+        "404":
+          description: Ticket rejected, or the workspace or file no longer exists
+        "413":
+          description: File is larger than the 25 MB media limit
+
   /webhooks/{accountId}/{channelName}:
     post:
       tags:
@@ -1729,7 +1749,7 @@ paths:
                 expiresInSeconds:
                   type: integer
                   minimum: 1
-                  maximum: 604800
+                  maximum: 2592000
                   default: 86400
       responses:
         "200":
