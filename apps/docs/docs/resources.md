@@ -115,6 +115,10 @@ documentation is the reference for its settings.
 accepts `project` / `location`, and `custom` additionally requires `base_url` —
 all of them straight from the AI SDK.
 
+Because an `apiKey` is always required, `vertex` authenticates in
+[express mode](https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode).
+Service-account credentials are not reachable through this path.
+
 Use `custom` for providers that expose an OpenAI-compatible Chat Completions API:
 
 ```ts
