@@ -21,14 +21,16 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 Channel tools are automatic; do not add them to `config.tools`.
 
-| Tool | Use |
-| --- | --- |
-| `send-message` | Message another session |
-| `send-image` | Send an image |
-| `send-sticker` | Send a sticker |
-| `send-reactions` | React to a message |
+| Tool             | Use                                                  |
+| ---------------- | ---------------------------------------------------- |
+| `send-message`   | Message another session                              |
+| `send-image`     | Send an image, from a workspace file or a public URL |
+| `send-sticker`   | Send a sticker                                       |
+| `send-reactions` | React to a message                                   |
 
 `send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
+
+`send-image` takes `file_path` for an image in an attached workspace, or `url` for one already published on the web. Chat providers fetch the picture themselves, so a workspace file is handed over as a presigned link that stays valid for an hour. `file_path` appears only when the agent has a workspace attached.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

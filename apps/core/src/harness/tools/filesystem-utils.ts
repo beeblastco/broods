@@ -12,7 +12,13 @@
 import type { JSONObject } from "@ai-sdk/provider";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
-import { isMissingS3Error, listS3Prefix, readS3Text } from "../../shared/s3.ts";
+import {
+  getS3ObjectUrl,
+  isMissingS3Error,
+  listS3Prefix,
+  readS3Text,
+  s3ObjectExists,
+} from "../../shared/s3.ts";
 import type { SandboxRunMetadata } from "../../shared/sandbox-sizes.ts";
 import { workspaceSandboxLimits } from "../../shared/sandbox.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
@@ -457,6 +463,39 @@ export async function s3Glob(
   return toolText(
     matches.length > 0 ? `${matches.join("\n")}\n` : "No files found\n",
   );
+}
+
+// A workspace file as a URL an outside service can fetch, for the chat providers
+// that pull media themselves instead of taking an upload. The presign cannot
+// outlive the credentials that signed it, so a bring-your-own bucket clamps to
+// its assumed session.
+export async function s3PresignedUrl(
+  ws: ResolvedWorkspace,
+  rel: string,
+  expiresInSeconds: number,
+): Promise<string> {
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(ws.config.storage, ws.namespace),
+  );
+  const key = `${target.prefix}${rel}`;
+  const exists = target.access
+    ? await s3ObjectExists(target.bucket, key, target.access)
+    : await s3ObjectExists(target.bucket, key);
+  if (!exists) {
+    return toolError(`Error: file not found: ${rel}`);
+  }
+  const secondsLeft = target.credentialsExpireAt
+    ? Math.floor((target.credentialsExpireAt.getTime() - Date.now()) / 1000)
+    : expiresInSeconds;
+  const expiry = Math.min(expiresInSeconds, secondsLeft);
+  if (expiry <= 0) {
+    return toolError("Error: workspace storage credentials have expired");
+  }
+
+  return getS3ObjectUrl(target.bucket, key, {
+    expiresInSeconds: expiry,
+    ...(target.access ? { access: target.access } : {}),
+  });
 }
 
 export function formatRunText(result: SandboxRunResult): string {

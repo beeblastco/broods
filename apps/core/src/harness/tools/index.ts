@@ -218,7 +218,9 @@ export async function createTools(
   if (context.channel) {
     Object.assign(
       tools,
-      sendImageTool(context.channel),
+      // send-image can deliver a workspace file, so it takes the same workspace
+      // list the sandbox tools read from.
+      sendImageTool({ ...context.channel, workspaces: workspaces }),
       sendReactionsTool(context.channel),
       sendStickerTool(context.channel),
     );
