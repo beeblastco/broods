@@ -125,14 +125,25 @@ export const getById = internalQuery({
   handler: (ctx, { accountId, cronId }) => getOwned(ctx, accountId, cronId),
 });
 
+/** Every cron job of an account, or only one agent's when `agentId` is given. */
 export const list = internalQuery({
-  args: { accountId: v.id("accounts") },
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.optional(v.id("agents")),
+  },
   returns: v.array(cronDoc),
-  handler: (ctx, { accountId }) =>
-    ctx.db
-      .query("crons")
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .collect(),
+  handler: (ctx, { accountId, agentId }) =>
+    agentId
+      ? ctx.db
+          .query("crons")
+          .withIndex("by_accountId_and_agentId", (q) =>
+            q.eq("accountId", accountId).eq("agentId", agentId),
+          )
+          .collect()
+      : ctx.db
+          .query("crons")
+          .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
+          .collect(),
 });
 
 /**

@@ -144,7 +144,7 @@ interface CronStore {
   // the runtime path for it is the schedule_task tool.
   create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
-  list(accountId: string): Promise<CronRecord[]>;
+  list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
   markStarted(accountId: string, cronId: string): Promise<void>;
   markCompleted(accountId: string, cronId: string): Promise<void>;

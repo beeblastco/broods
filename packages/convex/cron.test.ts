@@ -11,7 +11,9 @@ const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;
 
 /** One live cron with a run, plus two runs whose cron is already gone. */
-async function seed(tt: T): Promise<{ accountId: Id<"accounts"> }> {
+async function seed(
+  tt: T,
+): Promise<{ accountId: Id<"accounts">; agentId: Id<"agents"> }> {
   return await tt.run(async (ctx) => {
     const now = Date.now();
     const accountId = await ctx.db.insert("accounts", {
@@ -67,9 +69,53 @@ async function seed(tt: T): Promise<{ accountId: Id<"accounts"> }> {
       });
     }
 
-    return { accountId: accountId };
+    return { accountId: accountId, agentId: agentId };
   });
 }
+
+describe("list", () => {
+  test("returns only the named agent's jobs", async () => {
+    const tt = t();
+    const { accountId, agentId } = await seed(tt);
+    const otherAgentId = await tt.run(async (ctx) => {
+      const now = Date.now();
+
+      return await ctx.db.insert("agents", {
+        accountId: accountId,
+        name: "other",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await tt.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("crons", {
+        accountId: accountId,
+        name: "theirs",
+        agentId: otherAgentId,
+        events: [],
+        scheduleExpression: "rate(1 day)",
+        status: "active" as const,
+        schedulerName: "s-theirs",
+        schedulerGroupName: "g",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+
+    expect(
+      (
+        await tt.query(internal.cron.list, {
+          accountId: accountId,
+          agentId: agentId,
+        })
+      ).map((cron) => cron.name),
+    ).toEqual(["live"]);
+    expect(
+      (await tt.query(internal.cron.list, { accountId: accountId })).length,
+    ).toBe(2);
+  });
+});
 
 describe("deleteOrphanedCronRuns", () => {
   test("reports orphans without touching them on a dry run", async () => {

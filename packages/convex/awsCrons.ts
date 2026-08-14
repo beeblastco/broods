@@ -262,6 +262,9 @@ export const sweepSpentCrons = internalAction({
     });
     const complete = crons.length < limit;
     const remaining = new Set<string>();
+    // Many jobs share one agent, and an agent id is never reused, so one read
+    // per agent answers the whole scan.
+    const agentExists = new Map<string, boolean>();
     let spentOneTime = 0;
     let missingAgent = 0;
 
@@ -271,11 +274,16 @@ export const sweepSpentCrons = internalAction({
         cron.lastInvokedAt !== undefined;
       // A spent job goes either way, so its agent never has to be read.
       if (!spent) {
-        const agent = await ctx.runQuery(internal.agents.getById, {
-          accountId: cron.accountId,
-          agentId: cron.agentId,
-        });
-        if (agent) {
+        let exists = agentExists.get(cron.agentId);
+        if (exists === undefined) {
+          exists =
+            (await ctx.runQuery(internal.agents.getById, {
+              accountId: cron.accountId,
+              agentId: cron.agentId,
+            })) !== null;
+          agentExists.set(cron.agentId, exists);
+        }
+        if (exists) {
           remaining.add(cron.schedulerName);
           continue;
         }

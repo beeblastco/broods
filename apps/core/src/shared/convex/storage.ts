@@ -310,9 +310,10 @@ const crons: Storage["crons"] = {
 
     return cronFromConvex(doc as ConvexCronDoc | null);
   },
-  list: async function(accountId) {
+  list: async function(accountId, agentId) {
     const docs = (await getConvexClient().query(internal.cron.list, {
       accountId: accountId as any,
+      ...(agentId ? { agentId: agentId as any } : {}),
     })) as ConvexCronDoc[];
 
     return docs.map((d) => cronFromConvex(d)!).filter(Boolean);

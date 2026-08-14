@@ -1171,8 +1171,14 @@ function storageWithCrons(
         ) ?? null
       );
     },
-    list: async function (accountId: string) {
-      return crons.filter((cron) => cron.accountId === accountId);
+    // Mirrors the by_accountId_and_agentId index: the store scopes the read,
+    // so a leak here would show up as a task the caller does not own.
+    list: async function (accountId: string, agentId?: string) {
+      return crons.filter(
+        (cron) =>
+          cron.accountId === accountId &&
+          (agentId === undefined || cron.agentId === agentId),
+      );
     },
     remove: remove,
   });

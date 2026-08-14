@@ -91,13 +91,12 @@ export function listScheduledTasksTool(context: ScheduledTaskContext): ToolSet {
         additionalProperties: false,
       }),
       execute: async function (): Promise<{ tasks: ScheduledTaskSummary[] }> {
-        const crons = await getStorage().crons.list(context.accountId);
+        const crons = await getStorage().crons.list(
+          context.accountId,
+          context.agentId,
+        );
 
-        return {
-          tasks: crons
-            .filter((cron) => cron.agentId === context.agentId)
-            .map(toScheduledTaskSummary),
-        };
+        return { tasks: crons.map(toScheduledTaskSummary) };
       },
     }),
   };
