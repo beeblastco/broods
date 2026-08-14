@@ -9,7 +9,6 @@ import {
   SUBAGENT_TOOL_PROPERTIES,
   subagentNotFound,
   toolError,
-  toToolResultOutput,
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
@@ -27,7 +26,6 @@ export default function getSubagentStatusTool(
         required: ["taskId", "agentId"],
         additionalProperties: false,
       }),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const record = await getOwnedSubagent(context, input);
         if (!record) {

@@ -26,7 +26,6 @@ export interface SubagentToolInput {
   agentId: string;
 }
 
-export type ToolCompatibleOutput = JSONValue | ToolResultOutput;
 export type UserContentPart = Exclude<UserContent, string>[number];
 
 export const SUBAGENT_TOOL_PROPERTIES: Record<string, JSONSchema7> = {
@@ -137,31 +136,11 @@ export function subagentNotFound(taskId: string): string {
 }
 
 /**
- * Runtime counterpart for uploaded tools whose output generic is necessarily
- * erased before execution.
+ * Convert an erased execute result at the AI SDK model-output boundary. Static
+ * tools return string or JSON and take the SDK's own default; only uploaded
+ * tools need this, because the SDK default never validates what it wraps.
  */
-export function toDynamicToolResultOutput({
-  output,
-}: {
-  output: unknown;
-}): ToolResultOutput {
-  return normalizeToolResultOutput(output);
-}
-
-/**
- * Convert a successful native execute result at the AI SDK model-output
- * boundary. The parameter type makes statically defined tools prove that their
- * output is supported, and the runtime checks catch erased or uploaded tools.
- */
-export function toToolResultOutput({
-  output,
-}: {
-  output: ToolCompatibleOutput;
-}): ToolResultOutput {
-  return normalizeToolResultOutput(output);
-}
-
-function normalizeToolResultOutput(output: unknown): ToolResultOutput {
+export function normalizeToolResultOutput(output: unknown): ToolResultOutput {
   if (isToolResultOutput(output)) {
     return output;
   }

@@ -16,7 +16,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolError, toolText } from "./utils.ts";
 
 interface ReadInput {
   file_path: string;
@@ -63,7 +63,6 @@ Usage notes:
 - Lines are returned as \`<line_number>\\t<content>\`.
 - Prefer this over \`bash cat\` for reading files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const { file_path, offset, limit, workspace } = input as ReadInput;
         try {

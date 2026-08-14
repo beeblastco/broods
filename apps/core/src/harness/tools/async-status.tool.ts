@@ -31,7 +31,7 @@ import type {
   SandboxExecutorConfig,
   SandboxJobStatus,
 } from "../sandbox/types.ts";
-import { toolError, toToolResultOutput } from "./utils.ts";
+import { toolError } from "./utils.ts";
 
 const JOB_LOG_LIMIT_BYTES = 64 * 1024;
 
@@ -97,7 +97,6 @@ The result is delivered back into the conversation automatically when it finishe
         required: ["statusId"],
         additionalProperties: false,
       }),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const { statusId, action = "status" } = input;
         const record = await getAsyncToolResult(statusId);

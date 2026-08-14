@@ -15,7 +15,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolError, toolText } from "./utils.ts";
 
 interface EditInput {
   file_path: string;
@@ -100,7 +100,6 @@ Usage notes:
 - new_string must differ from old_string.
 - The edit fails if the file does not exist — use the \`write\` tool to create new files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const { file_path, old_string, new_string, replace_all, workspace } =
           input as EditInput;

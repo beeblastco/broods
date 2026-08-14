@@ -11,7 +11,6 @@ import {
   type SystemModelMessage,
   type ToolSet,
 } from "ai";
-import { toToolResultOutput } from "./utils.ts";
 
 const MAX_SUBAGENT_TASKS = 10;
 const TASK_KEYS = new Set(["agentId", "prompt", "conversationKey"]);
@@ -108,7 +107,6 @@ export default function runSubagentTool(context: {
       inputSchema: jsonSchema<RunSubagentInput>(
         buildRunSubagentInputSchema(context.mode),
       ),
-      toModelOutput: toToolResultOutput,
       execute: async function (input, options) {
         const tasks = normalizeInput(input, context.mode);
 
