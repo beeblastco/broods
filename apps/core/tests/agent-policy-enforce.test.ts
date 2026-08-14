@@ -288,6 +288,33 @@ describe("agent.invoke gate", () => {
     ).toBeUndefined();
   });
 
+  it("refuses when a configured policy resolves to no documents", async (): Promise<void> => {
+    // A policy id that no longer resolves used to read as "no policy" here and
+    // as "nothing allowed" at the tool gate: the agent answered while every
+    // tool call was refused. Both gates refuse now.
+    setStorageForTests({
+      agentPolicies: { getById: async (): Promise<null> => null },
+    } as unknown as Storage);
+    try {
+      const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        channel: "zalo",
+      });
+
+      expect(decision).toEqual({
+        allowed: false,
+        mode: "enforce",
+        reason: "No allow policy rule matched",
+        matchedRuleIds: [],
+      });
+    } finally {
+      setStorageForTests({
+        agentPolicies: { getById: async () => policyRecord },
+      } as unknown as Storage);
+    }
+  });
+
   it("sends the actor and channel to OPA as agent.invoke", async () => {
     // Drive its own evaluation: asserting on a sibling test's recorded input
     // passes only when that test ran first, and breaks under -t or .only.
