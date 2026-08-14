@@ -54,14 +54,18 @@ export async function resolveActiveAccountForAuthId(
 }
 
 /**
- * Ensures `agentConfigs[configId].agentId` references a live `agents` row
- * scoped to the caller's active org. Idempotent: if `agentId` is already
- * set and the referenced row exists, this returns it unchanged.
+ * Ensures `agentConfigs[configId].agentId` references a live `agents` row.
+ * Idempotent: if `agentId` is already set and the row it names belongs to the
+ * owning account, this returns it unchanged.
+ *
+ * Callers that authenticated as an account must pass `accountId`: the active
+ * org is dashboard state and can name a different tenant than the credential.
  */
 export async function ensureAgentsRowForConfig(
   ctx: MutationCtx,
   configId: Id<"agentConfigs">,
   authId: string,
+  accountId?: Id<"accounts">,
 ): Promise<Id<"agents"> | null> {
   const config = await ctx.db.get(configId);
   if (!config || config.authId !== authId) return null;
@@ -70,11 +74,21 @@ export async function ensureAgentsRowForConfig(
     const normalized = ctx.db.normalizeId("agents", config.agentId);
     if (normalized) {
       const existing = await ctx.db.get(normalized);
-      if (existing) return existing._id;
+      // A row under another account is a mis-filed agent from an earlier sync,
+      // not this account's agent: recreate rather than keep handing it back.
+      if (
+        existing &&
+        (accountId === undefined || existing.accountId === accountId)
+      ) {
+        return existing._id;
+      }
     }
   }
 
-  const account = await resolveActiveAccountForAuthId(ctx, authId);
+  const account =
+    accountId !== undefined
+      ? await ctx.db.get(accountId)
+      : await resolveActiveAccountForAuthId(ctx, authId);
   if (!account) return null;
 
   const now = Date.now();

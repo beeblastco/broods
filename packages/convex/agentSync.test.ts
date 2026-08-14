@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
+import { ensureAgentsRowForConfig } from "./model/agentSync";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -444,5 +445,142 @@ describe("syncApiAgentCanvasWiring", () => {
         target: workspaceNode.id,
       }),
     );
+  });
+});
+
+describe("ensureAgentsRowForConfig", () => {
+  test("files the agent under the syncing account, not the user's active org", async () => {
+    const tt = t();
+    const personal = await seedOrg(tt, {
+      orgName: "personal",
+      slug: "personal",
+      username: "personal-account",
+      email: "owner@example.com",
+    });
+    const beeblast = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+
+    // `broods dev` synced the personal org while the same human's dashboard
+    // session sat on beeblast. Resolving the account from the active org files
+    // the agent under a tenant that owns neither the project nor the runtime
+    // key, and the harness then 404s the agent it was just told to run.
+    await tt.run(async (ctx) => {
+      await ctx.db.patch(personal.userId, { activeOrgId: beeblast.orgId });
+    });
+
+    const configId = await tt.run(async (ctx) => {
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner@example.com",
+        orgId: personal.orgId,
+        name: "sched-test",
+        slug: "sched-test",
+        updatedAt: Date.now(),
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: "auth_owner@example.com",
+        projectId: projectId,
+        name: "development",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: Date.now(),
+      });
+
+      return await ctx.db.insert("agentConfigs", {
+        authId: "auth_owner@example.com",
+        name: "scheduled-task-agent",
+        projectId: projectId,
+        stageId: stageId,
+        updatedAt: Date.now(),
+      });
+    });
+
+    const agentId = await tt.run(async (ctx) =>
+      ensureAgentsRowForConfig(
+        ctx,
+        configId,
+        "auth_owner@example.com",
+        personal.accountId,
+      ),
+    );
+    expect(agentId).not.toBeNull();
+
+    await tt.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId!);
+      expect(agent?.accountId).toBe(personal.accountId);
+    });
+  });
+
+  test("recreates an agent already mis-filed under another account", async () => {
+    const tt = t();
+    const personal = await seedOrg(tt, {
+      orgName: "personal",
+      slug: "personal",
+      username: "personal-account",
+      email: "owner@example.com",
+    });
+    const beeblast = await seedOrg(tt, {
+      orgName: "beeblast",
+      slug: "beeblast",
+      username: "beeblast-sale-agent-dev",
+      email: "owner@example.com",
+    });
+
+    const seeded = await tt.run(async (ctx) => {
+      const now = Date.now();
+      const projectId = await ctx.db.insert("projects", {
+        authId: "auth_owner@example.com",
+        orgId: personal.orgId,
+        name: "sched-test",
+        slug: "sched-test",
+        updatedAt: now,
+      });
+      const stageId = await ctx.db.insert("stages", {
+        authId: "auth_owner@example.com",
+        projectId: projectId,
+        name: "development",
+        kind: "development" as const,
+        isDefault: true,
+        updatedAt: now,
+      });
+      // The row an earlier, pre-fix sync left under the wrong tenant.
+      const strayAgentId = await ctx.db.insert("agents", {
+        accountId: beeblast.accountId,
+        name: "scheduled-task-agent",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const configId = await ctx.db.insert("agentConfigs", {
+        authId: "auth_owner@example.com",
+        name: "scheduled-task-agent",
+        agentId: strayAgentId,
+        projectId: projectId,
+        stageId: stageId,
+        updatedAt: now,
+      });
+
+      return { configId: configId, strayAgentId: strayAgentId };
+    });
+
+    const agentId = await tt.run(async (ctx) =>
+      ensureAgentsRowForConfig(
+        ctx,
+        seeded.configId,
+        "auth_owner@example.com",
+        personal.accountId,
+      ),
+    );
+
+    expect(agentId).not.toBe(seeded.strayAgentId);
+    await tt.run(async (ctx) => {
+      const agent = await ctx.db.get(agentId!);
+      expect(agent?.accountId).toBe(personal.accountId);
+      // The config now points at the replacement, not the stray row.
+      const config = await ctx.db.get(seeded.configId);
+      expect(config?.agentId).toBe(agentId);
+    });
   });
 });

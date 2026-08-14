@@ -1729,7 +1729,12 @@ async function syncAgentResources(
         managedBy: "cli",
         updatedAt: Date.now(),
       });
-      await ensureAgentsRowForConfig(ctx, target._id, target.authId);
+      await ensureAgentsRowForConfig(
+        ctx,
+        target._id,
+        target.authId,
+        account._id,
+      );
       await syncAgentRowFields(ctx, target._id, {
         name: name,
         description: resource.description,
@@ -1767,7 +1772,7 @@ async function syncAgentResources(
         updatedAt: Date.now(),
       });
       await saveAgentRuntimeSecrets(ctx, configId, runtimeVariables);
-      await ensureAgentsRowForConfig(ctx, configId, authId);
+      await ensureAgentsRowForConfig(ctx, configId, authId, account._id);
       await pushEncryptedConfigToAgentRow(ctx, configId);
       const created = await ctx.db.get(configId);
       if (created?.agentId) ids[name] = created.agentId;
