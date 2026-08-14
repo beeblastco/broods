@@ -927,12 +927,12 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual([
-      "cancel_scheduled_task",
-      "list_scheduled_tasks",
-      "schedule_task",
+      "cancel_schedule",
+      "list_schedules",
+      "schedule",
     ]);
     expect(
-      await channelToolExecute(tools.schedule_task, {
+      await channelToolExecute(tools.schedule, {
         name: "daily-standup",
         instructions: "Post the standup summary.",
         schedule: "cron(0 9 * * ? *)",
@@ -963,7 +963,7 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    await channelToolExecute(tools.schedule_task, {
+    await channelToolExecute(tools.schedule, {
       name: "one-off",
       instructions: "Remind me once.",
       schedule: "at(2027-01-01T09:00:00)",
@@ -977,7 +977,7 @@ describe("createTools", () => {
     });
 
     await expect(
-      channelToolExecute(tools.schedule_task, {
+      channelToolExecute(tools.schedule, {
         name: "broken",
         instructions: "Never mind.",
         schedule: "every monday",
@@ -1003,8 +1003,8 @@ describe("createTools", () => {
       scheduler: { enabled: true },
     });
 
-    expect(await channelToolExecute(tools.list_scheduled_tasks, {})).toEqual({
-      tasks: [
+    expect(await channelToolExecute(tools.list_schedules, {})).toEqual({
+      schedules: [
         {
           cronId: "cron_mine",
           name: "daily-standup",
@@ -1036,19 +1036,19 @@ describe("createTools", () => {
     });
 
     expect(
-      await channelToolExecute(tools.cancel_scheduled_task, {
+      await channelToolExecute(tools.cancel_schedule, {
         cronId: "cron_mine",
       }),
     ).toBe("Cancelled scheduled task 'daily-standup' (cron_mine).");
     expect(remove).toHaveBeenCalledWith("acct_test", "cron_mine");
 
     await expect(
-      channelToolExecute(tools.cancel_scheduled_task, {
+      channelToolExecute(tools.cancel_schedule, {
         cronId: "cron_other",
       }),
     ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
     await expect(
-      channelToolExecute(tools.cancel_scheduled_task, { cronId: "nope" }),
+      channelToolExecute(tools.cancel_schedule, { cronId: "nope" }),
     ).rejects.toThrow("No scheduled task nope belongs to this agent");
     expect(remove).toHaveBeenCalledTimes(1);
   });

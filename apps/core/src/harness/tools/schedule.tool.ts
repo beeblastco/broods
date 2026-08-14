@@ -1,6 +1,6 @@
 /**
- * Model-facing scheduled tasks: create, list, cancel. Every task belongs to the
- * calling agent and the conversation it was scheduled from.
+ * Model-facing schedules: create, list, cancel. Every schedule belongs to the
+ * calling agent and the conversation it was created from.
  * Cron rows and EventBridge lifecycle stay in the config plane (awsCrons).
  */
 
@@ -11,7 +11,7 @@ import { toolError, toolText } from "./utils.ts";
 
 const SCHEDULE_PATTERN = /^(cron|rate|at)\(.+\)$/;
 
-export interface ScheduledTaskContext {
+export interface ScheduleContext {
   accountId: string;
   agentId: string;
   // Public conversation key of the session that owns the task. A channel
@@ -19,18 +19,18 @@ export interface ScheduledTaskContext {
   conversationKey: string;
 }
 
-interface CancelScheduledTaskInput {
+interface CancelScheduleInput {
   cronId: string;
 }
 
-interface ScheduleTaskInput {
+interface ScheduleInput {
   name: string;
   instructions: string;
   schedule: string;
   timezone?: string;
 }
 
-interface ScheduledTaskSummary {
+interface ScheduleSummary {
   cronId: string;
   name: string;
   schedule: string;
@@ -41,14 +41,12 @@ interface ScheduledTaskSummary {
   lastInvokedAt?: string;
 }
 
-export function cancelScheduledTaskTool(
-  context: ScheduledTaskContext,
-): ToolSet {
+export function cancelScheduleTool(context: ScheduleContext): ToolSet {
   return {
-    cancel_scheduled_task: tool({
+    cancel_schedule: tool({
       description:
-        "Cancels one of your scheduled tasks for good, by the cronId that schedule_task or list_scheduled_tasks reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
-      inputSchema: jsonSchema<CancelScheduledTaskInput>({
+        "Cancels one of your scheduled tasks for good, by the cronId that schedule or list_schedules reported. Its run history goes with it. A task that already fired once and deleted itself is simply gone.",
+      inputSchema: jsonSchema<CancelScheduleInput>({
         type: "object",
         properties: {
           cronId: {
@@ -80,9 +78,9 @@ export function cancelScheduledTaskTool(
   };
 }
 
-export function listScheduledTasksTool(context: ScheduledTaskContext): ToolSet {
+export function listSchedulesTool(context: ScheduleContext): ToolSet {
   return {
-    list_scheduled_tasks: tool({
+    list_schedules: tool({
       description:
         "Lists every scheduled task you own, including ones scheduled from other conversations and ones an account owner created for you. `conversationKey` tells you where each task answers.",
       inputSchema: jsonSchema<Record<string, never>>({
@@ -90,24 +88,24 @@ export function listScheduledTasksTool(context: ScheduledTaskContext): ToolSet {
         properties: {},
         additionalProperties: false,
       }),
-      execute: async function (): Promise<{ tasks: ScheduledTaskSummary[] }> {
+      execute: async function (): Promise<{ schedules: ScheduleSummary[] }> {
         const crons = await getStorage().crons.list(
           context.accountId,
           context.agentId,
         );
 
-        return { tasks: crons.map(toScheduledTaskSummary) };
+        return { schedules: crons.map(toScheduleSummary) };
       },
     }),
   };
 }
 
-export function scheduleTaskTool(context: ScheduledTaskContext): ToolSet {
+export function scheduleTool(context: ScheduleContext): ToolSet {
   return {
-    schedule_task: tool({
+    schedule: tool({
       description:
         "Schedules a task for yourself. Each time it fires you start a fresh run in this same conversation with the stored instructions, and the answer is delivered back here. A one-time task deletes itself once it has run; a recurring one keeps firing until it is cancelled.",
-      inputSchema: jsonSchema<ScheduleTaskInput>({
+      inputSchema: jsonSchema<ScheduleInput>({
         type: "object",
         properties: {
           name: {
@@ -164,7 +162,7 @@ export function scheduleTaskTool(context: ScheduledTaskContext): ToolSet {
   };
 }
 
-function toScheduledTaskSummary(cron: CronRecord): ScheduledTaskSummary {
+function toScheduleSummary(cron: CronRecord): ScheduleSummary {
   return {
     cronId: cron.cronId,
     name: cron.name,
