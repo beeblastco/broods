@@ -39,7 +39,10 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import channelTool, { type ChannelToolContext } from "./channel.tool.ts";
+import channelTool, {
+  sendMessageTool,
+  type ChannelToolContext,
+} from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
   hasStandaloneSandbox,
@@ -56,7 +59,6 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
-import sendMessageTool from "./send-message.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";

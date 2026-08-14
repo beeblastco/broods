@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe("telegram channel actions", () => {
-  it("sends Telegram photos and stickers to the current topic", async () => {
+  it("sends Telegram photos and stickers to the current topic", async (): Promise<void> => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
       telegramMessageResponse(50, "photo"),
@@ -361,7 +361,7 @@ describe("discord channel actions", () => {
 });
 
 describe("slack channel actions", () => {
-  it("posts Slack image blocks and custom emoji stickers in the current thread", async () => {
+  it("posts Slack image blocks and custom emoji stickers in the current thread", async (): Promise<void> => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
       jsonResponse({ ok: true }),
@@ -464,7 +464,7 @@ describe("slack channel actions", () => {
     });
   });
 
-  it("keeps Slack image and sticker tools on the slash-command response URL", async () => {
+  it("keeps Slack image and sticker tools on the slash-command response URL", async (): Promise<void> => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
       new Response("", { status: 200 }),
@@ -488,7 +488,7 @@ describe("slack channel actions", () => {
     await actions.sendSticker?.("party_parrot");
     await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
 
-    expect(fetchMock.calls.map((call) => toUrl(call.input))).toEqual([
+    expect(fetchMock.calls.map((call): string => toUrl(call.input))).toEqual([
       responseUrl,
       responseUrl,
       responseUrl,
@@ -745,9 +745,11 @@ describe("zalo channel actions", () => {
       jsonResponse({ ok: true, result: true }),
     );
 
-    const actions = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    }).actions(
+    const actions = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      { allowedUserIds: new Set(["user-1"]) },
+    ).actions(
       createMessage({
         chatId: "chat-1",
         chatType: "PRIVATE",
@@ -818,9 +820,11 @@ describe("zalo channel actions", () => {
 
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    });
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      { allowedUserIds: new Set(["user-1"]) },
+    );
     const actions = adapter.actions(
       createMessage({
         chatId: "chat-1",

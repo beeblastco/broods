@@ -371,15 +371,13 @@ export function createSlackChannel(
   return {
     name: "slack",
 
-    canHandle: function (req) {
+    canHandle: function(req) {
       return "x-slack-signature" in req.headers;
     },
 
-    authenticate: async function (req) {
+    authenticate: async function(req) {
       try {
-        await verifySlackSignature(req.body, req.headers, {
-          signingSecret: signingSecret,
-        });
+        await verifySlackSignature(req.body, req.headers, { signingSecret: signingSecret });
 
         return true;
       } catch (err) {
@@ -391,7 +389,7 @@ export function createSlackChannel(
       }
     },
 
-    parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
       const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
 
       if (payload.kind === "url_verification") {
@@ -428,7 +426,7 @@ export function createSlackChannel(
       );
     },
 
-    actions: function (msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createSlackActions(
         botToken,
         apiUrl,
@@ -441,7 +439,7 @@ export function createSlackChannel(
     // Slack is the one provider where the reply has two places it can land, so
     // it is the one that can honour the record. A slash command still answers
     // through its response URL, which carries no thread either way.
-    applyThreadPolicy: function (source, policy) {
+    applyThreadPolicy: function(source, policy) {
       const slackSource = toSlackSource(source);
       const threadTs =
         policy === "always-thread"
@@ -698,14 +696,16 @@ function createSlackActions(
   source: SlackSource,
   reactionEmoji: string,
 ): ChannelActions {
-  const threadId = slack.encodeThreadId({
-    channel: source.channelId,
-    threadTs: source.threadTs ?? "",
-  });
+  const threadId = source.threadTs
+    ? slack.encodeThreadId({
+        channel: source.channelId,
+        threadTs: source.threadTs,
+      })
+    : undefined;
   const formatter = new SlackFormatConverter();
 
   return {
-    sendImage: async function (url, caption): Promise<void> {
+    sendImage: async function(url, caption): Promise<void> {
       await postSlackCard(
         botToken,
         apiUrl,
@@ -719,7 +719,7 @@ function createSlackActions(
       );
     },
 
-    sendSticker: async function (sticker): Promise<void> {
+    sendSticker: async function(sticker): Promise<void> {
       const value = sticker.trim();
       if (!value) {
         throw new Error(
@@ -754,7 +754,7 @@ function createSlackActions(
       });
     },
 
-    sendText: async function (text) {
+    sendText: async function(text) {
       if (source.responseUrl) {
         await sendSlackWebhookResponse(
           source.responseUrl,
@@ -775,12 +775,12 @@ function createSlackActions(
       });
     },
 
-    sendTyping: async function () {
+    sendTyping: async function() {
       return;
     },
 
     supportsReactions: Boolean(source.messageTs),
-    reactToMessage: async function (emoji): Promise<void> {
+    reactToMessage: async function(emoji): Promise<void> {
       if (!source.messageTs) {
         return;
       }
@@ -799,7 +799,7 @@ function createSlackActions(
       );
     },
 
-    ...(source.threadTs && source.userId
+    ...(threadId && source.userId
       ? {
           stream: async (textStream, options) => {
             const result = await slack.stream(
@@ -999,9 +999,7 @@ function parseSlashCommand(
   }
 
   if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
-    logWarn("Slack slash command channel not in allow list", {
-      channelId: channelId,
-    });
+    logWarn("Slack slash command channel not in allow list", { channelId: channelId });
 
     return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
   }

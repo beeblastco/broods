@@ -165,14 +165,14 @@ export function createDiscordChannel(
   return {
     name: "discord",
 
-    canHandle: function (req) {
+    canHandle: function(req) {
       return (
         "x-signature-ed25519" in req.headers ||
         "x-discord-gateway-token" in req.headers
       );
     },
 
-    authenticate: function (req) {
+    authenticate: function(req) {
       if ("x-discord-gateway-token" in req.headers) {
         return req.headers["x-discord-gateway-token"] === botToken;
       }
@@ -184,7 +184,7 @@ export function createDiscordChannel(
       );
     },
 
-    parse: function (req): ChannelParseResult {
+    parse: function(req): ChannelParseResult {
       const payload = JSON.parse(req.body) as DiscordInteractionPayload;
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
@@ -326,7 +326,7 @@ export function createDiscordChannel(
       };
     },
 
-    actions: function (msg): ChannelActions {
+    actions: function(msg): ChannelActions {
       return createDiscordActions(
         botToken,
         publicKey,
@@ -359,7 +359,7 @@ function createDiscordActions(
     });
 
   return {
-    sendText: async function (text) {
+    sendText: async function(text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
 
@@ -385,7 +385,7 @@ function createDiscordActions(
       }
     },
 
-    sendTyping: async function () {
+    sendTyping: async function() {
       if (!source.channelId) {
         return;
       }

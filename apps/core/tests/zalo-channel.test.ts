@@ -18,9 +18,11 @@ import {
 
 describe("zalo channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    });
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      { allowedUserIds: new Set(["user-1"]) },
+    );
 
     expect(
       adapter.authenticate(
@@ -42,9 +44,11 @@ describe("zalo channel adapter", () => {
   });
 
   it("normalizes text webhook events into direct conversations", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    });
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      { allowedUserIds: new Set(["user-1"]) },
+    );
     const parsed = await adapter.parse(
       createZaloRequest(
         validUpdate({
@@ -82,9 +86,11 @@ describe("zalo channel adapter", () => {
   });
 
   it("accepts wrapped Zalo API webhook envelopes", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    });
+    const adapter = createZaloChannel(
+      "bot-token",
+      "zalo-secret",
+      { allowedUserIds: new Set(["user-1"]) },
+    );
     const parsed = await adapter.parse(
       createZaloRequest({
         ok: true,
@@ -231,9 +237,7 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
     expectIgnoreReason(
       await adapter.parse(
-        createZaloRequest(
-          validUpdate({ chatType: "GROUP", chatId: "group-9" }),
-        ),
+        createZaloRequest(validUpdate({ chatType: "GROUP", chatId: "group-9" })),
       ),
       "group_not_allowed:group-9",
     );
@@ -368,9 +372,9 @@ describe("zalo channel adapter", () => {
 
   it("rejects image URLs Zalo could not fetch", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
-      await expect(actions.sendImage?.("/workspace/chart.png")).rejects.toThrow(
-        "absolute http(s) image URL",
-      );
+      await expect(
+        actions.sendImage?.("/workspace/chart.png"),
+      ).rejects.toThrow("absolute http(s) image URL");
       await expect(
         actions.sendImage?.("data:image/png;base64,iVBORw0KGgo="),
       ).rejects.toThrow("absolute http(s) image URL");
@@ -379,7 +383,7 @@ describe("zalo channel adapter", () => {
     expect(calls).toEqual([]);
   });
 
-  it("sends a provider-native sticker through sendSticker", async () => {
+  it("sends a provider-native sticker through sendSticker", async (): Promise<void> => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
       await actions.sendSticker?.(" sticker-123 ");
     });
@@ -462,7 +466,10 @@ function createZaloRequest(
   };
 }
 
-function expectIgnoreReason(parsed: ChannelParseResult, reason: string): void {
+function expectIgnoreReason(
+  parsed: ChannelParseResult,
+  reason: string,
+): void {
   expect(parsed.kind).toBe("ignore");
   if (parsed.kind !== "ignore") {
     throw new Error("Expected Zalo webhook to be ignored");

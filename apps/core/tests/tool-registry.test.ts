@@ -15,6 +15,14 @@ import {
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
 
+interface ChannelTestTool {
+  execute: ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+}
+
 const urlContextMock = mock((options: unknown) => ({
   provider: "urlContext",
   options: options,
@@ -38,7 +46,7 @@ describe("createTools", () => {
     expect(urlContextMock).not.toHaveBeenCalled();
   });
 
-  it("automatically exposes channel interaction tools on channel turns", async () => {
+  it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const sendImage = mock(async function (): Promise<void> {});
     const sendSticker = mock(async function (): Promise<void> {});
@@ -99,7 +107,7 @@ describe("createTools", () => {
     expect(sendSticker).toHaveBeenCalledWith("sticker-1");
   });
 
-  it("omits unsupported channel interaction tools", async () => {
+  it("omits unsupported channel interaction tools", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const tools = await createTools(
       {
@@ -122,7 +130,7 @@ describe("createTools", () => {
     expect(tools).toEqual({});
   });
 
-  it("exposes send-message outside channel turns for configured agents", async () => {
+  it("exposes send-message outside channel turns for configured agents", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const dispatchSessionMessage = mock(
       async function (): Promise<SessionMessageResult> {
@@ -140,7 +148,7 @@ describe("createTools", () => {
     expect(Object.keys(tools)).toEqual(["send-message"]);
   });
 
-  it("lets channel denyTools withhold automatic interaction tools", async () => {
+  it("lets channel denyTools withhold automatic interaction tools", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const context: Omit<ToolContext, "config"> = {
       ...createToolContext(),
@@ -949,14 +957,6 @@ async function channelToolExecute(
     messages: [],
     context: {},
   });
-}
-
-interface ChannelTestTool {
-  execute: ToolExecuteFunction<
-    Record<string, unknown>,
-    unknown,
-    Record<string, unknown>
-  >;
 }
 
 function isChannelTestTool(

@@ -1005,9 +1005,7 @@ export async function runAgentLoop(
         conversationKey: session.conversationKey,
         attributes: attributes,
       });
-      recordToolCallSummary(toolCallSummaries, toolCall, {
-        stepNumber: stepNumber,
-      });
+      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -1172,9 +1170,7 @@ export async function runAgentLoop(
         lastStepText = stepText;
       }
       for (const toolCall of toolCalls) {
-        recordToolCallSummary(toolCallSummaries, toolCall, {
-          stepNumber: stepNumber,
-        });
+        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
       }
 
       // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)

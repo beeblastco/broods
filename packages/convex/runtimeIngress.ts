@@ -643,7 +643,12 @@ export const getConversationTarget = internalQuery({
     conversationKey: v.string(),
   },
   returns: v.union(channelTargetValidator, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<NonNullable<
+    Doc<"runtimeConversationCoordinators">["channelTarget"]
+  > | null> => {
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const coordinator = await getCoordinator(ctx, args.conversationKey);
     if (

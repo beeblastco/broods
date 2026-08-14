@@ -6,6 +6,11 @@
 import type { ModelMessage, SystemModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { runtime } from "../shared/convex/runtime.ts";
+import {
+  accountAgentScopedKey,
+  parseAccountAgentScopedKey,
+  publicConversationKeyFromScoped,
+} from "../shared/runtime-keys.ts";
 
 export type IngressMode = "reject" | "followup" | "collect" | "steer";
 export type AppliedIngressMode = IngressMode;
@@ -39,6 +44,15 @@ export interface SessionMessageInput {
 export interface SessionMessageResult {
   conversationKey: string;
   status: "accepted" | "queued";
+}
+
+export interface PreparedSessionMessage {
+  candidate: IngressCandidate & {
+    agentConfig: AgentConfig;
+    delivery: Extract<IngressDelivery, { kind: "channel" }>;
+  };
+  publicEventId: string;
+  publicConversationKey: string;
 }
 
 export type RunSessionMessageDispatch = (
@@ -100,7 +114,12 @@ export interface AppliedIngress {
 
 export type IngressAdmission = {
   outcome:
-    "owner" | "queued" | "duplicate" | "rejected" | "capacity" | "conflict";
+    | "owner"
+    | "queued"
+    | "duplicate"
+    | "rejected"
+    | "capacity"
+    | "conflict";
   eventId?: string;
   status?: IngressStatus;
   ownerGeneration?: number;
@@ -188,6 +207,83 @@ export async function acceptIngress(
     maxQueuedCount: DEFAULT_INGRESS_MAX_COUNT,
     maxQueuedBytes: DEFAULT_INGRESS_MAX_BYTES,
   });
+}
+
+export async function prepareSessionMessage(options: {
+  accountId: string;
+  agentId: string;
+  sourceConversationKey: string;
+  input: SessionMessageInput;
+}): Promise<PreparedSessionMessage> {
+  const requestedKey = options.input.conversationKey.trim();
+  if (!requestedKey || !options.input.message.trim()) {
+    throw new Error("Target conversation and message must not be empty");
+  }
+  const requestedScope = parseAccountAgentScopedKey(requestedKey);
+  if (requestedKey.startsWith("acct:") && !requestedScope) {
+    throw new Error("Target conversation key is invalid");
+  }
+  if (
+    requestedScope &&
+    (requestedScope.accountId !== options.accountId ||
+      requestedScope.agentId !== options.agentId)
+  ) {
+    throw new Error("Target conversation must belong to the current agent");
+  }
+  const conversationKey = requestedScope
+    ? requestedKey
+    : accountAgentScopedKey(options.accountId, options.agentId, requestedKey);
+  if (conversationKey === options.sourceConversationKey) {
+    throw new Error("send-message cannot target the current conversation");
+  }
+  const target = await getConversationDispatchTarget({
+    accountId: options.accountId,
+    agentId: options.agentId,
+    conversationKey: conversationKey,
+  });
+  if (!target) {
+    throw new Error("Target conversation is not an existing channel session");
+  }
+  const publicEventId = `session-message-${crypto.randomUUID()}`;
+  const eventId = accountAgentScopedKey(
+    options.accountId,
+    options.agentId,
+    publicEventId,
+  );
+  const publicConversationKey = publicConversationKeyFromScoped(
+    conversationKey,
+    options.accountId,
+    options.agentId,
+  );
+
+  return {
+    candidate: {
+      accountId: options.accountId,
+      agentId: options.agentId,
+      agentConfig: target.agentConfig,
+      eventId: eventId,
+      conversationKey: conversationKey,
+      events: [
+        {
+          role: "user",
+          content: `[Inter-session message from ${publicConversationKeyFromScoped(
+            options.sourceConversationKey,
+            options.accountId,
+            options.agentId,
+          )}]\n${options.input.message}`,
+        },
+      ],
+      requestedMode: "followup",
+      idempotencyKey: eventId,
+      delivery: {
+        kind: "channel",
+        channel: target.channelName,
+        source: target.source,
+      },
+    },
+    publicEventId: publicEventId,
+    publicConversationKey: publicConversationKey,
+  };
 }
 
 /** Reads the durable channel destination for an existing agent conversation. */

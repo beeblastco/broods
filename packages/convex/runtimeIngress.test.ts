@@ -64,7 +64,7 @@ function admission(options: {
 }
 
 describe("runtime ingress", () => {
-  test("remembers the latest channel target for session messaging", async () => {
+  test("remembers the latest channel target for session messaging", async (): Promise<void> => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
     const conversationKey = conversationKeyFor(accountId);

@@ -53,16 +53,13 @@ type RuntimeMutationName = keyof typeof runtimeMutations;
 
 /** Mutable call boundary used by focused core tests without a live deployment. */
 export const runtime = {
-  query: function <T>(
-    name: RuntimeQueryName,
-    args: Record<string, unknown>,
-  ): Promise<T> {
+  query: function<T>(name: RuntimeQueryName, args: Record<string, unknown>): Promise<T> {
     return getConvexClient().query(
       runtimeQueries[name],
       args as any,
     ) as Promise<T>;
   },
-  mutate: function <T>(
+  mutate: function<T>(
     name: RuntimeMutationName,
     args: Record<string, unknown>,
   ): Promise<T> {

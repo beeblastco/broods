@@ -21,12 +21,12 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 Channel tools are automatic; do not add them to `config.tools`.
 
-| Tool             | Use                     |
-| ---------------- | ----------------------- |
-| `send-message`   | Message another session |
-| `send-image`     | Send an image           |
-| `send-sticker`   | Send a sticker          |
-| `send-reactions` | React to a message      |
+| Tool | Use |
+| --- | --- |
+| `send-message` | Message another session |
+| `send-image` | Send an image |
+| `send-sticker` | Send a sticker |
+| `send-reactions` | React to a message |
 
 `send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
 
