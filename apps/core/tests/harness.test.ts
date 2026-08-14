@@ -4,12 +4,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { SystemModelMessage } from "ai";
 import * as actualAi from "ai";
+import type { SystemContextSnapshot } from "../src/harness/session.ts";
+import type { SandboxExecutorConfig } from "../src/harness/sandbox/types.ts";
+import type { SandboxPermissionMode } from "../src/shared/domain/sandbox-config.ts";
 import {
   setStorageForTests,
   type Storage,
   type TaskUsageInput,
 } from "../src/shared/storage.ts";
+import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const ORIGINAL_ENV = { ...process.env };
 const ORIGINAL_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
@@ -64,6 +69,7 @@ let streamTextScenario:
   | "error-no-finish"
   | "hard-throw"
   | "approval-request"
+  | "automatic-approval"
   | "structured-output"
   | "tool-run"
   | "multi-step-text" = "empty";
@@ -222,6 +228,54 @@ const streamTextMock = mock(
             toolCallId: "tool-call-1",
           });
           controller.enqueue({ type: "finish", finishReason: "tool-calls" });
+          controller.close();
+
+          return;
+        }
+
+        // A policy decision the SDK resolved itself: the request part is a record
+        // of an answered question, and its response ships in the same run.
+        if (streamTextScenario === "automatic-approval") {
+          const approvalPart = {
+            type: "tool-approval-request",
+            approvalId: "approval-auto-1",
+            isAutomatic: true,
+            toolCall: {
+              type: "tool-call",
+              toolCallId: "tool-call-1",
+              toolName: "bash",
+              input: { shell: "ls" },
+            },
+          };
+          await options.onEnd({
+            response: {
+              messages: [
+                {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "tool-call",
+                      toolCallId: "tool-call-1",
+                      toolName: "bash",
+                      input: { shell: "ls" },
+                    },
+                    {
+                      type: "tool-approval-request",
+                      approvalId: "approval-auto-1",
+                      toolCallId: "tool-call-1",
+                    },
+                  ],
+                },
+              ],
+            },
+            text: "listed the files",
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+            steps: [{ content: [approvalPart] }],
+            toolCalls: [],
+          });
+          controller.enqueue({ type: "text-delta", text: "listed the files" });
+          controller.enqueue({ type: "finish", finishReason: "stop" });
           controller.close();
 
           return;
@@ -1043,6 +1097,80 @@ describe("runAgentLoop", () => {
       }),
     ).resolves.toBe("user-approval");
     expect(streamTextMock.mock.calls[0]?.[0].instructions).toEqual([]);
+  });
+
+  it("does not gate the turn on approvals the SDK already resolved", async (): Promise<void> => {
+    streamTextScenario = "automatic-approval";
+    installHarnessEnv();
+    const { runAgentLoop } = await import("../src/harness/harness.ts");
+    const persistModelMessages = mock(async (): Promise<void> => {});
+    const onErrorText = mock(async (): Promise<void> => {});
+    const onApprovalRequired = mock(async (): Promise<void> => {});
+    const onFinalText = mock(async (): Promise<void> => {});
+
+    const stream = await runAgentLoop(
+      {
+        conversationKey: "direct:conversation",
+        eventId: "direct-event",
+        filesystemNamespace: (): string => "fs-test",
+        resolvedWorkspaces: (): ResolvedWorkspace[] => [],
+        agentSandbox: (): SandboxExecutorConfig => ({ provider: "lambda" }),
+        agentSandboxPermissionMode: (): SandboxPermissionMode => "bypass",
+        persistModelMessages: persistModelMessages,
+        loadRefreshedSystemPromptParts: async (): Promise<{
+          systemContextSnapshot: SystemContextSnapshot;
+          system: SystemModelMessage[];
+        }> => ({
+          systemContextSnapshot: { cursor: null, messages: [] },
+          system: [],
+        }),
+      } as never,
+      {
+        messages: [{ role: "user", content: "list the files" }],
+        system: [],
+        ephemeralSystem: [],
+        systemContextSnapshot: { cursor: null, messages: [] },
+      },
+      {
+        provider: { google: { apiKey: "google-key" } },
+        model: { provider: "google", modelId: "gemini-test" },
+      },
+      {
+        onFinalText: onFinalText,
+        onErrorText: onErrorText,
+        onApprovalRequired: onApprovalRequired,
+      },
+    );
+
+    await stream.consumeStream();
+
+    // An automatic request must not read as pending: on a channel turn that
+    // would persist a denial for an answered approvalId, and the next model call
+    // rejects the history with AI_InvalidToolApprovalError.
+    expect(stream.approvalSummaries()).toEqual([]);
+    expect(onApprovalRequired).not.toHaveBeenCalled();
+    expect(onErrorText).not.toHaveBeenCalled();
+    expect(stream.didFail()).toBe(false);
+    expect(onFinalText).toHaveBeenCalled();
+    // The request part still belongs in history so the SDK can pair it later.
+    expect(persistModelMessages).toHaveBeenCalledWith([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-call-1",
+            toolName: "bash",
+            input: { shell: "ls" },
+          },
+          {
+            type: "tool-approval-request",
+            approvalId: "approval-auto-1",
+            toolCallId: "tool-call-1",
+          },
+        ],
+      },
+    ]);
   });
 
   it("passes agent model config into streamText", async () => {
