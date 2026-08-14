@@ -189,6 +189,11 @@ async function resolveImageUrl(
   filePath: string | undefined,
   workspace: string | undefined,
 ): Promise<string> {
+  // Two sources name two different pictures. Picking one silently would send
+  // something the caller did not ask for, so refuse and let the model choose.
+  if (filePath && url) {
+    return toolError("Error: send-image takes file_path or url, not both");
+  }
   if (filePath) {
     const ws = resolveWorkspace(source.workspaces, workspace);
     if (!ws || !source.accountId) {
@@ -215,7 +220,7 @@ function sendImageDescription(
   hasWorkspace: boolean,
 ): string {
   const source = hasWorkspace
-    ? "Pass file_path for an image in the workspace, or url for one already published on the web."
+    ? "Pass exactly one source: file_path for an image in the workspace, or url for one already published on the web."
     : "Pass url, an image already published on the web.";
 
   return `Sends an image to the current ${channelName} conversation immediately. ${source} Use this for an intentional image message; the normal final text answer is delivered automatically.`;

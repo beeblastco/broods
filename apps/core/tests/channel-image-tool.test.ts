@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import { openMediaTicket } from "../src/shared/media-ticket.ts";
+import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const s3ObjectExistsMock = mock(async (_bucket: string, _key: string) => true);
 
@@ -33,6 +34,12 @@ const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
 const NS = "fs-0123456789abcdef0123456789abcdef01234567";
 const SECRET = "service-auth-secret";
+const WORKSPACE: ResolvedWorkspace = {
+  name: "notes",
+  workspaceId: "ws_a",
+  namespace: NS,
+  config: { storage: { provider: "s3" } },
+};
 
 beforeEach(() => {
   process.env.AWS_REGION = "us-east-1";
@@ -100,6 +107,21 @@ describe("sendImageTool", () => {
     expect(sendImage).not.toHaveBeenCalled();
   });
 
+  it("refuses both sources rather than picking one", async (): Promise<void> => {
+    const { sendImageTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    const sendImage = mock(async function (): Promise<void> {});
+    const tools = sendImageTool(channelContext(sendImage));
+
+    const sent = execute(tools["send-image"], {
+      file_path: "profile.jpeg",
+      url: "https://example.com/other.png",
+    });
+
+    await expect(sent).rejects.toThrow("takes file_path or url, not both");
+    expect(sendImage).not.toHaveBeenCalled();
+  });
+
   it("requires either a workspace file or a URL", async (): Promise<void> => {
     const { sendImageTool } =
       await import("../src/harness/tools/channel.tool.ts");
@@ -143,14 +165,7 @@ function channelContext(
       return `[safe] ${text}`;
     },
     accountId: ACCOUNT,
-    workspaces: [
-      {
-        name: "notes",
-        workspaceId: "ws_a",
-        namespace: NS,
-        config: { storage: { provider: "s3" } },
-      },
-    ] as never,
+    workspaces: [WORKSPACE],
   };
 }
 
