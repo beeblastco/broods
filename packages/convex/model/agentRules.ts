@@ -9,16 +9,14 @@ import {
   AGENT_HOOK_EVENT_NAMES,
   type AgentHookEventName,
 } from "./accountHooks";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  isAccountModelProviderName,
+  type AccountModelProviderName,
+} from "./modelProviders";
 
 export type AgentStatus = "active" | "disabled";
-export type AccountModelProviderName =
-  | "google"
-  | "openai"
-  | "anthropic"
-  | "bedrock"
-  | "vercel"
-  | "minimax"
-  | "custom";
+export type { AccountModelProviderName } from "./modelProviders";
 
 export type AgentConfig = Record<string, unknown> & {
   agent?: Record<string, unknown>;
@@ -90,15 +88,6 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "write",
 ]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
-const ACCOUNT_MODEL_PROVIDER_NAMES = [
-  "google",
-  "openai",
-  "anthropic",
-  "bedrock",
-  "vercel",
-  "minimax",
-  "custom",
-] as const;
 const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
@@ -438,32 +427,6 @@ function normalizeProviderSettings(
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new Error(
       `config.provider.${providerName}.headers must be an object with string values`,
-    );
-  }
-  if (providerName === "openai" || providerName === "custom") {
-    assertOptionalString(
-      config.organization,
-      `config.provider.${providerName}.organization`,
-    );
-    assertOptionalString(
-      config.project,
-      `config.provider.${providerName}.project`,
-    );
-    assertOptionalString(config.name, `config.provider.${providerName}.name`);
-  }
-  if (providerName === "bedrock") {
-    assertOptionalString(config.region, "config.provider.bedrock.region");
-    assertOptionalString(
-      config.accessKeyId,
-      "config.provider.bedrock.accessKeyId",
-    );
-    assertOptionalString(
-      config.secretAccessKey,
-      "config.provider.bedrock.secretAccessKey",
-    );
-    assertOptionalString(
-      config.sessionToken,
-      "config.provider.bedrock.sessionToken",
     );
   }
 }
@@ -1081,14 +1044,6 @@ function assertOptionalNumberArray(value: unknown, name: string): void {
   ) {
     throw new Error(`${name} must be an array of numbers`);
   }
-}
-
-function isAccountModelProviderName(
-  value: string,
-): value is AccountModelProviderName {
-  return ACCOUNT_MODEL_PROVIDER_NAMES.includes(
-    value as AccountModelProviderName,
-  );
 }
 
 // Provider-defined tool names are validated for shape only; whether the

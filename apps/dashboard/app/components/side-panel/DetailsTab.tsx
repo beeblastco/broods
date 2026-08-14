@@ -27,6 +27,11 @@ import { Separator } from "@/app/components/ui/separator";
 import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  MODEL_PROVIDERS,
+  type AccountModelProviderName,
+} from "@broods/convex/model/modelProviders";
+import {
   readAgentBranch,
   readModelReasoning,
   type FlatAgentConfig,
@@ -69,25 +74,14 @@ type OutputFormatConfig = {
   description?: string;
 };
 
-export type AgentProvider =
-  | "openai"
-  | "google"
-  | "bedrock"
-  | "anthropic"
-  | "minimax"
-  | "vercel"
-  | "custom";
+export type AgentProvider = AccountModelProviderName;
 type RuntimeVariable = { key: string; value: string };
 
-const providerOptions: Array<{ value: AgentProvider; label: string }> = [
-  { value: "openai", label: "OpenAI" },
-  { value: "google", label: "Google" },
-  { value: "bedrock", label: "Bedrock" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "minimax", label: "MiniMax" },
-  { value: "vercel", label: "Vercel" },
-  { value: "custom", label: "Custom OpenAI-compatible" },
-];
+const providerOptions: Array<{ value: AgentProvider; label: string }> =
+  ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
+    value: name,
+    label: MODEL_PROVIDERS[name].label,
+  }));
 
 const REASONING_EFFORT_LABELS: Record<string, string> = {
   none: "None",

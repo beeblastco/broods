@@ -3421,66 +3421,58 @@ components:
 
     ProviderConfig:
       type: object
-      description: Constructor settings for the AI SDK provider. The selected provider entry must exist and include its `apiKey`. Secret-like fields are encrypted at rest and redacted from reads.
+      description: >-
+        Constructor settings for the Vercel AI SDK provider, keyed by provider
+        name. The provider named by `model.provider` must have an entry here,
+        and that entry must carry its `apiKey`. Everything else is handed to
+        that provider's AI SDK factory unchanged, so whatever the factory
+        accepts is accepted here. Secret-like fields are encrypted at rest and
+        redacted from reads.
+      propertyNames:
+        enum:
+          - anthropic
+          - azure
+          - baseten
+          - bedrock
+          - cerebras
+          - cohere
+          - custom
+          - deepinfra
+          - deepseek
+          - fireworks
+          - google
+          - groq
+          - minimax
+          - mistral
+          - openai
+          - perplexity
+          - togetherai
+          - v0
+          - vercel
+          - vertex
+          - xai
+      additionalProperties:
+        $ref: "#/components/schemas/ProviderSettings"
+
+    ProviderSettings:
+      type: object
+      description: >-
+        Settings for one provider. Only the fields broods reads itself are
+        listed; any other setting the provider's AI SDK factory supports is
+        forwarded as-is.
+      additionalProperties: true
       properties:
-        google:
+        apiKey:
+          type: string
+        base_url:
+          type: string
+          description: OpenAI-compatible endpoint, required for `custom`. `baseURL` is accepted as an alias; the camel-case `baseUrl` is rejected.
+        baseURL:
+          type: string
+        headers:
           type: object
-          description: Google Generative AI provider
-          properties:
-            apiKey:
-              type: string
-            baseURL:
-              type: string
-            headers:
-              type: object
-        openai:
-          type: object
-          description: OpenAI provider
-          properties:
-            apiKey:
-              type: string
-            baseURL:
-              type: string
-            organization:
-              type: string
-            project:
-              type: string
-            name:
-              type: string
-        bedrock:
-          type: object
-          description: AWS Bedrock provider
-          properties:
-            region:
-              type: string
-            apiKey:
-              type: string
-            accessKeyId:
-              type: string
-            secretAccessKey:
-              type: string
-            sessionToken:
-              type: string
-        vercel:
-          type: object
-          description: Vercel AI Gateway provider
-          properties:
-            apiKey:
-              type: string
-            baseURL:
-              type: string
-            headers:
-              type: object
-        minimax:
-          type: object
-          description: MiniMax provider
-          properties:
-            apiKey:
-              type: string
-            baseURL:
-              type: string
-            headers:
-              type: object
+          additionalProperties:
+            type: string
 
     ModelConfig:
       type: object

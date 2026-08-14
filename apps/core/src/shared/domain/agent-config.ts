@@ -30,16 +30,16 @@ import {
   isStringRecord,
 } from "../object.ts";
 import {
-  accountModelProviderNames,
+  ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
   type AccountModelProviderName,
-} from "../providers.ts";
+} from "@broods/convex/model/modelProviders";
 import { isAccountToolId } from "./account-tools.ts";
 import {
   normalizeAgentPolicyConfig,
   type AgentPolicyConfig,
 } from "./agent-policy.ts";
-export type { AccountModelProviderName } from "../providers.ts";
+export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
 const REDACTED_SECRET_VALUE = "********";
@@ -283,14 +283,8 @@ export type AgentProviderConfig = Partial<
   Record<AccountModelProviderName, AgentProviderSettings>
 >;
 
-/**
- * Constructor settings for a model provider. The keys are an explicit allow-list
- * (no open index signature) so a misspelled option — most commonly the camel
- * `baseUrl` instead of the canonical `base_url`/`baseURL` — is a compile-time
- * error in the SDK and is caught by `normalizeProviderSettings` at runtime.
- * Keep this list in sync with `normalizeProviderSettings` and the SDK's
- * `KNOWN_PROVIDER_SETTING_KEYS`.
- */
+// Open on purpose: what a provider's AI SDK factory accepts is passed through
+// verbatim. Named keys are only the ones broods reads itself, never a limit.
 export interface AgentProviderSettings {
   apiKey?: string;
   /** OpenAI-compatible endpoint (`custom`). Snake form, as documented. */
@@ -298,13 +292,11 @@ export interface AgentProviderSettings {
   /** OpenAI-compatible endpoint (`custom`). AI-SDK form; the dashboard writes both. */
   baseURL?: string;
   headers?: Record<string, string>;
+  /** Endpoint label; becomes the provider id and the pi harness env prefix. */
+  name?: string;
   organization?: string;
   project?: string;
-  name?: string;
-  region?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-  sessionToken?: string;
+  [key: string]: unknown;
 }
 
 export interface AgentWorkspaceRef {
@@ -987,34 +979,6 @@ function normalizeProviderSettings(
       `config.provider.${providerName}.headers must be an object with string values`,
     );
   }
-
-  if (providerName === "openai" || providerName === "custom") {
-    assertOptionalString(
-      config.organization,
-      `config.provider.${providerName}.organization`,
-    );
-    assertOptionalString(
-      config.project,
-      `config.provider.${providerName}.project`,
-    );
-    assertOptionalString(config.name, `config.provider.${providerName}.name`);
-  }
-
-  if (providerName === "bedrock") {
-    assertOptionalString(config.region, "config.provider.bedrock.region");
-    assertOptionalString(
-      config.accessKeyId,
-      "config.provider.bedrock.accessKeyId",
-    );
-    assertOptionalString(
-      config.secretAccessKey,
-      "config.provider.bedrock.secretAccessKey",
-    );
-    assertOptionalString(
-      config.sessionToken,
-      "config.provider.bedrock.sessionToken",
-    );
-  }
 }
 
 function providerBaseURL(config: Record<string, unknown>): string | undefined {
@@ -1551,7 +1515,7 @@ function assertOptionalProviderName(value: unknown, name: string): void {
   }
   if (typeof value !== "string" || !isAccountModelProviderName(value)) {
     throw new Error(
-      `${name} must be one of: ${accountModelProviderNames().join(", ")}`,
+      `${name} must be one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")}`,
     );
   }
 }

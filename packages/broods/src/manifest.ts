@@ -18,6 +18,10 @@ import {
   type BuildFailure,
   type Plugin,
 } from "esbuild";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  isAccountModelProviderName,
+} from "../../convex/model/modelProviders.ts";
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
@@ -831,32 +835,7 @@ async function normalizeConfig(
   return rewriteValues(resource.config);
 }
 
-// Supported providers and their constructor-setting keys — a local mirror of
-// core's `ACCOUNT_MODEL_PROVIDERS` / `normalizeProviderSettings` (kept as plain
-// values rather than a runtime import so core is not bundled into the SDK). Keep
-// in sync with core's `AgentProviderSettings`.
-const KNOWN_PROVIDER_NAMES = [
-  "google",
-  "openai",
-  "anthropic",
-  "bedrock",
-  "vercel",
-  "minimax",
-  "custom",
-] as const;
-const KNOWN_PROVIDER_SETTING_KEYS = new Set([
-  "apiKey",
-  "base_url",
-  "baseURL",
-  "headers",
-  "organization",
-  "project",
-  "name",
-  "region",
-  "accessKeyId",
-  "secretAccessKey",
-  "sessionToken",
-]);
+const CANONICAL_PROVIDER_KEYS = new Set(["apiKey", "base_url", "baseURL"]);
 const KNOWN_HARNESS_KEYS = new Set([
   "activeTools",
   "debug",
@@ -869,8 +848,16 @@ const KNOWN_HARNESS_KEYS = new Set([
 ]);
 const KNOWN_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 
-/** Suggest the canonical key for a common misspelling, else "". */
+/**
+ * Suggest the canonical key for a common misspelling, else "". A setting the SDK
+ * has never heard of is fine — it reaches the provider's Vercel AI SDK factory
+ * untouched — but a casing slip on one of the few keys broods reads itself
+ * (`apiKey`, `base_url`) would silently do nothing, so those still throw.
+ */
 function suggestProviderKey(key: string): string {
+  if (CANONICAL_PROVIDER_KEYS.has(key)) {
+    return "";
+  }
   const canonical = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   if (canonical === "baseurl") return `"base_url" or "baseURL"`;
   if (canonical === "apikey") return `"apiKey"`;
@@ -895,9 +882,9 @@ export function validateProviderConfig(
   for (const [providerName, settings] of Object.entries(
     provider as Record<string, unknown>,
   )) {
-    if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(providerName)) {
+    if (!isAccountModelProviderName(providerName)) {
       throw new Error(
-        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${KNOWN_PROVIDER_NAMES.join(", ")})`,
+        `Agent "${agentName}" config.provider.${providerName} is not a supported provider (expected one of: ${ACCOUNT_MODEL_PROVIDER_NAMES.join(", ")})`,
       );
     }
     if (
@@ -911,11 +898,12 @@ export function validateProviderConfig(
     }
     const record = settings as Record<string, unknown>;
     for (const key of Object.keys(record)) {
-      if (KNOWN_PROVIDER_SETTING_KEYS.has(key)) continue;
       const suggestion = suggestProviderKey(key);
-      throw new Error(
-        `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}"${suggestion ? ` — did you mean ${suggestion}?` : ""}`,
-      );
+      if (suggestion) {
+        throw new Error(
+          `Agent "${agentName}" config.provider.${providerName} has unknown option "${key}" — did you mean ${suggestion}?`,
+        );
+      }
     }
     if (
       providerName === "custom" &&
@@ -1633,7 +1621,7 @@ function sdkStubPlugin(shimDir: string): Plugin {
 
   return {
     name: "broods-sdk-stub",
-    setup: function(build) {
+    setup: function (build) {
       build.onResolve({ filter: /^broods(\/.*)?$/ }, () => ({ path: stub }));
     },
   };

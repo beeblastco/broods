@@ -5,11 +5,25 @@
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createAzure } from "@ai-sdk/azure";
+import { createBaseten } from "@ai-sdk/baseten";
+import { createCerebras } from "@ai-sdk/cerebras";
+import { createCohere } from "@ai-sdk/cohere";
+import { createDeepInfra } from "@ai-sdk/deepinfra";
+import { createDeepSeek } from "@ai-sdk/deepseek";
+import { createFireworks } from "@ai-sdk/fireworks";
 import { createGateway } from "@ai-sdk/gateway";
 import { createGoogle } from "@ai-sdk/google";
+import { createGoogleVertex } from "@ai-sdk/google-vertex";
+import { createGroq } from "@ai-sdk/groq";
+import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createPerplexity } from "@ai-sdk/perplexity";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { createTogetherAI } from "@ai-sdk/togetherai";
+import { createVercel } from "@ai-sdk/vercel";
+import { createXai } from "@ai-sdk/xai";
 import {
   jsonSchema,
   Output,
@@ -18,13 +32,21 @@ import {
   type LanguageModelMiddleware,
 } from "ai";
 import { createMinimax } from "vercel-minimax-ai-provider";
+import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import type {
-  AccountModelProviderName,
   AgentConfig,
   AgentModelOutputConfig,
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
+
+// What every AI SDK provider factory has in common: settings in, callable
+// provider out. The settings each one accepts are read off it, never restated.
+type ModelProviderFactory = (settings: never) => ModelProviderInstance;
+
+interface ModelProviderInstance {
+  (modelId: string): LanguageModel;
+}
 
 export interface ResolvedModelProvider {
   providerName: AccountModelProviderName;
@@ -38,59 +60,58 @@ export type ModelOutputSpec =
   | ReturnType<typeof Output.choice>
   | ReturnType<typeof Output.json>;
 
+// Name → AI SDK factory; `satisfies` fails the build if a name has no factory.
+// Built per call so each is read off its live binding, which keeps it mockable.
+export function modelProviderFactories() {
+  return {
+    anthropic: createAnthropic,
+    azure: createAzure,
+    baseten: createBaseten,
+    bedrock: createAmazonBedrock,
+    cerebras: createCerebras,
+    cohere: createCohere,
+    custom: createOpenAICompatible,
+    deepinfra: createDeepInfra,
+    deepseek: createDeepSeek,
+    fireworks: createFireworks,
+    google: createGoogle,
+    groq: createGroq,
+    minimax: createMinimax,
+    mistral: createMistral,
+    openai: createOpenAI,
+    perplexity: createPerplexity,
+    togetherai: createTogetherAI,
+    v0: createVercel,
+    vercel: createGateway,
+    vertex: createGoogleVertex,
+    xai: createXai,
+  } satisfies Record<AccountModelProviderName, ModelProviderFactory>;
+}
+
 export function resolveConfiguredModel(
   agentConfig: AgentConfig,
 ): ResolvedModelProvider {
   const providerName = requireModelProvider(agentConfig);
   const modelId = requireModelId(agentConfig);
   const providerConfig = requireProviderSettings(agentConfig, providerName);
-
-  switch (providerName) {
-    case "google":
-      return resolveProviderModel(
-        providerName,
-        createGoogle(providerConfig as never),
-        modelId,
-      );
-    case "openai":
-      return resolveProviderModel(
-        providerName,
-        createOpenAI(providerConfig as never),
-        modelId,
-      );
-    case "custom":
-      return resolveOpenAICompatibleModel(
-        providerName,
-        providerConfig,
-        modelId,
-      );
-    case "anthropic":
-      return resolveProviderModel(
-        providerName,
-        createAnthropic(providerConfig as never),
-        modelId,
-      );
-    case "bedrock":
-      return resolveProviderModel(
-        providerName,
-        createAmazonBedrock(providerConfig as never),
-        modelId,
-      );
-    case "vercel":
-      return resolveProviderModel(
-        providerName,
-        createGateway(providerConfig as never),
-        modelId,
-      );
-    case "minimax":
-      return resolveProviderModel(
-        providerName,
-        createMinimax(providerConfig as never),
-        modelId,
-      );
-    default:
-      throw new Error(`Unsupported model provider: ${String(providerName)}`);
+  if (providerName === "custom") {
+    return resolveOpenAICompatibleModel(providerName, providerConfig, modelId);
   }
+
+  // The registry's value type is a union of factories, so its parameter narrows
+  // to an intersection no single provider's settings satisfy. Settings are
+  // validated by `normalizeProviderSettings` and passed through verbatim, so the
+  // cast is the one seam where account config meets the SDK's own typing.
+  const createProvider = modelProviderFactories()[providerName] as (
+    settings: AgentProviderSettings,
+  ) => ModelProviderInstance;
+  const provider = createProvider(providerConfig);
+
+  return {
+    providerName: providerName,
+    provider: provider,
+    model: provider(modelId),
+  };
 }
 
 export function modelSettingsFromModelConfig(
@@ -122,18 +143,6 @@ export function modelOutputFromModelConfig(
   }
 
   return createModelOutput(output);
-}
-
-function resolveProviderModel(
-  providerName: AccountModelProviderName,
-  provider: (modelId: string) => LanguageModel,
-  modelId: string,
-): ResolvedModelProvider {
-  return {
-    providerName: providerName,
-    provider: provider,
-    model: provider(modelId),
-  };
 }
 
 // vLLM-style chat templates often accept only a single system message, and
@@ -183,7 +192,7 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
           LanguageModelV4StreamPart,
           LanguageModelV4StreamPart
         >({
-          transform: function(part, controller) {
+          transform: function (part, controller) {
             if (part.type === "reasoning-delta" || part.type === "text-delta") {
               const key = `${part.type}:${part.id}`;
               const previous = accumulated.get(key) ?? "";
@@ -234,7 +243,7 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
 };
 
 function resolveOpenAICompatibleModel(
-  providerName: AccountModelProviderName,
+  providerName: "custom",
   providerConfig: AgentProviderSettings,
   modelId: string,
 ): ResolvedModelProvider {
@@ -243,7 +252,7 @@ function resolveOpenAICompatibleModel(
   // return thinking text in `reasoning`/`reasoning_content` fields, which only
   // the compatible provider parses into reasoning parts (#115).
   const provider = createOpenAICompatible({
-    ...(openAIConfig as Record<string, unknown>),
+    ...openAIConfig,
     baseURL: customProviderBaseURL(providerConfig) ?? "",
     name:
       typeof providerConfig.name === "string"

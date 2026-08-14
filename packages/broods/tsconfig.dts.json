@@ -6,7 +6,13 @@
     "emitDeclarationOnly": true,
     "noEmit": false,
     "outDir": ".dts-temp",
-    "rootDir": "../.."
+    "rootDir": "../..",
+    // Every @broods/* type the public surface touches resolves to source, so the
+    // rolled-up .d.ts inlines it instead of importing a package consumers lack.
+    "paths": {
+      "@broods/core/*": ["../../apps/core/*", "../../apps/core/*.ts"],
+      "@broods/*": ["../*", "../*.ts"]
+    }
   },
   "include": ["src/**/*.ts"]
 }

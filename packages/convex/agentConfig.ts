@@ -21,16 +21,11 @@ import {
 import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
+import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
 
 const agentProviderValidator = v.union(
-  v.literal("openai"),
-  v.literal("google"),
-  v.literal("bedrock"),
-  v.literal("anthropic"),
-  v.literal("minimax"),
-  v.literal("vercel"),
-  v.literal("custom"),
+  ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
 );
 
 const agentConfigDoc = v.object({

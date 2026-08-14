@@ -7,7 +7,6 @@ Convex is the sole persistence backend for account configuration and runtime sta
 - `runtime.ts` calls the transactional conversation, claim, async-result, and sandbox-reservation functions.
 - `client.ts` owns the deploy-key-authenticated `ConvexHttpClient` shared by these adapters.
 - The sandbox and usage modules keep focused Convex calls beside the core storage adapter.
-- `dedupe.ts` keeps the narrow event-claim interface used by channel adapters.
 
 Domain records, validation, encryption codecs, redaction, and runtime config
 projection live in `../domain/`; they are not persistence adapters.
