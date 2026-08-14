@@ -30,6 +30,7 @@ import type {
   AsyncToolSource,
   RunAsyncToolDispatch,
 } from "../async-tools.ts";
+import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type {
   SandboxCpuSample,
   SandboxExecutorConfig,
@@ -55,6 +56,7 @@ import readTool from "./read.tool.ts";
 import runSubagentTool, {
   type RunSubagentDispatch,
 } from "./run-subagent.tool.ts";
+import sendMessageTool from "./send-message.tool.ts";
 import stopSubagentTool from "./stop-subagent.tool.ts";
 import updateSubagentTool from "./update-subagent.tool.ts";
 import writeTool from "./write.tool.ts";
@@ -78,6 +80,7 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
@@ -209,6 +212,12 @@ export async function createTools(
 
   if (context.channel) {
     Object.assign(tools, channelTool(context.channel));
+  }
+  if (
+    context.dispatchSessionMessage &&
+    Object.keys(agentConfig.channels ?? {}).length > 0
+  ) {
+    Object.assign(tools, sendMessageTool(context.dispatchSessionMessage));
   }
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry

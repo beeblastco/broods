@@ -58,6 +58,7 @@ import {
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
+import type { RunSessionMessageDispatch } from "./ingress.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
@@ -191,6 +192,7 @@ export interface SubagentParentContext {
 export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; nests its trace under the parent.
   subagentParent?: SubagentParentContext;
   // Request-shared hook dispatcher (one storage load + one ctx.state per
@@ -470,6 +472,7 @@ export async function runAgentLoop(
         modelProvider: configuredModel.provider,
         session: session,
         dispatchAsyncTools: options.dispatchAsyncTools,
+        dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,
         policyToolIdsByName: policyToolIdsByName,
@@ -484,7 +487,7 @@ export async function runAgentLoop(
               channel: {
                 actions: session.channelActions,
                 channelName: channelDelivery.channelName,
-                transformText: (text: string) =>
+                transformText: (text: string): Promise<string | null> =>
                   applyMessageSendingHook(
                     hooks,
                     channelDelivery.channelName,
@@ -1002,7 +1005,9 @@ export async function runAgentLoop(
         conversationKey: session.conversationKey,
         attributes: attributes,
       });
-      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
+      recordToolCallSummary(toolCallSummaries, toolCall, {
+        stepNumber: stepNumber,
+      });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -1167,7 +1172,9 @@ export async function runAgentLoop(
         lastStepText = stepText;
       }
       for (const toolCall of toolCalls) {
-        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
+        recordToolCallSummary(toolCallSummaries, toolCall, {
+          stepNumber: stepNumber,
+        });
       }
 
       // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)

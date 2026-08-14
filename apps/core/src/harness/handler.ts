@@ -15,76 +15,79 @@ import {
 } from "../shared/domain/agent-config.ts";
 import type { CronRecord } from "../shared/domain/cron.ts";
 import {
-    booleanEnv,
-    getHarnessPublicUrl,
-    optionalEnv,
-    positiveIntegerEnv,
+  booleanEnv,
+  getHarnessPublicUrl,
+  optionalEnv,
+  positiveIntegerEnv,
 } from "../shared/env.ts";
 import {
-    errorResponse,
-    jsonResponse,
-    parseJsonBody,
-    type CoreRequest,
-    type RequestContext,
+  errorResponse,
+  jsonResponse,
+  parseJsonBody,
+  type CoreRequest,
+  type RequestContext,
 } from "../shared/http.ts";
 import { logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
-    publicConversationKeyFromScoped,
-    scopedDirectConversationKey,
-    scopedDirectEventId,
+  publicConversationKeyFromScoped,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
-    createPendingAsyncAgentResult,
-    getAsyncAgentResult,
-    markAsyncAgentResultAwaitingApproval,
-    markAsyncAgentResultCompleted,
-    markAsyncAgentResultFailed,
+  createPendingAsyncAgentResult,
+  getAsyncAgentResult,
+  markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultCompleted,
+  markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import {
-    getAsyncToolResult,
-    getDetachedAsyncToolGroup,
-    listAsyncToolResultsByParentEvent,
-    sealDetachedAsyncToolGroup,
-    settleAsyncToolResultFromCallback,
-    verifyAsyncToolCompletionToken,
-    type AsyncToolDelivery,
-    type AsyncToolResultRecord,
+  getAsyncToolResult,
+  getDetachedAsyncToolGroup,
+  listAsyncToolResultsByParentEvent,
+  sealDetachedAsyncToolGroup,
+  settleAsyncToolResultFromCallback,
+  verifyAsyncToolCompletionToken,
+  type AsyncToolDelivery,
+  type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 import {
-    AsyncToolCoordinator,
-    completionToParentMessage,
+  AsyncToolCoordinator,
+  completionToParentMessage,
 } from "./async-tools.ts";
 import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
-    applyMessageSendingHook,
-    createAgentHookDispatcher,
-    type HookDispatcher,
+  applyMessageSendingHook,
+  createAgentHookDispatcher,
+  type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import {
-    acceptIngress,
-    getIngressStatus,
-    type AppliedIngress,
-    type IngressAdmission,
-    type IngressDelivery,
+  acceptIngress,
+  getIngressStatus,
+  type AppliedIngress,
+  type IngressAdmission,
+  type IngressDelivery,
+  type SessionMessageInput,
+  type SessionMessageResult,
 } from "./ingress.ts";
 import {
-    channelActionsFromConfig,
-    rewriteLatestUserIngressText,
-    routeIncomingEvent,
-    sendChannelReply,
-    type AsyncDirectInboundEvent,
-    type AsyncToolCompletionInboundEvent,
-    type ChannelContextEvent,
-    type ChannelInboundEvent,
-    type DirectInboundEvent,
-    type IngressDispatchScope,
-    type SandboxJobCompletionInboundEvent,
-    type StatusInboundEvent,
+  channelActionsFromConfig,
+  rewriteLatestUserIngressText,
+  routeIncomingEvent,
+  sendChannelReply,
+  type AsyncDirectInboundEvent,
+  type AsyncToolCompletionInboundEvent,
+  type ChannelContextEvent,
+  type ChannelInboundEvent,
+  type DirectInboundEvent,
+  type IngressDispatchScope,
+  type SandboxJobCompletionInboundEvent,
+  type StatusInboundEvent,
 } from "./integrations.ts";
 import { Session, type ConversationIngressEvent } from "./session.ts";
+import { prepareSessionMessage } from "./session-messages.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
 type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
@@ -1004,7 +1007,9 @@ async function handleNatsWorkerRequest(
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, fencedPublisher),
         onLoopErrorText: async (error) => {
-          fencedPublisher.publish({ type: "error", error: error }).catch(() => {});
+          fencedPublisher
+            .publish({ type: "error", error: error })
+            .catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
@@ -2205,7 +2210,7 @@ function createDirectContinuationSseBody(
     // This callback runs during stream consumption, after handler() has already
     // returned and its observability scope has closed, so open a fresh one here
     // to keep the continuation's redaction/routing tenant-private.
-    start: function(controller) {
+    start: function (controller) {
       return runWithObservabilityScope(async () => {
         const subagentCoordinator = new SubagentCoordinator(
           session,
@@ -2449,6 +2454,10 @@ async function runParentContinuationLoop(options: {
       {
         dispatchSubagents: options.subagentCoordinator.dispatch,
         dispatchAsyncTools: options.asyncToolCoordinator.dispatch,
+        dispatchSessionMessage: (
+          input: SessionMessageInput,
+        ): Promise<SessionMessageResult> =>
+          dispatchSessionMessage(options.session, input),
         hooks: hooks,
       },
     );
@@ -2459,7 +2468,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2482,7 +2493,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: true,
         failureText: stream.failureText(),
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2501,7 +2514,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2513,13 +2528,70 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
       };
     }
   }
+}
+
+async function dispatchSessionMessage(
+  session: Session,
+  input: SessionMessageInput,
+): Promise<SessionMessageResult> {
+  const prepared = await prepareSessionMessage(session, input);
+  const { delivery, event, publicConversationKey } = prepared;
+  const admission = await acceptIngress({
+    accountId: event.accountId,
+    agentId: event.agentId,
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    events: event.events,
+    requestedMode: event.requestedMode,
+    idempotencyKey: event.idempotencyKey,
+    delivery: delivery,
+    agentConfig: event.agentConfig,
+  });
+  await dispatchRecoveredIngress(event, admission);
+  if (admission.outcome === "capacity") {
+    throw new Error("Target conversation queue is full");
+  }
+  if (admission.outcome === "conflict" || admission.outcome === "rejected") {
+    throw new Error("Target conversation rejected the message");
+  }
+  if (admission.outcome === "owner") {
+    if (admission.ownerGeneration === undefined) {
+      throw new Error("Session message admission has no owner generation");
+    }
+    try {
+      await invokeAsyncWorker({
+        ...event,
+        ownerGeneration: admission.ownerGeneration,
+      });
+    } catch (error) {
+      await failOwnedIngress(
+        { ...event, ownerGeneration: admission.ownerGeneration },
+        error instanceof Error
+          ? error.message
+          : "Failed to start target conversation",
+      );
+      throw error;
+    }
+
+    return {
+      conversationKey: publicConversationKey,
+      status: "accepted",
+    };
+  }
+
+  return {
+    conversationKey: publicConversationKey,
+    status: "queued",
+  };
 }
 
 /**
@@ -2705,7 +2777,7 @@ function isErrorStreamChunk(chunk: unknown): boolean {
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
-      start: function(controller) {
+      start: function (controller) {
         controller.close();
       },
     }),
@@ -2716,7 +2788,7 @@ function emptySseResponse(): Response {
 function errorSseResponse(error: string, statusCode = 200): Response {
   return new Response(
     new ReadableStream({
-      start: function(controller) {
+      start: function (controller) {
         controller.enqueue(
           textEncoder.encode(
             `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,

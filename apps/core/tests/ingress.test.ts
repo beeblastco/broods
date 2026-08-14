@@ -31,6 +31,32 @@ function candidate(): IngressCandidate {
 }
 
 describe("ingress admission payloads", () => {
+  it("remembers channel delivery as a session target", async () => {
+    let call: Record<string, unknown> | undefined;
+    runtime.mutate = (async (_name: string, args: Record<string, unknown>) => {
+      call = args;
+
+      return { outcome: "owner", ownerGeneration: 1 };
+    }) as never;
+    const agentConfig = { channels: { telegram: { botToken: "secret" } } };
+
+    await acceptIngress({
+      ...candidate(),
+      agentConfig: agentConfig,
+      delivery: {
+        kind: "channel",
+        channel: "telegram",
+        source: { chatId: "chat-1" },
+      },
+    });
+
+    expect(call?.channelTarget).toEqual({
+      agentConfig: agentConfig,
+      channelName: "telegram",
+      source: { chatId: "chat-1" },
+    });
+  });
+
   it("persists per-request execution context and covers it in the digest", async () => {
     const calls: Array<Record<string, unknown>> = [];
     runtime.mutate = (async (_name: string, args: Record<string, unknown>) => {

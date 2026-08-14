@@ -25,6 +25,26 @@ export interface PublicDeploymentIngress {
   projectSlug: string;
 }
 
+export interface ConversationDispatchTarget {
+  agentConfig: AgentConfig;
+  channelName: string;
+  source: Record<string, unknown>;
+}
+
+export interface SessionMessageInput {
+  conversationKey: string;
+  message: string;
+}
+
+export interface SessionMessageResult {
+  conversationKey: string;
+  status: "accepted" | "queued";
+}
+
+export type RunSessionMessageDispatch = (
+  input: SessionMessageInput,
+) => Promise<SessionMessageResult>;
+
 export type IngressDelivery =
   | {
       kind: "http";
@@ -80,12 +100,7 @@ export interface AppliedIngress {
 
 export type IngressAdmission = {
   outcome:
-    | "owner"
-    | "queued"
-    | "duplicate"
-    | "rejected"
-    | "capacity"
-    | "conflict";
+    "owner" | "queued" | "duplicate" | "rejected" | "capacity" | "conflict";
   eventId?: string;
   status?: IngressStatus;
   ownerGeneration?: number;
@@ -156,6 +171,15 @@ export async function acceptIngress(
 
   return runtime.mutate<IngressAdmission>("acceptIngress", {
     ...candidate,
+    ...(candidate.delivery.kind === "channel" && candidate.agentConfig
+      ? {
+          channelTarget: {
+            agentConfig: candidate.agentConfig,
+            channelName: candidate.delivery.channel,
+            source: candidate.delivery.source ?? {},
+          },
+        }
+      : {}),
     payloadDigest: payloadDigest,
     sizeBytes: new TextEncoder().encode(serializedPayload).byteLength,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
@@ -164,6 +188,15 @@ export async function acceptIngress(
     maxQueuedCount: DEFAULT_INGRESS_MAX_COUNT,
     maxQueuedBytes: DEFAULT_INGRESS_MAX_BYTES,
   });
+}
+
+/** Reads the durable channel destination for an existing agent conversation. */
+export function getConversationDispatchTarget(options: {
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+}): Promise<ConversationDispatchTarget | null> {
+  return runtime.query("getConversationTarget", options);
 }
 
 /** Reads one accepted ingress status after repeating account/agent authorization. */

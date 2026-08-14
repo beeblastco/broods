@@ -46,4 +46,4 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 
 Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
 
-Channel-originated runs also expose `send-image` and `send-sticker`. Images use Chat SDK's native attachment delivery, which maps the public HTTP(S) URL and optional caption to Telegram `sendPhoto`. Stickers use `sendSticker` with a bot-owned Telegram file ID or a compatible public sticker URL because Chat SDK does not expose a sticker primitive. Both preserve the inbound forum topic when one is present.
+Channel tools support images and Telegram sticker IDs or URLs. They preserve the current forum topic.

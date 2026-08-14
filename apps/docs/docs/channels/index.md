@@ -19,16 +19,16 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 ## Agent Channel Tools
 
-Every turn received from a configured communication channel automatically gives the agent four conversation-bound tools. They are runtime tools; do not add them to `config.tools`:
+Channel tools are automatic; do not add them to `config.tools`.
 
-| Tool             | Behavior                                                                 |
-| ---------------- | ------------------------------------------------------------------------ |
-| `send-message`   | Sends an additional text message to the current conversation.            |
-| `send-image`     | Sends a public `http(s)` image URL when the channel supports images.     |
-| `send-sticker`   | Sends a provider-native sticker identifier when the channel supports it. |
-| `send-reactions` | Reacts to the inbound message when the channel supports reactions.       |
+| Tool             | Use                     |
+| ---------------- | ----------------------- |
+| `send-message`   | Message another session |
+| `send-image`     | Send an image           |
+| `send-sticker`   | Send a sticker          |
+| `send-reactions` | React to a message      |
 
-The tools retain the adapter credentials and exact reply target inside the runtime; neither is exposed to the model or sandbox. Text and image captions pass through `onMessageSending`, and channel-record `denyTools` can withhold any tool by the name shown above. Unsupported provider operations return a tool error. The agent's ordinary final text is still delivered automatically, so `send-message` is for an intentional extra or early message rather than the normal answer.
+`send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

@@ -745,11 +745,9 @@ describe("zalo channel actions", () => {
       jsonResponse({ ok: true, result: true }),
     );
 
-    const actions = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
-    ).actions(
+    const actions = createZaloChannel("bot-token", "zalo-secret", {
+      allowedUserIds: new Set(["user-1"]),
+    }).actions(
       createMessage({
         chatId: "chat-1",
         chatType: "PRIVATE",
@@ -820,11 +818,9 @@ describe("zalo channel actions", () => {
 
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
-    );
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedUserIds: new Set(["user-1"]),
+    });
     const actions = adapter.actions(
       createMessage({
         chatId: "chat-1",

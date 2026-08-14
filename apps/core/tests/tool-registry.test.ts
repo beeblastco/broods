@@ -4,11 +4,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import type {
-  ToolExecuteFunction,
-  ToolSet,
-} from "ai";
+import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
+import type { SessionMessageResult } from "../src/harness/ingress.ts";
 import type { ToolContext } from "../src/harness/tools/index.ts";
 import {
   resetStorageForTests,
@@ -42,28 +40,35 @@ describe("createTools", () => {
 
   it("automatically exposes channel interaction tools on channel turns", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const sendImage = mock(async function(): Promise<void> {});
-    const sendSticker = mock(async function(): Promise<void> {});
-    const sendText = mock(async function(): Promise<void> {});
-    const reactToMessage = mock(async function(): Promise<void> {});
+    const sendImage = mock(async function (): Promise<void> {});
+    const sendSticker = mock(async function (): Promise<void> {});
+    const reactToMessage = mock(async function (): Promise<void> {});
+    const dispatchSessionMessage = mock(
+      async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "tg:target", status: "accepted" };
+      },
+    );
     const context: Omit<ToolContext, "config"> = {
       ...createToolContext(),
+      dispatchSessionMessage: dispatchSessionMessage,
       channel: {
         actions: {
           sendImage: sendImage,
           sendSticker: sendSticker,
-          sendText: sendText,
-          sendTyping: async function(): Promise<void> {},
+          sendText: async function (): Promise<void> {},
+          sendTyping: async function (): Promise<void> {},
           supportsReactions: true,
           reactToMessage: reactToMessage,
         },
         channelName: "zalo",
-        transformText: async function(text: string): Promise<string> {
+        transformText: async function (text: string): Promise<string> {
           return `[safe] ${text}`;
         },
       },
     };
-    const tools = await createTools(context, {});
+    const tools = await createTools(context, {
+      channels: { telegram: {} },
+    });
 
     expect(Object.keys(tools).sort()).toEqual([
       "send-image",
@@ -71,7 +76,10 @@ describe("createTools", () => {
       "send-reactions",
       "send-sticker",
     ]);
-    await channelToolExecute(tools["send-message"], { text: "hello" });
+    await channelToolExecute(tools["send-message"], {
+      conversationKey: "tg:target",
+      message: "hello",
+    });
     await channelToolExecute(tools["send-image"], {
       url: "https://example.com/image.png",
       caption: "caption",
@@ -79,7 +87,10 @@ describe("createTools", () => {
     await channelToolExecute(tools["send-reactions"], { emoji: "heart" });
     await channelToolExecute(tools["send-sticker"], { sticker: "sticker-1" });
 
-    expect(sendText).toHaveBeenCalledWith("[safe] hello");
+    expect(dispatchSessionMessage).toHaveBeenCalledWith({
+      conversationKey: "tg:target",
+      message: "hello",
+    });
     expect(sendImage).toHaveBeenCalledWith(
       "https://example.com/image.png",
       "[safe] caption",
@@ -88,13 +99,58 @@ describe("createTools", () => {
     expect(sendSticker).toHaveBeenCalledWith("sticker-1");
   });
 
+  it("omits unsupported channel interaction tools", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        channel: {
+          actions: {
+            sendText: async function (): Promise<void> {},
+            sendTyping: async function (): Promise<void> {},
+            reactToMessage: async function (): Promise<void> {},
+          },
+          channelName: "limited",
+          transformText: async function (text: string): Promise<string> {
+            return text;
+          },
+        },
+      },
+      {},
+    );
+
+    expect(tools).toEqual({});
+  });
+
+  it("exposes send-message outside channel turns for configured agents", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const dispatchSessionMessage = mock(
+      async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "slack:target", status: "queued" };
+      },
+    );
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        dispatchSessionMessage: dispatchSessionMessage,
+      },
+      { channels: { slack: {} } },
+    );
+
+    expect(Object.keys(tools)).toEqual(["send-message"]);
+  });
+
   it("lets channel denyTools withhold automatic interaction tools", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const context: Omit<ToolContext, "config"> = {
       ...createToolContext(),
+      dispatchSessionMessage: async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "target", status: "queued" };
+      },
       channel: channelToolContext(),
     };
     const tools = await createTools(context, {
+      channels: { telegram: {} },
       denyTools: ["send-image", "send-sticker"],
     });
 
@@ -865,15 +921,15 @@ function createToolContext(
 function channelToolContext(): ChannelToolContext {
   return {
     actions: {
-      sendImage: async function(): Promise<void> {},
-      sendSticker: async function(): Promise<void> {},
-      sendText: async function(): Promise<void> {},
-      sendTyping: async function(): Promise<void> {},
+      sendImage: async function (): Promise<void> {},
+      sendSticker: async function (): Promise<void> {},
+      sendText: async function (): Promise<void> {},
+      sendTyping: async function (): Promise<void> {},
       supportsReactions: true,
-      reactToMessage: async function(): Promise<void> {},
+      reactToMessage: async function (): Promise<void> {},
     },
     channelName: "test",
-    transformText: async function(text: string): Promise<string> {
+    transformText: async function (text: string): Promise<string> {
       return text;
     },
   };

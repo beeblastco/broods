@@ -8,8 +8,7 @@ import type { StreamOptions } from "chat";
 import type { ChannelThreadPolicy } from "./domain/channel-record.ts";
 
 export type ChannelIngressEvent =
-  | UserModelMessage
-  | (SystemModelMessage & { persist?: false });
+  UserModelMessage | (SystemModelMessage & { persist?: false });
 
 export interface ChannelActions {
   sendText(text: string): Promise<void>;

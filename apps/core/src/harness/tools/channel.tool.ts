@@ -5,7 +5,7 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import type { ChannelActions } from "../../shared/channels.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolText, toToolResultOutput } from "./utils.ts";
 
 const IMAGE_SCHEMA: JSONSchema7 = {
   type: "object",
@@ -21,17 +21,6 @@ const IMAGE_SCHEMA: JSONSchema7 = {
     },
   },
   required: ["url"],
-  additionalProperties: false,
-};
-const MESSAGE_SCHEMA: JSONSchema7 = {
-  type: "object",
-  properties: {
-    text: {
-      type: "string",
-      description: "Text to send to the current chat conversation.",
-    },
-  },
-  required: ["text"],
   additionalProperties: false,
 };
 const REACTION_SCHEMA: JSONSchema7 = {
@@ -69,10 +58,6 @@ interface SendImageInput {
   caption?: string;
 }
 
-interface SendMessageInput {
-  text: string;
-}
-
 interface SendReactionInput {
   emoji?: string;
 }
@@ -83,57 +68,35 @@ interface SendStickerInput {
 
 export default function channelTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
+  const sendImage = actions.sendImage;
+  const sendSticker = actions.sendSticker;
+  const tools: ToolSet = {};
 
-  return {
-    "send-image": tool({
+  if (sendImage) {
+    tools["send-image"] = tool({
       description: `Sends an image to the current ${channelName} conversation immediately. Use this for an intentional image message; the normal final text answer is delivered automatically.`,
       inputSchema: jsonSchema(IMAGE_SCHEMA),
       toModelOutput: toToolResultOutput,
-      execute: async function(input): Promise<string> {
-        if (!actions.sendImage) {
-          return toolError(
-            `The ${channelName} channel does not support sending images`,
-          );
-        }
+      execute: async function (input): Promise<string> {
         const { url, caption } = input as SendImageInput;
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
           return toolText("Image blocked by the outbound message hook.");
         }
-        await actions.sendImage(url, transformed || undefined);
+        await sendImage(url, transformed || undefined);
 
         return toolText(
           `Image sent to the current ${channelName} conversation.`,
         );
       },
-    }),
-    "send-message": tool({
-      description: `Sends an additional text message to the current ${channelName} conversation immediately. Do not use it for an ordinary final answer because final answer text is delivered automatically.`,
-      inputSchema: jsonSchema(MESSAGE_SCHEMA),
-      toModelOutput: toToolResultOutput,
-      execute: async function(input): Promise<string> {
-        const { text } = input as SendMessageInput;
-        const transformed = await context.transformText(text);
-        if (transformed === null) {
-          return toolText("Message blocked by the outbound message hook.");
-        }
-        await actions.sendText(transformed);
-
-        return toolText(
-          `Message sent to the current ${channelName} conversation.`,
-        );
-      },
-    }),
-    "send-reactions": tool({
+    });
+  }
+  if (actions.supportsReactions === true) {
+    tools["send-reactions"] = tool({
       description: `Adds a reaction to the inbound message in the current ${channelName} conversation. The provider may accept only its own emoji names or supported Unicode emoji.`,
       inputSchema: jsonSchema(REACTION_SCHEMA),
       toModelOutput: toToolResultOutput,
-      execute: async function(input): Promise<string> {
-        if (actions.supportsReactions !== true) {
-          return toolError(
-            `The ${channelName} channel does not support message reactions`,
-          );
-        }
+      execute: async function (input): Promise<string> {
         const { emoji } = input as SendReactionInput;
         await actions.reactToMessage(emoji);
 
@@ -141,24 +104,23 @@ export default function channelTool(context: ChannelToolContext): ToolSet {
           `Reaction added to the inbound ${channelName} message.`,
         );
       },
-    }),
-    "send-sticker": tool({
+    });
+  }
+  if (sendSticker) {
+    tools["send-sticker"] = tool({
       description: `Sends a provider-native sticker to the current ${channelName} conversation immediately. Use a sticker identifier valid for this provider.`,
       inputSchema: jsonSchema(STICKER_SCHEMA),
       toModelOutput: toToolResultOutput,
-      execute: async function(input): Promise<string> {
-        if (!actions.sendSticker) {
-          return toolError(
-            `The ${channelName} channel does not support sending stickers`,
-          );
-        }
+      execute: async function (input): Promise<string> {
         const { sticker } = input as SendStickerInput;
-        await actions.sendSticker(sticker);
+        await sendSticker(sticker);
 
         return toolText(
           `Sticker sent to the current ${channelName} conversation.`,
         );
       },
-    }),
-  };
+    });
+  }
+
+  return tools;
 }

@@ -1371,7 +1371,7 @@ async function handleChannelWebhook(
             ...(identity ? { identity: identity } : {}),
             source: source,
             channel: channel,
-            channelFactory: (replySource) =>
+            channelFactory: (replySource): ChannelActions =>
               adapter.actions({ ...message, source: replySource }),
             accountId: account.accountId,
             agentId: target.agent.agentId,
@@ -1626,7 +1626,10 @@ export function rewriteLatestUserIngressText(
     const event = events[i]!;
     if (event.role !== "user") continue;
     const next = [...events];
-    next[i] = { ...event, content: rewriteUserContentText(event.content, text) };
+    next[i] = {
+      ...event,
+      content: rewriteUserContentText(event.content, text),
+    };
 
     return next;
   }
@@ -1641,7 +1644,6 @@ function rewriteUserContentText(
   text: string,
 ): UserContent {
   if (typeof content === "string") {
-
     return text;
   }
   const attachments = content.filter((part) => part.type !== "text");
@@ -1721,7 +1723,7 @@ export function channelActionsFromConfig(
   source: Record<string, unknown>,
 ): ChannelActions | null {
   const adapter = createChannelRegistry(config).webhookChannels.find(
-    (candidate) => candidate.name === channelName,
+    (candidate): boolean => candidate.name === channelName,
   );
   if (!adapter) {
     return null;

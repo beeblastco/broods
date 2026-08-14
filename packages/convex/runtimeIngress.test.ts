@@ -64,6 +64,39 @@ function admission(options: {
 }
 
 describe("runtime ingress", () => {
+  test("remembers the latest channel target for session messaging", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    const channelTarget = {
+      agentConfig: { channels: { telegram: { botToken: "secret" } } },
+      channelName: "telegram",
+      source: { chatId: "chat-1", messageId: "message-1" },
+    };
+    await t.mutation(internal.runtimeIngress.accept, {
+      ...admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "channel-session",
+        mode: "followup",
+      }),
+      channelTarget: channelTarget,
+      delivery: {
+        kind: "channel",
+        channel: "telegram",
+        source: channelTarget.source,
+      },
+    });
+
+    expect(
+      await t.query(internal.runtimeIngress.getConversationTarget, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+      }),
+    ).toEqual(channelTarget);
+  });
+
   test("returns only narrowed public deployment ingress provenance from delivery", async () => {
     const t = runtimeTest();
     const accountId = await createActiveAccount(t);
