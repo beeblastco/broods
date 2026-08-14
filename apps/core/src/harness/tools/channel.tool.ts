@@ -11,63 +11,6 @@ import type {
 } from "../ingress.ts";
 import { toolText, toToolResultOutput } from "./utils.ts";
 
-const IMAGE_SCHEMA: JSONSchema7 = {
-  type: "object",
-  properties: {
-    url: {
-      type: "string",
-      description:
-        "Absolute public http(s) URL of the image the chat provider can fetch.",
-    },
-    caption: {
-      type: "string",
-      description: "Optional text shown with the image.",
-    },
-  },
-  required: ["url"],
-  additionalProperties: false,
-};
-const MESSAGE_SCHEMA: JSONSchema7 = {
-  type: "object",
-  properties: {
-    conversationKey: {
-      type: "string",
-      minLength: 1,
-      description: "Conversation key of the target agent session.",
-    },
-    message: {
-      type: "string",
-      minLength: 1,
-      description: "Message to deliver to the target session.",
-    },
-  },
-  required: ["conversationKey", "message"],
-  additionalProperties: false,
-};
-const REACTION_SCHEMA: JSONSchema7 = {
-  type: "object",
-  properties: {
-    emoji: {
-      type: "string",
-      description:
-        "Optional channel-native emoji name or Unicode emoji. Omit it to use the channel's configured acknowledgement reaction.",
-    },
-  },
-  additionalProperties: false,
-};
-const STICKER_SCHEMA: JSONSchema7 = {
-  type: "object",
-  properties: {
-    sticker: {
-      type: "string",
-      description:
-        "Provider-native sticker identifier, file identifier, name, or public URL.",
-    },
-  },
-  required: ["sticker"],
-  additionalProperties: false,
-};
-
 export interface ChannelToolContext {
   actions: ChannelActions;
   channelName: string;
@@ -98,7 +41,22 @@ export function sendImageTool(context: ChannelToolContext): ToolSet {
   return {
     "send-image": tool({
       description: `Sends an image to the current ${channelName} conversation immediately. Use this for an intentional image message; the normal final text answer is delivered automatically.`,
-      inputSchema: jsonSchema<SendImageInput>(IMAGE_SCHEMA),
+      inputSchema: {
+        type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description:
+                "Absolute public http(s) URL of the image the chat provider can fetch.",
+            },
+            caption: {
+              type: "string",
+              description: "Optional text shown with the image.",
+            },
+          },
+          required: ["url"],
+          additionalProperties: false,
+      },
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
         const { url, caption } = input;
@@ -123,7 +81,23 @@ export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
     "send-message": tool({
       description:
         "Sends a message to another conversation session. The target agent processes it as a follow-up and replies in that conversation.",
-      inputSchema: jsonSchema<SessionMessageInput>(MESSAGE_SCHEMA),
+      inputSchema: {
+        type: "object",
+        properties: {
+          conversationKey: {
+            type: "string",
+            minLength: 1,
+            description: "Conversation key of the target agent session.",
+          },
+          message: {
+            type: "string",
+            minLength: 1,
+            description: "Message to deliver to the target session.",
+          },
+        },
+        required: ["conversationKey", "message"],
+        additionalProperties: false,
+      },
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
         const result = await dispatch(input);
@@ -146,7 +120,17 @@ export function sendReactionsTool(context: ChannelToolContext): ToolSet {
   return {
     "send-reactions": tool({
       description: `Adds a reaction to the inbound message in the current ${channelName} conversation. The provider may accept only its own emoji names or supported Unicode emoji.`,
-      inputSchema: jsonSchema<SendReactionInput>(REACTION_SCHEMA),
+      inputSchema: {
+        type: "object",
+        properties: {
+          emoji: {
+            type: "string",
+            description:
+              "Optional channel-native emoji name or Unicode emoji. Omit it to use the channel's configured acknowledgement reaction.",
+          },
+        },
+        additionalProperties: false,
+      },
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
         const { emoji } = input;
@@ -171,7 +155,18 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
   return {
     "send-sticker": tool({
       description: `Sends a provider-native sticker to the current ${channelName} conversation immediately. Use a sticker identifier valid for this provider.`,
-      inputSchema: jsonSchema<SendStickerInput>(STICKER_SCHEMA),
+      inputSchema: {
+        type: "object",
+        properties: {
+          sticker: {
+            type: "string",
+            description:
+              "Provider-native sticker identifier, file identifier, name, or public URL.",
+          },
+        },
+        required: ["sticker"],
+        additionalProperties: false,
+      },
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
         const { sticker } = input;
