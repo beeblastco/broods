@@ -158,6 +158,8 @@ Both recurring and one-time schedules are accepted, so "every weekday at 9" and 
 
 `update_schedule` changes only the fields it is given, so "make that 10am instead" retimes a job without restating its instructions. Setting `status` to `paused` stops a job firing while keeping it and its history; `active` resumes it. That is the difference from `cancel_schedule`, which is permanent.
 
+Instructions are the one field `update_schedule` will not change from anywhere. A job answers in the conversation that created it, so rewriting its instructions from a second conversation would put text of the model's choosing into a conversation the current turn is not in — which `schedule` itself cannot do, since it always binds to the calling conversation. Renaming, retiming and pausing carry no such content and work from any conversation; an instruction rewrite has to come from the one the job answers in. `list_schedules` reports each job's `conversationKey` so the model can tell which that is.
+
 Withhold any of them from one channel with `denyTools: ["cancel_schedule"]` (or the other names) on that channel record.
 
 ## SDK and Dynamic Creation

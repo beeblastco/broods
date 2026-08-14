@@ -148,7 +148,8 @@ interface CronStore {
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;
   remove(accountId: string, cronId: string): Promise<boolean>;
   // Patches the EventBridge schedule before the row, so a rejected expression
-  // leaves the stored job untouched; null means no such job.
+  // leaves the stored job untouched. Null means the job is gone: either it
+  // never existed, or it was deleted while the patch was in flight.
   update(
     accountId: string,
     cronId: string,

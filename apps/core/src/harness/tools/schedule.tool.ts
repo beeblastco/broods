@@ -5,10 +5,12 @@
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import type {
-  CronRecord,
-  CronStatus,
-  UpdateCronInput,
+import {
+  normalizeUpdateCronInput,
+  type CronRecord,
+  type CronStatus,
+  type CronSummary,
+  type UpdateCronInput,
 } from "../../shared/domain/cron.ts";
 import { getStorage } from "../../shared/storage.ts";
 import { toolError, toolText } from "./utils.ts";
@@ -180,7 +182,7 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
   return {
     update_schedule: tool({
       description:
-        "Changes one of your scheduled tasks in place, by the cronId that schedule or list_schedules reported. Only the fields you pass change; the rest stay as they are. Pause a task with status 'paused' to stop it firing while keeping it, and resume it with 'active' — cancelling instead throws the task away.",
+        "Changes one of your scheduled tasks in place, by the cronId that schedule or list_schedules reported. Only the fields you pass change; the rest stay as they are. Pause a task with status 'paused' to stop it firing while keeping it, and resume it with 'active'. Cancelling instead throws the task away. Instructions can only be rewritten from the conversation the task answers in.",
       inputSchema: jsonSchema<UpdateScheduleInput>({
         type: "object",
         properties: {
@@ -221,6 +223,11 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
         additionalProperties: false,
       }),
       execute: async function (input): Promise<string> {
+        // inputSchema is a hint the model may ignore: the AI SDK only enforces
+        // it when jsonSchema() is given a validate function, which it is not.
+        if (typeof input.cronId !== "string" || input.cronId.trim() === "") {
+          return toolError("cronId is required");
+        }
         const cronId = input.cronId.trim();
         const schedule = input.schedule?.trim();
         if (schedule !== undefined && !SCHEDULE_PATTERN.test(schedule)) {
@@ -242,6 +249,15 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
             "Pass at least one of name, instructions, schedule, timezone or status to change",
           );
         }
+        // Same normalizer the config plane runs, so a rejected field fails here
+        // with a message the model can act on instead of a Convex error frame.
+        try {
+          normalizeUpdateCronInput(patch);
+        } catch (error) {
+          return toolError(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
 
         // The config plane only fences on account, so the agent fence is here:
         // read the task first and refuse one that belongs to another agent.
@@ -251,13 +267,20 @@ export function updateScheduleTool(context: ScheduleContext): ToolSet {
         if (!existing || existing.agentId !== context.agentId) {
           return toolError(`No scheduled task ${cronId} belongs to this agent`);
         }
-        const updated = await getStorage().crons.update(
-          context.accountId,
-          cronId,
-          patch,
-        );
+        // Retiming and pausing are safe from anywhere, but instructions are
+        // content: rewriting them from elsewhere would put model-chosen text
+        // into a conversation this turn is not in, which schedule cannot do.
+        if (
+          input.instructions !== undefined &&
+          existing.conversationKey !== context.conversationKey
+        ) {
+          return toolError(
+            `Scheduled task ${cronId} answers in another conversation, so its instructions can only be rewritten there. Its name, schedule, timezone and status can be changed from here.`,
+          );
+        }
+        const updated = await updateOwnedCron(context.accountId, cronId, patch);
         if (!updated) {
-          return toolError(`No scheduled task ${cronId} belongs to this agent`);
+          return toolError(`Scheduled task ${cronId} no longer exists`);
         }
 
         return toolText(
@@ -281,4 +304,27 @@ function toScheduleSummary(cron: CronRecord): ScheduleSummary {
     ...(cron.lastStatus ? { lastStatus: cron.lastStatus } : {}),
     ...(cron.lastInvokedAt ? { lastInvokedAt: cron.lastInvokedAt } : {}),
   };
+}
+
+/**
+ * Applies the patch through the config plane. A fired at(...) job deletes its
+ * own EventBridge schedule but can leave the row behind, and the config plane
+ * refuses to patch a schedule that is gone; that is the one failure the model
+ * can act on, and it only reaches core as a message.
+ */
+async function updateOwnedCron(
+  accountId: string,
+  cronId: string,
+  patch: UpdateCronInput,
+): Promise<CronSummary | null> {
+  try {
+    return await getStorage().crons.update(accountId, cronId, patch);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("ResourceNotFoundException")) throw error;
+
+    return toolError(
+      `Scheduled task ${cronId} has no live schedule any more, so it cannot be changed. Cancel it and schedule a new one.`,
+    );
+  }
 }

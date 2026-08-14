@@ -1019,11 +1019,15 @@ describe("createTools", () => {
 
   it("updates its own scheduled task and refuses another agent's", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
+    // Every field the success line quotes differs from the stored record, so
+    // the test fails if the message is built from the pre-update read.
     const update = mock(async function (): Promise<CronSummary> {
       return {
         ...cronSummary(),
         cronId: "cron_mine",
+        name: "renamed",
         scheduleExpression: "cron(0 10 * * ? *)",
+        timezone: "Europe/Paris",
         status: "paused",
       };
     });
@@ -1045,16 +1049,23 @@ describe("createTools", () => {
     expect(
       await channelToolExecute(tools.update_schedule, {
         cronId: "cron_mine",
+        name: "renamed",
+        instructions: "Post the new summary.",
         schedule: "cron(0 10 * * ? *)",
+        timezone: "Europe/Paris",
         status: "paused",
       }),
     ).toBe(
-      "Updated scheduled task 'daily-standup' (cron_mine): cron(0 10 * * ? *) in Asia/Ho_Chi_Minh, paused.",
+      "Updated scheduled task 'renamed' (cron_mine): cron(0 10 * * ? *) in Europe/Paris, paused.",
     );
-    // Only the named fields reach the patch, so an untouched field keeps the
-    // value the config plane already holds.
+    // instructions ride the patch as `input`, the one-of field the config plane
+    // collapses into stored events. Nothing may add agentId or conversationKey,
+    // which is what stops a task being repointed.
     expect(update).toHaveBeenCalledWith("acct_test", "cron_mine", {
+      name: "renamed",
+      input: "Post the new summary.",
       scheduleExpression: "cron(0 10 * * ? *)",
+      timezone: "Europe/Paris",
       status: "paused",
     });
 
@@ -1074,6 +1085,111 @@ describe("createTools", () => {
       channelToolExecute(tools.update_schedule, { cronId: "cron_mine" }),
     ).rejects.toThrow("Pass at least one of name, instructions, schedule");
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("rewrites instructions only from the conversation the task answers in", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const update = mock(async function (): Promise<CronSummary> {
+      return { ...cronSummary(), cronId: "cron_elsewhere" };
+    });
+    setStorageForTests(
+      storageWithCrons(
+        [
+          cronRecord({
+            cronId: "cron_elsewhere",
+            conversationKey: "slack:T1:C_OTHER",
+          }),
+        ],
+        undefined,
+        update,
+      ),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_elsewhere",
+        instructions: "Post everything here instead.",
+      }),
+    ).rejects.toThrow("answers in another conversation");
+    expect(update).not.toHaveBeenCalled();
+
+    // Retiming and pausing carry no model-chosen content, so they still reach
+    // a task bound elsewhere.
+    await channelToolExecute(tools.update_schedule, {
+      cronId: "cron_elsewhere",
+      status: "paused",
+    });
+    expect(update).toHaveBeenCalledWith("acct_test", "cron_elsewhere", {
+      status: "paused",
+    });
+  });
+
+  it("validates its own input because the AI SDK does not enforce the schema", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const update = mock(async function (): Promise<CronSummary> {
+      return cronSummary();
+    });
+    setStorageForTests(
+      storageWithCrons(
+        [cronRecord({ cronId: "cron_mine" })],
+        undefined,
+        update,
+      ),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    // The model can emit anything: inputSchema is a hint, so an absent required
+    // field must not reach the tool body as a TypeError.
+    await expect(channelToolExecute(tools.update_schedule, {})).rejects.toThrow(
+      "cronId is required",
+    );
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_mine",
+        status: "cancelled",
+      }),
+    ).rejects.toThrow("status must be active or paused");
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_mine",
+        timezone: "Asia/Ho Chi Minh",
+      }),
+    ).rejects.toThrow("timezone contains unsupported characters");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("reports a task whose schedule is already gone as unchangeable", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const update = mock(async function (): Promise<CronSummary> {
+      throw new Error(
+        "[CONVEX A(awsCrons:update)] Uncaught ResourceNotFoundException: Schedule not found",
+      );
+    });
+    setStorageForTests(
+      storageWithCrons(
+        [cronRecord({ cronId: "cron_fired" })],
+        undefined,
+        update,
+      ),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_fired",
+        schedule: "at(2027-01-01T09:00:00)",
+      }),
+    ).rejects.toThrow("has no live schedule any more");
   });
 
   it("cancels its own scheduled task and refuses another agent's", async () => {

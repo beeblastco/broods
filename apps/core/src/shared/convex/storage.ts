@@ -327,8 +327,8 @@ const crons: Storage["crons"] = {
     })) as boolean;
   },
   // awsCrons.update is a Node action that updates the EventBridge schedule
-  // first and only then patches the row, so a rejected schedule expression
-  // cannot leave the two disagreeing.
+  // first and only then patches the row, so a schedule EventBridge rejects
+  // never reaches the stored job.
   update: async function(accountId, cronId, patch) {
     return (await getConvexClient().action(internal.awsCrons.update, {
       accountId: accountId as any,
