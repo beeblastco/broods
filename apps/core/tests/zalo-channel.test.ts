@@ -382,6 +382,22 @@ describe("zalo channel adapter", () => {
 
     expect(calls).toEqual([]);
   });
+
+  it("sends a provider-native sticker through sendSticker", async () => {
+    const calls = await captureZaloCalls(async (actions): Promise<void> => {
+      await actions.sendSticker?.(" sticker-123 ");
+    });
+
+    expect(calls).toEqual([
+      {
+        url: "https://bot-api.zaloplatforms.com/botbot-token/sendSticker",
+        body: {
+          chat_id: "chat-1",
+          sticker: "sticker-123",
+        },
+      },
+    ]);
+  });
 });
 
 async function parsedContent(

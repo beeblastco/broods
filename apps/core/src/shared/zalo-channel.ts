@@ -113,6 +113,16 @@ export function createZaloActions(
         ...(caption ? { caption: caption.slice(0, ZALO_TEXT_LIMIT) } : {}),
       });
     },
+    sendSticker: async function(sticker): Promise<void> {
+      const value = sticker.trim();
+      if (!value) {
+        throw new Error("Zalo sendSticker needs a sticker id or name");
+      }
+      await callZaloApi(botToken, "sendSticker", {
+        chat_id: source.chatId,
+        sticker: value,
+      });
+    },
     sendTyping: async function() {
       await callZaloApi(botToken, "sendChatAction", {
         chat_id: source.chatId,
@@ -244,7 +254,7 @@ export function createZaloChannel(
 
 async function callZaloApi(
   botToken: string,
-  method: "sendChatAction" | "sendMessage" | "sendPhoto",
+  method: "sendChatAction" | "sendMessage" | "sendPhoto" | "sendSticker",
   body: Record<string, unknown>,
 ): Promise<ZaloApiResponse> {
   const controller = new AbortController();

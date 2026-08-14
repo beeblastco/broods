@@ -33,6 +33,8 @@ export const myAgent = defineAgent({
 
 Slack replies stream through Chat SDK's native Slack streaming API when the source event has thread and user context. Otherwise the agent sends one final reply through Chat SDK Slack primitives. Markdown and response-url text formatting are delegated to Chat SDK.
 
+Channel-originated runs also expose `send-image` and `send-sticker`. Images are converted from Chat SDK cards into Slack image blocks from public HTTP(S) URLs. Because Slack has no separate sticker message type, `send-sticker` sends a workspace custom emoji by name (for example, `party_parrot`) or converts a public sticker URL through the same card primitive. Both preserve the current Slack thread.
+
 ## Slack App Setup
 
 Point Event Subscriptions and Slash Commands (`/new`, `/clear`, `/help`) at the generated Slack webhook URL.

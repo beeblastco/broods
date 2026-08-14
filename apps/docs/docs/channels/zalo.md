@@ -75,7 +75,7 @@ flowchart TD
   Adapter --> Auth["Check X-Bot-Api-Secret-Token"]
   Auth --> Allow["Check allowedUserIds and allowedGroupIds when configured"]
   Allow --> Agent["Run agent"]
-  Agent --> Reply["sendMessage / sendPhoto"]
+  Agent --> Reply["sendMessage / sendPhoto / sendSticker"]
   Reply --> Zalo
 ```
 
@@ -86,4 +86,5 @@ flowchart TD
 - Outbound replies are split into 2000-character chunks for the Zalo Bot API text limit.
 - Typing indicators use `sendChatAction`.
 - Outbound images use `sendPhoto`. Zalo fetches the picture itself, so the image must be an absolute `http(s)` URL that Zalo can reach — a local path, a `data:` URL, or a private link is rejected. An optional caption is truncated to 2000 characters.
+- Outbound stickers use `sendSticker` with a Zalo sticker ID or name. The agent can invoke it through the automatic `send-sticker` channel tool.
 - Reactions are not supported by the official Zalo Bot API adapter.

@@ -215,6 +215,7 @@ export interface ChannelInboundEvent {
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
   channel: ChannelActions;
+  channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
 }
 
@@ -1348,6 +1349,8 @@ async function handleChannelWebhook(
             ...(identity ? { identity: identity } : {}),
             source: source,
             channel: channel,
+            channelFactory: (replySource) =>
+              adapter.actions({ ...message, source: replySource }),
             accountId: account.accountId,
             agentId: target.agent.agentId,
             agentConfig: targetConfig,
@@ -1688,6 +1691,27 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       zaloChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
+}
+
+export function channelActionsFromConfig(
+  config: AgentConfig,
+  channelName: string,
+  source: Record<string, unknown>,
+): ChannelActions | null {
+  const adapter = createChannelRegistry(config).webhookChannels.find(
+    (candidate) => candidate.name === channelName,
+  );
+  if (!adapter) {
+    return null;
+  }
+
+  return adapter.actions({
+    eventId: "",
+    conversationKey: "",
+    channelName: channelName,
+    content: "",
+    source: source,
+  });
 }
 
 /**

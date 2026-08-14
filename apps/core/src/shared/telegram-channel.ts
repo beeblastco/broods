@@ -23,6 +23,7 @@ const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
 export interface TelegramSource {
   chatId: number;
   messageId: string;
+  messageThreadId?: number;
   threadId: string;
   fromUserId?: number;
   fromUsername?: string;
@@ -78,6 +79,9 @@ export function createTelegramChannel(
       const source: TelegramSource = {
         chatId: message.chat.id,
         messageId: parsed.id,
+        ...(message.message_thread_id !== undefined
+          ? { messageThreadId: message.message_thread_id }
+          : {}),
         threadId: parsed.threadId,
         fromUserId: message.from?.id,
         fromUsername: message.from?.username,
@@ -110,17 +114,47 @@ export function createTelegramChannel(
       const source = toTelegramSource(msg.source);
 
       return {
+        sendImage: async function(url, caption): Promise<void> {
+          await transport.postMessage(source.threadId, {
+            raw: caption ?? "",
+            attachments: [
+              {
+                type: "image",
+                url: url,
+              },
+            ],
+          });
+        },
+        sendSticker: async function(sticker): Promise<void> {
+          const value = sticker.trim();
+          if (!value) {
+            throw new Error(
+              "Telegram sendSticker needs a file id or public http(s) URL",
+            );
+          }
+          if (value.includes("://")) {
+            assertTelegramStickerUrl(value);
+          }
+          await callTelegramBotApi(apiUrl, botToken, "sendSticker", {
+            chat_id: source.chatId,
+            sticker: value,
+            ...(source.messageThreadId !== undefined
+              ? { message_thread_id: source.messageThreadId }
+              : {}),
+          });
+        },
         sendText: async function(text) {
           for (const chunk of splitTelegramRawText(text)) {
             await transport.postMessage(source.threadId, { markdown: chunk });
           }
         },
         sendTyping: () => transport.startTyping(source.threadId),
-        reactToMessage: () =>
+        supportsReactions: true,
+        reactToMessage: (emoji) =>
           transport.addReaction(
             source.threadId,
             source.messageId,
-            reactionEmoji,
+            emoji ?? reactionEmoji,
           ),
         ...(source.chatId > 0
           ? {
@@ -142,6 +176,47 @@ export function createTelegramChannel(
 
 function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.edited_message ?? null;
+}
+
+async function callTelegramBotApi(
+  apiUrl: string | undefined,
+  botToken: string,
+  method: "sendSticker",
+  body: Record<string, unknown>,
+): Promise<void> {
+  const response = await fetch(
+    `${(apiUrl ?? "https://api.telegram.org").replace(/\/+$/, "")}/bot${botToken}/${method}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const result = (await response.json()) as {
+    ok?: boolean;
+    description?: string;
+  };
+  if (!response.ok || result.ok !== true) {
+    throw new Error(
+      `Telegram ${method} failed (${response.status}): ${result.description ?? "unknown error"}`,
+    );
+  }
+}
+
+function assertTelegramStickerUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      "Telegram sendSticker needs an absolute http(s) sticker URL",
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(
+      "Telegram sendSticker needs an absolute http(s) sticker URL",
+    );
+  }
 }
 
 function splitTelegramRawText(text: string): string[] {
@@ -182,6 +257,10 @@ function toTelegramSource(source: Record<string, unknown>): TelegramSource {
   return {
     chatId: source.chatId,
     messageId: source.messageId,
+    messageThreadId:
+      typeof source.messageThreadId === "number"
+        ? source.messageThreadId
+        : undefined,
     threadId: source.threadId,
     fromUserId:
       typeof source.fromUserId === "number" ? source.fromUserId : undefined,

@@ -38,6 +38,7 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import channelTool, { type ChannelToolContext } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
   hasStandaloneSandbox,
@@ -83,6 +84,7 @@ export interface ToolContext {
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   policyToolIdsByName?: Map<string, string>;
+  channel?: ChannelToolContext;
 }
 
 export async function createTools(
@@ -204,6 +206,10 @@ export async function createTools(
   }
   Object.assign(tools, sandboxTools);
   const asyncModes: AsyncToolModeMap = new Map();
+
+  if (context.channel) {
+    Object.assign(tools, channelTool(context.channel));
+  }
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.

@@ -71,6 +71,7 @@ import {
     type IngressDelivery,
 } from "./ingress.ts";
 import {
+    channelActionsFromConfig,
     rewriteLatestUserIngressText,
     routeIncomingEvent,
     sendChannelReply,
@@ -1217,6 +1218,7 @@ async function handleChannelRequest(
     event.projectSlug,
     event.stageSlug,
     admission.ownerGeneration,
+    event.channel,
   );
   let incoming: ConversationIngressEvent[] = event.events;
   let incomingEphemeral: SystemModelMessage[] = [];
@@ -1366,6 +1368,7 @@ async function handleChannelRequest(
         event.projectSlug,
         event.stageSlug,
         next.ownerGeneration,
+        event.channelFactory?.(source) ?? event.channel,
       );
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
@@ -1513,7 +1516,13 @@ async function prepareDirectTurn(
         publicEventId: event.publicEventId,
         publicConversationKey: event.publicConversationKey,
       }
-    : undefined;
+    : event.replyTarget
+      ? {
+          kind: "channel",
+          channelName: event.replyTarget.channelName,
+          source: event.replyTarget.source,
+        }
+      : undefined;
   if (event.ownerGeneration === undefined) {
     throw new Error("Direct turn is missing its durable owner generation");
   }
@@ -1528,6 +1537,13 @@ async function prepareDirectTurn(
     event.projectSlug,
     event.stageSlug,
     event.ownerGeneration,
+    event.replyTarget
+      ? (channelActionsFromConfig(
+          event.agentConfig,
+          event.replyTarget.channelName,
+          event.replyTarget.source,
+        ) ?? undefined)
+      : undefined,
   );
   try {
     const ephemeralSystem = await session.appendIngressEvents(event.events);

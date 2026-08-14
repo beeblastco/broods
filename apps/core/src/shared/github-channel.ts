@@ -511,11 +511,16 @@ function createGitHubActions(
       await github.startTyping(source.threadId);
     },
 
-    reactToMessage: async function() {
+    supportsReactions: true,
+    reactToMessage: async function(emoji) {
       if (!source.messageId) {
         return;
       }
-      await github.addReaction(source.threadId, source.messageId, "eyes");
+      await github.addReaction(
+        source.threadId,
+        source.messageId,
+        emoji ?? "eyes",
+      );
     },
 
     stream: async (textStream, options) => {

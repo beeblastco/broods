@@ -392,11 +392,12 @@ function createDiscordActions(
       await discord.startTyping(threadId);
     },
 
-    reactToMessage: async function() {
+    supportsReactions: true,
+    reactToMessage: async function(emoji) {
       if (typeof source.messageId !== "string") {
         return;
       }
-      await discord.addReaction(threadId, source.messageId, "eyes");
+      await discord.addReaction(threadId, source.messageId, emoji ?? "eyes");
 
       return;
     },

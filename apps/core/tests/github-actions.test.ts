@@ -63,7 +63,7 @@ describe("github outbound actions", () => {
     );
 
     await actions.sendText("hello from bun");
-    await actions.reactToMessage();
+    await actions.reactToMessage("+1");
 
     expect(calls).toHaveLength(3);
     expect(calls[0]?.url).toBe(
@@ -77,7 +77,7 @@ describe("github outbound actions", () => {
     );
 
     expect(calls[1]?.jsonBody).toEqual({ body: "hello from bun" });
-    expect(calls[2]?.jsonBody).toEqual({ content: "eyes" });
+    expect(calls[2]?.jsonBody).toEqual({ content: "+1" });
     expect(calls[1]?.headers.authorization).toBe("token installation-token");
     expect(calls[2]?.headers.authorization).toBe("token installation-token");
 

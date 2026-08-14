@@ -34,6 +34,70 @@ describe("createTools", () => {
     expect(urlContextMock).not.toHaveBeenCalled();
   });
 
+  it("automatically exposes channel interaction tools on channel turns", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const sendImage = mock(async function(): Promise<void> {});
+    const sendSticker = mock(async function(): Promise<void> {});
+    const sendText = mock(async function(): Promise<void> {});
+    const reactToMessage = mock(async function(): Promise<void> {});
+    const tools = await createTools(
+      Object.assign({}, createToolContext(), {
+        channel: {
+          actions: {
+            sendImage: sendImage,
+            sendSticker: sendSticker,
+            sendText: sendText,
+            sendTyping: async function(): Promise<void> {},
+            supportsReactions: true,
+            reactToMessage: reactToMessage,
+          },
+          channelName: "zalo",
+          transformText: async function(text: string): Promise<string> {
+            return `[safe] ${text}`;
+          },
+        },
+      }) as never,
+      {},
+    );
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "send-image",
+      "send-message",
+      "send-reactions",
+      "send-sticker",
+    ]);
+    await channelToolExecute(tools["send-message"], { text: "hello" });
+    await channelToolExecute(tools["send-image"], {
+      url: "https://example.com/image.png",
+      caption: "caption",
+    });
+    await channelToolExecute(tools["send-reactions"], { emoji: "heart" });
+    await channelToolExecute(tools["send-sticker"], { sticker: "sticker-1" });
+
+    expect(sendText).toHaveBeenCalledWith("[safe] hello");
+    expect(sendImage).toHaveBeenCalledWith(
+      "https://example.com/image.png",
+      "[safe] caption",
+    );
+    expect(reactToMessage).toHaveBeenCalledWith("heart");
+    expect(sendSticker).toHaveBeenCalledWith("sticker-1");
+  });
+
+  it("lets channel denyTools withhold automatic interaction tools", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      Object.assign({}, createToolContext(), {
+        channel: channelToolContext(),
+      }) as never,
+      { denyTools: ["send-image", "send-sticker"] },
+    );
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "send-message",
+      "send-reactions",
+    ]);
+  });
+
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
@@ -797,6 +861,32 @@ function createToolContext(
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
     ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
   } as never;
+}
+
+function channelToolContext() {
+  return {
+    actions: {
+      sendText: async function(): Promise<void> {},
+      sendTyping: async function(): Promise<void> {},
+      supportsReactions: true,
+      reactToMessage: async function(): Promise<void> {},
+    },
+    channelName: "test",
+    transformText: async function(text: string): Promise<string> {
+      return text;
+    },
+  };
+}
+
+async function channelToolExecute(
+  candidate: unknown,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  const selected = candidate as {
+    execute(input: unknown): Promise<unknown>;
+  };
+
+  return selected.execute(input);
 }
 
 function storageWithAccountTool(accountTool: AccountToolRecord): Storage {

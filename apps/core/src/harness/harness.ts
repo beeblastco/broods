@@ -59,6 +59,7 @@ import {
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import {
+  applyMessageSendingHook,
   createAgentHookDispatcher,
   wrapToolsWithHooks,
   type HookDispatcher,
@@ -455,6 +456,8 @@ export async function runAgentLoop(
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
+  const channelDelivery =
+    session.delivery?.kind === "channel" ? session.delivery : undefined;
   const builtTools = {
     ...(await createTools(
       {
@@ -476,6 +479,20 @@ export async function runAgentLoop(
           ...(session.agentId ? { agentId: session.agentId } : {}),
           conversationKey: session.conversationKey,
         },
+        ...(channelDelivery && session.channelActions
+          ? {
+              channel: {
+                actions: session.channelActions,
+                channelName: channelDelivery.channelName,
+                transformText: (text: string) =>
+                  applyMessageSendingHook(
+                    hooks,
+                    channelDelivery.channelName,
+                    text,
+                  ),
+              },
+            }
+          : {}),
         // The handler owns subagent lifecycle, so the loop only forwards the
         // dispatcher into the tool registry for this one model run. Ephemeral
         // system messages are request-local, so pass the current turn copy into
