@@ -5,7 +5,7 @@
  * auto-pauses it on idle and connect resumes it).
  */
 
-import { Sandbox } from "e2b";
+import type { Sandbox } from "e2b";
 import { Buffer } from "node:buffer";
 import { upsertSandboxInstance } from "../../shared/convex/sandbox-instances.ts";
 import { optionalEnv } from "../../shared/env.ts";
@@ -106,6 +106,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
     if (!key) return;
     const externalId = await getSandboxExternalId("e2b", key);
     if (!externalId) return;
+    const Sandbox = await e2bSandboxApi();
     try {
       await Sandbox.kill(externalId, e2bApiOptions(this.#config));
     } catch (err) {
@@ -139,6 +140,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
   }
 
   async #acquire(request: SandboxRunRequest): Promise<Sandbox> {
+    const Sandbox = await e2bSandboxApi();
     if (!this.#persistent(request)) {
       return Sandbox.create(e2bCreateOptions(this.#config, false));
     }
@@ -241,6 +243,14 @@ function e2bApiOptions(config: SandboxExecutorConfig): Record<string, unknown> {
     timeoutMs:
       resolveSandboxLifecycle(config.lifecycle).idleTimeoutSeconds * 1000,
   };
+}
+
+// e2b's bundle require()s chalk while the pi harness imports that same chalk as
+// ESM, and one eager graph holding both is a race. Load it only when e2b is used.
+async function e2bSandboxApi(): Promise<typeof import("e2b").Sandbox> {
+  const { Sandbox } = await import("e2b");
+
+  return Sandbox;
 }
 
 function e2bCreateOptions(
