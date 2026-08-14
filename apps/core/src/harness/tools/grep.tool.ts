@@ -14,7 +14,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolError, toolText } from "./utils.ts";
 
 type OutputMode = "content" | "files_with_matches" | "count";
 
@@ -79,7 +79,6 @@ Usage notes:
 - Filter files with the \`glob\` parameter (e.g. \`*.ts\`) and narrow the search root with \`path\`.
 - Prefer this over \`bash grep\`/\`rg\` for searching file contents.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const {
           pattern,

@@ -30,6 +30,7 @@ import type {
   AsyncToolSource,
   RunAsyncToolDispatch,
 } from "../async-tools.ts";
+import type { RunSessionMessageDispatch } from "../ingress.ts";
 import type {
   SandboxCpuSample,
   SandboxExecutorConfig,
@@ -38,6 +39,13 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import {
+  sendImageTool,
+  sendMessageTool,
+  sendReactionsTool,
+  sendStickerTool,
+  type ChannelToolContext,
+} from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
 import {
   hasStandaloneSandbox,
@@ -77,12 +85,14 @@ export interface ToolContext {
   session?: Session;
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  dispatchSessionMessage?: RunSessionMessageDispatch;
   // Reports each sandbox exec's CPU so the harness attributes usage per sandbox
   // (agent bash/fs => role "agent"; uploaded custom tools => role "tool").
   onSandboxCpu?: (sample: SandboxCpuSample) => void;
   sandboxMetadata?: SandboxRunMetadata;
   approvalRequirements?: Map<string, true>;
   policyToolIdsByName?: Map<string, string>;
+  channel?: ChannelToolContext;
 }
 
 export async function createTools(
@@ -204,6 +214,21 @@ export async function createTools(
   }
   Object.assign(tools, sandboxTools);
   const asyncModes: AsyncToolModeMap = new Map();
+
+  if (context.channel) {
+    Object.assign(
+      tools,
+      sendImageTool(context.channel),
+      sendReactionsTool(context.channel),
+      sendStickerTool(context.channel),
+    );
+  }
+  if (
+    context.dispatchSessionMessage &&
+    Object.keys(agentConfig.channels ?? {}).length > 0
+  ) {
+    Object.assign(tools, sendMessageTool(context.dispatchSessionMessage));
+  }
 
   // Subagent execution is orchestrated by the handler/coordinator. The registry
   // exposes only the model-facing tool when config and runtime dispatcher agree.

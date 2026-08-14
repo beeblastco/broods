@@ -45,3 +45,5 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 - `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`.
 
 Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
+
+Channel tools support images and Telegram sticker IDs or URLs. They preserve the current forum topic.

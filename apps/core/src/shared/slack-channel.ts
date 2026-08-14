@@ -4,6 +4,8 @@
  */
 
 import {
+  cardToBlockKit,
+  cardToFallbackText,
   SlackAdapter,
   SlackFormatConverter,
   type SlackEvent,
@@ -20,7 +22,14 @@ import {
   verifySlackSignature,
   type SlackSlashCommandPayload,
 } from "@chat-adapter/slack/webhook";
-import { ConsoleLogger, type StreamChunk } from "chat";
+import {
+  Card,
+  CardText,
+  ConsoleLogger,
+  Image,
+  type CardElement,
+  type StreamChunk,
+} from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -420,6 +429,7 @@ export function createSlackChannel(
     actions: function(msg): ChannelActions {
       return createSlackActions(
         botToken,
+        apiUrl,
         slack,
         toSlackSource(msg.source),
         reactionEmoji,
@@ -639,10 +649,12 @@ async function resolveSlackUserName(
 async function sendSlackWebhookResponse(
   url: string,
   text: string,
+  blocks?: unknown[],
 ): Promise<void> {
   try {
     await sendSlackResponseUrl(url, {
       text: text,
+      ...(blocks ? { blocks: blocks } : {}),
       responseType: "in_channel",
     });
   } catch (err) {
@@ -679,6 +691,7 @@ function cleanSlackText(value: string): string {
 
 function createSlackActions(
   botToken: string,
+  apiUrl: string | undefined,
   slack: SlackAdapter,
   source: SlackSource,
   reactionEmoji: string,
@@ -692,6 +705,55 @@ function createSlackActions(
   const formatter = new SlackFormatConverter();
 
   return {
+    sendImage: async function(url, caption): Promise<void> {
+      await postSlackCard(
+        botToken,
+        apiUrl,
+        source,
+        Card({
+          children: [
+            ...(caption ? [CardText(caption)] : []),
+            Image({ url: url, alt: caption ?? "Image" }),
+          ],
+        }),
+      );
+    },
+
+    sendSticker: async function(sticker): Promise<void> {
+      const value = sticker.trim();
+      if (!value) {
+        throw new Error(
+          "Slack sendSticker needs a custom emoji name or public http(s) image URL",
+        );
+      }
+      if (value.includes("://")) {
+        await postSlackCard(
+          botToken,
+          apiUrl,
+          source,
+          Card({
+            children: [Image({ url: value, alt: "Sticker" })],
+          }),
+        );
+
+        return;
+      }
+      const emojiName = value.replace(/^:+|:+$/g, "");
+      const text = /^[a-z0-9_+-]+$/i.test(emojiName) ? `:${emojiName}:` : value;
+      if (source.responseUrl) {
+        await sendSlackWebhookResponse(source.responseUrl, text);
+
+        return;
+      }
+      await postSlackMessage({
+        token: botToken,
+        apiUrl: apiUrl,
+        channel: source.channelId,
+        text: text,
+        threadTs: source.threadTs,
+      });
+    },
+
     sendText: async function(text) {
       if (source.responseUrl) {
         await sendSlackWebhookResponse(
@@ -702,45 +764,39 @@ function createSlackActions(
         return;
       }
 
-      try {
-        await postSlackMessage({
-          token: botToken,
-          channel: source.channelId,
-          markdownText: text,
-          threadTs: source.threadTs,
-          unfurlLinks: false,
-          unfurlMedia: false,
-        });
-      } catch (err) {
-        throw normalizeSlackApiError("chat.postMessage", err);
-      }
+      await postSlackMessage({
+        token: botToken,
+        apiUrl: apiUrl,
+        channel: source.channelId,
+        markdownText: text,
+        threadTs: source.threadTs,
+        unfurlLinks: false,
+        unfurlMedia: false,
+      });
     },
 
     sendTyping: async function() {
       return;
     },
 
-    reactToMessage: async function() {
+    supportsReactions: Boolean(source.messageTs),
+    reactToMessage: async function(emoji): Promise<void> {
       if (!source.messageTs) {
         return;
       }
 
-      try {
-        assertSlackOk(
+      assertSlackOk(
+        "reactions.add",
+        await callSlackApi(
           "reactions.add",
-          await callSlackApi(
-            "reactions.add",
-            {
-              channel: source.channelId,
-              timestamp: source.messageTs,
-              name: reactionEmoji,
-            },
-            { token: botToken, contentType: "json" },
-          ),
-        );
-      } catch (err) {
-        throw normalizeSlackApiError("reactions.add", err);
-      }
+          {
+            channel: source.channelId,
+            timestamp: source.messageTs,
+            name: (emoji ?? reactionEmoji).replace(/^:+|:+$/g, ""),
+          },
+          { token: botToken, apiUrl: apiUrl, contentType: "json" },
+        ),
+      );
     },
 
     ...(threadId && source.userId
@@ -762,6 +818,31 @@ function createSlackActions(
         }
       : {}),
   };
+}
+
+async function postSlackCard(
+  botToken: string,
+  apiUrl: string | undefined,
+  source: SlackSource,
+  card: CardElement,
+): Promise<void> {
+  const text = cardToFallbackText(card) || "Image";
+  const blocks = cardToBlockKit(card);
+  if (source.responseUrl) {
+    await sendSlackWebhookResponse(source.responseUrl, text, blocks);
+
+    return;
+  }
+  await postSlackMessage({
+    token: botToken,
+    apiUrl: apiUrl,
+    channel: source.channelId,
+    text: text,
+    blocks: blocks,
+    threadTs: source.threadTs,
+    unfurlLinks: false,
+    unfurlMedia: false,
+  });
 }
 
 function createSlackUserNameResolver(
@@ -903,16 +984,6 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
   }
 
   return false;
-}
-
-function normalizeSlackApiError(method: string, err: unknown): Error {
-  if (err instanceof SlackApiError) {
-    return new Error(
-      `Slack ${method} failed (${err.status ?? 200}): ${err.response?.error ?? "unknown_error"}`,
-    );
-  }
-
-  return err instanceof Error ? err : new Error(String(err));
 }
 
 function parseSlashCommand(

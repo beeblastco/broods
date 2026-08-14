@@ -15,7 +15,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolError, toolText } from "./utils.ts";
 
 interface WriteInput {
   file_path: string;
@@ -51,7 +51,6 @@ Usage notes:
 - Prefer editing an existing file with the \`edit\` tool over overwriting it with \`write\`.
 - Always prefer this over \`bash\` redirection for creating files.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const { file_path, content, workspace } = input as WriteInput;
         try {

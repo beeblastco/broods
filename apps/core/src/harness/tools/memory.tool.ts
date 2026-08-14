@@ -20,7 +20,7 @@ import {
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
-import { toolError, toolText, toToolResultOutput } from "./utils.ts";
+import { toolError, toolText } from "./utils.ts";
 
 export const MEMORY_DIR = "memory";
 export const MEMORY_INDEX_PATH = `${MEMORY_DIR}/MEMORY.md`;
@@ -53,7 +53,6 @@ Usage notes:
 - Its metadata records the conversation scope it was learned in (originSessionId), so you can tell where a memory came from when reading it later.
 - Check the memory index already in your context first: saving an existing title updates that entry instead of duplicating it.`,
       inputSchema: jsonSchema(inputSchema(context)),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const { title, description, content, type, workspace } =
           input as MemorySaveInput;

@@ -11,6 +11,7 @@ export const runtimeQueries = {
   getAsyncToolGroup: internal.runtime.getAsyncToolGroup,
   getAsyncToolResult: internal.runtime.getAsyncToolResult,
   getAsyncToolToken: internal.runtime.getAsyncToolToken,
+  getConversationTarget: internal.runtimeIngress.getConversationTarget,
   getHarnessSession: internal.runtime.getHarnessSession,
   getSandboxReservation: internal.runtime.getSandboxReservation,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,

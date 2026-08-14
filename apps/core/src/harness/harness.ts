@@ -58,7 +58,9 @@ import {
 } from "../shared/otel.ts";
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
+import type { RunSessionMessageDispatch } from "./ingress.ts";
 import {
+  applyMessageSendingHook,
   createAgentHookDispatcher,
   wrapToolsWithHooks,
   type HookDispatcher,
@@ -190,6 +192,7 @@ export interface SubagentParentContext {
 export interface AgentLoopOptions {
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
+  dispatchSessionMessage?: RunSessionMessageDispatch;
   // Present when this run is a subagent; nests its trace under the parent.
   subagentParent?: SubagentParentContext;
   // Request-shared hook dispatcher (one storage load + one ctx.state per
@@ -455,6 +458,8 @@ export async function runAgentLoop(
 
   const configuredApprovals = new Map<string, true>();
   const policyToolIdsByName = new Map<string, string>();
+  const channelDelivery =
+    session.delivery?.kind === "channel" ? session.delivery : undefined;
   const builtTools = {
     ...(await createTools(
       {
@@ -467,6 +472,7 @@ export async function runAgentLoop(
         modelProvider: configuredModel.provider,
         session: session,
         dispatchAsyncTools: options.dispatchAsyncTools,
+        dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,
         policyToolIdsByName: policyToolIdsByName,
@@ -476,6 +482,20 @@ export async function runAgentLoop(
           ...(session.agentId ? { agentId: session.agentId } : {}),
           conversationKey: session.conversationKey,
         },
+        ...(channelDelivery && session.channelActions
+          ? {
+              channel: {
+                actions: session.channelActions,
+                channelName: channelDelivery.channelName,
+                transformText: (text: string): Promise<string | null> =>
+                  applyMessageSendingHook(
+                    hooks,
+                    channelDelivery.channelName,
+                    text,
+                  ),
+              },
+            }
+          : {}),
         // The handler owns subagent lifecycle, so the loop only forwards the
         // dispatcher into the tool registry for this one model run. Ephemeral
         // system messages are request-local, so pass the current turn copy into

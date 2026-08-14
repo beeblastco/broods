@@ -844,6 +844,13 @@ export const runtimeConversationCoordinatorsFields = {
   accountId: v.string(),
   agentId: v.string(),
   conversationKey: v.string(),
+  channelTarget: v.optional(
+    v.object({
+      agentConfig: v.any(),
+      channelName: v.string(),
+      source: v.record(v.string(), v.any()),
+    }),
+  ),
   nextSequence: v.number(),
   ownerGeneration: v.number(),
   ownerEventId: v.optional(v.string()),

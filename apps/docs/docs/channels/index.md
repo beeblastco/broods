@@ -17,6 +17,19 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 {BROODS_BASE_URL}/webhooks/{accountId}/{channel}
 ```
 
+## Agent Channel Tools
+
+Channel tools are automatic; do not add them to `config.tools`.
+
+| Tool | Use |
+| --- | --- |
+| `send-message` | Message another session |
+| `send-image` | Send an image |
+| `send-sticker` | Send a sticker |
+| `send-reactions` | React to a message |
+
+`send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
+
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request
 and sends the reply, because the reply must come from the app the provider

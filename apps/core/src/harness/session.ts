@@ -13,6 +13,7 @@ import {
   type UserModelMessage,
 } from "ai";
 import { runtime } from "../shared/convex/runtime.ts";
+import type { ChannelActions } from "../shared/channels.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
@@ -193,6 +194,9 @@ export class Session {
     // Monotonic Convex fencing token. Present for every coordinator-admitted run;
     // absent only on context-only writes that do not execute a model turn.
     public readonly ownerGeneration?: number,
+    // Bound to the current inbound message so model-facing channel tools retain
+    // the credential holder and exact provider reply target.
+    public readonly channelActions?: ChannelActions,
   ) {}
 
   async claim(): Promise<boolean> {

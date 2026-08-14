@@ -215,6 +215,7 @@ export interface ChannelInboundEvent {
   identity?: ChannelIdentity;
   source: Record<string, unknown>;
   channel: ChannelActions;
+  channelFactory?: (source: Record<string, unknown>) => ChannelActions;
   commandToken?: string;
 }
 
@@ -1047,8 +1048,22 @@ function channelReplySource(
 function channelRuntimeAgentConfig(
   target: { agent: AgentRecord; record?: ChannelRecord },
   channelName: string,
+  credentialHolderConfig: AgentConfig,
 ): AgentConfig {
-  const config = toChannelRuntimeAgentConfig(target.agent.config, channelName);
+  const targetConfig = toChannelRuntimeAgentConfig(
+    target.agent.config,
+    channelName,
+  );
+  const credentialChannel = credentialHolderConfig.channels?.[channelName];
+  const config = credentialChannel
+    ? {
+        ...targetConfig,
+        channels: {
+          ...targetConfig.channels,
+          [channelName]: credentialChannel,
+        },
+      }
+    : targetConfig;
 
   return target.record
     ? applyChannelRecord(config, target.record, channelName)
@@ -1233,7 +1248,11 @@ async function handleChannelWebhook(
             source: message.source,
             accountId: account.accountId,
             agentId: target.agent.agentId,
-            agentConfig: channelRuntimeAgentConfig(target, message.channelName),
+            agentConfig: channelRuntimeAgentConfig(
+              target,
+              message.channelName,
+              agent.config,
+            ),
             ...(targetDeployment
               ? {
                   endpointId: targetDeployment.endpointId,
@@ -1303,7 +1322,11 @@ async function handleChannelWebhook(
     });
 
     const identity = identityWithChannelRoles(message.identity, target.record);
-    const targetConfig = channelRuntimeAgentConfig(target, message.channelName);
+    const targetConfig = channelRuntimeAgentConfig(
+      target,
+      message.channelName,
+      agent.config,
+    );
     const refusal = await refuseChannelInvoke(
       targetConfig,
       account,
@@ -1348,6 +1371,8 @@ async function handleChannelWebhook(
             ...(identity ? { identity: identity } : {}),
             source: source,
             channel: channel,
+            channelFactory: (replySource): ChannelActions =>
+              adapter.actions({ ...message, source: replySource }),
             accountId: account.accountId,
             agentId: target.agent.agentId,
             agentConfig: targetConfig,
@@ -1688,6 +1713,28 @@ function createChannelRegistry(config: AgentConfig): ChannelRegistry {
       zaloChannel,
     ].filter((channel): channel is ChannelAdapter => channel !== null),
   };
+}
+
+export function channelActionsFromConfig(
+  config: AgentConfig,
+  channelName: string,
+  source: Record<string, unknown>,
+): ChannelActions | null {
+  const adapter = createChannelRegistry(config).webhookChannels.find(
+    (candidate): boolean => candidate.name === channelName,
+  );
+  if (!adapter) {
+
+    return null;
+  }
+
+  return adapter.actions({
+    eventId: "",
+    conversationKey: "",
+    channelName: channelName,
+    content: "",
+    source: source,
+  });
 }
 
 /**

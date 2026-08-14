@@ -138,6 +138,7 @@ describe("channel record resolution", () => {
     expect(response.statusCode).toBe(200);
     expect(runs).toHaveLength(1);
     expect(runs[0]!.agentId).toBe("agent_sales");
+    expect(runs[0]!.agentConfig?.channels?.telegram).toEqual(TELEGRAM_CHANNEL);
     // Keys are scoped by the agent that actually runs, so two agents in one
     // channel never share a conversation.
     expect(runs[0]!.conversationKey).toContain("agent:agent_sales:");

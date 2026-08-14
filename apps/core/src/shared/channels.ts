@@ -16,8 +16,14 @@ export interface ChannelActions {
   // Optional image delivery, by a URL the provider fetches for itself. Callers
   // check for it and fall back to a link when the provider has no image send.
   sendImage?(url: string, caption?: string): Promise<void>;
+  // Optional provider-native sticker delivery. Providers decide whether the
+  // value is a sticker id, file id, or public URL.
+  sendSticker?(sticker: string): Promise<void>;
   sendTyping(): Promise<void>;
-  reactToMessage(): Promise<void>;
+  supportsReactions?: boolean;
+  // Reactions target the inbound message. Omitting the emoji uses the channel's
+  // configured acknowledgement reaction.
+  reactToMessage(emoji?: string): Promise<void>;
   // Optional native SDK/platform streaming. Channels omit it when the provider
   // lacks SDK streaming support, in which case the harness sends one final reply.
   stream?(

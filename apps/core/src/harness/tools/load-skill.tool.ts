@@ -6,7 +6,6 @@
 import { jsonSchema, tool, type ToolSet } from "ai";
 import { logError, logInfo } from "../../shared/log.ts";
 import type { Session } from "../session.ts";
-import { toToolResultOutput } from "./utils.ts";
 
 export type LoadSkillPrompt = (
   skillPath: string,
@@ -45,7 +44,6 @@ export default function loadSkillTool(
         required: ["path"],
         additionalProperties: false,
       } as const),
-      toModelOutput: toToolResultOutput,
       execute: async function (input) {
         const skillPath = (input as { path?: unknown }).path;
         const resources = (input as { resources?: unknown }).resources;

@@ -81,6 +81,12 @@ const ingressStatusResultValidator = v.object({
   ),
 });
 
+const channelTargetValidator = v.object({
+  agentConfig: v.any(),
+  channelName: v.string(),
+  source: v.record(v.string(), v.any()),
+});
+
 type PublicDeploymentIngress = {
   accountId: string;
   endpointId: string;
@@ -437,6 +443,7 @@ export const accept = internalMutation({
     delivery: v.any(),
     requestedMode: ingressModeValidator,
     agentConfig: v.optional(v.any()),
+    channelTarget: v.optional(channelTargetValidator),
     ephemeralSystem: v.optional(v.array(v.any())),
     sizeBytes: v.number(),
     leaseTtlMs: v.number(),
@@ -493,6 +500,17 @@ export const accept = internalMutation({
       coordinator.agentId !== args.agentId
     ) {
       throw new Error("Conversation coordinator scope mismatch");
+    }
+    if (args.channelTarget !== undefined) {
+      await ctx.db.patch(coordinator._id, {
+        channelTarget: args.channelTarget,
+        updatedAt: now,
+      });
+      coordinator = {
+        ...coordinator,
+        channelTarget: args.channelTarget,
+        updatedAt: now,
+      };
     }
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
     await expireStaleOwner(ctx, coordinator, now);
@@ -614,6 +632,35 @@ export const accept = internalMutation({
       ownerGeneration: ownerGeneration,
       sequence: sequence,
     };
+  },
+});
+
+/** Returns the durable channel destination for one existing agent session. */
+export const getConversationTarget = internalQuery({
+  args: {
+    accountId: v.string(),
+    agentId: v.string(),
+    conversationKey: v.string(),
+  },
+  returns: v.union(channelTargetValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<NonNullable<
+    Doc<"runtimeConversationCoordinators">["channelTarget"]
+  > | null> => {
+    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
+    const coordinator = await getCoordinator(ctx, args.conversationKey);
+    if (
+      !coordinator ||
+      coordinator.accountId !== args.accountId ||
+      coordinator.agentId !== args.agentId
+    ) {
+
+      return null;
+    }
+
+    return coordinator.channelTarget ?? null;
   },
 });
 

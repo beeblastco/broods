@@ -4,12 +4,24 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { ToolExecuteFunction, ToolSet } from "ai";
+import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
+import type { SessionMessageResult } from "../src/harness/ingress.ts";
+import type { ToolContext } from "../src/harness/tools/index.ts";
 import {
   resetStorageForTests,
   setStorageForTests,
   type Storage,
 } from "../src/shared/storage.ts";
 import type { AccountToolRecord } from "../src/shared/domain/account-tools.ts";
+
+interface ChannelTestTool {
+  execute: ToolExecuteFunction<
+    Record<string, unknown>,
+    unknown,
+    Record<string, unknown>
+  >;
+}
 
 const urlContextMock = mock((options: unknown) => ({
   provider: "urlContext",
@@ -32,6 +44,128 @@ describe("createTools", () => {
 
     expect(await createTools(createToolContext(), {})).toEqual({});
     expect(urlContextMock).not.toHaveBeenCalled();
+  });
+
+  it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const sendImage = mock(async function (): Promise<void> {});
+    const sendSticker = mock(async function (): Promise<void> {});
+    const reactToMessage = mock(async function (): Promise<void> {});
+    const dispatchSessionMessage = mock(
+      async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "tg:target", status: "accepted" };
+      },
+    );
+    const context: Omit<ToolContext, "config"> = {
+      ...createToolContext(),
+      dispatchSessionMessage: dispatchSessionMessage,
+      channel: {
+        actions: {
+          sendImage: sendImage,
+          sendSticker: sendSticker,
+          sendText: async function (): Promise<void> {},
+          sendTyping: async function (): Promise<void> {},
+          supportsReactions: true,
+          reactToMessage: reactToMessage,
+        },
+        channelName: "zalo",
+        transformText: async function (text: string): Promise<string> {
+          return `[safe] ${text}`;
+        },
+      },
+    };
+    const tools = await createTools(context, {
+      channels: { telegram: {} },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "send-image",
+      "send-message",
+      "send-reactions",
+      "send-sticker",
+    ]);
+    await channelToolExecute(tools["send-message"], {
+      conversationKey: "tg:target",
+      message: "hello",
+    });
+    await channelToolExecute(tools["send-image"], {
+      url: "https://example.com/image.png",
+      caption: "caption",
+    });
+    await channelToolExecute(tools["send-reactions"], { emoji: "heart" });
+    await channelToolExecute(tools["send-sticker"], { sticker: "sticker-1" });
+
+    expect(dispatchSessionMessage).toHaveBeenCalledWith({
+      conversationKey: "tg:target",
+      message: "hello",
+    });
+    expect(sendImage).toHaveBeenCalledWith(
+      "https://example.com/image.png",
+      "[safe] caption",
+    );
+    expect(reactToMessage).toHaveBeenCalledWith("heart");
+    expect(sendSticker).toHaveBeenCalledWith("sticker-1");
+  });
+
+  it("omits unsupported channel interaction tools", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        channel: {
+          actions: {
+            sendText: async function (): Promise<void> {},
+            sendTyping: async function (): Promise<void> {},
+            reactToMessage: async function (): Promise<void> {},
+          },
+          channelName: "limited",
+          transformText: async function (text: string): Promise<string> {
+            return text;
+          },
+        },
+      },
+      {},
+    );
+
+    expect(tools).toEqual({});
+  });
+
+  it("exposes send-message outside channel turns for configured agents", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const dispatchSessionMessage = mock(
+      async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "slack:target", status: "queued" };
+      },
+    );
+    const tools = await createTools(
+      {
+        ...createToolContext(),
+        dispatchSessionMessage: dispatchSessionMessage,
+      },
+      { channels: { slack: {} } },
+    );
+
+    expect(Object.keys(tools)).toEqual(["send-message"]);
+  });
+
+  it("lets channel denyTools withhold automatic interaction tools", async (): Promise<void> => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const context: Omit<ToolContext, "config"> = {
+      ...createToolContext(),
+      dispatchSessionMessage: async function (): Promise<SessionMessageResult> {
+        return { conversationKey: "target", status: "queued" };
+      },
+      channel: channelToolContext(),
+    };
+    const tools = await createTools(context, {
+      channels: { telegram: {} },
+      denyTools: ["send-image", "send-sticker"],
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "send-message",
+      "send-reactions",
+    ]);
   });
 
   it("includes the sandbox bash tool plus enabled configured tools", async () => {
@@ -626,8 +760,8 @@ describe("createTools", () => {
   it("passes async-enabled provider tools through the async coordinator", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const approvalRequirements = new Map<string, true>();
-    const dispatch = mock(
-      (tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
+    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
+      (tools, asyncToolModes): ToolSet => {
         expect([...asyncToolModes.entries()]).toEqual([
           ["googleSearch", "built-in"],
         ]);
@@ -636,10 +770,7 @@ describe("createTools", () => {
         ).toBeUndefined();
 
         return {
-          googleSearch: {
-            ...(tools.googleSearch as object),
-            wrapped: true,
-          },
+          googleSearch: Object.assign(tools.googleSearch!, { wrapped: true }),
         };
       },
     );
@@ -698,16 +829,13 @@ describe("createTools", () => {
         updatedAt: "2026-06-06T00:00:00.000Z",
       }),
     );
-    const dispatch = mock(
-      (tools: Record<string, unknown>, asyncToolModes: Map<string, string>) => {
+    const dispatch: NonNullable<ToolContext["dispatchAsyncTools"]> = mock(
+      (tools, asyncToolModes): ToolSet => {
         expect(asyncToolModes).toEqual(new Map([["test_async", "uploaded"]]));
 
         return {
           ...tools,
-          test_async: {
-            ...(tools.test_async as object),
-            wrapped: true,
-          },
+          test_async: Object.assign(tools.test_async!, { wrapped: true }),
         };
       },
     );
@@ -779,14 +907,13 @@ function createToolContext(
   googleSearch: ((options: unknown) => unknown) | undefined = mock(
     (_options: unknown) => ({ provider: "googleSearch" }),
   ),
-  modelProviderName = "google",
-  dispatchSubagents?: unknown,
-  dispatchAsyncTools?: unknown,
-) {
+  modelProviderName: ToolContext["modelProviderName"] = "google",
+  dispatchSubagents?: ToolContext["dispatchSubagents"],
+  dispatchAsyncTools?: ToolContext["dispatchAsyncTools"],
+): Omit<ToolContext, "config"> {
   return {
     accountId: "acct_test",
     conversationKey: "conversation",
-    permissionMode: "ask",
     modelProviderName: modelProviderName,
     modelProvider: {
       tools: {
@@ -796,7 +923,48 @@ function createToolContext(
     },
     ...(dispatchSubagents ? { dispatchSubagents: dispatchSubagents } : {}),
     ...(dispatchAsyncTools ? { dispatchAsyncTools: dispatchAsyncTools } : {}),
-  } as never;
+  };
+}
+
+function channelToolContext(): ChannelToolContext {
+  return {
+    actions: {
+      sendImage: async function (): Promise<void> {},
+      sendSticker: async function (): Promise<void> {},
+      sendText: async function (): Promise<void> {},
+      sendTyping: async function (): Promise<void> {},
+      supportsReactions: true,
+      reactToMessage: async function (): Promise<void> {},
+    },
+    channelName: "test",
+    transformText: async function (text: string): Promise<string> {
+
+      return text;
+    },
+  };
+}
+
+function isChannelTestTool(
+  candidate: ToolSet[string] | undefined,
+): candidate is ToolSet[string] & ChannelTestTool {
+
+  return typeof candidate?.execute === "function";
+}
+
+async function channelToolExecute(
+  candidate: ToolSet[string] | undefined,
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  if (!isChannelTestTool(candidate)) {
+    throw new Error("Expected an executable channel tool");
+  }
+  const execute: ChannelTestTool["execute"] = candidate.execute;
+
+  return execute(input, {
+    toolCallId: "channel-tool-test",
+    messages: [],
+    context: {},
+  });
 }
 
 function storageWithAccountTool(accountTool: AccountToolRecord): Storage {

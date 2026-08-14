@@ -33,6 +33,8 @@ export const myAgent = defineAgent({
 
 Slack replies stream through Chat SDK's native Slack streaming API when the source event has thread and user context. Otherwise the agent sends one final reply through Chat SDK Slack primitives. Markdown and response-url text formatting are delegated to Chat SDK.
 
+Channel tools support image blocks and custom emoji or URL stickers. Event replies preserve the current Slack thread. Slash-command replies use the Slack response URL.
+
 ## Slack App Setup
 
 Point Event Subscriptions and Slash Commands (`/new`, `/clear`, `/help`) at the generated Slack webhook URL.

@@ -29,6 +29,53 @@ afterEach(() => {
 });
 
 describe("telegram channel actions", () => {
+  it("sends Telegram photos and stickers to the current topic", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      telegramMessageResponse(50, "photo"),
+      telegramMessageResponse(51, "sticker"),
+    );
+
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set([123]),
+      "👀",
+    ).actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        messageThreadId: 7,
+        threadId: "telegram:123:7",
+      }),
+    );
+
+    await actions.sendImage?.(
+      "https://cdn.example.com/chart.png",
+      "A useful chart",
+    );
+    await actions.sendSticker?.("telegram-file-id");
+
+    expect(fetchMock.calls).toHaveLength(2);
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendPhoto",
+    );
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toEqual({
+      chat_id: "123",
+      photo: "https://cdn.example.com/chart.png",
+      caption: "A useful chart",
+      message_thread_id: 7,
+    });
+    expect(toUrl(fetchMock.calls[1]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendSticker",
+    );
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      chat_id: 123,
+      sticker: "telegram-file-id",
+      message_thread_id: 7,
+    });
+  });
+
   it("uses the Chat SDK adapter for sending, streaming, typing, and reactions", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
@@ -65,7 +112,7 @@ describe("telegram channel actions", () => {
       })(),
     );
     await actions.sendTyping();
-    await actions.reactToMessage();
+    await actions.reactToMessage(":heart:");
 
     expect(fetchMock.calls).toHaveLength(6);
     expect(toUrl(fetchMock.calls[0]!.input)).toBe(
@@ -109,6 +156,7 @@ describe("telegram channel actions", () => {
     expect(JSON.parse(String(fetchMock.calls[5]!.init?.body))).toMatchObject({
       chat_id: "123",
       message_id: 42,
+      reaction: [{ type: "emoji", emoji: ":heart:" }],
     });
   });
 
@@ -313,6 +361,79 @@ describe("discord channel actions", () => {
 });
 
 describe("slack channel actions", () => {
+  it("posts Slack image blocks and custom emoji stickers in the current thread", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+      jsonResponse({ ok: true }),
+    );
+
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      "white_check_mark",
+    ).actions(
+      createMessage({
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1713916800.000001",
+      }),
+    );
+
+    await actions.sendImage?.(
+      "https://cdn.example.com/chart.png",
+      "A useful chart",
+    );
+    await actions.sendSticker?.("party_parrot");
+    await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
+
+    expect(fetchMock.calls).toHaveLength(3);
+    const imageBody = Object.fromEntries(
+      new URLSearchParams(String(fetchMock.calls[0]!.init?.body)),
+    );
+    expect(imageBody).toMatchObject({
+      channel: "C1",
+      text: "A useful chart",
+      thread_ts: "1713916800.000001",
+    });
+    expect(JSON.parse(imageBody.blocks!)).toEqual([
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: "A useful chart" },
+      },
+      {
+        type: "image",
+        image_url: "https://cdn.example.com/chart.png",
+        alt_text: "A useful chart",
+      },
+    ]);
+    expect(
+      Object.fromEntries(
+        new URLSearchParams(String(fetchMock.calls[1]!.init?.body)),
+      ),
+    ).toMatchObject({
+      channel: "C1",
+      text: ":party_parrot:",
+      thread_ts: "1713916800.000001",
+    });
+    const stickerBody = Object.fromEntries(
+      new URLSearchParams(String(fetchMock.calls[2]!.init?.body)),
+    );
+    expect(stickerBody).toMatchObject({
+      channel: "C1",
+      thread_ts: "1713916800.000001",
+    });
+    expect(JSON.parse(stickerBody.blocks!)).toEqual([
+      {
+        type: "image",
+        image_url: "https://cdn.example.com/sticker.gif",
+        alt_text: "Sticker",
+      },
+    ]);
+  });
+
   it("posts to response_url payloads with SDK-formatted markdown", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(new Response("", { status: 200 }));
@@ -343,6 +464,66 @@ describe("slack channel actions", () => {
     });
   });
 
+  it("keeps Slack image and sticker tools on the slash-command response URL", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      new Response("", { status: 200 }),
+      new Response("", { status: 200 }),
+      new Response("", { status: 200 }),
+    );
+    const responseUrl = "https://hooks.slack.test/response";
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+    ).actions(
+      createMessage({
+        teamId: "T1",
+        channelId: "C1",
+        responseUrl: responseUrl,
+      }),
+    );
+
+    await actions.sendImage?.("https://cdn.example.com/chart.png", "Chart");
+    await actions.sendSticker?.("party_parrot");
+    await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
+
+    expect(fetchMock.calls.map((call): string => toUrl(call.input))).toEqual([
+      responseUrl,
+      responseUrl,
+      responseUrl,
+    ]);
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+      text: "Chart",
+      response_type: "in_channel",
+      blocks: [
+        {
+          type: "section",
+          text: { type: "mrkdwn", text: "Chart" },
+        },
+        {
+          type: "image",
+          image_url: "https://cdn.example.com/chart.png",
+          alt_text: "Chart",
+        },
+      ],
+    });
+    expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
+      text: ":party_parrot:",
+      response_type: "in_channel",
+    });
+    expect(JSON.parse(String(fetchMock.calls[2]!.init?.body))).toMatchObject({
+      response_type: "in_channel",
+      blocks: [
+        {
+          type: "image",
+          image_url: "https://cdn.example.com/sticker.gif",
+          alt_text: "Sticker",
+        },
+      ],
+    });
+  });
+
   it("posts threaded Slack messages and reactions through the Web API", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
@@ -365,7 +546,7 @@ describe("slack channel actions", () => {
     );
 
     await actions.sendText("hello slack");
-    await actions.reactToMessage();
+    await actions.reactToMessage(":heart:");
     await actions.sendTyping();
 
     expect(fetchMock.calls).toHaveLength(2);
@@ -392,7 +573,7 @@ describe("slack channel actions", () => {
     expect(JSON.parse(String(fetchMock.calls[1]!.init?.body))).toEqual({
       channel: "C1",
       timestamp: "1713916800.000002",
-      name: "white_check_mark",
+      name: "heart",
     });
   });
 
@@ -446,14 +627,14 @@ describe("slack channel actions", () => {
       jsonResponse({ ok: false, error: "channel_not_found" }, 200),
     );
     await expect(apiActions.sendText("hello")).rejects.toThrow(
-      "Slack chat.postMessage failed (200): channel_not_found",
+      "Slack chat.postMessage failed: channel_not_found",
     );
 
     fetchMock.responses.push(
       jsonResponse({ ok: false, error: "missing_scope" }, 403),
     );
     await expect(apiActions.reactToMessage()).rejects.toThrow(
-      "Slack reactions.add failed (403): missing_scope",
+      "Slack reactions.add returned HTTP 403",
     );
   });
 });

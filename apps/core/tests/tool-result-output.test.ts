@@ -1,17 +1,16 @@
 import { expect, it } from "bun:test";
 import {
   modelValueToUserParts,
-  toDynamicToolResultOutput,
-  toToolResultOutput,
+  normalizeToolResultOutput,
 } from "../src/harness/tools/utils.ts";
 
 it("maps native text and JSON to their matching AI SDK result types", () => {
-  expect(toToolResultOutput({ output: "done" })).toEqual({
+  expect(normalizeToolResultOutput("done")).toEqual({
     type: "text",
     value: "done",
   });
   const value = { status: "completed", response: ["a", null, 1] };
-  expect(toToolResultOutput({ output: value })).toEqual({
+  expect(normalizeToolResultOutput(value)).toEqual({
     type: "json",
     value,
   });
@@ -19,7 +18,7 @@ it("maps native text and JSON to their matching AI SDK result types", () => {
 
 it("preserves valid explicit ToolResultOutput variants", () => {
   const denied = { type: "execution-denied" as const, reason: "not allowed" };
-  expect(toToolResultOutput({ output: denied })).toBe(denied);
+  expect(normalizeToolResultOutput(denied)).toBe(denied);
 
   const content = {
     type: "content" as const,
@@ -31,23 +30,21 @@ it("preserves valid explicit ToolResultOutput variants", () => {
       },
     ],
   };
-  expect(toToolResultOutput({ output: content })).toBe(content);
+  expect(normalizeToolResultOutput(content)).toBe(content);
 });
 
 it("rejects unsupported dynamic values instead of coercing them", () => {
-  expect(() => toDynamicToolResultOutput({ output: 1n })).toThrow(
+  expect(() => normalizeToolResultOutput(1n)).toThrow(
     "Tool output must be a string",
   );
-  expect(() => toDynamicToolResultOutput({ output: new Date() })).toThrow(
+  expect(() => normalizeToolResultOutput(new Date())).toThrow(
+    "Tool output must be a string",
+  );
+  expect(() => normalizeToolResultOutput({ value: undefined })).toThrow(
     "Tool output must be a string",
   );
   expect(() =>
-    toDynamicToolResultOutput({ output: { value: undefined } }),
-  ).toThrow("Tool output must be a string");
-  expect(() =>
-    toDynamicToolResultOutput({
-      output: { type: "text", value: { nested: true } },
-    }),
+    normalizeToolResultOutput({ type: "text", value: { nested: true } }),
   ).toThrow('Invalid ToolResultOutput for type "text"');
 });
 
@@ -55,7 +52,7 @@ it("rejects cyclic JSON instead of serializing or casting it", () => {
   const cyclic: Record<string, unknown> = {};
   cyclic.self = cyclic;
 
-  expect(() => toDynamicToolResultOutput({ output: cyclic })).toThrow(
+  expect(() => normalizeToolResultOutput(cyclic)).toThrow(
     "Tool output must be a string",
   );
 });
