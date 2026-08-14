@@ -112,3 +112,39 @@ export const deleteOrphanedTools = internalMutation({
     };
   },
 });
+
+// Drop cron run rows whose cron job is gone. Deleting a job used to leave its
+// history behind, and nothing can reach those rows: run listings resolve the
+// job first. Paginated — pass the returned cursor back until isDone.
+export const deleteOrphanedCronRuns = internalMutation({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    numItems: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    scanned: v.number(),
+    orphaned: v.number(),
+    cursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("cronRuns").paginate({
+      numItems: args.numItems ?? 200,
+      cursor: args.cursor ?? null,
+    });
+    let orphaned = 0;
+    for (const run of page.page) {
+      if (await ctx.db.get(run.cronId)) continue;
+      orphaned += 1;
+      if (args.dryRun !== true) await ctx.db.delete(run._id);
+    }
+
+    return {
+      scanned: page.page.length,
+      orphaned: orphaned,
+      cursor: page.isDone ? null : page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
