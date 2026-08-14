@@ -142,11 +142,12 @@ export const support = defineAgent({
 });
 ```
 
-| Tool              | Input                                           | What it does                                                                |
-| ----------------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
-| `schedule`        | `name`, `instructions`, `schedule`, `timezone?` | Creates a cron job for this agent, bound to the calling conversation          |
-| `list_schedules`  | —                                               | Every job owned by this agent, with its schedule, status, and conversation    |
-| `cancel_schedule` | `cronId`                                        | Deletes one of this agent's jobs, run history included                        |
+| Tool              | Input                                                                   | What it does                                                               |
+| ----------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `schedule`        | `name`, `instructions`, `schedule`, `timezone?`                         | Creates a cron job for this agent, bound to the calling conversation       |
+| `list_schedules`  | —                                                                       | Every job owned by this agent, with its schedule, status, and conversation |
+| `update_schedule` | `cronId`, `name?`, `instructions?`, `schedule?`, `timezone?`, `status?` | Changes one of this agent's jobs in place, including pausing and resuming  |
+| `cancel_schedule` | `cronId`                                                                | Deletes one of this agent's jobs, run history included                     |
 
 These are normal cron jobs through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things `schedule` fixes for the model:
 
@@ -154,6 +155,8 @@ These are normal cron jobs through the same config plane — visible on the dash
 - **The conversation is always the calling one.** The cron stores the conversation key of the session the tool ran in, so an agent asked in Slack to summarize every morning answers in that Slack conversation. See [Conversation Binding](#conversation-binding).
 
 Both recurring and one-time schedules are accepted, so "every weekday at 9" and "remind me on Friday" are the same tool. A one-time task disappears by itself once it has run; a recurring one lives until it is cancelled. `list_schedules` is what the model should read before answering "what have you got scheduled" — its own memory of the conversation is not the source of truth.
+
+`update_schedule` changes only the fields it is given, so "make that 10am instead" retimes a job without restating its instructions. Setting `status` to `paused` stops a job firing while keeping it and its history; `active` resumes it. That is the difference from `cancel_schedule`, which is permanent.
 
 Withhold any of them from one channel with `denyTools: ["cancel_schedule"]` (or the other names) on that channel record.
 

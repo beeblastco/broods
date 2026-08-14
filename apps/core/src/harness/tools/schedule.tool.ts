@@ -1,14 +1,20 @@
 /**
- * Model-facing schedules: create, list, cancel. Every schedule belongs to the
- * calling agent and the conversation it was created from.
+ * Model-facing schedules: create, list, update, cancel. Every schedule belongs
+ * to the calling agent and the conversation it was created from.
  * Cron rows and EventBridge lifecycle stay in the config plane (awsCrons).
  */
 
 import { jsonSchema, tool, type ToolSet } from "ai";
-import type { CronRecord } from "../../shared/domain/cron.ts";
+import type {
+  CronRecord,
+  CronStatus,
+  UpdateCronInput,
+} from "../../shared/domain/cron.ts";
 import { getStorage } from "../../shared/storage.ts";
 import { toolError, toolText } from "./utils.ts";
 
+const SCHEDULE_EXPRESSION_DESCRIPTION =
+  "EventBridge Scheduler expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).";
 const SCHEDULE_PATTERN = /^(cron|rate|at)\(.+\)$/;
 
 export interface ScheduleContext {
@@ -39,6 +45,15 @@ interface ScheduleSummary {
   conversationKey?: string;
   lastStatus?: string;
   lastInvokedAt?: string;
+}
+
+interface UpdateScheduleInput {
+  cronId: string;
+  name?: string;
+  instructions?: string;
+  schedule?: string;
+  timezone?: string;
+  status?: CronStatus;
 }
 
 export function cancelScheduleTool(context: ScheduleContext): ToolSet {
@@ -123,8 +138,7 @@ export function scheduleTool(context: ScheduleContext): ToolSet {
           },
           schedule: {
             type: "string",
-            description:
-              "EventBridge Scheduler expression. cron(...) takes six fields — minute hour day-of-month month day-of-week year — with ? for whichever day field is unused: cron(0 9 * * ? *) is every day at 09:00, cron(30 8 ? * MON *) is Mondays at 08:30. rate(...) repeats on an interval: rate(2 hours). at(...) fires once at a future local time and then deletes itself: at(2027-01-01T09:00:00).",
+            description: SCHEDULE_EXPRESSION_DESCRIPTION,
           },
           timezone: {
             type: "string",
@@ -156,6 +170,100 @@ export function scheduleTool(context: ScheduleContext): ToolSet {
           `Scheduled task '${created.name}' (${created.cronId}) on ${created.scheduleExpression}${
             created.timezone ? ` in ${created.timezone}` : " in UTC"
           }. It runs in this conversation.`,
+        );
+      },
+    }),
+  };
+}
+
+export function updateScheduleTool(context: ScheduleContext): ToolSet {
+  return {
+    update_schedule: tool({
+      description:
+        "Changes one of your scheduled tasks in place, by the cronId that schedule or list_schedules reported. Only the fields you pass change; the rest stay as they are. Pause a task with status 'paused' to stop it firing while keeping it, and resume it with 'active' — cancelling instead throws the task away.",
+      inputSchema: jsonSchema<UpdateScheduleInput>({
+        type: "object",
+        properties: {
+          cronId: {
+            type: "string",
+            minLength: 1,
+            description: "Id of the scheduled task to change.",
+          },
+          name: {
+            type: "string",
+            minLength: 1,
+            maxLength: 120,
+            description: "New human-readable name for the task.",
+          },
+          instructions: {
+            type: "string",
+            minLength: 1,
+            description:
+              "Replacement instructions to run when the task fires. Replaces the stored ones outright.",
+          },
+          schedule: {
+            type: "string",
+            description: SCHEDULE_EXPRESSION_DESCRIPTION,
+          },
+          timezone: {
+            type: "string",
+            description:
+              "IANA timezone the schedule is read in, e.g. 'Asia/Ho_Chi_Minh'.",
+          },
+          status: {
+            type: "string",
+            enum: ["active", "paused"],
+            description:
+              "'paused' stops the task firing without deleting it; 'active' resumes it.",
+          },
+        },
+        required: ["cronId"],
+        additionalProperties: false,
+      }),
+      execute: async function (input): Promise<string> {
+        const cronId = input.cronId.trim();
+        const schedule = input.schedule?.trim();
+        if (schedule !== undefined && !SCHEDULE_PATTERN.test(schedule)) {
+          return toolError(
+            `schedule must be a cron(...), rate(...), or at(...) expression, got '${schedule}'`,
+          );
+        }
+        const patch: UpdateCronInput = {
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.instructions !== undefined
+            ? { input: input.instructions }
+            : {}),
+          ...(schedule !== undefined ? { scheduleExpression: schedule } : {}),
+          ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+          ...(input.status !== undefined ? { status: input.status } : {}),
+        };
+        if (Object.keys(patch).length === 0) {
+          return toolError(
+            "Pass at least one of name, instructions, schedule, timezone or status to change",
+          );
+        }
+
+        // The config plane only fences on account, so the agent fence is here:
+        // read the task first and refuse one that belongs to another agent.
+        const existing = await getStorage()
+          .crons.getById(context.accountId, cronId)
+          .catch(() => null);
+        if (!existing || existing.agentId !== context.agentId) {
+          return toolError(`No scheduled task ${cronId} belongs to this agent`);
+        }
+        const updated = await getStorage().crons.update(
+          context.accountId,
+          cronId,
+          patch,
+        );
+        if (!updated) {
+          return toolError(`No scheduled task ${cronId} belongs to this agent`);
+        }
+
+        return toolText(
+          `Updated scheduled task '${updated.name}' (${updated.cronId}): ${updated.scheduleExpression}${
+            updated.timezone ? ` in ${updated.timezone}` : " in UTC"
+          }, ${updated.status}.`,
         );
       },
     }),

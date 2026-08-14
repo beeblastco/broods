@@ -930,6 +930,7 @@ describe("createTools", () => {
       "cancel_schedule",
       "list_schedules",
       "schedule",
+      "update_schedule",
     ]);
     expect(
       await channelToolExecute(tools.schedule, {
@@ -1014,6 +1015,65 @@ describe("createTools", () => {
         },
       ],
     });
+  });
+
+  it("updates its own scheduled task and refuses another agent's", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const update = mock(async function (): Promise<CronSummary> {
+      return {
+        ...cronSummary(),
+        cronId: "cron_mine",
+        scheduleExpression: "cron(0 10 * * ? *)",
+        status: "paused",
+      };
+    });
+    setStorageForTests(
+      storageWithCrons(
+        [
+          cronRecord({ cronId: "cron_mine", name: "daily-standup" }),
+          cronRecord({ cronId: "cron_other", agentId: "agent_other" }),
+        ],
+        undefined,
+        update,
+      ),
+    );
+
+    const tools = await createTools(schedulerToolContext(), {
+      scheduler: { enabled: true },
+    });
+
+    expect(
+      await channelToolExecute(tools.update_schedule, {
+        cronId: "cron_mine",
+        schedule: "cron(0 10 * * ? *)",
+        status: "paused",
+      }),
+    ).toBe(
+      "Updated scheduled task 'daily-standup' (cron_mine): cron(0 10 * * ? *) in Asia/Ho_Chi_Minh, paused.",
+    );
+    // Only the named fields reach the patch, so an untouched field keeps the
+    // value the config plane already holds.
+    expect(update).toHaveBeenCalledWith("acct_test", "cron_mine", {
+      scheduleExpression: "cron(0 10 * * ? *)",
+      status: "paused",
+    });
+
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_other",
+        name: "stolen",
+      }),
+    ).rejects.toThrow("No scheduled task cron_other belongs to this agent");
+    await expect(
+      channelToolExecute(tools.update_schedule, {
+        cronId: "cron_mine",
+        schedule: "every monday",
+      }),
+    ).rejects.toThrow(/cron\(\.\.\.\), rate\(\.\.\.\), or at\(\.\.\.\)/);
+    await expect(
+      channelToolExecute(tools.update_schedule, { cronId: "cron_mine" }),
+    ).rejects.toThrow("Pass at least one of name, instructions, schedule");
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it("cancels its own scheduled task and refuses another agent's", async () => {
@@ -1162,6 +1222,9 @@ function storageWithCrons(
   remove: Storage["crons"]["remove"] = async function (): Promise<boolean> {
     return true;
   },
+  update: Storage["crons"]["update"] = async function (): Promise<CronSummary> {
+    return cronSummary();
+  },
 ): Storage {
   return storageWithCronStore({
     getById: async function (accountId: string, cronId: string) {
@@ -1181,6 +1244,7 @@ function storageWithCrons(
       );
     },
     remove: remove,
+    update: update,
   });
 }
 
