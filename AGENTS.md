@@ -34,14 +34,5 @@ outside repo, sibling of checkout:
 
 ## Code Style
 
-every workspace. follow strict. workspace guide add to this, never replace.
-
-- file order: constants, types, interfaces first. then exports and main logic. then private helpers used only in that file.
-- same kind of function sit together — all async in one run, then all plain. alphabetical inside group so eye find fast.
-- comment only key section. two lines max. no per-function docstring by default. if you need paragraph-long comment to say why workaround ok, code is wrong. fix code.
-- `key: value` object syntax. no shorthand.
-- one blank line before every `return`.
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
-- look for existing interface first. many come straight from Vercel AI SDK or other library. do not make new type when library type fit. but do not force reuse either.
 - before say done: run package own `bun run check` (lint + types) and `bun run format` (prettier). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
-- Put explicitly return type in each function, avoid using satisfies.
