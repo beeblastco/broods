@@ -489,20 +489,18 @@ export class SubagentCoordinator {
     // child's spans and logs publish to the same live dashboard subscription and
     // its usage rows are counted in the right stage. The trigger is inherited
     // too: a child of a scheduled run must not reach the schedule tools either.
-    const childSession = new Session(
-      task.eventId,
-      task.conversationKey,
-      requireParentAccountId(this.parentSession),
-      task.agentId,
-      task.agentConfig,
-      undefined,
-      this.parentSession.endpointId,
-      this.parentSession.projectSlug,
-      this.parentSession.stageSlug,
-      ownerGeneration,
-      undefined,
-      this.parentSession.trigger,
-    );
+    const childSession = new Session({
+      eventId: task.eventId,
+      conversationKey: task.conversationKey,
+      accountId: requireParentAccountId(this.parentSession),
+      agentId: task.agentId,
+      agentConfig: task.agentConfig,
+      endpointId: this.parentSession.endpointId,
+      projectSlug: this.parentSession.projectSlug,
+      stageSlug: this.parentSession.stageSlug,
+      ownerGeneration: ownerGeneration,
+      trigger: this.parentSession.trigger,
+    });
     let finalResponse: JSONValue | undefined;
     let approvalRequested = false;
     try {

@@ -1214,24 +1214,24 @@ async function handleChannelRequest(
     throw new Error("Channel admission did not return an owner generation");
   }
 
-  let session = new Session(
-    event.eventId,
-    event.conversationKey,
-    event.accountId,
-    event.agentId,
-    event.agentConfig ?? {},
-    {
+  let session = new Session({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig ?? {},
+    delivery: {
       kind: "channel",
       channelName: event.channelName,
       ...(event.identity ? { identity: event.identity } : {}),
       source: event.source,
     },
-    event.endpointId,
-    event.projectSlug,
-    event.stageSlug,
-    admission.ownerGeneration,
-    event.channel,
-  );
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+    ownerGeneration: admission.ownerGeneration,
+    channelActions: event.channel,
+  });
   let incoming: ConversationIngressEvent[] = event.events;
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
@@ -1364,24 +1364,24 @@ async function handleChannelRequest(
           ? (next.delivery.source ?? event.source)
           : event.source;
       activeConfig = next.agentConfig ?? event.agentConfig ?? {};
-      session = new Session(
-        next.eventId,
-        event.conversationKey,
-        event.accountId,
-        event.agentId,
-        activeConfig,
-        {
+      session = new Session({
+        eventId: next.eventId,
+        conversationKey: event.conversationKey,
+        accountId: event.accountId,
+        agentId: event.agentId,
+        agentConfig: activeConfig,
+        delivery: {
           kind: "channel",
           channelName: event.channelName,
           ...(event.identity ? { identity: event.identity } : {}),
           source: source,
         },
-        event.endpointId,
-        event.projectSlug,
-        event.stageSlug,
-        next.ownerGeneration,
-        event.channelFactory?.(source) ?? event.channel,
-      );
+        endpointId: event.endpointId,
+        projectSlug: event.projectSlug,
+        stageSlug: event.stageSlug,
+        ownerGeneration: next.ownerGeneration,
+        channelActions: event.channelFactory?.(source) ?? event.channel,
+      });
       incoming = next.events as ConversationIngressEvent[];
       incomingEphemeral = next.ephemeralSystem ?? [];
     }
@@ -1401,17 +1401,16 @@ function commandText(commandToken: string, content: string): string {
 }
 
 async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
-  const session = new Session(
-    event.eventId,
-    event.conversationKey,
-    event.accountId,
-    event.agentId,
-    event.agentConfig ?? {},
-    undefined,
-    event.endpointId,
-    event.projectSlug,
-    event.stageSlug,
-  );
+  const session = new Session({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig ?? {},
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+  });
   logInfo("Channel context received", {
     channel: event.channelName,
     accountId: event.accountId,
@@ -1538,26 +1537,26 @@ async function prepareDirectTurn(
   if (event.ownerGeneration === undefined) {
     throw new Error("Direct turn is missing its durable owner generation");
   }
-  const session = new Session(
-    event.eventId,
-    event.conversationKey,
-    event.accountId,
-    event.agentId,
-    event.agentConfig,
-    delivery,
-    event.endpointId,
-    event.projectSlug,
-    event.stageSlug,
-    event.ownerGeneration,
-    event.replyTarget
+  const session = new Session({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig,
+    delivery: delivery,
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+    ownerGeneration: event.ownerGeneration,
+    channelActions: event.replyTarget
       ? (channelActionsFromConfig(
           event.agentConfig,
           event.replyTarget.channelName,
           event.replyTarget.source,
         ) ?? undefined)
       : undefined,
-    event.cronRun ? "cron" : undefined,
-  );
+    trigger: event.cronRun ? "cron" : undefined,
+  });
   try {
     const ephemeralSystem = await session.appendIngressEvents(event.events);
     if (event.ephemeralSystem) {
@@ -1581,13 +1580,13 @@ async function failOwnedIngress(
   error: string,
 ): Promise<void> {
   if (event.ownerGeneration === undefined) return;
-  const session = new Session(
-    event.eventId,
-    event.conversationKey,
-    event.accountId,
-    event.agentId,
-    event.agentConfig,
-    event.connectionId
+  const session = new Session({
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+    accountId: event.accountId,
+    agentId: event.agentId,
+    agentConfig: event.agentConfig,
+    delivery: event.connectionId
       ? {
           kind: "nats",
           connectionId: event.connectionId,
@@ -1595,11 +1594,11 @@ async function failOwnedIngress(
           publicConversationKey: event.publicConversationKey,
         }
       : undefined,
-    event.endpointId,
-    event.projectSlug,
-    event.stageSlug,
-    event.ownerGeneration,
-  );
+    endpointId: event.endpointId,
+    projectSlug: event.projectSlug,
+    stageSlug: event.stageSlug,
+    ownerGeneration: event.ownerGeneration,
+  });
   // A scheduling failure recurses back through dispatchAppliedIngress; each
   // level consumes one envelope, so the queue bound terminates it.
   await settleFailedIngressAndDrain(session, error, () =>
