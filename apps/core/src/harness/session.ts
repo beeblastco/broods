@@ -161,10 +161,56 @@ interface StoredConversationEventPage {
 }
 
 /**
+ * What a turn carries into its session. Only the event and its conversation are
+ * always known; every other field depends on how the run arrived.
+ */
+export interface SessionOptions {
+  eventId: string;
+  conversationKey: string;
+  accountId?: string;
+  agentId?: string;
+  agentConfig?: AgentConfig;
+  // Where a deferred result spawned in this turn (a detached background job)
+  // should be delivered when it settles in a later invocation. Carries the
+  // originating chat channel or WebSocket connection; absent for plain
+  // direct/async API turns, which fall back to status polling.
+  delivery?: AsyncToolDelivery;
+  // Per-deployment id from the runtime key that authorized this turn. Present
+  // for deployment-key traffic and resolved channel integrations.
+  // Used to scope realtime telemetry to the dashboard's deployment view.
+  endpointId?: string;
+  // Project and stage slugs from the runtime key scope. Present for
+  // deployment-key traffic and resolved channel integrations. Used to build
+  // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
+  projectSlug?: string;
+  stageSlug?: string;
+  // Monotonic Convex fencing token. Present for every coordinator-admitted run;
+  // absent only on context-only writes that do not execute a model turn.
+  ownerGeneration?: number;
+  // Bound to the current inbound message so model-facing channel tools retain
+  // the credential holder and exact provider reply target.
+  channelActions?: ChannelActions;
+  // Absent for the ordinary channel/API paths, where a person is waiting.
+  trigger?: RunTrigger;
+}
+
+/**
  * Agent conversation session.
  * Owns persistence, leases, prompt assembly, and in-memory child turns.
  */
 export class Session {
+  readonly eventId: string;
+  readonly conversationKey: string;
+  readonly accountId: string | undefined;
+  readonly agentId: string | undefined;
+  readonly delivery: AsyncToolDelivery | undefined;
+  readonly endpointId: string | undefined;
+  readonly projectSlug: string | undefined;
+  readonly stageSlug: string | undefined;
+  readonly ownerGeneration: number | undefined;
+  readonly channelActions: ChannelActions | undefined;
+  readonly trigger: RunTrigger | undefined;
+  private readonly agentConfig: AgentConfig;
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
   // One clock reading for the whole run: the system prompt is rebuilt before
@@ -178,35 +224,20 @@ export class Session {
   private resolvedRuntime: ResolvedAgentRuntime | undefined;
   private resolvedRuntimePromise: Promise<ResolvedAgentRuntime> | undefined;
 
-  constructor(
-    public readonly eventId: string,
-    public readonly conversationKey: string,
-    public readonly accountId: string | undefined,
-    public readonly agentId: string | undefined,
-    private readonly agentConfig: AgentConfig = {},
-    // Where a deferred result spawned in this turn (a detached background job)
-    // should be delivered when it settles in a later invocation. Carries the
-    // originating chat channel or WebSocket connection; absent for plain
-    // direct/async API turns, which fall back to status polling.
-    public readonly delivery?: AsyncToolDelivery,
-    // Per-deployment id from the runtime key that authorized this turn. Present
-    // for deployment-key traffic and resolved channel integrations.
-    // Used to scope realtime telemetry to the dashboard's deployment view.
-    public readonly endpointId?: string,
-    // Project and stage slugs from the runtime key scope. Present for
-    // deployment-key traffic and resolved channel integrations. Used to build
-    // NATS observability subjects (tracesSubject, logsSubject) for live streaming.
-    public readonly projectSlug?: string,
-    public readonly stageSlug?: string,
-    // Monotonic Convex fencing token. Present for every coordinator-admitted run;
-    // absent only on context-only writes that do not execute a model turn.
-    public readonly ownerGeneration?: number,
-    // Bound to the current inbound message so model-facing channel tools retain
-    // the credential holder and exact provider reply target.
-    public readonly channelActions?: ChannelActions,
-    // Absent for the ordinary channel/API paths, where a person is waiting.
-    public readonly trigger?: RunTrigger,
-  ) {}
+  constructor(options: SessionOptions) {
+    this.eventId = options.eventId;
+    this.conversationKey = options.conversationKey;
+    this.accountId = options.accountId;
+    this.agentId = options.agentId;
+    this.agentConfig = options.agentConfig ?? {};
+    this.delivery = options.delivery;
+    this.endpointId = options.endpointId;
+    this.projectSlug = options.projectSlug;
+    this.stageSlug = options.stageSlug;
+    this.ownerGeneration = options.ownerGeneration;
+    this.channelActions = options.channelActions;
+    this.trigger = options.trigger;
+  }
 
   async claim(): Promise<boolean> {
     if (!this.accountId) {

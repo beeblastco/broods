@@ -5,6 +5,8 @@
 
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
 import * as actualAi from "ai";
+import type { Session } from "../src/harness/session.ts";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import * as realS3 from "../src/shared/s3.ts";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -119,8 +121,7 @@ afterAll(() => {
 describe("session system context", () => {
   it("uses only developer-provided system context", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
-    const session = new Session("event", "conversation", "acct", "agent", {
+    const session = await newSession({
       agent: {
         system: "Agent-specific prompt.",
       },
@@ -140,8 +141,7 @@ describe("session system context", () => {
 
   it("preserves agent-level system message events", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
-    const session = new Session("event", "conversation", "acct", "agent", {
+    const session = await newSession({
       agent: {
         system: [
           {
@@ -170,8 +170,7 @@ describe("session system context", () => {
 
   it("tells the model to use matching predefined subagent ids", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
-    const session = new Session("event", "conversation", "acct", "agent", {
+    const session = await newSession({
       subagent: {
         enabled: true,
         allowed: ["agent_research"],
@@ -198,8 +197,7 @@ describe("session system context", () => {
 
   it("gives a scheduling agent one clock reading for the whole run", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
-    const session = new Session("event", "conversation", "acct", "agent", {
+    const session = await newSession({
       scheduler: { enabled: true },
     });
 
@@ -228,8 +226,7 @@ describe("session system context", () => {
 
   it("withholds the scheduling clock until the agent opts in", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
-    const session = new Session("event", "conversation", "acct", "agent", {});
+    const session = await newSession({});
 
     const turnContext = await session.createEphemeralTurnContext([
       { role: "user", content: "hello" },
@@ -245,17 +242,10 @@ describe("session system context", () => {
   it("loads existing workspace memory separately from optional harness guidance", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Remember stable project facts.");
-    const { Session } = await import("../src/harness/session.ts");
 
-    const enabledSession = new Session(
-      "event",
-      "conversation",
-      "acct",
-      "agent",
-      {
-        workspaces: [{ name: "default", workspaceId: "ws_a" }],
-      },
-    );
+    const enabledSession = await newSession({
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
+    });
     const enabledContext = await enabledSession.createEphemeralTurnContext([
       { role: "user", content: "hello" },
     ]);
@@ -287,7 +277,6 @@ describe("session system context", () => {
 
   it("adds <memory> guidance only when a sandbox-backed workspace exposes memory_save", async () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
-    const { Session } = await import("../src/harness/session.ts");
 
     const storageWithSandbox = (workspaceConfig: Record<string, unknown>) =>
       ({
@@ -316,15 +305,12 @@ describe("session system context", () => {
 
     // Sandbox-backed workspace: the block names this conversation's scope as originSessionId.
     setStorageForTests(storageWithSandbox({ storage: { provider: "s3" } }));
-    const writable = new Session(
-      "event",
-      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
-      "acct",
-      "agent",
+    const writable = await newSession(
       {
         sandbox: "sb_1",
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
+      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
     );
     const writableContext = await writable.createEphemeralTurnContext([
       { role: "user", content: "hello" },
@@ -351,15 +337,12 @@ describe("session system context", () => {
       }),
     );
     readS3TextMock.mockResolvedValue("MUST NOT REACH THE MODEL");
-    const optedOut = new Session(
-      "event",
-      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
-      "acct",
-      "agent",
+    const optedOut = await newSession(
       {
         sandbox: "sb_1",
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
+      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
     );
     const optedOutContext = await optedOut.createEphemeralTurnContext([
       { role: "user", content: "hello" },
@@ -385,16 +368,9 @@ describe("session system context", () => {
     process.env.FILESYSTEM_BUCKET_NAME = "filesystem";
     readS3TextMock.mockResolvedValue("Keep this in context.");
     workspaceHarnessEnabled = false;
-    const { Session } = await import("../src/harness/session.ts");
-    const disabledSession = new Session(
-      "event",
-      "conversation",
-      "acct",
-      "agent",
-      {
-        workspaces: [{ name: "default", workspaceId: "ws_a" }],
-      },
-    );
+    const disabledSession = await newSession({
+      workspaces: [{ name: "default", workspaceId: "ws_a" }],
+    });
     const disabledContext = await disabledSession.createEphemeralTurnContext([
       { role: "user", content: "hello" },
     ]);
@@ -425,17 +401,13 @@ describe("session system context", () => {
         }),
       },
     } as never);
-    const { Session } = await import("../src/harness/session.ts");
-    const harnessSession = new Session(
-      "event",
-      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
-      "acct",
-      "agent",
+    const harnessSession = await newSession(
       {
         harness: { type: "codex" },
         sandbox: "sb_1",
         workspaces: [{ name: "default", workspaceId: "ws_a" }],
       },
+      "acct:acct_1:agent:agent_1:slack:T1:C2:11.22",
     );
     const harnessContext = await harnessSession.createEphemeralTurnContext([
       { role: "user", content: "hello" },
@@ -726,3 +698,22 @@ describe("session compaction", () => {
     expect(result).toBeNull();
   });
 });
+
+/**
+ * A session whose identity fields none of these tests assert on. Imported per
+ * call rather than at module scope so the mocks above are installed first.
+ */
+async function newSession(
+  agentConfig: AgentConfig,
+  conversationKey: string = "conversation",
+): Promise<Session> {
+  const { Session } = await import("../src/harness/session.ts");
+
+  return new Session({
+    eventId: "event",
+    conversationKey: conversationKey,
+    accountId: "acct",
+    agentId: "agent",
+    agentConfig: agentConfig,
+  });
+}
