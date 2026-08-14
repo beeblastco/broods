@@ -76,16 +76,16 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
-  "cancel_scheduled_task",
+  "cancel_schedule",
   "edit",
   "glob",
   "grep",
-  "list_scheduled_tasks",
+  "list_schedules",
   "load_skill",
   "memory_save",
   "read",
   "run_subagent",
-  "schedule_task",
+  "schedule",
   "write",
 ]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;

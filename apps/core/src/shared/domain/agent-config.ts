@@ -86,16 +86,16 @@ const DEPRECATED_TOOL_ID_PREFIX = "tool_";
 const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "async_status",
   "bash",
-  "cancel_scheduled_task",
+  "cancel_schedule",
   "edit",
   "glob",
   "grep",
-  "list_scheduled_tasks",
+  "list_schedules",
   "load_skill",
   "memory_save",
   "read",
   "run_subagent",
-  "schedule_task",
+  "schedule",
   "write",
 ]);
 
@@ -227,7 +227,7 @@ export interface AgentSkillsConfig {
 }
 
 /**
- * Opt-in for the `schedule_task` tool. Off by default: a scheduled task starts
+ * Opt-in for the `schedule` tool. Off by default: a scheduled task starts
  * billable agent runs long after the turn that asked for it.
  */
 export interface AgentSchedulerConfig {

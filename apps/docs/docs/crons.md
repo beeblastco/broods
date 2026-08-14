@@ -142,20 +142,20 @@ export const support = defineAgent({
 });
 ```
 
-| Tool                     | Input                                            | What it does                                                                    |
-| ------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------- |
-| `schedule_task`          | `name`, `instructions`, `schedule`, `timezone?`  | Creates a cron job for this agent, bound to the calling conversation             |
-| `list_scheduled_tasks`   | —                                                | Every task owned by this agent, with its schedule, status, and conversation      |
-| `cancel_scheduled_task`  | `cronId`                                         | Deletes one of this agent's tasks, run history included                          |
+| Tool              | Input                                           | What it does                                                                |
+| ----------------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
+| `schedule`        | `name`, `instructions`, `schedule`, `timezone?` | Creates a cron job for this agent, bound to the calling conversation          |
+| `list_schedules`  | —                                               | Every job owned by this agent, with its schedule, status, and conversation    |
+| `cancel_schedule` | `cronId`                                        | Deletes one of this agent's jobs, run history included                        |
 
-These are normal cron jobs through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things `schedule_task` fixes for the model:
+These are normal cron jobs through the same config plane — visible on the dashboard scheduler page and manageable through `/v1/crons` like any other. Two things `schedule` fixes for the model:
 
 - **The agent is always itself.** A scheduled task cannot be pointed at another agent, and `list`/`cancel` reach only that agent's own jobs.
 - **The conversation is always the calling one.** The cron stores the conversation key of the session the tool ran in, so an agent asked in Slack to summarize every morning answers in that Slack conversation. See [Conversation Binding](#conversation-binding).
 
-Both recurring and one-time schedules are accepted, so "every weekday at 9" and "remind me on Friday" are the same tool. A one-time task disappears by itself once it has run; a recurring one lives until it is cancelled. `list_scheduled_tasks` is what the model should read before answering "what have you got scheduled" — its own memory of the conversation is not the source of truth.
+Both recurring and one-time schedules are accepted, so "every weekday at 9" and "remind me on Friday" are the same tool. A one-time task disappears by itself once it has run; a recurring one lives until it is cancelled. `list_schedules` is what the model should read before answering "what have you got scheduled" — its own memory of the conversation is not the source of truth.
 
-Withhold any of them from one channel with `denyTools: ["cancel_scheduled_task"]` (or the other names) on that channel record.
+Withhold any of them from one channel with `denyTools: ["cancel_schedule"]` (or the other names) on that channel record.
 
 ## SDK and Dynamic Creation
 

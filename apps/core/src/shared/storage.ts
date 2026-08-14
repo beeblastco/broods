@@ -141,7 +141,7 @@ interface AgentDeploymentStore {
 /** Account-scoped cron job schedules. */
 interface CronStore {
   // Creates the crons row and its EventBridge schedule in the config plane;
-  // the runtime path for it is the schedule_task tool.
+  // the runtime path for it is the schedule tool.
   create(accountId: string, input: CreateCronInput): Promise<CronSummary>;
   getById(accountId: string, cronId: string): Promise<CronRecord | null>;
   list(accountId: string, agentId?: string): Promise<CronRecord[]>;

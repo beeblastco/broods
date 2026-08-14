@@ -146,16 +146,6 @@ export const list = internalQuery({
           .collect(),
 });
 
-/**
- * Every cron job across accounts, bounded. Only the maintenance sweep uses
- * this; account-facing reads go through `list`.
- */
-export const listAll = internalQuery({
-  args: { limit: v.number() },
-  returns: v.array(cronDoc),
-  handler: (ctx, { limit }) => ctx.db.query("crons").take(limit),
-});
-
 export const listByStatus = internalQuery({
   args: {
     accountId: v.id("accounts"),

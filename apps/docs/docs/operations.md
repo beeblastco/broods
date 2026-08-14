@@ -292,32 +292,6 @@ last prod deploy). It catches Pulumi-state-tracked orphans only; resources
 created entirely outside SST state (no Pulumi URN — e.g. an `aws ec2` command
 run by hand) still need manual cleanup.
 
-## Cron Cleanup
-
-Cron schedules are created at runtime by `awsCrons`, not by SST, so they carry no
-Pulumi URN and drift cleanup above never sees them. Two maintenance functions
-sweep what earlier versions left behind. Both default to reporting only.
-
-```bash
-# Run rows whose cron job is already deleted. Repeat with the returned cursor
-# until isDone, then re-run with '{"dryRun": false}' to actually delete.
-bunx convex run migrations:deleteOrphanedCronRuns '{"dryRun": true}'
-
-# Cron jobs that can never fire again — a spent at(...) job, or one whose agent
-# was deleted — plus EventBridge schedules no job owns.
-bunx convex run awsCrons:sweepSpentCrons '{"dryRun": true}'
-```
-
-`sweepSpentCrons` deletes rows **and** live EventBridge schedules once
-`dryRun: false`, so read the dry-run counts first. It only touches the schedule
-group named by this deployment's `CRON_SCHEDULER_GROUP_NAME`, which is
-stage-scoped, and it skips the schedule phase entirely when `complete` comes
-back `false` — a partial scan cannot tell an orphan schedule from one whose row
-it never read. Raise `limit` and re-run until `complete` is `true`.
-
-Neither is needed for jobs created after one-time schedules became
-self-deleting; see [Cron Jobs](crons.md).
-
 ## Runtime Telemetry
 
 `harness-processing` writes compact JSON log lines for metric-bearing model and tool events so CloudWatch Logs Insights, metric filters, and dashboards can graph model usage without parsing SSE payloads.
