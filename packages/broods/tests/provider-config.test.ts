@@ -58,6 +58,11 @@ test("passes provider-owned settings through and still catches apiKey typos", ()
 });
 
 test("supports every provider on the shared list, deepseek included", () => {
+  // Pinned independently of the loop: it draws its cases from the shared list,
+  // so a name dropped from that list would silently stop being covered.
+  expect(ACCOUNT_MODEL_PROVIDER_NAMES).toContain("deepseek");
+  expect(ACCOUNT_MODEL_PROVIDER_NAMES).toContain("vertex");
+
   for (const name of ACCOUNT_MODEL_PROVIDER_NAMES) {
     const settings =
       name === "custom"
