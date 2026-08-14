@@ -135,6 +135,11 @@ export async function createPolicyToolApproval(
           filePath: policyInput.filePath,
           skillPath: policyInput.skillPath,
           subagentId: policyInput.subagentId,
+          // A rule conditioned on the actor is undebuggable without the actor
+          // the decision actually read.
+          channelId: baseInput.channelId,
+          actorId: baseInput.actorId,
+          actorRoles: baseInput.actorRoles,
         };
         if (event.decision.type === "approved") {
           logInfo(message, data);
@@ -166,7 +171,16 @@ export async function evaluateChannelInvoke(
       input.accountId,
       agentConfig.policy?.policyIds ?? [],
     );
-    if (policies.length === 0) return undefined;
+    // Policy is configured but nothing resolved: refuse like the tool gate
+    // does, rather than letting a broken reference read as "no policy".
+    if (policies.length === 0) {
+      return {
+        allowed: false,
+        mode: mode,
+        reason: "No allow policy rule matched",
+        matchedRuleIds: [],
+      };
+    }
 
     const decision = await policyClient().evaluate<
       PolicyDecisionInput & { mode: AgentPolicyMode; policies: unknown[] },
@@ -539,11 +553,21 @@ async function loadPolicyDocuments(
   accountId: string,
   policyIds: string[],
 ): Promise<unknown[]> {
+  const requested = [...new Set(policyIds)];
   const records = await Promise.all(
-    [...new Set(policyIds)].map((policyId) =>
+    requested.map((policyId) =>
       getStorage().agentPolicies.getById(accountId, policyId),
     ),
   );
+  // A reference that resolves to nothing is a misconfiguration, not an empty
+  // policy: say so, or the rule silently stops applying.
+  const missing = requested.filter((_, index) => !records[index]);
+  if (missing.length > 0) {
+    logWarn("Policy references did not resolve", {
+      accountId: accountId,
+      policyIds: missing,
+    });
+  }
 
   return records
     .filter((record): record is NonNullable<typeof record> => Boolean(record))
