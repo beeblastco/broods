@@ -1415,7 +1415,11 @@ export async function runAgentLoop(
       taskUsage = usage;
       taskStepCount = stepCount;
       const approvalRequests = extractApprovalRequests(steps);
-      const approvals = approvalRequests.map(summarizeApprovalRequest);
+      // `isAutomatic` records a decision the SDK already answered this run, so
+      // only a request still waiting on a human may gate the turn.
+      const approvals = approvalRequests
+        .filter((request) => !request.isAutomatic)
+        .map(summarizeApprovalRequest);
       const tools = summarizeToolsUsed(toolCallSummaries);
       const finishLog = {
         eventType: "model.invocation.finished",
