@@ -1117,14 +1117,22 @@ describe("createTools", () => {
     ).rejects.toThrow("answers in another conversation");
     expect(update).not.toHaveBeenCalled();
 
-    // Retiming and pausing carry no model-chosen content, so they still reach
-    // a task bound elsewhere.
+    // Retiming, pausing and resuming carry no model-chosen content, so they
+    // still reach a task bound elsewhere.
     await channelToolExecute(tools.update_schedule, {
       cronId: "cron_elsewhere",
       status: "paused",
     });
     expect(update).toHaveBeenCalledWith("acct_test", "cron_elsewhere", {
       status: "paused",
+    });
+
+    await channelToolExecute(tools.update_schedule, {
+      cronId: "cron_elsewhere",
+      status: "active",
+    });
+    expect(update).toHaveBeenLastCalledWith("acct_test", "cron_elsewhere", {
+      status: "active",
     });
   });
 
