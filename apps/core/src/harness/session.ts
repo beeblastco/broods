@@ -12,8 +12,8 @@ import {
   type ToolModelMessage,
   type UserModelMessage,
 } from "ai";
-import { runtime } from "../shared/convex/runtime.ts";
 import type { ChannelActions } from "../shared/channels.ts";
+import { runtime } from "../shared/convex/runtime.ts";
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
@@ -38,6 +38,13 @@ import {
   compactSessionContext,
   isCompactionSummaryMessage,
 } from "./compaction.ts";
+import {
+  applySteering,
+  DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  settleIngress,
+  takeNextIngress,
+  type AppliedIngress,
+} from "./ingress.ts";
 import { pruneSessionMessages } from "./pruning.ts";
 import {
   resolveS3ReadTarget,
@@ -50,13 +57,6 @@ import {
   loadConfiguredSkillPrompt,
   type SkillMetadata,
 } from "./skills.ts";
-import {
-  applySteering,
-  DEFAULT_CONVERSATION_LEASE_TTL_MS,
-  settleIngress,
-  takeNextIngress,
-  type AppliedIngress,
-} from "./ingress.ts";
 import { MEMORY_INDEX_PATH } from "./tools/memory.tool.ts";
 
 // What started a run when it was not a person asking: so far only the scheduler
@@ -239,6 +239,17 @@ export class Session {
     this.trigger = options.trigger;
   }
 
+  /** Rejects a side effect when this run no longer owns the conversation. */
+  async assertCurrentOwner(): Promise<void> {
+    if (this.ownerGeneration === undefined) return;
+    const current = await runtime.query<boolean>("isCurrentIngressOwner", {
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+    if (!current) throw new Error("Stale conversation owner generation");
+  }
+
   async claim(): Promise<boolean> {
     if (!this.accountId) {
       throw new Error("Account ID is required for runtime claims");
@@ -283,54 +294,6 @@ export class Session {
     });
   }
 
-  /** Rejects a side effect when this run no longer owns the conversation. */
-  async assertCurrentOwner(): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
-    const current = await runtime.query<boolean>("isCurrentIngressOwner", {
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ownerGeneration: this.ownerGeneration,
-    });
-    if (!current) throw new Error("Stale conversation owner generation");
-  }
-
-  /** Applies all queued steer envelopes to this active event. */
-  async applySteeringIngress(): Promise<AppliedIngress | null> {
-    if (this.ownerGeneration === undefined) return null;
-
-    return applySteering({
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ownerGeneration: this.ownerGeneration,
-    });
-  }
-
-  /** Takes the next durable FIFO application after this event finishes. */
-  async takeNextIngress(): Promise<AppliedIngress | null> {
-    if (this.ownerGeneration === undefined) return null;
-
-    return takeNextIngress({
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ownerGeneration: this.ownerGeneration,
-    });
-  }
-
-  /** Marks this event and every applied contributor terminal. */
-  async settleIngress(
-    status: "completed" | "failed",
-    options: { result?: unknown; error?: string } = {},
-  ): Promise<void> {
-    if (this.ownerGeneration === undefined) return;
-    await settleIngress({
-      conversationKey: this.conversationKey,
-      ownerEventId: this.eventId,
-      ownerGeneration: this.ownerGeneration,
-      status: status,
-      ...options,
-    });
-  }
-
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
@@ -359,6 +322,43 @@ export class Session {
     await this.persistModelMessages(persistedMessages);
 
     return ephemeralSystem;
+  }
+
+  /** Applies all queued steer envelopes to this active event. */
+  async applySteeringIngress(): Promise<AppliedIngress | null> {
+    if (this.ownerGeneration === undefined) return null;
+
+    return applySteering({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
+  }
+
+  /** Marks this event and every applied contributor terminal. */
+  async settleIngress(
+    status: "completed" | "failed",
+    options: { result?: unknown; error?: string } = {},
+  ): Promise<void> {
+    if (this.ownerGeneration === undefined) return;
+    await settleIngress({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+      status: status,
+      ...options,
+    });
+  }
+
+  /** Takes the next durable FIFO application after this event finishes. */
+  async takeNextIngress(): Promise<AppliedIngress | null> {
+    if (this.ownerGeneration === undefined) return null;
+
+    return takeNextIngress({
+      conversationKey: this.conversationKey,
+      ownerEventId: this.eventId,
+      ownerGeneration: this.ownerGeneration,
+    });
   }
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
@@ -394,6 +394,22 @@ export class Session {
       conversationKey: this.conversationKey,
       ...state,
     });
+  }
+
+  async createEphemeralTurnContext(
+    messages: ModelMessage[],
+    ephemeralSystem: SystemModelMessage[] = [],
+  ): Promise<TurnContextSnapshot> {
+    await this.ensureResolvedRuntime();
+
+    // Ephemeral child turns are in-memory only, but they still need the same
+    // source `ephemeralSystem` list so system prompt refreshes preserve it.
+    return {
+      messages: pruneSessionMessages(messages, this.agentConfig),
+      system: await this.buildSystemPromptParts([], ephemeralSystem),
+      ephemeralSystem: ephemeralSystem,
+      systemContextSnapshot: { cursor: null, messages: [] },
+    };
   }
 
   async createTurnContext(
@@ -487,22 +503,6 @@ export class Session {
     };
   }
 
-  async createEphemeralTurnContext(
-    messages: ModelMessage[],
-    ephemeralSystem: SystemModelMessage[] = [],
-  ): Promise<TurnContextSnapshot> {
-    await this.ensureResolvedRuntime();
-
-    // Ephemeral child turns are in-memory only, but they still need the same
-    // source `ephemeralSystem` list so system prompt refreshes preserve it.
-    return {
-      messages: pruneSessionMessages(messages, this.agentConfig),
-      system: await this.buildSystemPromptParts([], ephemeralSystem),
-      ephemeralSystem: ephemeralSystem,
-      systemContextSnapshot: { cursor: null, messages: [] },
-    };
-  }
-
   /**
    * Called from harness.ts prepareStep. Keep `systemContextSnapshot` updated across
    * model steps so newly persisted system rows become visible while prior
@@ -542,6 +542,10 @@ export class Session {
     };
   }
 
+  async loadHarnessSkills(): Promise<HarnessAgentSkill[]> {
+    return loadConfiguredHarnessSkills(this.accountId, this.agentConfig);
+  }
+
   async loadSkillPrompt(
     allowedSkillPaths: string[],
     skillPath: string,
@@ -566,53 +570,29 @@ export class Session {
     return loaded;
   }
 
-  async loadHarnessSkills(): Promise<HarnessAgentSkill[]> {
-    return loadConfiguredHarnessSkills(this.accountId, this.agentConfig);
-  }
-
   /**
-   * Lazily fetches and caches the resolved runtime (sandbox + workspaces hydrated
-   * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
+   * The agent's own sandbox (`config.sandbox`). Backs bash when no workspace is
+   * attached, is the fallback sandbox for workspaces that declare none, and stays
+   * separately reachable when every workspace borrows a different one. Undefined
+   * when the agent references no sandbox.
    */
-  private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
-    const channelScopeKey = channelScopeKeyFromConversation(
-      this.conversationKey,
-    );
-    const conversationScopeKey = channelScopeKeyFromConversation(
-      this.conversationKey,
-      "conversation",
-    );
-    this.resolvedRuntimePromise ??= resolveAgentRuntime(
-      this.agentConfig,
-      this.accountId,
-      {
-        channelName:
-          this.delivery?.kind === "channel"
-            ? this.delivery.channelName
-            : undefined,
-        channelScopeKey: channelScopeKey,
-        conversationKey: conversationScopeKey,
-        workspaceScope: this.channelWorkspaceScope(),
-      },
-    ).then((resolved) => {
-      this.resolvedRuntime = resolved;
-
-      return resolved;
-    });
-
-    return this.resolvedRuntimePromise;
+  agentSandbox(): SandboxExecutorConfig | undefined {
+    return this.resolvedRuntime?.sandbox;
   }
 
-  private channelWorkspaceScope(): AgentChannelWorkspaceScope | undefined {
-    if (this.delivery?.kind !== "channel") {
-      return undefined;
-    }
-    const config = this.agentConfig.channels?.[this.delivery.channelName];
-    const workspaceScope = isPlainObject(config)
-      ? config.workspaceScope
-      : undefined;
+  agentSandboxPermissionMode(): SandboxPermissionMode {
+    return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
+  }
 
-    return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
+  // Namespace of the default (first) workspace, used for memory/skill staging
+  // S3 reads. Empty string when no workspace is attached.
+  filesystemNamespace(): string {
+    return this.resolvedWorkspaces()[0]?.namespace ?? "";
+  }
+
+  /** Resolved workspaces for this turn (first is the default). Empty when none. */
+  resolvedWorkspaces(): ResolvedWorkspace[] {
+    return this.resolvedRuntime?.workspaces ?? [];
   }
 
   private async buildSystemPromptParts(
@@ -700,27 +680,78 @@ export class Session {
     ];
   }
 
-  private async persistStoredEvent(
-    event: StoredConversationEvent,
-  ): Promise<string> {
-    const createdAt = this.nextCreatedAt();
-    if (this.ownerGeneration !== undefined) {
-      await runtime.mutate("appendFencedConversationEvent", {
-        conversationKey: this.conversationKey,
-        ownerEventId: this.eventId,
-        ownerGeneration: this.ownerGeneration,
-        cursor: createdAt,
-        event: event,
-      });
-    } else {
-      await runtime.mutate("appendConversationEvent", {
-        conversationKey: this.conversationKey,
-        cursor: createdAt,
-        event: event,
-      });
+  private channelWorkspaceScope(): AgentChannelWorkspaceScope | undefined {
+    if (this.delivery?.kind !== "channel") {
+      return undefined;
+    }
+    const config = this.agentConfig.channels?.[this.delivery.channelName];
+    const workspaceScope = isPlainObject(config)
+      ? config.workspaceScope
+      : undefined;
+
+    return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
+  }
+
+  private defaultWorkspaceHasSandbox(): boolean {
+    return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
+  }
+
+  // The <workspace> prompt is the default harness's own guidance. An AI SDK
+  // harness brings its own, and takes over the tools this prompt describes.
+  private enableDefaultHarness(): boolean {
+    if (this.agentConfig.harness !== undefined) {
+      return false;
     }
 
-    return createdAt;
+    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) =>
+      workspaceGuidanceEnabled(workspace.config),
+    );
+  }
+
+  /**
+   * Lazily fetches and caches the resolved runtime (sandbox + workspaces hydrated
+   * from their storage IDs). Promise-memoized so concurrent callers share one fetch.
+   */
+  private async ensureResolvedRuntime(): Promise<ResolvedAgentRuntime> {
+    const channelScopeKey = channelScopeKeyFromConversation(
+      this.conversationKey,
+    );
+    const conversationScopeKey = channelScopeKeyFromConversation(
+      this.conversationKey,
+      "conversation",
+    );
+    this.resolvedRuntimePromise ??= resolveAgentRuntime(
+      this.agentConfig,
+      this.accountId,
+      {
+        channelName:
+          this.delivery?.kind === "channel"
+            ? this.delivery.channelName
+            : undefined,
+        channelScopeKey: channelScopeKey,
+        conversationKey: conversationScopeKey,
+        workspaceScope: this.channelWorkspaceScope(),
+      },
+    ).then((resolved) => {
+      this.resolvedRuntime = resolved;
+
+      return resolved;
+    });
+
+    return this.resolvedRuntimePromise;
+  }
+
+  // Mirrors the registry condition in tools/index.ts: memory_save exists when a
+  // sandbox-backed workspace has the memory harness enabled (default: on).
+  private isMemoryToolEnabled(): boolean {
+    return this.resolvedWorkspaces().some(
+      (workspace) =>
+        workspace.sandbox && workspaceMemoryHarnessEnabled(workspace.config),
+    );
+  }
+
+  private isWorkspaceEnabled(): boolean {
+    return (this.resolvedRuntime?.workspaces.length ?? 0) > 0;
   }
 
   private async loadConversationEntries(
@@ -752,39 +783,6 @@ export class Session {
       }
       afterCursor = result.continueCursor;
     }
-  }
-
-  private nextCreatedAt(): string {
-    const sequence = String(this.messageSequence).padStart(4, "0");
-    this.messageSequence += 1;
-
-    return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
-  }
-
-  private async loadMemoryFiles(): Promise<
-    Array<{ workspace: ResolvedWorkspace; content: string }>
-  > {
-    if (!this.isWorkspaceEnabled()) {
-      return [];
-    }
-
-    const memoryFiles: Array<{
-      workspace: ResolvedWorkspace;
-      content: string;
-    }> = [];
-    for (const workspace of this.resolvedWorkspaces()) {
-      // harness.memory.enabled: false is a full opt-out — the index is not
-      // loaded into the model context either.
-      if (!workspaceMemoryHarnessEnabled(workspace.config)) {
-        continue;
-      }
-      const content = await this.loadMemoryFile(workspace);
-      if (content != null) {
-        memoryFiles.push({ workspace: workspace, content: content });
-      }
-    }
-
-    return memoryFiles;
   }
 
   private async loadMemoryFile(
@@ -829,58 +827,30 @@ export class Session {
     return null;
   }
 
-  // Namespace of the default (first) workspace, used for memory/skill staging
-  // S3 reads. Empty string when no workspace is attached.
-  filesystemNamespace(): string {
-    return this.resolvedWorkspaces()[0]?.namespace ?? "";
-  }
-
-  /** Resolved workspaces for this turn (first is the default). Empty when none. */
-  resolvedWorkspaces(): ResolvedWorkspace[] {
-    return this.resolvedRuntime?.workspaces ?? [];
-  }
-
-  /**
-   * The agent's own sandbox (`config.sandbox`). Backs bash when no workspace is
-   * attached, is the fallback sandbox for workspaces that declare none, and stays
-   * separately reachable when every workspace borrows a different one. Undefined
-   * when the agent references no sandbox.
-   */
-  agentSandbox(): SandboxExecutorConfig | undefined {
-    return this.resolvedRuntime?.sandbox;
-  }
-
-  agentSandboxPermissionMode(): SandboxPermissionMode {
-    return this.resolvedRuntime?.sandbox?.permissionMode ?? "ask";
-  }
-
-  private isWorkspaceEnabled(): boolean {
-    return (this.resolvedRuntime?.workspaces.length ?? 0) > 0;
-  }
-
-  private defaultWorkspaceHasSandbox(): boolean {
-    return Boolean(this.resolvedWorkspaces()[0]?.sandbox);
-  }
-
-  // The <workspace> prompt is the default harness's own guidance. An AI SDK
-  // harness brings its own, and takes over the tools this prompt describes.
-  private enableDefaultHarness(): boolean {
-    if (this.agentConfig.harness !== undefined) {
-      return false;
+  private async loadMemoryFiles(): Promise<
+    Array<{ workspace: ResolvedWorkspace; content: string }>
+  > {
+    if (!this.isWorkspaceEnabled()) {
+      return [];
     }
 
-    return (this.resolvedRuntime?.workspaces ?? []).some((workspace) =>
-      workspaceGuidanceEnabled(workspace.config),
-    );
-  }
+    const memoryFiles: Array<{
+      workspace: ResolvedWorkspace;
+      content: string;
+    }> = [];
+    for (const workspace of this.resolvedWorkspaces()) {
+      // harness.memory.enabled: false is a full opt-out — the index is not
+      // loaded into the model context either.
+      if (!workspaceMemoryHarnessEnabled(workspace.config)) {
+        continue;
+      }
+      const content = await this.loadMemoryFile(workspace);
+      if (content != null) {
+        memoryFiles.push({ workspace: workspace, content: content });
+      }
+    }
 
-  // Mirrors the registry condition in tools/index.ts: memory_save exists when a
-  // sandbox-backed workspace has the memory harness enabled (default: on).
-  private isMemoryToolEnabled(): boolean {
-    return this.resolvedWorkspaces().some(
-      (workspace) =>
-        workspace.sandbox && workspaceMemoryHarnessEnabled(workspace.config),
-    );
+    return memoryFiles;
   }
 
   private async loadSkillMetadata(): Promise<SkillMetadata[]> {
@@ -915,6 +885,116 @@ export class Session {
 
     return this.subagentMetadataPromise;
   }
+
+  private nextCreatedAt(): string {
+    const sequence = String(this.messageSequence).padStart(4, "0");
+    this.messageSequence += 1;
+
+    return `${new Date().toISOString()}#${this.eventId}#${sequence}`;
+  }
+
+  private async persistStoredEvent(
+    event: StoredConversationEvent,
+  ): Promise<string> {
+    const createdAt = this.nextCreatedAt();
+    if (this.ownerGeneration !== undefined) {
+      await runtime.mutate("appendFencedConversationEvent", {
+        conversationKey: this.conversationKey,
+        ownerEventId: this.eventId,
+        ownerGeneration: this.ownerGeneration,
+        cursor: createdAt,
+        event: event,
+      });
+    } else {
+      await runtime.mutate("appendConversationEvent", {
+        conversationKey: this.conversationKey,
+        cursor: createdAt,
+        event: event,
+      });
+    }
+
+    return createdAt;
+  }
+}
+
+// Message persistence sanitization. Exported so tests can verify the
+// metadata-envelope split without going through Convex.
+export function createStoredEventFromModelMessage(
+  message: ModelMessage | undefined,
+  sourceEventId: string,
+): StoredConversationEvent | null {
+  if (!message) {
+    return null;
+  }
+
+  switch (message.role) {
+    case "user": {
+      // Opaque hook metadata rides the stored envelope; the persisted model
+      // message stays a clean AI SDK shape.
+      const { metadata, ...userMessage } = message as UserModelMessage & {
+        metadata?: unknown;
+      };
+
+      return toStoredConversationEvent(
+        sanitizeUserMessage(userMessage),
+        sourceEventId,
+        metadata,
+      );
+    }
+    case "assistant":
+      return toStoredConversationEvent(
+        sanitizeAssistantMessage(message),
+        sourceEventId,
+      );
+    case "tool":
+      return toStoredConversationEvent(
+        sanitizeToolMessage(message),
+        sourceEventId,
+      );
+    case "system":
+      return toStoredConversationEvent(
+        systemModelMessageSchema.parse(message),
+        sourceEventId,
+      );
+    default:
+      return null;
+  }
+}
+
+// Compaction resume support.
+export function selectPostCompactionPendingMessages(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  const lastMessage = messages.at(-1);
+  if (lastMessage?.role === "user") {
+    return [lastMessage];
+  }
+
+  if (!isToolApprovalResponseMessage(lastMessage)) {
+    return [];
+  }
+
+  const approvalIds = new Set(
+    lastMessage.content
+      .filter((part) => part.type === "tool-approval-response")
+      .map((part) => part.approvalId),
+  );
+  // The approval response references only approvalId; the prior assistant message
+  // carries the tool call details needed to execute or deny the tool on resume.
+  const approvalRequestMessages = messages.filter(
+    (message): message is AssistantModelMessage =>
+      message.role === "assistant" &&
+      typeof message.content !== "string" &&
+      message.content.some(
+        (part) =>
+          part.type === "tool-approval-request" &&
+          approvalIds.has(part.approvalId),
+      ),
+  );
+
+  return approvalRequestMessages.length > 0
+    ? [...approvalRequestMessages, lastMessage]
+    : [lastMessage];
 }
 
 // Projection attaches metadata/createdAt for hook payloads; model calls must
@@ -934,6 +1014,72 @@ export function stripEnvelopeFieldsFromMessages(
 
     return rest as ModelMessage;
   });
+}
+
+function agentSystemMessages(
+  system: string | SystemModelMessage | SystemModelMessage[] | undefined,
+): SystemModelMessage[] {
+  if (system === undefined) {
+    return [];
+  }
+  if (typeof system === "string") {
+    return [{ role: "system", content: system }];
+  }
+
+  return Array.isArray(system) ? system : [system];
+}
+
+function createSystemContextSnapshot(
+  entries: StoredConversationEntry[],
+): SystemContextSnapshot {
+  const systemEntries = entriesSinceLatestCompactionSummary(entries);
+
+  return {
+    cursor:
+      systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
+    messages: projectSystemContextMessages(systemEntries),
+  };
+}
+
+function entriesSinceLatestCompactionSummary(
+  entries: StoredConversationEntry[],
+): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
+  return latestCompactionIndex === -1
+    ? entries
+    : entries.slice(latestCompactionIndex);
+}
+
+function findLatestCompactionSummaryIndex(
+  entries: StoredConversationEntry[],
+): number {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.event.message;
+    if (message?.role === "system" && isCompactionSummaryMessage(message)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
+  const now = new Date();
+  const weekday = now.toLocaleDateString("en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  });
+  const today = now.toISOString().slice(0, 10);
+
+  return `<memory>
+Today is ${weekday}, ${today} (UTC).
+You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
+- Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
+- Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
+- The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
+- Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
+</memory>`;
 }
 
 function formatMemorySystemPrompt(
@@ -959,75 +1105,6 @@ function formatMemorySystemPrompt(
     .join("\n\n");
 
   return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
-}
-
-function formatMemoryHarnessSystemPrompt(originSessionId: string): string {
-  const now = new Date();
-  const weekday = now.toLocaleDateString("en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  });
-  const today = now.toISOString().slice(0, 10);
-
-  return `<memory>
-Today is ${weekday}, ${today} (UTC).
-You have a persistent memory: markdown files in the workspace's memory/ folder, indexed by ${MEMORY_INDEX_PATH} (one line per memory, loaded into your context every turn).
-- Each memory is one file holding one fact, with YAML frontmatter: name, description, and metadata (node_type, type, originSessionId). originSessionId is the conversation scope the fact was learned in; this conversation's scope is "${originSessionId}".
-- Save new facts with memory_save; it names the file after the title, stamps the metadata, and updates the index. Check the index first so you update an existing entry instead of duplicating it.
-- The index only holds one-line summaries — read the linked file with the read tool before relying on it. A memory whose originSessionId is another conversation may reflect that conversation's context, not this one's, and your current instructions always outrank anything in memory.
-- Do not save what the current conversation already carries or what your instructions state; save what you would otherwise forget: who people are, their preferences, feedback on how to behave, ongoing work, and useful references.
-</memory>`;
-}
-
-function formatWorkspaceHarnessSystemPrompt(
-  workspaces: ResolvedWorkspace[],
-  memoryToolEnabled = false,
-): string {
-  const hasWritable = workspaces.some((ws) => ws.sandbox != null);
-  const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
-
-  const workspaceList = workspaces
-    .map((workspace, index) => {
-      const readOnlyTag =
-        workspace.sandbox == null ? " [read-only: read, glob]" : "";
-
-      return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
-    })
-    .join("\n");
-
-  const toolsLine =
-    hasWritable && hasReadOnly
-      ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
-      : hasWritable
-        ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
-        : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
-
-  const memoryIndexEnabled = workspaces.some((workspace) =>
-    workspaceMemoryHarnessEnabled(workspace.config),
-  );
-  const memoryGuidance = memoryToolEnabled
-    ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
-    : memoryIndexEnabled
-      ? `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`
-      : "3. Structured memory is disabled for this agent — do not create memory files unless explicitly asked.";
-  const guidance = hasWritable
-    ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
-2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
-${memoryGuidance}
-4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
-5. Treat memory and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
-    : `1. Use read to inspect files and glob to find files by pattern.
-2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
-
-  return `<workspace>
-A persistent workspace is attached. ${toolsLine}
-
-Configured workspaces:
-${workspaceList}
-
-Guidance:
-${guidance}
-</workspace>`;
 }
 
 function formatSchedulerSystemPrompt(now: Date): string {
@@ -1083,78 +1160,105 @@ Tool guidance:
 </subagent>`;
 }
 
-function agentSystemMessages(
-  system: string | SystemModelMessage | SystemModelMessage[] | undefined,
-): SystemModelMessage[] {
-  if (system === undefined) {
-    return [];
-  }
-  if (typeof system === "string") {
-    return [{ role: "system", content: system }];
-  }
+function formatWorkspaceHarnessSystemPrompt(
+  workspaces: ResolvedWorkspace[],
+  memoryToolEnabled = false,
+): string {
+  const hasWritable = workspaces.some((ws) => ws.sandbox != null);
+  const hasReadOnly = workspaces.some((ws) => ws.sandbox == null);
 
-  return Array.isArray(system) ? system : [system];
+  const workspaceList = workspaces
+    .map((workspace, index) => {
+      const readOnlyTag =
+        workspace.sandbox == null ? " [read-only: read, glob]" : "";
+
+      return `- ${workspace.name}${index === 0 ? " (default)" : ""}${readOnlyTag}: ${workspace.namespace}${workspace.description ? ` - ${workspace.description}` : ""}`;
+    })
+    .join("\n");
+
+  const toolsLine =
+    hasWritable && hasReadOnly
+      ? "Use the file tools (read, glob) on all workspaces; write, edit, grep, and bash are available only on writable workspaces."
+      : hasWritable
+        ? "Use the file tools (read, write, edit, glob, grep) and bash to work with the mounted filesystem; bash starts in the current workspace directory."
+        : "Use the file tools (read, glob) to read the mounted filesystem. These workspaces are read-only, attempt to modify will get error.";
+
+  const memoryIndexEnabled = workspaces.some((workspace) =>
+    workspaceMemoryHarnessEnabled(workspace.config),
+  );
+  const memoryGuidance = memoryToolEnabled
+    ? `3. Durable memory is managed through the memory_save tool and the ${MEMORY_INDEX_PATH} index — see <memory>.`
+    : memoryIndexEnabled
+      ? `3. Keep durable project facts, decisions, conventions, and context that should survive long-running work as markdown files under memory/, indexed in ${MEMORY_INDEX_PATH}.`
+      : "3. Structured memory is disabled for this agent — do not create memory files unless explicitly asked.";
+  const guidance = hasWritable
+    ? `1. Use read/write/edit to inspect and change files, glob/grep to find files and content, and bash to run commands and programs (python3, node, and the usual tools are on PATH).
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.
+${memoryGuidance}
+4. Use TASKS.md or focused task markdown files for plans and progress tracking when that helps the work stay aligned.
+5. Treat memory and task files as normal workspace files: read them before relying on them, update them when useful, and keep them concise.`
+    : `1. Use read to inspect files and glob to find files by pattern.
+2. When more than one workspace is configured, pass the workspace field to select one; omitted means the default workspace.`;
+
+  return `<workspace>
+A persistent workspace is attached. ${toolsLine}
+
+Configured workspaces:
+${workspaceList}
+
+Guidance:
+${guidance}
+</workspace>`;
 }
 
-// Message persistence sanitization. Exported so tests can verify the
-// metadata-envelope split without going through Convex.
-export function createStoredEventFromModelMessage(
+/**
+ * Checks if assistant content part should be persisted.
+ */
+function isPersistedAssistantContentPart(
+  part: Exclude<AssistantModelMessage["content"], string>[number],
+): boolean {
+  return (
+    part.type === "text" ||
+    part.type === "tool-call" ||
+    part.type === "tool-approval-request" ||
+    part.type === "tool-result"
+  );
+}
+
+/**
+ * Checks if tool content part should be persisted.
+ */
+function isPersistedToolContentPart(
+  part: ToolModelMessage["content"][number],
+): boolean {
+  return part.type === "tool-approval-response" || part.type === "tool-result";
+}
+
+function isToolApprovalResponseMessage(
   message: ModelMessage | undefined,
-  sourceEventId: string,
-): StoredConversationEvent | null {
-  if (!message) {
-    return null;
-  }
-
-  switch (message.role) {
-    case "user": {
-      // Opaque hook metadata rides the stored envelope; the persisted model
-      // message stays a clean AI SDK shape.
-      const { metadata, ...userMessage } = message as UserModelMessage & {
-        metadata?: unknown;
-      };
-
-      return toStoredConversationEvent(
-        sanitizeUserMessage(userMessage),
-        sourceEventId,
-        metadata,
-      );
-    }
-    case "assistant":
-      return toStoredConversationEvent(
-        sanitizeAssistantMessage(message),
-        sourceEventId,
-      );
-    case "tool":
-      return toStoredConversationEvent(
-        sanitizeToolMessage(message),
-        sourceEventId,
-      );
-    case "system":
-      return toStoredConversationEvent(
-        systemModelMessageSchema.parse(message),
-        sourceEventId,
-      );
-    default:
-      return null;
-  }
+): message is ToolModelMessage {
+  return (
+    message?.role === "tool" &&
+    message.content.length > 0 &&
+    message.content.every((part) => part.type === "tool-approval-response")
+  );
 }
 
-function toStoredConversationEvent<
-  TMessage extends StoredConversationEvent["message"],
->(
-  message: TMessage | null,
-  sourceEventId: string,
-  metadata?: unknown,
-): StoredConversationEventBase<TMessage> | null {
-  return message
-    ? {
-        version: 1,
-        sourceEventId: sourceEventId,
-        ...(metadata !== undefined ? { metadata: metadata } : {}),
-        message: message,
-      }
-    : null;
+function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+  if (!isPlainObject(value)) return false;
+  if (value.level === "channel") return value.alias === undefined;
+
+  return value.level === "conversation" && typeof value.alias === "string";
+}
+
+function projectActiveConversationEntries(
+  entries: StoredConversationEntry[],
+): StoredConversationEntry[] {
+  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
+
+  return latestCompactionIndex === -1
+    ? entries
+    : entries.slice(latestCompactionIndex + 1);
 }
 
 // Conversation projection. User messages carry envelope metadata/createdAt for
@@ -1205,102 +1309,6 @@ function projectSystemContextMessages(
   });
 }
 
-function createSystemContextSnapshot(
-  entries: StoredConversationEntry[],
-): SystemContextSnapshot {
-  const systemEntries = entriesSinceLatestCompactionSummary(entries);
-
-  return {
-    cursor:
-      systemEntries.at(-1)?.createdAt ?? entries.at(-1)?.createdAt ?? null,
-    messages: projectSystemContextMessages(systemEntries),
-  };
-}
-
-function projectActiveConversationEntries(
-  entries: StoredConversationEntry[],
-): StoredConversationEntry[] {
-  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
-
-  return latestCompactionIndex === -1
-    ? entries
-    : entries.slice(latestCompactionIndex + 1);
-}
-
-// Compaction resume support.
-export function selectPostCompactionPendingMessages(
-  messages: ModelMessage[],
-): ModelMessage[] {
-  const lastMessage = messages.at(-1);
-  if (lastMessage?.role === "user") {
-    return [lastMessage];
-  }
-
-  if (!isToolApprovalResponseMessage(lastMessage)) {
-    return [];
-  }
-
-  const approvalIds = new Set(
-    lastMessage.content
-      .filter((part) => part.type === "tool-approval-response")
-      .map((part) => part.approvalId),
-  );
-  // The approval response references only approvalId; the prior assistant message
-  // carries the tool call details needed to execute or deny the tool on resume.
-  const approvalRequestMessages = messages.filter(
-    (message): message is AssistantModelMessage =>
-      message.role === "assistant" &&
-      typeof message.content !== "string" &&
-      message.content.some(
-        (part) =>
-          part.type === "tool-approval-request" &&
-          approvalIds.has(part.approvalId),
-      ),
-  );
-
-  return approvalRequestMessages.length > 0
-    ? [...approvalRequestMessages, lastMessage]
-    : [lastMessage];
-}
-
-function entriesSinceLatestCompactionSummary(
-  entries: StoredConversationEntry[],
-): StoredConversationEntry[] {
-  const latestCompactionIndex = findLatestCompactionSummaryIndex(entries);
-
-  return latestCompactionIndex === -1
-    ? entries
-    : entries.slice(latestCompactionIndex);
-}
-
-function findLatestCompactionSummaryIndex(
-  entries: StoredConversationEntry[],
-): number {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.event.message;
-    if (message?.role === "system" && isCompactionSummaryMessage(message)) {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-/**
- * Filters user message to only text content parts.
- */
-function sanitizeUserMessage(
-  message: UserModelMessage,
-): UserModelMessage | null {
-  if (typeof message.content === "string") {
-    return message;
-  }
-
-  const content = message.content.filter((part) => part.type === "text");
-
-  return content.length > 0 ? { ...message, content: content } : null;
-}
-
 /**
  * Filters assistant message to only persisted content parts.
  */
@@ -1328,41 +1336,33 @@ function sanitizeToolMessage(
 }
 
 /**
- * Checks if assistant content part should be persisted.
+ * Filters user message to only text content parts.
  */
-function isPersistedAssistantContentPart(
-  part: Exclude<AssistantModelMessage["content"], string>[number],
-): boolean {
-  return (
-    part.type === "text" ||
-    part.type === "tool-call" ||
-    part.type === "tool-approval-request" ||
-    part.type === "tool-result"
-  );
+function sanitizeUserMessage(
+  message: UserModelMessage,
+): UserModelMessage | null {
+  if (typeof message.content === "string") {
+    return message;
+  }
+
+  const content = message.content.filter((part) => part.type === "text");
+
+  return content.length > 0 ? { ...message, content: content } : null;
 }
 
-/**
- * Checks if tool content part should be persisted.
- */
-function isPersistedToolContentPart(
-  part: ToolModelMessage["content"][number],
-): boolean {
-  return part.type === "tool-approval-response" || part.type === "tool-result";
-}
-
-function isToolApprovalResponseMessage(
-  message: ModelMessage | undefined,
-): message is ToolModelMessage {
-  return (
-    message?.role === "tool" &&
-    message.content.length > 0 &&
-    message.content.every((part) => part.type === "tool-approval-response")
-  );
-}
-
-function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
-  if (!isPlainObject(value)) return false;
-  if (value.level === "channel") return value.alias === undefined;
-
-  return value.level === "conversation" && typeof value.alias === "string";
+function toStoredConversationEvent<
+  TMessage extends StoredConversationEvent["message"],
+>(
+  message: TMessage | null,
+  sourceEventId: string,
+  metadata?: unknown,
+): StoredConversationEventBase<TMessage> | null {
+  return message
+    ? {
+        version: 1,
+        sourceEventId: sourceEventId,
+        ...(metadata !== undefined ? { metadata: metadata } : {}),
+        message: message,
+      }
+    : null;
 }
