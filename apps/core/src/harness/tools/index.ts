@@ -39,8 +39,11 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
-import channelTool, {
+import {
+  sendImageTool,
   sendMessageTool,
+  sendReactionsTool,
+  sendStickerTool,
   type ChannelToolContext,
 } from "./channel.tool.ts";
 import editTool from "./edit.tool.ts";
@@ -213,7 +216,12 @@ export async function createTools(
   const asyncModes: AsyncToolModeMap = new Map();
 
   if (context.channel) {
-    Object.assign(tools, channelTool(context.channel));
+    Object.assign(
+      tools,
+      sendImageTool(context.channel),
+      sendReactionsTool(context.channel),
+      sendStickerTool(context.channel),
+    );
   }
   if (
     context.dispatchSessionMessage &&

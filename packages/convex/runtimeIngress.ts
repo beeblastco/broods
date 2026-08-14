@@ -656,6 +656,7 @@ export const getConversationTarget = internalQuery({
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
+
       return null;
     }
 

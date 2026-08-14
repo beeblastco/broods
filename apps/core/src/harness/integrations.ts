@@ -1724,6 +1724,7 @@ export function channelActionsFromConfig(
     (candidate): boolean => candidate.name === channelName,
   );
   if (!adapter) {
+
     return null;
   }
 

@@ -87,21 +87,24 @@ interface SendStickerInput {
   sticker: string;
 }
 
-export default function channelTool(context: ChannelToolContext): ToolSet {
+export function sendImageTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
   const sendImage = actions.sendImage;
-  const sendSticker = actions.sendSticker;
-  const tools: ToolSet = {};
+  if (!sendImage) {
 
-  if (sendImage) {
-    tools["send-image"] = tool({
+    return {};
+  }
+
+  return {
+    "send-image": tool({
       description: `Sends an image to the current ${channelName} conversation immediately. Use this for an intentional image message; the normal final text answer is delivered automatically.`,
-      inputSchema: jsonSchema(IMAGE_SCHEMA),
+      inputSchema: jsonSchema<SendImageInput>(IMAGE_SCHEMA),
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
-        const { url, caption } = input as SendImageInput;
+        const { url, caption } = input;
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
+
           return toolText("Image blocked by the outbound message hook.");
         }
         await sendImage(url, transformed || undefined);
@@ -110,56 +113,72 @@ export default function channelTool(context: ChannelToolContext): ToolSet {
           `Image sent to the current ${channelName} conversation.`,
         );
       },
-    });
-  }
-  if (actions.supportsReactions === true) {
-    tools["send-reactions"] = tool({
-      description: `Adds a reaction to the inbound message in the current ${channelName} conversation. The provider may accept only its own emoji names or supported Unicode emoji.`,
-      inputSchema: jsonSchema(REACTION_SCHEMA),
+    }),
+  };
+}
+
+export function sendMessageTool(dispatch: RunSessionMessageDispatch): ToolSet {
+
+  return {
+    "send-message": tool({
+      description:
+        "Sends a message to another conversation session. The target agent processes it as a follow-up and replies in that conversation.",
+      inputSchema: jsonSchema<SessionMessageInput>(MESSAGE_SCHEMA),
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
-        const { emoji } = input as SendReactionInput;
+        const result = await dispatch(input);
+
+        return toolText(
+          `Message ${result.status} for conversation ${result.conversationKey}.`,
+        );
+      },
+    }),
+  };
+}
+
+export function sendReactionsTool(context: ChannelToolContext): ToolSet {
+  const { actions, channelName } = context;
+  if (actions.supportsReactions !== true) {
+
+    return {};
+  }
+
+  return {
+    "send-reactions": tool({
+      description: `Adds a reaction to the inbound message in the current ${channelName} conversation. The provider may accept only its own emoji names or supported Unicode emoji.`,
+      inputSchema: jsonSchema<SendReactionInput>(REACTION_SCHEMA),
+      toModelOutput: toToolResultOutput,
+      execute: async function (input): Promise<string> {
+        const { emoji } = input;
         await actions.reactToMessage(emoji);
 
         return toolText(
           `Reaction added to the inbound ${channelName} message.`,
         );
       },
-    });
+    }),
+  };
+}
+
+export function sendStickerTool(context: ChannelToolContext): ToolSet {
+  const { actions, channelName } = context;
+  const sendSticker = actions.sendSticker;
+  if (!sendSticker) {
+
+    return {};
   }
-  if (sendSticker) {
-    tools["send-sticker"] = tool({
+
+  return {
+    "send-sticker": tool({
       description: `Sends a provider-native sticker to the current ${channelName} conversation immediately. Use a sticker identifier valid for this provider.`,
-      inputSchema: jsonSchema(STICKER_SCHEMA),
+      inputSchema: jsonSchema<SendStickerInput>(STICKER_SCHEMA),
       toModelOutput: toToolResultOutput,
       execute: async function (input): Promise<string> {
-        const { sticker } = input as SendStickerInput;
+        const { sticker } = input;
         await sendSticker(sticker);
 
         return toolText(
           `Sticker sent to the current ${channelName} conversation.`,
-        );
-      },
-    });
-  }
-
-  return tools;
-}
-
-export function sendMessageTool(
-  dispatch: RunSessionMessageDispatch,
-): ToolSet {
-  return {
-    "send-message": tool({
-      description:
-        "Sends a message to another conversation session. The target agent processes it as a follow-up and replies in that conversation.",
-      inputSchema: jsonSchema(MESSAGE_SCHEMA),
-      toModelOutput: toToolResultOutput,
-      execute: async function (input): Promise<string> {
-        const result = await dispatch(input as SessionMessageInput);
-
-        return toolText(
-          `Message ${result.status} for conversation ${result.conversationKey}.`,
         );
       },
     }),

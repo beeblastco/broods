@@ -3,7 +3,7 @@
  * Convex owns atomic FIFO and fencing; handlers decide how accepted work is delivered.
  */
 
-import type { ModelMessage, SystemModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage, UserModelMessage } from "ai";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import {
@@ -47,9 +47,10 @@ export interface SessionMessageResult {
 }
 
 export interface PreparedSessionMessage {
-  candidate: IngressCandidate & {
+  candidate: Omit<IngressCandidate, "agentConfig" | "delivery" | "events"> & {
     agentConfig: AgentConfig;
     delivery: Extract<IngressDelivery, { kind: "channel" }>;
+    events: UserModelMessage[];
   };
   publicEventId: string;
   publicConversationKey: string;
@@ -150,18 +151,6 @@ export const DEFAULT_INGRESS_STATUS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const DEFAULT_INGRESS_MAX_COUNT = 100;
 export const DEFAULT_INGRESS_MAX_BYTES = 1024 * 1024;
 export const DEFAULT_CONVERSATION_LEASE_TTL_MS = 15 * 60 * 1000;
-
-/** Produces one stable digest for duplicate-payload comparison. */
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** Atomically admits one candidate into the durable conversation coordinator. */
 export async function acceptIngress(
@@ -286,12 +275,26 @@ export async function prepareSessionMessage(options: {
   };
 }
 
+/** Applies waiting steer envelopes at the current AI SDK step boundary. */
+export function applySteering(options: {
+  conversationKey: string;
+  ownerEventId: string;
+  ownerGeneration: number;
+}): Promise<AppliedIngress | null> {
+
+  return runtime.mutate("applyIngressSteering", {
+    ...options,
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  });
+}
+
 /** Reads the durable channel destination for an existing agent conversation. */
 export function getConversationDispatchTarget(options: {
   accountId: string;
   agentId: string;
   conversationKey: string;
 }): Promise<ConversationDispatchTarget | null> {
+
   return runtime.query("getConversationTarget", options);
 }
 
@@ -301,31 +304,8 @@ export function getIngressStatus(options: {
   agentId: string;
   eventId: string;
 }): Promise<IngressStatusRecord | null> {
+
   return runtime.query("getIngressStatus", options);
-}
-
-/** Applies waiting steer envelopes at the current AI SDK step boundary. */
-export function applySteering(options: {
-  conversationKey: string;
-  ownerEventId: string;
-  ownerGeneration: number;
-}): Promise<AppliedIngress | null> {
-  return runtime.mutate("applyIngressSteering", {
-    ...options,
-    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
-  });
-}
-
-/** Takes the next FIFO follow-up or contiguous collect application. */
-export function takeNextIngress(options: {
-  conversationKey: string;
-  ownerEventId: string;
-  ownerGeneration: number;
-}): Promise<AppliedIngress | null> {
-  return runtime.mutate("takeNextIngress", {
-    ...options,
-    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
-  });
 }
 
 /** Settles every envelope applied to one active event under the fencing token. */
@@ -337,5 +317,31 @@ export function settleIngress(options: {
   result?: unknown;
   error?: string;
 }): Promise<number> {
+
   return runtime.mutate("settleIngress", options);
+}
+
+/** Takes the next FIFO follow-up or contiguous collect application. */
+export function takeNextIngress(options: {
+  conversationKey: string;
+  ownerEventId: string;
+  ownerGeneration: number;
+}): Promise<AppliedIngress | null> {
+
+  return runtime.mutate("takeNextIngress", {
+    ...options,
+    leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
+  });
+}
+
+/** Produces one stable digest for duplicate-payload comparison. */
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+
+  return [...new Uint8Array(digest)]
+    .map((byte): string => byte.toString(16).padStart(2, "0"))
+    .join("");
 }

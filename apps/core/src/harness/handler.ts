@@ -1742,18 +1742,6 @@ async function invokeNatsWorker(event: DirectInboundEvent): Promise<void> {
   } satisfies NatsWorkerInvocation);
 }
 
-/** Transfers the fenced owner to the next durable FIFO application and schedules it. */
-async function dispatchNextIngress(
-  session: Session,
-  previous: IngressDispatchScope,
-): Promise<boolean> {
-  const next = await session.takeNextIngress();
-  if (!next) return false;
-  await dispatchAppliedIngress(previous, next);
-
-  return true;
-}
-
 /**
  * Schedules one durably applied envelope on its worker. The envelope's own
  * persisted agentConfig/ephemeralSystem win over the base event's so a queued
@@ -1826,6 +1814,21 @@ async function dispatchAppliedIngress(
   });
 }
 
+/** Transfers the fenced owner to the next durable FIFO application and schedules it. */
+async function dispatchNextIngress(
+  session: Session,
+  previous: IngressDispatchScope,
+): Promise<boolean> {
+  const next = await session.takeNextIngress();
+  if (!next) {
+
+    return false;
+  }
+  await dispatchAppliedIngress(previous, next);
+
+  return true;
+}
+
 /**
  * Best-effort dispatch of an application that admission recovered from an
  * expired owner. Never throws: the caller's own admission response must win.
@@ -1834,7 +1837,10 @@ async function dispatchRecoveredIngress(
   base: Parameters<typeof dispatchAppliedIngress>[0],
   admission: IngressAdmission,
 ): Promise<void> {
-  if (!admission.recovered) return;
+  if (!admission.recovered) {
+
+    return;
+  }
   try {
     await dispatchAppliedIngress(base, admission.recovered);
   } catch (error) {
@@ -1844,6 +1850,76 @@ async function dispatchRecoveredIngress(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function dispatchSessionMessage(
+  session: Session,
+  input: SessionMessageInput,
+): Promise<SessionMessageResult> {
+  if (!session.accountId || !session.agentId) {
+    throw new Error("Session messaging requires account and agent scope");
+  }
+  const prepared = await prepareSessionMessage({
+    accountId: session.accountId,
+    agentId: session.agentId,
+    sourceConversationKey: session.conversationKey,
+    input: input,
+  });
+  const { candidate, publicEventId, publicConversationKey } = prepared;
+  const delivery = candidate.delivery;
+  const event: DirectInboundEvent = {
+    accountId: candidate.accountId,
+    agentId: candidate.agentId,
+    agentConfig: candidate.agentConfig,
+    eventId: candidate.eventId,
+    publicEventId: publicEventId,
+    conversationKey: candidate.conversationKey,
+    publicConversationKey: publicConversationKey,
+    events: candidate.events,
+    requestedMode: candidate.requestedMode,
+    idempotencyKey: candidate.idempotencyKey,
+    replyTarget: {
+      channelName: delivery.channel,
+      source: delivery.source ?? {},
+    },
+  };
+  const admission = await acceptIngress(candidate);
+  await dispatchRecoveredIngress(event, admission);
+  if (admission.outcome === "capacity") {
+    throw new Error("Target conversation queue is full");
+  }
+  if (admission.outcome === "conflict" || admission.outcome === "rejected") {
+    throw new Error("Target conversation rejected the message");
+  }
+  if (admission.outcome === "owner") {
+    if (admission.ownerGeneration === undefined) {
+      throw new Error("Session message admission has no owner generation");
+    }
+    try {
+      await invokeAsyncWorker({
+        ...event,
+        ownerGeneration: admission.ownerGeneration,
+      });
+    } catch (error) {
+      await failOwnedIngress(
+        { ...event, ownerGeneration: admission.ownerGeneration },
+        error instanceof Error
+          ? error.message
+          : "Failed to start target conversation",
+      );
+      throw error;
+    }
+
+    return {
+      conversationKey: publicConversationKey,
+      status: "accepted",
+    };
+  }
+
+  return {
+    conversationKey: publicConversationKey,
+    status: "queued",
+  };
 }
 
 /** Durably admits an internally generated continuation before scheduling it. */
@@ -2527,76 +2603,6 @@ async function runParentContinuationLoop(options: {
       };
     }
   }
-}
-
-async function dispatchSessionMessage(
-  session: Session,
-  input: SessionMessageInput,
-): Promise<SessionMessageResult> {
-  if (!session.accountId || !session.agentId) {
-    throw new Error("Session messaging requires account and agent scope");
-  }
-  const prepared = await prepareSessionMessage({
-    accountId: session.accountId,
-    agentId: session.agentId,
-    sourceConversationKey: session.conversationKey,
-    input: input,
-  });
-  const { candidate, publicEventId, publicConversationKey } = prepared;
-  const delivery = candidate.delivery;
-  const event: DirectInboundEvent = {
-    accountId: candidate.accountId,
-    agentId: candidate.agentId,
-    agentConfig: candidate.agentConfig,
-    eventId: candidate.eventId,
-    publicEventId: publicEventId,
-    conversationKey: candidate.conversationKey,
-    publicConversationKey: publicConversationKey,
-    events: candidate.events as DirectInboundEvent["events"],
-    requestedMode: candidate.requestedMode,
-    idempotencyKey: candidate.idempotencyKey,
-    replyTarget: {
-      channelName: delivery.channel,
-      source: delivery.source ?? {},
-    },
-  };
-  const admission = await acceptIngress(candidate);
-  await dispatchRecoveredIngress(event, admission);
-  if (admission.outcome === "capacity") {
-    throw new Error("Target conversation queue is full");
-  }
-  if (admission.outcome === "conflict" || admission.outcome === "rejected") {
-    throw new Error("Target conversation rejected the message");
-  }
-  if (admission.outcome === "owner") {
-    if (admission.ownerGeneration === undefined) {
-      throw new Error("Session message admission has no owner generation");
-    }
-    try {
-      await invokeAsyncWorker({
-        ...event,
-        ownerGeneration: admission.ownerGeneration,
-      });
-    } catch (error) {
-      await failOwnedIngress(
-        { ...event, ownerGeneration: admission.ownerGeneration },
-        error instanceof Error
-          ? error.message
-          : "Failed to start target conversation",
-      );
-      throw error;
-    }
-
-    return {
-      conversationKey: publicConversationKey,
-      status: "accepted",
-    };
-  }
-
-  return {
-    conversationKey: publicConversationKey,
-    status: "queued",
-  };
 }
 
 /**
