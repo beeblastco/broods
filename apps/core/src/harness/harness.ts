@@ -555,7 +555,10 @@ export async function runAgentLoop(
   const enabledTools = Object.keys(tools).length > 0 ? tools : undefined;
   const modelSettings = modelSettingsFromModelConfig(agentConfig);
   const modelOutput = modelOutputFromModelConfig(agentConfig);
-  const providerOptions = providerOptionsFromModelConfig(agentConfig);
+  const providerOptions = providerOptionsFromModelConfig(
+    agentConfig,
+    session.conversationKey,
+  );
   let approvalSummaries: ToolApprovalSummary[] = [];
   let finalResponse: JSONValue | undefined;
   let lastStepText = "";

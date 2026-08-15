@@ -45,7 +45,11 @@ import {
   takeNextIngress,
   type AppliedIngress,
 } from "./ingress.ts";
-import { pruneSessionMessages } from "./pruning.ts";
+import {
+  modelIdentityFromModelConfig,
+  withoutStoredItemId,
+} from "./provider.ts";
+import { pruneSessionMessages, retainsReasoningParts } from "./pruning.ts";
 import {
   resolveS3ReadTarget,
   workspaceReadContext,
@@ -130,6 +134,21 @@ interface StoredEventBase {
   version: 1;
   sourceEventId: string;
   metadata?: unknown;
+  // Which model produced an assistant message, as `provider/modelId`. Reasoning
+  // and the stored-item ids beside it are only replayable to that same model,
+  // so projection needs to know. Absent on rows written before we recorded it,
+  // and on every message a model did not write.
+  model?: string;
+}
+
+/**
+ * The model behind a message being persisted. `retainsReasoning` is what the
+ * provider will actually replay: storing reasoning nobody sends back is dead
+ * weight, and on a stored-item provider dropping it breaks the next turn.
+ */
+interface MessageProducer {
+  model?: string;
+  retainsReasoning?: boolean;
 }
 
 // Internal normalized shapes persisted in Convex. We use AI SDK-style roles
@@ -363,11 +382,16 @@ export class Session {
 
   async persistModelMessages(messages: ModelMessage[]): Promise<string[]> {
     const createdAtValues: string[] = [];
+    const producer: MessageProducer = {
+      model: modelIdentityFromModelConfig(this.agentConfig),
+      retainsReasoning: retainsReasoningParts(this.agentConfig),
+    };
 
     for (const message of messages) {
       const storedEvent = createStoredEventFromModelMessage(
         message,
         this.eventId,
+        producer,
       );
       if (!storedEvent) {
         continue;
@@ -427,7 +451,10 @@ export class Session {
     // harness passes this through prepareStep so long-running tool loops can
     // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(entries);
-    let messages = projectEntriesToMessages(activeEntries);
+    let messages = projectEntriesToMessages(
+      activeEntries,
+      modelIdentityFromModelConfig(this.agentConfig),
+    );
     const system = await this.buildSystemPromptParts(
       systemContextSnapshot.messages,
       ephemeralSystem,
@@ -922,6 +949,7 @@ export class Session {
 export function createStoredEventFromModelMessage(
   message: ModelMessage | undefined,
   sourceEventId: string,
+  producer: MessageProducer = {},
 ): StoredConversationEvent | null {
   if (!message) {
     return null;
@@ -943,8 +971,10 @@ export function createStoredEventFromModelMessage(
     }
     case "assistant":
       return toStoredConversationEvent(
-        sanitizeAssistantMessage(message),
+        sanitizeAssistantMessage(message, producer.retainsReasoning === true),
         sourceEventId,
+        undefined,
+        producer.model,
       );
     case "tool":
       return toStoredConversationEvent(
@@ -1213,11 +1243,15 @@ ${guidance}
 
 /**
  * Checks if assistant content part should be persisted.
+ * Reasoning rides along because OpenAI's Responses API replays a stored
+ * assistant message by item id and rejects the reference when the reasoning
+ * item that produced it is missing. See `retainsReasoningParts` in pruning.ts.
  */
 function isPersistedAssistantContentPart(
   part: Exclude<AssistantModelMessage["content"], string>[number],
 ): boolean {
   return (
+    part.type === "reasoning" ||
     part.type === "text" ||
     part.type === "tool-call" ||
     part.type === "tool-approval-request" ||
@@ -1265,6 +1299,7 @@ function projectActiveConversationEntries(
 // hook payloads; stripEnvelopeFieldsFromMessages removes both for model calls.
 function projectEntriesToMessages(
   entries: StoredConversationEntry[],
+  model: string | undefined,
 ): ModelMessage[] {
   return entries.flatMap(({ createdAt, event }): ModelMessage[] => {
     switch (event.message.role) {
@@ -1283,6 +1318,11 @@ function projectEntriesToMessages(
         return [projected];
       }
       case "assistant":
+        return [
+          event.model === model
+            ? event.message
+            : withoutStoredItems(event.message),
+        ];
       case "tool":
         return [event.message];
     }
@@ -1314,12 +1354,17 @@ function projectSystemContextMessages(
  */
 function sanitizeAssistantMessage(
   message: AssistantModelMessage,
+  retainsReasoning: boolean,
 ): AssistantModelMessage | null {
   if (typeof message.content === "string") {
     return message;
   }
 
-  const content = message.content.filter(isPersistedAssistantContentPart);
+  const content = message.content.filter(
+    (part) =>
+      isPersistedAssistantContentPart(part) &&
+      (retainsReasoning || part.type !== "reasoning"),
+  );
 
   return content.length > 0 ? { ...message, content: content } : null;
 }
@@ -1356,13 +1401,38 @@ function toStoredConversationEvent<
   message: TMessage | null,
   sourceEventId: string,
   metadata?: unknown,
+  model?: string,
 ): StoredConversationEventBase<TMessage> | null {
   return message
     ? {
         version: 1,
         sourceEventId: sourceEventId,
         ...(metadata !== undefined ? { metadata: metadata } : {}),
+        ...(model !== undefined ? { model: model } : {}),
         message: message,
       }
     : null;
+}
+
+/**
+ * Drops what only the producing model can replay: its reasoning, and the ids
+ * the provider would otherwise resolve that reasoning through. Applied to every
+ * assistant message the current model did not write — another model cannot
+ * decrypt that reasoning, and a row stored before we recorded a producer has no
+ * reasoning to pair its ids with in the first place. The message still replays,
+ * as plain content.
+ */
+function withoutStoredItems(
+  message: AssistantModelMessage,
+): AssistantModelMessage {
+  if (typeof message.content === "string") {
+    return message;
+  }
+
+  return {
+    ...message,
+    content: message.content
+      .filter((part) => part.type !== "reasoning")
+      .map(withoutStoredItemId),
+  };
 }

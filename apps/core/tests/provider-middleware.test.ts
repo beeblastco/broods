@@ -3,13 +3,16 @@
  * quirks: mergeSystemMessagesMiddleware folds multiple system messages into
  * one (extras return an empty stream), and normalizeStreamDeltasMiddleware
  * rewrites cumulative-snapshot deltas to increments and back-fills missing
- * reasoning-token usage.
+ * reasoning-token usage. retryWithoutStoredItemsMiddleware covers the OpenAI
+ * Responses path, where a replayed item reference can go stale.
  */
 
+import { APICallError } from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import {
   mergeSystemMessagesMiddleware,
   normalizeStreamDeltasMiddleware,
+  retryWithoutStoredItemsMiddleware,
 } from "../src/harness/provider.ts";
 
 type PromptMessage = { role: string; content: unknown };
@@ -173,5 +176,104 @@ describe("normalizeStreamDeltasMiddleware", () => {
     ]);
 
     expect(emitted.at(-1)).toEqual(finish);
+  });
+});
+
+const storedItemPrompt = [
+  { role: "user", content: [{ type: "text", text: "who are our customers?" }] },
+  {
+    role: "assistant",
+    content: [
+      {
+        type: "reasoning",
+        text: "",
+        providerOptions: { openai: { itemId: "rs_1" } },
+      },
+      {
+        type: "text",
+        text: "answer",
+        providerOptions: { openai: { itemId: "msg_1", phase: "final" } },
+      },
+    ],
+  },
+] as never;
+
+const apiCallError = (message: string): APICallError =>
+  new APICallError({
+    message: message,
+    url: "https://api.openai.com/v1/responses",
+    requestBodyValues: {},
+    statusCode: 400,
+  });
+
+// Drives the middleware with a first call that always throws, so the assertion
+// is on whether a retry happened and what prompt it carried.
+async function retryPrompt(error: unknown): Promise<{
+  retried: boolean;
+  prompt?: unknown;
+}> {
+  let retried: { prompt: unknown } | undefined;
+
+  await retryWithoutStoredItemsMiddleware.wrapStream!({
+    doStream: async () => {
+      throw error;
+    },
+    model: {
+      doStream: async (params: { prompt: unknown }) => {
+        retried = { prompt: params.prompt };
+
+        return { stream: new ReadableStream() };
+      },
+    },
+    params: { prompt: storedItemPrompt },
+  } as never);
+
+  return { retried: retried !== undefined, prompt: retried?.prompt };
+}
+
+describe("retryWithoutStoredItemsMiddleware", () => {
+  it("retries without reasoning parts or item ids when a reference is unpaired", async () => {
+    const { retried, prompt } = await retryPrompt(
+      apiCallError(
+        "Item 'msg_1' of type 'message' was provided without its required 'reasoning' item: 'rs_1'.",
+      ),
+    );
+
+    expect(retried).toBe(true);
+    expect(prompt).toEqual([
+      storedItemPrompt[0],
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "answer",
+            providerOptions: { openai: { phase: "final" } },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("retries when a referenced item has aged out of the store", async () => {
+    const { retried } = await retryPrompt(
+      apiCallError("Item with id 'rs_1' not found."),
+    );
+
+    expect(retried).toBe(true);
+  });
+
+  it("retries when reasoning was encrypted for another model", async () => {
+    const { retried } = await retryPrompt(
+      apiCallError("invalid_encrypted_content"),
+    );
+
+    expect(retried).toBe(true);
+  });
+
+  it("rethrows an unrelated failure instead of paying for a second call", async () => {
+    await expect(
+      retryPrompt(apiCallError("Rate limit reached for gpt-5.6")),
+    ).rejects.toThrow("Rate limit reached");
   });
 });

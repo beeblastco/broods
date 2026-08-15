@@ -467,6 +467,34 @@ describe("session pruning", () => {
     ]);
   });
 
+  it("keeps reasoning on a stored-item provider, whose message replay needs it", async () => {
+    const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
+    const messages = [
+      { role: "user", content: "hello" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "reasoning",
+            text: "",
+            providerOptions: { openai: { itemId: "rs_1" } },
+          },
+          {
+            type: "text",
+            text: "visible answer",
+            providerOptions: { openai: { itemId: "msg_1" } },
+          },
+        ],
+      },
+    ] as actualAi.ModelMessage[];
+
+    expect(
+      pruneSessionMessages(messages, {
+        model: { provider: "openai", modelId: "gpt-5.6" },
+      }),
+    ).toEqual(messages);
+  });
+
   it("keeps approval tool calls when the latest message is an approval response", async () => {
     const { pruneSessionMessages } = await import("../src/harness/pruning.ts");
     const messages = [
@@ -504,6 +532,139 @@ describe("session pruning", () => {
     ] as actualAi.ModelMessage[];
 
     expect(pruneSessionMessages(messages, {})).toEqual(messages);
+  });
+});
+
+describe("stored item persistence", () => {
+  const assistantWithReasoning: actualAi.AssistantModelMessage = {
+    role: "assistant",
+    content: [
+      { type: "reasoning", text: "scratch work" },
+      { type: "text", text: "answer" },
+    ],
+  };
+
+  it("stores reasoning for a provider that will replay it", async () => {
+    const { createStoredEventFromModelMessage } =
+      await import("../src/harness/session.ts");
+
+    const event = createStoredEventFromModelMessage(
+      assistantWithReasoning,
+      "event",
+      { model: "openai/gpt-5.6-luna", retainsReasoning: true },
+    );
+
+    expect(event).toEqual({
+      version: 1,
+      sourceEventId: "event",
+      model: "openai/gpt-5.6-luna",
+      message: assistantWithReasoning,
+    });
+  });
+
+  it("drops reasoning nobody sends back rather than storing dead weight", async () => {
+    const { createStoredEventFromModelMessage } =
+      await import("../src/harness/session.ts");
+
+    const event = createStoredEventFromModelMessage(
+      assistantWithReasoning,
+      "event",
+      { model: "anthropic/claude-opus-5", retainsReasoning: false },
+    );
+
+    expect(event).toEqual({
+      version: 1,
+      sourceEventId: "event",
+      model: "anthropic/claude-opus-5",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "answer" }],
+      },
+    });
+  });
+});
+
+describe("stored item projection", () => {
+  const openaiAgentConfig: AgentConfig = {
+    provider: { openai: { apiKey: "openai-key" } },
+    model: { provider: "openai", modelId: "gpt-5.6-luna" },
+  };
+  const assistantMessage = {
+    role: "assistant",
+    content: [
+      {
+        type: "reasoning",
+        text: "",
+        providerOptions: { openai: { itemId: "rs_1" } },
+      },
+      {
+        type: "text",
+        text: "answer",
+        providerOptions: { openai: { itemId: "msg_1" } },
+      },
+    ],
+  };
+
+  // Replaces the Convex page load with one stored assistant row, so the
+  // assertion is purely on how projection treats its recorded producer.
+  async function projectedMessages(
+    model: string | undefined,
+  ): Promise<actualAi.ModelMessage[]> {
+    const { runtime } = await import("../src/shared/convex/runtime.ts");
+    const originalQuery = runtime.query;
+    runtime.query = (async (name: string) =>
+      name === "listConversationEvents"
+        ? {
+            page: [
+              {
+                cursor: "1",
+                event: {
+                  version: 1,
+                  sourceEventId: "event",
+                  ...(model !== undefined ? { model: model } : {}),
+                  message: assistantMessage,
+                },
+              },
+            ],
+            isDone: true,
+            continueCursor: null,
+          }
+        : null) as typeof runtime.query;
+    try {
+      const session = await newSession(openaiAgentConfig);
+
+      return (await session.createTurnContext()).messages;
+    } finally {
+      runtime.query = originalQuery;
+    }
+  }
+
+  it("replays reasoning and item ids back to the model that produced them", async () => {
+    expect(await projectedMessages("openai/gpt-5.6-luna")).toEqual([
+      assistantMessage,
+    ] as actualAi.ModelMessage[]);
+  });
+
+  it("drops both when the agent has since moved to another model", async () => {
+    expect(await projectedMessages("anthropic/claude-opus-5")).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "answer", providerOptions: { openai: {} } },
+        ],
+      },
+    ] as actualAi.ModelMessage[]);
+  });
+
+  it("drops both on a row stored before producers were recorded", async () => {
+    expect(await projectedMessages(undefined)).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "answer", providerOptions: { openai: {} } },
+        ],
+      },
+    ] as actualAi.ModelMessage[]);
   });
 });
 
