@@ -89,6 +89,8 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   low: "Low",
   medium: "Medium",
   high: "High",
+  xhigh: "Extra high",
+  max: "Max",
 };
 
 const POLICY_MODE_LABELS: Record<string, string> = {
