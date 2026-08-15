@@ -128,6 +128,15 @@ describe("model reasoning codec", () => {
     expect(readModelReasoning(model)).toEqual({ effort: "high" });
   });
 
+  test("maps OpenAI max effort to reasoningEffort", () => {
+    const model = applyModelReasoning({}, "openai", { effort: "max" });
+
+    expect(model).toEqual({
+      providerOptions: { openai: { reasoningEffort: "max" } },
+    });
+    expect(readModelReasoning(model)).toEqual({ effort: "max" });
+  });
+
   test("maps Google budget to thinkingConfig.thinkingBudget", () => {
     const model = applyModelReasoning({}, "google", { budgetTokens: 8192 });
 
