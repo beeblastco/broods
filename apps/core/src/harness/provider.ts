@@ -3,6 +3,7 @@
  * Keep provider construction and AI SDK setting projection here.
  */
 
+import { createHash } from "node:crypto";
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
@@ -20,7 +21,12 @@ import { createMistral } from "@ai-sdk/mistral";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createPerplexity } from "@ai-sdk/perplexity";
-import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import {
+  APICallError,
+  type LanguageModelV4CallOptions,
+  type LanguageModelV4StreamPart,
+  type SharedV4ProviderOptions,
+} from "@ai-sdk/provider";
 import { createTogetherAI } from "@ai-sdk/togetherai";
 import { createVercel } from "@ai-sdk/vercel";
 import { createXai } from "@ai-sdk/xai";
@@ -39,13 +45,30 @@ import type {
   AgentModelProviderOptions,
   AgentProviderSettings,
 } from "../shared/domain/agent-config.ts";
+import { logInfo } from "../shared/log.ts";
+
+// Providers that answer on OpenAI's Responses API, where a replayed assistant
+// message is a reference to the item the provider still holds rather than the
+// content itself. That reference is only valid while the item resolves and
+// still carries the reasoning item it was produced with, which is why these
+// providers keep reasoning in context and get the retry below.
+export const STORED_ITEM_PROVIDERS: ReadonlySet<AccountModelProviderName> =
+  new Set(["azure", "openai"]);
+
+// How OpenAI names a reference it cannot honour: the item aged out of its 30-day
+// window, it lost the reasoning item it was paired with, or its reasoning was
+// encrypted for a different model.
+const STALE_STORED_ITEM_PATTERN =
+  /without its required (?:'reasoning' item|following item)|Item with id .{0,80}not found|encrypted[_ ]content/i;
 
 // What every AI SDK provider factory has in common: settings in, callable
 // provider out. The settings each one accepts are read off it, never restated.
 type ModelProviderFactory = (settings: never) => ModelProviderInstance;
 
 interface ModelProviderInstance {
-  (modelId: string): LanguageModel;
+  // Never the string form of `LanguageModel`: a constructed provider hands back
+  // a model instance, which is what middleware can wrap.
+  (modelId: string): Exclude<LanguageModel, string>;
 }
 
 export interface ResolvedModelProvider {
@@ -106,11 +129,17 @@ export function resolveConfiguredModel(
     settings: AgentProviderSettings,
   ) => ModelProviderInstance;
   const provider = createProvider(providerConfig);
+  const model = provider(modelId);
 
   return {
     providerName: providerName,
     provider: provider,
-    model: provider(modelId),
+    model: STORED_ITEM_PROVIDERS.has(providerName)
+      ? wrapLanguageModel({
+          model: model,
+          middleware: [retryWithoutStoredItemsMiddleware],
+        })
+      : model,
   };
 }
 
@@ -128,10 +157,60 @@ export function modelSettingsFromModelConfig(
   return settings;
 }
 
+/**
+ * Account provider options, with a prompt cache key derived from the caller's
+ * conversation when the provider needs one. OpenAI routes a request to the
+ * machine holding a matching prefix by this key, and from GPT-5.6 on it is
+ * required for that match to be dependable — without it a conversation pays
+ * full price for a prefix the provider already has. The key is hashed because
+ * a conversation key names the account, agent and chat it came from.
+ */
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
+  conversationKey?: string,
 ): AgentModelProviderOptions | undefined {
-  return agentConfig.model?.providerOptions;
+  const configured = agentConfig.model?.providerOptions;
+  const providerName = agentConfig.model?.provider;
+  if (
+    conversationKey === undefined ||
+    providerName === undefined ||
+    !STORED_ITEM_PROVIDERS.has(providerName)
+  ) {
+    return configured;
+  }
+
+  const openaiOptions = configured?.openai;
+  if (openaiOptions?.promptCacheKey !== undefined) {
+    return configured;
+  }
+
+  return {
+    ...configured,
+    openai: {
+      ...openaiOptions,
+      promptCacheKey: createHash("sha256")
+        .update(conversationKey)
+        .digest("hex")
+        .slice(0, 32),
+    },
+  };
+}
+
+/**
+ * Which model an agent is configured on right now, as a value that can be
+ * stored beside a message and compared later. Undefined only when the config is
+ * incomplete, which `resolveConfiguredModel` refuses anyway.
+ */
+export function modelIdentityFromModelConfig(
+  agentConfig: AgentConfig,
+): string | undefined {
+  const providerName = agentConfig.model?.provider;
+  const modelId = agentConfig.model?.modelId;
+  if (providerName === undefined || modelId === undefined) {
+    return undefined;
+  }
+
+  return `${providerName}/${modelId}`;
 }
 
 export function modelOutputFromModelConfig(
@@ -241,6 +320,75 @@ export const normalizeStreamDeltasMiddleware: LanguageModelMiddleware = {
     };
   },
 };
+
+// Stored-item references are the provider's own state, so they can go stale for
+// reasons no amount of care on our side prevents: the 30-day window closes, or
+// the agent's model changes and the old reasoning can no longer be decrypted.
+// Retry once with that state dropped — the turn then costs a full re-upload of
+// its history and nothing else, instead of failing in the user's chat.
+export const retryWithoutStoredItemsMiddleware: LanguageModelMiddleware = {
+  wrapGenerate: async ({ doGenerate, model, params }) => {
+    try {
+      return await doGenerate();
+    } catch (error) {
+      if (!isStaleStoredItemError(error)) {
+        throw error;
+      }
+      logStaleStoredItemRetry(error);
+
+      return await model.doGenerate(withoutStoredItemState(params));
+    }
+  },
+  wrapStream: async ({ doStream, model, params }) => {
+    try {
+      return await doStream();
+    } catch (error) {
+      if (!isStaleStoredItemError(error)) {
+        throw error;
+      }
+      logStaleStoredItemRetry(error);
+
+      return await model.doStream(withoutStoredItemState(params));
+    }
+  },
+};
+
+/**
+ * Strips the id an assistant part is replayed by, leaving the part to be sent
+ * as content. Only ever correct alongside dropping the reasoning parts of the
+ * same message: an id without its reasoning is the reference the provider
+ * refuses.
+ */
+export function withoutStoredItemId<
+  TPart extends { type: string; providerOptions?: SharedV4ProviderOptions },
+>(part: TPart): TPart {
+  const openaiOptions = part.providerOptions?.openai;
+  if (openaiOptions?.itemId === undefined) {
+    return part;
+  }
+  const { itemId: _itemId, ...remaining } = openaiOptions;
+
+  return {
+    ...part,
+    providerOptions: { ...part.providerOptions, openai: remaining },
+  };
+}
+
+function isStaleStoredItemError(error: unknown): boolean {
+  if (!APICallError.isInstance(error)) {
+    return false;
+  }
+  const responseBody =
+    typeof error.responseBody === "string" ? error.responseBody : "";
+
+  return STALE_STORED_ITEM_PATTERN.test(`${error.message} ${responseBody}`);
+}
+
+function logStaleStoredItemRetry(error: unknown): void {
+  logInfo("Retrying model call without stored item references", {
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
 
 function resolveOpenAICompatibleModel(
   providerName: "custom",
@@ -361,3 +509,39 @@ function createModelOutput(
       });
   }
 }
+
+// Everything the request says about items the provider is holding: the ids an
+// assistant part is replayed by, the reasoning parts they must be paired with,
+// and any response chain the account pinned through `providerOptions`. They go
+// together — a surviving `previousResponseId` makes the provider skip the very
+// history this retry exists to send in full.
+function withoutStoredItemState(
+  params: LanguageModelV4CallOptions,
+): LanguageModelV4CallOptions {
+  const openaiOptions = params.providerOptions?.openai;
+  const { previousResponseId: _previousResponseId, ...remainingOptions } =
+    openaiOptions ?? {};
+
+  return {
+    ...params,
+    ...(openaiOptions?.previousResponseId !== undefined
+      ? {
+          providerOptions: {
+            ...params.providerOptions,
+            openai: remainingOptions,
+          },
+        }
+      : {}),
+    prompt: params.prompt.map((message) =>
+      message.role === "assistant"
+        ? {
+            ...message,
+            content: message.content
+              .filter((part) => part.type !== "reasoning")
+              .map(withoutStoredItemId),
+          }
+        : message,
+    ),
+  };
+}
+
