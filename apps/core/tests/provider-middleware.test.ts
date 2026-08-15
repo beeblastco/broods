@@ -224,11 +224,13 @@ async function retryCall(
   let retried: LanguageModelV4CallOptions | undefined;
 
   await retryWithoutStoredItemsMiddleware.wrapStream!({
-    doStream: async () => {
+    doStream: async (): Promise<never> => {
       throw error;
     },
     model: {
-      doStream: async (params: LanguageModelV4CallOptions) => {
+      doStream: async (
+        params: LanguageModelV4CallOptions,
+      ): Promise<{ stream: ReadableStream }> => {
         retried = params;
 
         return { stream: new ReadableStream() };
