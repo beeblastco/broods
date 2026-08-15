@@ -7,7 +7,11 @@
  * Responses path, where a replayed item reference can go stale.
  */
 
-import { APICallError } from "@ai-sdk/provider";
+import {
+  APICallError,
+  type LanguageModelV4CallOptions,
+  type LanguageModelV4Message,
+} from "@ai-sdk/provider";
 import { describe, expect, it } from "bun:test";
 import {
   mergeSystemMessagesMiddleware,
@@ -179,8 +183,13 @@ describe("normalizeStreamDeltasMiddleware", () => {
   });
 });
 
-const storedItemPrompt = [
-  { role: "user", content: [{ type: "text", text: "who are our customers?" }] },
+const storedItemQuestion: LanguageModelV4Message = {
+  role: "user",
+  content: [{ type: "text", text: "who are our customers?" }],
+};
+
+const storedItemPrompt: LanguageModelV4CallOptions["prompt"] = [
+  storedItemQuestion,
   {
     role: "assistant",
     content: [
@@ -196,7 +205,7 @@ const storedItemPrompt = [
       },
     ],
   },
-] as never;
+];
 
 const apiCallError = (message: string): APICallError =>
   new APICallError({
@@ -207,41 +216,44 @@ const apiCallError = (message: string): APICallError =>
   });
 
 // Drives the middleware with a first call that always throws, so the assertion
-// is on whether a retry happened and what prompt it carried.
-async function retryPrompt(error: unknown): Promise<{
-  retried: boolean;
-  prompt?: unknown;
-}> {
-  let retried: { prompt: unknown } | undefined;
+// is on whether a retry happened and what call options it carried.
+async function retryCall(
+  error: unknown,
+  providerOptions?: LanguageModelV4CallOptions["providerOptions"],
+): Promise<{ retried: boolean; params?: LanguageModelV4CallOptions }> {
+  let retried: LanguageModelV4CallOptions | undefined;
 
   await retryWithoutStoredItemsMiddleware.wrapStream!({
     doStream: async () => {
       throw error;
     },
     model: {
-      doStream: async (params: { prompt: unknown }) => {
-        retried = { prompt: params.prompt };
+      doStream: async (params: LanguageModelV4CallOptions) => {
+        retried = params;
 
         return { stream: new ReadableStream() };
       },
     },
-    params: { prompt: storedItemPrompt },
+    params: {
+      prompt: storedItemPrompt,
+      ...(providerOptions ? { providerOptions: providerOptions } : {}),
+    },
   } as never);
 
-  return { retried: retried !== undefined, prompt: retried?.prompt };
+  return { retried: retried !== undefined, params: retried };
 }
 
 describe("retryWithoutStoredItemsMiddleware", () => {
   it("retries without reasoning parts or item ids when a reference is unpaired", async () => {
-    const { retried, prompt } = await retryPrompt(
+    const { retried, params } = await retryCall(
       apiCallError(
         "Item 'msg_1' of type 'message' was provided without its required 'reasoning' item: 'rs_1'.",
       ),
     );
 
     expect(retried).toBe(true);
-    expect(prompt).toEqual([
-      storedItemPrompt[0],
+    expect(params?.prompt).toEqual([
+      storedItemQuestion,
       {
         role: "assistant",
         content: [
@@ -256,7 +268,7 @@ describe("retryWithoutStoredItemsMiddleware", () => {
   });
 
   it("retries when a referenced item has aged out of the store", async () => {
-    const { retried } = await retryPrompt(
+    const { retried } = await retryCall(
       apiCallError("Item with id 'rs_1' not found."),
     );
 
@@ -264,16 +276,30 @@ describe("retryWithoutStoredItemsMiddleware", () => {
   });
 
   it("retries when reasoning was encrypted for another model", async () => {
-    const { retried } = await retryPrompt(
+    const { retried } = await retryCall(
       apiCallError("invalid_encrypted_content"),
     );
 
     expect(retried).toBe(true);
   });
 
+  // A surviving previousResponseId makes the provider drop replayed history on
+  // the assumption the chain still holds it, so the retry would send less than
+  // the call that just failed.
+  it("drops a pinned response chain but keeps the rest of the options", async () => {
+    const { params } = await retryCall(
+      apiCallError("Item with id 'rs_1' not found."),
+      { openai: { previousResponseId: "resp_1", promptCacheKey: "cache-1" } },
+    );
+
+    expect(params?.providerOptions).toEqual({
+      openai: { promptCacheKey: "cache-1" },
+    });
+  });
+
   it("rethrows an unrelated failure instead of paying for a second call", async () => {
     await expect(
-      retryPrompt(apiCallError("Rate limit reached for gpt-5.6")),
+      retryCall(apiCallError("Rate limit reached for gpt-5.6")),
     ).rejects.toThrow("Rate limit reached");
   });
 });

@@ -510,15 +510,28 @@ function createModelOutput(
   }
 }
 
-// Everything the request says about items the provider is holding: the item ids
-// an assistant part is replayed by, and the reasoning parts they must be paired
-// with. Dropping both together is the point — dropping either alone leaves a
-// reference the provider cannot resolve.
+// Everything the request says about items the provider is holding: the ids an
+// assistant part is replayed by, the reasoning parts they must be paired with,
+// and any response chain the account pinned through `providerOptions`. They go
+// together — a surviving `previousResponseId` makes the provider skip the very
+// history this retry exists to send in full.
 function withoutStoredItemState(
   params: LanguageModelV4CallOptions,
 ): LanguageModelV4CallOptions {
+  const openaiOptions = params.providerOptions?.openai;
+  const { previousResponseId: _previousResponseId, ...remainingOptions } =
+    openaiOptions ?? {};
+
   return {
     ...params,
+    ...(openaiOptions?.previousResponseId !== undefined
+      ? {
+          providerOptions: {
+            ...params.providerOptions,
+            openai: remainingOptions,
+          },
+        }
+      : {}),
     prompt: params.prompt.map((message) =>
       message.role === "assistant"
         ? {
