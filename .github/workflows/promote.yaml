@@ -1,7 +1,7 @@
 # One-click promotion: fast-forwards main to dev, then dispatches the main
 # deploy workflows. Pushes made with GITHUB_TOKEN do not fire `on: push`
 # workflows (recursion guard), so the production workflows are dispatched
-# explicitly in dependency order and each must finish before the next starts.
+# explicitly: Convex first, then the rest in parallel.
 
 name: Promote dev to main
 
@@ -81,14 +81,34 @@ jobs:
           }
 
           # Convex schema/functions first, then the AWS data plane that calls
-          # them, then the core runtime image (the k8s prod pod pulls :main),
-          # the gateway, the dashboard, the docs site, and finally the SDK
-          # publish. `on: push` does not fire for the promote's bot push, so
-          # each of these must be dispatched explicitly.
+          # them: that deploy must not start until the new schema exists. The
+          # remaining workflows are independent, so they are dispatched in
+          # parallel and the promote finishes when the slowest one does. `on:
+          # push` does not fire for the promote's bot push, so each of these
+          # must be dispatched explicitly.
           dispatch_and_wait deploy-convex.yaml
-          dispatch_and_wait deploy.yaml
-          dispatch_and_wait build-core.yaml
-          dispatch_and_wait build-gateway.yaml
-          dispatch_and_wait build-dashboard.yaml
-          dispatch_and_wait deploy-docs.yaml
-          dispatch_and_wait publish-npm.yaml
+
+          workflows=(
+            deploy.yaml
+            build-core.yaml
+            build-gateway.yaml
+            build-dashboard.yaml
+            deploy-docs.yaml
+            publish-npm.yaml
+          )
+
+          pids=()
+          for workflow in "${workflows[@]}"; do
+            dispatch_and_wait "$workflow" &
+            pids+=("$!")
+          done
+
+          failed=0
+          for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then
+              echo "A production workflow failed; promote left incomplete." >&2
+              failed=1
+            fi
+          done
+
+          exit "$failed"
