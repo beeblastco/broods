@@ -196,4 +196,28 @@ describe("session messages", (): void => {
       ).rejects.toThrow("must belong to the current agent");
     },
   );
+
+  it(
+    "refuses a chat that has never messaged the bot",
+    async (): Promise<void> => {
+      // No coordinator row means no stored channel target, which is every group
+      // the bot was added to but that has not spoken yet.
+      runtime.query = async function <T>(): Promise<T> {
+        return null as T;
+      };
+
+      await expect(
+        prepareSessionMessage({
+          accountId: "acct_test",
+          agentId: "agent_test",
+          sourceConversationKey:
+            "acct:acct_test:agent:agent_test:zalo:zgr-internal",
+          input: {
+            conversationKey: "zalo:zgr-silent-group",
+            message: "Chương trình Trung Thu",
+          },
+        }),
+      ).rejects.toThrow("not an existing channel session");
+    },
+  );
 });
