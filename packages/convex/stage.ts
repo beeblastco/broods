@@ -3,6 +3,7 @@
  */
 
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
@@ -339,7 +340,17 @@ export async function deleteStageContents(
     .query("workspaceConfigs")
     .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
     .collect();
-  for (const workspace of workspaces) await ctx.db.delete(workspace._id);
+  for (const workspace of workspaces) {
+    // Managed workspace files live outside Convex and must be purged before the
+    // workspace row disappears. Bring-your-own buckets are customer-owned.
+    if (!workspace.config?.storage?.bucket) {
+      await ctx.scheduler.runAfter(0, internal.awsWorkspaceFiles.purge, {
+        accountId: workspace.accountId,
+        workspaceId: workspace._id,
+      });
+    }
+    await ctx.db.delete(workspace._id);
+  }
 
   const externals = await ctx.db
     .query("cliExternalResources")
