@@ -4,7 +4,12 @@
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
-import type { ChannelActions, ChannelFile } from "../../shared/channels.ts";
+import type {
+  ChannelActions,
+  ChannelFile,
+  ChannelImage,
+} from "../../shared/channels.ts";
+import { logWarn } from "../../shared/log.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type {
   RunSessionMessageDispatch,
@@ -22,9 +27,9 @@ export interface ChannelToolContext {
   actions: ChannelActions;
   channelName: string;
   transformText(text: string): Promise<string | null>;
-  // Attached workspaces, so send-image can take a workspace file instead of a
-  // public URL. Needs the owning account to seal the media link, so both arrive
-  // together or not at all.
+  // Attached workspaces, so send-images and send-files can take a workspace
+  // file instead of a public URL. Sealing that link needs the owning account,
+  // so both arrive together or not at all.
   workspaces?: ResolvedWorkspace[];
   accountId?: string;
 }
@@ -36,8 +41,13 @@ const FILE_MIME_TYPES: Record<string, string> = {
   csv: "text/csv",
   doc: "application/msword",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
   pdf: "application/pdf",
+  png: "image/png",
   txt: "text/plain",
+  webp: "image/webp",
   xls: "application/vnd.ms-excel",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
@@ -48,9 +58,9 @@ interface SendFilesInput {
   caption?: string;
 }
 
-interface SendImageInput {
-  url?: string;
-  file_path?: string;
+interface SendImagesInput {
+  urls?: string[];
+  file_paths?: string[];
   workspace?: string;
   caption?: string;
 }
@@ -108,32 +118,25 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
         if (transformed === null) {
           return toolText("Files blocked by the outbound message hook.");
         }
-        if (native) {
-          await native(files, transformed || undefined);
 
-          return toolText(
-            `${files.length} file(s) sent to the current ${channelName} conversation.`,
-          );
-        }
-        const lines = files.map((file) => `${file.name}: ${file.url}`);
-        await actions.sendText(
-          transformed
-            ? `${transformed}\n${lines.join("\n")}`
-            : lines.join("\n"),
-        );
-
-        return toolText(
-          `${channelName} cannot attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
-        );
+        return await deliverFiles(context, files, transformed);
       },
     }),
   };
 }
 
-export function sendImageTool(context: ChannelToolContext): ToolSet {
+// Pictures, by the same sealed media link `send-files` hands documents over as.
+// A picture is a different message from a file — the recipient sees it without
+// opening anything — so it gets its own tool and its own provider endpoint. It
+// degrades rather than fails: a channel with no picture endpoint, or one that
+// rejects the batch, still delivers through `send-files`, because the recipient
+// would rather have the file than an apology.
+export function sendImagesTool(context: ChannelToolContext): ToolSet {
   const { actions, channelName } = context;
-  const sendImages = actions.sendImages;
-  if (!sendImages) {
+  // A channel with neither endpoint cannot deliver a picture as anything but a
+  // bare link, which is what `send-files` is already for. Offering a picture
+  // tool that never sends one would just mislead the model.
+  if (!actions.sendImages && !actions.sendFiles) {
     return {};
   }
   // A workspace file can only be handed over as a media link, which has to name
@@ -142,28 +145,48 @@ export function sendImageTool(context: ChannelToolContext): ToolSet {
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 
   return {
-    "send-image": tool({
-      description: sendImageDescription(channelName, workspaces.length > 0),
-      inputSchema: jsonSchema<SendImageInput>(sendImageSchema(workspaces)),
+    "send-images": tool({
+      description: sendImagesDescription(
+        channelName,
+        workspaces.length > 0,
+        actions.sendImages !== undefined,
+      ),
+      inputSchema: jsonSchema<SendImagesInput>(sendImagesSchema(workspaces)),
       execute: async function (input): Promise<string> {
-        const { url, file_path, workspace, caption } = input;
-        const photo = await resolveImageUrl(
+        const { urls, file_paths, workspace, caption } = input;
+        const images = await resolveImages(
           { workspaces: workspaces, accountId: accountId },
-          url,
-          file_path,
+          urls,
+          file_paths,
           workspace,
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
-          return toolText("Image blocked by the outbound message hook.");
+          return toolText("Images blocked by the outbound message hook.");
         }
-        await sendImages(
-          [{ type: "image", url: photo }],
-          transformed || undefined,
-        );
+        if (actions.sendImages) {
+          try {
+            await actions.sendImages(images, transformed || undefined);
 
-        return toolText(
-          `Image sent to the current ${channelName} conversation.`,
+            return toolText(
+              `${images.length} image(s) sent to the current ${channelName} conversation.`,
+            );
+          } catch (error) {
+            // The provider took the batch and refused it. The reason belongs in
+            // the log, not the conversation; the recipient gets the pictures by
+            // the next route down rather than an error.
+            logWarn("Channel rejected an image batch, falling back to files", {
+              channel: channelName,
+              count: images.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
+        return await deliverFiles(
+          context,
+          images.map(toChannelFile),
+          transformed,
         );
       },
     }),
@@ -269,6 +292,32 @@ export function sendStickerTool(context: ChannelToolContext): ToolSet {
   };
 }
 
+// The last two rungs both tools share: hand the documents to the provider, and
+// if it has none, post the sealed links as text. The tool result names which
+// happened so the model does not send them a second time.
+async function deliverFiles(
+  context: ChannelToolContext,
+  files: ChannelFile[],
+  caption: string,
+): Promise<string> {
+  const { actions, channelName } = context;
+  if (actions.sendFiles) {
+    await actions.sendFiles(files, caption || undefined);
+
+    return toolText(
+      `${files.length} file(s) sent to the current ${channelName} conversation.`,
+    );
+  }
+  const lines = files.map((file) => `${file.name}: ${file.url}`);
+  await actions.sendText(
+    caption ? `${caption}\n${lines.join("\n")}` : lines.join("\n"),
+  );
+
+  return toolText(
+    `${channelName} cannot attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
+  );
+}
+
 function fileMimeType(rel: string): string {
   const extension = rel.split(".").pop()?.toLowerCase() ?? "";
 
@@ -278,36 +327,60 @@ function fileMimeType(rel: string): string {
 // A workspace file has no address of its own, so it is handed over as a durable
 // media link — every provider fetches the picture itself rather than accepting
 // an upload, and Zalo re-fetches it long after the message was sent.
-async function resolveImageUrl(
+async function resolveImages(
   source: { workspaces: ResolvedWorkspace[]; accountId?: string },
-  url: string | undefined,
-  filePath: string | undefined,
+  urls: string[] | undefined,
+  filePaths: string[] | undefined,
   workspace: string | undefined,
-): Promise<string> {
-  // Two sources name two different pictures. Picking one silently would send
-  // something the caller did not ask for, so refuse and let the model choose.
-  if (filePath && url) {
-    return toolError("Error: send-image takes file_path or url, not both");
+): Promise<ChannelImage[]> {
+  // Two sources name two different sets of pictures. Picking one silently would
+  // send something the caller did not ask for, so refuse and let the model
+  // choose.
+  if (filePaths?.length && urls?.length) {
+    return toolError("Error: send-images takes file_paths or urls, not both");
   }
-  if (filePath) {
+  if (filePaths?.length) {
     const ws = resolveWorkspace(source.workspaces, workspace);
-    if (!ws || !source.accountId) {
+    const accountId = source.accountId;
+    if (!ws || !accountId) {
       return toolError("Error: no workspace attached");
     }
 
-    return await workspaceMediaUrl(
-      ws,
-      toWorkspaceRelative(filePath),
-      source.accountId,
+    return await Promise.all(
+      filePaths.map(async (path): Promise<ChannelImage> => {
+        const rel = toWorkspaceRelative(path);
+
+        return {
+          type: "image",
+          url: await workspaceMediaUrl(ws, rel, accountId),
+          name: rel.split("/").pop() || rel,
+          mimeType: fileMimeType(rel),
+        };
+      }),
     );
   }
-  if (!url) {
+  if (!urls?.length) {
     return toolError(
-      "Error: send-image needs either file_path (a workspace file) or url (a public image URL)",
+      "Error: send-images needs either file_paths (workspace files) or urls (public image URLs)",
     );
   }
 
-  return url;
+  return urls.map((url): ChannelImage => {
+    const name = url.split("/").pop()?.split("?")[0] || "image";
+
+    return {
+      type: "image",
+      url: url,
+      name: name,
+      mimeType: fileMimeType(name),
+    };
+  });
+}
+
+// The same picture, offered as something to download instead of something to
+// look at. Only the delivery changes; the sealed link is the one already minted.
+function toChannelFile(image: ChannelImage): ChannelFile {
+  return { ...image, type: "file" };
 }
 
 function sendFilesDescription(channelName: string, native: boolean): string {
@@ -342,18 +415,22 @@ function sendFilesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
   };
 }
 
-function sendImageDescription(
+function sendImagesDescription(
   channelName: string,
   hasWorkspace: boolean,
+  native: boolean,
 ): string {
   const source = hasWorkspace
-    ? "Pass exactly one source: file_path for an image in the workspace, or url for one already published on the web."
-    : "Pass url, an image already published on the web.";
+    ? "Pass exactly one source: file_paths for images in the workspace, or urls for ones already published on the web."
+    : "Pass urls, images already published on the web.";
+  const delivery = native
+    ? `They arrive inline, so the recipient sees them without opening anything. Send a whole set in one call rather than one call per picture; ${channelName} decides how to group them.`
+    : `${channelName} cannot show pictures inline, so they are delivered as files to download instead.`;
 
-  return `Sends an image to the current ${channelName} conversation immediately. ${source} Use this for an intentional image message; the normal final text answer is delivered automatically.`;
+  return `Sends one or more images to the current ${channelName} conversation immediately. ${source} ${delivery} Use this for an intentional image message; the normal final text answer is delivered automatically. Documents that are not pictures go through send-files.`;
 }
 
-function sendImageSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
+function sendImagesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
   const workspaceProp = workspaceParamSchema(workspaces);
 
   return {
@@ -361,21 +438,25 @@ function sendImageSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
     properties: {
       ...(workspaces.length > 0
         ? {
-            file_path: {
-              type: "string",
+            file_paths: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
               description:
-                "Path to an image file in the workspace, relative to the workspace root.",
+                "Paths to image files in the workspace, each relative to the workspace root.",
             },
           }
         : {}),
-      url: {
-        type: "string",
+      urls: {
+        type: "array",
+        items: { type: "string" },
+        minItems: 1,
         description:
-          "Absolute public http(s) URL of the image the chat provider can fetch.",
+          "Absolute public http(s) URLs of images the chat provider can fetch.",
       },
       caption: {
         type: "string",
-        description: "Optional text shown with the image.",
+        description: "Optional text shown with the images.",
       },
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
