@@ -100,19 +100,29 @@ export function createZaloActions(
         });
       }
     },
-    sendImage: async function(url, caption): Promise<void> {
-      // Zalo fetches the picture itself, so it only ever accepts a public URL.
-      const photo = zaloHttpUrl(url);
-      if (!photo) {
-        throw new Error(
-          "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
-        );
+    // No sendFiles: the Zalo Bot API is sendMessage, sendPhoto, sendSticker and
+    // sendChatAction, with no document endpoint to attach anything to. Leaving
+    // it off is what routes `send-files` to its download-link fallback.
+    sendImages: async function(images, caption): Promise<void> {
+      // Zalo has no album, so a batch goes out as consecutive photos with the
+      // caption on the first: repeating it would read as the same message sent
+      // once per picture.
+      for (const [index, image] of images.entries()) {
+        // Zalo fetches the picture itself, so it only ever accepts a public URL.
+        const photo = zaloHttpUrl(image.url);
+        if (!photo) {
+          throw new Error(
+            "Zalo sendPhoto needs an absolute http(s) image URL that Zalo can fetch",
+          );
+        }
+        await callZaloApi(botToken, "sendPhoto", {
+          chat_id: source.chatId,
+          photo: photo,
+          ...(caption && index === 0
+            ? { caption: caption.slice(0, ZALO_TEXT_LIMIT) }
+            : {}),
+        });
       }
-      await callZaloApi(botToken, "sendPhoto", {
-        chat_id: source.chatId,
-        photo: photo,
-        ...(caption ? { caption: caption.slice(0, ZALO_TEXT_LIMIT) } : {}),
-      });
     },
     sendSticker: async function(sticker): Promise<void> {
       const value = sticker.trim();

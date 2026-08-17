@@ -4,7 +4,7 @@
  */
 
 import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
-import type { StreamOptions } from "chat";
+import type { Attachment, StreamOptions } from "chat";
 import type { ChannelReplyIn } from "./domain/channel-record.ts";
 
 /** Reach every room or sender, instead of only the listed ids. */
@@ -13,11 +13,27 @@ export const CHANNEL_REACH_WILDCARD = "*";
 export type ChannelIngressEvent =
   UserModelMessage | (SystemModelMessage & { persist?: false });
 
+/**
+ * A document or picture handed to a channel for delivery. This is the Chat
+ * SDK's own attachment shape, narrowed to what this layer guarantees: a
+ * workspace file has no address of its own, so it always travels as a URL the
+ * provider fetches for itself. `type` is fixed per alias because that is the
+ * field an adapter maps onto the provider's photo or document endpoint.
+ */
+export type ChannelFile = Attachment & { type: "file"; url: string };
+
+export type ChannelImage = Attachment & { type: "image"; url: string };
+
 export interface ChannelActions {
   sendText(text: string): Promise<void>;
-  // Optional image delivery, by a URL the provider fetches for itself. Callers
-  // check for it and fall back to a link when the provider has no image send.
-  sendImage?(url: string, caption?: string): Promise<void>;
+  // Optional document delivery. Omitted by providers with no document endpoint
+  // at all (Zalo bots take photos and stickers and nothing else), which is why
+  // `send-files` posts download links as text rather than failing.
+  sendFiles?(files: ChannelFile[], caption?: string): Promise<void>;
+  // Optional picture delivery, the same shape so one tool core serves both.
+  // A batch arrives whole and the provider decides how to spend it: Telegram
+  // groups it into one album, Zalo has no album and sends them in sequence.
+  sendImages?(images: ChannelImage[], caption?: string): Promise<void>;
   // Optional provider-native sticker delivery. Providers decide whether the
   // value is a sticker id, file id, or public URL.
   sendSticker?(sticker: string): Promise<void>;

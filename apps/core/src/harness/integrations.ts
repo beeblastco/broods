@@ -1813,12 +1813,15 @@ export async function sendChannelReply(options: {
   };
   const actions = adapter.actions(message);
   if (options.imageUrl) {
-    if (!actions.sendImage) {
+    if (!actions.sendImages) {
       throw new Error(
         `Channel ${options.channelName} cannot send images; send a link instead`,
       );
     }
-    await actions.sendImage(options.imageUrl, text || undefined);
+    await actions.sendImages(
+      [{ type: "image", url: options.imageUrl }],
+      text || undefined,
+    );
 
     return;
   }

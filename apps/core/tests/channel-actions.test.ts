@@ -51,8 +51,8 @@ describe("telegram channel actions", () => {
       }),
     );
 
-    await actions.sendImage?.(
-      "https://cdn.example.com/chart.png",
+    await actions.sendImages?.(
+      [{ type: "image", url: "https://cdn.example.com/chart.png" }],
       "A useful chart",
     );
     await actions.sendSticker?.("telegram-file-id");
@@ -74,6 +74,101 @@ describe("telegram channel actions", () => {
       chat_id: 123,
       sticker: "telegram-file-id",
       message_thread_id: 7,
+    });
+  });
+
+  it("sends a batch of Telegram pictures as albums of ten", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      telegramMediaGroupResponse(10),
+      telegramMediaGroupResponse(2),
+    );
+
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set(["123"]),
+      null,
+      "👀",
+    ).actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        threadId: "telegram:123",
+      }),
+    );
+
+    await actions.sendImages?.(
+      Array.from({ length: 12 }, (_unused, index) => ({
+        type: "image" as const,
+        url: `https://cdn.example.com/${index}.png`,
+      })),
+      "twelve charts",
+    );
+
+    // Twelve is past Telegram's ten-per-album ceiling, so it goes out as two
+    // albums rather than one rejected request, and only the first carries the
+    // caption.
+    expect(fetchMock.calls.map((call): string => toUrl(call.input))).toEqual([
+      "https://api.telegram.org/botbot-token/sendMediaGroup",
+      "https://api.telegram.org/botbot-token/sendMediaGroup",
+    ]);
+    const [first, second] = fetchMock.calls.map((call) =>
+      telegramMediaGroup(call.init?.body),
+    );
+    expect(first!.media).toHaveLength(10);
+    expect(second!.media).toHaveLength(2);
+    expect(first!.media[0]).toMatchObject({
+      type: "photo",
+      media: "https://cdn.example.com/0.png",
+      caption: "twelve charts",
+    });
+    expect(second!.media[0]).toMatchObject({
+      type: "photo",
+      media: "https://cdn.example.com/10.png",
+    });
+    expect(second!.media[0]?.caption).toBeUndefined();
+  });
+
+  it("sends Telegram documents through the document endpoint", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(telegramMessageResponse(62, "doc"));
+
+    const actions = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set(["123"]),
+      null,
+      "👀",
+    ).actions(
+      createMessage({
+        chatId: 123,
+        messageId: "123:42",
+        threadId: "telegram:123",
+      }),
+    );
+
+    await actions.sendFiles?.(
+      [
+        {
+          type: "file",
+          url: "https://gateway.test/media/token",
+          name: "declaration.pdf",
+          mimeType: "application/pdf",
+        },
+      ],
+      "công bố sản phẩm",
+    );
+
+    // A lone attachment is a plain send, not an album, and `type` is what picks
+    // sendDocument over sendPhoto.
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://api.telegram.org/botbot-token/sendDocument",
+    );
+    expect(JSON.parse(String(fetchMock.calls[0]!.init?.body))).toMatchObject({
+      chat_id: "123",
+      document: "https://gateway.test/media/token",
+      caption: "công bố sản phẩm",
     });
   });
 
@@ -392,8 +487,8 @@ describe("slack channel actions", () => {
       }),
     );
 
-    await actions.sendImage?.(
-      "https://cdn.example.com/chart.png",
+    await actions.sendImages?.(
+      [{ type: "image", url: "https://cdn.example.com/chart.png" }],
       "A useful chart",
     );
     await actions.sendSticker?.("party_parrot");
@@ -496,7 +591,10 @@ describe("slack channel actions", () => {
       }),
     );
 
-    await actions.sendImage?.("https://cdn.example.com/chart.png", "Chart");
+    await actions.sendImages?.(
+      [{ type: "image", url: "https://cdn.example.com/chart.png" }],
+      "Chart",
+    );
     await actions.sendSticker?.("party_parrot");
     await actions.sendSticker?.("https://cdn.example.com/sticker.gif");
 
@@ -929,6 +1027,37 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
     status: status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// sendMediaGroup answers with one message per album entry, unlike the single
+// message every other send returns.
+function telegramMediaGroupResponse(count: number) {
+  return jsonResponse({
+    ok: true,
+    result: Array.from({ length: count }, (_unused, index) => ({
+      message_id: 100 + index,
+      chat: { id: 123, type: "private" },
+      date: 1_700_000_000,
+    })),
+  });
+}
+
+interface TelegramMediaGroupItem {
+  caption?: string;
+  media: string;
+  type: string;
+}
+
+// sendMediaGroup goes out as multipart with the album described in a `media`
+// JSON field, so the assertions read that rather than the request body.
+function telegramMediaGroup(body: RequestInit["body"]): {
+  media: TelegramMediaGroupItem[];
+} {
+  if (!(body instanceof FormData)) {
+    throw new Error("Expected sendMediaGroup to post FormData");
+  }
+
+  return { media: JSON.parse(String(body.get("media"))) };
 }
 
 function telegramMessageResponse(messageId: number, text: string) {
