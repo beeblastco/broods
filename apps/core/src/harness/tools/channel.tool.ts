@@ -18,6 +18,7 @@ import type {
 import {
   resolveWorkspace,
   toWorkspaceRelative,
+  workspaceMediaBytes,
   workspaceMediaUrl,
   workspaceParamSchema,
 } from "./filesystem-utils.ts";
@@ -73,7 +74,7 @@ interface SendStickerInput {
   sticker: string;
 }
 
-// Documents, by the same sealed media link `send-image` hands pictures over as.
+// Documents, by the same sealed media link `send-images` hands pictures over as.
 // Two deliveries behind one tool: a provider with a document API gets the files
 // themselves, and one without gets their URLs as text. The model picks neither —
 // it names workspace paths and the channel decides, so a prompt written for one
@@ -111,6 +112,7 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
               url: await workspaceMediaUrl(ws, rel, accountId),
               name: rel.split("/").pop() || rel,
               mimeType: fileMimeType(rel),
+              fetchData: () => workspaceReader(ws, rel),
             };
           }),
         );
@@ -302,11 +304,23 @@ async function deliverFiles(
 ): Promise<string> {
   const { actions, channelName } = context;
   if (actions.sendFiles) {
-    await actions.sendFiles(files, caption || undefined);
+    try {
+      await actions.sendFiles(files, caption || undefined);
 
-    return toolText(
-      `${files.length} file(s) sent to the current ${channelName} conversation.`,
-    );
+      return toolText(
+        `${files.length} file(s) sent to the current ${channelName} conversation.`,
+      );
+    } catch (error) {
+      // Uploading is the rung that can fail on the provider's terms rather than
+      // ours: Discord caps a free guild at 10 MB and Slack needs files:write on
+      // the token. The link below needs neither, so it is worth trying before
+      // giving the recipient nothing.
+      logWarn("Channel rejected a file upload, falling back to links", {
+        channel: channelName,
+        count: files.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   const lines = files.map((file) => `${file.name}: ${file.url}`);
   await actions.sendText(
@@ -314,7 +328,7 @@ async function deliverFiles(
   );
 
   return toolText(
-    `${channelName} cannot attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
+    `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
   );
 }
 
@@ -355,6 +369,7 @@ async function resolveImages(
           url: await workspaceMediaUrl(ws, rel, accountId),
           name: rel.split("/").pop() || rel,
           mimeType: fileMimeType(rel),
+          fetchData: () => workspaceReader(ws, rel),
         };
       }),
     );
@@ -381,6 +396,16 @@ async function resolveImages(
 // look at. Only the delivery changes; the sealed link is the one already minted.
 function toChannelFile(image: ChannelImage): ChannelFile {
   return { ...image, type: "file" };
+}
+
+// The Chat SDK types `fetchData` as returning a Buffer, so a workspace read is
+// wrapped rather than handed over raw. Nothing reads it unless the provider
+// uploads bytes, which keeps the object off the wire for Telegram and Zalo.
+async function workspaceReader(
+  ws: ResolvedWorkspace,
+  rel: string,
+): Promise<Buffer> {
+  return Buffer.from(await workspaceMediaBytes(ws, rel));
 }
 
 function sendFilesDescription(channelName: string, native: boolean): string {

@@ -16,6 +16,7 @@ import { isPlainObject } from "../../shared/object.ts";
 import {
   isMissingS3Error,
   listS3Prefix,
+  readS3Bytes,
   readS3Text,
   s3ObjectExists,
 } from "../../shared/s3.ts";
@@ -509,6 +510,26 @@ export async function workspaceMediaUrl(
   );
 
   return `${baseUrl}${MEDIA_PATH_PREFIX}${token}`;
+}
+
+// The same workspace file as bytes, for the providers that upload instead of
+// fetching. Slack and Discord ignore an outbound URL entirely — both take a
+// multipart upload and nothing else — so the media link the other channels are
+// handed is worthless to them and the object has to be read here. Reading S3
+// directly rather than fetching our own /media route keeps it to one hop and
+// off the 25 MB the public route caps at.
+export async function workspaceMediaBytes(
+  ws: ResolvedWorkspace,
+  rel: string,
+): Promise<Uint8Array> {
+  const target = await resolveS3ReadTarget(
+    workspaceReadContext(ws.config.storage, ws.namespace),
+  );
+  const key = `${target.prefix}${rel}`;
+
+  return target.access
+    ? await readS3Bytes(target.bucket, key, target.access)
+    : await readS3Bytes(target.bucket, key);
 }
 
 export function formatRunText(result: SandboxRunResult): string {
