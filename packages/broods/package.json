@@ -60,7 +60,7 @@
     "esbuild": "^0.28.2"
   },
   "peerDependencies": {
-    "ai": "^7.0.58"
+    "ai": "^7.0.65"
   },
   "devDependencies": {
     "@ai-sdk/tui": "^1.0.59",
@@ -70,7 +70,7 @@
     "@chat-adapter/slack": "^4.35.0",
     "@chat-adapter/telegram": "^4.35.0",
     "@types/bun": "^1.3.14",
-    "ai": "^7.0.58",
+    "ai": "^7.0.65",
     "publint": "^0.3.23",
     "rollup": "^4.62.2",
     "rollup-plugin-dts": "^6.4.1",
