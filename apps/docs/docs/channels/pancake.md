@@ -4,7 +4,7 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 ## Configuration
 
-Define a Pancake channel with `definePancakeConnection` and attach it to an agent:
+Define a Pancake connection with `definePancakeConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
 import { defineAgent, definePancakeConnection, env } from "broods";

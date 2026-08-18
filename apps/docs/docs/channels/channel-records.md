@@ -130,6 +130,7 @@ The per-platform id field is named for what the provider calls it: `channelId` f
 
 ### Through the account API
 
+The API speaks the stored names, not the authoring ones: send `workspaceScope` where the CLI writes `partition`, and `externalId` where it writes `channelId`, `repo`, `chatId` or `conversationId`.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";

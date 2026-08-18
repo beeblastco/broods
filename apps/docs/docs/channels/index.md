@@ -133,7 +133,7 @@ export const support = defineAgent({
 
 A connection answers in the rooms declared against it and nowhere else. One that declares none fails `broods dev` rather than going quiet in production, so set `allowedChannelIds: ["*"]` when you really do mean everywhere. Naming ids in `allowedChannelIds` adds rooms on top of the declared channels, which is worth doing only for a room that needs no rules of its own. `allowedUserIds` narrows the same way by sender, and takes `["*"]` for everyone.
 
-`broods dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use channel constructors; keyed channel objects are rejected.
+`broods dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use connection constructors; keyed channel objects are rejected.
 
 Runnable examples live under `packages/demos/channel-*`. Provider registration is explicit: Telegram, Zalo, and Discord demos include a `register` command; other providers use their administration console.
 

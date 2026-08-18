@@ -4,7 +4,7 @@ Zalo integration allows your agent to answer text messages in private chats and 
 
 ## Configuration
 
-Define a Zalo channel with `defineZaloConnection` and attach it to an agent:
+Define a Zalo connection with `defineZaloConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
 import { defineAgent, defineZaloConnection, env } from "broods";
