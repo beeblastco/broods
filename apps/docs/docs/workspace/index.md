@@ -211,13 +211,13 @@ flowchart TD
   Child --> Private["MEMORY.md · TASKS.md · files for this conversation only"]
 ```
 
-| Workspace setting              | Channel setting                                  | What happens                                                                          |
+| Workspace setting              | Connection setting                               | What happens                                                                          |
 | ------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | `partitioned` omitted or `false` | `partition` is not allowed                  | every run mounts the same workspace root                                              |
-| `partitioned: true`              | every attached channel must set `partition` | channel runs mount the workspace root; conversation runs mount a private child folder |
+| `partitioned: true`              | every attached connection must set `partition` | shared runs mount the workspace root; conversation runs mount a private child folder |
 
-If any channel defines `partition`, at least one attached workspace must use
-`partitioned: true`. If a workspace uses `partitioned: true`, every attached channel must
+If any connection defines `partition`, at least one attached workspace must use
+`partitioned: true`. If a workspace uses `partitioned: true`, every attached connection must
 define `partition`. The CLI rejects mixed or old-mode configs so the runtime does not
 silently pick the wrong folder.
 
@@ -297,7 +297,7 @@ With that setup:
 | ------------------------------ | --------------------------------------------------------------------------- |
 | Slack `T123 / C456 / thread A` | shares the channel working folder with Slack `thread B` in the same channel |
 | GitHub `owner/repo#123`        | gets a separate working folder from `owner/repo#456`                        |
-| Telegram chat `123`            | scoped to chat `123`; `channel` and `conversation` are usually the same key |
+| Telegram chat `123`            | scoped to chat `123`; `shared` and `conversation` are usually the same key |
 
 Use this mixed mode when providers should not all use the same granularity. For example:
 
@@ -314,7 +314,7 @@ underscores, or hyphens.
 
 `partition.by` controls visibility:
 
-- `channel` mounts the workspace root. The parent can see root files and child folders
+- `shared` mounts the workspace root. The parent can see root files and child folders
   below it.
 - `conversation` mounts only that conversation child folder. The child cannot read the
   parent folder, and sibling children cannot read each other.

@@ -734,6 +734,31 @@ export const desk = defineAgent({ name: "desk", connections: [tgBot] });
   expect(telegram).toMatchObject({ allowedChannelIds: ["*"] });
 });
 
+test("compileProject rejects a github channel whose repo names no owner", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineGitHubChannel, defineGitHubConnection, env } from "${RESOURCES_MODULE}";
+
+export const github = defineGitHubConnection({
+  appId: env("GITHUB_APP_ID"),
+  privateKey: env("GITHUB_PRIVATE_KEY"),
+  webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
+});
+export const platform = defineGitHubChannel({
+  name: "platform",
+  connection: github,
+  repo: "platform",
+  agents: [],
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Channel "platform" repo must be "owner/name", not "platform"',
+  );
+});
+
 test("compileProject rejects unsafe partition aliases", async () => {
   const cwd = await fixtureProject(
     "",

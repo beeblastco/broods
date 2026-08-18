@@ -749,10 +749,10 @@ function defineChannelResource<const Name extends string>(
   });
 }
 
-export function defineTelegramConnection(
-  config: TelegramConnectionInput,
-): TelegramConnectionDefinition {
-  return defineConnection("telegram", config);
+export function defineDiscordConnection(
+  config: DiscordConnectionInput,
+): DiscordConnectionDefinition {
+  return defineConnection("discord", config);
 }
 
 export function defineGitHubConnection(
@@ -761,36 +761,28 @@ export function defineGitHubConnection(
   return defineConnection("github", config);
 }
 
-export function defineSlackConnection(
-  config: SlackConnectionInput,
-): SlackConnectionDefinition {
-  return defineConnection("slack", config);
-}
-
-export function defineDiscordConnection(
-  config: DiscordConnectionInput,
-): DiscordConnectionDefinition {
-  return defineConnection("discord", config);
-}
-
 export function definePancakeConnection(
   config: PancakeConnectionInput,
 ): PancakeConnectionDefinition {
   return defineConnection("pancake", config);
 }
 
+export function defineSlackConnection(
+  config: SlackConnectionInput,
+): SlackConnectionDefinition {
+  return defineConnection("slack", config);
+}
+
+export function defineTelegramConnection(
+  config: TelegramConnectionInput,
+): TelegramConnectionDefinition {
+  return defineConnection("telegram", config);
+}
+
 export function defineZaloConnection(
   config: ZaloConnectionInput,
 ): ZaloConnectionDefinition {
   return defineConnection("zalo", config);
-}
-
-export function defineSlackChannel<const Name extends string>(
-  input: ResourceInput<Name, SlackChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, channelId, teamId, ...rules } = input;
-
-  return defineChannelResource(name, description, channelId, teamId, rules);
 }
 
 export function defineDiscordChannel<const Name extends string>(
@@ -805,14 +797,38 @@ export function defineGitHubChannel<const Name extends string>(
   input: ResourceInput<Name, GitHubChannelInput>,
 ): ChannelResource<Name> {
   const { name, description, repo, ...rules } = input;
+  // The owner half becomes the workspace ref, so a repo missing it would store
+  // the whole string as an owner that does not exist.
+  const [owner, ...rest] = repo.split("/");
+  if (!owner || rest.length !== 1 || !rest[0]) {
+    throw new Error(
+      `Channel "${name}" repo must be "owner/name", not "${repo}"`,
+    );
+  }
+
+  return defineChannelResource(name, description, repo, owner, rules);
+}
+
+export function definePancakeChannel<const Name extends string>(
+  input: ResourceInput<Name, PancakeChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, conversationId, ...rules } = input;
 
   return defineChannelResource(
     name,
     description,
-    repo,
-    repo.split("/")[0],
+    conversationId,
+    undefined,
     rules,
   );
+}
+
+export function defineSlackChannel<const Name extends string>(
+  input: ResourceInput<Name, SlackChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, channelId, teamId, ...rules } = input;
+
+  return defineChannelResource(name, description, channelId, teamId, rules);
 }
 
 export function defineTelegramChannel<const Name extends string>(
@@ -829,20 +845,6 @@ export function defineZaloChannel<const Name extends string>(
   const { name, description, chatId, ...rules } = input;
 
   return defineChannelResource(name, description, chatId, undefined, rules);
-}
-
-export function definePancakeChannel<const Name extends string>(
-  input: ResourceInput<Name, PancakeChannelInput>,
-): ChannelResource<Name> {
-  const { name, description, conversationId, ...rules } = input;
-
-  return defineChannelResource(
-    name,
-    description,
-    conversationId,
-    undefined,
-    rules,
-  );
 }
 
 export function defineBroods(
