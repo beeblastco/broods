@@ -45,6 +45,7 @@ import {
   formatSpecs,
   instanceStatusBadge,
   relativeTime,
+  useNow,
 } from "./sandboxFormat";
 
 interface Props {
@@ -71,6 +72,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
   const resume = useAction(api.sandboxPublic.resumeSandbox);
   const refresh = useAction(api.sandboxPublic.refreshSandbox);
   const searchParams = useSearchParams();
+  const now = useNow();
 
   const [selected, setSelected] = useState<Doc<"sandboxInstances"> | null>(
     null,
@@ -356,10 +358,10 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.createdAt)}
+                    {relativeTime(instance.createdAt, now)}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                    {relativeTime(instance.lastUsedAt)}
+                    {relativeTime(instance.lastUsedAt, now)}
                   </td>
                   <td
                     className="px-4 py-2.5 text-right"

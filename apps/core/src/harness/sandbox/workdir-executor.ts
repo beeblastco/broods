@@ -29,6 +29,7 @@ import {
   claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxExternalId,
+  getSandboxReservedAt,
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
@@ -74,6 +75,18 @@ import {
 
 const DEFAULT_WORKSPACE_ROOT = "/mnt/workspaces";
 const DEFAULT_S3_SECRET_NAMES = ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
+
+// workdir rejects an out-of-range auto_stop with a 400, and the account-facing
+// `idleTimeoutSeconds` allows far more than it accepts (up to MAX_IDLE_TIMEOUT_SECONDS).
+// Clamping keeps a legal config running with the closest idle window workdir supports,
+// where forwarding it verbatim would fail every create the sandbox ever attempts.
+const AUTO_STOP_MIN_SECONDS = 30;
+const AUTO_STOP_MAX_SECONDS = 60 * 60;
+
+// The mount's assume-role session lasts an hour and mount-s3 takes its credentials as
+// process env, so the only way to hand it new ones is to replace the daemon. Remount
+// with this much of the session left, rather than letting it expire into I/O errors.
+const MOUNT_MAX_AGE_SECONDS = 45 * 60;
 
 export interface WorkdirHarnessReservation {
   readonly sandbox: Sandbox;
@@ -339,6 +352,24 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     return isPlainObject(this.#config.options) ? this.#config.options : {};
   }
 
+  // workdir has no native hard expiry — `auto_stop_seconds` only stops the machine,
+  // it never deletes it — so `lifecycle.maxLifetimeSeconds` is enforced here, at
+  // acquire time. Checking between turns rather than on a timer means an expiry can
+  // never interrupt a running exec: the next call retires the old sandbox and boots
+  // a fresh one, which costs a cold create instead of a resume. Local disk is lost;
+  // the S3 workspace mount is not, so the agent's files come back with it. Unset
+  // maxLifetimeSeconds keeps the sandbox until something releases the reservation.
+  async #outlivedMaxLifetime(reservationKey: string): Promise<boolean> {
+    const { maxLifetimeSeconds } = resolveSandboxLifecycle(
+      this.#config.lifecycle,
+    );
+    if (maxLifetimeSeconds === undefined) return false;
+    const reservedAt = await getSandboxReservedAt("sandbox", reservationKey);
+    if (reservedAt === null) return false;
+
+    return Date.now() - reservedAt >= maxLifetimeSeconds * 1000;
+  }
+
   #persistent(request: {
     namespace?: string;
     reservationKey?: string;
@@ -485,8 +516,14 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       ...(options.docker === true ? { docker: { enabled: true } } : {}),
       ...(persistent
         ? {
-            auto_stop_seconds: resolveSandboxLifecycle(this.#config.lifecycle)
-              .idleTimeoutSeconds,
+            auto_stop_seconds: Math.min(
+              Math.max(
+                resolveSandboxLifecycle(this.#config.lifecycle)
+                  .idleTimeoutSeconds,
+                AUTO_STOP_MIN_SECONDS,
+              ),
+              AUTO_STOP_MAX_SECONDS,
+            ),
           }
         : {}),
       ...(Object.keys(startup).length > 0 ? { startup: startup } : {}),
@@ -530,17 +567,24 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       };
     }
     const ns = sandboxReservationKey(request)!;
+    if (await this.#outlivedMaxLifetime(ns)) {
+      // Deliberately not caught: a failed delete here would leak the old sandbox
+      // at the provider the moment the new one claims the key.
+      await this.release({ reservationKey: ns });
+    }
     const externalId = await getSandboxExternalId("sandbox", ns);
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(externalId);
-        await saveSandboxInstance(
+        // Reservation refresh and dashboard mirror are both recoverable on the next
+        // call, so they never hold up an exec that already has its endpoint.
+        void saveSandboxInstance(
           "sandbox",
           ns,
           externalId,
           this.#config.controlPlane?.accountId,
         ).catch(() => {});
-        await upsertSandboxInstance(
+        void upsertSandboxInstance(
           this.#config.controlPlane,
           "sandbox",
           ns,
@@ -663,8 +707,14 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // `exec` strategy: mount the bucket via mount-s3 inside the guest, handing it
   // short-lived credentials (incl. the session token) scoped to the mount prefix as
   // per-call exec env — never the harness's own broad creds, which any code the
-  // agent runs could read (the daytona model). Idempotent: a resumed sandbox keeps
-  // its disk but loses the FUSE mount, so only mount when the path isn't a mountpoint.
+  // agent runs could read (the daytona model).
+  //
+  // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
+  // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry —
+  // mount-s3 only reads them at startup, so rotating means replacing the daemon.
+  // Age comes from a stamp written with the harness's clock, not the guest's, which a
+  // Firecracker pause freezes. The stamp lives on agent-writable disk, so it is treated
+  // as untrusted input: anything non-numeric reads as "unknown age" and forces a remount.
   async #ensureS3Mount(
     sandbox: Sandbox,
     request: { namespace?: string; workspaceRoot?: string },
@@ -686,8 +736,18 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     ]
       .map(shellQuote)
       .join(" ");
+    const quotedPath = shellQuote(mountPath);
+    const quotedStamp = shellQuote(`${mountPath}.mounted-at`);
+    const now = Math.floor(Date.now() / 1000);
     const result = await sandbox.exec(
-      `mkdir -p ${shellQuote(mountPath)}; mountpoint -q ${shellQuote(mountPath)} || mount-s3 ${mountArgs}`,
+      [
+        `stamp=$(cat ${quotedStamp} 2>/dev/null || echo 0);`,
+        `case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac;`,
+        `if ! mountpoint -q ${quotedPath} || [ $((${now} - stamp)) -ge ${MOUNT_MAX_AGE_SECONDS} ]; then`,
+        `fusermount -u ${quotedPath} 2>/dev/null || umount -l ${quotedPath} 2>/dev/null;`,
+        `mkdir -p ${quotedPath} && mount-s3 ${mountArgs} && echo ${now} > ${quotedStamp};`,
+        `fi`,
+      ].join(" "),
       {
         env: {
           ...mount.credentials,

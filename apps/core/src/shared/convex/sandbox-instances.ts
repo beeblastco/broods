@@ -113,11 +113,14 @@ export async function upsertSandboxInstance(
 /**
  * Mirrors a suspend/resume status transition into Convex. No-op outside convex
  * mode or when no row matches the reservation key.
+ * @param observed the status was read off the provider, not caused by a use, so
+ * it must not move the row's "last used" clock.
  */
 export async function setSandboxInstanceStatus(
   accountId: string,
   reservationKey: string,
   status: SandboxInstanceStatus,
+  observed = false,
 ): Promise<void> {
   if (!convexEnabled()) return;
   try {
@@ -125,6 +128,7 @@ export async function setSandboxInstanceStatus(
       accountId: accountId as any,
       reservationKey: reservationKey,
       status: status,
+      observed: observed,
     });
   } catch (err) {
     logError("Sandbox instance status mirror failed (convex)", {

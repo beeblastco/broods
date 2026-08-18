@@ -105,15 +105,28 @@ const deleteSandboxInstanceMock = mock(async () => {
   storedSandboxExternalId = null;
 });
 const upsertSandboxInstanceMock = mock(async () => {});
+// Epoch ms the stored reservation was claimed; drives the max-lifetime check.
+let storedReservedAt: number | null = null;
+const getSandboxReservedAtMock = mock(
+  async (_provider: string, _key: string): Promise<number | null> =>
+    storedReservedAt,
+);
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
+  getSandboxReservedAt: getSandboxReservedAtMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
 }));
+// mock.module replaces the whole module, so every export the executor's own imports
+// reach for has to be here — the sandbox index pulls the microvm executor in too, and
+// a missing name is a SyntaxError at import time, not an undefined at call time.
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
+  setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
+  sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
+  removeSandboxInstance: mock(async (): Promise<void> => {}),
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -176,6 +189,7 @@ beforeEach(() => {
   reconnectState = "running";
   execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
   storedSandboxExternalId = null;
+  storedReservedAt = null;
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   delete process.env.WORKDIR_URL;
@@ -190,6 +204,7 @@ beforeEach(() => {
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   upsertSandboxInstanceMock.mockClear();
+  getSandboxReservedAtMock.mockClear();
 });
 
 afterEach(() => {
@@ -519,6 +534,18 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(String(mount!.body?.cmd)).toContain(`'--prefix' '${NS}/'`);
     expect(String(mount!.body?.cmd)).toContain("'--allow-delete'");
     expect(String(mount!.body?.cmd)).toContain("'--allow-overwrite'");
+    // The guard clears a wedged FUSE endpoint before retaking the path, and stamps
+    // the mount so a later call can tell the credentials have aged out.
+    expect(String(mount!.body?.cmd)).toContain("fusermount -u");
+    expect(String(mount!.body?.cmd)).toContain("umount -l");
+    expect(String(mount!.body?.cmd)).toContain(".mounted-at");
+    expect(String(mount!.body?.cmd)).toContain(`-ge ${45 * 60}`);
+    // The stamp sits on disk the agent can write, so a non-numeric value must fall
+    // back to "unknown age" instead of reaching the arithmetic, which would abort
+    // the mount and strand the workspace.
+    expect(String(mount!.body?.cmd)).toContain(
+      `case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac;`,
+    );
     expect(mount!.body?.env).toMatchObject({
       AWS_ACCESS_KEY_ID: "ASIA_TEMP",
       AWS_SECRET_ACCESS_KEY: "temp-secret",
@@ -697,6 +724,91 @@ describe("WorkdirSandboxExecutor.run", () => {
     ).toBe(false);
     expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(true);
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("retires a reserved sandbox that outlived lifecycle.maxLifetimeSeconds", async (): Promise<void> => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 120, maxLifetimeSeconds: 900 },
+      options: { workdirUrl: BASE },
+    });
+
+    storedSandboxExternalId = "sbx_stored";
+    storedReservedAt = Date.now() - 901_000;
+    await executor.run({
+      code: "echo expired",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(true);
+    expect(
+      fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
+    ).toBe(true);
+    expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(false);
+  });
+
+  it("keeps a reserved sandbox that is still inside its max lifetime", async (): Promise<void> => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 120, maxLifetimeSeconds: 900 },
+      options: { workdirUrl: BASE },
+    });
+
+    storedSandboxExternalId = "sbx_stored";
+    storedReservedAt = Date.now() - 60_000;
+    reconnectState = "stopped";
+    await executor.run({
+      code: "echo fresh",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(
+      fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
+    ).toBe(false);
+    expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(true);
+  });
+
+  it("never expires a reserved sandbox when no max lifetime is configured", async (): Promise<void> => {
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    storedSandboxExternalId = "sbx_stored";
+    storedReservedAt = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    await executor.run({
+      code: "echo ancient",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(getSandboxReservedAtMock).not.toHaveBeenCalled();
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("clamps auto_stop_seconds into the range workdir accepts", async (): Promise<void> => {
+    // The account-facing idle timeout allows up to a week; workdir 400s anything
+    // over an hour, which would fail every create rather than degrade.
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      lifecycle: { idleTimeoutSeconds: 7 * 24 * 60 * 60 },
+      options: { workdirUrl: BASE },
+    });
+
+    await executor.run({
+      code: "echo clamp",
+      reservationKey: "tool:acct_1",
+      timeoutSeconds: 30,
+      outputLimitBytes: 4096,
+    });
+    expect(createBody().auto_stop_seconds).toBe(60 * 60);
   });
 
   it("runs onCreate/onResume lifecycle hooks for a persistent sandbox", async () => {

@@ -14,6 +14,8 @@ export const runtimeQueries = {
   getConversationTarget: internal.runtimeIngress.getConversationTarget,
   getHarnessSession: internal.runtime.getHarnessSession,
   getSandboxReservation: internal.runtime.getSandboxReservation,
+  getSandboxReservationClaimedAt:
+    internal.runtime.getSandboxReservationClaimedAt,
   listAsyncToolResults: internal.runtime.listAsyncToolResults,
   listConversationEvents: internal.runtime.listConversationEvents,
   getIngressStatus: internal.runtimeIngress.getStatus,

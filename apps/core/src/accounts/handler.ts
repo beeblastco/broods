@@ -414,7 +414,8 @@ async function handleSandboxLifecycle(
       return jsonResponse(200, { status: "terminated" });
     }
     const status = info.state === "unknown" ? "error" : info.state;
-    await setSandboxInstanceStatus(accountId, reservationKey, status);
+    // A refresh reads the provider's state; it does not use the sandbox.
+    await setSandboxInstanceStatus(accountId, reservationKey, status, true);
     await audit(status === "error" ? "error" : "ok", { status: status });
 
     return jsonResponse(200, { status: status, externalId: info.externalId });
