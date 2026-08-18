@@ -108,7 +108,8 @@ const upsertSandboxInstanceMock = mock(async () => {});
 // Epoch ms the stored reservation was claimed; drives the max-lifetime check.
 let storedReservedAt: number | null = null;
 const getSandboxReservedAtMock = mock(
-  async (_provider: string, _key: string) => storedReservedAt,
+  async (_provider: string, _key: string): Promise<number | null> =>
+    storedReservedAt,
 );
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
@@ -123,9 +124,9 @@ mock.module("../src/harness/sandbox/instance-store.ts", () => ({
 // a missing name is a SyntaxError at import time, not an undefined at call time.
 mock.module("../src/shared/convex/sandbox-instances.ts", () => ({
   upsertSandboxInstance: upsertSandboxInstanceMock,
-  setSandboxInstanceStatus: mock(async () => {}),
-  sandboxInstanceIsControllable: mock(async () => true),
-  removeSandboxInstance: mock(async () => {}),
+  setSandboxInstanceStatus: mock(async (): Promise<void> => {}),
+  sandboxInstanceIsControllable: mock(async (): Promise<boolean> => true),
+  removeSandboxInstance: mock(async (): Promise<void> => {}),
 }));
 
 // Assume-role S3 mount path: stub STS so it returns fixed temporary credentials
@@ -725,7 +726,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
-  it("retires a reserved sandbox that outlived lifecycle.maxLifetimeSeconds", async () => {
+  it("retires a reserved sandbox that outlived lifecycle.maxLifetimeSeconds", async (): Promise<void> => {
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
@@ -748,7 +749,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(false);
   });
 
-  it("keeps a reserved sandbox that is still inside its max lifetime", async () => {
+  it("keeps a reserved sandbox that is still inside its max lifetime", async (): Promise<void> => {
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
@@ -772,7 +773,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.path.endsWith("/resume"))).toBe(true);
   });
 
-  it("never expires a reserved sandbox when no max lifetime is configured", async () => {
+  it("never expires a reserved sandbox when no max lifetime is configured", async (): Promise<void> => {
     const executor = await newExecutor({
       provider: "sandbox",
       persistent: true,
@@ -791,7 +792,7 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
-  it("clamps auto_stop_seconds into the range workdir accepts", async () => {
+  it("clamps auto_stop_seconds into the range workdir accepts", async (): Promise<void> => {
     // The account-facing idle timeout allows up to a week; workdir 400s anything
     // over an hour, which would fail every create rather than degrade.
     const executor = await newExecutor({
