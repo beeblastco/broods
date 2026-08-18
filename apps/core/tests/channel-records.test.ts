@@ -336,8 +336,8 @@ describe("channel record resolution", () => {
           config: {
             agentBindings: [{ agentId: "agent_support" }],
             tagRoles: [
-              { roleId: "oncall", actorIds: ["456"] },
-              { roleId: "admin", actorIds: ["999"] },
+              { roleId: "oncall", userIds: ["456"] },
+              { roleId: "admin", userIds: ["999"] },
             ],
           },
         }),
@@ -346,8 +346,8 @@ describe("channel record resolution", () => {
       path: "/webhooks/acct_test/telegram",
     });
 
-    expect(runs[0]!.identity?.actorId).toBe("456");
-    expect(runs[0]!.identity?.actorRoles).toEqual(["oncall"]);
+    expect(runs[0]!.identity?.userId).toBe("456");
+    expect(runs[0]!.identity?.userRoles).toEqual(["oncall"]);
   });
 
   it("refuses the tag and answers in-channel when a policy denies the invoke", async () => {
@@ -655,8 +655,8 @@ describe("channel record helpers", () => {
       config: {
         agentBindings: [{ agentId: "a" }],
         tagRoles: [
-          { roleId: "oncall", actorIds: ["U1", "U2"] },
-          { roleId: "admin", actorIds: ["U9"] },
+          { roleId: "oncall", userIds: ["U1", "U2"] },
+          { roleId: "admin", userIds: ["U9"] },
         ],
       },
     });

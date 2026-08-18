@@ -233,6 +233,7 @@ function createGitHubActions(
     "app-123",
     privateKey,
     null,
+    null,
   ).actions({
     eventId: "gh:test",
     conversationKey: source.threadId,

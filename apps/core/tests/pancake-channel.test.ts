@@ -19,7 +19,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("normalizes messaging events into page-scoped conversations", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
     const parsed = await adapter.parse(
       createPancakeRequest({
         page_id: "page-1",
@@ -74,7 +74,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("carries comment source fields for comment replies", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
     const parsed = await adapter.parse(
       createPancakeRequest({
         page_id: "page-1",
@@ -111,7 +111,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("ignores non-message events, wrong pages, empty text, and page-originated messages", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
 
     expect(
       await adapter.parse(
@@ -155,7 +155,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("surfaces conversation tag ids on the parsed source so hooks can filter", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
 
     const parsed = await adapter.parse(
       createPancakeRequest(
@@ -174,7 +174,7 @@ describe("pancake channel adapter", () => {
   });
 
   it("authenticates only requests carrying the webhook secret query parameter", async () => {
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
 
     expect(
       await adapter.authenticate(

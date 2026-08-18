@@ -150,7 +150,8 @@ class BroodsDiscordAdapter extends DiscordAdapter {
 export function createDiscordChannel(
   botToken: string,
   publicKey: string,
-  allowedGuildIds: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   apiUrl?: string,
   options: DiscordChannelOptions = {},
 ): ChannelAdapter {
@@ -189,7 +190,8 @@ export function createDiscordChannel(
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
         payload as DiscordForwardedEventPayload,
-        allowedGuildIds,
+        allowedExternalIds,
+        allowedUserIds,
         options,
       );
       if (gatewayEvent) {
@@ -246,13 +248,13 @@ export function createDiscordChannel(
         };
       }
 
+      const interactionUser = payload.member?.user?.id ?? payload.user?.id;
       if (
-        allowedGuildIds &&
-        payload.guild_id &&
-        !allowedGuildIds.has(payload.guild_id)
+        allowedUserIds &&
+        (!interactionUser || !allowedUserIds.has(interactionUser))
       ) {
-        logWarn("Discord guild not in allow list", {
-          guildId: payload.guild_id,
+        logWarn("Discord sender not in allow list", {
+          userId: interactionUser,
         });
 
         return {
@@ -262,7 +264,25 @@ export function createDiscordChannel(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               type: 4,
-              data: { content: "This server is not allowed.", flags: 64 },
+              data: { content: "You are not allowed here.", flags: 64 },
+            }),
+          },
+        };
+      }
+
+      if (allowedExternalIds && !allowedExternalIds.has(payload.channel_id)) {
+        logWarn("Discord channel not in allow list", {
+          channelId: payload.channel_id,
+        });
+
+        return {
+          kind: "response",
+          response: {
+            statusCode: 200,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: 4,
+              data: { content: "This channel is not allowed.", flags: 64 },
             }),
           },
         };
@@ -317,7 +337,7 @@ export function createDiscordChannel(
             channelId: thread.channelId,
             ...(thread.threadId ? { threadId: thread.threadId } : {}),
             ...((payload.member?.user?.id ?? payload.user?.id)
-              ? { actorId: payload.member?.user?.id ?? payload.user?.id }
+              ? { userId: payload.member?.user?.id ?? payload.user?.id }
               : {}),
           },
           // Spread so the typed source reaches a Record<string, unknown> field.
@@ -496,7 +516,8 @@ function mentionsDiscordBot(
 function parseForwardedGatewayEvent(
   discord: BroodsDiscordAdapter,
   event: DiscordForwardedEventPayload,
-  allowedGuildIds: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   options: DiscordChannelOptions,
 ): ChannelParseResult | null {
   if (typeof event.type !== "string" || !event.type.startsWith("GATEWAY_")) {
@@ -532,12 +553,22 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  if (allowedGuildIds && !allowedGuildIds.has(data.guild_id)) {
-    logWarn("Discord guild not in allow list", { guildId: data.guild_id });
+  if (allowedUserIds && !allowedUserIds.has(data.author?.id ?? "")) {
+    logWarn("Discord sender not in allow list", { userId: data.author?.id });
 
     return {
       kind: "ignore",
-      reason: "guild_not_allowed",
+      reason: "user_not_allowed",
+      response: gatewayAck().response,
+    };
+  }
+
+  if (allowedExternalIds && !allowedExternalIds.has(data.channel_id)) {
+    logWarn("Discord channel not in allow list", { channelId: data.channel_id });
+
+    return {
+      kind: "ignore",
+      reason: "channel_not_allowed",
       response: gatewayAck().response,
     };
   }
@@ -590,9 +621,9 @@ function parseForwardedGatewayEvent(
         workspaceRef: data.guild_id,
         channelId: thread.channelId,
         ...(thread.threadId ? { threadId: thread.threadId } : {}),
-        actorId: data.author.id,
+        userId: data.author.id,
         ...(data.author.global_name || data.author.username
-          ? { actorName: data.author.global_name || data.author.username }
+          ? { userName: data.author.global_name || data.author.username }
           : {}),
       },
       // Spread so the typed source reaches a Record<string, unknown> field.

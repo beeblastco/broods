@@ -11,7 +11,8 @@ describe("telegram channel adapter", () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     );
 
@@ -48,7 +49,8 @@ describe("telegram channel adapter", () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     );
 
@@ -66,7 +68,8 @@ describe("telegram channel adapter", () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([999]),
+      new Set(["999"]),
+      null,
       "👀",
     );
 
@@ -84,7 +87,8 @@ describe("telegram channel adapter", () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     );
 
@@ -117,7 +121,8 @@ describe("telegram channel adapter", () => {
     const adapter = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     );
 

@@ -346,7 +346,7 @@ export type ChannelDefinitionConfig = {
   threadPolicy?: "always-thread" | "inline";
   partition?: ChannelPartition;
   sandboxImages?: readonly string[];
-  tagRoles?: readonly { roleId: string; actorIds: readonly string[] }[];
+  tagRoles?: readonly { roleId: string; userIds: readonly string[] }[];
 };
 
 /** Rules shared by every channel, whatever the provider calls its rooms. */

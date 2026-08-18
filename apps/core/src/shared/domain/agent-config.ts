@@ -452,7 +452,8 @@ export interface AgentTelegramChannelConfig {
   apiUrl?: string;
   botToken?: string;
   webhookSecret?: string;
-  allowedChatIds?: number[];
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -465,7 +466,8 @@ export interface AgentGitHubChannelConfig {
   webhookSecret?: string;
   appId?: string;
   privateKey?: string;
-  allowedRepos?: string[];
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
   userName?: string;
   /** Bot's numeric GitHub user ID for self-message detection. */
@@ -484,7 +486,8 @@ export interface AgentSlackChannelConfig {
   apiUrl?: string;
   botToken?: string;
   signingSecret?: string;
-  allowedChannelIds?: string[];
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -496,7 +499,8 @@ export interface AgentDiscordChannelConfig {
   apiUrl?: string;
   botToken?: string;
   publicKey?: string;
-  allowedGuildIds?: string[];
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
   botUserId?: string;
   /** Role ids that count as mentioning the agent, e.g. an on-call role. */
@@ -507,6 +511,8 @@ export interface AgentDiscordChannelConfig {
 }
 
 export interface AgentPancakeChannelConfig {
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   id?: string;
   pageId?: string;
   pageAccessToken?: string;
@@ -518,11 +524,11 @@ export interface AgentPancakeChannelConfig {
 }
 
 export interface AgentZaloChannelConfig {
+  allowedExternalIds?: string[];
+  allowedUserIds?: string[];
   id?: string;
   botToken?: string;
   webhookSecret?: string;
-  allowedUserIds?: string[];
-  allowedGroupIds?: string[];
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
@@ -1333,9 +1339,13 @@ function normalizeTelegramConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.telegram.webhookSecret",
   );
-  assertOptionalNumberArray(
-    config.allowedChatIds,
-    "config.channels.telegram.allowedChatIds",
+  assertOptionalStringArray(
+    config.allowedExternalIds,
+    "config.channels.telegram.allowedExternalIds",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.telegram.allowedUserIds",
   );
   assertOptionalString(
     config.reactionEmoji,
@@ -1357,8 +1367,12 @@ function normalizeGitHubConfig(value: unknown): void {
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(
-    config.allowedRepos,
-    "config.channels.github.allowedRepos",
+    config.allowedExternalIds,
+    "config.channels.github.allowedExternalIds",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.github.allowedUserIds",
   );
   assertOptionalString(config.userName, "config.channels.github.userName");
   assertOptionalPositiveInteger(
@@ -1381,8 +1395,12 @@ function normalizeSlackConfig(value: unknown): void {
     "config.channels.slack.signingSecret",
   );
   assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.slack.allowedChannelIds",
+    config.allowedExternalIds,
+    "config.channels.slack.allowedExternalIds",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.slack.allowedUserIds",
   );
   assertOptionalString(
     config.reactionEmoji,
@@ -1400,8 +1418,12 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(
-    config.allowedGuildIds,
-    "config.channels.discord.allowedGuildIds",
+    config.allowedExternalIds,
+    "config.channels.discord.allowedExternalIds",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.discord.allowedUserIds",
   );
   assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
   assertOptionalStringArray(
@@ -1416,6 +1438,14 @@ function normalizePancakeConfig(value: unknown): void {
     throw new Error("config.channels.pancake must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.pancake");
+  assertOptionalStringArray(
+    config.allowedExternalIds,
+    "config.channels.pancake.allowedExternalIds",
+  );
+  assertOptionalStringArray(
+    config.allowedUserIds,
+    "config.channels.pancake.allowedUserIds",
+  );
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(
     config.pageAccessToken,
@@ -1444,8 +1474,8 @@ function normalizeZaloConfig(value: unknown): void {
     "config.channels.zalo.allowedUserIds",
   );
   assertOptionalStringArray(
-    config.allowedGroupIds,
-    "config.channels.zalo.allowedGroupIds",
+    config.allowedExternalIds,
+    "config.channels.zalo.allowedExternalIds",
   );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;

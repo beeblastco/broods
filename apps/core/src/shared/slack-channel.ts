@@ -355,7 +355,8 @@ export async function* toSlackStream(
 export function createSlackChannel(
   botToken: string,
   signingSecret: string,
-  allowedChannelIds: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   reactionEmoji = "eyes",
   apiUrl?: string,
   userNameResolver?: SlackUserNameResolver,
@@ -405,7 +406,7 @@ export function createSlackChannel(
       }
 
       if (payload.kind === "slash_command") {
-        return parseSlashCommand(payload, allowedChannelIds);
+        return parseSlashCommand(payload, allowedExternalIds, allowedUserIds);
       }
 
       if (
@@ -421,7 +422,8 @@ export function createSlackChannel(
 
       return parseEventCallback(
         req.body,
-        allowedChannelIds,
+        allowedExternalIds,
+        allowedUserIds,
         userNameResolver ?? createSlackUserNameResolver(slack),
       );
     },
@@ -515,7 +517,8 @@ async function normalizeSlackMentions(
 
 async function parseEventCallback(
   body: string,
-  allowedChannelIds: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   resolveUserName: SlackUserNameResolver,
 ): Promise<ChannelParseResult> {
   const payload = JSON.parse(body) as SlackEventEnvelope;
@@ -557,10 +560,17 @@ async function parseEventCallback(
     return { kind: "ignore", reason: "missing_channel_or_timestamp" };
   }
 
-  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
+  if (allowedExternalIds && !allowedExternalIds.has(channelId)) {
     logWarn("Slack channel not in allow list", { channelId: channelId });
 
     return { kind: "ignore", reason: "channel_not_allowed" };
+  }
+
+  const eventUser = payload.event.user;
+  if (allowedUserIds && (!eventUser || !allowedUserIds.has(eventUser))) {
+    logWarn("Slack sender not in allow list", { userId: eventUser });
+
+    return { kind: "ignore", reason: "user_not_allowed" };
   }
 
   if (
@@ -594,7 +604,7 @@ async function parseEventCallback(
   );
   const threadTs = payload.event.thread_ts ?? ts;
   const replyThreadTs = getSlackReplyThreadTs(payload.event, ts);
-  const actorName = payload.event.user
+  const userName = payload.event.user
     ? await resolveSlackUserName(payload.event.user, resolveUserName)
     : undefined;
   const source: SlackSource = {
@@ -628,8 +638,8 @@ async function parseEventCallback(
         ...(payload.event.thread_ts
           ? { threadId: payload.event.thread_ts }
           : {}),
-        ...(payload.event.user ? { actorId: payload.event.user } : {}),
-        ...(actorName ? { actorName: actorName } : {}),
+        ...(payload.event.user ? { userId: payload.event.user } : {}),
+        ...(userName ? { userName: userName } : {}),
       },
       // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },
@@ -988,7 +998,8 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
 
 function parseSlashCommand(
   payload: SlackSlashCommandPayload,
-  allowedChannelIds: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
   const teamId = payload.teamId;
   const channelId = payload.channelId;
@@ -998,10 +1009,18 @@ function parseSlashCommand(
     return { kind: "ignore", reason: "invalid_slash_command" };
   }
 
-  if (allowedChannelIds && !allowedChannelIds.has(channelId)) {
+  if (allowedExternalIds && !allowedExternalIds.has(channelId)) {
     logWarn("Slack slash command channel not in allow list", { channelId: channelId });
 
     return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
+  }
+
+  if (allowedUserIds && (!payload.userId || !allowedUserIds.has(payload.userId))) {
+    logWarn("Slack slash command sender not in allow list", {
+      userId: payload.userId,
+    });
+
+    return { kind: "ignore", reason: "slash_command_user_not_allowed" };
   }
 
   const text = payload.text ?? "";
@@ -1027,7 +1046,7 @@ function parseSlashCommand(
       identity: {
         workspaceRef: teamId,
         channelId: channelId,
-        ...(payload.userId ? { actorId: payload.userId } : {}),
+        ...(payload.userId ? { userId: payload.userId } : {}),
       },
       // Spread so the typed source reaches a Record<string, unknown> field.
       source: { ...source },

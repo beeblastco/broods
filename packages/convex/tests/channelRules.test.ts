@@ -109,7 +109,7 @@ describe("normalizeChannelRecordConfig", () => {
         agentBindings: bindings,
         tagRoles: [{ roleId: "oncall" }],
       }).tagRoles,
-    ).toEqual([{ roleId: "oncall", actorIds: [] }]);
+    ).toEqual([{ roleId: "oncall", userIds: [] }]);
   });
 });
 

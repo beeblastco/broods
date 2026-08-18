@@ -8,7 +8,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -32,11 +33,12 @@ describe("discord channel adapter", () => {
     expect(parsed.response.body).toContain("Discord DMs are disabled.");
   });
 
-  it("rejects guild interactions outside the allow list", async () => {
+  it("rejects interactions in a channel outside the allow list", async () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -45,8 +47,8 @@ describe("discord channel adapter", () => {
         type: 2,
         token: "token-2",
         application_id: "app-1",
-        guild_id: "guild-2",
-        channel_id: "channel-1",
+        guild_id: "guild-1",
+        channel_id: "channel-9",
         data: { name: "new" },
         member: { user: { id: "user-1" } },
       }),
@@ -54,18 +56,19 @@ describe("discord channel adapter", () => {
 
     expect(parsed.kind).toBe("response");
     if (parsed.kind !== "response") {
-      throw new Error("Expected out-of-scope guild to be rejected");
+      throw new Error("Expected out-of-scope channel to be rejected");
     }
 
     expect(parsed.response.statusCode).toBe(200);
-    expect(parsed.response.body).toContain("This server is not allowed.");
+    expect(parsed.response.body).toContain("This channel is not allowed.");
   });
 
   it("accepts guild interactions inside the allow list", async () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -95,7 +98,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -145,7 +149,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const interaction = await adapter.parse(
@@ -197,7 +202,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -227,7 +233,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
       undefined,
       { botUserId: "bot-9" },
     );
@@ -281,7 +288,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
       undefined,
       { botUserId: "bot-9", mentionRoleIds: ["role-oncall"] },
     );
@@ -308,7 +316,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
       undefined,
       { botUserId: "bot-9" },
     );
@@ -360,7 +369,8 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["guild-1"]),
+      new Set(["channel-1", "thread-1"]),
+      null,
       undefined,
       { botUserId: "bot-9" },
     );
@@ -387,6 +397,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
+      null,
       null,
     );
 

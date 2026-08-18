@@ -825,6 +825,7 @@ function createTestSlackChannel(allowedChannelIds: Set<string> | null) {
     "bot-token",
     "signing-secret",
     allowedChannelIds,
+    null,
     "eyes",
     undefined,
     async (userId) => users.get(userId) ?? null,

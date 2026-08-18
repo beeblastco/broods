@@ -33,7 +33,8 @@ export interface TelegramSource {
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
-  allowedChatIds: Set<number>,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   reactionEmoji: string,
   apiUrl?: string,
 ): ChannelAdapter {
@@ -70,8 +71,18 @@ export function createTelegramChannel(
         return { kind: "ignore" };
       }
 
-      if (!allowedChatIds.has(message.chat.id)) {
+      if (
+        allowedExternalIds &&
+        !allowedExternalIds.has(String(message.chat.id))
+      ) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
+
+        return { kind: "ignore" };
+      }
+
+      const senderId = message.from?.id ? String(message.from.id) : undefined;
+      if (allowedUserIds && (!senderId || !allowedUserIds.has(senderId))) {
+        logWarn("Telegram sender not in allow list", { userId: senderId });
 
         return { kind: "ignore" };
       }
@@ -100,9 +111,9 @@ export function createTelegramChannel(
             ...(message.message_thread_id !== undefined
               ? { threadId: String(message.message_thread_id) }
               : {}),
-            ...(message.from?.id ? { actorId: String(message.from.id) } : {}),
+            ...(message.from?.id ? { userId: String(message.from.id) } : {}),
             ...(message.from?.username
-              ? { actorName: message.from.username }
+              ? { userName: message.from.username }
               : {}),
           },
           // Spread so the typed source reaches a Record<string, unknown> field.

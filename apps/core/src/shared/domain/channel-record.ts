@@ -39,10 +39,10 @@ export interface ChannelAgentBinding {
   isDefault?: boolean;
 }
 
-/** A named group of people, referenced from policy conditions by `actorRoles`. */
+/** A named group of people, referenced from policy conditions by `userRoles`. */
 export interface ChannelTagRole {
   roleId: string;
-  actorIds: string[];
+  userIds: string[];
 }
 
 export interface ChannelRecordConfig {
@@ -125,12 +125,12 @@ export function channelRecordMatchesWorkspace(
 /** Role ids an actor holds in this channel, for policy conditions. */
 export function channelActorRoles(
   record: ChannelRecord,
-  actorId: string | undefined,
+  userId: string | undefined,
 ): string[] {
-  if (!actorId) return [];
+  if (!userId) return [];
 
   return (record.config.tagRoles ?? [])
-    .filter((role) => role.actorIds.includes(actorId))
+    .filter((role) => role.userIds.includes(userId))
     .map((role) => role.roleId);
 }
 
@@ -450,10 +450,10 @@ function normalizeTagRoles(value: unknown): ChannelTagRole[] | undefined {
 
     return {
       roleId: requireString(role.roleId, `config.tagRoles[${index}].roleId`),
-      actorIds:
+      userIds:
         optionalStringArray(
-          role.actorIds,
-          `config.tagRoles[${index}].actorIds`,
+          role.userIds,
+          `config.tagRoles[${index}].userIds`,
         ) ?? [],
     };
   });

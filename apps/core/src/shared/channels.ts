@@ -59,11 +59,11 @@ export interface ChannelIdentity {
   /** Thread inside the channel, when the message is threaded. */
   threadId?: string;
   /** Provider id of the person who sent it. */
-  actorId?: string;
+  userId?: string;
   /** Display name for that person, when the provider gives one cheaply. */
-  actorName?: string;
+  userName?: string;
   /** Roles that person holds in this channel. Filled from the channel record. */
-  actorRoles?: string[];
+  userRoles?: string[];
 }
 
 export interface InboundMessage {

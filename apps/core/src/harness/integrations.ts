@@ -990,9 +990,9 @@ function identityWithChannelRoles(
   record: ChannelRecord | undefined,
 ): ChannelIdentity | undefined {
   if (!identity || !record) return identity;
-  const roles = channelActorRoles(record, identity.actorId);
+  const roles = channelActorRoles(record, identity.userId);
 
-  return roles.length > 0 ? { ...identity, actorRoles: roles } : identity;
+  return roles.length > 0 ? { ...identity, userRoles: roles } : identity;
 }
 
 /**
@@ -1022,7 +1022,7 @@ async function refuseChannelInvoke(
       agentId: agentId,
       channel: channelName,
       channelId: identity?.channelId,
-      actorId: identity?.actorId,
+      userId: identity?.userId,
       reason: decision.reason,
       matchedRuleIds: decision.matchedRuleIds,
     },
@@ -2323,14 +2323,15 @@ function createTelegramChannelFromConfig(
   config: AgentConfig,
 ): ChannelAdapter | null {
   const channel = config.channels?.telegram;
-  if (!channel?.botToken || !channel.webhookSecret || !channel.allowedChatIds) {
+  if (!channel?.botToken || !channel.webhookSecret) {
     return null;
   }
 
   return createTelegramChannel(
     channel.botToken,
     channel.webhookSecret,
-    new Set(channel.allowedChatIds),
+    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.reactionEmoji ?? "👀",
     channel.apiUrl,
   );
@@ -2348,7 +2349,8 @@ function createGitHubChannelFromConfig(
     channel.webhookSecret,
     channel.appId,
     channel.privateKey,
-    channel.allowedRepos ? new Set(channel.allowedRepos) : null,
+    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.apiUrl,
     channel.userName,
     channel.botUserId,
@@ -2370,7 +2372,8 @@ function createSlackChannelFromConfig(
   return createSlackChannel(
     channel.botToken,
     channel.signingSecret,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
+    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.reactionEmoji ?? "eyes",
     channel.apiUrl,
   );
@@ -2387,7 +2390,8 @@ function createDiscordChannelFromConfig(
   return createDiscordChannel(
     channel.botToken,
     channel.publicKey,
-    channel.allowedGuildIds ? new Set(channel.allowedGuildIds) : null,
+    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.apiUrl,
     {
       ...(channel.botUserId ? { botUserId: channel.botUserId } : {}),
@@ -2410,6 +2414,8 @@ function createPancakeChannelFromConfig(
     channel.pageId,
     channel.pageAccessToken,
     channel.webhookSecret,
+    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.senderId,
   );
 }
@@ -2423,11 +2429,11 @@ function createZaloChannelFromConfig(
   }
 
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
-    ...(channel.allowedUserIds?.length
-      ? { allowedUserIds: new Set(channel.allowedUserIds) }
-      : {}),
-    ...(channel.allowedGroupIds?.length
-      ? { allowedGroupIds: new Set(channel.allowedGroupIds) }
-      : {}),
+    allowedExternalIds: channel.allowedExternalIds
+      ? new Set(channel.allowedExternalIds)
+      : null,
+    allowedUserIds: channel.allowedUserIds
+      ? new Set(channel.allowedUserIds)
+      : null,
   });
 }

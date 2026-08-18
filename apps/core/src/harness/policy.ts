@@ -51,16 +51,16 @@ export function channelPolicyIdentity(
   identity: ChannelIdentity | undefined,
 ): Pick<
   PolicyDecisionInput,
-  "channelId" | "threadId" | "actorId" | "actorName" | "actorRoles"
+  "channelId" | "threadId" | "userId" | "userName" | "userRoles"
 > {
   if (!identity) return {};
 
   return {
     ...(identity.channelId ? { channelId: identity.channelId } : {}),
     ...(identity.threadId ? { threadId: identity.threadId } : {}),
-    ...(identity.actorId ? { actorId: identity.actorId } : {}),
-    ...(identity.actorName ? { actorName: identity.actorName } : {}),
-    ...(identity.actorRoles?.length ? { actorRoles: identity.actorRoles } : {}),
+    ...(identity.userId ? { userId: identity.userId } : {}),
+    ...(identity.userName ? { userName: identity.userName } : {}),
+    ...(identity.userRoles?.length ? { userRoles: identity.userRoles } : {}),
   };
 }
 
@@ -138,8 +138,8 @@ export async function createPolicyToolApproval(
           // A rule conditioned on the actor is undebuggable without the actor
           // the decision actually read.
           channelId: baseInput.channelId,
-          actorId: baseInput.actorId,
-          actorRoles: baseInput.actorRoles,
+          userId: baseInput.userId,
+          userRoles: baseInput.userRoles,
         };
         if (event.decision.type === "approved") {
           logInfo(message, data);

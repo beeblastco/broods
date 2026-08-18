@@ -98,7 +98,8 @@ export function createGitHubChannel(
   webhookSecret: string,
   appId: string,
   privateKey: string,
-  allowedRepos: Set<string> | null,
+  allowedExternalIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   apiUrl?: string,
   userName?: string,
   botUserId?: number,
@@ -152,14 +153,17 @@ export function createGitHubChannel(
         return { kind: "ignore" };
       }
 
-      if (
-        allowedRepos &&
-        !allowedRepos.has("*") &&
-        !allowedRepos.has(fullName)
-      ) {
+      if (allowedExternalIds && !allowedExternalIds.has(fullName)) {
         logWarn("GitHub repository not in allow list", {
           repository: fullName,
         });
+
+        return { kind: "ignore" };
+      }
+
+      const senderLogin = payload.sender?.login;
+      if (allowedUserIds && (!senderLogin || !allowedUserIds.has(senderLogin))) {
+        logWarn("GitHub sender not in allow list", { userId: senderLogin });
 
         return { kind: "ignore" };
       }
@@ -671,7 +675,7 @@ function githubIdentity(
     channelId: repoFullName,
     threadId: String(resourceNumber),
     ...(sender?.login
-      ? { actorId: sender.login, actorName: sender.login }
+      ? { userId: sender.login, userName: sender.login }
       : {}),
   };
 }

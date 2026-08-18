@@ -85,10 +85,10 @@ export interface PolicyDecisionInput {
   /** Thread inside that channel, when the turn is threaded. */
   threadId?: string;
   /** The person who addressed the agent, so a rule can be scoped to people. */
-  actorId?: string;
-  actorName?: string;
-  /** Ids of the channel record's roles the actor holds, when one is configured. */
-  actorRoles?: string[];
+  userId?: string;
+  userName?: string;
+  /** Ids of the channel record's roles the user holds, when one is configured. */
+  userRoles?: string[];
   toolName?: string;
   toolId?: string;
   workspaceId?: string;
