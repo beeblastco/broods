@@ -29,7 +29,7 @@ import {
   claimSandboxInstance,
   deleteSandboxInstance,
   getSandboxExternalId,
-  getSandboxReservedAt,
+  getSandboxReservationRecord,
   saveSandboxInstance,
 } from "./instance-store.ts";
 import {
@@ -359,15 +359,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // a fresh one, which costs a cold create instead of a resume. Local disk is lost;
   // the S3 workspace mount is not, so the agent's files come back with it. Unset
   // maxLifetimeSeconds keeps the sandbox until something releases the reservation.
-  async #outlivedMaxLifetime(reservationKey: string): Promise<boolean> {
+  #outlivedMaxLifetime(claimedAt: number): boolean {
     const { maxLifetimeSeconds } = resolveSandboxLifecycle(
       this.#config.lifecycle,
     );
     if (maxLifetimeSeconds === undefined) return false;
-    const reservedAt = await getSandboxReservedAt("sandbox", reservationKey);
-    if (reservedAt === null) return false;
 
-    return Date.now() - reservedAt >= maxLifetimeSeconds * 1000;
+    return Date.now() - claimedAt >= maxLifetimeSeconds * 1000;
   }
 
   #persistent(request: {
@@ -567,12 +565,17 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       };
     }
     const ns = sandboxReservationKey(request)!;
-    if (await this.#outlivedMaxLifetime(ns)) {
+    const reserved = await getSandboxReservationRecord("sandbox", ns);
+    const expired =
+      reserved !== null && this.#outlivedMaxLifetime(reserved.claimedAt);
+    if (expired) {
       // Deliberately not caught: a failed delete here would leak the old sandbox
       // at the provider the moment the new one claims the key.
       await this.release({ reservationKey: ns });
     }
-    const externalId = await getSandboxExternalId("sandbox", ns);
+    // An expired reservation was just released, so its sandbox is gone; fall
+    // through to a fresh create rather than reconnecting to a deleted machine.
+    const externalId = expired ? null : (reserved?.externalId ?? null);
     if (externalId) {
       try {
         const sandbox = await this.#reconnect(externalId);
@@ -747,7 +750,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         `fusermount -u ${quotedPath} 2>/dev/null || umount -l ${quotedPath} 2>/dev/null;`,
         `mkdir -p ${quotedPath} && mount-s3 ${mountArgs} && echo ${now} > ${quotedStamp};`,
         `fi`,
-      ].join(" "),
+      ].join("\n"),
       {
         env: {
           ...mount.credentials,

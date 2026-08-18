@@ -106,15 +106,21 @@ const deleteSandboxInstanceMock = mock(async () => {
 });
 const upsertSandboxInstanceMock = mock(async () => {});
 // Epoch ms the stored reservation was claimed; drives the max-lifetime check.
-let storedReservedAt: number | null = null;
-const getSandboxReservedAtMock = mock(
-  async (_provider: string, _key: string): Promise<number | null> =>
-    storedReservedAt,
+// Defaults to "just now" so the reserved-sandbox tests are not accidentally expired.
+let storedReservedAt = Date.now();
+const getSandboxReservationRecordMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+  ): Promise<{ externalId: string; claimedAt: number } | null> =>
+    storedSandboxExternalId === null
+      ? null
+      : { externalId: storedSandboxExternalId, claimedAt: storedReservedAt },
 );
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
-  getSandboxReservedAt: getSandboxReservedAtMock,
+  getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
@@ -189,7 +195,7 @@ beforeEach(() => {
   reconnectState = "running";
   execResult = { exit_code: 0, stdout: "workdir ok\n", stderr: "" };
   storedSandboxExternalId = null;
-  storedReservedAt = null;
+  storedReservedAt = Date.now();
   process.env.AWS_REGION = "us-east-1";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   delete process.env.WORKDIR_URL;
@@ -204,7 +210,7 @@ beforeEach(() => {
   saveSandboxInstanceMock.mockClear();
   deleteSandboxInstanceMock.mockClear();
   upsertSandboxInstanceMock.mockClear();
-  getSandboxReservedAtMock.mockClear();
+  getSandboxReservationRecordMock.mockClear();
 });
 
 afterEach(() => {
@@ -788,8 +794,11 @@ describe("WorkdirSandboxExecutor.run", () => {
       timeoutSeconds: 30,
       outputLimitBytes: 4096,
     });
-    expect(getSandboxReservedAtMock).not.toHaveBeenCalled();
+    // A month-old reservation is still reused, because no max lifetime bounds it.
     expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(
+      fetchCalls.some((c) => c.method === "POST" && c.path === "/v1/sandboxes"),
+    ).toBe(false);
   });
 
   it("clamps auto_stop_seconds into the range workdir accepts", async (): Promise<void> => {

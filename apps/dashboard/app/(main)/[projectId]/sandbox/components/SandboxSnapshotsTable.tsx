@@ -90,6 +90,7 @@ export function SandboxSnapshotsTable({ snapshots }: Props) {
       {selected && (
         <SandboxSnapshotSheet
           snapshot={selected}
+          now={now}
           onClose={() => setSelected(null)}
         />
       )}

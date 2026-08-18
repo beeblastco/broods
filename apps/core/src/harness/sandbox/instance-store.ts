@@ -8,14 +8,13 @@ export function getSandboxExternalId(
 ): Promise<string | null> {
   return runtime.query("getSandboxReservation", { provider: provider, reservationKey: reservationKey });
 }
-// Age of the sandbox the reservation currently points at, for the executors that
-// enforce `lifecycle.maxLifetimeSeconds` themselves. Null when the reservation is
-// unknown, which callers must read as "not expired" rather than "expired".
-export function getSandboxReservedAt(
+// The reserved sandbox and when it was claimed, in one read, for the executors
+// that enforce `lifecycle.maxLifetimeSeconds` themselves. Null when unreserved.
+export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
-): Promise<number | null> {
-  return runtime.query("getSandboxReservationClaimedAt", { provider: provider, reservationKey: reservationKey });
+): Promise<{ externalId: string; claimedAt: number } | null> {
+  return runtime.query("getSandboxReservationRecord", { provider: provider, reservationKey: reservationKey });
 }
 // The reservation key is a hashed namespace, so the owning account can't be
 // derived from it — callers pass accountId from the sandbox control plane. When

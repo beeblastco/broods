@@ -72,12 +72,23 @@ const fetchMock = mock(
 const getSandboxExternalIdMock = mock(
   async (_provider: string, _key: string) => "sbx_handler",
 );
+// Claimed just now, so the workdir executor's max-lifetime check never expires it.
+const getSandboxReservationRecordMock = mock(
+  async (
+    _provider: string,
+    _key: string,
+  ): Promise<{ externalId: string; claimedAt: number } | null> => ({
+    externalId: "sbx_handler",
+    claimedAt: Date.now(),
+  }),
+);
 const claimSandboxInstanceMock = mock(async () => true);
 const saveSandboxInstanceMock = mock(async () => {});
 const deleteSandboxInstanceMock = mock(async () => {});
 
 mock.module("../src/harness/sandbox/instance-store.ts", () => ({
   getSandboxExternalId: getSandboxExternalIdMock,
+  getSandboxReservationRecord: getSandboxReservationRecordMock,
   claimSandboxInstance: claimSandboxInstanceMock,
   saveSandboxInstance: saveSandboxInstanceMock,
   deleteSandboxInstance: deleteSandboxInstanceMock,
