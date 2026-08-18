@@ -218,9 +218,13 @@ export const setStatus = internalMutation({
     accountId: v.id("accounts"),
     reservationKey: v.string(),
     status: sandboxInstancesFields.status,
+    observed: v.optional(v.boolean()),
   },
   returns: v.null(),
-  handler: async (ctx, { accountId, reservationKey, status }) => {
+  handler: async (
+    ctx,
+    { accountId, reservationKey, status, observed },
+  ): Promise<null> => {
     const instance = await ctx.db
       .query("sandboxInstances")
       .withIndex("by_reservationKey", (q) =>
@@ -232,10 +236,10 @@ export const setStatus = internalMutation({
     const now = Date.now();
     await ctx.db.patch(instance._id, {
       status: status,
-      // Only a resume is a use. Stamping every transition let a suspend — or a
-      // refresh that merely observed one — rewrite "last used" to now, so a row
+      // Only a use moves "last used". Stamping every transition let a suspend --
+      // or a status read that merely observed one -- rewrite it to now, so a row
       // untouched for a day still read as seconds old.
-      ...(status === "running" ? { lastUsedAt: now } : {}),
+      ...(status === "running" && !observed ? { lastUsedAt: now } : {}),
       ...(status === "suspended" ? { suspendedAt: now } : {}),
       ...(status === "terminating" ? { terminatedAt: now } : {}),
     });
