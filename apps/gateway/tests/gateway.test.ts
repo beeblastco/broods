@@ -15,6 +15,7 @@ import {
 } from "../src/routes.ts";
 import { proxyHttp, resolveObservabilityScope } from "../src/upstream.ts";
 import {
+  lokiBackfillQuery,
   lokiLogEntry,
   normalizeOtelId,
   relayNatsMessages,
@@ -1395,6 +1396,25 @@ test("observability relay skips malformed and below-threshold log messages", asy
       entry: { ts: 2, level: "ERROR", eventType: "error", message: "keep" },
     },
   ]);
+});
+
+test("asks Loki to drop the levels a subscription does not want", () => {
+  const scope = {
+    accountId: "acct-1",
+    projectSlug: "shop",
+    stageSlug: "dev",
+    endpointIds: [],
+  };
+  const selector = '{account_id="acct-1",project="shop",stage="dev"}';
+
+  // A DEBUG subscriber wants everything, so nothing is filtered away.
+  expect(lokiBackfillQuery(scope, "DEBUG")).toBe(selector);
+  expect(lokiBackfillQuery(scope, "WARN")).toBe(
+    `${selector} | level!~"(?i)(DEBUG|INFO)"`,
+  );
+  expect(lokiBackfillQuery(scope, "ERROR")).toBe(
+    `${selector} | level!~"(?i)(DEBUG|INFO|WARN)"`,
+  );
 });
 
 test("reads a lowercase Loki level label as its real level", () => {

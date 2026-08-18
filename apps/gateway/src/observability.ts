@@ -50,10 +50,6 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
   WARN: 2,
   ERROR: 3,
 };
-// Loki's stream selector cannot filter on level, so a level-filtered backfill
-// over-fetches and trims. Without it a stage whose recent history is mostly
-// DEBUG answers `broods logs --limit 100` with a handful of rows.
-const LOKI_LEVEL_OVERFETCH = 5;
 const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
@@ -144,6 +140,26 @@ export function cleanupObservabilitySocket(
   cleanupObservabilityStream(socket, "logs");
   cleanupObservabilityStream(socket, "traces");
   obsState.delete(socket);
+}
+
+/**
+ * LogQL for a durable backfill. Levels below `minLevel` are dropped by Loki
+ * itself, so an errors-only tail reaches past a long quiet run of DEBUG instead
+ * of returning whatever happens to sit in the newest page. Core stamps `level`
+ * on every record it emits; a line that somehow arrives without one survives
+ * the filter and is judged by meetsMinLevel.
+ */
+export function lokiBackfillQuery(
+  scope: ObservabilityScope,
+  minLevel: LogLevel,
+): string {
+  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",stage="${scope.stageSlug}"}`;
+  const below = Object.entries(LOG_LEVEL_ORDER)
+    .filter(([, order]) => order < LOG_LEVEL_ORDER[minLevel])
+    .map(([level]) => level);
+  if (below.length === 0) return selector;
+
+  return `${selector} | level!~"(?i)(${below.join("|")})"`;
 }
 
 export function lokiLogEntry(
@@ -360,15 +376,11 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) return false;
-      const pageLimit =
-        minLevel === "DEBUG" ? limit : limit * LOKI_LEVEL_OVERFETCH;
-      const logs = await fetchLokiBackfill(lokiUrl, scope, pageLimit);
-      const matching = logs.filter((entry) => meetsMinLevel(entry, minLevel));
+      const logs = await fetchLokiBackfill(lokiUrl, scope, limit, minLevel);
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        // Entries arrive oldest-first, so the newest page is the tail.
-        entries: matching.slice(-limit),
+        entries: logs.filter((entry) => meetsMinLevel(entry, minLevel)),
       });
     } else {
       const tempoUrl = process.env.TEMPO_URL?.trim();
@@ -390,10 +402,10 @@ async function fetchLokiBackfill(
   lokiUrl: string,
   scope: ObservabilityScope,
   limit: number,
+  minLevel: LogLevel,
 ): Promise<ObservabilityLogEntry[]> {
-  const selector = `{account_id="${scope.accountId}",project="${scope.projectSlug}",stage="${scope.stageSlug}"}`;
   const url = new URL(`${lokiUrl}/loki/api/v1/query_range`);
-  url.searchParams.set("query", selector);
+  url.searchParams.set("query", lokiBackfillQuery(scope, minLevel));
   url.searchParams.set("limit", String(limit));
   url.searchParams.set("direction", "backward");
   url.searchParams.set(
