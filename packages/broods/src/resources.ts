@@ -19,6 +19,7 @@ import type {
   AgentPolicyDocument,
   AgentHookEventName,
   AgentWebhookHookConfig,
+  ChannelThreadPolicy,
   CreateCronInput,
   SandboxConfig,
   WorkspaceConfig,
@@ -524,7 +525,7 @@ export type ChannelRecordDefinitionConfig = {
   policyMode?: AgentPolicyConfig["mode"];
   denyTools?: readonly string[];
   /** Where the reply lands. Slack only — see the channel-records docs. */
-  threadPolicy?: "always-thread" | "inline";
+  threadPolicy?: ChannelThreadPolicy;
   workspaceScope?: AgentChannelWorkspaceScope;
   sandboxImages?: readonly string[];
   tagRoles?: readonly { roleId: string; actorIds: readonly string[] }[];

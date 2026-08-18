@@ -23,6 +23,7 @@ import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
   AgentPolicyDocument,
+  ChannelThreadPolicy,
   CreateCronInput,
   SandboxConfig,
   UpdateCronInput,
@@ -181,7 +182,7 @@ export interface ChannelRecordConfig {
    * when the message already did. Slack only — no other provider gives the
    * runtime a second place to reply.
    */
-  threadPolicy?: "always-thread" | "inline";
+  threadPolicy?: ChannelThreadPolicy;
   workspaceScope?: AgentChannelWorkspaceScope;
   /** Images the agent may stand a sandbox up from for a thread here. */
   sandboxImages?: string[];

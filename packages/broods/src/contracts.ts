@@ -20,6 +20,7 @@ import type {
   AgentProviderSettings,
   AgentWorkspaceRef,
 } from "../../../apps/core/src/shared/domain/agent-config.ts";
+import type { ChannelThreadPolicy } from "../../../apps/core/src/shared/domain/channel-record.ts";
 import type {
   CreateCronInput,
   CronLastStatus,
@@ -65,6 +66,7 @@ export type {
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,
+  ChannelThreadPolicy,
   AgentPolicyConfig,
   AgentPolicyDocument,
   CreateCronInput,
