@@ -429,12 +429,17 @@ type Exactly<A, B> =
     ? true
     : false;
 
+type SerializedCredential<T> = Extract<T, string | undefined>;
+
 type AssertAllExact<T extends readonly true[]> = T;
 
 type ChannelCredentialDrift = AssertAllExact<
   [
     Exactly<TelegramAdapterConfig["apiUrl"], string | undefined>,
-    Exactly<TelegramAdapterConfig["botToken"], string | undefined>,
+    Exactly<
+      SerializedCredential<TelegramAdapterConfig["botToken"]>,
+      string | undefined
+    >,
     Exactly<TelegramAdapterConfig["secretToken"], string | undefined>,
     Exactly<
       Extract<GitHubAdapterConfig, { appId: string }>["apiUrl"],
@@ -452,7 +457,10 @@ type ChannelCredentialDrift = AssertAllExact<
     Exactly<SlackAdapterConfig["apiUrl"], string | undefined>,
     Exactly<SlackAdapterConfig["signingSecret"], string | undefined>,
     Exactly<DiscordAdapterConfig["apiUrl"], string | undefined>,
-    Exactly<DiscordAdapterConfig["botToken"], string | undefined>,
+    Exactly<
+      SerializedCredential<DiscordAdapterConfig["botToken"]>,
+      string | undefined
+    >,
     Exactly<DiscordAdapterConfig["publicKey"], string | undefined>,
   ]
 >;
