@@ -23,7 +23,7 @@ import {
   workspaceGuidanceEnabled,
   workspaceMemoryHarnessEnabled,
 } from "../shared/domain/workspace-config.ts";
-import { logError, logInfo } from "../shared/log.ts";
+import { logDebug, logError } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { channelScopeKeyFromConversation } from "../shared/runtime-keys.ts";
 import { isMissingS3Error, readS3Text } from "../shared/s3.ts";
@@ -514,7 +514,7 @@ export class Session {
 
     const prunedMessageCount = messages.length;
     messages = pruneSessionMessages(messages, this.agentConfig);
-    logInfo("Session context pruned", {
+    logDebug("Session context pruned", {
       conversationKey: this.conversationKey,
       eventId: this.eventId,
       beforeCount: prunedMessageCount,
@@ -843,7 +843,7 @@ export class Session {
     }
 
     if (!this.hasLoggedMissingMemoryFile) {
-      logInfo("No memory index found for session prompt", {
+      logDebug("No memory index found for session prompt", {
         conversationKey: this.conversationKey,
         workspace: workspace.name,
         key: key,

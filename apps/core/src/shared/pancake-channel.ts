@@ -15,7 +15,7 @@ import type {
   ChannelParseResult,
   ChannelRequest,
 } from "./channels.ts";
-import { logInfo, logWarn } from "./log.ts";
+import { logDebug, logInfo, logWarn } from "./log.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 interface PancakeConversation {
@@ -152,7 +152,7 @@ async function sendPancakeMessage(
           ...(senderId ? { sender_id: senderId } : {}),
         };
 
-  logInfo("Pancake send message request", {
+  logDebug("Pancake send message request", {
     pageId: source.pageId,
     conversationId: source.conversationId,
     messageType: source.messageType,
@@ -243,7 +243,7 @@ function parsePancakeWebhook(
   pageId: string,
 ): ChannelParseResult {
   const payload = JSON.parse(req.body) as PancakeWebhookPayload;
-  logInfo("Pancake webhook received", {
+  logDebug("Pancake webhook received", {
     configuredPageId: pageId,
     payloadPageId: payload.page_id,
     eventType: payload.event_type,
@@ -260,7 +260,7 @@ function parsePancakeWebhook(
   });
 
   if (payload.event_type !== "messaging") {
-    logInfo("Pancake webhook ignored", {
+    logDebug("Pancake webhook ignored", {
       reason: "unsupported_event_type",
       eventType: payload.event_type,
       pageId: payload.page_id,
@@ -284,7 +284,7 @@ function parsePancakeWebhook(
     !text ||
     !isPancakeMessageType(message.type)
   ) {
-    logInfo("Pancake webhook ignored", {
+    logDebug("Pancake webhook ignored", {
       reason: "missing_or_unsupported_message",
       pageId: payload.page_id,
       conversationId: conversation?.id,
@@ -302,7 +302,7 @@ function parsePancakeWebhook(
     message.from?.id === pageId ||
     !message.from?.page_customer_id
   ) {
-    logInfo("Pancake webhook ignored", {
+    logDebug("Pancake webhook ignored", {
       reason: message.is_hidden
         ? "hidden_message"
         : message.is_removed

@@ -250,6 +250,9 @@ export function MonitoringPanel({ projectSlug, stageSlug, apiKey }: Props) {
     stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
+    // The panel filters levels client-side, so ask the gateway for everything
+    // it has — DEBUG only ever arrives through the durable backfill.
+    minLevel: "DEBUG",
   });
 
   const fromMs = toEpochMs(fromTime);

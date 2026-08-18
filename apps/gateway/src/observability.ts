@@ -1,5 +1,7 @@
 import {
+  isLogLevel,
   isObservabilityClientMessage,
+  LOG_LEVEL_ORDER,
   type LogLevel,
   type ObservabilityClientMessage,
   type ObservabilityLogEntry,
@@ -43,11 +45,6 @@ type OtelValue = {
 };
 type OtelAttribute = { key?: string; value?: OtelValue };
 
-const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
-  INFO: 0,
-  WARN: 1,
-  ERROR: 2,
-};
 const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
@@ -104,10 +101,7 @@ export async function relayNatsMessages(
 
         if (stream === "logs") {
           const entry = parsed as ObservabilityLogEntry;
-          const entryLevel = entry.level as LogLevel;
-          if (LOG_LEVEL_ORDER[entryLevel] === undefined) continue;
-          if (LOG_LEVEL_ORDER[entryLevel] < LOG_LEVEL_ORDER[state.logsMinLevel])
-            continue;
+          if (!meetsMinLevel(entry, state.logsMinLevel)) continue;
           sendObs(socket, { type: "log", entry: entry });
         } else {
           sendObs(socket, {
@@ -154,15 +148,17 @@ export function lokiLogEntry(
     parsed && typeof parsed === "object"
       ? (parsed as Record<string, unknown>)
       : {};
+  // Loki labels are lowercase (`detected_level=debug`) while core's own JSON
+  // line is uppercase, so normalize before matching or every debug line from
+  // the label path reads as INFO.
   const rawLevel =
     record.level ??
     metadata.level ??
     metadata.severity_text ??
     metadata.detected_level;
-  const level =
-    rawLevel === "DEBUG" || rawLevel === "WARN" || rawLevel === "ERROR"
-      ? rawLevel
-      : "INFO";
+  const normalizedLevel =
+    typeof rawLevel === "string" ? rawLevel.toUpperCase() : undefined;
+  const level = isLogLevel(normalizedLevel) ? normalizedLevel : "INFO";
   const parsedTime =
     typeof record.ts === "number"
       ? record.ts
@@ -339,23 +335,27 @@ async function handleObservabilitySubscribe(
 
   sendObs(socket, { type: "ready" });
   if (typeof backfill === "number" && backfill > 0)
-    void sendBackfill(socket, scope, stream, backfill);
+    void sendBackfill(socket, scope, stream, backfill, minLevel);
 }
 
+// Backfill honours the same minLevel as the live relay, so a client asking for
+// errors never has to re-filter a screenful of Loki history.
 async function sendBackfill(
   socket: Bun.ServerWebSocket<ObservabilityGatewayData>,
   scope: ObservabilityScope,
   stream: "logs" | "traces",
   limit: number,
+  minLevel: LogLevel,
 ): Promise<boolean> {
   try {
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) return false;
+      const logs = await fetchLokiBackfill(lokiUrl, scope, limit);
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        entries: await fetchLokiBackfill(lokiUrl, scope, limit),
+        entries: logs.filter((entry) => meetsMinLevel(entry, minLevel)),
       });
     } else {
       const tempoUrl = process.env.TEMPO_URL?.trim();
@@ -548,6 +548,16 @@ function sendObs(
   } catch {
     return;
   }
+}
+
+/** Whether an entry is at or above the subscription's minimum level. */
+function meetsMinLevel(
+  entry: ObservabilityLogEntry,
+  minLevel: LogLevel,
+): boolean {
+  if (!isLogLevel(entry.level)) return false;
+
+  return LOG_LEVEL_ORDER[entry.level] >= LOG_LEVEL_ORDER[minLevel];
 }
 
 function optionalString(...values: unknown[]): string | undefined {

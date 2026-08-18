@@ -9,7 +9,7 @@
 
 import { requireEnv } from "./shared/env.ts";
 import type { CoreRequest } from "./shared/http.ts";
-import { logInfo, logWarn } from "./shared/log.ts";
+import { logDebug, logWarn } from "./shared/log.ts";
 import { MEDIA_PATH_PREFIX, openMediaTicket } from "./shared/media-ticket.ts";
 import { headS3Object, readS3Bytes } from "./shared/s3.ts";
 import { getStorage } from "./shared/storage.ts";
@@ -101,7 +101,7 @@ export async function handleMediaRequest(
       ? { "content-length": String(head.contentLength) }
       : {}),
   };
-  logInfo("media.serve", {
+  logDebug("media.serve", {
     accountId: ticket.accountId,
     workspaceId: ticket.workspaceId,
     path: ticket.path,

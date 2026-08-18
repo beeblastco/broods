@@ -31,7 +31,7 @@ import {
     type CoreRequest,
     type RequestContext,
 } from "../shared/http.ts";
-import { logError, logInfo } from "../shared/log.ts";
+import { logDebug, logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
@@ -1411,7 +1411,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     projectSlug: event.projectSlug,
     stageSlug: event.stageSlug,
   });
-  logInfo("Channel context received", {
+  logDebug("Channel context received", {
     channel: event.channelName,
     accountId: event.accountId,
     agentId: event.agentId,
@@ -1421,7 +1421,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
   });
 
   if (!(await claimSession(session))) {
-    logInfo("Channel context already claimed", {
+    logDebug("Channel context already claimed", {
       channel: event.channelName,
       accountId: event.accountId,
       agentId: event.agentId,
@@ -1433,7 +1433,7 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
   }
 
   await session.appendIngressEvents(event.events);
-  logInfo("Channel context persisted", {
+  logDebug("Channel context persisted", {
     channel: event.channelName,
     accountId: event.accountId,
     agentId: event.agentId,
@@ -1608,7 +1608,7 @@ async function failOwnedIngress(
 
 async function claimSession(session: Session): Promise<boolean> {
   if (!(await session.claim())) {
-    logInfo("Duplicate event skipped", { eventId: session.eventId });
+    logDebug("Duplicate event skipped", { eventId: session.eventId });
 
     return false;
   }

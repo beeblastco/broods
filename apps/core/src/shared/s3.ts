@@ -13,7 +13,7 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { logError, logInfo } from "./log.ts";
+import { logDebug, logError } from "./log.ts";
 
 export interface S3ObjectInfo {
   key: string;
@@ -92,7 +92,7 @@ export async function writeS3Object(
   options: { contentType?: string; executable?: boolean } = {},
 ): Promise<number> {
   const size = typeof body === "string" ? body.length : body.byteLength;
-  logInfo("s3.write start", {
+  logDebug("s3.write start", {
     bucket: bucket,
     key: key,
     contentType: options.contentType,
@@ -106,7 +106,7 @@ export async function writeS3Object(
         options.executable === true,
       ),
     });
-    logInfo("s3.write success", { bucket: bucket, key: key, result: size });
+    logDebug("s3.write success", { bucket: bucket, key: key, result: size });
 
     return size;
   } catch (err) {
@@ -130,7 +130,7 @@ export async function copyS3Object(
   destinationKey: string,
   options: { contentType?: string; executable?: boolean } = {},
 ): Promise<void> {
-  logInfo("s3.copy start", {
+  logDebug("s3.copy start", {
     sourceBucket: sourceBucket,
     sourceKey: sourceKey,
     destinationBucket: destinationBucket,
@@ -150,7 +150,7 @@ export async function copyS3Object(
         ...(options.contentType ? { ContentType: options.contentType } : {}),
       }),
     );
-    logInfo("s3.copy success", {
+    logDebug("s3.copy success", {
       sourceBucket: sourceBucket,
       sourceKey: sourceKey,
       destinationBucket: destinationBucket,
@@ -225,10 +225,10 @@ export async function s3ObjectExists(
   key: string,
   access?: S3Access,
 ): Promise<boolean> {
-  logInfo("s3.exists start", { bucket: bucket, key: key });
+  logDebug("s3.exists start", { bucket: bucket, key: key });
   try {
     const head = await headS3Object(bucket, key, access);
-    logInfo("s3.exists result", {
+    logDebug("s3.exists result", {
       bucket: bucket,
       key: key,
       exists: head !== null,
@@ -263,7 +263,7 @@ export async function listS3Prefix(
   prefix: string,
   access?: S3Access,
 ): Promise<S3ObjectInfo[]> {
-  logInfo("s3.list start", { bucket: bucket, prefix: prefix });
+  logDebug("s3.list start", { bucket: bucket, prefix: prefix });
   const objects: S3ObjectInfo[] = [];
   let continuationToken: string | undefined;
 
@@ -297,7 +297,7 @@ export async function listS3Prefix(
       continuationToken = result.NextContinuationToken;
     } while (continuationToken);
 
-    logInfo("s3.list success", {
+    logDebug("s3.list success", {
       bucket: bucket,
       prefix: prefix,
       count: objects.length,

@@ -7,7 +7,7 @@
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
 import { getHarnessPublicUrl } from "../../shared/env.ts";
-import { logInfo } from "../../shared/log.ts";
+import { logDebug, logInfo } from "../../shared/log.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import {
@@ -398,7 +398,7 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
               options.toolCallId,
             );
           }
-          logInfo("bash tool command", {
+          logDebug("bash tool command", {
             namespace: ws?.namespace,
             commandLength: trimmed.length,
             pty: pty === true,

@@ -4,15 +4,24 @@
  * zero runtime deps. Kept separate from the agent-test websocket-contracts.
  */
 
-// DEBUG is durable-only (Loki/Grafana) and never sent over NATS live.
-export type LogLevel = "INFO" | "WARN" | "ERROR";
+// DEBUG never rides the live NATS relay — core writes it to stdout/OTLP only —
+// so it reaches a client through Loki backfill and nowhere else.
+export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export const MAX_OBSERVABILITY_BACKFILL = 500;
 
-// Matches the shape core's _shared/log.ts emits to NATS. `level` allows DEBUG
-// because Loki backfill can return it; the live NATS stream is INFO+ only.
+/** Order used to compare a log entry against a subscription's minimum level. */
+export const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+};
+
+// Matches the shape core's shared/log.ts emits. Backfilled entries can be any
+// level; the live NATS stream is INFO+ only.
 export type ObservabilityLogEntry = {
   ts: number;
-  level: LogLevel | "DEBUG";
+  level: LogLevel;
   eventType: string;
   message: string;
   traceId?: string;
@@ -59,7 +68,9 @@ export type ObservabilitySubscribeMessage = {
   // subscription starts. Used by CLI live tails so stale errors never print on
   // startup; dashboard views omit it to keep the recent full-fidelity replay.
   liveOnly?: boolean;
-  // Server-side min level for the live "logs" relay (default INFO+); traces are unfiltered.
+  // Server-side min level for the "logs" stream, applied to both the backfill
+  // and the live relay (default INFO+). Pass "DEBUG" to keep backfilled debug
+  // lines. Traces are unfiltered.
   minLevel?: LogLevel;
 };
 
@@ -123,13 +134,7 @@ export function isObservabilityClientMessage(
     if (msg["liveOnly"] !== undefined && typeof msg["liveOnly"] !== "boolean")
       return false;
     const minLevel = msg["minLevel"];
-    if (
-      minLevel !== undefined &&
-      minLevel !== "INFO" &&
-      minLevel !== "WARN" &&
-      minLevel !== "ERROR"
-    )
-      return false;
+    if (minLevel !== undefined && !isLogLevel(minLevel)) return false;
 
     return true;
   }
@@ -140,6 +145,16 @@ export function isObservabilityClientMessage(
   }
 
   return false;
+}
+
+/** Narrow an unknown wire value to a LogLevel. */
+export function isLogLevel(value: unknown): value is LogLevel {
+  return (
+    value === "DEBUG" ||
+    value === "INFO" ||
+    value === "WARN" ||
+    value === "ERROR"
+  );
 }
 
 /** Whether a span is a top-level run, each of which owns its own trace. */
