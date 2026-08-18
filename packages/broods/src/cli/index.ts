@@ -1664,6 +1664,9 @@ function resolveObservabilityCredentials(): {
 function resolveMinLevel(args: string[]): LogLevel {
   if (hasFlag(args, "--all")) return "DEBUG";
   const raw = optionValue(args, "--level");
+  if (raw === undefined && hasFlag(args, "--level")) {
+    throw new Error("Missing value for --level. Use DEBUG, INFO, WARN, or ERROR.");
+  }
   if (!raw) return "WARN";
   const upper = raw.toUpperCase();
   if (upper === "DEBUG") return "DEBUG";
@@ -1722,7 +1725,7 @@ async function resolveObservabilityTarget(
 
 /** Point at --all whenever a tail is running on the quiet default. */
 function levelHint(minLevel: LogLevel): string {
-  return minLevel === "WARN" ? " (--all for every level)" : "";
+  return minLevel === "WARN" ? " (--all for INFO too)" : "";
 }
 
 /** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
