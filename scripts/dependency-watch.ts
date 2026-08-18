@@ -14,6 +14,7 @@ const WORKSPACES = [
   "apps/core",
   "apps/dashboard",
   "apps/gateway",
+  "packages/ai-sdk-sandbox",
   "packages/broods",
   "packages/convex",
 ];

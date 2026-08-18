@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import {
   HarnessCapabilityUnsupportedError,
+  type HarnessV1PortEndpoint,
   type HarnessV1NetworkPolicy,
   type HarnessV1NetworkSandboxSession,
   type HarnessV1SandboxProvider,
@@ -363,6 +364,13 @@ class BroodsNetworkSandboxSession
     }
 
     return await this.session.getPortUrl(options);
+  };
+
+  readonly getPortEndpoint = async (options: {
+    port: number;
+    protocol?: "http" | "https" | "ws";
+  }): Promise<HarnessV1PortEndpoint> => {
+    return { url: await this.getPortUrl(options) };
   };
 
   readonly stop = (): Promise<void> => {
