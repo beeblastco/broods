@@ -15,7 +15,7 @@ import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
 import { resolveActiveAccountForAuthId } from "./model/agentSync";
 import { isPlainObject } from "./model/objects";
-import { AGENT_POLICY_ACTIONS } from "./model/policyRules";
+import { POLICY_ACTIONS } from "./model/policyRules";
 import { agentPoliciesFields } from "./schema";
 
 const policyDoc = v.object({
@@ -30,7 +30,7 @@ const policyStatusValidator = v.union(
 );
 // Sourced from the CRUD normalizer rather than restated: this copy had gone
 // stale and silently refused every `agent.invoke` rule the runtime supports.
-const POLICY_ACTIONS = new Set<string>(AGENT_POLICY_ACTIONS);
+const POLICY_ACTION_SET = new Set<string>(POLICY_ACTIONS);
 
 /**
  * Lists active policies for a project stage.
@@ -440,7 +440,7 @@ export function normalizePolicyDocument(value: unknown): unknown {
       );
     }
     for (const action of rule.actions) {
-      if (typeof action !== "string" || !POLICY_ACTIONS.has(action)) {
+      if (typeof action !== "string" || !POLICY_ACTION_SET.has(action)) {
         throw new Error(
           `Policy rule ${index + 1} contains an unsupported action.`,
         );

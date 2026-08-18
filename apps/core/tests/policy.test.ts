@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { policyInputForTool } from "../src/harness/policy.ts";
 import {
-  normalizeAgentPolicyConfig,
-  normalizeAgentPolicyDocument,
-} from "../src/shared/domain/agent-policy.ts";
+  normalizePolicyDocument,
+  normalizePolicyIds,
+} from "../src/shared/domain/policy.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
 const workspaces: ResolvedWorkspace[] = [
@@ -171,35 +171,44 @@ describe("agent policy input", () => {
   });
 });
 
-describe("agent policy validation", () => {
-  it("rejects unknown config.policy keys instead of dropping them", () => {
-    expect(() => normalizeAgentPolicyConfig({ enabbled: true })).toThrow(
-      "config.policy.enabbled is not supported",
-    );
+describe("policy attachment validation", () => {
+  it("keeps the attachment a plain list of ids", () => {
     expect(
-      normalizeAgentPolicyConfig({
-        enabled: true,
-        policyIds: ["policy_a"],
-        mode: "audit",
-      }),
-    ).toEqual({
-      policyIds: ["policy_a"],
-      mode: "audit",
-    });
+      normalizePolicyIds(["policy_a", "policy_b"], "config.policies"),
+    ).toEqual(["policy_a", "policy_b"]);
+    expect(() => normalizePolicyIds([1], "config.policies")).toThrow(
+      "config.policies",
+    );
   });
 
-  it("treats an empty config.policy object as no policy assignment", () => {
-    expect(normalizeAgentPolicyConfig({})).toBeUndefined();
-    expect(normalizeAgentPolicyConfig({ enabled: true })).toBeUndefined();
-    expect(normalizeAgentPolicyConfig({ mode: "audit" })).toBeUndefined();
+  it("treats an empty attachment as no policy at all", () => {
+    expect(normalizePolicyIds(undefined, "config.policies")).toBeUndefined();
+    expect(normalizePolicyIds([], "config.policies")).toBeUndefined();
+  });
+
+  // Attaching the same policy twice must not send it to OPA twice.
+  it("drops duplicate ids", () => {
     expect(
-      normalizeAgentPolicyConfig({ policyIds: [], mode: "enforce" }),
-    ).toBeUndefined();
+      normalizePolicyIds(["policy_a", "policy_a"], "config.policies"),
+    ).toEqual(["policy_a"]);
+  });
+
+  it("carries the mode on the policy document", () => {
+    expect(
+      normalizePolicyDocument({ version: 1, mode: "enforce", rules: [] }),
+    ).toEqual({ version: 1, mode: "enforce", rules: [] });
+    expect(normalizePolicyDocument({ version: 1, rules: [] })).toEqual({
+      version: 1,
+      rules: [],
+    });
+    expect(() =>
+      normalizePolicyDocument({ version: 1, mode: "watch", rules: [] }),
+    ).toThrow("policy document mode");
   });
 
   it("rejects unknown resource selector keys", () => {
     expect(() =>
-      normalizeAgentPolicyDocument({
+      normalizePolicyDocument({
         version: 1,
         rules: [
           {
@@ -224,10 +233,10 @@ describe("agent policy validation", () => {
       ],
     });
     expect(() =>
-      normalizeAgentPolicyDocument(documentWithValue(["prod", 1, true])),
+      normalizePolicyDocument(documentWithValue(["prod", 1, true])),
     ).toThrow("policy rules[0].conditions[0].value is invalid");
     expect(() =>
-      normalizeAgentPolicyDocument(documentWithValue(["prod", "staging"])),
+      normalizePolicyDocument(documentWithValue(["prod", "staging"])),
     ).not.toThrow();
   });
 
@@ -240,21 +249,23 @@ describe("agent policy validation", () => {
         {
           effect: "deny",
           actions: ["agent.invoke"],
-          conditions: [{ attribute: "actorRoles", operator: operator, value: value }],
+          conditions: [
+            { attribute: "actorRoles", operator: operator, value: value },
+          ],
         },
       ],
     });
     expect(() =>
-      normalizeAgentPolicyDocument(documentWith("notIn", "oncall")),
+      normalizePolicyDocument(documentWith("notIn", "oncall")),
     ).toThrow("must be an array when operator is notIn");
+    expect(() => normalizePolicyDocument(documentWith("in", "oncall"))).toThrow(
+      "must be an array when operator is in",
+    );
     expect(() =>
-      normalizeAgentPolicyDocument(documentWith("in", "oncall")),
-    ).toThrow("must be an array when operator is in");
-    expect(() =>
-      normalizeAgentPolicyDocument(documentWith("notIn", ["oncall"])),
+      normalizePolicyDocument(documentWith("notIn", ["oncall"])),
     ).not.toThrow();
     expect(() =>
-      normalizeAgentPolicyDocument(documentWith("equals", "oncall")),
+      normalizePolicyDocument(documentWith("equals", "oncall")),
     ).not.toThrow();
   });
 });

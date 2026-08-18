@@ -1,7 +1,31 @@
 package broods.authz
 
-mode := input.mode if input.mode == "audit"
-mode := "enforce" if not input.mode == "audit"
+# How hard one policy bites. Mode rides on the policy document, so a set of
+# policies attached to the same place can mix: a new rule can watch while an
+# established one refuses.
+policy_mode(policy) := "enforce" if object.get(policy, "mode", "audit") == "enforce"
+
+policy_mode(policy) := "audit" if object.get(policy, "mode", "audit") != "enforce"
+
+# A place is guarded once any policy attached to it enforces. Until then nothing
+# here refuses, which is what keeps default-deny off while every policy is still
+# being trialled.
+enforcing if policy_mode(input.policies[_]) == "enforce"
+
+mode := "enforce" if enforcing
+
+mode := "audit" if not enforcing
+
+decision := {
+  "allow": false,
+  "allowed": false,
+  "mode": mode,
+  "reason": sprintf("Denied by policy rule %s", [blocking_rules[0].id]),
+  "matchedRuleIds": [rule.id | rule := blocking_rules[_]],
+  "auditedRuleIds": [rule.id | rule := audited_rules[_]],
+} if {
+  count(blocking_rules) > 0
+}
 
 decision := {
   "allow": false,
@@ -9,19 +33,26 @@ decision := {
   "mode": mode,
   "reason": "No allow policy rule matched",
   "matchedRuleIds": [],
+  "auditedRuleIds": [],
 } if {
+  count(blocking_rules) == 0
   count(deny_rules) == 0
   count(allow_rules) == 0
+  enforcing
 }
 
+# A deny from a policy still in audit is reported and then let through, so the
+# rollout can be watched on live traffic without refusing anyone.
 decision := {
-  "allow": false,
-  "allowed": false,
+  "allow": true,
+  "allowed": true,
   "mode": mode,
-  "reason": sprintf("Denied by policy rule %s", [deny_rules[0].id]),
-  "matchedRuleIds": [rule.id | rule := deny_rules[_]],
+  "reason": sprintf("Audited by policy rule %s: would deny, policy is not enforcing", [audited_rules[0].id]),
+  "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "auditedRuleIds": [rule.id | rule := audited_rules[_]],
 } if {
-  count(deny_rules) > 0
+  count(blocking_rules) == 0
+  count(audited_rules) > 0
 }
 
 decision := {
@@ -30,10 +61,37 @@ decision := {
   "mode": mode,
   "reason": sprintf("Allowed by policy rule %s", [allow_rules[0].id]),
   "matchedRuleIds": [rule.id | rule := allow_rules[_]],
+  "auditedRuleIds": [],
 } if {
-  count(deny_rules) == 0
+  count(blocking_rules) == 0
+  count(audited_rules) == 0
   count(allow_rules) > 0
 }
+
+decision := {
+  "allow": true,
+  "allowed": true,
+  "mode": mode,
+  "reason": "No policy rule matched and nothing here is enforcing",
+  "matchedRuleIds": [],
+  "auditedRuleIds": [],
+} if {
+  count(blocking_rules) == 0
+  count(audited_rules) == 0
+  count(allow_rules) == 0
+  not enforcing
+}
+
+# Only an enforcing policy's deny actually refuses.
+blocking_rules := [rule |
+  rule := deny_rules[_]
+  rule.mode == "enforce"
+]
+
+audited_rules := [rule |
+  rule := deny_rules[_]
+  rule.mode == "audit"
+]
 
 deny_rules := [rule |
   rule := matching_rules[_]
@@ -45,7 +103,9 @@ allow_rules := [rule |
   rule.effect == "allow"
 ]
 
-matching_rules := [rule |
+# Each matched rule carries the mode of the policy that owns it, so the verdict
+# can tell an enforcing refusal from one that is only being watched.
+matching_rules := [{"id": rule.id, "effect": rule.effect, "mode": policy_mode(policy)} |
   policy := input.policies[_]
   rule := policy.rules[_]
   rule_matches(rule)

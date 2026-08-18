@@ -71,30 +71,40 @@ describe("normalizeChannelRecordConfig", () => {
     ).toThrow("must be one of: channel, conversation");
   });
 
-  it("validates thread policy and policy mode enums", () => {
+  it("validates the reply target enum", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        threadPolicy: "maybe",
+        replyIn: "maybe",
       }),
-    ).toThrow("config.threadPolicy must be one of: always-thread, inline");
+    ).toThrow("config.replyIn must be one of: thread, source");
+  });
 
+  // Mode moved onto the policy, so a record still naming these must not be
+  // accepted and quietly ignored.
+  it("rejects the retired policy fields", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        policyMode: "warn",
+        policyMode: "audit",
       }),
-    ).toThrow("config.policyMode must be one of: enforce, audit");
+    ).toThrow("config.policyMode is not supported");
+    expect(() =>
+      normalizeChannelRecordConfig({
+        agentBindings: bindings,
+        threadPolicy: "inline",
+      }),
+    ).toThrow("config.threadPolicy is not supported");
   });
 
   it("rejects blank entries in a string list", () => {
-    // `policyIds: [""]` would otherwise persist as a live reference to nothing.
+    // `policies: [""]` would otherwise persist as a live reference to nothing.
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        policyIds: [""],
+        policies: [""],
       }),
-    ).toThrow("config.policyIds must be an array of non-empty strings");
+    ).toThrow("config.policies must be an array of non-empty strings");
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
@@ -139,14 +149,14 @@ describe("normalizeCreateChannelRecordInput", () => {
         externalId: "C042",
         workspaceRef: "T09",
         name: "#product-eng",
-        config: { agentBindings: bindings, policyIds: ["policy_1"] },
+        config: { agentBindings: bindings, policies: ["policy_1"] },
       }),
     ).toEqual({
       platform: "slack",
       externalId: "C042",
       workspaceRef: "T09",
       name: "#product-eng",
-      config: { agentBindings: bindings, policyIds: ["policy_1"] },
+      config: { agentBindings: bindings, policies: ["policy_1"] },
     });
   });
 });

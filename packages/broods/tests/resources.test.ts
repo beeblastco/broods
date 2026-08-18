@@ -470,7 +470,10 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent",
   )!;
@@ -500,7 +503,11 @@ export const support = defineAgent({
     },
   });
   expect(
-    channels.map(({ alias, type, agentName }) => ({ alias: alias, type: type, agentName: agentName })),
+    channels.map(({ alias, type, agentName }) => ({
+      alias: alias,
+      type: type,
+      agentName: agentName,
+    })),
   ).toEqual([
     { alias: "discord", type: "discord", agentName: "support" },
     { alias: "github", type: "github", agentName: "support" },
@@ -582,7 +589,10 @@ export const support = defineAgent({
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "support",
   );
@@ -648,7 +658,10 @@ export const support = defineAgent({ name: "support", connections: [slack], work
 `,
   );
 
-  const { manifest, channels } = await compileProject({ cwd: cwd, command: "dev" });
+  const { manifest, channels } = await compileProject({
+    cwd: cwd,
+    command: "dev",
+  });
   const agent = manifest.resources.find(
     (resource) => resource.kind === "agent" && resource.name === "support",
   );
@@ -1513,7 +1526,7 @@ export const filesystemPolicy = definePolicy({
 export const support = defineAgent({
   name: "support",
   model: { provider: "openai", modelId: "gpt-5-mini" },
-  policy: { mode: "audit", policies: [filesystemPolicy] },
+  policies: [filesystemPolicy],
 });
 `,
   );
@@ -1540,12 +1553,7 @@ export const support = defineAgent({
       },
     ],
   });
-  expect(agent?.config).toMatchObject({
-    policy: {
-      mode: "audit",
-      policyIds: ["filesystem-guard"],
-    },
-  });
+  expect(agent?.config).toMatchObject({ policies: ["filesystem-guard"] });
 });
 
 test("compileProject drops empty agent policy config", async () => {
@@ -1557,7 +1565,7 @@ import { defineAgent } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
   model: { provider: "openai", modelId: "gpt-5-mini" },
-  policy: {},
+  policies: [],
 });
 `,
   );
@@ -1579,13 +1587,14 @@ import { defineAgent } from "${RESOURCES_MODULE}";
 export const support = defineAgent({
   name: "support",
   model: { provider: "openai", modelId: "gpt-5-mini" },
-  policy: { enabbled: true },
+  policy: { policyIds: ["filesystem-guard"] },
 });
 `,
   );
 
+  // The wrapper is gone: naming it must point at the list, not be dropped.
   await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
-    'Agent "support" config.policy.enabbled is not supported',
+    'Agent "support" has an unknown config key "policy". Did you mean "policies"?',
   );
 });
 

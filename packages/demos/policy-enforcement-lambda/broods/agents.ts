@@ -14,31 +14,43 @@ export const lambdaSandbox = defineSandbox({
   timeout: 60,
 });
 
-export const denyBashPolicy = definePolicy({
-  name: "deny-bash-exec",
+// Mode rides on the policy, so comparing the two rollout stages means two
+// policies over one shared rule set rather than one policy read two ways.
+const denySmokeCommandRules = [
+  {
+    id: "deny-policy-smoke-command",
+    effect: "deny",
+    actions: ["workspace.exec"],
+    resources: { toolNames: ["bash"] },
+    conditions: [
+      {
+        attribute: "tool.input.command",
+        operator: "contains",
+        value: "POLICY_SMOKE_OK",
+      },
+    ],
+  },
+  {
+    id: "allow-other-bash-commands",
+    effect: "allow",
+    actions: ["workspace.exec"],
+    resources: { toolNames: ["bash"] },
+  },
+] as const;
+
+export const auditBashPolicy = definePolicy({
+  name: "audit-bash-exec",
   description:
-    "Deny the policy smoke-test bash command so audit and enforce rollout modes can be compared.",
-  rules: [
-    {
-      id: "deny-policy-smoke-command",
-      effect: "deny",
-      actions: ["workspace.exec"],
-      resources: { toolNames: ["bash"] },
-      conditions: [
-        {
-          attribute: "tool.input.command",
-          operator: "contains",
-          value: "POLICY_SMOKE_OK",
-        },
-      ],
-    },
-    {
-      id: "allow-other-bash-commands",
-      effect: "allow",
-      actions: ["workspace.exec"],
-      resources: { toolNames: ["bash"] },
-    },
-  ],
+    "Records the policy smoke-test bash command it would have denied, without blocking it.",
+  mode: "audit",
+  rules: [...denySmokeCommandRules],
+});
+
+export const enforceBashPolicy = definePolicy({
+  name: "deny-bash-exec",
+  description: "Blocks the policy smoke-test bash command outright.",
+  mode: "enforce",
+  rules: [...denySmokeCommandRules],
 });
 
 export const auditPolicyAgent = defineAgent({
@@ -58,10 +70,7 @@ export const auditPolicyAgent = defineAgent({
   },
   sandbox: lambdaSandbox,
   publicAccess: true,
-  policy: {
-    mode: "audit",
-    policies: [denyBashPolicy],
-  },
+  policies: [auditBashPolicy],
 });
 
 export const enforcePolicyAgent = defineAgent({
@@ -81,8 +90,5 @@ export const enforcePolicyAgent = defineAgent({
   },
   sandbox: lambdaSandbox,
   publicAccess: true,
-  policy: {
-    mode: "enforce",
-    policies: [denyBashPolicy],
-  },
+  policies: [enforceBashPolicy],
 });

@@ -7,7 +7,7 @@
 import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
-export const AGENT_POLICY_ACTIONS = [
+export const POLICY_ACTIONS = [
   // Gates the turn itself, before any tool runs: "may this person address the
   // agent here?". Everything below gates one action inside an admitted turn.
   "agent.invoke",
@@ -19,24 +19,24 @@ export const AGENT_POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
-export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
-export type AgentPolicyEffect = "allow" | "deny";
-export type AgentPolicyConditionOperator =
+export type PolicyAction = (typeof POLICY_ACTIONS)[number];
+export type PolicyEffect = "allow" | "deny";
+export type PolicyConditionOperator =
   "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
 
 /**
  * One optional predicate on a policy rule.
  */
-export interface AgentPolicyCondition {
+export interface PolicyCondition {
   attribute: string;
-  operator: AgentPolicyConditionOperator;
+  operator: PolicyConditionOperator;
   value: string | number | boolean | string[] | number[] | boolean[];
 }
 
 /**
  * Resource selector fields supported by policy rules.
  */
-export interface AgentPolicyResourceSelector {
+export interface PolicyResourceSelector {
   toolNames?: string[];
   toolIds?: string[];
   workspaceIds?: string[];
@@ -49,20 +49,22 @@ export interface AgentPolicyResourceSelector {
 /**
  * One allow/deny rule inside a policy document.
  */
-export interface AgentPolicyRule {
+export interface PolicyRule {
   id: string;
-  effect: AgentPolicyEffect;
-  actions: AgentPolicyAction[];
-  resources?: AgentPolicyResourceSelector;
-  conditions?: AgentPolicyCondition[];
+  effect: PolicyEffect;
+  actions: PolicyAction[];
+  resources?: PolicyResourceSelector;
+  conditions?: PolicyCondition[];
 }
 
 /**
  * Versioned policy document accepted by account-management CRUD.
  */
-export interface AgentPolicyDocument {
+export interface PolicyDocument {
   version: 1;
-  rules: AgentPolicyRule[];
+  /** How hard this policy bites where it is attached. Omitted reads as `audit`. */
+  mode?: "enforce" | "audit";
+  rules: PolicyRule[];
 }
 
 /**
@@ -70,15 +72,15 @@ export interface AgentPolicyDocument {
  * @param value the raw request body
  * @returns normalized create fields
  */
-export function normalizeCreateAgentPolicyInput(value: unknown): {
+export function normalizeCreatePolicyInput(value: unknown): {
   name: string;
   description?: string;
-  document: AgentPolicyDocument;
+  document: PolicyDocument;
 } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
-  const document = normalizeAgentPolicyDocument(value.document);
+  const document = normalizePolicyDocument(value.document);
 
   return {
     name: name,
@@ -92,17 +94,17 @@ export function normalizeCreateAgentPolicyInput(value: unknown): {
  * @param value the raw request body
  * @returns normalized patch fields
  */
-export function normalizeUpdateAgentPolicyInput(value: unknown): {
+export function normalizeUpdatePolicyInput(value: unknown): {
   name?: string;
   description?: string | null;
-  document?: AgentPolicyDocument;
+  document?: PolicyDocument;
   status?: "active" | "deleted";
 } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const patch: {
     name?: string;
     description?: string | null;
-    document?: AgentPolicyDocument;
+    document?: PolicyDocument;
     status?: "active" | "deleted";
   } = {};
   if (value.name !== undefined) patch.name = requireString(value.name, "name");
@@ -112,7 +114,7 @@ export function normalizeUpdateAgentPolicyInput(value: unknown): {
         ? null
         : optionalString(value.description, "description");
   if (value.document !== undefined)
-    patch.document = normalizeAgentPolicyDocument(value.document);
+    patch.document = normalizePolicyDocument(value.document);
   if (value.status !== undefined) {
     if (value.status !== "active" && value.status !== "deleted") {
       throw new Error("status must be one of: active, deleted");
@@ -128,9 +130,7 @@ export function normalizeUpdateAgentPolicyInput(value: unknown): {
  * @param value candidate policy document
  * @returns normalized policy document
  */
-export function normalizeAgentPolicyDocument(
-  value: unknown,
-): AgentPolicyDocument {
+export function normalizePolicyDocument(value: unknown): PolicyDocument {
   if (!isPlainObject(value))
     throw new Error("policy document must be an object");
   const document = value;
@@ -138,11 +138,18 @@ export function normalizeAgentPolicyDocument(
     throw new Error("policy document version must be 1");
   if (!Array.isArray(document.rules))
     throw new Error("policy document rules must be an array");
+  assertOptionalEnum(document.mode, "policy document mode", [
+    "enforce",
+    "audit",
+  ]);
 
   return {
     version: 1,
+    ...(document.mode !== undefined
+      ? { mode: document.mode as "enforce" | "audit" }
+      : {}),
     rules: document.rules.map((rule, index) =>
-      normalizeAgentPolicyRule(rule, index),
+      normalizePolicyRule(rule, index),
     ),
   };
 }
@@ -167,10 +174,7 @@ export function toPublicAgentPolicyResponse(
   };
 }
 
-function normalizeAgentPolicyRule(
-  value: unknown,
-  index: number,
-): AgentPolicyRule {
+function normalizePolicyRule(value: unknown, index: number): PolicyRule {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}] must be an object`);
   const rule = value;
@@ -189,14 +193,14 @@ function normalizeAgentPolicyRule(
     assertOptionalEnum(
       action,
       `policy rules[${index}].actions[]`,
-      AGENT_POLICY_ACTIONS,
+      POLICY_ACTIONS,
     );
   }
 
   return {
     id: id,
-    effect: rule.effect as AgentPolicyEffect,
-    actions: rule.actions as AgentPolicyAction[],
+    effect: rule.effect as PolicyEffect,
+    actions: rule.actions as PolicyAction[],
     ...(rule.resources !== undefined
       ? { resources: normalizeResourceSelector(rule.resources, index) }
       : {}),
@@ -219,7 +223,7 @@ const RESOURCE_SELECTOR_KEYS = [
 function normalizeResourceSelector(
   value: unknown,
   index: number,
-): AgentPolicyResourceSelector {
+): PolicyResourceSelector {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}].resources must be an object`);
   const selector = value;
@@ -241,13 +245,10 @@ function normalizeResourceSelector(
     );
   }
 
-  return selector as AgentPolicyResourceSelector;
+  return selector as PolicyResourceSelector;
 }
 
-function normalizeConditions(
-  value: unknown,
-  index: number,
-): AgentPolicyCondition[] {
+function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   if (!Array.isArray(value))
     throw new Error(`policy rules[${index}].conditions must be an array`);
 
@@ -290,15 +291,13 @@ function normalizeConditions(
 
     return {
       attribute: attribute,
-      operator: record.operator as AgentPolicyConditionOperator,
+      operator: record.operator as PolicyConditionOperator,
       value: record.value,
     };
   });
 }
 
-function isConditionValue(
-  value: unknown,
-): value is AgentPolicyCondition["value"] {
+function isConditionValue(value: unknown): value is PolicyCondition["value"] {
   if (
     typeof value === "string" ||
     typeof value === "number" ||

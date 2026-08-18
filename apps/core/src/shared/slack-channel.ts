@@ -442,10 +442,10 @@ export function createSlackChannel(
     // Slack is the one provider where the reply has two places it can land, so
     // it is the one that can honour the record. A slash command still answers
     // through its response URL, which carries no thread either way.
-    applyThreadPolicy: function(source, policy) {
+    applyReplyIn: function(source, replyIn) {
       const slackSource = toSlackSource(source);
       const threadTs =
-        policy === "always-thread"
+        replyIn === "thread"
           ? (slackSource.inThreadTs ?? slackSource.messageTs)
           : slackSource.inThreadTs;
 

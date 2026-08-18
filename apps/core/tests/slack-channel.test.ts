@@ -736,12 +736,12 @@ describe("slack channel adapter", () => {
     const parsed = await parseChannelMention(adapter);
     expect(parsed.source.threadTs).toBe("1713916800.000030");
 
-    expect(adapter.applyThreadPolicy?.(parsed.source, "inline")).toMatchObject({
+    expect(adapter.applyReplyIn?.(parsed.source, "source")).toMatchObject({
       threadTs: undefined,
     });
-    expect(
-      adapter.applyThreadPolicy?.(parsed.source, "always-thread"),
-    ).toMatchObject({ threadTs: "1713916800.000030" });
+    expect(adapter.applyReplyIn?.(parsed.source, "thread")).toMatchObject({
+      threadTs: "1713916800.000030",
+    });
   });
 
   it("keeps a reply in the thread it was asked in under either policy", async () => {
@@ -749,12 +749,12 @@ describe("slack channel adapter", () => {
 
     const parsed = await parseChannelMention(adapter, "1713916800.000020");
 
-    expect(adapter.applyThreadPolicy?.(parsed.source, "inline")).toMatchObject({
+    expect(adapter.applyReplyIn?.(parsed.source, "source")).toMatchObject({
       threadTs: "1713916800.000020",
     });
-    expect(
-      adapter.applyThreadPolicy?.(parsed.source, "always-thread"),
-    ).toMatchObject({ threadTs: "1713916800.000020" });
+    expect(adapter.applyReplyIn?.(parsed.source, "thread")).toMatchObject({
+      threadTs: "1713916800.000020",
+    });
   });
 
   it("threads a direct message only when the policy asks for it", async () => {
@@ -780,10 +780,10 @@ describe("slack channel adapter", () => {
     }
 
     expect(
-      adapter.applyThreadPolicy?.(parsed.message.source, "inline"),
+      adapter.applyReplyIn?.(parsed.message.source, "source"),
     ).toMatchObject({ threadTs: undefined });
     expect(
-      adapter.applyThreadPolicy?.(parsed.message.source, "always-thread"),
+      adapter.applyReplyIn?.(parsed.message.source, "thread"),
     ).toMatchObject({ threadTs: "1713916800.000040" });
   });
 });

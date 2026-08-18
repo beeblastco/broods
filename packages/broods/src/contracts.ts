@@ -28,10 +28,8 @@ import type {
 } from "../../../apps/core/src/shared/domain/cron.ts";
 import type { SandboxConfig } from "../../../apps/core/src/shared/domain/sandbox-config.ts";
 import type { WorkspaceConfig } from "../../../apps/core/src/shared/domain/workspace-config.ts";
-import type {
-  AgentPolicyConfig,
-  AgentPolicyDocument,
-} from "../../../apps/core/src/shared/domain/agent-policy.ts";
+import type { PolicyDocument } from "../../../apps/core/src/shared/domain/policy.ts";
+import type { ChannelReplyIn } from "../../../apps/core/src/shared/domain/channel-record.ts";
 
 // Per-channel inbound `source` shapes, inherited from the channel adapters so
 // the SDK hook typings cannot drift from what core actually emits.
@@ -65,8 +63,8 @@ export type {
   AgentZaloChannelConfig,
   AgentProviderSettings,
   AgentWorkspaceRef,
-  AgentPolicyConfig,
-  AgentPolicyDocument,
+  ChannelReplyIn,
+  PolicyDocument,
   CreateCronInput,
   CronLastStatus,
   CronStatus,

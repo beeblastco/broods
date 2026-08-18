@@ -15,23 +15,21 @@ import type {
   AgentConfig,
   AgentWorkspaceRef,
 } from "./agent-config.ts";
-import type { AgentPolicyMode } from "./agent-policy.ts";
-
-export const CHANNEL_THREAD_POLICIES = ["always-thread", "inline"] as const;
+/** Where a reply lands: its own thread, or wherever the message came from. */
+export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
 
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
   "agentBindings",
   "workspaces",
-  "policyIds",
-  "policyMode",
+  "policies",
   "denyTools",
-  "threadPolicy",
+  "replyIn",
   "workspaceScope",
   "sandboxImages",
   "tagRoles",
 ] as const;
-export type ChannelThreadPolicy = (typeof CHANNEL_THREAD_POLICIES)[number];
+export type ChannelReplyIn = (typeof CHANNEL_REPLY_TARGETS)[number];
 
 export interface ChannelAgentBinding {
   agentId: string;
@@ -51,15 +49,16 @@ export interface ChannelRecordConfig {
   agentBindings: ChannelAgentBinding[];
   /** Narrowing only: entries the agent does not already attach are ignored. */
   workspaces?: AgentWorkspaceRef[];
-  policyIds?: string[];
-  /**
-   * Enforcement stage for this channel. Set `audit` to watch a rule on a live
-   * channel before it starts refusing anyone. Falls back to the agent's mode.
-   */
-  policyMode?: AgentPolicyMode;
+  /** Added to whatever the agent already carries. Each policy holds its own mode. */
+  policies?: string[];
   /** Tools to withhold here. Narrowing only — a channel cannot add a tool. */
   denyTools?: string[];
-  threadPolicy?: ChannelThreadPolicy;
+  /**
+   * Where the reply lands. `source` answers wherever the message came from, and
+   * threads only when the message already did. Slack only: no other provider
+   * gives the runtime a second place to reply.
+   */
+  replyIn?: ChannelReplyIn;
   workspaceScope?: AgentChannelWorkspaceScope;
   /** Images the agent may stand a sandbox up from for a thread in this channel. */
   sandboxImages?: string[];
@@ -149,13 +148,10 @@ export function applyChannelRecord(
     config.workspaces,
     channelConfig.workspaces,
   );
-  const policyIds = [
-    ...new Set([
-      ...(config.policy?.policyIds ?? []),
-      ...(channelConfig.policyIds ?? []),
-    ]),
+  // A record adds policies, it never drops the agent's own.
+  const policies = [
+    ...new Set([...(config.policies ?? []), ...(channelConfig.policies ?? [])]),
   ];
-  const policyMode = channelConfig.policyMode ?? config.policy?.mode;
   const denyTools = channelConfig.denyTools?.length
     ? [...new Set([...(config.denyTools ?? []), ...channelConfig.denyTools])]
     : undefined;
@@ -174,15 +170,7 @@ export function applyChannelRecord(
         }
       : {}),
     ...(workspaces ? { workspaces: workspaces } : {}),
-    ...(policyIds.length > 0
-      ? {
-          policy: {
-            ...config.policy,
-            policyIds: policyIds,
-            ...(policyMode ? { mode: policyMode } : {}),
-          },
-        }
-      : {}),
+    ...(policies.length > 0 ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
     // The scope entry is written even when the bound agent carries no config for
     // this channel — with an account-scoped webhook the credentials live on the
@@ -222,14 +210,13 @@ export function normalizeChannelRecordConfig(
   );
   const agentBindings = normalizeAgentBindings(config.agentBindings);
   const workspaces = normalizeChannelWorkspaces(config.workspaces);
-  const policyIds = optionalStringArray(config.policyIds, "config.policyIds");
-  const policyMode = normalizePolicyMode(config.policyMode);
+  const policies = optionalStringArray(config.policies, "config.policies");
   const denyTools = optionalStringArray(config.denyTools, "config.denyTools");
   const sandboxImages = optionalStringArray(
     config.sandboxImages,
     "config.sandboxImages",
   );
-  const threadPolicy = normalizeThreadPolicy(config.threadPolicy);
+  const replyIn = normalizeReplyIn(config.replyIn);
   const workspaceScope = normalizeChannelWorkspaceScope(config.workspaceScope);
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
@@ -237,10 +224,9 @@ export function normalizeChannelRecordConfig(
     ...(instructions ? { instructions: instructions } : {}),
     agentBindings: agentBindings,
     ...(workspaces ? { workspaces: workspaces } : {}),
-    ...(policyIds ? { policyIds: policyIds } : {}),
-    ...(policyMode ? { policyMode: policyMode } : {}),
+    ...(policies ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
-    ...(threadPolicy ? { threadPolicy: threadPolicy } : {}),
+    ...(replyIn ? { replyIn: replyIn } : {}),
     ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
     ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
     ...(tagRoles ? { tagRoles: tagRoles } : {}),
@@ -428,15 +414,6 @@ function normalizeChannelWorkspaceScope(
   };
 }
 
-function normalizePolicyMode(value: unknown): AgentPolicyMode | undefined {
-  if (value === undefined) return undefined;
-  if (value !== "enforce" && value !== "audit") {
-    throw new Error("config.policyMode must be one of: enforce, audit");
-  }
-
-  return value;
-}
-
 function normalizeTagRoles(value: unknown): ChannelTagRole[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
@@ -459,17 +436,15 @@ function normalizeTagRoles(value: unknown): ChannelTagRole[] | undefined {
   });
 }
 
-function normalizeThreadPolicy(
-  value: unknown,
-): ChannelThreadPolicy | undefined {
+function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
   if (value === undefined) return undefined;
-  if (!CHANNEL_THREAD_POLICIES.includes(value as ChannelThreadPolicy)) {
+  if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
     throw new Error(
-      `config.threadPolicy must be one of: ${CHANNEL_THREAD_POLICIES.join(", ")}`,
+      `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
     );
   }
 
-  return value as ChannelThreadPolicy;
+  return value as ChannelReplyIn;
 }
 
 function optionalString(value: unknown, name: string): string | undefined {

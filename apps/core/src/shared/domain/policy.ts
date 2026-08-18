@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { assertOptionalStringArray, isPlainObject } from "../object.ts";
 
-export const AGENT_POLICY_ACTIONS = [
+export const POLICY_ACTIONS = [
   // Gates the turn itself, before any tool runs: "may this person address the
   // agent here?". Everything below gates one action inside an admitted turn.
   "agent.invoke",
@@ -18,19 +18,19 @@ export const AGENT_POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
-export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
-export type AgentPolicyEffect = "allow" | "deny";
-export type AgentPolicyMode = "enforce" | "audit";
-export type AgentPolicyConditionOperator =
+export type PolicyAction = (typeof POLICY_ACTIONS)[number];
+export type PolicyEffect = "allow" | "deny";
+export type PolicyMode = "enforce" | "audit";
+export type PolicyConditionOperator =
   "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
 
-export interface AgentPolicyCondition {
+export interface PolicyCondition {
   attribute: string;
-  operator: AgentPolicyConditionOperator;
+  operator: PolicyConditionOperator;
   value: string | number | boolean | string[] | number[] | boolean[];
 }
 
-export interface AgentPolicyResourceSelector {
+export interface PolicyResourceSelector {
   toolNames?: string[];
   toolIds?: string[];
   workspaceIds?: string[];
@@ -40,37 +40,39 @@ export interface AgentPolicyResourceSelector {
   skillPaths?: string[];
 }
 
-export interface AgentPolicyRule {
+export interface PolicyRule {
   id: string;
-  effect: AgentPolicyEffect;
-  actions: AgentPolicyAction[];
-  resources?: AgentPolicyResourceSelector;
-  conditions?: AgentPolicyCondition[];
+  effect: PolicyEffect;
+  actions: PolicyAction[];
+  resources?: PolicyResourceSelector;
+  conditions?: PolicyCondition[];
 }
 
-export interface AgentPolicyDocument {
+export interface PolicyDocument {
   version: 1;
-  rules: AgentPolicyRule[];
+  /**
+   * How hard this policy bites. `audit` records what it would have done and
+   * blocks nothing; `enforce` lets its deny rules refuse, and switches the
+   * places it is attached to over to default-deny. Omitted reads as `audit`,
+   * so a freshly written policy can never break a running agent.
+   */
+  mode?: PolicyMode;
+  rules: PolicyRule[];
 }
 
-export interface AgentPolicyRecord {
+export interface PolicyRecord {
   accountId: string;
   policyId: string;
   name: string;
   description?: string;
-  document: AgentPolicyDocument;
+  document: PolicyDocument;
   status: "active" | "deleted";
   createdAt: string;
   updatedAt: string;
 }
 
-export interface AgentPolicyConfig {
-  policyIds?: string[];
-  mode?: AgentPolicyMode;
-}
-
 export interface PolicyDecisionInput {
-  action: AgentPolicyAction;
+  action: PolicyAction;
   accountId?: string;
   project?: string;
   stage?: string;
@@ -106,64 +108,52 @@ export interface PolicyDecisionInput {
 
 export interface PolicyDecision {
   allowed: boolean;
-  mode: AgentPolicyMode;
+  mode: PolicyMode;
   reason: string;
   matchedRuleIds: string[];
+  /** Deny rules that fired but only recorded, because their policy is auditing. */
+  auditedRuleIds: string[];
 }
 
-export interface CreateAgentPolicyInput {
+export interface CreatePolicyInput {
   name: string;
   description?: string;
   document: unknown;
 }
 
-export interface UpdateAgentPolicyInput {
+export interface UpdatePolicyInput {
   name?: string;
   description?: string | null;
   document?: unknown;
-  status?: AgentPolicyRecord["status"];
+  status?: PolicyRecord["status"];
 }
 
-export function createAgentPolicyId(): string {
+export function createPolicyId(): string {
   return `policy_${randomBytes(12).toString("base64url")}`;
 }
 
-export function normalizeAgentPolicyConfig(
+/**
+ * Validates the policy ids attached to an agent or a channel. Attachment is
+ * just the list: how hard each one bites is carried by the policy itself.
+ */
+export function normalizePolicyIds(
   value: unknown,
-): AgentPolicyConfig | undefined {
+  field: string,
+): string[] | undefined {
   if (value == null) return undefined;
-  if (!isPlainObject(value)) throw new Error("config.policy must be an object");
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (key !== "enabled" && key !== "policyIds" && key !== "mode") {
-      throw new Error(`config.policy.${key} is not supported`);
-    }
-  }
-  // `enabled` is accepted for backward compatibility with early policy configs,
-  // but activation now follows assigned policyIds. An empty policy object is a no-op.
-  assertOptionalBoolean(config.enabled, "config.policy.enabled");
-  assertOptionalStringArray(config.policyIds, "config.policy.policyIds");
-  assertOptionalEnum(config.mode, "config.policy.mode", ["enforce", "audit"]);
+  assertOptionalStringArray(value, field);
+  const ids = [...new Set(value as string[])];
 
-  const normalized = {
-    ...(Array.isArray(config.policyIds) && config.policyIds.length > 0
-      ? { policyIds: config.policyIds as string[] }
-      : {}),
-    ...(config.mode !== undefined
-      ? { mode: config.mode as AgentPolicyMode }
-      : {}),
-  };
-
-  return normalized.policyIds ? normalized : undefined;
+  return ids.length > 0 ? ids : undefined;
 }
 
-export function normalizeCreateAgentPolicyInput(
-  value: CreateAgentPolicyInput,
-): CreateAgentPolicyInput {
+export function normalizeCreatePolicyInput(
+  value: CreatePolicyInput,
+): CreatePolicyInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const name = requireString(value.name, "name");
   const description = optionalString(value.description, "description");
-  const document = normalizeAgentPolicyDocument(value.document);
+  const document = normalizePolicyDocument(value.document);
 
   return {
     name: name,
@@ -172,11 +162,11 @@ export function normalizeCreateAgentPolicyInput(
   };
 }
 
-export function normalizeUpdateAgentPolicyInput(
-  value: UpdateAgentPolicyInput,
-): UpdateAgentPolicyInput {
+export function normalizeUpdatePolicyInput(
+  value: UpdatePolicyInput,
+): UpdatePolicyInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  const patch: UpdateAgentPolicyInput = {};
+  const patch: UpdatePolicyInput = {};
   if (value.name !== undefined) patch.name = requireString(value.name, "name");
   if (value.description !== undefined)
     patch.description =
@@ -184,7 +174,7 @@ export function normalizeUpdateAgentPolicyInput(
         ? null
         : optionalString(value.description, "description");
   if (value.document !== undefined)
-    patch.document = normalizeAgentPolicyDocument(value.document);
+    patch.document = normalizePolicyDocument(value.document);
   if (value.status !== undefined) {
     if (value.status !== "active" && value.status !== "deleted") {
       throw new Error("status must be one of: active, deleted");
@@ -195,9 +185,7 @@ export function normalizeUpdateAgentPolicyInput(
   return patch;
 }
 
-export function normalizeAgentPolicyDocument(
-  value: unknown,
-): AgentPolicyDocument {
+export function normalizePolicyDocument(value: unknown): PolicyDocument {
   if (!isPlainObject(value))
     throw new Error("policy document must be an object");
   const document = value as Record<string, unknown>;
@@ -206,18 +194,23 @@ export function normalizeAgentPolicyDocument(
   if (!Array.isArray(document.rules))
     throw new Error("policy document rules must be an array");
 
+  assertOptionalEnum(document.mode, "policy document mode", [
+    "enforce",
+    "audit",
+  ]);
+
   return {
     version: 1,
+    ...(document.mode !== undefined
+      ? { mode: document.mode as PolicyMode }
+      : {}),
     rules: document.rules.map((rule, index) =>
-      normalizeAgentPolicyRule(rule, index),
+      normalizePolicyRule(rule, index),
     ),
   };
 }
 
-function normalizeAgentPolicyRule(
-  value: unknown,
-  index: number,
-): AgentPolicyRule {
+function normalizePolicyRule(value: unknown, index: number): PolicyRule {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}] must be an object`);
   const rule = value as Record<string, unknown>;
@@ -236,14 +229,14 @@ function normalizeAgentPolicyRule(
     assertOptionalEnum(
       action,
       `policy rules[${index}].actions[]`,
-      AGENT_POLICY_ACTIONS,
+      POLICY_ACTIONS,
     );
   }
 
   return {
     id: id,
-    effect: rule.effect as AgentPolicyEffect,
-    actions: rule.actions as AgentPolicyAction[],
+    effect: rule.effect as PolicyEffect,
+    actions: rule.actions as PolicyAction[],
     ...(rule.resources !== undefined
       ? { resources: normalizeResourceSelector(rule.resources, index) }
       : {}),
@@ -266,7 +259,7 @@ const RESOURCE_SELECTOR_KEYS = [
 function normalizeResourceSelector(
   value: unknown,
   index: number,
-): AgentPolicyResourceSelector {
+): PolicyResourceSelector {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}].resources must be an object`);
   const selector = value as Record<string, unknown>;
@@ -288,13 +281,10 @@ function normalizeResourceSelector(
     );
   }
 
-  return selector as AgentPolicyResourceSelector;
+  return selector as PolicyResourceSelector;
 }
 
-function normalizeConditions(
-  value: unknown,
-  index: number,
-): AgentPolicyCondition[] {
+function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   if (!Array.isArray(value))
     throw new Error(`policy rules[${index}].conditions must be an array`);
 
@@ -337,15 +327,13 @@ function normalizeConditions(
 
     return {
       attribute: attribute,
-      operator: record.operator as AgentPolicyConditionOperator,
+      operator: record.operator as PolicyConditionOperator,
       value: record.value,
     };
   });
 }
 
-function isConditionValue(
-  value: unknown,
-): value is AgentPolicyCondition["value"] {
+function isConditionValue(value: unknown): value is PolicyCondition["value"] {
   if (
     typeof value === "string" ||
     typeof value === "number" ||
@@ -365,11 +353,6 @@ function isConditionValue(
     return false;
 
   return value.every((entry) => typeof entry === elementType);
-}
-
-function assertOptionalBoolean(value: unknown, name: string): void {
-  if (value !== undefined && typeof value !== "boolean")
-    throw new Error(`${name} must be a boolean`);
 }
 
 function assertOptionalEnum<T extends readonly string[]>(

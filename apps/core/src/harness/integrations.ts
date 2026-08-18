@@ -1017,38 +1017,52 @@ async function refuseChannelInvoke(
     channel: channelName,
     ...channelPolicyIdentity(identity),
   });
-  if (!decision || decision.allowed) return null;
+  if (!decision) return null;
 
-  logWarn(
-    `Agent policy ${decision.mode === "enforce" ? "denied" : "would deny"} agent.invoke (${decision.mode})`,
-    {
-      accountId: account.accountId,
-      agentId: agentId,
-      channel: channelName,
-      channelId: identity?.channelId,
-      userId: identity?.userId,
-      reason: decision.reason,
-      matchedRuleIds: decision.matchedRuleIds,
-    },
-  );
+  const context = {
+    accountId: account.accountId,
+    agentId: agentId,
+    channel: channelName,
+    channelId: identity?.channelId,
+    userId: identity?.userId,
+    reason: decision.reason,
+  };
+  // The verdict already accounts for each policy's mode, so `allowed` is final.
+  // A rule that fired from an auditing policy is reported and then let through,
+  // which is the whole signal a rollout is watched on.
+  if (decision.allowed) {
+    if (decision.auditedRuleIds.length > 0) {
+      logWarn("Agent policy would deny agent.invoke (audit)", {
+        ...context,
+        auditedRuleIds: decision.auditedRuleIds,
+      });
+    }
 
-  return decision.mode === "enforce" ? decision.reason : null;
+    return null;
+  }
+
+  logWarn("Agent policy denied agent.invoke (enforce)", {
+    ...context,
+    matchedRuleIds: decision.matchedRuleIds,
+  });
+
+  return decision.reason;
 }
 
 /**
- * Reply routing for this turn. A record's `threadPolicy` decides between a
- * thread and the channel, so it applies only where the provider gives the
- * runtime that choice — everywhere else the source is already the one place.
+ * Reply routing for this turn. A record's `replyIn` decides between a thread
+ * and wherever the message came from, so it applies only where the provider
+ * gives the runtime that choice — everywhere else there is one place to reply.
  */
 function channelReplySource(
   adapter: ChannelAdapter,
   message: InboundMessage,
   record: ChannelRecord | undefined,
 ): Record<string, unknown> {
-  const policy = record?.config.threadPolicy;
-  if (!policy || !adapter.applyThreadPolicy) return message.source;
+  const replyIn = record?.config.replyIn;
+  if (!replyIn || !adapter.applyReplyIn) return message.source;
 
-  return adapter.applyThreadPolicy(message.source, policy);
+  return adapter.applyReplyIn(message.source, replyIn);
 }
 
 /** Scope the run to this channel's own config, then layer the record over it. */
@@ -1633,7 +1647,10 @@ export function rewriteLatestUserIngressText(
     const event = events[i]!;
     if (event.role !== "user") continue;
     const next = [...events];
-    next[i] = { ...event, content: rewriteUserContentText(event.content, text) };
+    next[i] = {
+      ...event,
+      content: rewriteUserContentText(event.content, text),
+    };
 
     return next;
   }
@@ -1648,7 +1665,6 @@ function rewriteUserContentText(
   text: string,
 ): UserContent {
   if (typeof content === "string") {
-
     return text;
   }
   const attachments = content.filter((part) => part.type !== "text");
@@ -1731,7 +1747,6 @@ export function channelActionsFromConfig(
     (candidate): boolean => candidate.name === channelName,
   );
   if (!adapter) {
-
     return null;
   }
 

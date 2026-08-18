@@ -364,7 +364,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "subagent",
   "skills",
   "scheduler",
-  "policy",
+  "policies",
   "publicAccess",
 ]);
 
@@ -372,7 +372,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
 const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   workspace: "workspaces",
   skill: "skills",
-  policies: "policy",
+  policy: "policies",
   tool: "tools",
   channel: "connections",
   channels: "connections",
@@ -558,7 +558,9 @@ function assertPartitionShape(
     return;
   }
   if (partition.by !== "conversation") {
-    throw new Error(`${name} partition.by must be one of: shared, conversation`);
+    throw new Error(
+      `${name} partition.by must be one of: shared, conversation`,
+    );
   }
   if (typeof partition.alias !== "string" || partition.alias.length === 0) {
     throw new Error(
@@ -578,7 +580,6 @@ function assertPartitionShape(
     throw new Error(`${name} partition.alias must not be "." or ".."`);
   }
 }
-
 
 function resolveLocalWorkspace(
   entry: unknown,
@@ -1292,10 +1293,10 @@ function normalizeAgentConfig(
       normalizeWorkspaceRef(workspace, resource.name),
     );
   }
-  if (config.policy !== undefined) {
-    const policy = normalizeAgentPolicyConfig(config.policy, resource.name);
-    if (policy) config.policy = policy;
-    else delete config.policy;
+  if (config.policies !== undefined) {
+    const policies = normalizePolicyRefs(config.policies, resource.name);
+    if (policies) config.policies = policies;
+    else delete config.policies;
   }
 
   return {
@@ -1428,67 +1429,27 @@ function transpileInlineHookBundle(
   }
 }
 
-function normalizeAgentPolicyConfig(
-  config: unknown,
+/**
+ * Resolves the policies attached to an agent down to the names the manifest
+ * stores. Attachment is only the list: each policy carries its own mode.
+ */
+function normalizePolicyRefs(
+  refs: unknown,
   agentName: string,
-): Record<string, unknown> | undefined {
-  if (!config || typeof config !== "object" || Array.isArray(config)) {
-    throw new Error(`Agent "${agentName}" config.policy must be an object`);
+): string[] | undefined {
+  if (!Array.isArray(refs)) {
+    throw new Error(`Agent "${agentName}" config.policies must be an array`);
   }
-  const input = config as Record<string, unknown>;
-  for (const key of Object.keys(input)) {
-    if (
-      key !== "enabled" &&
-      key !== "policyIds" &&
-      key !== "policies" &&
-      key !== "mode"
-    ) {
-      throw new Error(
-        `Agent "${agentName}" config.policy.${key} is not supported`,
-      );
-    }
-  }
-  const policyIds = input.policyIds;
-  const policies = input.policies;
-  if (policyIds !== undefined && policies !== undefined) {
+  const names = refs.map((entry) => {
+    if (isResource(entry) && entry.kind === "policy")
+      return (entry as PolicyResource).name;
+    if (typeof entry === "string") return entry;
     throw new Error(
-      `Agent "${agentName}" config.policy cannot set both policyIds and policies`,
+      `Agent "${agentName}" config.policies must contain definePolicy(...) resources or strings`,
     );
-  }
-  const refs = policies ?? policyIds;
-  if (refs !== undefined && !Array.isArray(refs)) {
-    throw new Error(
-      `Agent "${agentName}" config.policy.policies must be an array`,
-    );
-  }
+  });
 
-  const normalized: Record<string, unknown> = {
-    ...input,
-    ...(Array.isArray(refs)
-      ? {
-          policyIds: refs.map((entry) => {
-            if (isResource(entry) && entry.kind === "policy")
-              return (entry as PolicyResource).name;
-            if (typeof entry === "string") return entry;
-            throw new Error(
-              `Agent "${agentName}" config.policy.policies must contain definePolicy(...) resources or strings`,
-            );
-          }),
-        }
-      : {}),
-  };
-  delete normalized.policies;
-  delete normalized.enabled;
-  if (
-    Array.isArray(normalized.policyIds) &&
-    normalized.policyIds.length === 0
-  ) {
-    delete normalized.policyIds;
-  }
-
-  return Array.isArray(normalized.policyIds) && normalized.policyIds.length > 0
-    ? normalized
-    : undefined;
+  return names.length > 0 ? names : undefined;
 }
 
 async function normalizeSkillConfig(

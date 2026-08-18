@@ -39,6 +39,22 @@ export function readAgentBranch<T extends Record<string, unknown>>(
 }
 
 /**
+ * Policy ids attached to an agent. Attachment is a flat list: whether a policy
+ * blocks or only records rides on the policy document, not on the agent.
+ */
+export function readAgentPolicies(
+  agentConfig: FlatAgentConfig | null | undefined,
+): string[] {
+  if (!agentConfig) return [];
+  const nested = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
+  const policies = nested.policies;
+
+  return Array.isArray(policies)
+    ? policies.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+/**
  * Vercel AI SDK `providerOptions` keys the budget/effort knobs own per provider.
  * Only these are cleared on rewrite so unrelated options the UI doesn't manage
  * (e.g. OpenAI `reasoningSummary`) survive. MiniMax's default provider is

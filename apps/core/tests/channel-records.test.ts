@@ -99,7 +99,7 @@ const SALES_AGENT: AgentRecord = {
 const SLACK_MESSAGE_TS = "1713916800.000030";
 
 // Slack is the one provider whose reply has two places it can land, so it is
-// where a record's threadPolicy is observable end to end.
+// where a record's replyIn is observable end to end.
 const SLACK_AGENT: AgentRecord = {
   ...SUPPORT_AGENT,
   agentId: "agent_slack",
@@ -312,7 +312,7 @@ describe("channel record resolution", () => {
             agentBindings: [{ agentId: "agent_support" }],
             instructions: "Answer as the sales desk.",
             workspaces: [{ name: "crm", workspaceId: "ws_crm" }],
-            policyIds: ["policy_sales"],
+            policies: ["policy_sales"],
           },
         }),
       },
@@ -325,7 +325,7 @@ describe("channel record resolution", () => {
       { role: "system", content: "Answer as the sales desk." },
     ]);
     expect(config.workspaces).toBeUndefined();
-    expect(config.policy?.policyIds).toEqual(["policy_sales"]);
+    expect(config.policies).toEqual(["policy_sales"]);
   });
 
   it("attaches the roles the actor holds so policies can read them", async () => {
@@ -358,8 +358,7 @@ describe("channel record resolution", () => {
         "telegram:123": channelRecord({
           config: {
             agentBindings: [{ agentId: "agent_support" }],
-            policyIds: ["policy_ops_only"],
-            policyMode: "enforce",
+            policies: ["policy_ops_only"],
           },
         }),
       },
@@ -382,15 +381,13 @@ describe("channel record resolution", () => {
         "telegram:123": channelRecord({
           config: {
             agentBindings: [{ agentId: "agent_support" }],
-            policyIds: ["policy_ops_only"],
-            policyMode: "audit",
+            policies: ["policy_ops_only"],
           },
         }),
       },
       runs: runs,
       path: "/webhooks/acct_test/telegram",
-      policyDenies: true,
-      policyMode: "audit",
+      policyAudits: true,
     });
 
     expect(runs).toHaveLength(1);
@@ -400,7 +397,7 @@ describe("channel record resolution", () => {
   // the run gets, so a refusal is where the placement is observable end to end.
   it("posts the record's inline reply to the channel, not a thread", async () => {
     const posts: Array<Record<string, unknown>> = [];
-    await routeSlackMention({ threadPolicy: "inline", posts: posts });
+    await routeSlackMention({ replyIn: "source", posts: posts });
 
     expect(posts).toHaveLength(1);
     expect(posts[0]!.thread_ts).toBeUndefined();
@@ -408,14 +405,14 @@ describe("channel record resolution", () => {
 
   it("posts the record's always-thread reply into a new thread", async () => {
     const posts: Array<Record<string, unknown>> = [];
-    await routeSlackMention({ threadPolicy: "always-thread", posts: posts });
+    await routeSlackMention({ replyIn: "thread", posts: posts });
 
     expect(posts[0]!.thread_ts).toBe(SLACK_MESSAGE_TS);
   });
 
   it("carries the placement into the run, so a delayed reply lands there too", async () => {
     const runs: ChannelInboundEvent[] = [];
-    await routeSlackMention({ threadPolicy: "inline", runs: runs });
+    await routeSlackMention({ replyIn: "source", runs: runs });
 
     // handler.ts rebuilds a background job's sender from this stored source.
     expect(runs[0]!.source.threadTs).toBeUndefined();
@@ -433,7 +430,7 @@ describe("channel record layering", () => {
   const base: AgentConfig = {
     agent: { system: "You are the support agent." },
     workspaces: [{ name: "docs", workspaceId: "ws_docs" }],
-    policy: { policyIds: ["policy_base"] },
+    policy: { policies: ["policy_base"] },
     tools: { tavilySearch: { enabled: true } },
     channels: { slack: { botToken: "t", signingSecret: "s" } },
   };
@@ -464,13 +461,13 @@ describe("channel record layering", () => {
         platform: "slack",
         config: {
           agentBindings: [{ agentId: "a" }],
-          policyIds: ["policy_base", "policy_channel"],
+          policies: ["policy_base", "policy_channel"],
         },
       }),
       "slack",
     );
 
-    expect(merged.policy?.policyIds).toEqual(["policy_base", "policy_channel"]);
+    expect(merged.policies).toEqual(["policy_base", "policy_channel"]);
   });
 
   // A workspace is what materialises the sandbox file tools, so a record naming
@@ -713,13 +710,13 @@ describe("channel record validation", () => {
     ).toThrow("only supported when level is conversation");
   });
 
-  it("rejects an unknown thread policy", () => {
+  it("rejects an unknown reply target", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: [{ agentId: "a" }],
-        threadPolicy: "sometimes",
+        replyIn: "sometimes",
       }),
-    ).toThrow("config.threadPolicy must be one of: always-thread, inline");
+    ).toThrow("config.replyIn must be one of: thread, source");
   });
 });
 
@@ -728,7 +725,7 @@ describe("channel record validation", () => {
  * the router reply itself, which is the only outbound post these tests can see.
  */
 async function routeSlackMention(options: {
-  threadPolicy?: "always-thread" | "inline";
+  replyIn?: "thread" | "source";
   posts?: Array<Record<string, unknown>>;
   runs?: ChannelInboundEvent[];
 }) {
@@ -758,14 +755,10 @@ async function routeSlackMention(options: {
         externalId: "C1",
         config: {
           agentBindings: [{ agentId: "agent_slack" }],
-          ...(options.threadPolicy
-            ? { threadPolicy: options.threadPolicy }
-            : {}),
+          ...(options.replyIn ? { replyIn: options.replyIn } : {}),
           // The invoke gate only evaluates when a policy is assigned, and a
           // refusal is the only reply this router sends by itself.
-          ...(options.posts
-            ? { policyIds: ["policy_ops_only"], policyMode: "enforce" as const }
-            : {}),
+          ...(options.posts ? { policies: ["policy_ops_only"] } : {}),
         },
       }),
     },
@@ -788,7 +781,8 @@ async function route(options: {
   path: string;
   headers?: Record<string, string>;
   policyDenies?: boolean;
-  policyMode?: "enforce" | "audit";
+  /** A deny the rego downgraded, because the policy that owns the rule audits. */
+  policyAudits?: boolean;
   replies?: string[];
   agents?: AgentRecord[];
   /** Overrides the Telegram update these tests otherwise post. */
@@ -808,11 +802,14 @@ async function route(options: {
       Response.json({
         result: {
           allowed: !options.policyDenies,
-          mode: options.policyMode ?? "enforce",
+          mode: options.policyAudits ? "audit" : "enforce",
           reason: options.policyDenies
             ? "Denied by policy rule ops-only"
-            : "Allowed by policy rule default",
+            : options.policyAudits
+              ? "Audited by policy rule ops-only: would deny, policy is not enforcing"
+              : "Allowed by policy rule default",
           matchedRuleIds: options.policyDenies ? ["ops-only"] : [],
+          auditedRuleIds: options.policyAudits ? ["ops-only"] : [],
         },
       }),
   });

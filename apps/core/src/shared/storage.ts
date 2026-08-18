@@ -7,7 +7,7 @@ import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
-import type { AgentPolicyRecord } from "./domain/agent-policy.ts";
+import type { PolicyRecord } from "./domain/policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
 import type {
@@ -209,10 +209,7 @@ interface AccountHookStore {
 
 /** Account-scoped reusable runtime authorization policies. */
 interface AgentPolicyStore {
-  getById(
-    accountId: string,
-    policyId: string,
-  ): Promise<AgentPolicyRecord | null>;
+  getById(accountId: string, policyId: string): Promise<PolicyRecord | null>;
 }
 
 /**

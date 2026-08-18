@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { normalizePolicyDocument } from "../agentPolicies";
 import {
-  AGENT_POLICY_ACTIONS,
-  normalizeCreateAgentPolicyInput,
+  POLICY_ACTIONS,
+  normalizeCreatePolicyInput,
 } from "../model/policyRules";
 
 const policyWith = (operator: string, value: unknown) => ({
@@ -23,25 +23,25 @@ const policyWith = (operator: string, value: unknown) => ({
   },
 });
 
-// This file mirrors apps/core/src/shared/domain/agent-policy.ts. A scalar value
+// This file mirrors apps/core/src/shared/domain/policy.ts. A scalar value
 // satisfies no rego in/notIn branch, so the condition never fires and a deny
 // silently does nothing — both copies must refuse it at write time.
-describe("normalizeCreateAgentPolicyInput", () => {
+describe("normalizeCreatePolicyInput", () => {
   it("rejects a scalar value for in and notIn", () => {
     expect(() =>
-      normalizeCreateAgentPolicyInput(policyWith("notIn", "oncall")),
+      normalizeCreatePolicyInput(policyWith("notIn", "oncall")),
     ).toThrow("must be an array when operator is notIn");
     expect(() =>
-      normalizeCreateAgentPolicyInput(policyWith("in", "oncall")),
+      normalizeCreatePolicyInput(policyWith("in", "oncall")),
     ).toThrow("must be an array when operator is in");
   });
 
   it("accepts an array value, and a scalar on a scalar operator", () => {
     expect(() =>
-      normalizeCreateAgentPolicyInput(policyWith("notIn", ["oncall"])),
+      normalizeCreatePolicyInput(policyWith("notIn", ["oncall"])),
     ).not.toThrow();
     expect(() =>
-      normalizeCreateAgentPolicyInput(policyWith("equals", "oncall")),
+      normalizeCreatePolicyInput(policyWith("equals", "oncall")),
     ).not.toThrow();
   });
 });
@@ -51,7 +51,7 @@ describe("normalizeCreateAgentPolicyInput", () => {
 // one path and rejected by the other.
 describe("normalizePolicyDocument", () => {
   it("accepts every action the CRUD normalizer accepts", () => {
-    for (const action of AGENT_POLICY_ACTIONS) {
+    for (const action of POLICY_ACTIONS) {
       expect(() =>
         normalizePolicyDocument({
           version: 1,

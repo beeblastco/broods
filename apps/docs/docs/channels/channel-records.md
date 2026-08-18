@@ -57,17 +57,16 @@ so this costs no availability that is not already lost.
 A record **narrows and adds**. It never grants capability the agent lacks, so
 reading an agent still tells you its ceiling.
 
-| Field            | Effect                                                            |
-| ---------------- | ----------------------------------------------------------------- |
-| `instructions`   | Appended after the agent's own system prompt                      |
-| `workspaces`     | Selects from the agent's own; one it does not attach is ignored   |
-| `policyIds`      | Unioned with the agent's                                          |
-| `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
-| `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
-| `partition` | Overrides the channel's scope (`channel` or `conversation`)       |
-| `threadPolicy`   | Where the reply lands — `always-thread` or `inline` (Slack only)  |
-| `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
-| `tagRoles`       | Named groups of people, readable from policy as `userRoles`      |
+| Field           | Effect                                                           |
+| --------------- | ---------------------------------------------------------------- |
+| `instructions`  | Appended after the agent's own system prompt                     |
+| `workspaces`    | Selects from the agent's own; one it does not attach is ignored  |
+| `policies`      | Unioned with the agent's; each policy carries its own mode       |
+| `denyTools`     | Withholds tools here, after the set is built — covers `bash` too |
+| `partition`     | Overrides the channel's scope (`channel` or `conversation`)      |
+| `replyIn`       | Where the reply lands — `thread` or `source` (Slack only)        |
+| `sandboxImages` | Images the agent may stand a sandbox up from for a thread here   |
+| `tagRoles`      | Named groups of people, readable from policy as `userRoles`      |
 
 Provider, model and credentials stay on the agent and are never touched.
 
@@ -76,13 +75,13 @@ the sandbox file tools. So a record may only name a workspace the agent already
 attaches — it can mount that workspace under a channel-specific name, but a
 `workspaceId` the agent does not carry is dropped and logged.
 
-`threadPolicy` decides where the answer appears. `always-thread` opens a thread
+`replyIn` decides where the answer appears. `thread` opens a thread
 on the message that tagged the agent, so the whole exchange stays out of the
-channel; `inline` answers in the channel, and threads only when the message
-itself arrived in a thread. It applies to Slack alone — every other provider
+channel; `source` answers wherever the message came from, and threads only when
+the message itself arrived in a thread. It applies to Slack alone — every other provider
 delivers the reply to the one place the message came from, so there is no
-choice to express. Unset, a Slack reply threads in a channel and stays inline
-in a DM.
+choice to express. Unset, a Slack reply threads in a channel and answers at the
+source in a DM.
 
 `denyTools` is applied to the finished tool set rather than to `config.tools`,
 so it reaches every tool the agent ended up with: built-ins, [custom
@@ -118,7 +117,7 @@ export const productEng = defineSlackChannel({
   teamId: "T09BEEBLAST",
   agents: [nhi, { agent: scribe, reply: false }],
   instructions: "Escalate billing questions to #finance.",
-  threadPolicy: "always-thread",
+  replyIn: "thread",
 });
 ```
 
@@ -148,9 +147,8 @@ await client.createChannel({
     // `agent_nhi` must already attach ws_incidents; this mounts it as "incidents" here.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
     workspaceScope: { alias: "eng", level: "conversation" },
-    threadPolicy: "always-thread",
-    policyIds: ["policy_prod_data"],
-    policyMode: "audit",
+    replyIn: "thread",
+    policies: ["policy_prod_data"],
     tagRoles: [{ roleId: "oncall", userIds: ["U777", "U778"] }],
   },
 });
@@ -199,5 +197,5 @@ say "production data only in #ops, and only for the on-call group":
 }
 ```
 
-See the `AgentPolicyDocument` schema in the [API Reference](/api-reference) for
+See the `PolicyDocument` schema in the [API Reference](/api-reference) for
 the full policy contract and the attributes a condition may read.

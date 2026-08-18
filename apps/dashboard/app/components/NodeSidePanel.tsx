@@ -692,7 +692,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   );
 
   const handleUpdatePolicyConfig = useCallback(
-    async (config: Record<string, unknown> | null) => {
+    async (policies: string[] | null) => {
       if (!agentConfigId || !agentConfig) return;
 
       const currentExtra =
@@ -701,7 +701,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
         configId: agentConfigId,
         extraConfig: {
           ...currentExtra,
-          policy: config ?? undefined,
+          policies: policies ?? undefined,
         },
       });
     },

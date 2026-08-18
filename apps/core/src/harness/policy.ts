@@ -18,10 +18,11 @@ import type {
 import type { ChannelIdentity } from "../shared/channels.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import type {
-  AgentPolicyMode,
   PolicyDecision,
   PolicyDecisionInput,
-} from "../shared/domain/agent-policy.ts";
+  PolicyDocument,
+  PolicyMode,
+} from "../shared/domain/policy.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
 import { optionalEnv } from "../shared/env.ts";
 import { logDebug, logInfo, logWarn } from "../shared/log.ts";
@@ -42,7 +43,7 @@ type RuntimeToolApproval = Extract<
 >;
 
 export function isPolicyEnabled(agentConfig: AgentConfig): boolean {
-  return (agentConfig.policy?.policyIds?.length ?? 0) > 0;
+  return (agentConfig.policies?.length ?? 0) > 0;
 }
 
 // Lifts the channel's place and person onto the policy input. The rego resolves
@@ -74,11 +75,11 @@ export async function createPolicyToolApproval(
   } = {},
 ): Promise<RuntimeToolApproval | undefined> {
   if (!isPolicyEnabled(agentConfig) || !baseInput.accountId) return undefined;
-  const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
   const documents = await loadPolicyDocuments(
     baseInput.accountId,
-    agentConfig.policy?.policyIds ?? [],
+    agentConfig.policies ?? [],
   );
+  const mode: PolicyMode = enforcingMode(documents);
 
   const client = policyClient();
   const approval = shadow(
@@ -93,11 +94,13 @@ export async function createPolicyToolApproval(
           workspaces,
           options,
         ),
-        mode: mode,
         policies: documents,
       }),
     }),
     {
+      // The rego already applied each policy's own mode, so a deny that arrives
+      // here is one an enforcing policy meant. This flag only still matters when
+      // OPA cannot be reached: a place with nothing enforcing must stay open.
       enforce: mode === "enforce",
       onDecision: (event) => {
         const reason =
@@ -162,33 +165,37 @@ export async function evaluateChannelInvoke(
   input: Omit<PolicyDecisionInput, "action">,
 ): Promise<PolicyDecision | undefined> {
   if (!isPolicyEnabled(agentConfig) || !input.accountId) return undefined;
-  const mode: AgentPolicyMode = agentConfig.policy?.mode ?? "audit";
-
   try {
     // Loading the documents sits inside the try on purpose: a control-plane
     // blip must fail closed like an unreachable OPA, not throw past the caller.
     const policies = await loadPolicyDocuments(
       input.accountId,
-      agentConfig.policy?.policyIds ?? [],
+      agentConfig.policies ?? [],
     );
+    const mode = enforcingMode(policies);
     // Policy is configured but nothing resolved: refuse like the tool gate
     // does, rather than letting a broken reference read as "no policy".
     if (policies.length === 0) {
       return {
         allowed: false,
-        mode: mode,
+        mode: "enforce",
         reason: "No allow policy rule matched",
         matchedRuleIds: [],
+        auditedRuleIds: [],
       };
     }
 
     const decision = await policyClient().evaluate<
-      PolicyDecisionInput & { mode: AgentPolicyMode; policies: unknown[] },
-      { allowed?: boolean; reason?: string; matchedRuleIds?: string[] }
+      PolicyDecisionInput & { policies: PolicyDocument[] },
+      {
+        allowed?: boolean;
+        reason?: string;
+        matchedRuleIds?: string[];
+        auditedRuleIds?: string[];
+      }
     >(POLICY_DECISION_PATH, {
       ...input,
       action: "agent.invoke",
-      mode: mode,
       policies: policies,
     });
 
@@ -197,21 +204,24 @@ export async function evaluateChannelInvoke(
       mode: mode,
       reason: decision?.reason ?? "No allow policy rule matched",
       matchedRuleIds: decision?.matchedRuleIds ?? [],
+      auditedRuleIds: decision?.auditedRuleIds ?? [],
     };
   } catch (error) {
     logWarn("Channel invoke policy evaluation failed", {
       accountId: input.accountId,
       agentId: input.agentId,
       channelId: input.channelId,
-      mode: mode,
       error: error instanceof Error ? error.message : String(error),
     });
 
+    // Fail closed: the modes live in the documents this call could not read, so
+    // there is no way to tell an auditing place from an enforcing one here.
     return {
       allowed: false,
-      mode: mode,
+      mode: "enforce",
       reason: "Policy evaluation failed",
       matchedRuleIds: [],
+      auditedRuleIds: [],
     };
   }
 }
@@ -221,7 +231,7 @@ export function policyDecisionLogMessage(input: {
   decision: string;
   enforced: boolean;
   inputPreview?: string;
-  mode: AgentPolicyMode;
+  mode: PolicyMode;
   reason?: string;
   toolName: string;
 }): string {
@@ -549,10 +559,20 @@ function resolveWorkspaceForPolicy(
 /** Rego entrypoint. Both the per-tool approval and the invoke gate use it. */
 const POLICY_DECISION_PATH = "broods/authz/decision";
 
+/**
+ * Summary stage for a set of attached policies, matching what the rego decides:
+ * the place is enforcing as soon as one policy attached to it enforces.
+ */
+function enforcingMode(documents: PolicyDocument[]): PolicyMode {
+  return documents.some((document) => document.mode === "enforce")
+    ? "enforce"
+    : "audit";
+}
+
 async function loadPolicyDocuments(
   accountId: string,
   policyIds: string[],
-): Promise<unknown[]> {
+): Promise<PolicyDocument[]> {
   const requested = [...new Set(policyIds)];
   const records = await Promise.all(
     requested.map((policyId) =>
