@@ -507,6 +507,11 @@ function assertPartitionShape(
       `${name} partition.alias must use only letters, numbers, dots, underscores, or hyphens`,
     );
   }
+  // The charset above still admits the two relative segments, which would walk
+  // the alias out of its own namespace.
+  if (partition.alias === "." || partition.alias === "..") {
+    throw new Error(`${name} partition.alias must not be "." or ".."`);
+  }
 }
 
 
@@ -1554,9 +1559,8 @@ function normalizeChannelConfig(name: string, value: unknown): unknown {
   delete config.connection;
   config.platform = connection.type;
 
-  const partition = config.partition as
-    | { by: "shared" | "conversation"; alias?: string }
-    | undefined;
+  const partition = config.partition as AnyConnectionDefinition["partition"];
+  assertPartitionShape(partition, `Channel "${name}"`);
   if (partition) {
     delete config.partition;
     config.workspaceScope =

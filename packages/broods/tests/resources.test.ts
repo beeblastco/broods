@@ -687,6 +687,33 @@ export const support = defineAgent({ name: "support", connections: [slack], work
   );
 });
 
+test("compileProject rejects a channel partition alias that walks out of its namespace", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineSlackChannel, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
+
+export const slack = defineSlackConnection({
+  partition: { by: "shared" },
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+export const repo = defineWorkspace({ name: "repo", storage: { provider: "s3" }, partitioned: true });
+export const support = defineAgent({ name: "support", connections: [slack], workspaces: [repo] });
+export const escape = defineSlackChannel({
+  name: "escape",
+  connection: slack,
+  channelId: "C042ESCAPE",
+  partition: { by: "conversation", alias: ".." },
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    'Channel "escape" partition.alias must not be "." or ".."',
+  );
+});
+
 test("compileProject rejects unknown partition modes", async () => {
   const cwd = await fixtureProject(
     "",
