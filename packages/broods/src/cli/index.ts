@@ -65,6 +65,11 @@ import {
   printWarning,
 } from "./output.ts";
 import { runAgentTui, streamAgentText } from "./tui.ts";
+import {
+  isNewerVersion,
+  latestPublishedVersion,
+  updateTarget,
+} from "./update.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
 const VERSION = packageJson.version;
@@ -107,6 +112,9 @@ Runtime:
   run <agent> [prompt] Chat with an agent in a terminal UI
   logs                 Backfill recent logs then live-tail
   stream               Stream live logs for the whole project/stage (Ctrl+C to stop)
+
+CLI:
+  update               Install the newest broods release over this one
 
 Options:
   -h, --help           Show help for a command (e.g. \`broods org --help\`)
@@ -228,6 +236,11 @@ Options:
   --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
+  update: `Usage: broods update
+
+Installs the newest published broods over the copy you are running, with the
+package manager that installed it (bun or npm). Global installs are replaced in
+place; inside a project the dependency is upgraded instead.`,
   whoami: `Usage: broods whoami [options]
 
 Shows the login, server, org, plan, project and stage the next command uses.
@@ -312,6 +325,10 @@ async function main(): Promise<void> {
       return;
     case "run":
       await run(args);
+
+      return;
+    case "update":
+      await update();
 
       return;
     default:
@@ -754,12 +771,65 @@ function printSyncWarnings(result: RemoteManifestResponse): void {
   }
 }
 
+/**
+ * Replaces this copy of the CLI with the newest published release, using the
+ * package manager that installed it. The install runs in the foreground so the
+ * manager's own output and exit code reach the caller unchanged.
+ */
+async function update(): Promise<void> {
+  const latest = await latestPublishedVersion({ maxAgeMs: 0 });
+  if (latest === null) {
+    throw new Error(
+      "Could not reach the npm registry to check for a newer broods.",
+    );
+  }
+  if (!isNewerVersion(latest, VERSION)) {
+    console.log(`broods v${VERSION} is already the newest release.`);
+
+    return;
+  }
+
+  const target = updateTarget();
+  console.log(
+    `Updating broods ${VERSION} → ${latest} ${target.global ? "globally" : "in this project"}`,
+  );
+  console.log(`$ ${[target.command, ...target.args].join(" ")}`);
+  await new Promise<void>((resolveInstall, reject) => {
+    const child = spawn(target.command, target.args, { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolveInstall();
+
+        return;
+      }
+      reject(
+        new Error(`${target.command} exited with code ${code ?? "unknown"}`),
+      );
+    });
+  });
+  console.log(`broods ${latest} installed.`);
+}
+
+/**
+ * Tells a sync that a newer CLI is published. Cached for a day and silent on
+ * any failure, because a version check must never hold up or fail a sync.
+ */
+async function warnOnOutdatedCli(): Promise<void> {
+  const latest = await latestPublishedVersion();
+  if (latest === null || !isNewerVersion(latest, VERSION)) return;
+  printWarning(
+    `broods ${latest} is out, you are on ${VERSION}. Run \`broods update\`.`,
+  );
+}
+
 async function dev(args: string[]): Promise<void> {
   await ensureDevOnboarding(args);
 
   if (hasFlag(args, "--once")) {
     if (!process.env.BROODS_SUPPRESS_DEV_TARGET) {
       await printDevTarget(args);
+      await warnOnOutdatedCli();
     }
     const start = performance.now();
     await syncDev(args);
@@ -782,6 +852,7 @@ async function dev(args: string[]): Promise<void> {
   };
 
   await printDevTarget(args);
+  await warnOnOutdatedCli();
   await runSyncChild(args, childEnv);
 
   let timer: NodeJS.Timeout | undefined;

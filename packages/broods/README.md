@@ -21,6 +21,9 @@ npm install -g broods
 broods dev
 ```
 
+`broods update` installs the newest release over the copy you are running, and
+`broods dev` says so when one is out.
+
 `ai` is a peer dependency. npm and bun install it for you; add it explicitly on
 package managers that do not auto-install peers:
 
