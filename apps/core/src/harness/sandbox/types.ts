@@ -241,9 +241,13 @@ export interface SandboxExecutor {
   // (workdir/daytona/e2b sandbox) plus its instance record.
   // Best-effort + idempotent: a missing sandbox is a no-op. Called on
   // account/workspace deletion to prevent leaked compute/disk.
+  // `expectedExternalId` makes the teardown conditional: a caller that already read
+  // the reservation names the sandbox it means, so a key re-claimed in between is
+  // left alone. Omit it to release whatever the key points at now.
   release?(request: {
     namespace?: string;
     reservationKey?: string;
+    expectedExternalId?: string;
   }): Promise<void>;
   // --- Snapshot/standby lifecycle (workdir + lambda-microvm). All optional; callers
   // feature-detect. Drives control-plane sync + dashboard suspend/resume/snapshot. ---

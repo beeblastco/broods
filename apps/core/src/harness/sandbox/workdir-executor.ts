@@ -329,11 +329,21 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   async release(request: {
     namespace?: string;
     reservationKey?: string;
+    expectedExternalId?: string;
   }): Promise<void> {
     const key = sandboxReservationKey(request);
     if (!key) return;
     const externalId = await getSandboxExternalId("sandbox", key);
     if (!externalId) return;
+    // A caller releasing a sandbox it already looked up names it, because between
+    // that lookup and this read another acquire can have claimed the key. Deleting
+    // whatever the key points at now would destroy the replacement.
+    if (
+      request.expectedExternalId !== undefined &&
+      request.expectedExternalId !== externalId
+    ) {
+      return;
+    }
     try {
       await (await this.#client.sandboxes.get(externalId)).delete();
     } catch (err) {
@@ -341,10 +351,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       // caller iterating multiple configs can try the next one.
       if (!isSandboxGoneError(err)) throw err;
     }
+    // Conditional on the same id, so a reservation re-claimed while the provider
+    // delete was in flight keeps its row.
     await deleteSandboxInstance(
       "sandbox",
       key,
       this.#config.controlPlane?.accountId,
+      externalId,
     ).catch(() => {});
   }
 
@@ -570,8 +583,13 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
       reserved !== null && this.#outlivedMaxLifetime(reserved.claimedAt);
     if (expired) {
       // Deliberately not caught: a failed delete here would leak the old sandbox
-      // at the provider the moment the new one claims the key.
-      await this.release({ reservationKey: ns });
+      // at the provider the moment the new one claims the key. Named so a
+      // concurrent acquire that already replaced the expired sandbox is not the
+      // one deleted.
+      await this.release({
+        reservationKey: ns,
+        expectedExternalId: reserved.externalId,
+      });
     }
     // An expired reservation was just released, so its sandbox is gone; fall
     // through to a fresh create rather than reconnecting to a deleted machine.
