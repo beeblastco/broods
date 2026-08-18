@@ -730,10 +730,6 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalStringArray(
-    config.allowedRepos,
-    "config.channels.github.allowedRepos",
-  );
   assertOptionalString(config.userName, "config.channels.github.userName");
   assertOptionalPositiveInteger(
     config.botUserId,
@@ -1033,16 +1029,6 @@ function assertOptionalStringArray(value: unknown, name: string): void {
     )
   ) {
     throw new Error(`${name} must be an array of non-empty strings`);
-  }
-}
-
-function assertOptionalNumberArray(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")
-  ) {
-    throw new Error(`${name} must be an array of numbers`);
   }
 }
 

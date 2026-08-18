@@ -483,6 +483,17 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   }
 }
 
+// `partition` is the authoring name; storage still reads `workspaceScope`.
+function workspaceScopeFromPartition(
+  partition: AnyConnectionDefinition["partition"],
+): { level: string; alias?: string } | undefined {
+  if (!partition) return undefined;
+
+  return partition.by === "shared"
+    ? { level: "channel" }
+    : { level: "conversation", alias: partition.alias };
+}
+
 function assertPartitionShape(
   partition: AnyConnectionDefinition["partition"],
   name: string,
@@ -753,7 +764,7 @@ function compileChannels(
   return compiled.sort((left, right) => left.alias.localeCompare(right.alias));
 }
 
-type DeclaredReach = Map<AnyConnectionDefinition, string[]>;
+type DeclaredReach = Map<AnyConnectionDefinition, Set<string>>;
 
 /**
  * A connection with no declared channel answers nowhere, which is never what
@@ -789,11 +800,7 @@ function connectionReach(
   connection: AnyConnectionDefinition,
   reach: DeclaredReach,
 ): string[] {
-  const authored = (connection.config as { allowedChannelIds?: unknown })
-    .allowedChannelIds;
-  const named = Array.isArray(authored)
-    ? authored.filter((entry): entry is string => typeof entry === "string")
-    : [];
+  const named = connection.config.allowedChannelIds ?? [];
   if (named.includes(CHANNEL_REACH_WILDCARD)) return [CHANNEL_REACH_WILDCARD];
 
   return [...new Set([...(reach.get(connection) ?? []), ...named])];
@@ -814,8 +821,8 @@ function declaredReach(resources: AnyResource[]): DeclaredReach {
     };
     if (!isConnectionDefinition(config.connection)) continue;
     if (typeof config.externalId !== "string") continue;
-    const declared = reach.get(config.connection) ?? [];
-    if (!declared.includes(config.externalId)) declared.push(config.externalId);
+    const declared = reach.get(config.connection) ?? new Set<string>();
+    declared.add(config.externalId);
     reach.set(config.connection, declared);
   }
 
@@ -1212,12 +1219,7 @@ function normalizeAgentConfig(
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-        // `partition` is the authoring name; storage still reads workspaceScope.
-        const workspaceScope = channel.partition
-          ? channel.partition.by === "shared"
-            ? { level: "channel" }
-            : { level: "conversation", alias: channel.partition.alias }
-          : undefined;
+        const workspaceScope = workspaceScopeFromPartition(channel.partition);
         const allowedChannelIds = connectionReach(channel, reach);
 
         return [
@@ -1641,10 +1643,7 @@ function normalizeChannelConfig(name: string, value: unknown): unknown {
   assertPartitionShape(partition, `Channel "${name}"`);
   if (partition) {
     delete config.partition;
-    config.workspaceScope =
-      partition.by === "shared"
-        ? { level: "channel" }
-        : { level: "conversation", alias: partition.alias };
+    config.workspaceScope = workspaceScopeFromPartition(partition);
   }
 
   return rewriteValues(config);

@@ -10,7 +10,6 @@
 import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
-  AgentChannelWorkspaceScope,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,

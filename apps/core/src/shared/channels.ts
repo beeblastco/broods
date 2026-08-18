@@ -143,8 +143,18 @@ export function extractText(content: UserContent): string {
 }
 
 /**
+ * Builds the set a reach gate reads. No list stays null, which the gate reads
+ * as open — an empty `Set` would mean the opposite, so the distinction cannot
+ * be dropped at the call site.
+ */
+export function reachSet(ids: string[] | undefined): Set<string> | null {
+  return ids ? new Set(ids) : null;
+}
+
+/**
  * The reach gate. Answered from the webhook payload alone, so an unwanted room
- * or sender is dropped before any record read, deployment load or policy call.
+ * or sender is dropped before any record read or policy call. The deployment
+ * load still runs ahead of it, so this is cheap, not free.
  * No list, or the wildcard, lets everything through; an id the payload never
  * carried matches nothing.
  */

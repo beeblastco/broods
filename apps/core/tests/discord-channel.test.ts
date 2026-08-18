@@ -8,7 +8,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -37,7 +37,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -67,7 +67,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -98,7 +98,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -149,7 +149,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -202,7 +202,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
     );
 
@@ -233,7 +233,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
       undefined,
       { botUserId: "bot-9" },
@@ -288,7 +288,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
       undefined,
       { botUserId: "bot-9", mentionRoleIds: ["role-oncall"] },
@@ -316,7 +316,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
       undefined,
       { botUserId: "bot-9" },
@@ -369,7 +369,7 @@ describe("discord channel adapter", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
-      new Set(["channel-1", "thread-1"]),
+      new Set(["channel-1"]),
       null,
       undefined,
       { botUserId: "bot-9" },

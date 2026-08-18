@@ -270,9 +270,14 @@ export function createDiscordChannel(
         };
       }
 
-      if (!isAllowedId(allowedChannelIds, payload.channel_id)) {
+      // Discord sends the interaction's channel object, so a command typed inside
+      // a thread resolves to the same parent+thread key the gateway path builds.
+      // Without this the two paths disagree and /new clears the wrong conversation.
+      // Gating on the parent also matters: a thread id is never declarable.
+      const thread = toDiscordInteractionThread(payload);
+      if (!isAllowedId(allowedChannelIds, thread.channelId)) {
         logWarn("Discord channel not in allow list", {
-          channelId: payload.channel_id,
+          channelId: thread.channelId,
         });
 
         return {
@@ -300,10 +305,6 @@ export function createDiscordChannel(
         return unsupportedInteractionResponse();
       }
 
-      // Discord sends the interaction's channel object, so a command typed inside
-      // a thread resolves to the same parent+thread key the gateway path builds.
-      // Without this the two paths disagree and /new clears the wrong conversation.
-      const thread = toDiscordInteractionThread(payload);
       const threadId = discord.encodeThreadId(thread);
       const source: DiscordSource = {
         applicationId: payload.application_id,
@@ -563,8 +564,10 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  if (!isAllowedId(allowedChannelIds, data.channel_id)) {
-    logWarn("Discord channel not in allow list", { channelId: data.channel_id });
+  // Gate the parent channel, not the thread: a thread id cannot be declared.
+  const thread = toDiscordGatewayThread(data);
+  if (!isAllowedId(allowedChannelIds, thread.channelId)) {
+    logWarn("Discord channel not in allow list", { channelId: thread.channelId });
 
     return {
       kind: "ignore",
@@ -573,7 +576,6 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  const thread = toDiscordGatewayThread(data);
   const threadId = discord.encodeThreadId(thread);
   const content = data.content.trim();
   if (!content) {

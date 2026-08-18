@@ -25,7 +25,11 @@ import type {
   ChannelResponse,
   InboundMessage,
 } from "../shared/channels.ts";
-import { extractText, formatChannelErrorText } from "../shared/channels.ts";
+import {
+  extractText,
+  formatChannelErrorText,
+  reachSet,
+} from "../shared/channels.ts";
 import { parseCommand } from "../shared/commands.ts";
 import { createDiscordChannel } from "../shared/discord-channel.ts";
 import type { AccountRecord } from "../shared/domain/accounts.ts";
@@ -2330,8 +2334,8 @@ function createTelegramChannelFromConfig(
   return createTelegramChannel(
     channel.botToken,
     channel.webhookSecret,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
-    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
     channel.reactionEmoji ?? "👀",
     channel.apiUrl,
   );
@@ -2349,8 +2353,8 @@ function createGitHubChannelFromConfig(
     channel.webhookSecret,
     channel.appId,
     channel.privateKey,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
-    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
     channel.apiUrl,
     channel.userName,
     channel.botUserId,
@@ -2372,8 +2376,8 @@ function createSlackChannelFromConfig(
   return createSlackChannel(
     channel.botToken,
     channel.signingSecret,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
-    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
     channel.reactionEmoji ?? "eyes",
     channel.apiUrl,
   );
@@ -2390,8 +2394,8 @@ function createDiscordChannelFromConfig(
   return createDiscordChannel(
     channel.botToken,
     channel.publicKey,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
-    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
     channel.apiUrl,
     {
       ...(channel.botUserId ? { botUserId: channel.botUserId } : {}),
@@ -2414,8 +2418,8 @@ function createPancakeChannelFromConfig(
     channel.pageId,
     channel.pageAccessToken,
     channel.webhookSecret,
-    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
-    channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
+    reachSet(channel.allowedChannelIds),
+    reachSet(channel.allowedUserIds),
     channel.senderId,
   );
 }
@@ -2429,11 +2433,7 @@ function createZaloChannelFromConfig(
   }
 
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
-    allowedChannelIds: channel.allowedChannelIds
-      ? new Set(channel.allowedChannelIds)
-      : null,
-    allowedUserIds: channel.allowedUserIds
-      ? new Set(channel.allowedUserIds)
-      : null,
+    allowedChannelIds: reachSet(channel.allowedChannelIds),
+    allowedUserIds: reachSet(channel.allowedUserIds),
   });
 }

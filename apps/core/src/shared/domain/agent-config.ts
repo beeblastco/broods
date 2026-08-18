@@ -407,6 +407,16 @@ export interface AgentChannelsConfig {
 export type ChannelWorkspaceScopeLevel = "channel" | "conversation";
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
 
+// Every provider used to name its own reach list. They are one pair now, so a
+// stale key has to fail loudly here rather than sit in config doing nothing —
+// the index signature on the channel configs means nothing else catches it.
+const RETIRED_REACH_KEYS = [
+  ["allowedChatIds", "allowedChannelIds"],
+  ["allowedGroupIds", "allowedChannelIds"],
+  ["allowedGuildIds", "allowedChannelIds"],
+  ["allowedRepos", "allowedChannelIds"],
+] as const;
+
 export type AgentChannelWorkspaceScope =
   | { level: "channel"; alias?: never }
   | { level: "conversation"; alias: string };
@@ -1339,14 +1349,6 @@ function normalizeTelegramConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.telegram.webhookSecret",
   );
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.telegram.allowedChannelIds",
-  );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.telegram.allowedUserIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.telegram.reactionEmoji",
@@ -1366,14 +1368,6 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.github.allowedChannelIds",
-  );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.github.allowedUserIds",
-  );
   assertOptionalString(config.userName, "config.channels.github.userName");
   assertOptionalPositiveInteger(
     config.botUserId,
@@ -1394,14 +1388,6 @@ function normalizeSlackConfig(value: unknown): void {
     config.signingSecret,
     "config.channels.slack.signingSecret",
   );
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.slack.allowedChannelIds",
-  );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.slack.allowedUserIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.slack.reactionEmoji",
@@ -1417,14 +1403,6 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.discord.allowedChannelIds",
-  );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.discord.allowedUserIds",
-  );
   assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
   assertOptionalStringArray(
     config.mentionRoleIds,
@@ -1438,14 +1416,6 @@ function normalizePancakeConfig(value: unknown): void {
     throw new Error("config.channels.pancake must be an object");
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.pancake");
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.pancake.allowedChannelIds",
-  );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.pancake.allowedUserIds",
-  );
   assertOptionalString(config.pageId, "config.channels.pancake.pageId");
   assertOptionalString(
     config.pageAccessToken,
@@ -1469,14 +1439,6 @@ function normalizeZaloConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.zalo.webhookSecret",
   );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.zalo.allowedUserIds",
-  );
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.zalo.allowedChannelIds",
-  );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {
@@ -1496,6 +1458,17 @@ function normalizeChannelIdentityConfig(
     "enabled",
     "disabled",
   ] as const);
+  for (const [retired, replacement] of RETIRED_REACH_KEYS) {
+    if (config[retired] !== undefined)
+      throw new Error(
+        `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
+      );
+  }
+  assertOptionalStringArray(
+    config.allowedChannelIds,
+    `${name}.allowedChannelIds`,
+  );
+  assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
       `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
@@ -1634,16 +1607,6 @@ function assertOptionalPositiveInteger(
     value > max
   ) {
     throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function assertOptionalNumberArray(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")
-  ) {
-    throw new Error(`${name} must be an array of numbers`);
   }
 }
 
