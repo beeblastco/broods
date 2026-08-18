@@ -128,6 +128,9 @@ describe("BroodsSandboxProvider", () => {
     expect(
       await networkSession.getPortUrl({ port: 4_321, protocol: "ws" }),
     ).toBe("wss://sandbox.example.test:4321");
+    await expect(
+      networkSession.getPortEndpoint({ port: 4_321, protocol: "ws" }),
+    ).resolves.toEqual({ url: "wss://sandbox.example.test:4321" });
     const policy: HarnessV1NetworkPolicy = {
       mode: "custom",
       allowedHosts: ["example.com"],
@@ -404,6 +407,9 @@ describe("BroodsSandboxProvider", () => {
     await expect(sandbox.getPortUrl({ port: 3_000 })).rejects.toBeInstanceOf(
       HarnessCapabilityUnsupportedError,
     );
+    await expect(
+      sandbox.getPortEndpoint({ port: 3_000 }),
+    ).rejects.toBeInstanceOf(HarnessCapabilityUnsupportedError);
     await Promise.all([
       sandbox.destroy?.(),
       sandbox.destroy?.(),
