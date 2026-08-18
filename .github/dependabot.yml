@@ -50,6 +50,11 @@ updates:
       - dependency-name: eslint
         update-types:
           - version-update:semver-major
+      # typescript-eslint currently supports TypeScript <6.1.0; the dashboard
+      # lint job cannot load TypeScript 7 until that upstream peer range moves.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     groups:
       ai-sdk:
         patterns:

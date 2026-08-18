@@ -44,6 +44,7 @@ export function createTelegramChannel(
     botToken: botToken,
     secretToken: webhookSecret,
     mode: "webhook",
+    nativeStreaming: true,
     logger: new ConsoleLogger("error").child("telegram"),
   });
 
