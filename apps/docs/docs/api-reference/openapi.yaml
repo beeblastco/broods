@@ -3803,8 +3803,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3852,8 +3852,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3887,8 +3887,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3934,8 +3934,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -3968,8 +3968,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
@@ -4009,8 +4009,8 @@ components:
             trace:
               type: string
               enum: [enabled, disabled]
-              default: enabled
-              description: Whether replies from this channel include a dashboard trace link. Trace collection is unaffected.
+              default: disabled
+              description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
             workspaceScope:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."

@@ -593,16 +593,17 @@ export function toChannelRuntimeAgentConfig(
   };
 }
 
+// Off by default: only an explicit `trace: "enabled"` on the channel appends
+// the dashboard trace link to replies. Trace collection is unaffected.
 export function isChannelTraceEnabled(
   config: AgentConfig,
   channelName: string | undefined,
 ): boolean {
-  if (!channelName) return true;
+  if (!channelName) return false;
   const channelConfig = config.channels?.[channelName] as
-    | { trace?: "enabled" | "disabled" }
-    | undefined;
+    { trace?: "enabled" | "disabled" } | undefined;
 
-  return channelConfig?.trace !== "disabled";
+  return channelConfig?.trace === "enabled";
 }
 
 // Provider-defined tool names are validated for shape only; whether the
