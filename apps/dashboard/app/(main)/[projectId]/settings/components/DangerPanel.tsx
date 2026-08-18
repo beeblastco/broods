@@ -18,7 +18,7 @@ interface Props {
   stageId: Id<"stages"> | null;
 }
 
-export function DangerPanel({ projectId, stageId }: Props) {
+export function DangerPanel({ projectId, stageId }: Props): React.JSX.Element {
   const project = useQuery(api.project.getById, { projectId: projectId });
   const stages = useQuery(api.stage.list, {
     projectId: projectId,

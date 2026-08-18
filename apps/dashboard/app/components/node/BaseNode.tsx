@@ -76,7 +76,7 @@ export function BaseNode({
   featureRows?: { key: string; icon?: React.ReactNode; label: string }[];
   /** Render left/right handles for mount connections (workspace ↔ sandbox). */
   showSideHandles?: boolean;
-}) {
+}): React.JSX.Element {
   const zoom = useStore(zoomSelector);
   const scale = Math.min(Math.max(1 / Math.sqrt(zoom), 0.9), 1.2);
 

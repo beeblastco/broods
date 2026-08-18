@@ -29,7 +29,7 @@ function reportWebVital(metric: WebVitalsMetric) {
   });
 }
 
-export function PerfReporter() {
+export function PerfReporter(): null {
   useReportWebVitals(reportWebVital);
   const pathname = usePathname();
   const transitionFrom = useRef<{ path: string; at: number } | null>(null);

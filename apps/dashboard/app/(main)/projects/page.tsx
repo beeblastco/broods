@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 /** Full-page grid of the user's projects with create and empty states. */
-export default function ProjectsPage() {
+export default function ProjectsPage(): React.JSX.Element {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const projects = useQuery(
     api.project.list,

@@ -13,7 +13,10 @@ import { useCallback, useTransition } from "react";
  * Returns the current stage ID from the URL and a setter that updates the URL.
  * Setting null removes the stage param, causing StageSelector to auto-select the default.
  */
-export function useStage() {
+export function useStage(): {
+  stageId: Id<"stages"> | null;
+  setStageId: (id: Id<"stages"> | null) => void;
+} {
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();

@@ -39,7 +39,7 @@ function isStructuredOutputEnabled(outputFormat: unknown): boolean {
 }
 
 /** Agent node representing an AI agent on the canvas. */
-export function AgentNode({ id, data }: NodeProps) {
+export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const agentConfigId = nodeData.agentConfigId as
     Id<"agentConfigs"> | undefined;

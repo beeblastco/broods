@@ -43,7 +43,7 @@ export function SkillSourcePickerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSelect: (source: SkillSource) => void;
-}) {
+}): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xs gap-0 p-1">

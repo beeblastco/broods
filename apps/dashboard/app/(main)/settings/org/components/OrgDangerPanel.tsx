@@ -19,7 +19,7 @@ interface Props {
   org: Doc<"orgs">;
 }
 
-export function OrgDangerPanel({ org }: Props) {
+export function OrgDangerPanel({ org }: Props): React.JSX.Element {
   const router = useRouter();
   const removeOrg = useMutation(api.org.remove);
 

@@ -67,7 +67,7 @@ function NavLinksInner() {
 }
 
 /** Horizontal nav links wrapped in Suspense for useSearchParams. */
-export function NavLinks() {
+export function NavLinks(): React.JSX.Element {
   return (
     <Suspense fallback={<nav className="flex items-center gap-1 h-8" />}>
       <NavLinksInner />

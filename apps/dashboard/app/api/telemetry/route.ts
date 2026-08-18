@@ -13,7 +13,7 @@ import {
 const MAX_BODY_BYTES = 64 * 1024;
 const OTLP_TIMEOUT_MS = 5000;
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
   // Same contract as core's otel.ts: no endpoint configured, no exporter.
   if (!endpoint) return new Response(null, { status: 204 });

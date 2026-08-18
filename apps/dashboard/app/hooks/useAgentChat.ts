@@ -14,6 +14,16 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type ChatStatus = "ready" | "streaming" | "error";
+
+/** What `useAgentChat` hands its caller: the transcript plus the two controls. */
+export interface AgentChat {
+  messages: UIMessage[];
+  status: ChatStatus;
+  error: Error | null;
+  sendMessage: (text: string) => Promise<void>;
+  resetChat: () => void;
+}
+
 const WEBSOCKET_CONNECT_TIMEOUT_MS = 2000;
 
 type WsServerMessage =
@@ -635,7 +645,7 @@ export function useAgentChat({
   projectSlug?: string;
   stageSlug?: string;
   webSocketEnabled: boolean;
-}) {
+}): AgentChat {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [error, setError] = useState<Error | null>(null);

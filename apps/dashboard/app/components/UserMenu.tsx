@@ -33,7 +33,7 @@ import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 
-export function UserMenu() {
+export function UserMenu(): React.JSX.Element | null {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();

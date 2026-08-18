@@ -4,7 +4,7 @@ import { Button } from "@/app/components/ui/button";
 import { useReactFlow } from "@xyflow/react";
 
 /** Zoom and fit-view controls for the canvas. */
-export function CanvasControls() {
+export function CanvasControls(): React.JSX.Element {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
 
   return (

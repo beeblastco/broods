@@ -35,7 +35,7 @@ const ProjectHeaderRight = dynamic(
   { loading: () => <div className="flex items-center gap-1 h-4" /> },
 );
 
-export function Header() {
+export function Header(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const isProjectPage = Boolean(params.projectId);
   const { resolvedTheme } = useTheme();

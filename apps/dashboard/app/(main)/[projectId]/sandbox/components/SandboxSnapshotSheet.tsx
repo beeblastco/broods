@@ -35,7 +35,11 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function SandboxSnapshotSheet({ snapshot, now, onClose }: Props) {
+export function SandboxSnapshotSheet({
+  snapshot,
+  now,
+  onClose,
+}: Props): React.JSX.Element {
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">

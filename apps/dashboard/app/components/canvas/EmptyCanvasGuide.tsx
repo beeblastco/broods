@@ -8,7 +8,7 @@ export function EmptyCanvasGuide({
   onCreateConfig,
 }: {
   onCreateConfig?: () => void;
-}) {
+}): React.JSX.Element {
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
       <div className="pointer-events-auto flex w-72 flex-col rounded-xl border border-border bg-card/80 p-1 backdrop-blur-md">

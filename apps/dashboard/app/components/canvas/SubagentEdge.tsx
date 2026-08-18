@@ -31,7 +31,7 @@ export function SubagentEdge({
   sourcePosition,
   targetPosition,
   style,
-}: EdgeProps) {
+}: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
 
   // Fan parallel subagent edges apart so their trunks don't stack (horizontal flow → offset Y).

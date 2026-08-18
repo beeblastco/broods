@@ -17,7 +17,7 @@ interface Props {
   snapshots: Array<Doc<"sandboxSnapshots">>;
 }
 
-export function SandboxSnapshotsTable({ snapshots }: Props) {
+export function SandboxSnapshotsTable({ snapshots }: Props): React.JSX.Element {
   const now = useNow();
   const [selected, setSelected] = useState<Doc<"sandboxSnapshots"> | null>(
     null,

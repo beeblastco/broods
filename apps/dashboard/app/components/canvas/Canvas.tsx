@@ -1217,7 +1217,11 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 }
 
 /** Main canvas wrapped with ReactFlowProvider. */
-export function Canvas({ projectId }: { projectId: Id<"projects"> }) {
+export function Canvas({
+  projectId,
+}: {
+  projectId: Id<"projects">;
+}): React.JSX.Element {
   return (
     <ReactFlowProvider>
       <CanvasInner projectId={projectId} />

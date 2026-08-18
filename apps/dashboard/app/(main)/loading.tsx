@@ -1,7 +1,7 @@
 /** Skeleton shown while the dashboard page chunk and data load. */
 import { Skeleton } from "@/app/components/ui/skeleton";
 
-export default function DashboardLoading() {
+export default function DashboardLoading(): React.JSX.Element {
   return (
     <div className="flex h-full flex-col">
       <div className="shrink-0 px-6 py-4">

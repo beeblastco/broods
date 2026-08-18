@@ -164,7 +164,7 @@ export function DetailsTab({
   onUpdatePolicyConfig?: (
     config: Record<string, unknown> | null,
   ) => Promise<void>;
-}) {
+}): React.JSX.Element {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);

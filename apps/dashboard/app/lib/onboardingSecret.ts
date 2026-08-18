@@ -14,7 +14,7 @@ let pendingSecret: string | null = null;
  * (or current) route, then notifies any mounted listener.
  * @param secret the plaintext fp_acct_ secret to surface once
  */
-export function publishOnboardingSecret(secret: string) {
+export function publishOnboardingSecret(secret: string): void {
   if (typeof window === "undefined") return;
 
   pendingSecret = secret;
@@ -32,7 +32,7 @@ export function readOnboardingSecret(): string | null {
 }
 
 /** Clears the pending one-time secret and notifies listeners. */
-export function clearOnboardingSecret() {
+export function clearOnboardingSecret(): void {
   if (typeof window === "undefined") return;
 
   pendingSecret = null;

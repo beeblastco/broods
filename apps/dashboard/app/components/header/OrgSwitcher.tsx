@@ -40,7 +40,7 @@ import { Building2, Check, ChevronDown, Plus, Settings } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
-export function OrgSwitcher() {
+export function OrgSwitcher(): React.JSX.Element {
   const router = useRouter();
   const convex = useConvex();
   const params = useParams<{ projectId?: string }>();

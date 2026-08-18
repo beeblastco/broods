@@ -21,7 +21,7 @@ export default function ArchitecturePage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
-}) {
+}): React.JSX.Element {
   const { projectId } = use(params);
 
   return <Canvas projectId={projectId as Id<"projects">} />;

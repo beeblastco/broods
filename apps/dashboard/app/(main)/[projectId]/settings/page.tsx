@@ -28,7 +28,7 @@ const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "danger", label: "Danger Zone", danger: true },
 ];
 
-export default function SettingsPage() {
+export default function SettingsPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;

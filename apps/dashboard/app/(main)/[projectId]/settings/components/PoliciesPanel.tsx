@@ -28,7 +28,10 @@ const DEFAULT_POLICY_DOCUMENT = {
   ],
 };
 
-export function PoliciesPanel({ projectId, stageId }: Props) {
+export function PoliciesPanel({
+  projectId,
+  stageId,
+}: Props): React.JSX.Element {
   const policies = useQuery(
     api.agentPolicies.listForStage,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",

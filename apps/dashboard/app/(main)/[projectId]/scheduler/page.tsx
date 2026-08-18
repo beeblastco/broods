@@ -24,7 +24,7 @@ export default function CronsPage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
-}) {
+}): React.JSX.Element {
   const { projectId } = use(params);
   const typedProjectId = projectId as Id<"projects">;
 

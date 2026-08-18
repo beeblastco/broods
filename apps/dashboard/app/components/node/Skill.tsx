@@ -14,7 +14,7 @@ import { useMemo } from "react";
 
 type SkillsSlice = { enabled?: boolean; allowed?: string[] };
 
-export function SkillNode({ id, data }: NodeProps) {
+export function SkillNode({ id, data }: NodeProps): React.JSX.Element {
   const baseData = data as BaseNodeData;
   const { agentConfig } = useConnectedAgentConfig(id);
   const path = (baseData.label ?? "").trim();

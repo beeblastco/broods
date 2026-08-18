@@ -15,7 +15,7 @@ export function ObservabilityKeyPrompt({
   generating,
   error,
   onGenerate,
-}: Props) {
+}: Props): React.JSX.Element {
   return (
     <div className="flex h-full min-h-64 flex-col items-center justify-center gap-3 text-center">
       <div className="rounded-full border border-border bg-muted/40 p-3">

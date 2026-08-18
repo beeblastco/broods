@@ -17,7 +17,7 @@ export function SidebarPageSkeleton({
   title: string;
   tabCount: number;
   contentMaxWidth?: string;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex h-full">
       {/* Sidebar */}

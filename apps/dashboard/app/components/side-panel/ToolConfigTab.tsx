@@ -103,7 +103,7 @@ export function ToolConfigTab({
   stageId: Id<"stages"> | null;
   nodeId: string;
   nodeLabel: string;
-}) {
+}): React.JSX.Element {
   const canQueryTool = !!projectId && !!stageId;
   const toolService = useQuery(
     api.toolService.getByNode,

@@ -18,7 +18,9 @@ function parseReturnTo(value: string | null): string | null {
  * Route handler that redirects to the WorkOS sign-in page.
  * @returns Redirect to WorkOS AuthKit sign-in with the PKCE verifier cookie attached
  */
-export async function GET(request: NextRequest) {
+export async function GET(
+  request: NextRequest,
+): Promise<NextResponse<unknown>> {
   const returnTo =
     parseReturnTo(request.nextUrl.searchParams.get("returnTo")) ?? "/";
   const authorizationUrl = await getSignInUrl({

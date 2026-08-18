@@ -51,7 +51,7 @@ type MemberRow = {
   avatarUrl?: string;
 };
 
-export function MembersPanel({ org }: Props) {
+export function MembersPanel({ org }: Props): React.JSX.Element {
   const members = useQuery(api.orgMembers.list, { orgId: org._id });
   const add = useMutation(api.orgMembers.add);
   const updateRole = useMutation(

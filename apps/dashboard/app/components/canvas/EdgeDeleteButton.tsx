@@ -18,7 +18,7 @@ export function EdgeDeleteButton({
   labelX: number;
   labelY: number;
   onHoverChange?: (hovered: boolean) => void;
-}) {
+}): React.JSX.Element {
   const { deleteElements } = useReactFlow();
   const onDelete = useCallback(async () => {
     await deleteElements({ edges: [{ id: edgeId }] });

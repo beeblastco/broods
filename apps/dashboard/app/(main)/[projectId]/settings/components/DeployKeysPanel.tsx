@@ -19,7 +19,10 @@ interface Props {
 }
 
 /** Lists, creates (with one-time reveal), and revokes deploy keys for the active stage. */
-export function DeployKeysPanel({ projectId, stageId }: Props) {
+export function DeployKeysPanel({
+  projectId,
+  stageId,
+}: Props): React.JSX.Element {
   const deployKeys = useQuery(
     api.deployKeys.list,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",

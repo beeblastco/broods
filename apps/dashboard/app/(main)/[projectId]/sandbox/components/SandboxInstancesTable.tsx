@@ -67,7 +67,10 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
 
 const PAGE_SIZE = 8;
 
-export function SandboxInstancesTable({ instances, projectId }: Props) {
+export function SandboxInstancesTable({
+  instances,
+  projectId,
+}: Props): React.JSX.Element {
   const suspend = useAction(api.sandboxPublic.suspendSandbox);
   const resume = useAction(api.sandboxPublic.resumeSandbox);
   const refresh = useAction(api.sandboxPublic.refreshSandbox);

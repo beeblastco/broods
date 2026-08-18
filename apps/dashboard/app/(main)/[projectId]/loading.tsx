@@ -1,5 +1,5 @@
 /** Skeleton shown while the canvas page chunk loads. */
-export default function CanvasLoading() {
+export default function CanvasLoading(): React.JSX.Element {
   return (
     <div className="flex h-full w-full items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">

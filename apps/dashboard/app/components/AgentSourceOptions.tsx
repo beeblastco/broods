@@ -16,7 +16,7 @@ export function AgentSourceOptions({
   onCreateNew,
 }: {
   onCreateNew?: () => void;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col">
       {SOURCE_OPTIONS.map(({ key, label, icon: Icon }) => (

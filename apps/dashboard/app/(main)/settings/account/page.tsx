@@ -117,7 +117,7 @@ function AccountDangerPanel() {
   );
 }
 
-export default function AccountSettingsPage() {
+export default function AccountSettingsPage(): React.JSX.Element {
   const searchParams = useSearchParams();
   const router = useRouter();
 

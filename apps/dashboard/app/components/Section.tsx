@@ -11,7 +11,7 @@ export function Section({
   description?: string;
   danger?: boolean;
   children: React.ReactNode;
-}) {
+}): React.JSX.Element {
   return (
     <section
       className={cn(

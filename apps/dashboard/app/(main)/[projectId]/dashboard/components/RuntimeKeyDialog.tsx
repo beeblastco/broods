@@ -242,7 +242,7 @@ export function RuntimeKeyView({
 }: {
   apiKey: string;
   onRotate?: () => Promise<void>;
-}) {
+}): React.JSX.Element {
   const [showKey, setShowKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const maskedKey = "•".repeat(Math.min(apiKey.length, 44));
@@ -365,7 +365,7 @@ export function RuntimeKeyDialog({
   onOpenChange,
   apiKey,
   justCreated = false,
-}: DialogProps) {
+}: DialogProps): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">

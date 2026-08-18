@@ -21,7 +21,7 @@ export function ToggleRow({
   checked: boolean;
   onCheckedChange: (next: boolean) => void;
   disabled?: boolean;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex flex-col">
@@ -43,7 +43,11 @@ export function ToggleRow({
 }
 
 /** Indented reveal block matching the Agent card's expand styling. */
-export function ExpandBlock({ children }: { children: ReactNode }) {
+export function ExpandBlock({
+  children,
+}: {
+  children: ReactNode;
+}): React.JSX.Element {
   return (
     <div className="ml-1 flex flex-col gap-2.5 border-l-2 border-border pl-3">
       {children}

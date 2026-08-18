@@ -49,7 +49,7 @@ export function ToolTestTab({
   projectId: Id<"projects"> | undefined;
   stageId: Id<"stages"> | null;
   nodeId: string;
-}) {
+}): React.JSX.Element {
   const canQueryTool = !!projectId && !!stageId;
   const executeTool = useAction(api.toolService.execute);
   const toolService = useQuery(

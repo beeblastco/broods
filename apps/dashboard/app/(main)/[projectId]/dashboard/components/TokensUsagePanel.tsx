@@ -766,7 +766,7 @@ export function TokensUsagePanel({
   projectSlug,
   stageSlug,
   apiKey,
-}: Props) {
+}: Props): React.JSX.Element {
   const [range, setRange] = useState<Range>("1h");
 
   // Reactive subscription: usage totals update live as the harness meters tokens.

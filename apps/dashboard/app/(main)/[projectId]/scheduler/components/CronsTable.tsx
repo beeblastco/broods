@@ -60,7 +60,7 @@ function statusBadge(status: Doc<"crons">["lastStatus"]) {
   );
 }
 
-export function CronsTable({ crons, agents }: Props) {
+export function CronsTable({ crons, agents }: Props): React.JSX.Element {
   const remove = useAction(api.cronPublic.remove);
 
   const [editing, setEditing] = useState<Doc<"crons"> | null>(null);

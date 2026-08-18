@@ -13,7 +13,7 @@ import {
 } from "@/app/lib/agentConfigCodec";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import { api } from "@broods/convex/_generated/api";
-import type { Id } from "@broods/convex/_generated/dataModel";
+import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useStore } from "@xyflow/react";
 import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useRef } from "react";
@@ -22,6 +22,17 @@ type ReactFlowState = {
   edges: Array<{ source: string; target: string }>;
   nodeLookup: Map<string, { type?: string; data?: { agentConfigId?: string } }>;
 };
+
+/**
+ * The agent config a canvas node is wired to, plus the writer its side-panel tabs
+ * edit through. `agentConfig` is undefined while the query loads and null when the
+ * id resolves to nothing.
+ */
+export interface ConnectedAgentConfig {
+  agentConfigId: Id<"agentConfigs"> | undefined;
+  agentConfig: Doc<"agentConfigs"> | null | undefined;
+  updateBranch: (path: ReadonlyArray<string>, value: unknown) => Promise<void>;
+}
 
 /**
  * Walks edges from `nodeId` (BFS) and returns the first reachable agent
@@ -73,7 +84,7 @@ function findReachableAgentConfigId(
 export function useConnectedAgentConfig(
   nodeId: string | undefined,
   via?: ReadonlyArray<string>,
-) {
+): ConnectedAgentConfig {
   const viaKey = via?.join("|");
   const agentConfigId = useStore(
     useCallback(
