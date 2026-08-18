@@ -8,9 +8,8 @@ export function getSandboxExternalId(
 ): Promise<string | null> {
   return runtime.query("getSandboxReservation", { provider: provider, reservationKey: reservationKey });
 }
-// The reserved sandbox plus when it was claimed, for the executors that enforce
-// `lifecycle.maxLifetimeSeconds` themselves — one read instead of the id and the
-// age separately. Null when the reservation is unknown.
+// The reserved sandbox and when it was claimed, in one read, for the executors
+// that enforce `lifecycle.maxLifetimeSeconds` themselves. Null when unreserved.
 export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
