@@ -18,7 +18,7 @@ import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 /** How a single channel field is entered and serialized. */
-type FieldType = "text" | "secret" | "stringList" | "numberList";
+type FieldType = "text" | "secret" | "stringList";
 
 type ChannelField = {
   key: string;
@@ -46,10 +46,10 @@ const CHANNELS: ChannelKind[] = [
         required: true,
       },
       {
-        key: "allowedChatIds",
+        key: "allowedChannelIds",
         label: "Allowed chat IDs",
-        type: "numberList",
-        placeholder: "123456789, …",
+        type: "stringList",
+        placeholder: "123456789, *",
       },
       {
         key: "reactionEmoji",
@@ -83,10 +83,10 @@ const CHANNELS: ChannelKind[] = [
         required: true,
       },
       {
-        key: "allowedRepos",
+        key: "allowedChannelIds",
         label: "Allowed repos",
         type: "stringList",
-        placeholder: "owner/repo, …",
+        placeholder: "owner/repo, *",
       },
       {
         key: "apiUrl",
@@ -158,10 +158,10 @@ const CHANNELS: ChannelKind[] = [
         placeholder: "123, …",
       },
       {
-        key: "allowedGuildIds",
-        label: "Allowed guild IDs",
+        key: "allowedChannelIds",
+        label: "Allowed channel IDs",
         type: "stringList",
-        placeholder: "123, …",
+        placeholder: "123, *",
       },
       {
         key: "apiUrl",
@@ -246,14 +246,6 @@ function parseFieldValue(type: FieldType, raw: string): unknown {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-  }
-  if (type === "numberList") {
-    const nums = trimmed
-      .split(",")
-      .map((s) => Number(s.trim()))
-      .filter((n) => Number.isFinite(n));
-
-    return nums.length > 0 ? nums : undefined;
   }
 
   return trimmed;

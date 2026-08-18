@@ -15,6 +15,7 @@ import type {
   ChannelParseResult,
   ChannelRequest,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -92,6 +93,8 @@ export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   webhookSecret: string,
+  allowedChannelIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   senderId?: string,
 ): ChannelAdapter {
   return {
@@ -112,7 +115,12 @@ export function createPancakeChannel(
     },
 
     parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
-      return parsePancakeWebhook(req, pageId);
+      return parsePancakeWebhook(
+        req,
+        pageId,
+        allowedChannelIds,
+        allowedUserIds,
+      );
     },
 
     actions: function(msg): ChannelActions {
@@ -241,6 +249,8 @@ function parseJsonBody(
 function parsePancakeWebhook(
   req: ChannelRequest,
   pageId: string,
+  allowedChannelIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
   const payload = JSON.parse(req.body) as PancakeWebhookPayload;
   logDebug("Pancake webhook received", {
@@ -320,6 +330,21 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
+  if (!isAllowedId(allowedChannelIds, conversation.id)) {
+    logWarn("Pancake conversation not in allow list", {
+      conversationId: conversation.id,
+    });
+
+    return { kind: "ignore" };
+  }
+
+  const fromId = message.from?.id ?? conversation.from?.id;
+  if (!isAllowedId(allowedUserIds, fromId)) {
+    logWarn("Pancake sender not in allow list", { userId: fromId });
+
+    return { kind: "ignore" };
+  }
+
   logInfo("Pancake webhook accepted", {
     pageId: pageId,
     conversationId: conversation.id,
@@ -353,10 +378,10 @@ function parsePancakeWebhook(
         workspaceRef: pageId,
         channelId: conversation.id,
         ...((message.from?.id ?? conversation.from?.id)
-          ? { actorId: message.from?.id ?? conversation.from?.id }
+          ? { userId: message.from?.id ?? conversation.from?.id }
           : {}),
         ...((message.from?.name ?? conversation.from?.name)
-          ? { actorName: message.from?.name ?? conversation.from?.name }
+          ? { userName: message.from?.name ?? conversation.from?.name }
           : {}),
       },
       // Spread so the typed source reaches a Record<string, unknown> field.

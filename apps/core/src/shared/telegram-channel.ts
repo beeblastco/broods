@@ -15,6 +15,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -33,7 +34,8 @@ export interface TelegramSource {
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
-  allowedChatIds: Set<number>,
+  allowedChannelIds: Set<string> | null,
+  allowedUserIds: Set<string> | null,
   reactionEmoji: string,
   apiUrl?: string,
 ): ChannelAdapter {
@@ -70,8 +72,17 @@ export function createTelegramChannel(
         return { kind: "ignore" };
       }
 
-      if (!allowedChatIds.has(message.chat.id)) {
+      if (
+        !isAllowedId(allowedChannelIds, String(message.chat.id))
+      ) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
+
+        return { kind: "ignore" };
+      }
+
+      const senderId = message.from?.id ? String(message.from.id) : undefined;
+      if (!isAllowedId(allowedUserIds, senderId)) {
+        logWarn("Telegram sender not in allow list", { userId: senderId });
 
         return { kind: "ignore" };
       }
@@ -100,9 +111,9 @@ export function createTelegramChannel(
             ...(message.message_thread_id !== undefined
               ? { threadId: String(message.message_thread_id) }
               : {}),
-            ...(message.from?.id ? { actorId: String(message.from.id) } : {}),
+            ...(message.from?.id ? { userId: String(message.from.id) } : {}),
             ...(message.from?.username
-              ? { actorName: message.from.username }
+              ? { userName: message.from.username }
               : {}),
           },
           // Spread so the typed source reaches a Record<string, unknown> field.

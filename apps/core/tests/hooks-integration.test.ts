@@ -219,7 +219,7 @@ describe("channel.message.received rewrite reaches the session", () => {
         telegram: {
           botToken: "bot-token",
           webhookSecret: "telegram-secret",
-          allowedChatIds: [123],
+          allowedChannelIds: ["123"],
         },
       };
       const hookedAgent = {

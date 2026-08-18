@@ -185,8 +185,8 @@ export interface ChannelRecordConfig {
   workspaceScope?: AgentChannelWorkspaceScope;
   /** Images the agent may stand a sandbox up from for a thread here. */
   sandboxImages?: string[];
-  /** Named groups of people, readable from policy conditions as `actorRoles`. */
-  tagRoles?: Array<{ roleId: string; actorIds: string[] }>;
+  /** Named groups of people, readable from policy conditions as `userRoles`. */
+  tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 }
 
 /** The stage a tool belongs to. Tools with the same name in two stages are two tools. */

@@ -31,6 +31,36 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
   });
 
+  it("validates one reach pair for every provider and rejects the retired keys", () => {
+    expect(
+      normalizeAgentConfig({
+        channels: {
+          telegram: { id: "tg", allowedChannelIds: ["*"] },
+          github: { id: "gh", allowedUserIds: ["octocat"] },
+        },
+      }),
+    ).toEqual({
+      channels: {
+        telegram: { id: "tg", allowedChannelIds: ["*"] },
+        github: { id: "gh", allowedUserIds: ["octocat"] },
+      },
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { discord: { id: "dc", allowedGuildIds: ["G1"] } },
+      }),
+    ).toThrow(
+      "config.channels.discord.allowedGuildIds is no longer supported; use config.channels.discord.allowedChannelIds",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { slack: { id: "sl", allowedChannelIds: [""] } },
+      }),
+    ).toThrow(
+      "config.channels.slack.allowedChannelIds must be an array of non-empty strings",
+    );
+  });
+
   it("normalizes empty configs and rejects non-objects", () => {
     expect(normalizeAgentConfig(null)).toEqual({});
     expect(() => normalizeAgentConfig("bad")).toThrow(

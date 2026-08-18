@@ -21,7 +21,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
+      { allowedChannelIds: null },
     );
 
     expect(
@@ -47,7 +47,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
+      { allowedChannelIds: null },
     );
     const parsed = await adapter.parse(
       createZaloRequest(
@@ -70,8 +70,8 @@ describe("zalo channel adapter", () => {
       content: "hello zalo",
       identity: {
         channelId: "chat-1",
-        actorId: "user-1",
-        actorName: "Ada",
+        userId: "user-1",
+        userName: "Ada",
       },
       source: {
         chatId: "chat-1",
@@ -89,7 +89,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
+      { allowedChannelIds: null },
     );
     const parsed = await adapter.parse(
       createZaloRequest({
@@ -117,9 +117,9 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
   });
 
-  it("accepts any private sender when the allow list is empty", async () => {
+  it("accepts any chat when the allow list is null", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(),
+      allowedChannelIds: null,
     });
 
     expect(
@@ -131,10 +131,8 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
   });
 
-  it("ignores unsupported events, invalid messages, and unknown senders", async () => {
-    const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedUserIds: new Set(["user-1"]),
-    });
+  it("ignores unsupported events and invalid messages", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret");
 
     expectIgnoreReason(
       await adapter.parse(
@@ -192,12 +190,6 @@ describe("zalo channel adapter", () => {
       "bot_message",
     );
     expectIgnoreReason(
-      await adapter.parse(
-        createZaloRequest(validUpdate({ senderId: "user-2" })),
-      ),
-      "sender_not_allowed:user-2",
-    );
-    expectIgnoreReason(
       await adapter.parse(createZaloRequest(validUpdate({ messageId: null }))),
       "missing_message_id",
     );
@@ -221,9 +213,9 @@ describe("zalo channel adapter", () => {
     expect(parsed.message.source.chatType).toBe("GROUP");
   });
 
-  it("ignores groups outside the group allow list", async () => {
+  it("ignores chats outside the allow list", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedGroupIds: new Set(["group-1"]),
+      allowedChannelIds: new Set(["group-1"]),
     });
 
     expect(
@@ -239,17 +231,38 @@ describe("zalo channel adapter", () => {
       await adapter.parse(
         createZaloRequest(validUpdate({ chatType: "GROUP", chatId: "group-9" })),
       ),
-      "group_not_allowed:group-9",
+      "chat_not_allowed:group-9",
     );
   });
 
-  it("leaves private chats untouched by the group allow list", async () => {
+  it("drops a sender outside the user allow list", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedGroupIds: new Set(["group-1"]),
+      allowedUserIds: new Set(["user-1"]),
     });
 
-    expect((await adapter.parse(createZaloRequest(validUpdate()))).kind).toBe(
-      "message",
+    expect(
+      (
+        await adapter.parse(
+          createZaloRequest(validUpdate({ senderId: "user-1" })),
+        )
+      ).kind,
+    ).toBe("message");
+    expectIgnoreReason(
+      await adapter.parse(
+        createZaloRequest(validUpdate({ senderId: "user-9" })),
+      ),
+      "user_not_allowed:user-9",
+    );
+  });
+
+  it("gates a private chat by the same allow list a group uses", async () => {
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: new Set(["group-1"]),
+    });
+
+    expectIgnoreReason(
+      await adapter.parse(createZaloRequest(validUpdate())),
+      "chat_not_allowed:chat-1",
     );
   });
 

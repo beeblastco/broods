@@ -10,7 +10,6 @@
 import type { ModelMessage } from "ai";
 import type {
   AgentConfig,
-  AgentChannelWorkspaceScope,
   AgentDiscordChannelConfig,
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
@@ -32,7 +31,7 @@ import type {
 
 const RESOURCE_MARKER = Symbol.for("broods.resource");
 const CONFIG_MARKER = Symbol.for("broods.config");
-const CHANNEL_MARKER = Symbol.for("broods.channel");
+const CONNECTION_MARKER = Symbol.for("broods.connection");
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 export interface EnvRef<Name extends string = string> {
@@ -184,41 +183,69 @@ export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
 export type ChannelType =
   "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
 
-export interface ChannelDefinition<Type extends ChannelType, Config> {
-  readonly [CHANNEL_MARKER]: true;
-  readonly kind: "channel";
+/**
+ * A connection is one app install: the credentials an agent needs before a
+ * provider can reach it at all. Channels point at a connection; a connection
+ * never points back, which is what keeps the reference graph acyclic.
+ */
+export interface ConnectionDefinition<Type extends ChannelType, Config> {
+  readonly [CONNECTION_MARKER]: true;
+  readonly kind: "connection";
   readonly type: Type;
-  readonly workspaceScope?: AgentChannelWorkspaceScope;
-  readonly config: Config;
+  readonly partition?: ChannelPartition;
+  /** `partition` is lifted out of the authored input, so it is not in here. */
+  readonly config: Omit<Config, "partition">;
 }
+
+/**
+ * How an attached partitioned workspace splits its folders for runs arriving
+ * through this door. `shared` mounts the workspace root; `conversation` mounts
+ * a private child folder per thread, issue or chat under `alias`.
+ */
+export type ChannelPartition =
+  | { by: "shared"; alias?: never }
+  | { by: "conversation"; alias: string };
+
+/**
+ * An agent bound to a channel. Every bound agent runs when a message arrives;
+ * `reply: false` runs it with a silenced channel, so it can work without
+ * speaking in the room.
+ */
+export type ChannelAgentInput =
+  | AgentResource
+  | { agent: AgentResource; reply?: boolean };
 
 type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Pick<Config, Keys>
 > &
   Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
-type ChannelIdentityInput = {
+type ConnectionIdentityInput = {
   /** Include the dashboard trace link in channel replies. Off by default. */
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
+  /**
+   * Rooms this connection answers in, on top of every channel declared against
+   * it. Use `["*"]` to answer everywhere instead, which is the only reason to
+   * name rooms here at all: a room with rules belongs in a channel resource.
+   */
+  allowedChannelIds?: readonly string[];
+  /** Provider user ids allowed to trigger the agent. `["*"]` or omitted is everyone. */
+  allowedUserIds?: readonly string[];
 };
 
-export type TelegramChannelInput = EnvRefString<
+export type TelegramConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentTelegramChannelConfig,
-      | "apiUrl"
-      | "botToken"
-      | "webhookSecret"
-      | "allowedChatIds"
-      | "reactionEmoji"
+      "apiUrl" | "botToken" | "webhookSecret" | "reactionEmoji"
     >,
-    "botToken" | "webhookSecret" | "allowedChatIds"
+    "botToken" | "webhookSecret"
   >
 > &
-  ChannelIdentityInput;
+  ConnectionIdentityInput;
 
-export type GitHubChannelInput = EnvRefString<
+export type GitHubConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentGitHubChannelConfig,
@@ -226,7 +253,6 @@ export type GitHubChannelInput = EnvRefString<
       | "webhookSecret"
       | "appId"
       | "privateKey"
-      | "allowedRepos"
       | "userName"
       | "botUserId"
       | "triggerOnIssueOpen"
@@ -235,80 +261,149 @@ export type GitHubChannelInput = EnvRefString<
     "webhookSecret" | "appId" | "privateKey"
   >
 > &
-  ChannelIdentityInput;
+  ConnectionIdentityInput;
 
-export type SlackChannelInput = EnvRefString<
+export type SlackConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentSlackChannelConfig,
-      | "apiUrl"
-      | "botToken"
-      | "signingSecret"
-      | "allowedChannelIds"
-      | "reactionEmoji"
+      "apiUrl" | "botToken" | "signingSecret" | "reactionEmoji"
     >,
     "botToken" | "signingSecret"
   >
 > &
-  ChannelIdentityInput;
+  ConnectionIdentityInput;
 
-export type DiscordChannelInput = EnvRefString<
+export type DiscordConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentDiscordChannelConfig,
-      | "apiUrl"
-      | "botToken"
-      | "publicKey"
-      | "allowedGuildIds"
-      | "botUserId"
-      | "mentionRoleIds"
+      "apiUrl" | "botToken" | "publicKey" | "botUserId" | "mentionRoleIds"
     >,
     "botToken" | "publicKey"
   >
 > &
-  ChannelIdentityInput;
-export interface PancakeChannelInput extends ChannelIdentityInput {
+  ConnectionIdentityInput;
+
+export interface PancakeConnectionInput extends ConnectionIdentityInput {
   pageId: ChannelSecret;
   pageAccessToken: ChannelSecret;
   webhookSecret: ChannelSecret;
   senderId?: string | EnvRef;
 }
 
-export interface ZaloChannelInput extends ChannelIdentityInput {
+export interface ZaloConnectionInput extends ConnectionIdentityInput {
   botToken: ChannelSecret;
   webhookSecret: ChannelSecret;
-  allowedUserIds?: readonly (string | EnvRef)[];
-  allowedGroupIds?: readonly (string | EnvRef)[];
 }
 
-export type TelegramChannelDefinition = ChannelDefinition<
+export type TelegramConnectionDefinition = ConnectionDefinition<
   "telegram",
-  TelegramChannelInput
+  TelegramConnectionInput
 >;
-export type GitHubChannelDefinition = ChannelDefinition<
+export type GitHubConnectionDefinition = ConnectionDefinition<
   "github",
-  GitHubChannelInput
+  GitHubConnectionInput
 >;
-export type SlackChannelDefinition = ChannelDefinition<
+export type SlackConnectionDefinition = ConnectionDefinition<
   "slack",
-  SlackChannelInput
+  SlackConnectionInput
 >;
-export type DiscordChannelDefinition = ChannelDefinition<
+export type DiscordConnectionDefinition = ConnectionDefinition<
   "discord",
-  DiscordChannelInput
+  DiscordConnectionInput
 >;
-export type PancakeChannelDefinition = ChannelDefinition<
+export type PancakeConnectionDefinition = ConnectionDefinition<
   "pancake",
-  PancakeChannelInput
+  PancakeConnectionInput
 >;
-export type ZaloChannelDefinition = ChannelDefinition<"zalo", ZaloChannelInput>;
-export type AnyChannelDefinition =
-  | TelegramChannelDefinition
-  | GitHubChannelDefinition
-  | SlackChannelDefinition
-  | DiscordChannelDefinition
-  | PancakeChannelDefinition
-  | ZaloChannelDefinition;
+export type ZaloConnectionDefinition = ConnectionDefinition<
+  "zalo",
+  ZaloConnectionInput
+>;
+export type AnyConnectionDefinition =
+  | TelegramConnectionDefinition
+  | GitHubConnectionDefinition
+  | SlackConnectionDefinition
+  | DiscordConnectionDefinition
+  | PancakeConnectionDefinition
+  | ZaloConnectionDefinition;
+
+/**
+ * One real place a team talks: a Slack channel, a Discord channel, a repo. It
+ * narrows and adds — instructions append, policies union, tools and workspaces
+ * only narrow — and never grants what a bound agent lacks. It names the
+ * connection it belongs to, so `platform` is never written by hand.
+ */
+export type ChannelDefinitionConfig = {
+  connection: AnyConnectionDefinition;
+  /** Provider id of the place, from the per-platform field on the input. */
+  externalId: string;
+  /** Team, guild or repo owner the place sits in, when the provider has one. */
+  workspaceRef?: string;
+  /** Every one of these runs. Omit and the connection's own agent answers. */
+  agents?: readonly ChannelAgentInput[];
+  /** Appended after each agent's own system prompt, never replacing it. */
+  instructions?: string;
+  /** Selects from what the agent already attaches; anything else is dropped. */
+  workspaces?: readonly AgentWorkspaceInput[];
+  policies?: readonly (PolicyResource | string)[];
+  policyMode?: AgentPolicyConfig["mode"];
+  denyTools?: readonly string[];
+  /** Where the reply lands. Slack only. */
+  threadPolicy?: "always-thread" | "inline";
+  partition?: ChannelPartition;
+  sandboxImages?: readonly string[];
+  tagRoles?: readonly { roleId: string; userIds: readonly string[] }[];
+};
+
+/** Rules shared by every channel, whatever the provider calls its rooms. */
+type ChannelRulesInput = Omit<
+  ChannelDefinitionConfig,
+  "connection" | "externalId" | "workspaceRef" | "threadPolicy"
+>;
+
+export type SlackChannelInput = ChannelRulesInput & {
+  connection: SlackConnectionDefinition;
+  /** Slack channel id, e.g. "C0123ABCD". */
+  channelId: string;
+  /** Slack team id the channel sits in. */
+  teamId?: string;
+  /** Where the reply lands. Slack is the only provider with a choice. */
+  threadPolicy?: "always-thread" | "inline";
+};
+
+export type DiscordChannelInput = ChannelRulesInput & {
+  connection: DiscordConnectionDefinition;
+  /** Discord channel id (a snowflake). */
+  channelId: string;
+  /** Guild the channel sits in. */
+  guildId?: string;
+};
+
+export type GitHubChannelInput = ChannelRulesInput & {
+  connection: GitHubConnectionDefinition;
+  /** Repository full name, e.g. "beeblast/api". */
+  repo: string;
+};
+
+export type TelegramChannelInput = ChannelRulesInput & {
+  connection: TelegramConnectionDefinition;
+  /** Telegram chat id, e.g. "-1001234567". */
+  chatId: string;
+};
+
+export type ZaloChannelInput = ChannelRulesInput & {
+  connection: ZaloConnectionDefinition;
+  /** Zalo user or group chat id. */
+  chatId: string;
+};
+
+export type PancakeChannelInput = ChannelRulesInput & {
+  connection: PancakeConnectionDefinition;
+  /** Pancake conversation id. */
+  conversationId: string;
+};
 
 /**
  * Per-agent workspace mount with an optional sandbox override. A bare
@@ -483,7 +578,7 @@ export type AgentDefinitionConfig = EnvRefString<
   hooks?: AgentHooks & {
     webhooks?: readonly EnvRefString<AgentWebhookHookConfig>[];
   };
-  channels?: readonly AnyChannelDefinition[];
+  connections?: readonly AnyConnectionDefinition[];
   sandbox?: SandboxResource | string;
   workspaces?: readonly AgentWorkspaceInput[];
   subagent?: AgentSubagentDefinitionConfig;
@@ -502,41 +597,23 @@ export type CronDefinitionConfig = Omit<CreateCronInput, "agentId" | "name"> & {
   agent: AgentResource | string;
 };
 
-/**
- * Binds one real place — a Slack channel, a Discord channel, a repo — to the
- * agent that answers there. Distinct from `channels` on an agent, which carries
- * one adapter's credentials: those say how to reach Slack, this says who replies
- * in #product-eng. A record narrows and adds, never granting what the agent lacks.
- */
-export type ChannelRecordDefinitionConfig = {
-  platform: ChannelType;
-  /** Provider id of the place: a Slack channel id, or an owner/repo. */
-  externalId: string;
-  /** Team or guild the place sits in, when the provider has one. */
-  workspaceRef?: string;
-  /** Who answers here. The first is the default when a turn matches no other. */
-  agents: readonly (AgentResource | string)[];
-  /** Appended after the bound agent's own system prompt. */
-  instructions?: string;
-  /** Selects from what the agent already attaches; anything else is dropped. */
-  workspaces?: readonly AgentWorkspaceInput[];
-  policies?: readonly (PolicyResource | string)[];
-  policyMode?: AgentPolicyConfig["mode"];
-  denyTools?: readonly string[];
-  /** Where the reply lands. Slack only — see the channel-records docs. */
-  threadPolicy?: "always-thread" | "inline";
-  workspaceScope?: AgentChannelWorkspaceScope;
-  sandboxImages?: readonly string[];
-  tagRoles?: readonly { roleId: string; actorIds: readonly string[] }[];
-};
-
 export type AgentResource<Name extends string = string> = ResourceDefinition<
   "agent",
   Name,
   AgentDefinitionConfig
 >;
+/**
+ * Code-first workspace config. Says `partitioned` where storage says
+ * `isolation`: the flag permits a split, it does not perform one — a channel's
+ * `partition` decides which folder a run actually mounts.
+ */
+export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
+  /** Allow this workspace to be split into per-conversation folders. */
+  partitioned?: boolean;
+};
+
 export type WorkspaceResource<Name extends string = string> =
-  ResourceDefinition<"workspace", Name, WorkspaceConfig>;
+  ResourceDefinition<"workspace", Name, WorkspaceDefinitionConfig>;
 export type SandboxResource<Name extends string = string> = ResourceDefinition<
   "sandbox",
   Name,
@@ -563,8 +640,11 @@ export type CronResource<Name extends string = string> = ResourceDefinition<
   CronDefinitionConfig
 >;
 
-export type ChannelRecordResource<Name extends string = string> =
-  ResourceDefinition<"channelRecord", Name, ChannelRecordDefinitionConfig>;
+export type ChannelResource<Name extends string = string> = ResourceDefinition<
+  "channelRecord",
+  Name,
+  ChannelDefinitionConfig
+>;
 
 export type AnyResource =
   | AgentResource
@@ -574,7 +654,7 @@ export type AnyResource =
   | SkillResource
   | ToolResource
   | PolicyResource
-  | ChannelRecordResource;
+  | ChannelResource;
 
 /**
  * References an account/environment variable resolved on the SERVER at runtime —
@@ -636,58 +716,134 @@ function defineResource<
   };
 }
 
-function defineChannel<const Type extends ChannelType, Config>(
+function defineConnection<const Type extends ChannelType, Config>(
   type: Type,
-  config: Config & ChannelIdentityInput,
-): ChannelDefinition<Type, Config> {
-  const { workspaceScope, ...channelConfig } = config;
+  config: Config & ConnectionIdentityInput,
+): ConnectionDefinition<Type, Config> {
+  const { partition, ...rest } = config;
 
   return {
-    [CHANNEL_MARKER]: true,
-    kind: "channel",
+    [CONNECTION_MARKER]: true,
+    kind: "connection",
     type: type,
-    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
-    config: {
-      ...channelConfig,
-      ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
-    } as Config,
+    ...(partition ? { partition: partition } : {}),
+    config: rest,
   };
 }
 
-export function defineTelegramChannel(
-  config: TelegramChannelInput,
-): TelegramChannelDefinition {
-  return defineChannel("telegram", config);
+// The per-platform id field is named for what the provider calls it, so the
+// value you paste is the value the field asks for. All of them normalize to the
+// one `externalId` the backend stores, and `platform` comes off the connection.
+function defineChannelResource<const Name extends string>(
+  name: Name,
+  description: string | undefined,
+  externalId: string,
+  workspaceRef: string | undefined,
+  rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
+): ChannelResource<Name> {
+  return defineResource("channelRecord", name, description, {
+    ...rules,
+    externalId: externalId,
+    ...(workspaceRef ? { workspaceRef: workspaceRef } : {}),
+  });
 }
 
-export function defineGitHubChannel(
-  config: GitHubChannelInput,
-): GitHubChannelDefinition {
-  return defineChannel("github", config);
+export function defineDiscordConnection(
+  config: DiscordConnectionInput,
+): DiscordConnectionDefinition {
+  return defineConnection("discord", config);
 }
 
-export function defineSlackChannel(
-  config: SlackChannelInput,
-): SlackChannelDefinition {
-  return defineChannel("slack", config);
+export function defineGitHubConnection(
+  config: GitHubConnectionInput,
+): GitHubConnectionDefinition {
+  return defineConnection("github", config);
 }
 
-export function defineDiscordChannel(
-  config: DiscordChannelInput,
-): DiscordChannelDefinition {
-  return defineChannel("discord", config);
+export function definePancakeConnection(
+  config: PancakeConnectionInput,
+): PancakeConnectionDefinition {
+  return defineConnection("pancake", config);
 }
 
-export function definePancakeChannel(
-  config: PancakeChannelInput,
-): PancakeChannelDefinition {
-  return defineChannel("pancake", config);
+export function defineSlackConnection(
+  config: SlackConnectionInput,
+): SlackConnectionDefinition {
+  return defineConnection("slack", config);
 }
 
-export function defineZaloChannel(
-  config: ZaloChannelInput,
-): ZaloChannelDefinition {
-  return defineChannel("zalo", config);
+export function defineTelegramConnection(
+  config: TelegramConnectionInput,
+): TelegramConnectionDefinition {
+  return defineConnection("telegram", config);
+}
+
+export function defineZaloConnection(
+  config: ZaloConnectionInput,
+): ZaloConnectionDefinition {
+  return defineConnection("zalo", config);
+}
+
+export function defineDiscordChannel<const Name extends string>(
+  input: ResourceInput<Name, DiscordChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, channelId, guildId, ...rules } = input;
+
+  return defineChannelResource(name, description, channelId, guildId, rules);
+}
+
+export function defineGitHubChannel<const Name extends string>(
+  input: ResourceInput<Name, GitHubChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, repo, ...rules } = input;
+  // The owner half becomes the workspace ref, so a repo missing it would store
+  // the whole string as an owner that does not exist.
+  const [owner, ...rest] = repo.split("/");
+  if (!owner || rest.length !== 1 || !rest[0]) {
+    throw new Error(
+      `Channel "${name}" repo must be "owner/name", not "${repo}"`,
+    );
+  }
+
+  return defineChannelResource(name, description, repo, owner, rules);
+}
+
+export function definePancakeChannel<const Name extends string>(
+  input: ResourceInput<Name, PancakeChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, conversationId, ...rules } = input;
+
+  return defineChannelResource(
+    name,
+    description,
+    conversationId,
+    undefined,
+    rules,
+  );
+}
+
+export function defineSlackChannel<const Name extends string>(
+  input: ResourceInput<Name, SlackChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, channelId, teamId, ...rules } = input;
+
+  return defineChannelResource(name, description, channelId, teamId, rules);
+}
+
+export function defineTelegramChannel<const Name extends string>(
+  input: ResourceInput<Name, TelegramChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, chatId, ...rules } = input;
+
+  return defineChannelResource(name, description, chatId, undefined, rules);
+}
+
+export function defineZaloChannel<const Name extends string>(
+  input: ResourceInput<Name, ZaloChannelInput>,
+): ChannelResource<Name> {
+  const { name, description, chatId, ...rules } = input;
+
+  return defineChannelResource(name, description, chatId, undefined, rules);
 }
 
 export function defineBroods(
@@ -716,7 +872,7 @@ export function defineHarness<const Definition extends HarnessDefinition>(
 }
 
 export function defineWorkspace<const Name extends string>(
-  input: ResourceInput<Name, WorkspaceConfig>,
+  input: ResourceInput<Name, WorkspaceDefinitionConfig>,
 ): WorkspaceResource<Name> {
   const { name, description, ...config } = input;
 
@@ -724,7 +880,7 @@ export function defineWorkspace<const Name extends string>(
     "workspace",
     name,
     description,
-    config as WorkspaceConfig,
+    config as WorkspaceDefinitionConfig,
   );
 }
 
@@ -783,19 +939,6 @@ export function definePolicy<const Name extends string>(
   );
 }
 
-export function defineChannelRecord<const Name extends string>(
-  input: ResourceInput<Name, ChannelRecordDefinitionConfig>,
-): ChannelRecordResource<Name> {
-  const { name, description, ...config } = input;
-
-  return defineResource(
-    "channelRecord",
-    name,
-    description,
-    config as ChannelRecordDefinitionConfig,
-  );
-}
-
 export function defineCron<const Name extends string>(
   input: ResourceInput<Name, CronDefinitionConfig>,
 ): CronResource<Name> {
@@ -817,13 +960,13 @@ export function isResource(value: unknown): value is AnyResource {
   );
 }
 
-export function isChannelDefinition(
+export function isConnectionDefinition(
   value: unknown,
-): value is AnyChannelDefinition {
+): value is AnyConnectionDefinition {
   return Boolean(
     value &&
     typeof value === "object" &&
-    (value as { [CHANNEL_MARKER]?: boolean })[CHANNEL_MARKER],
+    (value as { [CONNECTION_MARKER]?: boolean })[CONNECTION_MARKER],
   );
 }
 

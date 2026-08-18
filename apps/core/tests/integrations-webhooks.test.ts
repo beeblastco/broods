@@ -22,7 +22,7 @@ const TEST_ACCOUNT = {
       telegram: {
         botToken: "bot-token",
         webhookSecret: "telegram-secret",
-        allowedChatIds: [123],
+        allowedChannelIds: ["123"],
       },
     },
   },
@@ -200,7 +200,7 @@ describe("account webhook ingress", () => {
           telegram: {
             botToken: "bot-token",
             webhookSecret: "telegram-secret",
-            allowedChatIds: [123],
+            allowedChannelIds: ["123"],
           },
         },
       },
@@ -405,7 +405,9 @@ describe("account webhook ingress", () => {
     });
   });
 
-  it("accepts Zalo webhook senders when allowedUserIds is omitted or empty", async () => {
+  // An omitted list still means "everywhere". An empty one is now the explicit
+  // deny-all a declared-nothing connection compiles to.
+  it("accepts a Zalo sender when allowedUserIds is omitted and denies when it is empty", async () => {
     const handledEvents: ChannelInboundEvent[] = [];
     for (const allowedUserIds of [undefined, []]) {
       const zaloAgent = {
@@ -438,7 +440,7 @@ describe("account webhook ingress", () => {
       expect(response.statusCode).toBe(200);
       await response.afterResponse;
     }
-    expect(handledEvents).toHaveLength(2);
+    expect(handledEvents).toHaveLength(1);
   });
 
   it("returns 503 when Zalo is not configured", async () => {

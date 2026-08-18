@@ -1,14 +1,12 @@
-import { defineAgent, defineDiscordChannel, env } from "broods";
+import { defineAgent, defineDiscordConnection, env } from "broods";
 
-export const discord = defineDiscordChannel({
+export const discord = defineDiscordConnection({
+  allowedChannelIds: ["*"],
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
   // Set this and the agent answers only when it is tagged; everything else in
   // the channel is stored as context. Leave it out and it answers everything.
   botUserId: env("DISCORD_BOT_USER_ID"),
-  allowedGuildIds: process.env.DISCORD_ALLOWED_GUILD_IDS?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean),
 });
 
 export const agent = defineAgent({
@@ -26,5 +24,5 @@ export const agent = defineAgent({
   agent: {
     system: "You are a concise Discord assistant.",
   },
-  channels: [discord],
+  connections: [discord],
 });

@@ -214,8 +214,8 @@ describe("agent policy enforce mode", () => {
           workspaceRef: "T09BEEB",
           channelId: "C042PRODENG",
           threadId: "1753264860.4471",
-          actorId: "U777",
-          actorName: "Ana",
+          userId: "U777",
+          userName: "Ana",
         }),
       },
       [],
@@ -229,8 +229,8 @@ describe("agent policy enforce mode", () => {
         channel: "slack",
         channelId: "C042PRODENG",
         threadId: "1753264860.4471",
-        actorId: "U777",
-        actorName: "Ana",
+        userId: "U777",
+        userName: "Ana",
       }),
     );
   });
@@ -241,11 +241,11 @@ describe("agent policy enforce mode", () => {
       channelId: "C1",
     });
     expect(
-      channelPolicyIdentity({ actorId: "U1", actorRoles: ["oncall"] }),
-    ).toEqual({ actorId: "U1", actorRoles: ["oncall"] });
+      channelPolicyIdentity({ userId: "U1", userRoles: ["oncall"] }),
+    ).toEqual({ userId: "U1", userRoles: ["oncall"] });
     // An empty role list is noise on the policy input, not a value to match on.
-    expect(channelPolicyIdentity({ actorId: "U1", actorRoles: [] })).toEqual({
-      actorId: "U1",
+    expect(channelPolicyIdentity({ userId: "U1", userRoles: [] })).toEqual({
+      userId: "U1",
     });
   });
 });
@@ -257,7 +257,7 @@ describe("agent.invoke gate", () => {
       agentId: "agent_1",
       channel: "slack",
       channelId: "C042GENERAL",
-      actorId: "U777",
+      userId: "U777",
     });
 
     expect(decision).toEqual({
@@ -323,7 +323,7 @@ describe("agent.invoke gate", () => {
       agentId: "agent_1",
       channel: "slack",
       channelId: "C042GENERAL",
-      actorId: "U777",
+      userId: "U777",
     });
 
     expect(seenPolicyInputs).toContainEqual(
@@ -331,7 +331,7 @@ describe("agent.invoke gate", () => {
         action: "agent.invoke",
         channel: "slack",
         channelId: "C042GENERAL",
-        actorId: "U777",
+        userId: "U777",
       }),
     );
   });

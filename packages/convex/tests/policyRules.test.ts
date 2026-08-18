@@ -16,7 +16,7 @@ const policyWith = (operator: string, value: unknown) => ({
         effect: "deny",
         actions: ["agent.invoke"],
         conditions: [
-          { attribute: "actorRoles", operator: operator, value: value },
+          { attribute: "userRoles", operator: operator, value: value },
         ],
       },
     ],

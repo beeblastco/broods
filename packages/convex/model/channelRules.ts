@@ -42,7 +42,7 @@ export type ChannelRecordConfig = {
   workspaceScope?:
     { level: "channel" } | { level: "conversation"; alias: string };
   sandboxImages?: string[];
-  tagRoles?: Array<{ roleId: string; actorIds: string[] }>;
+  tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 };
 
 export type CreateChannelRecordInput = {
@@ -287,10 +287,10 @@ function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
 
     return {
       roleId: requireString(role.roleId, `config.tagRoles[${index}].roleId`),
-      actorIds:
+      userIds:
         optionalStringArray(
-          role.actorIds,
-          `config.tagRoles[${index}].actorIds`,
+          role.userIds,
+          `config.tagRoles[${index}].userIds`,
         ) ?? [],
     };
   });

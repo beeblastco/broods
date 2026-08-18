@@ -6,29 +6,35 @@ Broods uses [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter
 
 ## Configuration
 
-Define a GitHub channel with `defineGitHubChannel` and attach it to an agent:
+Define a GitHub connection with `defineGitHubConnection`, name the repositories it answers in with `defineGitHubChannel`, and attach the connection to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineGitHubChannel, env } from "broods";
+import { defineAgent, defineGitHubChannel, defineGitHubConnection, env } from "broods";
 
-export const github = defineGitHubChannel({
+export const github = defineGitHubConnection({
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
-  allowedRepos: ["owner/repo-1", "owner/repo-2"],
   apiUrl: "https://api.github.com",
+});
+
+export const platform = defineGitHubChannel({
+  name: "platform",
+  connection: github,
+  repo: "owner/repo-1",
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [github],
+  connections: [github],
 });
 ```
 
 - `webhookSecret`: GitHub Webhook Secret.
 - `appId`: GitHub App ID.
 - `privateKey`: GitHub App Private Key.
-- `allowedRepos` (optional): An array of full repository names (`owner/repo`) the agent may respond in. Events are matched against the webhook's `repository.full_name`.
+- `channels` (optional): `["*"]` to answer in every repository the App is installed on, instead of only the declared ones. A GitHub App's install list already narrows this, so the wildcard is the common choice here.
+- `allowedUserIds` (optional): GitHub logins allowed to trigger the agent. Everyone, when omitted.
 - `apiUrl` (optional): GitHub API base URL, for example for GitHub Enterprise. This maps to `GitHubAdapterConfig["apiUrl"]`.
 - `userName` (optional): Bot username for @-mention detection (e.g. `"my-bot"` or `"my-bot[bot]"`). When set, the bot only responds to comments that mention `@userName`. Without this, the bot responds to all human comments.
 - `botUserId` (optional): Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.

@@ -79,12 +79,12 @@ Webhook handling is split deliberately:
 
 | Channel    | Runtime adapter                                                                                                            | Chat SDK package                                                                 | Required config                                                                     | Documentation                   |
 | ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------- |
-| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`, `allowedChatIds`                                       | [Telegram Details](telegram.md) |
+| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret`                                                          | [Telegram Details](telegram.md) |
 | `github`   | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts)     | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)     | `webhookSecret`, `appId`, `privateKey` (+ optional `userName` for @-mention gating) | [GitHub Details](github.md)     |
 | `slack`    | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts)       | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)       | `botToken`, `signingSecret`                                                         | [Slack Details](slack.md)       |
 | `discord`  | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts)   | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)   | `botToken`, `publicKey`                                                             | [Discord Details](discord.md)   |
 | `pancake`  | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts)   | Broods-native                                                                    | `pageId`, `pageAccessToken`, `webhookSecret`                                        | [Pancake Details](pancake.md)   |
-| `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret` (+ optional `allowedUserIds`)                           | [Zalo Details](zalo.md)         |
+| `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret`                                                          | [Zalo Details](zalo.md)         |
 
 ---
 
@@ -96,29 +96,44 @@ The CLI SDK exposes one constructor per provider. Attach the resulting definitio
 import {
   defineAgent,
   defineGitHubChannel,
+  defineGitHubConnection,
   defineSlackChannel,
+  defineSlackConnection,
   env,
 } from "broods";
 
-export const github = defineGitHubChannel({
+export const github = defineGitHubConnection({
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-  allowedRepos: ["owner/repo"],
 });
 
-export const slack = defineSlackChannel({
+export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
+export const platform = defineGitHubChannel({
+  name: "platform",
+  connection: github,
+  repo: "owner/repo",
+});
+
+export const productEng = defineSlackChannel({
+  name: "product-eng",
+  connection: slack,
+  channelId: "C042PRODENG",
+});
+
 export const support = defineAgent({
   name: "support",
-  channels: [github, slack],
+  connections: [github, slack],
 });
 ```
 
-`broods dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use channel constructors; keyed channel objects are rejected.
+A connection answers in the rooms declared against it and nowhere else. One that declares none fails `broods dev` rather than going quiet in production, so set `allowedChannelIds: ["*"]` when you really do mean everywhere. Naming ids in `allowedChannelIds` adds rooms on top of the declared channels, which is worth doing only for a room that needs no rules of its own. `allowedUserIds` narrows the same way by sender, and takes `["*"]` for everyone.
+
+`broods dev` lowers the list to the runtime's keyed `config.channels` shape, syncs referenced environment values, generates `api.channels`, and prints each provider webhook URL. Code-first agent definitions must use connection constructors; keyed channel objects are rejected.
 
 Runnable examples live under `packages/demos/channel-*`. Provider registration is explicit: Telegram, Zalo, and Discord demos include a `register` command; other providers use their administration console.
 
@@ -183,7 +198,7 @@ The normalized `InboundMessage` contains:
 - `conversationKey`: provider thread/chat/channel key used for persisted conversation state
 - `channelName`: adapter name
 - `content`: Vercel AI SDK `UserContent`
-- `identity`: provider-neutral `ChannelIdentity` — `workspaceRef`, `channelId`, `threadId`, `actorId`, `actorName`. This is the part channel lookup and policy read.
+- `identity`: provider-neutral `ChannelIdentity` — `workspaceRef`, `channelId`, `threadId`, `userId`, `userName`. This is the part channel lookup and policy read.
 - `source`: provider metadata needed for commands, replies, or diagnostics. Stays opaque because it carries reply-routing secrets such as interaction tokens and response URLs.
 
 `integrations.ts` scopes `eventId` and `conversationKey` with `accountId` and `agentId` before the session sees them.

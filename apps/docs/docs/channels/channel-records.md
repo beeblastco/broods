@@ -64,10 +64,10 @@ reading an agent still tells you its ceiling.
 | `policyIds`      | Unioned with the agent's                                          |
 | `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
 | `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
-| `workspaceScope` | Overrides the channel's scope (`channel` or `conversation`)       |
+| `partition` | Overrides the channel's scope (`channel` or `conversation`)       |
 | `threadPolicy`   | Where the reply lands — `always-thread` or `inline` (Slack only)  |
 | `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
-| `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
+| `tagRoles`       | Named groups of people, readable from policy as `userRoles`      |
 
 Provider, model and credentials stay on the agent and are never touched.
 
@@ -93,6 +93,45 @@ ignored.
 
 ## Creating a record
 
+In code, a channel names the connection it belongs to and the agents that answer in it. `platform` is taken from the connection, so it is never written by hand, and the connection's credentials never follow the channel onto the record.
+
+```ts title="broods/index.ts"
+import {
+  defineAgent,
+  defineSlackChannel,
+  defineSlackConnection,
+  env,
+} from "broods";
+
+export const slackApp = defineSlackConnection({
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+
+export const nhi = defineAgent({ name: "nhi", connections: [slackApp] });
+export const scribe = defineAgent({ name: "scribe" });
+
+export const productEng = defineSlackChannel({
+  name: "product-eng",
+  connection: slackApp,
+  channelId: "C042PRODENG",
+  teamId: "T09BEEBLAST",
+  agents: [nhi, { agent: scribe, reply: false }],
+  instructions: "Escalate billing questions to #finance.",
+  threadPolicy: "always-thread",
+});
+```
+
+Every agent in `agents` runs when a message arrives. `reply: false` runs one with a silenced channel, so it can work without speaking in the room. Omit `agents` entirely and the connection's own agent answers.
+
+Nothing points back at a channel — the connection does not list its channels, and the agent does not either. That is what lets a channel name its own app's agent without a circular reference.
+
+The per-platform id field is named for what the provider calls it: `channelId` for Slack and Discord, `repo` for GitHub, `chatId` for Telegram and Zalo, `conversationId` for Pancake. All of them are stored as `externalId`.
+
+### Through the account API
+
+The API speaks the stored names, not the authoring ones: send `workspaceScope` where the CLI writes `partition`, and `externalId` where it writes `channelId`, `repo`, `chatId` or `conversationId`.
+
 ```ts
 import { BroodsAccountClient } from "broods/account";
 
@@ -112,7 +151,7 @@ await client.createChannel({
     threadPolicy: "always-thread",
     policyIds: ["policy_prod_data"],
     policyMode: "audit",
-    tagRoles: [{ roleId: "oncall", actorIds: ["U777", "U778"] }],
+    tagRoles: [{ roleId: "oncall", userIds: ["U777", "U778"] }],
   },
 });
 ```
@@ -122,15 +161,25 @@ place is rejected so the webhook lookup stays unambiguous.
 
 ## Access control
 
-Two things become expressible once a record exists.
+Reach and policy are two different gates, and they are not interchangeable.
+
+**Where the agent listens** is the rooms declared as channels. That list is
+matched while the webhook is parsed, before any record read or policy call, and
+an undeclared room is dropped silently. It is the outer boundary: a policy runs
+inside it and can only narrow it further, never widen it. To widen, declare
+another channel or set `allowedChannelIds: ["*"]` on the connection.
 
 **Who may tag the agent here.** `agent.invoke` is evaluated before the turn
-starts, so a refusal costs nothing and reads like a sentence in the channel
-rather than a stack trace. In `audit` mode the same decision is logged and the
-turn still runs — that is how a rule is rolled out on a live channel.
+starts, and a refusal reads like a sentence in the channel rather than a stack
+trace. It is not free: the record has been read, the agent's deployment may have
+been loaded, every referenced policy document is fetched, and the decision is an
+HTTP call to the policy engine. It also answers back, which is right for "you
+may not ask me that" and wrong for "this room is not mine" — that is what the
+declared channels are for. In `audit` mode the same decision is logged and the
+turn still runs, which is how a rule is rolled out on a live channel.
 
-**What it may reach here.** `tagRoles` become `actorRoles` on the policy input,
-alongside `channelId`, `threadId`, `actorId` and `actorName`. A rule can then
+**What it may reach here.** `tagRoles` become `userRoles` on the policy input,
+alongside `channelId`, `threadId`, `userId` and `userName`. A rule can then
 say "production data only in #ops, and only for the on-call group":
 
 ```json
@@ -143,7 +192,7 @@ say "production data only in #ops, and only for the on-call group":
       "actions": ["tool.call"],
       "resources": { "toolNames": ["query_prod_db"] },
       "conditions": [
-        { "attribute": "actorRoles", "operator": "notIn", "value": ["oncall"] }
+        { "attribute": "userRoles", "operator": "notIn", "value": ["oncall"] }
       ]
     }
   ]

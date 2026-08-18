@@ -27,6 +27,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
     );
 
     expect(
@@ -56,6 +57,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -78,6 +80,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       new Set(["owner/allowed"]),
     );
 
@@ -99,12 +102,13 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("allows all repos when allowedRepos contains '*'", async () => {
+  it("allows every repo when no allow list is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
       "private-key",
-      new Set(["*"]),
+      null,
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -130,6 +134,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
     );
 
@@ -174,6 +179,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
     );
 
@@ -224,6 +230,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
     );
 
@@ -278,6 +285,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -309,6 +317,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -343,6 +352,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -413,6 +423,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       testPrivateKey(),
+      null,
       null,
       undefined,
       "my-bot",
@@ -513,6 +524,7 @@ describe("github channel adapter", () => {
       "app-id",
       testPrivateKey(),
       null,
+      null,
       undefined,
       "my-bot",
     );
@@ -566,6 +578,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
       undefined,
       "my-bot",
     );
@@ -599,6 +612,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -634,6 +648,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
       undefined,
       "my-bot",
     );
@@ -668,6 +683,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
       undefined,
       "my-bot",
     );
@@ -697,6 +713,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
     );
 
     const parsed = await adapter.parse(
@@ -723,6 +740,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -752,6 +770,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -787,6 +806,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
       undefined,
       "my-bot",
     );
@@ -815,6 +835,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       undefined,
@@ -846,6 +867,7 @@ describe("github channel adapter", () => {
       "app-id",
       "private-key",
       null,
+      null,
       undefined,
       undefined,
       undefined,
@@ -875,6 +897,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",
@@ -906,6 +929,7 @@ describe("github channel adapter", () => {
       "webhook-secret",
       "app-id",
       "private-key",
+      null,
       null,
       undefined,
       "my-bot",

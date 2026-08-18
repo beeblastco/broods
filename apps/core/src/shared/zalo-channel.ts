@@ -10,6 +10,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -72,8 +73,8 @@ export interface ZaloSource {
 }
 
 interface ZaloChannelOptions {
-  allowedUserIds?: ReadonlySet<string>;
-  allowedGroupIds?: ReadonlySet<string>;
+  allowedChannelIds?: ReadonlySet<string> | null;
+  allowedUserIds?: ReadonlySet<string> | null;
 }
 
 interface ZaloUpdate {
@@ -140,7 +141,7 @@ export function createZaloChannel(
   webhookSecret: string,
   options: ZaloChannelOptions = {},
 ): ChannelAdapter {
-  const { allowedUserIds, allowedGroupIds } = options;
+  const { allowedChannelIds, allowedUserIds } = options;
 
   return {
     name: "zalo",
@@ -201,19 +202,15 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, "bot_message");
       }
-      if (
-        chatType === "GROUP" &&
-        allowedGroupIds?.size &&
-        !allowedGroupIds.has(chatId)
-      ) {
-        logWarn("Zalo group not in allow list", { chatId: chatId });
+      if (!isAllowedId(allowedChannelIds, chatId)) {
+        logWarn("Zalo chat not in allow list", { chatId: chatId });
 
-        return ignoreZaloUpdate(update, `group_not_allowed:${chatId}`);
+        return ignoreZaloUpdate(update, `chat_not_allowed:${chatId}`);
       }
-      if (allowedUserIds?.size && !allowedUserIds.has(senderId)) {
-        logWarn("Zalo sender not in allow list", { senderId: senderId });
+      if (!isAllowedId(allowedUserIds, senderId)) {
+        logWarn("Zalo sender not in allow list", { userId: senderId });
 
-        return ignoreZaloUpdate(update, `sender_not_allowed:${senderId}`);
+        return ignoreZaloUpdate(update, `user_not_allowed:${senderId}`);
       }
 
       const senderName = message.from?.display_name ?? message.from?.name;
@@ -237,8 +234,8 @@ export function createZaloChannel(
           content: content,
           identity: {
             channelId: chatId,
-            ...(senderId ? { actorId: senderId } : {}),
-            ...(senderName ? { actorName: senderName } : {}),
+            ...(senderId ? { userId: senderId } : {}),
+            ...(senderName ? { userName: senderName } : {}),
           },
           // Spread so the typed source reaches a Record<string, unknown> field.
           source: { ...source },

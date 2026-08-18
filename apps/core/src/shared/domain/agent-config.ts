@@ -407,6 +407,16 @@ export interface AgentChannelsConfig {
 export type ChannelWorkspaceScopeLevel = "channel" | "conversation";
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
 
+// Every provider used to name its own reach list. They are one pair now, so a
+// stale key has to fail loudly here rather than sit in config doing nothing —
+// the index signature on the channel configs means nothing else catches it.
+const RETIRED_REACH_KEYS = [
+  ["allowedChatIds", "allowedChannelIds"],
+  ["allowedGroupIds", "allowedChannelIds"],
+  ["allowedGuildIds", "allowedChannelIds"],
+  ["allowedRepos", "allowedChannelIds"],
+] as const;
+
 export type AgentChannelWorkspaceScope =
   | { level: "channel"; alias?: never }
   | { level: "conversation"; alias: string };
@@ -452,7 +462,8 @@ export interface AgentTelegramChannelConfig {
   apiUrl?: string;
   botToken?: string;
   webhookSecret?: string;
-  allowedChatIds?: number[];
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -465,7 +476,8 @@ export interface AgentGitHubChannelConfig {
   webhookSecret?: string;
   appId?: string;
   privateKey?: string;
-  allowedRepos?: string[];
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
   userName?: string;
   /** Bot's numeric GitHub user ID for self-message detection. */
@@ -485,6 +497,7 @@ export interface AgentSlackChannelConfig {
   botToken?: string;
   signingSecret?: string;
   allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
@@ -496,7 +509,8 @@ export interface AgentDiscordChannelConfig {
   apiUrl?: string;
   botToken?: string;
   publicKey?: string;
-  allowedGuildIds?: string[];
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
   botUserId?: string;
   /** Role ids that count as mentioning the agent, e.g. an on-call role. */
@@ -507,6 +521,8 @@ export interface AgentDiscordChannelConfig {
 }
 
 export interface AgentPancakeChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   id?: string;
   pageId?: string;
   pageAccessToken?: string;
@@ -518,11 +534,11 @@ export interface AgentPancakeChannelConfig {
 }
 
 export interface AgentZaloChannelConfig {
+  allowedChannelIds?: string[];
+  allowedUserIds?: string[];
   id?: string;
   botToken?: string;
   webhookSecret?: string;
-  allowedUserIds?: string[];
-  allowedGroupIds?: string[];
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
   [key: string]: unknown;
@@ -1333,10 +1349,6 @@ function normalizeTelegramConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.telegram.webhookSecret",
   );
-  assertOptionalNumberArray(
-    config.allowedChatIds,
-    "config.channels.telegram.allowedChatIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.telegram.reactionEmoji",
@@ -1356,10 +1368,6 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalStringArray(
-    config.allowedRepos,
-    "config.channels.github.allowedRepos",
-  );
   assertOptionalString(config.userName, "config.channels.github.userName");
   assertOptionalPositiveInteger(
     config.botUserId,
@@ -1380,10 +1388,6 @@ function normalizeSlackConfig(value: unknown): void {
     config.signingSecret,
     "config.channels.slack.signingSecret",
   );
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.slack.allowedChannelIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.slack.reactionEmoji",
@@ -1399,10 +1403,6 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalStringArray(
-    config.allowedGuildIds,
-    "config.channels.discord.allowedGuildIds",
-  );
   assertOptionalString(config.botUserId, "config.channels.discord.botUserId");
   assertOptionalStringArray(
     config.mentionRoleIds,
@@ -1439,14 +1439,6 @@ function normalizeZaloConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.zalo.webhookSecret",
   );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.zalo.allowedUserIds",
-  );
-  assertOptionalStringArray(
-    config.allowedGroupIds,
-    "config.channels.zalo.allowedGroupIds",
-  );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256) {
@@ -1466,6 +1458,17 @@ function normalizeChannelIdentityConfig(
     "enabled",
     "disabled",
   ] as const);
+  for (const [retired, replacement] of RETIRED_REACH_KEYS) {
+    if (config[retired] !== undefined)
+      throw new Error(
+        `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
+      );
+  }
+  assertOptionalStringArray(
+    config.allowedChannelIds,
+    `${name}.allowedChannelIds`,
+  );
+  assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
       `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
@@ -1604,16 +1607,6 @@ function assertOptionalPositiveInteger(
     value > max
   ) {
     throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function assertOptionalNumberArray(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")
-  ) {
-    throw new Error(`${name} must be an array of numbers`);
   }
 }
 

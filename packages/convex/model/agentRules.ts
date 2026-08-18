@@ -88,6 +88,15 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "write",
 ]);
 const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
+
+// Every provider used to name its own reach list. They are one pair now, so a
+// stale key has to fail loudly here rather than sit in config doing nothing.
+const RETIRED_REACH_KEYS = [
+  ["allowedChatIds", "allowedChannelIds"],
+  ["allowedGroupIds", "allowedChannelIds"],
+  ["allowedGuildIds", "allowedChannelIds"],
+  ["allowedRepos", "allowedChannelIds"],
+] as const;
 const MODEL_CONFIG_SETTING_KEYS = [
   "provider",
   "modelId",
@@ -702,10 +711,6 @@ function normalizeTelegramConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.telegram.webhookSecret",
   );
-  assertOptionalNumberArray(
-    config.allowedChatIds,
-    "config.channels.telegram.allowedChatIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.telegram.reactionEmoji",
@@ -725,10 +730,6 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalStringArray(
-    config.allowedRepos,
-    "config.channels.github.allowedRepos",
-  );
   assertOptionalString(config.userName, "config.channels.github.userName");
   assertOptionalPositiveInteger(
     config.botUserId,
@@ -749,10 +750,6 @@ function normalizeSlackConfig(value: unknown): void {
     config.signingSecret,
     "config.channels.slack.signingSecret",
   );
-  assertOptionalStringArray(
-    config.allowedChannelIds,
-    "config.channels.slack.allowedChannelIds",
-  );
   assertOptionalString(
     config.reactionEmoji,
     "config.channels.slack.reactionEmoji",
@@ -768,10 +765,6 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.apiUrl, "config.channels.discord.apiUrl");
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
-  assertOptionalStringArray(
-    config.allowedGuildIds,
-    "config.channels.discord.allowedGuildIds",
-  );
 }
 
 function normalizePancakeConfig(value: unknown): void {
@@ -803,14 +796,6 @@ function normalizeZaloConfig(value: unknown): void {
     config.webhookSecret,
     "config.channels.zalo.webhookSecret",
   );
-  assertOptionalStringArray(
-    config.allowedUserIds,
-    "config.channels.zalo.allowedUserIds",
-  );
-  assertOptionalStringArray(
-    config.allowedGroupIds,
-    "config.channels.zalo.allowedGroupIds",
-  );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;
     if (length < 8 || length > 256)
@@ -829,6 +814,17 @@ function normalizeChannelIdentityConfig(
     "enabled",
     "disabled",
   ] as const);
+  for (const [retired, replacement] of RETIRED_REACH_KEYS) {
+    if (config[retired] !== undefined)
+      throw new Error(
+        `${name}.${retired} is no longer supported; use ${name}.${replacement}`,
+      );
+  }
+  assertOptionalStringArray(
+    config.allowedChannelIds,
+    `${name}.allowedChannelIds`,
+  );
+  assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
       `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
@@ -1033,16 +1029,6 @@ function assertOptionalStringArray(value: unknown, name: string): void {
     )
   ) {
     throw new Error(`${name} must be an array of non-empty strings`);
-  }
-}
-
-function assertOptionalNumberArray(value: unknown, name: string): void {
-  if (value === undefined) return;
-  if (
-    !Array.isArray(value) ||
-    !value.every((entry) => Number.isFinite(entry) && typeof entry === "number")
-  ) {
-    throw new Error(`${name} must be an array of numbers`);
   }
 }
 

@@ -1,6 +1,7 @@
-import { defineAgent, definePancakeChannel, env } from "broods";
+import { defineAgent, definePancakeConnection, env } from "broods";
 
-export const pancake = definePancakeChannel({
+export const pancake = definePancakeConnection({
+  allowedChannelIds: ["*"],
   pageId: env("PANCAKE_PAGE_ID"),
   pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
   webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
@@ -38,5 +39,5 @@ export const agent = defineAgent({
         : undefined;
     },
   },
-  channels: [pancake],
+  connections: [pancake],
 });

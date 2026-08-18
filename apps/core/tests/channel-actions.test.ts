@@ -39,7 +39,8 @@ describe("telegram channel actions", () => {
     const actions = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     ).actions(
       createMessage({
@@ -90,7 +91,8 @@ describe("telegram channel actions", () => {
     const actions = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     ).actions(
       createMessage({
@@ -170,7 +172,8 @@ describe("telegram channel actions", () => {
     const actions = createTelegramChannel(
       "bot-token",
       "secret",
-      new Set([123]),
+      new Set(["123"]),
+      null,
       "👀",
     ).actions(
       createMessage({
@@ -203,6 +206,7 @@ describe("discord channel actions", () => {
     const actions = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
+      null,
       null,
     ).actions(
       createMessage({
@@ -240,6 +244,7 @@ describe("discord channel actions", () => {
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
       null,
+      null,
     ).actions(
       createMessage({
         applicationId: "app-1",
@@ -260,6 +265,7 @@ describe("discord channel actions", () => {
     const actions = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
+      null,
       null,
     ).actions(
       createMessage({
@@ -295,6 +301,7 @@ describe("discord channel actions", () => {
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
       null,
+      null,
     ).actions(
       createMessage({
         applicationId: "app-1",
@@ -317,6 +324,7 @@ describe("discord channel actions", () => {
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
       null,
+      null,
     ).actions(
       createMessage({
         applicationId: "app-1",
@@ -337,6 +345,7 @@ describe("discord channel actions", () => {
     const adapter = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
+      null,
       null,
     );
     const actions = adapter.actions(
@@ -372,6 +381,7 @@ describe("slack channel actions", () => {
     const actions = createSlackChannel(
       "bot-token",
       "signing-secret",
+      null,
       null,
       "white_check_mark",
     ).actions(
@@ -442,6 +452,7 @@ describe("slack channel actions", () => {
       "bot-token",
       "signing-secret",
       null,
+      null,
       "white_check_mark",
     ).actions(
       createMessage({
@@ -475,6 +486,7 @@ describe("slack channel actions", () => {
     const actions = createSlackChannel(
       "bot-token",
       "signing-secret",
+      null,
       null,
     ).actions(
       createMessage({
@@ -535,6 +547,7 @@ describe("slack channel actions", () => {
       "bot-token",
       "signing-secret",
       null,
+      null,
       "white_check_mark",
     ).actions(
       createMessage({
@@ -579,7 +592,7 @@ describe("slack channel actions", () => {
 
   it("skips Slack reactions without a message timestamp and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createSlackChannel("bot-token", "signing-secret", null, null);
     const actions = adapter.actions(
       createMessage({
         teamId: "T1",
@@ -602,7 +615,7 @@ describe("slack channel actions", () => {
 
   it("throws on Slack response_url and Web API failures", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createSlackChannel("bot-token", "signing-secret", null);
+    const adapter = createSlackChannel("bot-token", "signing-secret", null, null);
 
     const responseUrlActions = adapter.actions(
       createMessage({
@@ -648,6 +661,8 @@ describe("pancake channel actions", () => {
       "page-1",
       "page-token",
       "hook-secret",
+      null,
+      null,
       "sender-1",
     ).actions(
       createMessage({
@@ -685,6 +700,8 @@ describe("pancake channel actions", () => {
       "page-1",
       "page-token",
       "hook-secret",
+      null,
+      null,
     ).actions(
       createMessage({
         pageId: "page-1",
@@ -706,7 +723,7 @@ describe("pancake channel actions", () => {
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret");
+    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
     const actions = adapter.actions(
       createMessage({
         pageId: "page-1",
@@ -748,7 +765,7 @@ describe("zalo channel actions", () => {
     const actions = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
+      { allowedChannelIds: null },
     ).actions(
       createMessage({
         chatId: "chat-1",
@@ -823,7 +840,7 @@ describe("zalo channel actions", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedUserIds: new Set(["user-1"]) },
+      { allowedChannelIds: null },
     );
     const actions = adapter.actions(
       createMessage({

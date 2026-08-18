@@ -6,28 +6,36 @@ Broods uses [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/
 
 ## Configuration
 
-Define a Slack channel with `defineSlackChannel` and attach it to an agent:
+Define a Slack connection with `defineSlackConnection`, name the rooms it answers in with `defineSlackChannel`, and attach the connection to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineSlackChannel, env } from "broods";
+import { defineAgent, defineSlackChannel, defineSlackConnection, env } from "broods";
 
-export const slack = defineSlackChannel({
+export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
-  allowedChannelIds: ["channel-id-1"],
   reactionEmoji: "eyes",
   apiUrl: "https://slack.com/api/",
 });
 
+export const productEng = defineSlackChannel({
+  name: "product-eng",
+  connection: slack,
+  channelId: "C042PRODENG",
+});
+
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [slack],
+  connections: [slack],
 });
 ```
 
+The agent answers in the rooms you declared and nowhere else. To answer in every room the app can see, set `allowedChannelIds: ["*"]` on the connection instead.
+
 - `botToken`: Slack Bot User OAuth Token.
 - `signingSecret`: Used to verify Slack requests.
-- `allowedChannelIds` (optional): An array of strings representing allowed channel IDs.
+- `channels` (optional): `["*"]` to answer in every room instead of only the declared ones.
+- `allowedUserIds` (optional): Slack user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Slack emoji name to add to accepted messages, defaults to `eyes`.
 - `apiUrl` (optional): Slack Web API base URL, for example for GovSlack or a test proxy. This maps to `SlackAdapterConfig["apiUrl"]`.
 
