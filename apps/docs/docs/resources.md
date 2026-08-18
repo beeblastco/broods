@@ -326,12 +326,22 @@ See [External Tools](tools.md) for uploading custom tools.
 Attach one or more channels to an agent:
 
 ```ts
-import { defineAgent, defineTelegramConnection, env } from "broods";
+import {
+  defineAgent,
+  defineTelegramChannel,
+  defineTelegramConnection,
+  env,
+} from "broods";
 
 export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
-  allowedChatIds: [123456789],
+});
+
+export const ops = defineTelegramChannel({
+  name: "ops",
+  connection: telegram,
+  chatId: "123456789",
 });
 
 export const myAgent = defineAgent({
@@ -340,7 +350,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-Each channel type has its own constructor. See [Channels](channels/index.md).
+The connection carries the credentials, the channel names one room, and the agent attaches the connection. Each provider has its own pair of constructors. See [Channels](channels/index.md).
 
 ### Workspaces
 

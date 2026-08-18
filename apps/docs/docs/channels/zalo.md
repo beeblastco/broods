@@ -22,8 +22,8 @@ export const myAgent = defineAgent({
 
 - `botToken` (Required): Bot token from Zalo Bot Platform.
 - `webhookSecret` (Required): Secret sent by Zalo in `X-Bot-Api-Secret-Token`. Must be 8 to 256 characters.
-- `allowedUserIds` (Optional): Zalo user IDs allowed to trigger the agent. When omitted or empty, any user can send the agent a text message. Applies to private chats and groups alike.
-- `allowedGroupIds` (Optional): Zalo group chat IDs the agent answers in. When omitted or empty, the agent answers in any group it belongs to. Private chats are unaffected.
+- `channels` (Optional): `["*"]` to answer in every chat instead of only the declared ones. A bot that takes direct messages needs this, because a person's chat id does not exist until they write.
+- `allowedUserIds` (Optional): Zalo user IDs allowed to trigger the agent. Everyone, when omitted. Applies to private chats and groups alike.
 
 ## Group Chats
 
@@ -35,7 +35,12 @@ Zalo controls which group messages reach the bot. A member must either type `@` 
 export const zalo = defineZaloConnection({
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
-  allowedGroupIds: ["1234567890"],
+});
+
+export const standup = defineZaloChannel({
+  name: "standup",
+  connection: zalo,
+  chatId: "1234567890",
 });
 ```
 
@@ -73,7 +78,7 @@ traffic to that stage. Give each developer their own bot to run both at once.
 flowchart TD
   Zalo["Zalo Bot webhook<br/>text · image · sticker · voice"] --> Adapter["zalo-channel.ts"]
   Adapter --> Auth["Check X-Bot-Api-Secret-Token"]
-  Auth --> Allow["Check allowedUserIds and allowedGroupIds when configured"]
+  Auth --> Allow["Check the declared chats and allowedUserIds"]
   Allow --> Agent["Run agent"]
   Agent --> Reply["sendMessage / sendPhoto / sendSticker"]
   Reply --> Zalo
@@ -82,7 +87,7 @@ flowchart TD
 - Text messages in private chats and groups are supported.
 - Inbound pictures (`message.image.received`), stickers (`message.sticker.received`), and voice notes (`message.voice.received`) reach the agent as attachments. Zalo hosts each one as a URL, so the agent receives the link, not the bytes — the picture and the sticker as an image, the voice note as an audio file. An image caption arrives as the text of the same message.
 - The configured model must accept that input: send a picture to a text-only model and the run fails on the provider's error. `.aac` is the only audio format the Zalo Bot API deals in, so a voice note whose URL is anything else is passed along as a plain link instead of an audio attachment, and the turn survives.
-- Zalo has no inbound document or video event. Anything else the user sends arrives as `message.unsupported.received` and is ignored, along with bot-originated messages, senders outside `allowedUserIds`, and groups outside `allowedGroupIds` when configured.
+- Zalo has no inbound document or video event. Anything else the user sends arrives as `message.unsupported.received` and is ignored, along with bot-originated messages, chats that were never declared, and senders outside `allowedUserIds` when configured.
 - Outbound replies are split into 2000-character chunks for the Zalo Bot API text limit.
 - Typing indicators use `sendChatAction`.
 - Outbound images use `sendPhoto`. Zalo fetches the picture itself, so the image must be an absolute `http(s)` URL that Zalo can reach — a local path, a `data:` URL, or a private link is rejected. An optional caption is truncated to 2000 characters.

@@ -6,17 +6,23 @@ Broods uses [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapte
 
 ## Configuration
 
-Define a Discord channel with `defineDiscordConnection` and attach it to an agent:
+Define a Discord connection with `defineDiscordConnection`, name the channels it answers in with `defineDiscordChannel`, and attach the connection to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineDiscordConnection, env } from "broods";
+import { defineAgent, defineDiscordChannel, defineDiscordConnection, env } from "broods";
 
 export const discord = defineDiscordConnection({
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
   botUserId: env("DISCORD_BOT_USER_ID"),
-  allowedGuildIds: ["guild-id-1"],
   apiUrl: "https://discord.com/api/v10",
+});
+
+export const support = defineDiscordChannel({
+  name: "support",
+  connection: discord,
+  channelId: "1042PRODENG",
+  guildId: "1099SERVER",
 });
 
 export const myAgent = defineAgent({
@@ -29,7 +35,8 @@ export const myAgent = defineAgent({
 - `publicKey`: Discord Application Public Key.
 - `botUserId` (optional, recommended): the bot's own Discord user id. Set it to answer only when the agent is mentioned — see below.
 - `mentionRoleIds` (optional): role ids that also count as addressing the agent, e.g. an on-call role.
-- `allowedGuildIds` (optional): An array of strings representing allowed guild IDs.
+- `channels` (optional): `["*"]` to answer in every channel instead of only the declared ones.
+- `allowedUserIds` (optional): Discord user ids allowed to trigger the agent. Everyone, when omitted.
 - `apiUrl` (optional): Discord API base URL. This maps to `DiscordAdapterConfig["apiUrl"]`.
 
 Discord interaction webhooks are verified through the Chat SDK Discord adapter. Slash command interactions route `/new`, `/clear`, and `/help` into Broods command handlers. Gateway-forwarded `MESSAGE_CREATE` events route message text into the agent as normal chat input.

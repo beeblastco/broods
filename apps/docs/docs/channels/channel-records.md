@@ -67,7 +67,7 @@ reading an agent still tells you its ceiling.
 | `partition` | Overrides the channel's scope (`channel` or `conversation`)       |
 | `threadPolicy`   | Where the reply lands — `always-thread` or `inline` (Slack only)  |
 | `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
-| `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
+| `tagRoles`       | Named groups of people, readable from policy as `userRoles`      |
 
 Provider, model and credentials stay on the agent and are never touched.
 
@@ -150,7 +150,7 @@ await client.createChannel({
     threadPolicy: "always-thread",
     policyIds: ["policy_prod_data"],
     policyMode: "audit",
-    tagRoles: [{ roleId: "oncall", actorIds: ["U777", "U778"] }],
+    tagRoles: [{ roleId: "oncall", userIds: ["U777", "U778"] }],
   },
 });
 ```
@@ -160,15 +160,25 @@ place is rejected so the webhook lookup stays unambiguous.
 
 ## Access control
 
-Two things become expressible once a record exists.
+Reach and policy are two different gates, and they are not interchangeable.
+
+**Where the agent listens** is the rooms declared as channels. That list is
+matched while the webhook is parsed, before any record read or policy call, and
+an undeclared room is dropped silently. It is the outer boundary: a policy runs
+inside it and can only narrow it further, never widen it. To widen, declare
+another channel or set `channels: ["*"]` on the connection.
 
 **Who may tag the agent here.** `agent.invoke` is evaluated before the turn
-starts, so a refusal costs nothing and reads like a sentence in the channel
-rather than a stack trace. In `audit` mode the same decision is logged and the
-turn still runs — that is how a rule is rolled out on a live channel.
+starts, and a refusal reads like a sentence in the channel rather than a stack
+trace. It is not free: the record has been read, the agent's deployment may have
+been loaded, every referenced policy document is fetched, and the decision is an
+HTTP call to the policy engine. It also answers back, which is right for "you
+may not ask me that" and wrong for "this room is not mine" — that is what the
+declared channels are for. In `audit` mode the same decision is logged and the
+turn still runs, which is how a rule is rolled out on a live channel.
 
-**What it may reach here.** `tagRoles` become `actorRoles` on the policy input,
-alongside `channelId`, `threadId`, `actorId` and `actorName`. A rule can then
+**What it may reach here.** `tagRoles` become `userRoles` on the policy input,
+alongside `channelId`, `threadId`, `userId` and `userName`. A rule can then
 say "production data only in #ops, and only for the on-call group":
 
 ```json
@@ -181,7 +191,7 @@ say "production data only in #ops, and only for the on-call group":
       "actions": ["tool.call"],
       "resources": { "toolNames": ["query_prod_db"] },
       "conditions": [
-        { "attribute": "actorRoles", "operator": "notIn", "value": ["oncall"] }
+        { "attribute": "userRoles", "operator": "notIn", "value": ["oncall"] }
       ]
     }
   ]

@@ -6,17 +6,22 @@ Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapt
 
 ## Configuration
 
-Define a Telegram channel with `defineTelegramConnection` and attach it to an agent:
+Define a Telegram connection with `defineTelegramConnection`, name the chats it answers in with `defineTelegramChannel`, and attach the connection to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineTelegramConnection, env } from "broods";
+import { defineAgent, defineTelegramChannel, defineTelegramConnection, env } from "broods";
 
 export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
-  allowedChatIds: [123456789, 987654321],
   reactionEmoji: "👀",
   apiUrl: "https://api.telegram.org",
+});
+
+export const ops = defineTelegramChannel({
+  name: "ops",
+  connection: telegram,
+  chatId: "123456789",
 });
 
 export const myAgent = defineAgent({
@@ -24,6 +29,8 @@ export const myAgent = defineAgent({
   connections: [telegram],
 });
 ```
+
+A direct-message bot cannot know its chat ids up front, because a person's chat does not exist until they write. Those connections set `channels: ["*"]` and gate people with `allowedUserIds` instead.
 
 After `broods dev` or `broods deploy`, the CLI prints the webhook URL to register with Telegram:
 
@@ -40,7 +47,8 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 
 - `botToken`: Provided by BotFather.
 - `webhookSecret`: A secret string to verify incoming webhooks.
-- `allowedChatIds`: An array of numeric chat IDs allowed to talk to the agent.
+- `channels` (optional): `["*"]` to answer in every chat instead of only the declared ones.
+- `allowedUserIds` (optional): Telegram user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Emoji to use for reactions, defaults to "👀".
 - `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`.
 
