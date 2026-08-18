@@ -15,6 +15,7 @@ import type {
   ChannelParseResult,
   ChannelRequest,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -92,7 +93,7 @@ export function createPancakeChannel(
   pageId: string,
   pageAccessToken: string,
   webhookSecret: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   senderId?: string,
 ): ChannelAdapter {
@@ -117,7 +118,7 @@ export function createPancakeChannel(
       return parsePancakeWebhook(
         req,
         pageId,
-        allowedExternalIds,
+        allowedChannelIds,
         allowedUserIds,
       );
     },
@@ -248,7 +249,7 @@ function parseJsonBody(
 function parsePancakeWebhook(
   req: ChannelRequest,
   pageId: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
   const payload = JSON.parse(req.body) as PancakeWebhookPayload;
@@ -329,7 +330,7 @@ function parsePancakeWebhook(
     return { kind: "ignore" };
   }
 
-  if (allowedExternalIds && !allowedExternalIds.has(conversation.id)) {
+  if (!isAllowedId(allowedChannelIds, conversation.id)) {
     logWarn("Pancake conversation not in allow list", {
       conversationId: conversation.id,
     });
@@ -338,7 +339,7 @@ function parsePancakeWebhook(
   }
 
   const fromId = message.from?.id ?? conversation.from?.id;
-  if (allowedUserIds && (!fromId || !allowedUserIds.has(fromId))) {
+  if (!isAllowedId(allowedUserIds, fromId)) {
     logWarn("Pancake sender not in allow list", { userId: fromId });
 
     return { kind: "ignore" };

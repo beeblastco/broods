@@ -2330,7 +2330,7 @@ function createTelegramChannelFromConfig(
   return createTelegramChannel(
     channel.botToken,
     channel.webhookSecret,
-    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
     channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.reactionEmoji ?? "👀",
     channel.apiUrl,
@@ -2349,7 +2349,7 @@ function createGitHubChannelFromConfig(
     channel.webhookSecret,
     channel.appId,
     channel.privateKey,
-    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
     channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.apiUrl,
     channel.userName,
@@ -2372,7 +2372,7 @@ function createSlackChannelFromConfig(
   return createSlackChannel(
     channel.botToken,
     channel.signingSecret,
-    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
     channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.reactionEmoji ?? "eyes",
     channel.apiUrl,
@@ -2390,7 +2390,7 @@ function createDiscordChannelFromConfig(
   return createDiscordChannel(
     channel.botToken,
     channel.publicKey,
-    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
     channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.apiUrl,
     {
@@ -2414,7 +2414,7 @@ function createPancakeChannelFromConfig(
     channel.pageId,
     channel.pageAccessToken,
     channel.webhookSecret,
-    channel.allowedExternalIds ? new Set(channel.allowedExternalIds) : null,
+    channel.allowedChannelIds ? new Set(channel.allowedChannelIds) : null,
     channel.allowedUserIds ? new Set(channel.allowedUserIds) : null,
     channel.senderId,
   );
@@ -2429,8 +2429,8 @@ function createZaloChannelFromConfig(
   }
 
   return createZaloChannel(channel.botToken, channel.webhookSecret, {
-    allowedExternalIds: channel.allowedExternalIds
-      ? new Set(channel.allowedExternalIds)
+    allowedChannelIds: channel.allowedChannelIds
+      ? new Set(channel.allowedChannelIds)
       : null,
     allowedUserIds: channel.allowedUserIds
       ? new Set(channel.allowedUserIds)

@@ -35,6 +35,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import {
@@ -355,7 +356,7 @@ export async function* toSlackStream(
 export function createSlackChannel(
   botToken: string,
   signingSecret: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   reactionEmoji = "eyes",
   apiUrl?: string,
@@ -406,7 +407,7 @@ export function createSlackChannel(
       }
 
       if (payload.kind === "slash_command") {
-        return parseSlashCommand(payload, allowedExternalIds, allowedUserIds);
+        return parseSlashCommand(payload, allowedChannelIds, allowedUserIds);
       }
 
       if (
@@ -422,7 +423,7 @@ export function createSlackChannel(
 
       return parseEventCallback(
         req.body,
-        allowedExternalIds,
+        allowedChannelIds,
         allowedUserIds,
         userNameResolver ?? createSlackUserNameResolver(slack),
       );
@@ -517,7 +518,7 @@ async function normalizeSlackMentions(
 
 async function parseEventCallback(
   body: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   resolveUserName: SlackUserNameResolver,
 ): Promise<ChannelParseResult> {
@@ -560,14 +561,14 @@ async function parseEventCallback(
     return { kind: "ignore", reason: "missing_channel_or_timestamp" };
   }
 
-  if (allowedExternalIds && !allowedExternalIds.has(channelId)) {
+  if (!isAllowedId(allowedChannelIds, channelId)) {
     logWarn("Slack channel not in allow list", { channelId: channelId });
 
     return { kind: "ignore", reason: "channel_not_allowed" };
   }
 
   const eventUser = payload.event.user;
-  if (allowedUserIds && (!eventUser || !allowedUserIds.has(eventUser))) {
+  if (!isAllowedId(allowedUserIds, eventUser)) {
     logWarn("Slack sender not in allow list", { userId: eventUser });
 
     return { kind: "ignore", reason: "user_not_allowed" };
@@ -998,7 +999,7 @@ function mentionsSlackBot(text: string, payload: SlackEventEnvelope): boolean {
 
 function parseSlashCommand(
   payload: SlackSlashCommandPayload,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
 ): ChannelParseResult {
   const teamId = payload.teamId;
@@ -1009,13 +1010,13 @@ function parseSlashCommand(
     return { kind: "ignore", reason: "invalid_slash_command" };
   }
 
-  if (allowedExternalIds && !allowedExternalIds.has(channelId)) {
+  if (!isAllowedId(allowedChannelIds, channelId)) {
     logWarn("Slack slash command channel not in allow list", { channelId: channelId });
 
     return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
   }
 
-  if (allowedUserIds && (!payload.userId || !allowedUserIds.has(payload.userId))) {
+  if (!isAllowedId(allowedUserIds, payload.userId)) {
     logWarn("Slack slash command sender not in allow list", {
       userId: payload.userId,
     });

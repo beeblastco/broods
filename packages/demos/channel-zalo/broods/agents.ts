@@ -8,7 +8,7 @@ const allowedUserIds = (process.env.ZALO_ALLOWED_USER_IDS?.split(",") ?? [])
 // declared as channels up front. The wildcard says so, and the sender list
 // still gates who is answered — both checked while parsing the webhook.
 export const zalo = defineZaloConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   ...(allowedUserIds.length > 0 ? { allowedUserIds: allowedUserIds } : {}),
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),

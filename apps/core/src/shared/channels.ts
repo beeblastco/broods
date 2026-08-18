@@ -7,6 +7,9 @@ import type { SystemModelMessage, UserContent, UserModelMessage } from "ai";
 import type { StreamOptions } from "chat";
 import type { ChannelThreadPolicy } from "./domain/channel-record.ts";
 
+/** Reach every room or sender, instead of only the listed ids. */
+export const CHANNEL_REACH_WILDCARD = "*";
+
 export type ChannelIngressEvent =
   | UserModelMessage
   | (SystemModelMessage & { persist?: false });
@@ -139,8 +142,20 @@ export function extractText(content: UserContent): string {
     .join("");
 }
 
-export function isOpenAllowList(raw: string | undefined): boolean {
-  return !raw || raw.trim() === "" || raw.trim().toLowerCase() === "open";
+/**
+ * The reach gate. Answered from the webhook payload alone, so an unwanted room
+ * or sender is dropped before any record read, deployment load or policy call.
+ * No list, or the wildcard, lets everything through; an id the payload never
+ * carried matches nothing.
+ */
+export function isAllowedId(
+  allowed: ReadonlySet<string> | null | undefined,
+  id: string | undefined,
+): boolean {
+  if (!allowed || allowed.has(CHANNEL_REACH_WILDCARD)) return true;
+  if (!id) return false;
+
+  return allowed.has(id);
 }
 
 export function formatChannelErrorText(error: string): string {

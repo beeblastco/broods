@@ -22,7 +22,7 @@ const TEST_ACCOUNT = {
       telegram: {
         botToken: "bot-token",
         webhookSecret: "telegram-secret",
-        allowedChatIds: [123],
+        allowedChannelIds: ["123"],
       },
     },
   },
@@ -200,7 +200,7 @@ describe("account webhook ingress", () => {
           telegram: {
             botToken: "bot-token",
             webhookSecret: "telegram-secret",
-            allowedChatIds: [123],
+            allowedChannelIds: ["123"],
           },
         },
       },

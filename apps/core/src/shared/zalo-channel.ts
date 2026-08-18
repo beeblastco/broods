@@ -10,6 +10,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { ZALO_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -72,7 +73,7 @@ export interface ZaloSource {
 }
 
 interface ZaloChannelOptions {
-  allowedExternalIds?: ReadonlySet<string> | null;
+  allowedChannelIds?: ReadonlySet<string> | null;
   allowedUserIds?: ReadonlySet<string> | null;
 }
 
@@ -140,7 +141,7 @@ export function createZaloChannel(
   webhookSecret: string,
   options: ZaloChannelOptions = {},
 ): ChannelAdapter {
-  const { allowedExternalIds, allowedUserIds } = options;
+  const { allowedChannelIds, allowedUserIds } = options;
 
   return {
     name: "zalo",
@@ -201,12 +202,12 @@ export function createZaloChannel(
 
         return ignoreZaloUpdate(update, "bot_message");
       }
-      if (allowedExternalIds && !allowedExternalIds.has(chatId)) {
+      if (!isAllowedId(allowedChannelIds, chatId)) {
         logWarn("Zalo chat not in allow list", { chatId: chatId });
 
         return ignoreZaloUpdate(update, `chat_not_allowed:${chatId}`);
       }
-      if (allowedUserIds && !allowedUserIds.has(senderId)) {
+      if (!isAllowedId(allowedUserIds, senderId)) {
         logWarn("Zalo sender not in allow list", { userId: senderId });
 
         return ignoreZaloUpdate(update, `user_not_allowed:${senderId}`);

@@ -10,6 +10,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
 import { logWarn } from "./log.ts";
 import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
@@ -150,7 +151,7 @@ class BroodsDiscordAdapter extends DiscordAdapter {
 export function createDiscordChannel(
   botToken: string,
   publicKey: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   apiUrl?: string,
   options: DiscordChannelOptions = {},
@@ -190,7 +191,7 @@ export function createDiscordChannel(
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
         payload as DiscordForwardedEventPayload,
-        allowedExternalIds,
+        allowedChannelIds,
         allowedUserIds,
         options,
       );
@@ -250,8 +251,7 @@ export function createDiscordChannel(
 
       const interactionUser = payload.member?.user?.id ?? payload.user?.id;
       if (
-        allowedUserIds &&
-        (!interactionUser || !allowedUserIds.has(interactionUser))
+        !isAllowedId(allowedUserIds, interactionUser)
       ) {
         logWarn("Discord sender not in allow list", {
           userId: interactionUser,
@@ -270,7 +270,7 @@ export function createDiscordChannel(
         };
       }
 
-      if (allowedExternalIds && !allowedExternalIds.has(payload.channel_id)) {
+      if (!isAllowedId(allowedChannelIds, payload.channel_id)) {
         logWarn("Discord channel not in allow list", {
           channelId: payload.channel_id,
         });
@@ -516,7 +516,7 @@ function mentionsDiscordBot(
 function parseForwardedGatewayEvent(
   discord: BroodsDiscordAdapter,
   event: DiscordForwardedEventPayload,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   options: DiscordChannelOptions,
 ): ChannelParseResult | null {
@@ -553,7 +553,7 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  if (allowedUserIds && !allowedUserIds.has(data.author?.id ?? "")) {
+  if (!isAllowedId(allowedUserIds, data.author?.id)) {
     logWarn("Discord sender not in allow list", { userId: data.author?.id });
 
     return {
@@ -563,7 +563,7 @@ function parseForwardedGatewayEvent(
     };
   }
 
-  if (allowedExternalIds && !allowedExternalIds.has(data.channel_id)) {
+  if (!isAllowedId(allowedChannelIds, data.channel_id)) {
     logWarn("Discord channel not in allow list", { channelId: data.channel_id });
 
     return {

@@ -194,8 +194,6 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
   readonly kind: "connection";
   readonly type: Type;
   readonly partition?: ChannelPartition;
-  /** Set by `channels: ["*"]`: reach every room instead of the declared ones. */
-  readonly wildcardReach?: true;
   readonly config: Config;
 }
 
@@ -227,12 +225,12 @@ type ConnectionIdentityInput = {
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
   /**
-   * Answer in every room this app can see, instead of only the rooms declared
-   * as channels. The one value is the wildcard: name real rooms with a channel
-   * resource, which is also what carries their rules.
+   * Rooms this connection answers in, on top of every channel declared against
+   * it. Use `["*"]` to answer everywhere instead, which is the only reason to
+   * name rooms here at all: a room with rules belongs in a channel resource.
    */
-  channels?: readonly ["*"];
-  /** Provider user ids allowed to trigger the agent. Everyone, when omitted. */
+  allowedChannelIds?: readonly string[];
+  /** Provider user ids allowed to trigger the agent. `["*"]` or omitted is everyone. */
   allowedUserIds?: readonly string[];
 };
 
@@ -722,14 +720,13 @@ function defineConnection<const Type extends ChannelType, Config>(
   type: Type,
   config: Config & ConnectionIdentityInput,
 ): ConnectionDefinition<Type, Config> {
-  const { partition, channels, ...rest } = config;
+  const { partition, ...rest } = config;
 
   return {
     [CONNECTION_MARKER]: true,
     kind: "connection",
     type: type,
     ...(partition ? { partition: partition } : {}),
-    ...(channels ? { wildcardReach: true } : {}),
     config: rest as Config,
   };
 }

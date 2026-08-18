@@ -166,7 +166,7 @@ Reach and policy are two different gates, and they are not interchangeable.
 matched while the webhook is parsed, before any record read or policy call, and
 an undeclared room is dropped silently. It is the outer boundary: a policy runs
 inside it and can only narrow it further, never widen it. To widen, declare
-another channel or set `channels: ["*"]` on the connection.
+another channel or set `allowedChannelIds: ["*"]` on the connection.
 
 **Who may tag the agent here.** `agent.invoke` is evaluated before the turn
 starts, and a refusal reads like a sentence in the channel rather than a stack

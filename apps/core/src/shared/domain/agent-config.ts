@@ -452,7 +452,7 @@ export interface AgentTelegramChannelConfig {
   apiUrl?: string;
   botToken?: string;
   webhookSecret?: string;
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
@@ -466,7 +466,7 @@ export interface AgentGitHubChannelConfig {
   webhookSecret?: string;
   appId?: string;
   privateKey?: string;
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
   userName?: string;
@@ -486,7 +486,7 @@ export interface AgentSlackChannelConfig {
   apiUrl?: string;
   botToken?: string;
   signingSecret?: string;
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
@@ -499,7 +499,7 @@ export interface AgentDiscordChannelConfig {
   apiUrl?: string;
   botToken?: string;
   publicKey?: string;
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   /** Bot's Discord user id. Set it to answer only when the agent is mentioned. */
   botUserId?: string;
@@ -511,7 +511,7 @@ export interface AgentDiscordChannelConfig {
 }
 
 export interface AgentPancakeChannelConfig {
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
   pageId?: string;
@@ -524,7 +524,7 @@ export interface AgentPancakeChannelConfig {
 }
 
 export interface AgentZaloChannelConfig {
-  allowedExternalIds?: string[];
+  allowedChannelIds?: string[];
   allowedUserIds?: string[];
   id?: string;
   botToken?: string;
@@ -1340,8 +1340,8 @@ function normalizeTelegramConfig(value: unknown): void {
     "config.channels.telegram.webhookSecret",
   );
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.telegram.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.telegram.allowedChannelIds",
   );
   assertOptionalStringArray(
     config.allowedUserIds,
@@ -1367,8 +1367,8 @@ function normalizeGitHubConfig(value: unknown): void {
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.github.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.github.allowedChannelIds",
   );
   assertOptionalStringArray(
     config.allowedUserIds,
@@ -1395,8 +1395,8 @@ function normalizeSlackConfig(value: unknown): void {
     "config.channels.slack.signingSecret",
   );
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.slack.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.slack.allowedChannelIds",
   );
   assertOptionalStringArray(
     config.allowedUserIds,
@@ -1418,8 +1418,8 @@ function normalizeDiscordConfig(value: unknown): void {
   assertOptionalString(config.botToken, "config.channels.discord.botToken");
   assertOptionalString(config.publicKey, "config.channels.discord.publicKey");
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.discord.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.discord.allowedChannelIds",
   );
   assertOptionalStringArray(
     config.allowedUserIds,
@@ -1439,8 +1439,8 @@ function normalizePancakeConfig(value: unknown): void {
   const config = value as Record<string, unknown>;
   normalizeChannelIdentityConfig(config, "config.channels.pancake");
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.pancake.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.pancake.allowedChannelIds",
   );
   assertOptionalStringArray(
     config.allowedUserIds,
@@ -1474,8 +1474,8 @@ function normalizeZaloConfig(value: unknown): void {
     "config.channels.zalo.allowedUserIds",
   );
   assertOptionalStringArray(
-    config.allowedExternalIds,
-    "config.channels.zalo.allowedExternalIds",
+    config.allowedChannelIds,
+    "config.channels.zalo.allowedChannelIds",
   );
   if (typeof config.webhookSecret === "string") {
     const length = config.webhookSecret.length;

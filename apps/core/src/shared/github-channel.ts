@@ -13,6 +13,7 @@ import type {
   ChannelIngressEvent,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { GITHUB_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -98,7 +99,7 @@ export function createGitHubChannel(
   webhookSecret: string,
   appId: string,
   privateKey: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   apiUrl?: string,
   userName?: string,
@@ -153,7 +154,7 @@ export function createGitHubChannel(
         return { kind: "ignore" };
       }
 
-      if (allowedExternalIds && !allowedExternalIds.has(fullName)) {
+      if (!isAllowedId(allowedChannelIds, fullName)) {
         logWarn("GitHub repository not in allow list", {
           repository: fullName,
         });
@@ -162,7 +163,7 @@ export function createGitHubChannel(
       }
 
       const senderLogin = payload.sender?.login;
-      if (allowedUserIds && (!senderLogin || !allowedUserIds.has(senderLogin))) {
+      if (!isAllowedId(allowedUserIds, senderLogin)) {
         logWarn("GitHub sender not in allow list", { userId: senderLogin });
 
         return { kind: "ignore" };

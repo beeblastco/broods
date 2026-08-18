@@ -30,7 +30,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-A direct-message bot cannot know its chat ids up front, because a person's chat does not exist until they write. Those connections set `channels: ["*"]` and gate people with `allowedUserIds` instead.
+A direct-message bot cannot know its chat ids up front, because a person's chat does not exist until they write. Those connections set `allowedChannelIds: ["*"]` and gate people with `allowedUserIds` instead.
 
 After `broods dev` or `broods deploy`, the CLI prints the webhook URL to register with Telegram:
 

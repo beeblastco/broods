@@ -44,7 +44,7 @@ describe("sendChannelReply", () => {
         telegram: {
           botToken: "bot-xyz",
           webhookSecret: "secret",
-          allowedChatIds: [555],
+          allowedChannelIds: ["555"],
         },
       },
     };

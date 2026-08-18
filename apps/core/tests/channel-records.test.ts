@@ -60,7 +60,7 @@ const ACCOUNT = {
 const TELEGRAM_CHANNEL = {
   botToken: "bot-token",
   webhookSecret: "telegram-secret",
-  allowedChatIds: [123],
+  allowedChannelIds: ["123"],
 };
 
 const TELEGRAM_CONFIG: AgentConfig = {

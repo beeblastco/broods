@@ -3794,16 +3794,16 @@ components:
               type: string
             webhookSecret:
               type: string
-            allowedExternalIds:
+            allowedChannelIds:
               type: array
               items:
                 type: string
-              description: Rooms this connection answers in. Every room when omitted, none when empty.
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
                 type: string
-              description: Provider user ids allowed to trigger the agent. Everyone when omitted.
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             reactionEmoji:
               type: string
             trace:
@@ -3838,16 +3838,16 @@ components:
             privateKey:
               type: string
               description: GitHub App private key (PEM)
-            allowedExternalIds:
+            allowedChannelIds:
               type: array
               items:
                 type: string
-              description: Rooms this connection answers in. Every room when omitted, none when empty.
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
                 type: string
-              description: Provider user ids allowed to trigger the agent. Everyone when omitted.
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             userName:
               type: string
               description: Bot username for @-mention detection (e.g. `my-bot` or `my-bot[bot]`). When set, the bot only responds to comments that mention it.
@@ -3889,16 +3889,16 @@ components:
               type: string
             signingSecret:
               type: string
-            allowedExternalIds:
+            allowedChannelIds:
               type: array
               items:
                 type: string
-              description: Rooms this connection answers in. Every room when omitted, none when empty.
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
                 type: string
-              description: Provider user ids allowed to trigger the agent. Everyone when omitted.
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             reactionEmoji:
               type: string
             trace:
@@ -3930,16 +3930,16 @@ components:
               type: string
             publicKey:
               type: string
-            allowedExternalIds:
+            allowedChannelIds:
               type: array
               items:
                 type: string
-              description: Rooms this connection answers in. Every room when omitted, none when empty.
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
                 type: string
-              description: Provider user ids allowed to trigger the agent. Everyone when omitted.
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             botUserId:
               type: string
               description: >-
@@ -4019,16 +4019,16 @@ components:
               minLength: 8
               maxLength: 256
               description: Zalo webhook secret token, sent as `X-Bot-Api-Secret-Token`.
-            allowedExternalIds:
+            allowedChannelIds:
               type: array
               items:
                 type: string
-              description: Rooms this connection answers in. Every room when omitted, none when empty.
+              description: Rooms this connection answers in. Every room when omitted or set to ["*"], none when empty.
             allowedUserIds:
               type: array
               items:
                 type: string
-              description: Provider user ids allowed to trigger the agent. Everyone when omitted.
+              description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
             trace:
               type: string
               enum: [enabled, disabled]

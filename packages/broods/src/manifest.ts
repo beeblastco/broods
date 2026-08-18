@@ -38,6 +38,9 @@ import {
   type WorkspaceResource,
 } from "./resources.ts";
 
+/** Reach every room the app can see, instead of only the declared channels. */
+const CHANNEL_REACH_WILDCARD = "*";
+
 export interface CompileOptions {
   cwd?: string;
   project?: string;
@@ -768,14 +771,32 @@ function assertConnectionReach(
     if (!Array.isArray(connections)) continue;
     for (const connection of connections) {
       if (!isConnectionDefinition(connection)) continue;
-      if (connection.wildcardReach) continue;
-      if ((reach.get(connection) ?? []).length > 0) continue;
+      if (connectionReach(connection, reach).length > 0) continue;
       throw new Error(
         `Agent "${resource.name}" connection "${connection.type}" reaches no rooms: ` +
-          `declare a ${connection.type} channel for it, or set channels: ["*"] to answer everywhere`,
+          `declare a ${connection.type} channel for it, or set allowedChannelIds: ["*"] to answer everywhere`,
       );
     }
   }
+}
+
+/**
+ * The rooms a connection answers in: every channel declared against it, plus
+ * any id named on the connection itself. The wildcard swallows the rest, since
+ * "everywhere" and "these two rooms" cannot both be true.
+ */
+function connectionReach(
+  connection: AnyConnectionDefinition,
+  reach: DeclaredReach,
+): string[] {
+  const authored = (connection.config as { allowedChannelIds?: unknown })
+    .allowedChannelIds;
+  const named = Array.isArray(authored)
+    ? authored.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  if (named.includes(CHANNEL_REACH_WILDCARD)) return [CHANNEL_REACH_WILDCARD];
+
+  return [...new Set([...(reach.get(connection) ?? []), ...named])];
 }
 
 /**
@@ -1197,11 +1218,7 @@ function normalizeAgentConfig(
             ? { level: "channel" }
             : { level: "conversation", alias: channel.partition.alias }
           : undefined;
-        // No list at all is the one way to say "everywhere"; the wildcard opts
-        // into it, and anything else is exactly what was declared.
-        const allowedExternalIds = channel.wildcardReach
-          ? undefined
-          : (reach.get(channel) ?? []);
+        const allowedChannelIds = connectionReach(channel, reach);
 
         return [
           channel.type,
@@ -1209,9 +1226,7 @@ function normalizeAgentConfig(
             id: channelId,
             ...channel.config,
             ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
-            ...(allowedExternalIds
-              ? { allowedExternalIds: allowedExternalIds }
-              : {}),
+            allowedChannelIds: allowedChannelIds,
           },
         ];
       }),

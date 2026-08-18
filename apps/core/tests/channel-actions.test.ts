@@ -765,7 +765,7 @@ describe("zalo channel actions", () => {
     const actions = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedExternalIds: null },
+      { allowedChannelIds: null },
     ).actions(
       createMessage({
         chatId: "chat-1",
@@ -840,7 +840,7 @@ describe("zalo channel actions", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedExternalIds: null },
+      { allowedChannelIds: null },
     );
     const actions = adapter.actions(
       createMessage({

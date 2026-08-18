@@ -383,7 +383,7 @@ test("compileProject carries channel trace settings into the manifest", async ()
 import { defineAgent, defineZaloConnection, env } from "${RESOURCES_MODULE}";
 
 export const zalo = defineZaloConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
   trace: "disabled",
@@ -423,23 +423,20 @@ import {
 } from "${RESOURCES_MODULE}";
 
 export const telegram = defineTelegramConnection({
-  channels: ["*"],
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
-  allowedChatIds: [123],
+  allowedChannelIds: ["123"],
   reactionEmoji: "eyes",
   apiUrl: "https://telegram.example",
 });
 export const github = defineGitHubConnection({
-  channels: ["*"],
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-  allowedRepos: ["owner/repo"],
+  allowedChannelIds: ["owner/repo"],
   apiUrl: "https://github.example/api/v3",
 });
 export const slack = defineSlackConnection({
-  channels: ["*"],
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
   allowedChannelIds: ["C123"],
@@ -447,21 +444,20 @@ export const slack = defineSlackConnection({
   apiUrl: "https://slack.example/api/",
 });
 export const discord = defineDiscordConnection({
-  channels: ["*"],
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
-  allowedGuildIds: ["G123"],
+  allowedChannelIds: ["D123"],
   apiUrl: "https://discord.example/api/v10",
 });
 export const pancake = definePancakeConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   pageId: env("PANCAKE_PAGE_ID"),
   pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
   webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
   senderId: "staff-1",
 });
 export const zalo = defineZaloConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
   allowedUserIds: ["user-1"],
@@ -482,12 +478,12 @@ export const support = defineAgent({
   expect(agent.config).toMatchObject({
     channels: {
       telegram: {
-        allowedChatIds: [123],
+        allowedChannelIds: ["123"],
         reactionEmoji: "eyes",
         apiUrl: "https://telegram.example",
       },
       github: {
-        allowedRepos: ["owner/repo"],
+        allowedChannelIds: ["owner/repo"],
         apiUrl: "https://github.example/api/v3",
       },
       slack: {
@@ -496,11 +492,11 @@ export const support = defineAgent({
         apiUrl: "https://slack.example/api/",
       },
       discord: {
-        allowedGuildIds: ["G123"],
+        allowedChannelIds: ["D123"],
         apiUrl: "https://discord.example/api/v10",
       },
-      pancake: { senderId: "staff-1" },
-      zalo: { allowedUserIds: ["user-1"] },
+      pancake: { senderId: "staff-1", allowedChannelIds: ["*"] },
+      zalo: { allowedUserIds: ["user-1"], allowedChannelIds: ["*"] },
     },
   });
   expect(
@@ -522,7 +518,7 @@ test("compileProject rejects a channel reused by two agents", async () => {
     `
 import { defineAgent, defineGitHubConnection, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
@@ -560,14 +556,14 @@ test("compileProject lowers partition into the stored workspaceScope", async () 
 import { defineAgent, defineGitHubConnection, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const github = defineGitHubConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "conversation", alias: "support" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
@@ -642,7 +638,7 @@ test("compileProject auto-generates the channel id for a partitioned connection"
 import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -709,18 +705,18 @@ export const support = defineSlackChannel({
     .slack;
 
   expect(slack).toMatchObject({
-    allowedExternalIds: ["C042PRODENG", "C07SUPPORT"],
+    allowedChannelIds: ["C042PRODENG", "C07SUPPORT"],
   });
 });
 
-test("compileProject omits the allow list for a wildcard connection", async () => {
+test("compileProject emits the wildcard itself for a wildcard connection", async () => {
   const cwd = await fixtureProject(
     "",
     `
 import { defineAgent, defineTelegramConnection, env } from "${RESOURCES_MODULE}";
 
 export const tgBot = defineTelegramConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
 });
@@ -735,8 +731,7 @@ export const desk = defineAgent({ name: "desk", connections: [tgBot] });
   const telegram = (agent?.config as { channels: { telegram: object } })
     .channels.telegram;
 
-  expect(telegram).not.toHaveProperty("allowedExternalIds");
-  expect(telegram).not.toHaveProperty("channels");
+  expect(telegram).toMatchObject({ allowedChannelIds: ["*"] });
 });
 
 test("compileProject rejects unsafe partition aliases", async () => {
@@ -746,7 +741,7 @@ test("compileProject rejects unsafe partition aliases", async () => {
 import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "conversation", alias: "../support" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -768,7 +763,7 @@ test("compileProject rejects a channel partition alias that walks out of its nam
 import { defineAgent, defineSlackChannel, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -796,7 +791,7 @@ test("compileProject rejects unknown partition modes", async () => {
 import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "workspace", alias: "support" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -818,7 +813,7 @@ test("compileProject rejects a partitioned connection with no partitioned worksp
 import { defineAgent, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
@@ -840,13 +835,13 @@ test("compileProject rejects a partitioned workspace when a connection lacks par
 import { defineAgent, defineGitHubConnection, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const github = defineGitHubConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
@@ -868,14 +863,14 @@ test("compileProject rejects duplicate channel ids", async () => {
 import { defineAgent, defineGitHubConnection, defineSlackConnection, defineWorkspace, env } from "${RESOURCES_MODULE}";
 
 export const slack = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   id: "support-channel",
   partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 export const github = defineGitHubConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   id: "support-channel",
   partition: { by: "conversation", alias: "support" },
   appId: env("GITHUB_APP_ID"),
@@ -915,7 +910,7 @@ test("compileProject keeps uploaded tool bundles intact beside typed channels", 
     `
 import { defineAgent, defineGitHubConnection, defineTool, env } from "${RESOURCES_MODULE}";
 export const github = defineGitHubConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
@@ -1802,7 +1797,7 @@ test("writeGeneratedFiles emits typed channel references with authoritative webh
     "",
     `
 import { defineAgent, defineGitHubConnection, env } from "${RESOURCES_MODULE}";
-export const github = defineGitHubConnection({ channels: ["*"], appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
+export const github = defineGitHubConnection({ allowedChannelIds: ["*"], appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
 export const support = defineAgent({ name: "support", connections: [github] });
 `,
   );
@@ -1847,7 +1842,7 @@ test("writeGeneratedFiles marks the webhook path of a stage that is not producti
     "",
     `
 import { defineAgent, defineGitHubConnection, env } from "${RESOURCES_MODULE}";
-export const github = defineGitHubConnection({ channels: ["*"], appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
+export const github = defineGitHubConnection({ allowedChannelIds: ["*"], appId: env("APP_ID"), privateKey: env("KEY"), webhookSecret: env("SECRET") });
 export const support = defineAgent({ name: "support", connections: [github] });
 `,
   );
@@ -2025,7 +2020,7 @@ export const opsOnly = definePolicy({
 });
 
 export const slackApp = defineSlackConnection({
-  channels: ["*"],
+  allowedChannelIds: ["*"],
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });

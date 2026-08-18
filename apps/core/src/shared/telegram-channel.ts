@@ -15,6 +15,7 @@ import type {
   ChannelAdapter,
   ChannelParseResult,
 } from "./channels.ts";
+import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
@@ -33,7 +34,7 @@ export interface TelegramSource {
 export function createTelegramChannel(
   botToken: string,
   webhookSecret: string,
-  allowedExternalIds: Set<string> | null,
+  allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   reactionEmoji: string,
   apiUrl?: string,
@@ -72,8 +73,7 @@ export function createTelegramChannel(
       }
 
       if (
-        allowedExternalIds &&
-        !allowedExternalIds.has(String(message.chat.id))
+        !isAllowedId(allowedChannelIds, String(message.chat.id))
       ) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
 
@@ -81,7 +81,7 @@ export function createTelegramChannel(
       }
 
       const senderId = message.from?.id ? String(message.from.id) : undefined;
-      if (allowedUserIds && (!senderId || !allowedUserIds.has(senderId))) {
+      if (!isAllowedId(allowedUserIds, senderId)) {
         logWarn("Telegram sender not in allow list", { userId: senderId });
 
         return { kind: "ignore" };

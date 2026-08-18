@@ -21,7 +21,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedExternalIds: null },
+      { allowedChannelIds: null },
     );
 
     expect(
@@ -47,7 +47,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedExternalIds: null },
+      { allowedChannelIds: null },
     );
     const parsed = await adapter.parse(
       createZaloRequest(
@@ -89,7 +89,7 @@ describe("zalo channel adapter", () => {
     const adapter = createZaloChannel(
       "bot-token",
       "zalo-secret",
-      { allowedExternalIds: null },
+      { allowedChannelIds: null },
     );
     const parsed = await adapter.parse(
       createZaloRequest({
@@ -119,7 +119,7 @@ describe("zalo channel adapter", () => {
 
   it("accepts any chat when the allow list is null", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedExternalIds: null,
+      allowedChannelIds: null,
     });
 
     expect(
@@ -215,7 +215,7 @@ describe("zalo channel adapter", () => {
 
   it("ignores chats outside the allow list", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedExternalIds: new Set(["group-1"]),
+      allowedChannelIds: new Set(["group-1"]),
     });
 
     expect(
@@ -257,7 +257,7 @@ describe("zalo channel adapter", () => {
 
   it("gates a private chat by the same allow list a group uses", async () => {
     const adapter = createZaloChannel("bot-token", "zalo-secret", {
-      allowedExternalIds: new Set(["group-1"]),
+      allowedChannelIds: new Set(["group-1"]),
     });
 
     expectIgnoreReason(

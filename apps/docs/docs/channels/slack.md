@@ -30,7 +30,7 @@ export const myAgent = defineAgent({
 });
 ```
 
-The agent answers in the rooms you declared and nowhere else. To answer in every room the app can see, set `channels: ["*"]` on the connection instead.
+The agent answers in the rooms you declared and nowhere else. To answer in every room the app can see, set `allowedChannelIds: ["*"]` on the connection instead.
 
 - `botToken`: Slack Bot User OAuth Token.
 - `signingSecret`: Used to verify Slack requests.

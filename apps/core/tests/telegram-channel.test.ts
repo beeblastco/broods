@@ -83,6 +83,44 @@ describe("telegram channel adapter", () => {
     ).toEqual({ kind: "ignore" });
   });
 
+  it("answers an undeclared chat under the wildcard, still gated by sender", async () => {
+    const open = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set(["*"]),
+      null,
+      "👀",
+    );
+
+    expect(
+      (
+        await open.parse(
+          createRequest({
+            update_id: 1,
+            message: createMessage({ text: "hello" }),
+          }),
+        )
+      ).kind,
+    ).toBe("message");
+
+    const strangers = createTelegramChannel(
+      "bot-token",
+      "secret",
+      new Set(["*"]),
+      new Set(["8"]),
+      "👀",
+    );
+
+    expect(
+      await strangers.parse(
+        createRequest({
+          update_id: 1,
+          message: createMessage({ text: "hello" }),
+        }),
+      ),
+    ).toEqual({ kind: "ignore" });
+  });
+
   it("normalizes inbound messages from the main message payload", async () => {
     const adapter = createTelegramChannel(
       "bot-token",
