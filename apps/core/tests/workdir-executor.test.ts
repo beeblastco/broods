@@ -1068,7 +1068,42 @@ describe("WorkdirSandboxExecutor lifecycle", () => {
       "sandbox",
       NS,
       undefined,
+      "sbx_stored",
     );
+  });
+
+  it("releases the named sandbox when the reservation still points at it", async (): Promise<void> => {
+    storedSandboxExternalId = "sbx_stored";
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    await executor.release({
+      namespace: NS,
+      expectedExternalId: "sbx_stored",
+    });
+    expect(
+      fetchCalls.some(
+        (c) => c.method === "DELETE" && c.path === "/v1/sandboxes/sbx_stored",
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves a reservation alone when another acquire already re-claimed it", async (): Promise<void> => {
+    // The caller read sbx_old, but the key now points at a sandbox someone else
+    // just claimed — deleting it would destroy live work.
+    storedSandboxExternalId = "sbx_new";
+    const executor = await newExecutor({
+      provider: "sandbox",
+      persistent: true,
+      options: { workdirUrl: BASE },
+    });
+
+    await executor.release({ namespace: NS, expectedExternalId: "sbx_old" });
+    expect(fetchCalls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(deleteSandboxInstanceMock).not.toHaveBeenCalled();
   });
 
   it("returns null instance info when nothing is reserved", async () => {
