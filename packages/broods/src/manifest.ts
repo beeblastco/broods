@@ -25,10 +25,10 @@ import {
 import { GENERATED_DIR, PROJECT_DIR, stageFromEnv } from "./config.ts";
 import { loadBroodsRuntimeConfig } from "./runtime-config.ts";
 import {
-  isChannelDefinition,
+  isConnectionDefinition,
   isBroodsConfig,
   isResource,
-  type AnyChannelDefinition,
+  type AnyConnectionDefinition,
   type AnyResource,
   type AgentHooks,
   type BroodsConfigDefinition,
@@ -56,7 +56,7 @@ export interface CompiledProject {
 
 export interface CompiledChannel {
   alias: string;
-  type: AnyChannelDefinition["type"];
+  type: AnyConnectionDefinition["type"];
   id: string;
   agentName: string;
 }
@@ -408,14 +408,14 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   for (const resource of resources) {
     if (resource.kind !== "agent") continue;
     const config = resource.config as Record<string, unknown>;
-    const channels = config.channels;
+    const channels = config.connections;
     if (channels !== undefined && !Array.isArray(channels)) {
       throw new Error(
-        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+        `Agent "${resource.name}" config.connections must be an array of connection definitions`,
       );
     }
     const channelDefinitions = Array.isArray(channels)
-      ? channels.filter(isChannelDefinition)
+      ? channels.filter(isConnectionDefinition)
       : [];
     const channelIds = new Set<string>();
     for (const channel of channelDefinitions) {
@@ -426,19 +426,20 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           throw new Error(`Duplicate channel id: ${channelId}`);
         channelIds.add(channelId);
       }
-      if (channel.workspaceScope) {
-        assertWorkspaceScopeShape(
-          channel.workspaceScope,
-          `Agent "${resource.name}" channel "${channel.type}"`,
+      if (channel.partition) {
+        assertPartitionShape(
+          channel.partition,
+          `Agent "${resource.name}" connection "${channel.type}"`,
         );
       }
       if (
         channel.config &&
         typeof channel.config === "object" &&
-        "workspaceIsolationScope" in channel.config
+        ("workspaceIsolationScope" in channel.config ||
+          "workspaceScope" in channel.config)
       ) {
         throw new Error(
-          `Agent "${resource.name}" channel "${channel.type}" uses workspaceIsolationScope, which is no longer supported; use workspaceScope.`,
+          `Agent "${resource.name}" connection "${channel.type}" uses workspaceScope, which is no longer supported; use partition.`,
         );
       }
     }
@@ -448,27 +449,27 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
           .map((entry) => resolveLocalWorkspace(entry, workspaceResources))
           .filter((entry): entry is WorkspaceResource => Boolean(entry))
       : [];
-    const isolatedWorkspaces = attachedWorkspaces.filter(
+    const partitionedWorkspaces = attachedWorkspaces.filter(
       (workspace) =>
-        (workspace.config as unknown as Record<string, unknown>).isolation ===
+        (workspace.config as unknown as Record<string, unknown>).partitioned ===
         true,
     );
-    const scopedChannels = channelDefinitions.filter(
-      (channel) => channel.workspaceScope,
+    const partitionedChannels = channelDefinitions.filter(
+      (channel) => channel.partition,
     );
 
-    if (scopedChannels.length > 0 && isolatedWorkspaces.length === 0) {
-      const channel = scopedChannels[0]!;
+    if (partitionedChannels.length > 0 && partitionedWorkspaces.length === 0) {
+      const channel = partitionedChannels[0]!;
       throw new Error(
-        `Agent "${resource.name}" channel "${channel.type}" defines workspaceScope, but no attached workspace has isolation: true.`,
+        `Agent "${resource.name}" connection "${channel.type}" defines partition, but no attached workspace has partitioned: true.`,
       );
     }
 
-    if (isolatedWorkspaces.length > 0) {
+    if (partitionedWorkspaces.length > 0) {
       for (const channel of channelDefinitions) {
-        if (!channel.workspaceScope) {
+        if (!channel.partition) {
           throw new Error(
-            `Agent "${resource.name}" attaches isolated workspace "${isolatedWorkspaces[0]!.name}", but channel "${channel.type}" does not define workspaceScope.`,
+            `Agent "${resource.name}" attaches partitioned workspace "${partitionedWorkspaces[0]!.name}", but connection "${channel.type}" does not define partition.`,
           );
         }
       }
@@ -476,40 +477,30 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   }
 }
 
-function assertWorkspaceScopeShape(
-  scope: AnyChannelDefinition["workspaceScope"],
+function assertPartitionShape(
+  partition: AnyConnectionDefinition["partition"],
   name: string,
 ): void {
-  if (!scope) return;
-  if (scope.level === "channel") {
-    if ("alias" in scope && scope.alias !== undefined) {
+  if (!partition) return;
+  if (partition.by === "shared") {
+    if ("alias" in partition && partition.alias !== undefined) {
       throw new Error(
-        `${name} workspaceScope.alias is only supported when workspaceScope.level is conversation`,
+        `${name} partition.alias is only supported when partition.by is conversation`,
       );
     }
 
     return;
   }
-  if (scope.level !== "conversation") {
-    throw new Error(
-      `${name} workspaceScope.level must be one of: channel, conversation`,
-    );
+  if (partition.by !== "conversation") {
+    throw new Error(`${name} partition.by must be one of: shared, conversation`);
   }
-  if (
-    !("alias" in scope) ||
-    typeof scope.alias !== "string" ||
-    scope.alias.length === 0
-  ) {
+  if (typeof partition.alias !== "string" || partition.alias.length === 0) {
     throw new Error(
-      `${name} workspaceScope.alias must be a non-empty string when workspaceScope.level is conversation`,
-    );
-  }
-  if (!/^[A-Za-z0-9._-]+$/.test(scope.alias)) {
-    throw new Error(
-      `${name} workspaceScope.alias must use only letters, numbers, dots, underscores, or hyphens`,
+      `${name} partition.alias is required when partition.by is conversation`,
     );
   }
 }
+
 
 function resolveLocalWorkspace(
   entry: unknown,
@@ -665,10 +656,10 @@ function compileChannels(
   resources: ExportedResource[],
   exports: ExportedValue[],
 ): CompiledChannel[] {
-  const exportedAliases = new Map<AnyChannelDefinition, string>();
+  const exportedAliases = new Map<AnyConnectionDefinition, string>();
   for (const entry of exports) {
     if (
-      !isChannelDefinition(entry.value) ||
+      !isConnectionDefinition(entry.value) ||
       entry.exportName === "default" ||
       !isValidIdentifier(entry.exportName)
     )
@@ -682,24 +673,24 @@ function compileChannels(
     exportedAliases.set(entry.value, entry.exportName);
   }
 
-  const owners = new Map<AnyChannelDefinition, string>();
+  const owners = new Map<AnyConnectionDefinition, string>();
   const aliases = new Set<string>();
   const compiled: CompiledChannel[] = [];
 
   for (const { exportName, resource } of resources) {
     if (resource.kind !== "agent") continue;
-    const value = (resource.config as { channels?: unknown }).channels;
+    const value = (resource.config as { connections?: unknown }).connections;
     if (value === undefined) continue;
     if (!Array.isArray(value)) {
       throw new Error(
-        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+        `Agent "${resource.name}" config.connections must be an array of connection definitions`,
       );
     }
     const types = new Set<string>();
     for (const entry of value) {
-      if (!isChannelDefinition(entry)) {
+      if (!isConnectionDefinition(entry)) {
         throw new Error(
-          `Agent "${resource.name}" config.channels must contain channel definitions`,
+          `Agent "${resource.name}" config.connections must contain connection definitions`,
         );
       }
       const owner = owners.get(entry);
@@ -1097,17 +1088,17 @@ function normalizeAgentConfig(
   } else if (config.hooks !== undefined) {
     config.hooks = stripInlineHookKeys(config.hooks, resource.name);
   }
-  if (config.channels !== undefined) {
-    if (!Array.isArray(config.channels)) {
+  if (config.connections !== undefined) {
+    if (!Array.isArray(config.connections)) {
       throw new Error(
-        `Agent "${resource.name}" config.channels must be an array of channel definitions`,
+        `Agent "${resource.name}" config.connections must be an array of connection definitions`,
       );
     }
     config.channels = Object.fromEntries(
-      config.channels.map((channel) => {
-        if (!isChannelDefinition(channel)) {
+      config.connections.map((channel) => {
+        if (!isConnectionDefinition(channel)) {
           throw new Error(
-            `Agent "${resource.name}" config.channels must contain channel definitions`,
+            `Agent "${resource.name}" config.connections must contain connection definitions`,
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
