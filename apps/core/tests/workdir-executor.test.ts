@@ -539,6 +539,12 @@ describe("WorkdirSandboxExecutor.run", () => {
     expect(String(mount!.body?.cmd)).toContain("umount -l");
     expect(String(mount!.body?.cmd)).toContain(".mounted-at");
     expect(String(mount!.body?.cmd)).toContain(`-ge ${45 * 60}`);
+    // The stamp sits on disk the agent can write, so a non-numeric value must fall
+    // back to "unknown age" instead of reaching the arithmetic, which would abort
+    // the mount and strand the workspace.
+    expect(String(mount!.body?.cmd)).toContain(
+      `case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac;`,
+    );
     expect(mount!.body?.env).toMatchObject({
       AWS_ACCESS_KEY_ID: "ASIA_TEMP",
       AWS_SECRET_ACCESS_KEY: "temp-secret",

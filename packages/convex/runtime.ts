@@ -683,7 +683,7 @@ export const getSandboxReservation = internalQuery({
 export const getSandboxReservationClaimedAt = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
   returns: v.union(v.number(), v.null()),
-  handler: async (ctx, args) =>
+  handler: async (ctx, args): Promise<number | null> =>
     (
       await ctx.db
         .query("sandboxReservations")

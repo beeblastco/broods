@@ -709,14 +709,12 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
   // per-call exec env — never the harness's own broad creds, which any code the
   // agent runs could read (the daytona model).
   //
-  // One idempotent guard covers the three states a persistent sandbox reaches. Not
-  // mounted: mount it. Mounted but the daemon died: `mountpoint -q` reports it gone
-  // while the path stays a wedged FUSE endpoint that mount-s3 cannot retake, so clear
-  // it first — without that the workspace is unusable for the rest of the sandbox's
-  // life. Mounted and healthy but the credentials are near expiry: replace the daemon,
-  // since mount-s3 reads its credentials from the environment it started with and can
-  // never be handed new ones. Age is measured against a stamp written with the
-  // harness's clock rather than the guest's, which a Firecracker pause freezes.
+  // One idempotent guard covers three states: not mounted, mounted over a wedged FUSE
+  // endpoint a bare mount-s3 cannot retake, and mounted on credentials near expiry —
+  // mount-s3 only reads them at startup, so rotating means replacing the daemon.
+  // Age comes from a stamp written with the harness's clock, not the guest's, which a
+  // Firecracker pause freezes. The stamp lives on agent-writable disk, so it is treated
+  // as untrusted input: anything non-numeric reads as "unknown age" and forces a remount.
   async #ensureS3Mount(
     sandbox: Sandbox,
     request: { namespace?: string; workspaceRoot?: string },
@@ -744,6 +742,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const result = await sandbox.exec(
       [
         `stamp=$(cat ${quotedStamp} 2>/dev/null || echo 0);`,
+        `case "$stamp" in '' | *[!0-9]*) stamp=0 ;; esac;`,
         `if ! mountpoint -q ${quotedPath} || [ $((${now} - stamp)) -ge ${MOUNT_MAX_AGE_SECONDS} ]; then`,
         `fusermount -u ${quotedPath} 2>/dev/null || umount -l ${quotedPath} 2>/dev/null;`,
         `mkdir -p ${quotedPath} && mount-s3 ${mountArgs} && echo ${now} > ${quotedStamp};`,
