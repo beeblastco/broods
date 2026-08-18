@@ -31,7 +31,7 @@ interface Props {
 
 const MASKED_SECRET = "••••••••••••••••••••••••••••";
 
-export function ApiAccessPanel({ org }: Props) {
+export function ApiAccessPanel({ org }: Props): React.JSX.Element {
   const account = useQuery(api.org.getActiveAccount, {});
   const provision = useAction(api.orgLifecycle.provision);
   const rotate = useAction(api.orgLifecycle.rotateSecret);

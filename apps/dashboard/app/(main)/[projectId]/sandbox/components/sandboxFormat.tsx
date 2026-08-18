@@ -59,7 +59,9 @@ export function formatSpecs(specs: Doc<"sandboxInstances">["specs"]): string {
 }
 
 /** Status badge for a live instance. */
-export function instanceStatusBadge(status: Doc<"sandboxInstances">["status"]) {
+export function instanceStatusBadge(
+  status: Doc<"sandboxInstances">["status"],
+): React.JSX.Element {
   if (status === "running")
     return (
       <Badge variant="success" className="text-xs">
@@ -87,7 +89,9 @@ export function instanceStatusBadge(status: Doc<"sandboxInstances">["status"]) {
 }
 
 /** Status badge for a snapshot/image's unified build status. */
-export function snapshotStatusBadge(status: Doc<"sandboxSnapshots">["status"]) {
+export function snapshotStatusBadge(
+  status: Doc<"sandboxSnapshots">["status"],
+): React.JSX.Element {
   if (status === "active")
     return (
       <Badge variant="success" className="text-xs">
@@ -117,7 +121,7 @@ export function snapshotStatusBadge(status: Doc<"sandboxSnapshots">["status"]) {
 /** Badge for an instance's tool-approval policy; em dash when the row predates the mirror. */
 export function permissionModeBadge(
   mode: Doc<"sandboxInstances">["permissionMode"],
-) {
+): React.JSX.Element {
   if (mode === "ask")
     return (
       <Badge variant="success" className="text-xs">
@@ -141,7 +145,9 @@ export function permissionModeBadge(
 }
 
 /** Badge for an instance's egress policy; deny-all is most locked-down, allow-all most open. */
-export function egressBadge(egress: Doc<"sandboxInstances">["egress"]) {
+export function egressBadge(
+  egress: Doc<"sandboxInstances">["egress"],
+): React.JSX.Element {
   if (egress === "deny-all")
     return (
       <Badge variant="success" className="text-xs">

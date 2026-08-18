@@ -19,7 +19,7 @@ export function ConfigTab({
   agentConfig:
     (FlatAgentConfig & { _id?: Id<"agentConfigs"> }) | null | undefined;
   onSave: (value: unknown) => Promise<void>;
-}) {
+}): React.JSX.Element {
   const configValue = useMemo(() => {
     if (!agentConfig) return {};
     const n = toNestedAgentConfig(agentConfig) as Record<string, unknown>;

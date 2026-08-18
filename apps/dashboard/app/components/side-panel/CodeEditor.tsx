@@ -21,7 +21,7 @@ export function CodeEditor({
   value: string;
   onChange: (next: string) => void;
   readOnly?: boolean;
-}) {
+}): React.JSX.Element {
   const { resolvedTheme } = useTheme();
   const handleChange = useCallback(
     (next: string) => {

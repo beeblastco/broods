@@ -44,7 +44,7 @@ export function CreateProjectDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   description?: string;
-}) {
+}): React.JSX.Element {
   const createProject = useMutation(api.project.create);
   const router = useRouter();
   const [name, setName] = useState("");

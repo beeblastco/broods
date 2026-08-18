@@ -29,7 +29,7 @@ function formatPeriodEnd(epochSeconds: number): string {
   });
 }
 
-export function BillingPanel({ projectId }: Props) {
+export function BillingPanel({ projectId }: Props): React.JSX.Element {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);

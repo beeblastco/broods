@@ -225,7 +225,11 @@ function LogRow({
   );
 }
 
-export function MonitoringPanel({ projectSlug, stageSlug, apiKey }: Props) {
+export function MonitoringPanel({
+  projectSlug,
+  stageSlug,
+  apiKey,
+}: Props): React.JSX.Element {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

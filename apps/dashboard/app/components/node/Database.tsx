@@ -5,7 +5,7 @@ import type { NodeProps } from "@xyflow/react";
 import { Database } from "lucide-react";
 
 /** Session node — the agent's persistent conversation store (pruning/compaction tuned in its panel). */
-export function DatabaseNode({ id, data }: NodeProps) {
+export function DatabaseNode({ id, data }: NodeProps): React.JSX.Element {
   return (
     <BaseNode
       id={id}

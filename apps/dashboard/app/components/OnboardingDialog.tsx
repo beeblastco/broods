@@ -124,7 +124,7 @@ function DocsLink({ href, children }: { href: string; children: ReactNode }) {
  * dismissed by Escape or outside clicks: step two holds the unrecoverable
  * one-time secret, so the only way out is forward.
  */
-export function OnboardingDialog({ secret, onDone }: Props) {
+export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
   const [step, setStep] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const { copied, copy } = useCopy();

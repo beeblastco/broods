@@ -32,7 +32,10 @@ const COPY = {
   },
 } as const;
 
-export function SandboxPolicyTable({ instances, dimension }: Props) {
+export function SandboxPolicyTable({
+  instances,
+  dimension,
+}: Props): React.JSX.Element {
   const copy = COPY[dimension];
 
   if (instances.length === 0) {

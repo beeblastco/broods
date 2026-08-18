@@ -53,7 +53,7 @@ export function CreateAgentConfigDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialCanvasPosition?: { x: number; y: number } | null;
-}) {
+}): React.JSX.Element {
   const createAgentConfig = useMutation(api.agentConfig.create);
 
   const [name, setName] = useState("");

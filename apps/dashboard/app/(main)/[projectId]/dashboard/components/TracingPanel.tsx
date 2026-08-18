@@ -738,7 +738,11 @@ function renderSpanRows(
   return rows;
 }
 
-export function TracingPanel({ projectSlug, stageSlug, apiKey }: Props) {
+export function TracingPanel({
+  projectSlug,
+  stageSlug,
+  apiKey,
+}: Props): React.JSX.Element {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

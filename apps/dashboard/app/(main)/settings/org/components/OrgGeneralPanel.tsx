@@ -20,7 +20,7 @@ interface Props {
   org: Doc<"orgs">;
 }
 
-export function OrgGeneralPanel({ org }: Props) {
+export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
   const updateOrg = useMutation(api.org.update).withOptimisticUpdate(
     (localStore, args) => {
       const active = localStore.getQuery(api.org.getActive, {});

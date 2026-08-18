@@ -51,7 +51,11 @@ function useAuthAdapter() {
 }
 
 /** Wraps the app with theme, auth, and Convex providers. */
-export function ConvexClientProvider({ children }: { children: ReactNode }) {
+export function ConvexClientProvider({
+  children,
+}: {
+  children: ReactNode;
+}): React.JSX.Element {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <AuthKitProvider>

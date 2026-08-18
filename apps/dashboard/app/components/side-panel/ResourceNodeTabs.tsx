@@ -60,7 +60,7 @@ export function WorkspaceResourceDetailsTab({
   setEditName: (name: string) => void;
   onSaveName: () => void;
   onUpdateNodeData: UpdateNodeData;
-}) {
+}): React.JSX.Element {
   const config: Record<string, unknown> = isPlainObject(data.config)
     ? data.config
     : WORKSPACE_DEFAULT_CONFIG;
@@ -291,7 +291,7 @@ export function SandboxResourceDetailsTab({
   setEditName: (name: string) => void;
   onSaveName: () => void;
   onUpdateNodeData: UpdateNodeData;
-}) {
+}): React.JSX.Element {
   const config: Record<string, unknown> = isPlainObject(data.config)
     ? data.config
     : SANDBOX_DEFAULT_CONFIG;
@@ -395,7 +395,7 @@ export function ResourceConfigTab({
   nodeType: "workspace" | "sandbox";
   data: BaseNodeData;
   onUpdateNodeData: UpdateNodeData;
-}) {
+}): React.JSX.Element {
   const fallback =
     nodeType === "workspace"
       ? WORKSPACE_DEFAULT_CONFIG

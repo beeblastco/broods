@@ -76,7 +76,7 @@ function stageKind(
 }
 
 /** Color dot indicating stage type: green for Development, purple for Production. */
-export function StageDot({ kind }: { kind: StageKind }) {
+export function StageDot({ kind }: { kind: StageKind }): React.JSX.Element {
   return (
     <Circle
       className={cn(
@@ -96,7 +96,7 @@ export function StageDot({ kind }: { kind: StageKind }) {
  * Production panel opens only when the user selects a Production stage
  * that has no deployment region yet, so nothing else can prompt for one.
  */
-export function StageSelector() {
+export function StageSelector(): React.JSX.Element | null {
   const params = useParams<{ projectId?: string }>();
   const projectId = params.projectId as Id<"projects"> | undefined;
   const { stageId, setStageId } = useStage();

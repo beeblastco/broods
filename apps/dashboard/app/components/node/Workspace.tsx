@@ -8,7 +8,7 @@ import { BaseNode, type BaseNodeData } from "@/app/components/node/BaseNode";
 import type { NodeProps } from "@xyflow/react";
 import { FolderOpen } from "lucide-react";
 
-export function WorkspaceNode({ id, data }: NodeProps) {
+export function WorkspaceNode({ id, data }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
 
   return (

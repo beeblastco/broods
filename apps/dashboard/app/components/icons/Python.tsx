@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-const Python = (props: SVGProps<SVGSVGElement>) => (
+const Python = (props: SVGProps<SVGSVGElement>): React.JSX.Element => (
   <svg {...props} fill="none" viewBox="16 16 32 32">
     <path
       fill="url(#python__a)"

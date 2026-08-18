@@ -15,7 +15,7 @@ export function LockedEdgeBadge({
   labelX: number;
   labelY: number;
   onHoverChange?: (hovered: boolean) => void;
-}) {
+}): React.JSX.Element {
   return (
     <div
       className="nodrag nopan group absolute flex cursor-not-allowed items-center justify-center"

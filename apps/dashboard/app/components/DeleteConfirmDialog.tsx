@@ -41,7 +41,7 @@ export function DeleteConfirmDialog({
   critical = false,
   onConfirm,
   isDeleting = false,
-}: Props) {
+}: Props): React.JSX.Element {
   const [phrase, setPhrase] = useState("");
   const deletePhrase = critical
     ? `delete ${resourceName}, ${CRITICAL_SAFETY_PHRASE}`

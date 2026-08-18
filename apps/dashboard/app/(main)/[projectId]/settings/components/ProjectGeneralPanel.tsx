@@ -16,7 +16,7 @@ interface Props {
   projectId: Id<"projects">;
 }
 
-export function ProjectGeneralPanel({ projectId }: Props) {
+export function ProjectGeneralPanel({ projectId }: Props): React.JSX.Element {
   const project = useQuery(api.project.getById, { projectId: projectId });
   const update = useMutation(api.project.update);
 

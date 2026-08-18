@@ -29,7 +29,7 @@ const VIEWS: Array<{ id: SandboxView; label: string }> = [
   { id: "networking", label: "Networking" },
 ];
 
-export default function SandboxPage() {
+export default function SandboxPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const projectId = params.projectId as Id<"projects">;
   const { stageId } = useStage();

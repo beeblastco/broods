@@ -15,7 +15,7 @@ export function ToolSourceOptions({
   onSelect,
 }: {
   onSelect: (source: "docker" | "upload" | "scratch") => void;
-}) {
+}): React.JSX.Element {
   return (
     <div className="flex flex-col">
       {SOURCE_OPTIONS.map(({ key, label, icon: Icon }) => (

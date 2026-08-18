@@ -167,7 +167,7 @@ export function DitherAvatar({
   size = 40,
   className,
   style,
-}: DitherAvatarProps) {
+}: DitherAvatarProps): React.JSX.Element {
   const uri = ditherAvatarDataUri(seed);
 
   return (
@@ -190,7 +190,7 @@ export function DitherAvatarSVG({
   size = 40,
   className,
   style,
-}: DitherAvatarProps) {
+}: DitherAvatarProps): React.JSX.Element {
   const svg = generateDitherAvatar(seed);
   const inner = svg
     .replace(/<svg[^>]*>/, "")

@@ -24,7 +24,7 @@ const TABS: Array<{ id: OrgTab; label: string; danger?: boolean }> = [
   { id: "danger", label: "Danger Zone", danger: true },
 ];
 
-export default function OrgSettingsPage() {
+export default function OrgSettingsPage(): React.JSX.Element {
   const org = useQuery(api.org.getActive, {});
   const searchParams = useSearchParams();
   const router = useRouter();

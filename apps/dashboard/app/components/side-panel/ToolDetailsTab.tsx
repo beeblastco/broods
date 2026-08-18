@@ -30,7 +30,7 @@ export function ToolDetailsTab({
   onSaveName: () => void;
   nameChanged: boolean;
   isSavingName: boolean;
-}) {
+}): React.JSX.Element {
   const canQueryTool = !!projectId && !!stageId;
   const toolService = useQuery(
     api.toolService.getByNode,

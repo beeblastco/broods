@@ -464,7 +464,7 @@ export function WorkspaceFilesTab({
   projectId: Id<"projects"> | undefined;
   nodeId: string;
   workspaceId?: string;
-}) {
+}): React.JSX.Element {
   const convexFiles = useQuery(
     api.workspaceFiles.list,
     projectId && !workspaceId

@@ -23,7 +23,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 /** Dropdown to list, switch, and create projects. */
-export function ProjectSelector() {
+export function ProjectSelector(): React.JSX.Element {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const queryArgs = !isLoading && isAuthenticated ? {} : "skip";
   const projects = useQuery(api.project.list, queryArgs) as

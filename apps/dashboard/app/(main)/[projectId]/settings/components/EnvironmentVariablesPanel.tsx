@@ -32,7 +32,10 @@ interface Props {
 }
 
 /** Lists, adds, and removes runtime variables for the active stage. */
-export function EnvironmentVariablesPanel({ projectId, stageId }: Props) {
+export function EnvironmentVariablesPanel({
+  projectId,
+  stageId,
+}: Props): React.JSX.Element {
   const variables = useQuery(
     api.environmentVariables.list,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",

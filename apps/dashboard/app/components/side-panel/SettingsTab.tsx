@@ -75,7 +75,7 @@ export function SettingsTab({
   codeOwner?: "cli" | "api";
   /** Blocks delete while ownership is unknown or code owns the resource. */
   deleteLocked?: boolean;
-}) {
+}): React.JSX.Element {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [prevDeleteToken, setPrevDeleteToken] = useState(openDeleteDialogToken);

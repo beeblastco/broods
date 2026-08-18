@@ -46,7 +46,10 @@ type PendingWebhookDelete = {
 };
 
 /** Lists each agent's outbound webhooks with add / activate / remove controls. */
-export function WebhooksPanel({ projectId, stageId }: Props) {
+export function WebhooksPanel({
+  projectId,
+  stageId,
+}: Props): React.JSX.Element {
   const agents = useQuery(
     api.webhooks.listAgentWebhooks,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",

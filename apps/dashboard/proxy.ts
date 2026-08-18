@@ -1,4 +1,5 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
+import type { NextMiddlewareResult } from "next/dist/server/web/types";
 import type { NextFetchEvent, NextRequest } from "next/server";
 
 const redirectUri =
@@ -15,7 +16,10 @@ const authProxy = authkitProxy({
 /**
  * WorkOS AuthKit middleware for session management.
  */
-export default function proxy(request: NextRequest, event: NextFetchEvent) {
+export default function proxy(
+  request: NextRequest,
+  event: NextFetchEvent,
+): Promise<NextMiddlewareResult> | NextMiddlewareResult {
   return authProxy(request, event);
 }
 

@@ -37,7 +37,7 @@ export function DeletableEdge({
   sourcePosition,
   targetPosition,
   style,
-}: EdgeProps) {
+}: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const { theme } = useTheme();
   const isDark = theme === "dark";

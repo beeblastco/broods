@@ -12,6 +12,19 @@ const eslintConfig = defineConfig([
         "error",
         { blankLine: "always", prev: "*", next: "return" },
       ],
+      // Every exported function states its own return type, so a module's surface
+      // is readable without running the inference. Components return
+      // `React.JSX.Element`; a hook returning an object gets a named interface
+      // rather than an inlined structural type.
+      "@typescript-eslint/explicit-module-boundary-types": "error",
+    },
+  },
+  {
+    // Vendored shadcn/ui. `shadcn add` rewrites these files wholesale, so any
+    // annotation here is undone the next time a component is pulled or updated.
+    files: ["app/components/ui/**"],
+    rules: {
+      "@typescript-eslint/explicit-module-boundary-types": "off",
     },
   },
   globalIgnores([

@@ -76,7 +76,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function CronDialog({ mode, cron, agents, onClose }: Props) {
+export function CronDialog({
+  mode,
+  cron,
+  agents,
+  onClose,
+}: Props): React.JSX.Element {
   const create = useAction(api.cronPublic.create);
   const update = useAction(api.cronPublic.update);
 

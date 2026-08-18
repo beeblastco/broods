@@ -334,7 +334,7 @@ export function SkillDetailsTab({
   onSaveName: () => void;
   onUpdateNodeConfig: (patch: Record<string, unknown>) => void;
   onUpdateSkillPath: (path: string) => void;
-}) {
+}): React.JSX.Element {
   const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
   const skills = useMemo(
     () =>

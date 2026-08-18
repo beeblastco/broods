@@ -30,7 +30,7 @@ const TABS = [
 
 type DashboardTab = (typeof TABS)[number]["id"];
 
-export default function DashboardPage() {
+export default function DashboardPage(): React.JSX.Element {
   const params = useParams<{ projectId: string }>();
   const searchParams = useSearchParams();
   const projectId = params.projectId as Id<"projects">;

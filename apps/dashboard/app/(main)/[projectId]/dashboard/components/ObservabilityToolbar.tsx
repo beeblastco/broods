@@ -58,7 +58,7 @@ export function ObservabilityToolbar({
   refreshSpinning,
   refreshTitle,
   isError,
-}: Props) {
+}: Props): React.JSX.Element {
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-2">
       <div className="relative min-w-50 flex-1">

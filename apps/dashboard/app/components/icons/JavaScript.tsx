@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-const JavaScript = (props: SVGProps<SVGSVGElement>) => (
+const JavaScript = (props: SVGProps<SVGSVGElement>): React.JSX.Element => (
   <svg {...props} viewBox="0 0 1052 1052">
     <path fill="#f0db4f" d="M0 0h1052v1052H0z" />
     <path

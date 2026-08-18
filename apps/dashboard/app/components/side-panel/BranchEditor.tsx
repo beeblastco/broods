@@ -24,7 +24,7 @@ export function BranchEditor({
   placeholder?: string;
   onSave: (parsed: unknown) => Promise<void> | void;
   disabled?: boolean;
-}) {
+}): React.JSX.Element {
   const serialized = useMemo(
     () =>
       value === undefined || value === null

@@ -214,7 +214,7 @@ export function SkillFilesTab({
   nodeId: string;
   skillPath: string;
   onUpdateSkillPath: (path: string) => void;
-}) {
+}): React.JSX.Element {
   const files = useQuery(
     api.workspaceFiles.list,
     projectId ? { projectId: projectId, nodeId: nodeId } : "skip",

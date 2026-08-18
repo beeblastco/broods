@@ -43,7 +43,7 @@ export function SessionDetailsTab({
   onSaveName: () => void;
   nameChanged: boolean;
   isSaving: boolean;
-}) {
+}): React.JSX.Element {
   const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
   const session = useMemo(
     () =>

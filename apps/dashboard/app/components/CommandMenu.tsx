@@ -12,7 +12,7 @@ import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 
 /** Global Command+K search palette for searching nodes and actions. */
-export function CommandMenu() {
+export function CommandMenu(): React.JSX.Element {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {

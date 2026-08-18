@@ -27,7 +27,7 @@ export default function MainLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
-}>) {
+}>): React.JSX.Element | null {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const router = useRouter();

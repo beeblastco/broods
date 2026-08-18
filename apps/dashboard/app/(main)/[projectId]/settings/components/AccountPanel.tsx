@@ -30,7 +30,7 @@ import { useEffect, useRef, useState } from "react";
 const HANDLE_REGEX = /^[a-z0-9_-]{3,32}$/;
 
 /** User profile, avatar, account overview, and theme preferences. */
-export function AccountPanel() {
+export function AccountPanel(): React.JSX.Element {
   const { theme, setTheme } = useTheme();
   const { user: authUser } = useAuth();
 

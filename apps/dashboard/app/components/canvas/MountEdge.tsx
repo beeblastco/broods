@@ -37,7 +37,7 @@ export function MountEdge({
   sourcePosition,
   targetPosition,
   style,
-}: EdgeProps) {
+}: EdgeProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false);
   const endpointOwnership = useStore((s) => {
     const sourceData = s.nodeLookup.get(source)?.data as

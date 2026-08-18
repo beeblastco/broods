@@ -13,7 +13,11 @@ import {
 } from "@/app/lib/agentConfigCodec";
 import { useMemo } from "react";
 
-export function SkillConfigTab({ nodeId }: { nodeId: string }) {
+export function SkillConfigTab({
+  nodeId,
+}: {
+  nodeId: string;
+}): React.JSX.Element {
   const { agentConfig, updateBranch } = useConnectedAgentConfig(nodeId);
   const skills = useMemo(() => {
     const raw = readAgentBranch(

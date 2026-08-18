@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 /** Routes authenticated users to their most recent project, creating one on first login. */
-export default function HomePage() {
+export default function HomePage(): React.JSX.Element {
   const router = useRouter();
   const convex = useConvex();
   const getOrCreateOrg = useMutation(api.org.getOrCreate);

@@ -315,7 +315,7 @@ export function ChannelsSection({
     kind: string,
     config: ChannelConfig | null,
   ) => Promise<void>;
-}) {
+}): React.JSX.Element {
   const channels = useMemo(
     () =>
       readAgentBranch<Record<string, ChannelConfig>>(

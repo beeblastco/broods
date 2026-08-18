@@ -19,7 +19,7 @@ export function AgentSourcePickerDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreateNew: () => void;
-}) {
+}): React.JSX.Element {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xs p-1 gap-0">

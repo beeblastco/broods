@@ -99,7 +99,7 @@ export function SandboxInstanceSheet({
   projectId,
   now,
   onClose,
-}: Props) {
+}: Props): React.JSX.Element {
   const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
   const refresh = useAction(api.sandboxPublic.refreshSandbox);
   const runCommand = useAction(api.sandboxPublic.runSandboxCommand);

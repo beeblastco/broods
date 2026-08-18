@@ -10,7 +10,7 @@ import { Wrench } from "lucide-react";
 import { useParams } from "next/navigation";
 
 /** Tool node representing an external tool on the canvas. */
-export function ToolNode({ id, data }: NodeProps) {
+export function ToolNode({ id, data }: NodeProps): React.JSX.Element {
   const { projectId } = useParams<{ projectId: string }>();
   const { stageId } = useStage();
 

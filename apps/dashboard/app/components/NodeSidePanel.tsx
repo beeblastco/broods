@@ -181,7 +181,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   onRemoveNode: (nodeId: string) => void;
   onUpdateNodeLabel: (nodeId: string, label: string) => void;
   onUpdateNodeData: (nodeId: string, patch: Partial<BaseNodeData>) => void;
-}) {
+}): React.JSX.Element {
   const nodeData = node?.data as BaseNodeData | undefined;
   const nodeType = (node?.type ?? "agent") as NodeType;
   const isAgent = nodeType === "agent";
@@ -200,7 +200,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   // Time from the canvas click to this panel being on screen — mostly its own
   // dynamic import. Keyed on the click stamp so reselecting a node re-measures.
   const measuredSelection = useRef(0);
-  useEffect(() => {
+  useEffect((): void => {
     if (!nodeId || !selectedAt || measuredSelection.current === selectedAt)
       return;
 
@@ -452,7 +452,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     nodeData?.label,
   ]);
 
-  async function handleSaveName() {
+  async function handleSaveName(): Promise<void> {
     if (!editName.trim() || !nameChanged) return;
 
     if (isAgent && agentConfigId) {
@@ -507,7 +507,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     provider: AgentProvider;
     modelId: string;
     customBaseUrl?: string;
-  }) {
+  }): Promise<void> {
     if (!agentConfigId) return;
 
     const base = agentConfig
@@ -589,7 +589,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     );
 
   /** Deletes the node (and its agent config); no-op while code owns it. */
-  async function handleDelete() {
+  async function handleDelete(): Promise<void> {
     if (isCodeManaged || isOwnershipLoading) return;
     if (isAgent && agentConfigId) {
       await removeConfig({ configId: agentConfigId });
@@ -897,7 +897,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
-                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
+                onUpdateNodeData={(patch): void =>
+                  onUpdateNodeData(node.id, patch)
+                }
               />
             ) : nodeType === "sandbox" && node ? (
               <SandboxResourceDetailsTab
@@ -905,7 +907,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
-                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
+                onUpdateNodeData={(patch): void =>
+                  onUpdateNodeData(node.id, patch)
+                }
               />
             ) : nodeType === "skill" && node ? (
               <SkillDetailsTab
@@ -914,12 +918,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
-                onUpdateNodeConfig={(patch) =>
+                onUpdateNodeConfig={(patch): void =>
                   onUpdateNodeData(node.id, {
                     config: { ...(nodeData?.config ?? {}), ...patch },
                   })
                 }
-                onUpdateSkillPath={(p) => {
+                onUpdateSkillPath={(p): void => {
                   setEditName(p);
                   onUpdateNodeLabel(node.id, p);
                 }}
@@ -968,7 +972,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 projectId={projectId}
                 nodeId={node.id}
                 skillPath={editName}
-                onUpdateSkillPath={(path) => {
+                onUpdateSkillPath={(path): void => {
                   setEditName(path);
                   onUpdateNodeLabel(node.id, path);
                 }}
@@ -1006,7 +1010,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               <ResourceConfigTab
                 nodeType={isWorkspace ? "workspace" : "sandbox"}
                 data={nodeData}
-                onUpdateNodeData={(patch) => onUpdateNodeData(node.id, patch)}
+                onUpdateNodeData={(patch): void =>
+                  onUpdateNodeData(node.id, patch)
+                }
               />
             </TabsContent>
           )}
