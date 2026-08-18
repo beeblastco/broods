@@ -36,7 +36,6 @@ import {
   formatSpecs,
   instanceStatusBadge,
   relativeTime,
-  useNow,
 } from "./sandboxFormat";
 
 interface Props {
@@ -44,6 +43,8 @@ interface Props {
   instance: Doc<"sandboxInstances">;
   /** Current project route id, used to build trace deep links. */
   projectId: Id<"projects">;
+  /** The parent table's clock, so both tick together off one timer. */
+  now: number;
   /** Close the sheet. */
   onClose: () => void;
 }
@@ -93,12 +94,16 @@ function TraceLink({ traceId, href }: { traceId: string; href: string }) {
   );
 }
 
-export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
+export function SandboxInstanceSheet({
+  instance,
+  projectId,
+  now,
+  onClose,
+}: Props) {
   const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
   const refresh = useAction(api.sandboxPublic.refreshSandbox);
   const runCommand = useAction(api.sandboxPublic.runSandboxCommand);
   const terminate = useAction(api.sandboxPublic.terminateSandbox);
-  const now = useNow();
   const auditEvents = useQuery(api.sandboxAuditEvents.listForInstance, {
     reservationKey: instance.reservationKey,
     limit: 12,

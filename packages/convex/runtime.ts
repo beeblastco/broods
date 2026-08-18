@@ -674,26 +674,38 @@ export const getSandboxReservation = internalQuery({
     )?.externalId ?? null,
 });
 /**
- * When the reservation's current sandbox was first claimed — the clock a config's
- * `lifecycle.maxLifetimeSeconds` is measured against. A reconnect only patches the
- * row, so this stays the creation time of the machine the key points at; replacing
- * the sandbox deletes and re-inserts the row, which restarts the clock.
- * @returns epoch ms of the claim, or null when the reservation is absent
+ * The reservation's sandbox and when it was claimed, for the executors that enforce
+ * `lifecycle.maxLifetimeSeconds` themselves and would otherwise read the same row
+ * twice. A reconnect only patches the row, so `claimedAt` stays the creation time of
+ * the machine the key points at; replacing the sandbox deletes and re-inserts the
+ * row, which restarts the clock.
+ * @returns the sandbox id and claim time, or null when the reservation is absent
  */
-export const getSandboxReservationClaimedAt = internalQuery({
+export const getSandboxReservationRecord = internalQuery({
   args: { provider: sandboxProviderValidator, reservationKey: v.string() },
-  returns: v.union(v.number(), v.null()),
-  handler: async (ctx, args): Promise<number | null> =>
-    (
-      await ctx.db
-        .query("sandboxReservations")
-        .withIndex("by_provider_and_reservationKey", (q) =>
-          q
-            .eq("provider", args.provider)
-            .eq("reservationKey", args.reservationKey),
-        )
-        .unique()
-    )?._creationTime ?? null,
+  returns: v.union(
+    v.object({ externalId: v.string(), claimedAt: v.number() }),
+    v.null(),
+  ),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ externalId: string; claimedAt: number } | null> => {
+    const reservation = await ctx.db
+      .query("sandboxReservations")
+      .withIndex("by_provider_and_reservationKey", (q) =>
+        q
+          .eq("provider", args.provider)
+          .eq("reservationKey", args.reservationKey),
+      )
+      .unique();
+    if (!reservation) return null;
+
+    return {
+      externalId: reservation.externalId,
+      claimedAt: reservation._creationTime,
+    };
+  },
 });
 /**
  * Claims a new persistent sandbox reservation if it is still unmapped.

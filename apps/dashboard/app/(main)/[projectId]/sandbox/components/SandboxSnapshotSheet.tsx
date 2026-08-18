@@ -14,11 +14,13 @@ import {
   SheetTitle,
 } from "@/app/components/ui/sheet";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { relativeTime, snapshotStatusBadge, useNow } from "./sandboxFormat";
+import { relativeTime, snapshotStatusBadge } from "./sandboxFormat";
 
 interface Props {
   /** The snapshot whose detail is shown. */
   snapshot: Doc<"sandboxSnapshots">;
+  /** The parent table.s clock, so both tick together off one timer. */
+  now: number;
   /** Close the sheet. */
   onClose: () => void;
 }
@@ -33,9 +35,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function SandboxSnapshotSheet({ snapshot, onClose }: Props) {
-  const now = useNow();
-
+export function SandboxSnapshotSheet({ snapshot, now, onClose }: Props) {
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">

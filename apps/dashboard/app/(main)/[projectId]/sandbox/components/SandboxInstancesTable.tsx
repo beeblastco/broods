@@ -481,6 +481,7 @@ export function SandboxInstancesTable({ instances, projectId }: Props) {
         <SandboxInstanceSheet
           instance={selected}
           projectId={projectId}
+          now={now}
           onClose={() => setSelected(null)}
         />
       )}
