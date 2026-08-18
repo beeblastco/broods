@@ -8,7 +8,7 @@ This guide uses the **managed service** at `gateway.broods.app`. If you prefer t
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) 1.2+ (the CLI and SDK are built on Bun)
+- [Bun](https://bun.sh/) 1.2+ or [Node](https://nodejs.org/) 22.15+ (the CLI runs on either)
 - A free [Broods dashboard](https://dashboard.broods.app) account
 
 When you create your account or log in for the first time, Broods automatically provisions your API access. A one-time banner displays your account API secret (`fp_acct_...`) — copy it immediately, as it is shown only once. You can rotate it later under **Org Settings → API Access**.
@@ -169,7 +169,7 @@ your CLI login token and is shared by every project directory on the machine, so
 confirm it before syncing somewhere shared:
 
 ```bash
-broods status
+broods whoami
 ```
 
 ```text

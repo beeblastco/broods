@@ -21,7 +21,8 @@ interface Props {
   onDone: () => void;
 }
 
-const CLI_COMMAND = "mkdir broods-demo && bunx broods dev";
+const CLI_COMMAND =
+  "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
 
 /** Flat-top hexagon cell — the brood-comb shape used by the step indicator. */
 const HEX_CLIP =
@@ -227,6 +228,7 @@ export function OnboardingDialog({ secret, onDone }: Props): React.JSX.Element {
             <div className="grid gap-3">
               <CommandBlock command={CLI_COMMAND} />
               <p className="text-xs leading-relaxed text-muted-foreground">
+                On Bun, swap the first step for <Mono>bun add -g broods</Mono>.
                 The CLI walks you through login and scaffolding, then keeps your
                 config in sync while it runs. Once it&apos;s up,{" "}
                 <Mono>broods-demo</Mono> appears on your projects page.

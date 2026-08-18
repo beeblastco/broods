@@ -15,7 +15,7 @@ Three separate things decide what a command touches:
 | Stage        | `BROODS_STAGE` in `.env.local`   | `broods stage use`, `--stage`    |
 
 The organization lives on the token, not in `.env.local`, so it is shared by
-every project directory on the machine. Run `broods status` before a sync when
+every project directory on the machine. Run `broods whoami` before a sync when
 you are unsure.
 
 `deploy` is the exception to the stage row: it always targets `production` and
@@ -51,10 +51,10 @@ broods deploy -h  # deploy's flags
 
 `org`, `stage`, `env` and `agent` print their page instead of guessing a default, so `broods org` no longer lists organizations — that is `broods org list`. An unrecognized subcommand prints the same page alongside the error.
 
-## status
+## whoami
 
 ```bash
-broods status
+broods whoami
 ```
 
 Prints the login, control-plane URL, organization, plan, API account, and the
@@ -108,13 +108,28 @@ after switching to sync them into the new stage.
 The names `development` and `production` are reserved: they always become the
 `Development` and `Production` stages with their matching kinds.
 
+## update
+
+```bash
+broods update
+```
+
+Installs the newest published release over the copy you are running, with the
+package manager that installed it — `bun add -g` for a global bun install,
+`npm install -g` for a global npm one. Inside a project it upgrades the
+dependency instead of installing a second copy on your PATH.
+
+`broods dev` checks the registry at most once a day and prints a one-line notice
+when a newer release is out. The check is cached in `~/.broods`, capped at two
+seconds, and never fails a sync: an unreachable registry is silently skipped.
+
 ## Reference
 
 | Command                   | Purpose                                                |
 | ------------------------- | ------------------------------------------------------ |
 | `init`                    | Create a `broods/` project shell                       |
 | `login`                   | Authenticate through the dashboard                     |
-| `status`                  | Show the login, org, plan, project and stage in effect |
+| `whoami`                  | Show the login, org, plan, project and stage in effect |
 | `org list\|use\|create`   | Inspect and switch organizations                       |
 | `stage list\|use\|create` | Inspect, switch and clone stages                       |
 | `dev`                     | Watch, sync the current stage, live-tail logs          |
@@ -125,5 +140,6 @@ The names `development` and `production` are reserved: they always become the
 | `stream` / `logs`         | Live logs, with or without backfill                    |
 | `agent list\|get`         | Inspect synced agents                                  |
 | `run <agent>`             | Chat with an agent in a terminal UI                    |
+| `update`                  | Install the newest broods release over this one        |
 
 `env` manages variables inside a stage. `stage` manages the stages themselves.

@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 /**
- * The rename ships no compatibility shim. A project still carrying `--env` or
+ * Renames ship no compatibility shim. A project still carrying `--env` or
  * BROODS_ENVIRONMENT used to resolve to Development and act on a stage the user
- * never named, which is the one failure the hard break exists to prevent.
+ * never named, which is the one failure the hard break exists to prevent; a
+ * dropped command name has to say where it went rather than land on the
+ * unknown-command page.
  */
 
 const CLI = new URL("../src/cli/index.ts", import.meta.url).pathname;
@@ -51,6 +53,15 @@ async function runCli(
   return { exitCode: exitCode, stderr: stderr };
 }
 
+test("rejects the pre-rename status command", async () => {
+  const cwd = await projectDir(['BROODS_PROJECT="demo-app"']);
+
+  const result = await runCli(cwd, ["status"]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("status was renamed to whoami");
+});
+
 test("rejects the pre-rename --env flag", async () => {
   const cwd = await projectDir(['BROODS_PROJECT="demo-app"']);
 
@@ -66,7 +77,7 @@ test("rejects a project still carrying BROODS_ENVIRONMENT", async () => {
     'BROODS_ENVIRONMENT="production"',
   ]);
 
-  const result = await runCli(cwd, ["status"]);
+  const result = await runCli(cwd, ["whoami"]);
 
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toContain("BROODS_ENVIRONMENT was renamed");
@@ -82,7 +93,7 @@ test("allows BROODS_ENVIRONMENT alongside an explicit BROODS_STAGE", async () =>
     'BROODS_STAGE="staging"',
   ]);
 
-  const result = await runCli(cwd, ["status"]);
+  const result = await runCli(cwd, ["whoami"]);
 
   expect(result.stderr).not.toContain("BROODS_ENVIRONMENT was renamed");
 });

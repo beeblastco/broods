@@ -44,7 +44,7 @@ const onboardingProjectValidator = v.object({
   slug: v.string(),
 });
 
-/** The API account backing the token's current org; `broods status` reports it. */
+/** The API account backing the token's current org; `broods whoami` reports it. */
 const onboardingAccountValidator = v.object({
   id: v.id("accounts"),
   username: v.string(),

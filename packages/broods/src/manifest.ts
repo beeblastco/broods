@@ -2,9 +2,11 @@
  * Compiles `broods/` TypeScript resources into the SaaS CLI manifest.
  */
 
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import module from "node:module";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type {
@@ -248,6 +250,7 @@ async function listTypeScriptFiles(root: string): Promise<string[]> {
 }
 
 async function loadExports(files: string[]): Promise<ExportedValue[]> {
+  registerTypeScriptLoader();
   const values: ExportedValue[] = [];
   for (const file of files) {
     const href = `${pathToFileURL(file).href}?t=${Date.now()}`;
@@ -262,6 +265,51 @@ async function loadExports(files: string[]): Promise<ExportedValue[]> {
   }
 
   return values;
+}
+
+/** Guards against stacking one loader hook per `compileProject` call. */
+let typeScriptLoaderRegistered = false;
+
+/**
+ * Teaches Node how to `import()` the project's `.ts` resource files.
+ *
+ * Node erases type syntax and nothing else, so an `enum`, a decorator or a
+ * parameter property in `broods/` throws there while loading fine under Bun.
+ * Handing the source to esbuild — already a dependency, for bundling custom
+ * tools — makes both runtimes compile the same file, which is what lets
+ * `broods` run on plain `node`. A load hook keeps each module's own URL, so a
+ * resource that reads a file relative to `import.meta.url` still resolves
+ * against its source directory. No-op under Bun, which loads TypeScript
+ * natively and ships no `registerHooks`.
+ */
+function registerTypeScriptLoader(): void {
+  if (typeScriptLoaderRegistered) return;
+  typeScriptLoaderRegistered = true;
+  if (typeof module.registerHooks !== "function") return;
+  module.registerHooks({
+    load: (url, context, nextLoad) => {
+      // `loadExports` appends a cache-busting query the file system cannot see.
+      const [href] = url.split("?");
+      if (
+        href === undefined ||
+        !href.startsWith("file:") ||
+        !href.endsWith(".ts")
+      )
+        return nextLoad(url, context);
+      const path = fileURLToPath(href);
+
+      return {
+        format: "module",
+        shortCircuit: true,
+        source: transformSync(readFileSync(path, "utf8"), {
+          loader: "ts",
+          format: "esm",
+          sourcefile: path,
+          sourcemap: "inline",
+        }).code,
+      };
+    },
+  });
 }
 
 async function findConfig(
@@ -334,7 +382,8 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
  * `workspace:` (instead of `workspaces:`) fails loudly at compile time — the way
  * a Convex validator rejects unknown fields — instead of being silently dropped
  * by the sync pipeline. Runs during `dev`/`deploy`, so it surfaces in the watch
- * loop even though `bun` does not run `tsc`.
+ * loop even though the CLI transpiles resource files without typechecking
+ * them.
  * @throws when an agent config carries a key outside the known set
  */
 function assertKnownConfigKeys(resource: AnyResource): void {
@@ -355,7 +404,7 @@ function assertKnownConfigKeys(resource: AnyResource): void {
 /**
  * Runtime validation for code-first workspace storage. TypeScript catches this
  * when callers typecheck, but `broods dev/deploy` must also fail before
- * upload because the CLI loads resource modules directly with Bun.
+ * upload because the CLI imports resource modules without typechecking them.
  */
 function assertSupportedWorkspaceStorage(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
