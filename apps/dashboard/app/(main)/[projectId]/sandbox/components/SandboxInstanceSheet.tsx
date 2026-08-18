@@ -36,6 +36,7 @@ import {
   formatSpecs,
   instanceStatusBadge,
   relativeTime,
+  useNow,
 } from "./sandboxFormat";
 
 interface Props {
@@ -97,6 +98,7 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
   const refresh = useAction(api.sandboxPublic.refreshSandbox);
   const runCommand = useAction(api.sandboxPublic.runSandboxCommand);
   const terminate = useAction(api.sandboxPublic.terminateSandbox);
+  const now = useNow();
   const auditEvents = useQuery(api.sandboxAuditEvents.listForInstance, {
     reservationKey: instance.reservationKey,
     limit: 12,
@@ -321,15 +323,18 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                   }
                 />
               )}
-              <Field label="Created" value={relativeTime(instance.createdAt)} />
+              <Field
+                label="Created"
+                value={relativeTime(instance.createdAt, now)}
+              />
               <Field
                 label="Last used"
-                value={relativeTime(instance.lastUsedAt)}
+                value={relativeTime(instance.lastUsedAt, now)}
               />
               {instance.suspendedAt && (
                 <Field
                   label="Suspended"
-                  value={relativeTime(instance.suspendedAt)}
+                  value={relativeTime(instance.suspendedAt, now)}
                 />
               )}
             </div>
@@ -389,7 +394,7 @@ export function SandboxInstanceSheet({ instance, projectId, onClose }: Props) {
                         </p>
                       </div>
                       <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {relativeTime(event.createdAt)}
+                        {relativeTime(event.createdAt, now)}
                       </span>
                     </div>
                   ))

@@ -14,7 +14,7 @@ import {
   SheetTitle,
 } from "@/app/components/ui/sheet";
 import type { Doc } from "@broods/convex/_generated/dataModel";
-import { relativeTime, snapshotStatusBadge } from "./sandboxFormat";
+import { relativeTime, snapshotStatusBadge, useNow } from "./sandboxFormat";
 
 interface Props {
   /** The snapshot whose detail is shown. */
@@ -34,6 +34,8 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function SandboxSnapshotSheet({ snapshot, onClose }: Props) {
+  const now = useNow();
+
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-full overflow-y-auto sm:max-w-md">
@@ -61,10 +63,13 @@ export function SandboxSnapshotSheet({ snapshot, onClose }: Props) {
               }
             />
             <Field label="Pulled" value={snapshot.pulledCount} />
-            <Field label="Created" value={relativeTime(snapshot.createdAt)} />
+            <Field
+              label="Created"
+              value={relativeTime(snapshot.createdAt, now)}
+            />
             <Field
               label="Last used"
-              value={relativeTime(snapshot.lastUsedAt)}
+              value={relativeTime(snapshot.lastUsedAt, now)}
             />
           </div>
 

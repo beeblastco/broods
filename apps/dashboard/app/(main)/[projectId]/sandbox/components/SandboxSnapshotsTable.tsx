@@ -10,7 +10,7 @@
 import type { Doc } from "@broods/convex/_generated/dataModel";
 import { useState } from "react";
 import { SandboxSnapshotSheet } from "./SandboxSnapshotSheet";
-import { relativeTime, snapshotStatusBadge } from "./sandboxFormat";
+import { relativeTime, snapshotStatusBadge, useNow } from "./sandboxFormat";
 
 interface Props {
   /** Snapshot rows from Convex. */
@@ -18,6 +18,7 @@ interface Props {
 }
 
 export function SandboxSnapshotsTable({ snapshots }: Props) {
+  const now = useNow();
   const [selected, setSelected] = useState<Doc<"sandboxSnapshots"> | null>(
     null,
   );
@@ -75,10 +76,10 @@ export function SandboxSnapshotsTable({ snapshots }: Props) {
                   {snapshot.pulledCount}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {relativeTime(snapshot.createdAt)}
+                  {relativeTime(snapshot.createdAt, now)}
                 </td>
                 <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {relativeTime(snapshot.lastUsedAt)}
+                  {relativeTime(snapshot.lastUsedAt, now)}
                 </td>
               </tr>
             ))}

@@ -232,7 +232,10 @@ export const setStatus = internalMutation({
     const now = Date.now();
     await ctx.db.patch(instance._id, {
       status: status,
-      lastUsedAt: now,
+      // Only a resume is a use. Stamping every transition let a suspend — or a
+      // refresh that merely observed one — rewrite "last used" to now, so a row
+      // untouched for a day still read as seconds old.
+      ...(status === "running" ? { lastUsedAt: now } : {}),
       ...(status === "suspended" ? { suspendedAt: now } : {}),
       ...(status === "terminating" ? { terminatedAt: now } : {}),
     });

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Shared formatting + status-badge helpers for the Sandbox tab (instances and
  * snapshots). Keeps the instance/snapshot tables visually consistent.
@@ -5,18 +7,45 @@
 
 import { Badge } from "@/app/components/ui/badge";
 import type { Doc } from "@broods/convex/_generated/dataModel";
+import { useEffect, useState } from "react";
 
-/** Compact "Xs/m/h/d ago" relative time; em dash when unset. */
-export function relativeTime(ts: number | undefined): string {
+// A sandbox row changes state on the minute scale, so re-read the clock often
+// enough that the displayed age is never more than a minute stale.
+const CLOCK_TICK_MS = 30_000;
+
+/**
+ * Relative time that keeps minute resolution past the hour ("3h 07m ago"), because
+ * a sandbox's age is what tells you whether it is idle or abandoned and "1h ago"
+ * covers a whole hour of that. Em dash when unset. Pass `now` from `useNow()` so
+ * the value keeps ticking between Convex updates.
+ */
+export function relativeTime(ts: number | undefined, now = Date.now()): string {
   if (!ts) return "—";
-  const seconds = Math.floor((Date.now() - ts) / 1000);
+  const seconds = Math.max(0, Math.floor((now - ts) / 1000));
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24)
+    return `${hours}h ${String(minutes % 60).padStart(2, "0")}m ago`;
 
-  return `${Math.floor(hours / 24)}d ago`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h ago`;
+}
+
+/**
+ * Ticking wall clock for the relative-time columns. Convex only re-renders a row
+ * when its document changes, so without this an age freezes at whatever it read
+ * when the row last moved.
+ */
+export function useNow(): number {
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  return now;
 }
 
 /** Renders an instance's vcpu/memory/disk footprint as "1 vCPU · 2 GB · 8 GB". */
