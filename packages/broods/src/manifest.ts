@@ -143,12 +143,14 @@ export async function compileProject(
   assertUniqueResources(resources);
   assertExportedHarnessSandboxes(resources);
   const channels = compileChannels(resourceExports, exports);
+  const reach = declaredReach(resources);
   for (const resource of resources) assertKnownConfigKeys(resource);
   for (const resource of resources) assertSupportedWorkspaceStorage(resource);
   for (const resource of resources)
     assertSupportedWorkspaceIsolationShape(resource);
   assertWorkspaceIsolationConsistency(resources);
   assertSupportedWorkspaceSandboxMounts(resources);
+  assertConnectionReach(resourceExports, reach);
   const resourceAliases = aliasesForResources(resourceExports);
   const stage = resolveStage(
     config,
@@ -158,7 +160,7 @@ export async function compileProject(
   );
   const manifestResources = (
     await Promise.all(
-      resourceExports.map((entry) => toManifestResources(entry, root)),
+      resourceExports.map((entry) => toManifestResources(entry, root, reach)),
     )
   )
     .flat()
@@ -748,6 +750,57 @@ function compileChannels(
   return compiled.sort((left, right) => left.alias.localeCompare(right.alias));
 }
 
+type DeclaredReach = Map<AnyConnectionDefinition, string[]>;
+
+/**
+ * A connection with no declared channel answers nowhere, which is never what
+ * anyone means. Make the author choose here rather than discover the silence
+ * on a live webhook.
+ */
+function assertConnectionReach(
+  resources: ExportedResource[],
+  reach: DeclaredReach,
+): void {
+  for (const { resource } of resources) {
+    if (resource.kind !== "agent") continue;
+    const connections = (resource.config as { connections?: unknown })
+      .connections;
+    if (!Array.isArray(connections)) continue;
+    for (const connection of connections) {
+      if (!isConnectionDefinition(connection)) continue;
+      if (connection.wildcardReach) continue;
+      if ((reach.get(connection) ?? []).length > 0) continue;
+      throw new Error(
+        `Agent "${resource.name}" connection "${connection.type}" reaches no rooms: ` +
+          `declare a ${connection.type} channel for it, or set channels: ["*"] to answer everywhere`,
+      );
+    }
+  }
+}
+
+/**
+ * A connection reaches exactly the rooms declared as channels against it. That
+ * list becomes the adapter's allow list, so an undeclared room is dropped while
+ * parsing the webhook, before any record read or policy call.
+ */
+function declaredReach(resources: AnyResource[]): DeclaredReach {
+  const reach: DeclaredReach = new Map();
+  for (const resource of resources) {
+    if (resource.kind !== "channelRecord") continue;
+    const config = resource.config as {
+      connection?: unknown;
+      externalId?: unknown;
+    };
+    if (!isConnectionDefinition(config.connection)) continue;
+    if (typeof config.externalId !== "string") continue;
+    const declared = reach.get(config.connection) ?? [];
+    if (!declared.includes(config.externalId)) declared.push(config.externalId);
+    reach.set(config.connection, declared);
+  }
+
+  return reach;
+}
+
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -759,10 +812,11 @@ function isValidIdentifier(value: string): boolean {
 async function toManifestResources(
   entry: ExportedResource,
   projectRoot: string,
+  reach: DeclaredReach,
 ): Promise<CliManifestResource[]> {
   const resource = entry.resource;
   if (resource.kind === "agent") {
-    const normalized = normalizeAgentConfig(resource, projectRoot);
+    const normalized = normalizeAgentConfig(resource, projectRoot, reach);
 
     return [
       ...(normalized.hookResource ? [normalized.hookResource] : []),
@@ -1093,6 +1147,7 @@ function validateHarnessStringArray(
 function normalizeAgentConfig(
   resource: Extract<AnyResource, { kind: "agent" }>,
   _projectRoot: string,
+  reach: DeclaredReach,
 ): { config: unknown; hookResource?: CliManifestResource } {
   const config = { ...(resource.config as Record<string, unknown>) };
   validateProviderConfig(resource.name, config.provider);
@@ -1142,6 +1197,11 @@ function normalizeAgentConfig(
             ? { level: "channel" }
             : { level: "conversation", alias: channel.partition.alias }
           : undefined;
+        // No list at all is the one way to say "everywhere"; the wildcard opts
+        // into it, and anything else is exactly what was declared.
+        const allowedExternalIds = channel.wildcardReach
+          ? undefined
+          : (reach.get(channel) ?? []);
 
         return [
           channel.type,
@@ -1149,6 +1209,9 @@ function normalizeAgentConfig(
             id: channelId,
             ...channel.config,
             ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+            ...(allowedExternalIds
+              ? { allowedExternalIds: allowedExternalIds }
+              : {}),
           },
         ];
       }),

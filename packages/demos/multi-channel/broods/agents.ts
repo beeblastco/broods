@@ -68,7 +68,10 @@ export const telegramSecondary = defineTelegramChannel({
   chatId: "7495331456",
 });
 
+// A GitHub App's reach is already the repositories it was installed on, so the
+// wildcard defers to that rather than repeating the list here.
 export const github = defineGitHubConnection({
+  channels: ["*"],
   partition: { by: "shared" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),

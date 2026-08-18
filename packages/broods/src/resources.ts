@@ -194,6 +194,8 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
   readonly kind: "connection";
   readonly type: Type;
   readonly partition?: ChannelPartition;
+  /** Set by `channels: ["*"]`: reach every room instead of the declared ones. */
+  readonly wildcardReach?: true;
   readonly config: Config;
 }
 
@@ -224,6 +226,14 @@ type ConnectionIdentityInput = {
   /** Include the dashboard trace link in channel replies. Off by default. */
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
+  /**
+   * Answer in every room this app can see, instead of only the rooms declared
+   * as channels. The one value is the wildcard: name real rooms with a channel
+   * resource, which is also what carries their rules.
+   */
+  channels?: readonly ["*"];
+  /** Provider user ids allowed to trigger the agent. Everyone, when omitted. */
+  allowedUserIds?: readonly string[];
 };
 
 export type TelegramConnectionInput = EnvRefString<
@@ -712,13 +722,14 @@ function defineConnection<const Type extends ChannelType, Config>(
   type: Type,
   config: Config & ConnectionIdentityInput,
 ): ConnectionDefinition<Type, Config> {
-  const { partition, ...rest } = config;
+  const { partition, channels, ...rest } = config;
 
   return {
     [CONNECTION_MARKER]: true,
     kind: "connection",
     type: type,
     ...(partition ? { partition: partition } : {}),
+    ...(channels ? { wildcardReach: true } : {}),
     config: rest as Config,
   };
 }

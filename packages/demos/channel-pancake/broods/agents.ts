@@ -1,6 +1,7 @@
 import { defineAgent, definePancakeConnection, env } from "broods";
 
 export const pancake = definePancakeConnection({
+  channels: ["*"],
   pageId: env("PANCAKE_PAGE_ID"),
   pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
   webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),

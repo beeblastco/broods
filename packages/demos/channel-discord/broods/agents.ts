@@ -1,6 +1,7 @@
 import { defineAgent, defineDiscordConnection, env } from "broods";
 
 export const discord = defineDiscordConnection({
+  channels: ["*"],
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
   // Set this and the agent answers only when it is tagged; everything else in
