@@ -198,6 +198,7 @@ type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Omit<Config, Keys>;
 type ChannelSecret = string | EnvRef | undefined;
 type ChannelIdentityInput = {
+  /** Include the dashboard trace link in channel replies. Off by default. */
   trace?: "enabled" | "disabled";
   workspaceScope?: AgentChannelWorkspaceScope;
 };

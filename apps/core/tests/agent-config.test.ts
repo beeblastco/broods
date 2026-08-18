@@ -19,10 +19,14 @@ describe("agent config validation", () => {
       normalizeAgentConfig({
         channels: { zalo: { id: "support", trace: "hidden" } },
       }),
-    ).toThrow(
-      "config.channels.zalo.trace must be one of: enabled, disabled",
-    );
-    expect(isChannelTraceEnabled({}, "zalo")).toBe(true);
+    ).toThrow("config.channels.zalo.trace must be one of: enabled, disabled");
+    expect(isChannelTraceEnabled({}, "zalo")).toBe(false);
+    expect(
+      isChannelTraceEnabled(
+        { channels: { zalo: { trace: "enabled" } } },
+        "zalo",
+      ),
+    ).toBe(true);
     expect(
       isChannelTraceEnabled(
         { channels: { zalo: { trace: "disabled" } } },
