@@ -250,6 +250,7 @@ export function MonitoringPanel({ projectSlug, stageSlug, apiKey }: Props) {
     stageSlug: stageSlug,
     apiKey: apiKey,
     backfill: 200,
+    minLevel: "DEBUG",
   });
 
   const fromMs = toEpochMs(fromTime);

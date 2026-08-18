@@ -1397,6 +1397,17 @@ test("observability relay skips malformed and below-threshold log messages", asy
   ]);
 });
 
+test("reads a lowercase Loki level label as its real level", () => {
+  expect(
+    lokiLogEntry(
+      { account_id: "acct-1", detected_level: "debug" },
+      "s3.write start",
+      1_700_000_000_000,
+      "fallback",
+    ).level,
+  ).toBe("DEBUG");
+});
+
 test("rehydrates Loki OTLP metadata for durable log history", () => {
   expect(
     lokiLogEntry(

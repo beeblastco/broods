@@ -143,8 +143,8 @@ env("NAME") values from .env.local.
 
 Options:
   --once                Sync a single time and exit (no watch, no log stream)
-  --level <lvl>         Minimum level for the log tail INFO|WARN|ERROR (default: no filter)
-  --errors              Tail WARN/ERROR only (same as --level warn)
+  --level <lvl>         Minimum level for the log tail DEBUG|INFO|WARN|ERROR (default: WARN)
+  --all                 Tail INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
@@ -181,12 +181,12 @@ Options:
 ${GLOBAL_OPTIONS}`,
   logs: `Usage: broods logs [options]
 
-Backfills recent logs then live-tails. All levels, 100 lines by default.
+Backfills recent logs then live-tails. Warnings and errors, 100 lines by default.
 
 Options:
   -n, --limit <n>       Backfill line count (default 100)
-  --level <lvl>         Minimum log level INFO|WARN|ERROR (default: no filter)
-  --errors              Show WARN/ERROR only (same as --level warn)
+  --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
+  --all                 Show every level (DEBUG from the backfill only)
   --json                Print the backfill as raw JSON
 
 ${GLOBAL_OPTIONS}`,
@@ -229,8 +229,8 @@ ${GLOBAL_OPTIONS}`,
 Streams live logs for the whole project/stage until Ctrl+C. No backfill.
 
 Options:
-  --level <lvl>         Minimum log level INFO|WARN|ERROR (default: no filter)
-  --errors              Show WARN/ERROR only (same as --level warn)
+  --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
+  --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
 };
@@ -864,6 +864,9 @@ async function streamDevLogs(
   }
 
   const minLevel = resolveMinLevel(args);
+  console.log(
+    `· live logs [${minLevel}+]${levelHint(minLevel)}. Full INFO/DEBUG history is in the dashboard.`,
+  );
   try {
     for await (const entry of subscribeObservabilityLogs(
       {
@@ -1652,18 +1655,27 @@ function resolveObservabilityCredentials(): {
   return { apiKey: apiKey, baseUrl: baseUrl };
 }
 
-/** Parse --errors / --level <lvl> into a LogLevel (defaults to WARN). */
-function resolveMinLevel(args: string[]): LogLevel | undefined {
-  if (hasFlag(args, "--errors")) return "WARN";
+/**
+ * Parse --all / --level <lvl> into a LogLevel. The terminal defaults
+ * to WARN: a healthy run is not what a developer watches a terminal for, and
+ * the full INFO/DEBUG narration belongs in the dashboard, which can page,
+ * filter and search it.
+ */
+function resolveMinLevel(args: string[]): LogLevel {
+  if (hasFlag(args, "--all")) return "DEBUG";
   const raw = optionValue(args, "--level");
-  // No filter by default: agent-loop and tool-call events are INFO, so a WARN
-  // default hides everything a healthy run emits and reads as "no logs".
-  if (!raw) return undefined;
+  if (raw === undefined && hasFlag(args, "--level")) {
+    throw new Error("Missing value for --level. Use DEBUG, INFO, WARN, or ERROR.");
+  }
+  if (!raw) return "WARN";
   const upper = raw.toUpperCase();
+  if (upper === "DEBUG") return "DEBUG";
+  if (upper === "INFO") return "INFO";
   if (upper === "WARN" || upper === "WARNING") return "WARN";
   if (upper === "ERROR") return "ERROR";
-  if (upper === "INFO") return "INFO";
-  throw new Error(`Unknown log level: ${raw}. Use INFO, WARN, or ERROR.`);
+  throw new Error(
+    `Unknown log level: ${raw}. Use DEBUG, INFO, WARN, or ERROR.`,
+  );
 }
 
 /** Resolve project + stage for observability commands (same as other commands). */
@@ -1711,6 +1723,11 @@ async function resolveObservabilityTarget(
   return { project: scope.projectSlug, stage: scope.stageSlug };
 }
 
+/** Point at --all whenever a tail is running on the quiet default. */
+function levelHint(minLevel: LogLevel): string {
+  return minLevel === "WARN" ? " (--all for INFO too)" : "";
+}
+
 /** Render one ObservabilityLogEntry as `HH:mm:ss.SSS LEVEL eventType message`. */
 function formatObservabilityEntry(entry: ObservabilityLogEntry): string {
   const time = new Date(entry.ts).toISOString().slice(11, 23);
@@ -1734,8 +1751,8 @@ async function streamLogs(args: string[]): Promise<void> {
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Streaming live logs for ${project}/${stage}` +
-      (minLevel ? ` [${minLevel}+]` : "") +
+    `Streaming live logs for ${project}/${stage} [${minLevel}+]` +
+      levelHint(minLevel) +
       " — Ctrl+C to stop",
   );
 
@@ -1775,8 +1792,8 @@ async function logs(args: string[]): Promise<void> {
   process.on("SIGINT", onSigint);
 
   console.log(
-    `Logs for ${project}/${stage}` +
-      (minLevel ? ` [${minLevel}+]` : "") +
+    `Logs for ${project}/${stage} [${minLevel}+]` +
+      levelHint(minLevel) +
       ` (backfill ${limit}) — Ctrl+C to stop`,
   );
 

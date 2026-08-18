@@ -56,6 +56,7 @@ import {
 } from "../shared/http.ts";
 import {
   collectSecretValues,
+  logDebug,
   logError,
   logInfo,
   logWarn,
@@ -530,7 +531,7 @@ async function handleHttpRequest(
     const channelName = webhookRoute.channelName;
     const endpointId = webhookRoute.endpointId;
     const agentId = "(by channel)";
-    logInfo("Webhook request matched account route", {
+    logDebug("Webhook request matched account route", {
       accountId: accountId,
       agentId: agentId,
       channel: channelName,
@@ -631,7 +632,7 @@ async function handleHttpRequest(
         channel.name === channelName && channel.canHandle(channelRequest),
     );
 
-    logInfo("Webhook received", {
+    logDebug("Webhook received", {
       accountId: account.accountId,
       agentId: agentId,
       channel: channelName,
@@ -1101,7 +1102,7 @@ async function handleChannelWebhook(
   }
 
   try {
-    logInfo("Channel webhook received", {
+    logDebug("Channel webhook received", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: agent.agentId,
@@ -1121,7 +1122,7 @@ async function handleChannelWebhook(
     // Parse event and check if it should be ignored
     // This is based on the channel integration
     const parsed = await adapter.parse(request);
-    logInfo("Channel webhook parsed", {
+    logDebug("Channel webhook parsed", {
       channel: adapter.name,
       accountId: account.accountId,
       agentId: agent.agentId,
@@ -1153,7 +1154,7 @@ async function handleChannelWebhook(
     // Webhook is valid enough to accept, but should not run the agent.
     // Example: unsupported Pancake event, wrong page ID, hidden/removed or page-originated message.
     if (parsed.kind === "ignore") {
-      logInfo(`Channel webhook ignored: ${parsed.reason ?? "unspecified"}`, {
+      logDebug(`Channel webhook ignored: ${parsed.reason ?? "unspecified"}`, {
         channel: adapter.name,
         accountId: account.accountId,
         agentId: agent.agentId,

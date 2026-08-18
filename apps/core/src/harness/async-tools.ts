@@ -4,7 +4,7 @@
  */
 
 import type { JSONValue, ToolSet, UserModelMessage } from "ai";
-import { logError, logInfo, logWarn } from "../shared/log.ts";
+import { logDebug, logError, logInfo, logWarn } from "../shared/log.ts";
 import {
   createPendingAsyncToolResult,
   markAsyncToolResultCompleted,
@@ -297,7 +297,7 @@ export class AsyncToolCoordinator {
 
     try {
       await resolveToolOutput(options.execute());
-      logInfo("Detached async tool launch completed", {
+      logDebug("Detached async tool launch completed", {
         parentEventId: this.parentSession.eventId,
         resultId: options.resultId,
         toolName: options.toolName,

@@ -37,7 +37,7 @@ import {
   parseJsonBody,
   type CoreRequest,
 } from "../shared/http.ts";
-import { logError, logInfo, logWarn } from "../shared/log.ts";
+import { logDebug, logError, logWarn } from "../shared/log.ts";
 import { isPlainObject } from "../shared/object.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import { workspaceSandboxLimits } from "../shared/sandbox.ts";
@@ -80,7 +80,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
   const headers = request.headers;
 
   try {
-    logInfo("Account manage request received", {
+    logDebug("Account manage request received", {
       method: method,
       rawPath: rawPath,
     });
