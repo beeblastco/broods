@@ -10,8 +10,8 @@ bun add broods
 npm install broods
 ```
 
-Install it globally to get the `broods` command on your PATH. It runs on Bun or
-on Node 22.15+:
+Install it globally to get the `broods` command on your PATH. It runs on Bun
+1.2+ or on Node 22.15+:
 
 ```bash
 bun add -g broods

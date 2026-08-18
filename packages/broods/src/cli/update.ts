@@ -32,7 +32,11 @@ interface CachedCheck {
   latest: string;
 }
 
-/** Compares release triples only: a prerelease of the version in hand is not an upgrade. */
+/**
+ * Compares release triples, then treats a stable release as newer than the
+ * prerelease of the same triple: `broods@latest` upgrades you off an rc but
+ * never onto one, so an rc of the version in hand is not an upgrade.
+ */
 export function isNewerVersion(candidate: string, current: string): boolean {
   const left = releaseTriple(candidate);
   const right = releaseTriple(current);
@@ -42,7 +46,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
     if (a !== b) return a > b;
   }
 
-  return false;
+  return !isPrerelease(candidate) && isPrerelease(current);
 }
 
 /**
@@ -64,23 +68,34 @@ export async function latestPublishedVersion(
 }
 
 /**
- * Reads the install site off this module's own path: a global bun install lives
- * under `~/.bun/install/global`, and anything under the current project is a
- * dependency of that project rather than a copy on the PATH.
+ * Reads the install site off this module's own path. The `node_modules` this
+ * copy sits in names its project root, and the install belongs to that project
+ * only when the caller is inside that root — so a workspace running the
+ * root-installed CLI from `apps/foo` upgrades the dependency instead of
+ * installing a second copy on the PATH. A checkout with no `node_modules` in
+ * the path falls back to whether the caller is inside the checkout.
  */
-export function updateTarget(): UpdateTarget {
-  const self = fileURLToPath(import.meta.url);
+export function updateTarget(
+  cwd = resolve(process.cwd()),
+  self = fileURLToPath(import.meta.url),
+): UpdateTarget {
+  const marker = `${sep}node_modules${sep}`;
+  const markerAt = self.lastIndexOf(marker);
+  const projectRoot = markerAt === -1 ? null : self.slice(0, markerAt);
+  const local =
+    projectRoot === null
+      ? self.startsWith(`${cwd}${sep}`)
+      : cwd === projectRoot || cwd.startsWith(`${projectRoot}${sep}`);
   const bunGlobal = self.includes(`${sep}.bun${sep}install${sep}global${sep}`);
-  const global =
-    bunGlobal || !self.startsWith(`${resolve(process.cwd())}${sep}`);
-  const manager = bunGlobal || (!global && hasBunLockfile()) ? "bun" : "npm";
+  const manager =
+    bunGlobal || (local && hasBunLockfile(projectRoot ?? cwd)) ? "bun" : "npm";
   const verb = manager === "bun" ? "add" : "install";
 
   return {
     manager: manager,
-    global: global,
+    global: !local,
     command: manager,
-    args: global ? [verb, "-g", "broods@latest"] : [verb, "broods@latest"],
+    args: local ? [verb, "broods@latest"] : [verb, "-g", "broods@latest"],
   };
 }
 
@@ -99,12 +114,14 @@ async function fetchLatestVersion(): Promise<string | null> {
   }
 }
 
-function hasBunLockfile(): boolean {
-  const cwd = resolve(process.cwd());
-
+function hasBunLockfile(root: string): boolean {
   return (
-    existsSync(join(cwd, "bun.lock")) || existsSync(join(cwd, "bun.lockb"))
+    existsSync(join(root, "bun.lock")) || existsSync(join(root, "bun.lockb"))
   );
+}
+
+function isPrerelease(version: string): boolean {
+  return version.includes("-");
 }
 
 async function readCachedCheck(): Promise<CachedCheck | null> {

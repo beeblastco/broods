@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 
 /**
  * The CLI ships for Node as well as Bun, and Node only erases type syntax: an
@@ -10,8 +11,14 @@ import { tmpdir } from "node:os";
  * loads TypeScript natively and would pass either way.
  */
 
-const MANIFEST_MODULE = join(import.meta.dir, "..", "src", "manifest.ts");
-const RESOURCES_MODULE = join(import.meta.dir, "..", "src", "resources.ts");
+// File URLs, not paths: a Windows path interpolated into a module specifier
+// turns its separators into string escapes.
+const MANIFEST_MODULE = pathToFileURL(
+  join(import.meta.dir, "..", "src", "manifest.ts"),
+).href;
+const RESOURCES_MODULE = pathToFileURL(
+  join(import.meta.dir, "..", "src", "resources.ts"),
+).href;
 
 const tempDirs: string[] = [];
 

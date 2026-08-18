@@ -25,7 +25,7 @@ This is the open-source engine behind [Broods](https://github.com/beeblastco). T
 The fastest way to get running is the managed service via the Broods CLI and SDK:
 
 ```bash
-# 1. Install the CLI (Bun or Node 22.15+)
+# 1. Install the CLI (Bun 1.2+ or Node 22.15+)
 bun add -g broods   # or: npm install -g broods
 
 # 2. Initialize your project
