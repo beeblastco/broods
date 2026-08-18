@@ -63,6 +63,7 @@ import type * as model_channelRules from "../model/channelRules.js";
 import type * as model_configValues from "../model/configValues.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
+import type * as model_modelProviders from "../model/modelProviders.js";
 import type * as model_objects from "../model/objects.js";
 import type * as model_ownership_org from "../model/ownership/org.js";
 import type * as model_ownership_project from "../model/ownership/project.js";
@@ -166,6 +167,7 @@ declare const fullApi: ApiFromModules<{
   "model/configValues": typeof model_configValues;
   "model/cronRules": typeof model_cronRules;
   "model/environmentValues": typeof model_environmentValues;
+  "model/modelProviders": typeof model_modelProviders;
   "model/objects": typeof model_objects;
   "model/ownership/org": typeof model_ownership_org;
   "model/ownership/project": typeof model_ownership_project;
