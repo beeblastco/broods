@@ -97,7 +97,7 @@ Project:
 
 Account:
   login                Authenticate through the dashboard
-  status               Show the login, server, org, plan, project and stage in use
+  whoami               Show the login, server, org, plan, project and stage in use
   org                  List, switch or create organizations
   stage                List, switch or create stages
   env                  Store, reveal, list or remove encrypted environment variables
@@ -219,11 +219,6 @@ Options:
   --use                 Switch to the stage \`stage create\` just made
 
 ${GLOBAL_OPTIONS}`,
-  status: `Usage: broods status [options]
-
-Shows the login, server, org, plan, project and stage the next command uses.
-
-${GLOBAL_OPTIONS}`,
   stream: `Usage: broods stream [options]
 
 Streams live logs for the whole project/stage until Ctrl+C. No backfill.
@@ -231,6 +226,11 @@ Streams live logs for the whole project/stage until Ctrl+C. No backfill.
 Options:
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
   --all                 Stream INFO and up (DEBUG is dashboard-only)
+
+${GLOBAL_OPTIONS}`,
+  whoami: `Usage: broods whoami [options]
+
+Shows the login, server, org, plan, project and stage the next command uses.
 
 ${GLOBAL_OPTIONS}`,
 };
@@ -252,7 +252,7 @@ async function main(): Promise<void> {
       return;
   }
 
-  assertNoPreRenameConfig(args);
+  assertNoPreRenameConfig(command, args);
 
   const help = COMMAND_HELP[command];
   if (help && (hasFlag(args, "--help") || hasFlag(args, "-h"))) {
@@ -270,8 +270,8 @@ async function main(): Promise<void> {
       await login(args);
 
       return;
-    case "status":
-      await status(args);
+    case "whoami":
+      await whoami(args);
 
       return;
     case "org":
@@ -405,7 +405,7 @@ async function writeRuntimeKeyForLogin(
   }
 }
 
-async function status(args: string[]): Promise<void> {
+async function whoami(args: string[]): Promise<void> {
   const runtime = loadBroodsRuntimeConfig();
   const scope = targetScope(args);
   const dashboardUrl =
@@ -1073,7 +1073,7 @@ async function syncRuntimeKeyForScope(
     printWarning(
       `⚠ Could not read the runtime key for ${scope.project}/${scope.stage} ` +
         `(${error instanceof Error ? error.message : String(error)}). ` +
-        "BROODS_API_KEY still points at the previous scope — run `broods status` to check it.",
+        "BROODS_API_KEY still points at the previous scope — run `broods whoami` to check it.",
     );
 
     return;
@@ -1665,7 +1665,9 @@ function resolveMinLevel(args: string[]): LogLevel {
   if (hasFlag(args, "--all")) return "DEBUG";
   const raw = optionValue(args, "--level");
   if (raw === undefined && hasFlag(args, "--level")) {
-    throw new Error("Missing value for --level. Use DEBUG, INFO, WARN, or ERROR.");
+    throw new Error(
+      "Missing value for --level. Use DEBUG, INFO, WARN, or ERROR.",
+    );
   }
   if (!raw) return "WARN";
   const upper = raw.toUpperCase();
@@ -2293,10 +2295,15 @@ function starterAgent(): string {
   );
 }
 
-// The rename ships no compatibility shim, so the pre-rename flag and key have
-// to fail here. Left alone they resolve to Development, and the command acts
-// on a stage the user never named.
-function assertNoPreRenameConfig(args: string[]): void {
+// Renames ship no compatibility shim, so the pre-rename names have to fail
+// here. `--env`/BROODS_ENVIRONMENT left alone resolve to Development and the
+// command acts on a stage the user never named; `status` would only reach the
+// unknown-command page, which does not say where the command went.
+function assertNoPreRenameConfig(command: string, args: string[]): void {
+  if (command === "status") {
+    throw new Error("status was renamed to whoami. Run `broods whoami`.");
+  }
+
   if (args.includes("--env")) {
     throw new Error(
       "--env was renamed to --stage. Pass --stage <name> instead.",

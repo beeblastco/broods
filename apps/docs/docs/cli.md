@@ -15,7 +15,7 @@ Three separate things decide what a command touches:
 | Stage        | `BROODS_STAGE` in `.env.local`   | `broods stage use`, `--stage`    |
 
 The organization lives on the token, not in `.env.local`, so it is shared by
-every project directory on the machine. Run `broods status` before a sync when
+every project directory on the machine. Run `broods whoami` before a sync when
 you are unsure.
 
 `deploy` is the exception to the stage row: it always targets `production` and
@@ -51,10 +51,10 @@ broods deploy -h  # deploy's flags
 
 `org`, `stage`, `env` and `agent` print their page instead of guessing a default, so `broods org` no longer lists organizations — that is `broods org list`. An unrecognized subcommand prints the same page alongside the error.
 
-## status
+## whoami
 
 ```bash
-broods status
+broods whoami
 ```
 
 Prints the login, control-plane URL, organization, plan, API account, and the

@@ -54,7 +54,7 @@
     "test": "bun test"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.15"
   },
   "dependencies": {
     "esbuild": "^0.28.2"

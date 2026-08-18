@@ -66,7 +66,7 @@ test.each(["org", "stage", "env", "agent"])(
   },
 );
 
-test.each(["deploy", "dev", "logs", "run", "status"])(
+test.each(["deploy", "dev", "logs", "run", "whoami"])(
   "`broods %s --help` prints its page without reaching the network",
   async (command) => {
     const result = await runCli([command, "--help"]);

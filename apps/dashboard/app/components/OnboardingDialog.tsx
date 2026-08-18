@@ -21,7 +21,8 @@ interface Props {
   onDone: () => void;
 }
 
-const CLI_COMMAND = "mkdir broods-demo && bunx broods dev";
+const CLI_COMMAND =
+  "npm install -g broods && mkdir broods-demo && cd broods-demo && broods dev";
 
 /** Flat-top hexagon cell — the brood-comb shape used by the step indicator. */
 const HEX_CLIP =

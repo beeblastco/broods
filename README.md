@@ -25,30 +25,30 @@ This is the open-source engine behind [Broods](https://github.com/beeblastco). T
 The fastest way to get running is the managed service via the Broods CLI and SDK:
 
 ```bash
-# 1. Install the CLI (requires Bun)
-bun add -g broods
+# 1. Install the CLI (Bun or Node 22.15+)
+bun add -g broods   # or: npm install -g broods
 
 # 2. Initialize your project
 mkdir my-agents && cd my-agents
-bunx broods init
+broods init
 
 # 3. Log in and set your model key
-bunx broods login
-bunx broods env set OPENAI_API_KEY
+broods login
+broods env set OPENAI_API_KEY
 
 # 4. Sync to the cloud and run your first agent
-bunx broods dev
-bunx broods run my-agent "Hello!"
+broods dev
+broods run my-agent "Hello!"
 ```
 
 Check what a command will act on, and switch organization or stage:
 
 ```bash
-bunx broods status                              # login, org, plan, project, stage
-bunx broods org list                            # organizations you can select
-bunx broods org use my-team                     # switch org, repoint BROODS_API_KEY
-bunx broods stage create staging --from development   # clone a stage to work on
-bunx broods stage use staging
+broods whoami                              # login, org, plan, project, stage
+broods org list                            # organizations you can select
+broods org use my-team                     # switch org, repoint BROODS_API_KEY
+broods stage create staging --from development   # clone a stage to work on
+broods stage use staging
 ```
 
 See the [Getting Started guide](apps/docs/docs/getting-started.md) for the full walkthrough,

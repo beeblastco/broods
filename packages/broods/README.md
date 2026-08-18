@@ -10,10 +10,14 @@ bun add broods
 npm install broods
 ```
 
-The CLI requires Bun:
+Install it globally to get the `broods` command on your PATH. It runs on Bun or
+on Node 22.15+:
 
 ```bash
 bun add -g broods
+# or
+npm install -g broods
+
 broods dev
 ```
 

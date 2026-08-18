@@ -29,7 +29,7 @@ export default function HomePage() {
 
         // On first login (brand-new org with no backend account), auto-provision
         // and hand the one-time secret to the onboarding dialog, then land on the
-        // (empty) projects page — onboarding ends with `bunx broods dev`, which
+        // (empty) projects page — onboarding ends with `broods dev`, which
         // creates the first project. `provision` throws if an account already
         // exists, which we treat as already-provisioned.
         const account = await convex.query(api.org.getActiveAccount, {});
