@@ -144,7 +144,7 @@ env("NAME") values from .env.local.
 Options:
   --once                Sync a single time and exit (no watch, no log stream)
   --level <lvl>         Minimum level for the log tail DEBUG|INFO|WARN|ERROR (default: WARN)
-  --all                 Tail every level (same as --level debug)
+  --all                 Tail INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
@@ -186,7 +186,7 @@ Backfills recent logs then live-tails. Warnings and errors, 100 lines by default
 Options:
   -n, --limit <n>       Backfill line count (default 100)
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
-  --all                 Show every level (same as --level debug)
+  --all                 Show every level (DEBUG from the backfill only)
   --json                Print the backfill as raw JSON
 
 ${GLOBAL_OPTIONS}`,
@@ -230,7 +230,7 @@ Streams live logs for the whole project/stage until Ctrl+C. No backfill.
 
 Options:
   --level <lvl>         Minimum log level DEBUG|INFO|WARN|ERROR (default: WARN)
-  --all                 Show every level (same as --level debug)
+  --all                 Stream INFO and up (DEBUG is dashboard-only)
 
 ${GLOBAL_OPTIONS}`,
 };
@@ -1656,14 +1656,13 @@ function resolveObservabilityCredentials(): {
 }
 
 /**
- * Parse --all / --errors / --level <lvl> into a LogLevel. The terminal defaults
+ * Parse --all / --level <lvl> into a LogLevel. The terminal defaults
  * to WARN: a healthy run is not what a developer watches a terminal for, and
  * the full INFO/DEBUG narration belongs in the dashboard, which can page,
  * filter and search it.
  */
 function resolveMinLevel(args: string[]): LogLevel {
   if (hasFlag(args, "--all")) return "DEBUG";
-  if (hasFlag(args, "--errors")) return "WARN";
   const raw = optionValue(args, "--level");
   if (!raw) return "WARN";
   const upper = raw.toUpperCase();

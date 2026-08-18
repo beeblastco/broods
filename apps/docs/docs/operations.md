@@ -38,7 +38,7 @@ The terminal tails warnings and errors by default. The full INFO and DEBUG histo
 ```bash
 broods stream            # live-tail warnings and errors
 broods logs --limit 100  # backfill + live-tail
-broods logs --all        # every level, DEBUG included
+broods logs --all        # every level (DEBUG from history only)
 broods logs --level info # INFO and above
 ```
 

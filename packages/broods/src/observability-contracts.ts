@@ -9,14 +9,6 @@
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 export const MAX_OBSERVABILITY_BACKFILL = 500;
 
-/** Order used to compare a log entry against a subscription's minimum level. */
-export const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
-  DEBUG: 0,
-  INFO: 1,
-  WARN: 2,
-  ERROR: 3,
-};
-
 // Matches the shape core's shared/log.ts emits. Backfilled entries can be any
 // level; the live NATS stream is INFO+ only.
 export type ObservabilityLogEntry = {

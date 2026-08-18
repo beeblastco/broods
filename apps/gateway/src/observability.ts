@@ -1,7 +1,6 @@
 import {
   isLogLevel,
   isObservabilityClientMessage,
-  LOG_LEVEL_ORDER,
   type LogLevel,
   type ObservabilityClientMessage,
   type ObservabilityLogEntry,
@@ -45,6 +44,16 @@ type OtelValue = {
 };
 type OtelAttribute = { key?: string; value?: OtelValue };
 
+const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+};
+// Loki's stream selector cannot filter on level, so a level-filtered backfill
+// over-fetches and trims. Without it a stage whose recent history is mostly
+// DEBUG answers `broods logs --limit 100` with a handful of rows.
+const LOKI_LEVEL_OVERFETCH = 5;
 const LOKI_BACKFILL_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 const OBS_REPLAY_WINDOW_MS = 30 * 60 * 1000;
 const TEMPO_DETAIL_CONCURRENCY = 6;
@@ -351,11 +360,15 @@ async function sendBackfill(
     if (stream === "logs") {
       const lokiUrl = process.env.LOKI_URL?.trim();
       if (!lokiUrl) return false;
-      const logs = await fetchLokiBackfill(lokiUrl, scope, limit);
+      const pageLimit =
+        minLevel === "DEBUG" ? limit : limit * LOKI_LEVEL_OVERFETCH;
+      const logs = await fetchLokiBackfill(lokiUrl, scope, pageLimit);
+      const matching = logs.filter((entry) => meetsMinLevel(entry, minLevel));
       sendObs(socket, {
         type: "backfill",
         stream: "logs",
-        entries: logs.filter((entry) => meetsMinLevel(entry, minLevel)),
+        // Entries arrive oldest-first, so the newest page is the tail.
+        entries: matching.slice(-limit),
       });
     } else {
       const tempoUrl = process.env.TEMPO_URL?.trim();
