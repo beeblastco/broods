@@ -194,7 +194,8 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
   readonly kind: "connection";
   readonly type: Type;
   readonly partition?: ChannelPartition;
-  readonly config: Config;
+  /** `partition` is lifted out of the authored input, so it is not in here. */
+  readonly config: Omit<Config, "partition">;
 }
 
 /**
@@ -727,7 +728,7 @@ function defineConnection<const Type extends ChannelType, Config>(
     kind: "connection",
     type: type,
     ...(partition ? { partition: partition } : {}),
-    config: rest as Config,
+    config: rest,
   };
 }
 
