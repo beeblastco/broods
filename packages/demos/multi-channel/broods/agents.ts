@@ -1,10 +1,13 @@
 import {
   defineAgent,
   defineGitHubChannel,
+  defineGitHubConnection,
   defineSandbox,
   defineSkill,
   defineSlackChannel,
+  defineSlackConnection,
   defineTelegramChannel,
+  defineTelegramConnection,
   defineWorkspace,
   env,
 } from "broods";
@@ -26,28 +29,50 @@ const optionalSandboxGithubEnv = {
     : {}),
 };
 
-export const slack = defineSlackChannel({
-  workspaceScope: { level: "channel" },
+export const slack = defineSlackConnection({
+  partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
-  allowedChannelIds: ["C0BEDDS52GK", "C0BEQ9XRE4A"],
   reactionEmoji: process.env.SLACK_REACTION_EMOJI ?? "eyes",
 });
 
-export const telegram = defineTelegramChannel({
-  workspaceScope: { level: "channel" },
+// Reach is deny-by-default: these two rooms are the ones this agent answers in.
+export const slackGeneral = defineSlackChannel({
+  name: "multi-channel-general",
+  connection: slack,
+  channelId: "C0BEDDS52GK",
+});
+
+export const slackOps = defineSlackChannel({
+  name: "multi-channel-ops",
+  connection: slack,
+  channelId: "C0BEQ9XRE4A",
+});
+
+export const telegram = defineTelegramConnection({
+  partition: { by: "shared" },
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
-  allowedChatIds: [8096152290, 7495331456],
   reactionEmoji: "\u{1F440}",
 });
 
-export const github = defineGitHubChannel({
-  workspaceScope: { level: "channel" },
+export const telegramPrimary = defineTelegramChannel({
+  name: "multi-channel-telegram-primary",
+  connection: telegram,
+  chatId: "8096152290",
+});
+
+export const telegramSecondary = defineTelegramChannel({
+  name: "multi-channel-telegram-secondary",
+  connection: telegram,
+  chatId: "7495331456",
+});
+
+export const github = defineGitHubConnection({
+  partition: { by: "shared" },
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-  allowedRepos: ["*"],
   userName: env("GITHUB_BOT_USERNAME"),
   triggerOnIssueOpen: false,
   triggerOnPROpen: false,
@@ -86,7 +111,7 @@ export const sandbox = defineSandbox({
 export const workspace = defineWorkspace({
   name: "workspace",
   storage: { provider: "s3" },
-  isolation: true,
+  partitioned: true,
 });
 
 export const agent = defineAgent({
@@ -110,7 +135,7 @@ export const agent = defineAgent({
     system: instructions,
     maxTurn: 100,
   },
-  channels: [slack, telegram, github],
+  connections: [slack, telegram, github],
   sandbox: sandbox,
   workspaces: [workspace],
   subagent: {

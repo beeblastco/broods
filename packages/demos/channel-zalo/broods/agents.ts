@@ -1,16 +1,38 @@
-import { defineAgent, defineZaloChannel, env } from "broods";
+import { defineAgent, definePolicy, defineZaloConnection, env } from "broods";
 
-export const zalo = defineZaloChannel({
+const allowedChatIds = [
+  ...(process.env.ZALO_ALLOWED_USER_IDS?.split(",") ?? []),
+  ...(process.env.ZALO_ALLOWED_GROUP_IDS?.split(",") ?? []),
+]
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+export const zalo = defineZaloConnection({
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
-  allowedUserIds:
-    process.env.ZALO_ALLOWED_USER_IDS?.split(",")
-      .map((value) => value.trim())
-      .filter(Boolean) ?? [],
-  allowedGroupIds:
-    process.env.ZALO_ALLOWED_GROUP_IDS?.split(",")
-      .map((value) => value.trim())
-      .filter(Boolean) ?? [],
+});
+
+// Reach is deny-by-default. Zalo chats cannot be listed as channels up front —
+// a new person's chat id does not exist until they write — so a policy decides.
+export const reach = definePolicy({
+  name: "zalo-reach",
+  rules: [
+    {
+      action: "agent.invoke",
+      effect: "allow",
+      ...(allowedChatIds.length > 0
+        ? {
+            conditions: [
+              {
+                attribute: "channelId",
+                operator: "in",
+                value: allowedChatIds,
+              },
+            ],
+          }
+        : {}),
+    },
+  ],
 });
 
 export const agent = defineAgent({
@@ -28,5 +50,6 @@ export const agent = defineAgent({
   agent: {
     system: "You are a helpful assistant.",
   },
-  channels: [zalo],
+  connections: [zalo],
+  policy: { policies: [reach] },
 });

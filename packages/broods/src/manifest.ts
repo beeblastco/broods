@@ -303,7 +303,7 @@ const KNOWN_AGENT_CONFIG_KEYS = new Set([
   "provider",
   "session",
   "hooks",
-  "channels",
+  "connections",
   "tools",
   "denyTools",
   "sandbox",
@@ -321,7 +321,8 @@ const AGENT_KEY_SUGGESTIONS: Record<string, string> = {
   skill: "skills",
   policies: "policy",
   tool: "tools",
-  channel: "channels",
+  channel: "connections",
+  channels: "connections",
   hook: "hooks",
   subagents: "subagent",
   sandboxes: "sandbox",
@@ -383,14 +384,14 @@ function assertSupportedWorkspaceStorage(resource: AnyResource): void {
 function assertSupportedWorkspaceIsolationShape(resource: AnyResource): void {
   if (resource.kind !== "workspace") return;
   const config = resource.config as unknown as Record<string, unknown>;
-  if (typeof config.isolation === "string") {
+  if (typeof config.partitioned === "string") {
     throw new Error(
-      `Workspace "${resource.name}" config.isolation no longer supports string modes; use isolation: true or omit it.`,
+      `Workspace "${resource.name}" config.partitioned must be a boolean; string modes are not supported.`,
     );
   }
-  if (config.isolation !== undefined && typeof config.isolation !== "boolean") {
+  if (config.isolation !== undefined) {
     throw new Error(
-      `Workspace "${resource.name}" config.isolation must be a boolean`,
+      `Workspace "${resource.name}" config.isolation is no longer supported; use partitioned: true.`,
     );
   }
 }
@@ -497,6 +498,13 @@ function assertPartitionShape(
   if (typeof partition.alias !== "string" || partition.alias.length === 0) {
     throw new Error(
       `${name} partition.alias is required when partition.by is conversation`,
+    );
+  }
+  // The alias becomes a path segment under the workspace root, so keep it to
+  // characters that cannot escape or confuse the mount.
+  if (!/^[A-Za-z0-9._-]+$/.test(partition.alias)) {
+    throw new Error(
+      `${name} partition.alias must use only letters, numbers, dots, underscores, or hyphens`,
     );
   }
 }
@@ -782,6 +790,27 @@ async function normalizeConfig(
       resource.config as { path: string },
       projectRoot,
     );
+  }
+
+  if (resource.kind === "workspace") {
+    const config = { ...(resource.config as Record<string, unknown>) };
+    // Authoring says `partitioned`; storage still reads `isolation`.
+    if (config.partitioned !== undefined) {
+      if (typeof config.partitioned !== "boolean") {
+        throw new Error(
+          `Workspace "${resource.name}" config.partitioned must be a boolean`,
+        );
+      }
+      const partitioned = config.partitioned;
+      delete config.partitioned;
+      if (partitioned) config.isolation = true;
+    }
+
+    return rewriteValues(config);
+  }
+
+  if (resource.kind === "channelRecord") {
+    return normalizeChannelConfig(resource.name, resource.config);
   }
 
   if (resource.kind === "tool") {
@@ -1102,10 +1131,24 @@ function normalizeAgentConfig(
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
+        // `partition` is the authoring name; storage still reads workspaceScope.
+        const workspaceScope = channel.partition
+          ? channel.partition.by === "shared"
+            ? { level: "channel" }
+            : { level: "conversation", alias: channel.partition.alias }
+          : undefined;
 
-        return [channel.type, { id: channelId, ...channel.config }];
+        return [
+          channel.type,
+          {
+            id: channelId,
+            ...channel.config,
+            ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+          },
+        ];
       }),
     );
+    delete config.connections;
   }
   if (isResource(config.sandbox)) {
     config.sandbox = config.sandbox.name;
@@ -1494,6 +1537,35 @@ function resolveContainedResourcePath(
   throw new Error(
     `${kind} path ${resourcePath} must stay inside ${PROJECT_DIR}/`,
   );
+}
+
+// The SDK says `connection`, `agents` and `partition`; storage says `platform`,
+// `agentBindings` and `workspaceScope`. Translate here so the authoring names
+// never reach the wire and the connection's credentials never reach a channel
+// record — `rewriteValues` would otherwise inline the whole connection object.
+function normalizeChannelConfig(name: string, value: unknown): unknown {
+  const config = { ...(value as Record<string, unknown>) };
+  const connection = config.connection;
+  if (!isConnectionDefinition(connection)) {
+    throw new Error(
+      `Channel "${name}" config.connection must be a connection definition`,
+    );
+  }
+  delete config.connection;
+  config.platform = connection.type;
+
+  const partition = config.partition as
+    | { by: "shared" | "conversation"; alias?: string }
+    | undefined;
+  if (partition) {
+    delete config.partition;
+    config.workspaceScope =
+      partition.by === "shared"
+        ? { level: "channel" }
+        : { level: "conversation", alias: partition.alias };
+  }
+
+  return rewriteValues(config);
 }
 
 function rewriteValues(value: unknown): unknown {

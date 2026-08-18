@@ -594,8 +594,18 @@ export type AgentResource<Name extends string = string> = ResourceDefinition<
   Name,
   AgentDefinitionConfig
 >;
+/**
+ * Code-first workspace config. Says `partitioned` where storage says
+ * `isolation`: the flag permits a split, it does not perform one — a channel's
+ * `partition` decides which folder a run actually mounts.
+ */
+export type WorkspaceDefinitionConfig = Omit<WorkspaceConfig, "isolation"> & {
+  /** Allow this workspace to be split into per-conversation folders. */
+  partitioned?: boolean;
+};
+
 export type WorkspaceResource<Name extends string = string> =
-  ResourceDefinition<"workspace", Name, WorkspaceConfig>;
+  ResourceDefinition<"workspace", Name, WorkspaceDefinitionConfig>;
 export type SandboxResource<Name extends string = string> = ResourceDefinition<
   "sandbox",
   Name,
@@ -852,7 +862,7 @@ export function defineHarness<const Definition extends HarnessDefinition>(
 }
 
 export function defineWorkspace<const Name extends string>(
-  input: ResourceInput<Name, WorkspaceConfig>,
+  input: ResourceInput<Name, WorkspaceDefinitionConfig>,
 ): WorkspaceResource<Name> {
   const { name, description, ...config } = input;
 
@@ -860,7 +870,7 @@ export function defineWorkspace<const Name extends string>(
     "workspace",
     name,
     description,
-    config as WorkspaceConfig,
+    config as WorkspaceDefinitionConfig,
   );
 }
 

@@ -1,6 +1,6 @@
-import { defineAgent, defineDiscordChannel, env } from "broods";
+import { defineAgent, defineDiscordConnection, env } from "broods";
 
-export const discord = defineDiscordChannel({
+export const discord = defineDiscordConnection({
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
   // Set this and the agent answers only when it is tagged; everything else in
@@ -26,5 +26,5 @@ export const agent = defineAgent({
   agent: {
     system: "You are a concise Discord assistant.",
   },
-  channels: [discord],
+  connections: [discord],
 });
