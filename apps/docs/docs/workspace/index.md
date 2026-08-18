@@ -6,7 +6,7 @@
   (`bash`, `read`, `write`, `edit`, `glob`, `grep`) and a `permissionMode`.
 - A **workspace** is the persistent S3-backed filesystem that gets mounted into a sandbox.
   Agents that reference the **same** `workspaceId` read and write the **same files** unless
-  the workspace opts into hierarchical alias isolation.
+  the workspace opts into hierarchical alias partitioning.
 
 A sandbox can be attached **agent-wide** (`config.sandbox`) or **per workspace**
 (`workspaces[].sandbox`). A workspace's **effective sandbox** follows a simple cascade:
@@ -54,9 +54,9 @@ Define sandbox and workspace resources in `broods/`, then pass them to an agent:
 ```ts title="broods/index.ts"
 import {
   defineAgent,
-  defineGitHubChannel,
+  defineGitHubConnection,
   defineSandbox,
-  defineSlackChannel,
+  defineSlackConnection,
   defineWorkspace,
   env,
 } from "broods";
@@ -71,17 +71,17 @@ export const lambdaSandbox = defineSandbox({
 export const notes = defineWorkspace({
   name: "notes",
   storage: { provider: "s3" },
-  isolation: true,
+  partitioned: true,
 });
 
-export const slack = defineSlackChannel({
-  workspaceScope: { level: "channel" },
+export const slack = defineSlackConnection({
+  partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
-export const github = defineGitHubChannel({
-  workspaceScope: { alias: "support", level: "conversation" },
+export const github = defineGitHubConnection({
+  partition: { by: "conversation", alias: "support" },
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
@@ -92,7 +92,7 @@ export const myAgent = defineAgent({
   provider: { openai: { apiKey: env("OPENAI_API_KEY") } },
   model: { provider: "openai", modelId: "gpt-5.5" },
   agent: { system: "You are a helpful assistant." },
-  channels: [slack, github],
+  connections: [slack, github],
   sandbox: lambdaSandbox,
   workspaces: [
     notes, // inherit agent sandbox
@@ -200,30 +200,30 @@ downloaded files, and sandbox edits are separated from other scopes.
 ```mermaid
 flowchart TD
   Run["incoming run<br/>Slack · GitHub · Discord · Telegram"] --> Shared["shared agent configuration<br/>system prompt · business context · tools · credentials"]
-  Run --> Workspace["workspace record<br/>isolation true or omitted"]
-  Workspace --> Mode{"workspace.config.isolation"}
+  Run --> Workspace["workspace record<br/>partitioned true or omitted"]
+  Workspace --> Mode{"workspace.config.partitioned"}
   Mode -->|"omitted or false"| Root["mount base workspace folder"]
-  Mode -->|"true"| Scope["active channel workspaceScope"]
+  Mode -->|"true"| Scope["active channel partition"]
   Scope -->|"direct API or cron"| Root
-  Scope -->|"level channel"| Parent["mount workspace root"]
-  Scope -->|"alias support, level conversation"| Child["mount private child folder<br/>support/fs-conversation/"]
+  Scope -->|"by shared"| Parent["mount workspace root"]
+  Scope -->|"by conversation, alias support"| Child["mount private child folder<br/>support/fs-conversation/"]
   Parent --> Contents["MEMORY.md · TASKS.md · files · child folders"]
   Child --> Private["MEMORY.md · TASKS.md · files for this conversation only"]
 ```
 
 | Workspace setting              | Channel setting                                  | What happens                                                                          |
 | ------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `isolation` omitted or `false` | `workspaceScope` is not allowed                  | every run mounts the same workspace root                                              |
-| `isolation: true`              | every attached channel must set `workspaceScope` | channel runs mount the workspace root; conversation runs mount a private child folder |
+| `partitioned` omitted or `false` | `partition` is not allowed                  | every run mounts the same workspace root                                              |
+| `partitioned: true`              | every attached channel must set `partition` | channel runs mount the workspace root; conversation runs mount a private child folder |
 
-If any channel defines `workspaceScope`, at least one attached workspace must use
-`isolation: true`. If a workspace uses `isolation: true`, every attached channel must
-define `workspaceScope`. The CLI rejects mixed or old-mode configs so the runtime does not
+If any channel defines `partition`, at least one attached workspace must use
+`partitioned: true`. If a workspace uses `partitioned: true`, every attached channel must
+define `partition`. The CLI rejects mixed or old-mode configs so the runtime does not
 silently pick the wrong folder.
 
 ## Isolation scenarios
 
-Use isolation for the **working folder security boundary** of a team, project, ticket, or
+Use partitioning for the **working folder security boundary** of a team, project, ticket, or
 chat. Do not use it for business-wide instructions: put shared business context in the
 agent system prompt, configured skills, tools, or a separate non-isolated workspace.
 
@@ -234,7 +234,7 @@ What stays shared:
 - tool definitions, tool credentials, and tool availability
 - account-level resources such as skills and configured business data
 
-What isolation separates:
+What partitioning separates:
 
 - the mounted workspace folder
 - `MEMORY.md` and `TASKS.md` inside that folder
@@ -247,7 +247,7 @@ its own empty working folder unless you seed or copy files into that child. The 
 still sees the same workspace name, but that name points at the scoped folder for the
 current run.
 
-Use no isolation for a deliberately global workspace:
+Use no partitioning for a deliberately global workspace:
 
 ```ts
 export const companyKnowledge = defineWorkspace({
@@ -261,30 +261,30 @@ Effect:
 - Slack, GitHub, Discord, Telegram, and direct API runs all mount the same folder.
 - A file written from GitHub can be read later from Discord if both agents use this
   workspace.
-- Channel `workspaceScope` is invalid because there is no isolated folder hierarchy.
+- Channel `partition` is invalid because there is no isolated folder hierarchy.
 
 Use this for shared reference files, common templates, or non-sensitive business notes. Do
 not use it for customer-specific work, incidents, tickets, or team folders that should not
 see each other.
 
-Use `isolation: true` with `workspaceScope` when teams and issues need different folder
+Use `partitioned: true` with `partition` when teams and issues need different folder
 boundaries:
 
 ```ts
 export const supportWorkspace = defineWorkspace({
   name: "support",
   storage: { provider: "s3" },
-  isolation: true,
+  partitioned: true,
 });
 
-export const slack = defineSlackChannel({
-  workspaceScope: { level: "channel" },
+export const slack = defineSlackConnection({
+  partition: { by: "shared" },
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
-export const github = defineGitHubChannel({
-  workspaceScope: { alias: "support", level: "conversation" },
+export const github = defineGitHubConnection({
+  partition: { by: "conversation", alias: "support" },
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
@@ -306,13 +306,13 @@ Use this mixed mode when providers should not all use the same granularity. For 
 - Discord should share one workspace per team channel, or per thread if that server uses
   threads as tickets.
 
-`workspaceScope.alias` is only used for child conversation scopes. It is the model-visible
+`partition.alias` is only used for child conversation scopes. It is the model-visible
 folder name below the workspace root, such as `support/`. Same alias plus `conversation`
 creates private child folders directly under that alias. Different aliases create separate
 child folder trees. Alias values must be safe path segments: letters, numbers, dots,
 underscores, or hyphens.
 
-`workspaceScope.level` controls visibility:
+`partition.by` controls visibility:
 
 - `channel` mounts the workspace root. The parent can see root files and child folders
   below it.

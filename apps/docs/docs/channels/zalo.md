@@ -4,19 +4,19 @@ Zalo integration allows your agent to answer text messages in private chats and 
 
 ## Configuration
 
-Define a Zalo channel with `defineZaloChannel` and attach it to an agent:
+Define a Zalo channel with `defineZaloConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineZaloChannel, env } from "broods";
+import { defineAgent, defineZaloConnection, env } from "broods";
 
-export const zalo = defineZaloChannel({
+export const zalo = defineZaloConnection({
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
 });
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [zalo],
+  connections: [zalo],
 });
 ```
 
@@ -32,7 +32,7 @@ Group support is an [internal Zalo Bot Platform experiment](https://bot.zapps.me
 Zalo controls which group messages reach the bot. A member must either type `@` and select the bot from Zalo's mention picker, or reply directly to a message the bot previously sent. Broods runs the agent for either event; it does not match the bot's display name in message text.
 
 ```ts title="broods/index.ts"
-export const zalo = defineZaloChannel({
+export const zalo = defineZaloConnection({
   botToken: env("ZALO_BOT_TOKEN"),
   webhookSecret: env("ZALO_WEBHOOK_SECRET"),
   allowedGroupIds: ["1234567890"],

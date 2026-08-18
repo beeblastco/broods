@@ -64,7 +64,7 @@ reading an agent still tells you its ceiling.
 | `policyIds`      | Unioned with the agent's                                          |
 | `policyMode`     | Enforcement stage here — `audit` watches a rule before it refuses |
 | `denyTools`      | Withholds tools here, after the set is built — covers `bash` too  |
-| `workspaceScope` | Overrides the channel's scope (`channel` or `conversation`)       |
+| `partition` | Overrides the channel's scope (`channel` or `conversation`)       |
 | `threadPolicy`   | Where the reply lands — `always-thread` or `inline` (Slack only)  |
 | `sandboxImages`  | Images the agent may stand a sandbox up from for a thread here    |
 | `tagRoles`       | Named groups of people, readable from policy as `actorRoles`      |
@@ -92,6 +92,44 @@ never appear in `config.tools` at all. Naming a tool the agent does not have is
 ignored.
 
 ## Creating a record
+
+In code, a channel names the connection it belongs to and the agents that answer in it. `platform` is taken from the connection, so it is never written by hand, and the connection's credentials never follow the channel onto the record.
+
+```ts title="broods/index.ts"
+import {
+  defineAgent,
+  defineSlackChannel,
+  defineSlackConnection,
+  env,
+} from "broods";
+
+export const slackApp = defineSlackConnection({
+  botToken: env("SLACK_BOT_TOKEN"),
+  signingSecret: env("SLACK_SIGNING_SECRET"),
+});
+
+export const nhi = defineAgent({ name: "nhi", connections: [slackApp] });
+export const scribe = defineAgent({ name: "scribe" });
+
+export const productEng = defineSlackChannel({
+  name: "product-eng",
+  connection: slackApp,
+  channelId: "C042PRODENG",
+  teamId: "T09BEEBLAST",
+  agents: [nhi, { agent: scribe, reply: false }],
+  instructions: "Escalate billing questions to #finance.",
+  threadPolicy: "always-thread",
+});
+```
+
+Every agent in `agents` runs when a message arrives. `reply: false` runs one with a silenced channel, so it can work without speaking in the room. Omit `agents` entirely and the connection's own agent answers.
+
+Nothing points back at a channel — the connection does not list its channels, and the agent does not either. That is what lets a channel name its own app's agent without a circular reference.
+
+The per-platform id field is named for what the provider calls it: `channelId` for Slack and Discord, `repo` for GitHub, `chatId` for Telegram and Zalo, `conversationId` for Pancake. All of them are stored as `externalId`.
+
+### Through the account API
+
 
 ```ts
 import { BroodsAccountClient } from "broods/account";

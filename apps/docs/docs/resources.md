@@ -326,9 +326,9 @@ See [External Tools](tools.md) for uploading custom tools.
 Attach one or more channels to an agent:
 
 ```ts
-import { defineAgent, defineTelegramChannel, env } from "broods";
+import { defineAgent, defineTelegramConnection, env } from "broods";
 
-export const telegram = defineTelegramChannel({
+export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123456789],
@@ -336,7 +336,7 @@ export const telegram = defineTelegramChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [telegram],
+  connections: [telegram],
 });
 ```
 
@@ -604,12 +604,12 @@ Each channel has a dedicated constructor:
 
 ```ts
 import {
-  defineTelegramChannel,
-  defineDiscordChannel,
-  defineSlackChannel,
-  defineGitHubChannel,
-  definePancakeChannel,
-  defineZaloChannel,
+  defineTelegramConnection,
+  defineDiscordConnection,
+  defineSlackConnection,
+  defineGitHubConnection,
+  definePancakeConnection,
+  defineZaloConnection,
 } from "broods";
 ```
 

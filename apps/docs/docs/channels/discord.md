@@ -6,12 +6,12 @@ Broods uses [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapte
 
 ## Configuration
 
-Define a Discord channel with `defineDiscordChannel` and attach it to an agent:
+Define a Discord channel with `defineDiscordConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineDiscordChannel, env } from "broods";
+import { defineAgent, defineDiscordConnection, env } from "broods";
 
-export const discord = defineDiscordChannel({
+export const discord = defineDiscordConnection({
   botToken: env("DISCORD_BOT_TOKEN"),
   publicKey: env("DISCORD_PUBLIC_KEY"),
   botUserId: env("DISCORD_BOT_USER_ID"),
@@ -21,7 +21,7 @@ export const discord = defineDiscordChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [discord],
+  connections: [discord],
 });
 ```
 

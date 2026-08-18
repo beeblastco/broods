@@ -95,26 +95,26 @@ The CLI SDK exposes one constructor per provider. Attach the resulting definitio
 ```ts
 import {
   defineAgent,
-  defineGitHubChannel,
-  defineSlackChannel,
+  defineGitHubConnection,
+  defineSlackConnection,
   env,
 } from "broods";
 
-export const github = defineGitHubChannel({
+export const github = defineGitHubConnection({
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
   allowedRepos: ["owner/repo"],
 });
 
-export const slack = defineSlackChannel({
+export const slack = defineSlackConnection({
   botToken: env("SLACK_BOT_TOKEN"),
   signingSecret: env("SLACK_SIGNING_SECRET"),
 });
 
 export const support = defineAgent({
   name: "support",
-  channels: [github, slack],
+  connections: [github, slack],
 });
 ```
 

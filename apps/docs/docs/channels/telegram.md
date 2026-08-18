@@ -6,12 +6,12 @@ Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapt
 
 ## Configuration
 
-Define a Telegram channel with `defineTelegramChannel` and attach it to an agent:
+Define a Telegram channel with `defineTelegramConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineTelegramChannel, env } from "broods";
+import { defineAgent, defineTelegramConnection, env } from "broods";
 
-export const telegram = defineTelegramChannel({
+export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
   allowedChatIds: [123456789, 987654321],
@@ -21,7 +21,7 @@ export const telegram = defineTelegramChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [telegram],
+  connections: [telegram],
 });
 ```
 

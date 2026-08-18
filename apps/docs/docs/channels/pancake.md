@@ -4,12 +4,12 @@ Pancake is an omni-channel customer service and inbox management platform. The P
 
 ## Configuration
 
-Define a Pancake channel with `definePancakeChannel` and attach it to an agent:
+Define a Pancake channel with `definePancakeConnection` and attach it to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, definePancakeChannel, env } from "broods";
+import { defineAgent, definePancakeConnection, env } from "broods";
 
-export const pancake = definePancakeChannel({
+export const pancake = definePancakeConnection({
   pageId: env("PANCAKE_PAGE_ID"),
   pageAccessToken: env("PANCAKE_PAGE_ACCESS_TOKEN"),
   webhookSecret: env("PANCAKE_WEBHOOK_SECRET"),
@@ -18,7 +18,7 @@ export const pancake = definePancakeChannel({
 
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [pancake],
+  connections: [pancake],
 });
 ```
 
@@ -46,7 +46,7 @@ When staff take over a conversation in Pancake, add a tag; the hook drops the me
 ```ts title="broods/index.ts"
 export const myAgent = defineAgent({
   name: "my-agent",
-  channels: [pancake],
+  connections: [pancake],
   hooks: {
     // Drop inbound messages on conversations a human has taken over. `event`
     // is discriminated on `channel`, so after narrowing `event.source` is the
