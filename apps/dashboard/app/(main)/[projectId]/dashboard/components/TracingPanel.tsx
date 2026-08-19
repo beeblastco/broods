@@ -41,8 +41,7 @@ const STATUS_FILTER_OPTIONS: ToolbarFilterOption[] = [
   { value: "error", label: "error" },
 ];
 
-// Collapsible payload sections, ordered the way the model sees them: system
-// prompt, tools, then messages. Labels spell out the direction so it is clear
+// Collapsible payload sections. Labels spell out the direction so it is clear
 // what the model produced vs. what it was shown — the raw attribute keys
 // (model.tool_results vs tool.output) read as duplicates otherwise. The per-tool
 // `tool.output` on each child span is the authoritative "what the model saw", so

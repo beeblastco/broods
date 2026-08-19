@@ -878,11 +878,6 @@ export async function runAgentLoop(
     attributes: rootRunningAttributes,
   });
 
-  // Instructions the current step actually ran with. prepareStep refreshes system
-  // context mid-run (newly persisted system rows, steering, skills loaded by a
-  // tool), so each step span must record what that step was shown.
-  let stepSystem: SystemModelMessage[] = turnContext.system;
-
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -949,7 +944,10 @@ export async function runAgentLoop(
         ephemeralSystem: turnContext.ephemeralSystem,
       });
       systemContextSnapshot = refreshed.systemContextSnapshot;
-      stepSystem = refreshed.system;
+      // Keep the turn's instructions current: system context grows mid-run
+      // (newly persisted rows, steering, skills a tool loaded), and the step and
+      // root spans both trace off this.
+      turnContext.system = refreshed.system;
 
       return {
         instructions: refreshed.system,
@@ -994,7 +992,7 @@ export async function runAgentLoop(
         "agent.step_number": stepNumber,
         "step.state": "running",
         "model.input": traceAttribute(messages),
-        ...systemTraceAttributes(stepSystem, traceAttribute),
+        ...systemTraceAttributes(turnContext.system, traceAttribute),
       };
       const tracked = startTrackedSpan(
         "model.step",
