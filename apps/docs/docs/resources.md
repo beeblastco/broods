@@ -54,7 +54,7 @@ Or let `broods dev` auto-push it from your local `.env.local`.
 
 Every reference has to resolve. `broods dev` and `broods deploy` reject a manifest whose `env("NAME")` has no value stored for the stage, and name the variables you still owe:
 
-```
+```text
 Sync manifest failed: 500 env() references 1 variable(s) with no value set for
 this stage: OPENAI_API_KEY. Set each one with `broods env set <NAME>` (or put it
 in .env.local and run `broods dev`), then sync again.

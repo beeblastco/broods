@@ -1376,9 +1376,8 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
-  // Push any `env("NAME")` values from .env.local up first: the sync rejects a
-  // manifest whose env refs have no stored value, so this is what lets a local
-  // `.env.local` alone carry a dev stage.
+  // The sync rejects unresolved env refs, so push .env.local values up first:
+  // that is what lets a local `.env.local` alone carry a dev stage.
   await syncLocalEnvVars(
     client,
     manifest,

@@ -213,6 +213,12 @@ export const syncManifestBySecretHash = internalMutation({
 
     const projectDoc = await ensureProject(ctx, account, manifest.project);
     const stageDoc = await ensureStage(ctx, projectDoc, manifest.stage);
+    const envValues = await loadEnvironmentVariableValues(
+      ctx,
+      projectDoc._id,
+      stageDoc._id,
+    );
+    assertEnvRefsResolved(manifest.resources, envValues);
     const workspaceIds = await syncWorkspaceResources(
       ctx,
       account._id,
@@ -232,12 +238,6 @@ export const syncManifestBySecretHash = internalMutation({
       projectDoc._id,
       stageDoc._id,
     );
-    const envValues = await loadEnvironmentVariableValues(
-      ctx,
-      projectDoc._id,
-      stageDoc._id,
-    );
-    assertEnvRefsResolved(manifest.resources, envValues);
     const missingPolicies = new Set<string>();
     const sandboxIds = await syncSandboxResources(ctx, {
       accountId: account._id,
@@ -1037,17 +1037,14 @@ async function syncWorkspaceResources(
 }
 
 /**
- * Every `env("NAME")` in the manifest must resolve to a value stored for the
- * stage. An unset name used to sync through and fail later at run time against
- * an unresolved `${NAME}` literal, so it fails the sync instead: the mutation
- * rolls back, nothing is written, and the operator is told what to set.
+ * Rejects a manifest whose `env("NAME")` has no value stored for the stage,
+ * which would otherwise reach the runtime as a literal `${NAME}`.
  */
 function assertEnvRefsResolved(
   resources: CliResource[],
   envValues: Record<string, string>,
 ): void {
-  // Collected with the rewrite walker rather than a second traversal, so what
-  // counts as a reference here is always what substitution later looks for.
+  // Reuses the rewrite walker so collection cannot drift from substitution.
   const referenced = new Set<string>();
   for (const resource of resources) {
     rewriteEnvRefs(asObject(resource.config), referenced);
@@ -1177,12 +1174,8 @@ async function syncSandboxResources(
 
   for (const resource of sandboxes) {
     const name = resourceName(resource.name);
-    // Resolve `env("NAME")` refs to their stored values before encrypting, the
-    // same way agent configs are resolved at sync time — core reads the
-    // sandbox blob verbatim and has no placeholder substitution of its own.
-    // Every name is known to have a value here, so no literal `${NAME}` can
-    // leak into the sandbox environment. The resolved form is also what the
-    // rename comparison runs on, since `existingConfigs` is resolved too.
+    // Core reads the sandbox blob verbatim, so `env("NAME")` resolves here.
+    // The rename comparison runs on the resolved form too.
     const envNames = new Set<string>();
     // `sourceConfig` keeps `${NAME}` placeholders; `resolvedConfig` bakes in
     // current values. We store both: resolved for core to read, source so

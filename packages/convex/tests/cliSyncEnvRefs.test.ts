@@ -63,7 +63,7 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
   });
 }
 
-const sync = (tt: T) =>
+const sync = (tt: T): Promise<unknown> =>
   tt.mutation(internal.cliSync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {
@@ -76,13 +76,22 @@ const sync = (tt: T) =>
 
 /** What the harness actually receives: the config keeps `${NAME}`, the value
  * rides along in the agent's encrypted runtime variables. */
-const runtimeValue = (tt: T) =>
+const runtimeValue = (tt: T): Promise<string | undefined> =>
   tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
     if (!config) throw new Error("Agent config was not synced");
 
     return (await loadAgentRuntimeSecrets(ctx, config._id))[ENV_NAME];
   });
+
+const rowCounts = async (
+  tt: T,
+): Promise<{ projects: number; stages: number; agents: number }> =>
+  await tt.run(async (ctx) => ({
+    projects: (await ctx.db.query("projects").collect()).length,
+    stages: (await ctx.db.query("stages").collect()).length,
+    agents: (await ctx.db.query("agentConfigs").collect()).length,
+  }));
 
 describe("cli sync rejects env() refs with no stored value", () => {
   // Agent config is written encrypted; the sync throws without a secret.
@@ -99,11 +108,9 @@ describe("cli sync rejects env() refs with no stored value", () => {
 
     await expect(sync(tt)).rejects.toThrow(ENV_NAME);
 
-    // The mutation rolls back, so a failed sync leaves the stage untouched
-    // rather than half-applied.
-    expect(await tt.run((ctx) => ctx.db.query("agentConfigs").first())).toBe(
-      null,
-    );
+    // The check runs before the first write and the mutation rolls back, so a
+    // rejected sync leaves no project, stage or agent behind.
+    expect(await rowCounts(tt)).toEqual({ projects: 0, stages: 0, agents: 0 });
   });
 
   test("bakes the value in once it is set", async () => {
