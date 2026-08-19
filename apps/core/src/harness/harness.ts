@@ -32,6 +32,7 @@ import type { HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { ObservabilitySpanRow } from "../../../../packages/broods/src/observability-contracts.ts";
 import { consumeColdStart } from "../shared/cold-start.ts";
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { toErrorMessage } from "../shared/errors.ts";
 import {
   collectSecretValues,
   logError,
@@ -1787,7 +1788,7 @@ export async function runAgentLoop(
 }
 
 function errorMessage(error: unknown): string {
-  const rawMessage = error instanceof Error ? error.message : String(error);
+  const rawMessage = toErrorMessage(error);
   // This text reaches the end user via reply.onErrorText, so it must pass the
   // same secret scrubbing the telemetry path applies before any sink sees it.
   const message = redactSensitiveText(
@@ -2231,6 +2232,11 @@ function serializeError(error: unknown): Record<string, unknown> {
   }
   if (error instanceof Error && error.stack) {
     details.stack = error.stack.split("\n").slice(0, 8).join("\n");
+  }
+  // A provider's own failure payload has no stack and no shape we control, so
+  // keep it whole. It is the only record of what the provider actually said.
+  if (!(error instanceof Error)) {
+    details.raw = errorObject;
   }
 
   return details;
