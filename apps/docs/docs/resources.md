@@ -419,7 +419,7 @@ See [Skills](skills.md) for bundle format.
 
 ### Policies
 
-Use `definePolicy` for reusable structured authorization policies, then assign them to agents with `config.policy`.
+Use `definePolicy` for reusable structured authorization policies, then attach them to agents with `config.policies`. Each policy carries its own `mode`, so attachment is only the list.
 
 ```ts
 import { defineAgent, definePolicy } from "broods";

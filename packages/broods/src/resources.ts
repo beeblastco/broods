@@ -14,8 +14,8 @@ import type {
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
-  AgentPolicyConfig,
-  AgentPolicyDocument,
+  ChannelReplyIn,
+  PolicyDocument,
   AgentHookEventName,
   AgentWebhookHookConfig,
   CreateCronInput,
@@ -176,8 +176,8 @@ export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
   defaultConfig?: Record<string, unknown>;
 }
 
-export type PolicyDefinitionConfig = Omit<AgentPolicyDocument, "version"> & {
-  version?: AgentPolicyDocument["version"];
+export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
+  version?: PolicyDocument["version"];
 };
 
 export type ChannelType =
@@ -203,8 +203,7 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
  * a private child folder per thread, issue or chat under `alias`.
  */
 export type ChannelPartition =
-  | { by: "shared"; alias?: never }
-  | { by: "conversation"; alias: string };
+  { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
 
 /**
  * An agent bound to a channel. Every bound agent runs when a message arrives;
@@ -212,8 +211,7 @@ export type ChannelPartition =
  * speaking in the room.
  */
 export type ChannelAgentInput =
-  | AgentResource
-  | { agent: AgentResource; reply?: boolean };
+  AgentResource | { agent: AgentResource; reply?: boolean };
 
 type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Pick<Config, Keys>
@@ -347,11 +345,11 @@ export type ChannelDefinitionConfig = {
   instructions?: string;
   /** Selects from what the agent already attaches; anything else is dropped. */
   workspaces?: readonly AgentWorkspaceInput[];
+  /** Added to whatever the agent already carries. Each policy holds its own mode. */
   policies?: readonly (PolicyResource | string)[];
-  policyMode?: AgentPolicyConfig["mode"];
   denyTools?: readonly string[];
   /** Where the reply lands. Slack only. */
-  threadPolicy?: "always-thread" | "inline";
+  replyIn?: ChannelReplyIn;
   partition?: ChannelPartition;
   sandboxImages?: readonly string[];
   tagRoles?: readonly { roleId: string; userIds: readonly string[] }[];
@@ -360,7 +358,7 @@ export type ChannelDefinitionConfig = {
 /** Rules shared by every channel, whatever the provider calls its rooms. */
 type ChannelRulesInput = Omit<
   ChannelDefinitionConfig,
-  "connection" | "externalId" | "workspaceRef" | "threadPolicy"
+  "connection" | "externalId" | "workspaceRef" | "replyIn"
 >;
 
 export type SlackChannelInput = ChannelRulesInput & {
@@ -370,7 +368,7 @@ export type SlackChannelInput = ChannelRulesInput & {
   /** Slack team id the channel sits in. */
   teamId?: string;
   /** Where the reply lands. Slack is the only provider with a choice. */
-  threadPolicy?: "always-thread" | "inline";
+  replyIn?: ChannelReplyIn;
 };
 
 export type DiscordChannelInput = ChannelRulesInput & {
@@ -536,13 +534,6 @@ export interface AgentHooks {
   >;
 }
 
-export type AgentPolicyDefinitionConfig = Omit<
-  AgentPolicyConfig,
-  "policyIds"
-> & {
-  policies?: readonly (PolicyResource | string)[];
-};
-
 /**
  * Code-first agent config surface. Built from an explicit `Pick` of `AgentConfig`
  * (not `Omit`) so the SDK input type does NOT inherit `AgentConfig`'s
@@ -583,7 +574,8 @@ export type AgentDefinitionConfig = EnvRefString<
   workspaces?: readonly AgentWorkspaceInput[];
   subagent?: AgentSubagentDefinitionConfig;
   skills?: AgentSkillsDefinitionConfig;
-  policy?: AgentPolicyDefinitionConfig;
+  /** Policies that gate this agent. Each one carries its own enforcement mode. */
+  policies?: readonly (PolicyResource | string)[];
   /**
    * Opt the agent into the public runtime endpoint (SSE/WebSocket via the
    * stage runtime key). Off by default — secured: when unset the public

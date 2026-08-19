@@ -35,10 +35,7 @@ import {
   type AccountModelProviderName,
 } from "@broods/convex/model/modelProviders";
 import { isAccountToolId } from "./account-tools.ts";
-import {
-  normalizeAgentPolicyConfig,
-  type AgentPolicyConfig,
-} from "./agent-policy.ts";
+import { normalizePolicyIds } from "./policy.ts";
 export type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 
 const CONFIG_ENCRYPTION_ALGORITHM = "aes-256-gcm";
@@ -150,7 +147,8 @@ export interface AgentConfig {
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
-  policy?: AgentPolicyConfig;
+  /** Policies that gate this agent. Each one carries its own enforcement mode. */
+  policies?: string[];
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
   // runtime key). Off by default: when not `true` the deployment (public-key)
   // request path is refused. Internal callers (account/admin secret, cron,
@@ -577,7 +575,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     skills,
     subagent,
     scheduler,
-    policy,
+    policies,
     publicAccess,
   } = config;
 
@@ -595,7 +593,7 @@ export function toRuntimeAgentConfig(config: AgentConfig): AgentConfig {
     ...(skills !== undefined ? { skills: skills } : {}),
     ...(subagent !== undefined ? { subagent: subagent } : {}),
     ...(scheduler !== undefined ? { scheduler: scheduler } : {}),
-    ...(policy !== undefined ? { policy: policy } : {}),
+    ...(policies !== undefined ? { policies: policies } : {}),
     ...(publicAccess !== undefined ? { publicAccess: publicAccess } : {}),
   });
 }
@@ -677,14 +675,19 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
-  const policy = normalizeAgentPolicyConfig(config.policy);
-  if (policy) {
-    config.policy = policy;
-  } else {
-    delete config.policy;
+  if (config.policy !== undefined) {
+    throw new Error(
+      "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
+    );
   }
-  if (isPlainObject(config.harness) && config.policy !== undefined) {
-    throw new Error("config.policy is not supported with config.harness");
+  const policies = normalizePolicyIds(config.policies, "config.policies");
+  if (policies) {
+    config.policies = policies;
+  } else {
+    delete config.policies;
+  }
+  if (isPlainObject(config.harness) && config.policies !== undefined) {
+    throw new Error("config.policies is not supported with config.harness");
   }
   if (
     isPlainObject(config.harness) &&

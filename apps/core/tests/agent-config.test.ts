@@ -139,10 +139,15 @@ describe("agent config validation", () => {
     expect(() =>
       normalizeAgentConfig({
         harness: { type: "codex" },
-        policy: { policyIds: ["policy-1"] },
+        policies: ["policy-1"],
         sandbox: "persistent-sandbox",
       }),
-    ).toThrow("config.policy is not supported with config.harness");
+    ).toThrow("config.policies is not supported with config.harness");
+    // The wrapper is gone, so a config still carrying it must say so rather
+    // than being dropped and silently leaving the agent ungated.
+    expect(() =>
+      normalizeAgentConfig({ policy: { policyIds: ["policy-1"] } }),
+    ).toThrow("config.policy is no longer supported; use config.policies");
     expect(() =>
       normalizeAgentConfig({
         harness: {

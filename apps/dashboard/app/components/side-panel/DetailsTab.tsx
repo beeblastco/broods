@@ -33,6 +33,7 @@ import {
 } from "@broods/convex/model/modelProviders";
 import {
   readAgentBranch,
+  readAgentPolicies,
   readModelReasoning,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
@@ -91,11 +92,6 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   high: "High",
   xhigh: "Extra high",
   max: "Max",
-};
-
-const POLICY_MODE_LABELS: Record<string, string> = {
-  enforce: "Enforce",
-  audit: "Audit",
 };
 
 const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -161,9 +157,7 @@ export function DetailsTab({
     effort?: string;
   }) => Promise<void>;
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
-  onUpdatePolicyConfig?: (
-    config: Record<string, unknown> | null,
-  ) => Promise<void>;
+  onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
 }): React.JSX.Element {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
@@ -242,18 +236,11 @@ export function DetailsTab({
     api.agentPolicies.listForStage,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
-  const policyConfig = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "policy",
-      ) as Record<string, unknown>)
-    : {};
-  const assignedPolicyIds = Array.isArray(policyConfig.policyIds)
-    ? policyConfig.policyIds.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : [];
-  const policyMode = policyConfig.mode === "enforce" ? "enforce" : "audit";
+  // Attachment is only the list. Whether a policy blocks or just records is
+  // carried by the policy document, and edited with it.
+  const assignedPolicyIds = readAgentPolicies(
+    agentConfig as unknown as FlatAgentConfig,
+  );
 
   const outputFormat =
     agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
@@ -400,33 +387,13 @@ export function DetailsTab({
     });
   }
 
-  function updatePolicy(next: Record<string, unknown>) {
-    const policyIds = Array.isArray(next.policyIds)
-      ? next.policyIds.filter(
-          (entry): entry is string => typeof entry === "string",
-        )
-      : [];
-    // No assigned policies means nothing to evaluate: clear the config.
-    const payload =
-      policyIds.length === 0
-        ? null
-        : {
-            policyIds: policyIds,
-            mode: next.mode === "enforce" ? "enforce" : "audit",
-          };
-
-    void onUpdatePolicyConfig?.(payload);
-  }
-
   function togglePolicyId(policyId: string) {
     const nextIds = assignedPolicyIds.includes(policyId)
       ? assignedPolicyIds.filter((entry) => entry !== policyId)
       : [...assignedPolicyIds, policyId];
-    updatePolicy({
-      ...policyConfig,
-      policyIds: nextIds,
-      mode: policyMode,
-    });
+
+    // Nothing attached means nothing to evaluate: clear the field.
+    void onUpdatePolicyConfig?.(nextIds.length === 0 ? null : nextIds);
   }
 
   return (
@@ -626,35 +593,10 @@ export function DetailsTab({
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Runtime Policy
             </span>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-[11px] text-muted-foreground">Mode</span>
-              <Select
-                items={POLICY_MODE_LABELS}
-                value={policyMode}
-                onValueChange={(value) => {
-                  if (value === null) return;
-                  updatePolicy({
-                    ...policyConfig,
-                    policyIds: assignedPolicyIds,
-                    mode: value,
-                  });
-                }}
-              >
-                <SelectTrigger className="h-7 w-28 cursor-pointer text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(POLICY_MODE_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <p className="text-[11px] text-muted-foreground">
-              Audit records decisions without blocking; Enforce blocks tool
-              calls the policy denies.
+              Each policy carries its own mode: audit records decisions without
+              blocking, enforce blocks the tool calls it denies. Set it on the
+              policy in Settings.
             </p>
             <div className="flex flex-col gap-1.5">
               {(policyOptions ?? []).map((policy) => {

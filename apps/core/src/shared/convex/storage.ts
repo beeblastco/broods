@@ -20,7 +20,7 @@ import {
   decodeStoredAgentConfig,
   decodeStoredConfigObject,
 } from "../domain/agent-config.ts";
-import type { AgentPolicyRecord } from "../domain/agent-policy.ts";
+import type { PolicyRecord } from "../domain/policy.ts";
 import type { AgentRecord } from "../domain/agents.ts";
 import type {
   ChannelRecord,
@@ -658,7 +658,7 @@ interface ConvexAgentPolicyDoc {
   accountId: string;
   name: string;
   description?: string;
-  document: AgentPolicyRecord["document"];
+  document: PolicyRecord["document"];
   status: "active" | "deleted";
   createdAt: number;
   updatedAt: number;
@@ -666,7 +666,7 @@ interface ConvexAgentPolicyDoc {
 
 function agentPolicyFromConvex(
   doc: ConvexAgentPolicyDoc | null,
-): AgentPolicyRecord | null {
+): PolicyRecord | null {
   if (!doc) return null;
 
   return {

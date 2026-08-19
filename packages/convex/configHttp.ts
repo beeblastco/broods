@@ -41,8 +41,8 @@ import {
   toPublicChannelRecordResponse,
 } from "./model/channelRules";
 import {
-  normalizeCreateAgentPolicyInput,
-  normalizeUpdateAgentPolicyInput,
+  normalizeCreatePolicyInput,
+  normalizeUpdatePolicyInput,
   toPublicAgentPolicyResponse,
 } from "./model/policyRules";
 import {
@@ -1728,7 +1728,7 @@ async function handlePolicyConfigRoute(
       });
     }
     if (req.method === "POST") {
-      const input = normalizeCreateAgentPolicyInput(await req.json());
+      const input = normalizeCreatePolicyInput(await req.json());
       const createdId: Id<"agentPolicies"> = await ctx.runMutation(
         internal.agentPolicies.createInternal,
         {
@@ -1785,7 +1785,7 @@ async function handlePolicyConfigRoute(
       },
     );
     if (!existing) return json({ error: "Policy not found" }, 404);
-    const patch = normalizeUpdateAgentPolicyInput(await req.json());
+    const patch = normalizeUpdatePolicyInput(await req.json());
     await ctx.runMutation(internal.agentPolicies.updateInternal, {
       accountId: accountId,
       policyId: policyId,
@@ -2942,7 +2942,7 @@ async function validateAgentPolicyIds(
   accountId: Id<"accounts">,
   config: AgentConfig,
 ): Promise<void> {
-  for (const policyId of config.policy?.policyIds ?? []) {
+  for (const policyId of config.policies ?? []) {
     const policy: Doc<"agentPolicies"> | null = await ctx.runQuery(
       internal.agentPolicies.getById,
       {

@@ -112,7 +112,7 @@ export async function validateAgentPolicyIds(
   accountId: string,
   config: AgentConfig,
 ): Promise<void> {
-  for (const policyId of config.policy?.policyIds ?? []) {
+  for (const policyId of config.policies ?? []) {
     const policy = await getStorage().agentPolicies.getById(
       accountId,
       policyId,

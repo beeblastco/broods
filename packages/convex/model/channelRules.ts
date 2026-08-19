@@ -7,8 +7,9 @@
 import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
-export const CHANNEL_THREAD_POLICIES = ["always-thread", "inline"] as const;
-export type ChannelThreadPolicy = (typeof CHANNEL_THREAD_POLICIES)[number];
+/** Where a reply lands: its own thread, or wherever the message came from. */
+export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
+export type ChannelReplyIn = (typeof CHANNEL_REPLY_TARGETS)[number];
 
 const CHANNEL_RECORD_UPDATE_KEYS = [
   "name",
@@ -22,10 +23,9 @@ const CHANNEL_CONFIG_KEYS = [
   "instructions",
   "agentBindings",
   "workspaces",
-  "policyIds",
-  "policyMode",
+  "policies",
   "denyTools",
-  "threadPolicy",
+  "replyIn",
   "workspaceScope",
   "sandboxImages",
   "tagRoles",
@@ -35,10 +35,9 @@ export type ChannelRecordConfig = {
   instructions?: string;
   agentBindings: Array<{ agentId: string; isDefault?: boolean }>;
   workspaces?: Array<{ name: string; workspaceId: string }>;
-  policyIds?: string[];
-  policyMode?: "enforce" | "audit";
+  policies?: string[];
   denyTools?: string[];
-  threadPolicy?: ChannelThreadPolicy;
+  replyIn?: ChannelReplyIn;
   workspaceScope?:
     { level: "channel" } | { level: "conversation"; alias: string };
   sandboxImages?: string[];
@@ -81,14 +80,13 @@ export function normalizeChannelRecordConfig(
     "config.instructions",
   );
   const workspaces = normalizeWorkspaces(config.workspaces);
-  const policyIds = optionalStringArray(config.policyIds, "config.policyIds");
-  const policyMode = normalizePolicyMode(config.policyMode);
+  const policies = optionalStringArray(config.policies, "config.policies");
   const denyTools = optionalStringArray(config.denyTools, "config.denyTools");
   const sandboxImages = optionalStringArray(
     config.sandboxImages,
     "config.sandboxImages",
   );
-  const threadPolicy = normalizeThreadPolicy(config.threadPolicy);
+  const replyIn = normalizeReplyIn(config.replyIn);
   const workspaceScope = normalizeWorkspaceScope(config.workspaceScope);
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
@@ -96,10 +94,9 @@ export function normalizeChannelRecordConfig(
     ...(instructions ? { instructions: instructions } : {}),
     agentBindings: normalizeAgentBindings(config.agentBindings),
     ...(workspaces ? { workspaces: workspaces } : {}),
-    ...(policyIds ? { policyIds: policyIds } : {}),
-    ...(policyMode ? { policyMode: policyMode } : {}),
+    ...(policies ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
-    ...(threadPolicy ? { threadPolicy: threadPolicy } : {}),
+    ...(replyIn ? { replyIn: replyIn } : {}),
     ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
     ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
     ...(tagRoles ? { tagRoles: tagRoles } : {}),
@@ -296,26 +293,15 @@ function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
   });
 }
 
-function normalizePolicyMode(value: unknown): "enforce" | "audit" | undefined {
+function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
   if (value === undefined) return undefined;
-  if (value !== "enforce" && value !== "audit") {
-    throw new Error("config.policyMode must be one of: enforce, audit");
-  }
-
-  return value;
-}
-
-function normalizeThreadPolicy(
-  value: unknown,
-): ChannelThreadPolicy | undefined {
-  if (value === undefined) return undefined;
-  if (!CHANNEL_THREAD_POLICIES.includes(value as ChannelThreadPolicy)) {
+  if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
     throw new Error(
-      `config.threadPolicy must be one of: ${CHANNEL_THREAD_POLICIES.join(", ")}`,
+      `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
     );
   }
 
-  return value as ChannelThreadPolicy;
+  return value as ChannelReplyIn;
 }
 
 function optionalString(value: unknown, name: string): string | undefined {

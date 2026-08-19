@@ -53,11 +53,11 @@ broods run my-agent "Hello"  # same, with the prompt sent as the first turn
 
 ### Global Options
 
-| Flag                    | Description                 |
-| ----------------------- | --------------------------- |
-| `--dashboard-url <url>` | Override dashboard URL      |
-| `--project <name>`      | Override project name       |
-| `--stage <name>`        | Override target stage       |
+| Flag                    | Description            |
+| ----------------------- | ---------------------- |
+| `--dashboard-url <url>` | Override dashboard URL |
+| `--project <name>`      | Override project name  |
+| `--stage <name>`        | Override target stage  |
 
 ## Self-Hosted Configuration
 
@@ -95,7 +95,7 @@ Manual account creation through `POST /accounts` requires `AdminAccountSecret` a
 
 WebSocket gateway support is application infrastructure, not agent configuration. `sst.config.ts` fails early when `ENABLE_WEBSOCKET=true` is set without `NATS_URL`. At runtime, `harness-processing` also rejects `nats-worker` invocations unless WebSocket is enabled and the NATS connection can be established.
 
-OPA-backed agent policy is optional. When an agent has no assigned policy IDs, runtime behavior is unchanged and no policy decision is requested. When policies are assigned, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. Inputs include action/resource context plus sanitized tool-call details (`toolName`, `toolId`, `tool.input.*`) so policies can match specific functions and parameters. `config.policy.mode` picks the rollout stage per agent: `audit` (default) evaluates and logs every decision without blocking; `enforce` acts on decisions, so denied tool calls are blocked and an unavailable OPA fails closed.
+OPA-backed agent policy is optional. When an agent has no assigned policy IDs, runtime behavior is unchanged and no policy decision is requested. When policies are assigned, Broods posts policy inputs to OPA at `/v1/data/broods/authz/decision` using `OPA_BASE_URL` + `OPA_API_TOKEN`. Inputs include action/resource context plus sanitized tool-call details (`toolName`, `toolId`, `tool.input.*`) so policies can match specific functions and parameters. Each policy document carries a `mode` that picks its own rollout stage: `audit` (default) evaluates and records every decision without blocking; `enforce` lets that policy's deny rules refuse, switches the places it is attached to over to default-deny, and fails closed when OPA is unavailable. Policies attached to the same place can mix, so a new rule can watch while an established one refuses.
 
 ## Local Setup
 

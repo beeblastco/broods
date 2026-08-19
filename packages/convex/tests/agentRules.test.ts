@@ -190,11 +190,12 @@ describe("agent rules", () => {
     expect(() =>
       normalizeAgentConfig({ subagent: { context: "same" } }),
     ).toThrow("config.subagent.context must be one of: new, inherited");
-    expect(
-      normalizeAgentConfig({ policy: { enabled: true } }).policy,
-    ).toBeUndefined();
-    expect(() => normalizeAgentConfig({ policy: { policyIds: [1] } })).toThrow(
-      "config.policy.policyIds must be an array of non-empty strings",
+    expect(normalizeAgentConfig({ policies: [] }).policies).toBeUndefined();
+    expect(() =>
+      normalizeAgentConfig({ policy: { policyIds: ["policy_1"] } }),
+    ).toThrow("config.policy is no longer supported");
+    expect(() => normalizeAgentConfig({ policies: [1] })).toThrow(
+      "config.policies must be an array of non-empty strings",
     );
     // Harness-owned names stay rejected; free-form provider tool names are
     // resolved against the configured provider by core at run time.

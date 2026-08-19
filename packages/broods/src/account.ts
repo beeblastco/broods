@@ -22,7 +22,8 @@
 import type {
   AgentChannelWorkspaceScope,
   AgentConfig,
-  AgentPolicyDocument,
+  ChannelReplyIn,
+  PolicyDocument,
   CreateCronInput,
   SandboxConfig,
   UpdateCronInput,
@@ -136,7 +137,7 @@ export interface AccountPolicy {
   policyId: string;
   name: string;
   description?: string;
-  document: AgentPolicyDocument;
+  document: PolicyDocument;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -167,9 +168,8 @@ export interface ChannelRecordConfig {
   instructions?: string;
   agentBindings: Array<{ agentId: string; isDefault?: boolean }>;
   workspaces?: Array<{ name: string; workspaceId: string }>;
-  policyIds?: string[];
-  /** Enforcement stage here. `audit` watches a rule before it refuses anyone. */
-  policyMode?: "enforce" | "audit";
+  /** Added to whatever the agent already carries. Each policy holds its own mode. */
+  policies?: string[];
   /**
    * Tool names withheld in this channel, applied after the tool set is built —
    * so it also covers sandbox tools (`bash`, `read`, …) that `config.tools`
@@ -177,11 +177,11 @@ export interface ChannelRecordConfig {
    */
   denyTools?: string[];
   /**
-   * Where the reply lands. `inline` answers in the channel and threads only
-   * when the message already did. Slack only — no other provider gives the
-   * runtime a second place to reply.
+   * Where the reply lands. `source` answers wherever the message came from, and
+   * threads only when the message already did. Slack only — no other provider
+   * gives the runtime a second place to reply.
    */
-  threadPolicy?: "always-thread" | "inline";
+  replyIn?: ChannelReplyIn;
   workspaceScope?: AgentChannelWorkspaceScope;
   /** Images the agent may stand a sandbox up from for a thread here. */
   sandboxImages?: string[];
@@ -851,7 +851,7 @@ export class BroodsAccountClient {
   async createPolicy(input: {
     name: string;
     description?: string;
-    document: AgentPolicyDocument;
+    document: PolicyDocument;
   }): Promise<AccountPolicy> {
     const result = await this.request<AccountPolicy>(
       "POST",
@@ -877,7 +877,7 @@ export class BroodsAccountClient {
     patch: {
       name?: string;
       description?: string | null;
-      document?: AgentPolicyDocument;
+      document?: PolicyDocument;
       status?: string;
     },
   ): Promise<AccountPolicy | null> {

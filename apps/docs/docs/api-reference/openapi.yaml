@@ -3076,8 +3076,12 @@ components:
           $ref: "#/components/schemas/SubagentConfig"
         scheduler:
           $ref: "#/components/schemas/SchedulerConfig"
-        policy:
-          $ref: "#/components/schemas/AgentPolicyConfig"
+        policies:
+          type: array
+          items: { type: string }
+          description: >-
+            Policy ids that gate this agent. Each policy document carries its
+            own mode, so attachment is only the list.
         publicAccess:
           type: boolean
           description: "Opt the agent into the public runtime endpoint (SSE/WebSocket via the stage runtime key). Off by default — secured. When false/unset, public-key requests for this agent are refused with HTTP 403 (code public_access_disabled); internal callers and channel webhooks are unaffected."
@@ -3149,33 +3153,28 @@ components:
           type: boolean
           description: Enables Codex web search. Not supported by Claude Code.
 
-    AgentPolicyConfig:
-      type: object
-      description: Optional runtime authorization policy assignment. When unset or policyIds is empty, existing behavior is unchanged.
-      properties:
-        policyIds:
-          type: array
-          items:
-            type: string
-        mode:
-          type: string
-          enum: [enforce, audit]
-          default: audit
-          description: "audit evaluates and logs decisions without blocking; enforce blocks denied tool calls and fails closed when OPA is unavailable."
-
-    AgentPolicyDocument:
+    PolicyDocument:
       type: object
       required: [version, rules]
       properties:
         version:
           type: integer
           enum: [1]
+        mode:
+          type: string
+          enum: [enforce, audit]
+          default: audit
+          description: >-
+            How hard this policy bites wherever it is attached. audit evaluates
+            and records every decision without blocking; enforce lets its deny
+            rules refuse, switches the places it is attached to over to
+            default-deny, and fails closed when OPA is unavailable.
         rules:
           type: array
           items:
-            $ref: "#/components/schemas/AgentPolicyRule"
+            $ref: "#/components/schemas/PolicyRule"
 
-    AgentPolicyRule:
+    PolicyRule:
       type: object
       required: [effect, actions]
       properties:
@@ -3203,13 +3202,13 @@ components:
               person address the agent here?". The rest gate one action inside an
               admitted turn.
         resources:
-          $ref: "#/components/schemas/AgentPolicyResourceSelector"
+          $ref: "#/components/schemas/PolicyResourceSelector"
         conditions:
           type: array
           items:
-            $ref: "#/components/schemas/AgentPolicyCondition"
+            $ref: "#/components/schemas/PolicyCondition"
 
-    AgentPolicyResourceSelector:
+    PolicyResourceSelector:
       type: object
       properties:
         toolNames: { type: array, items: { type: string } }
@@ -3220,7 +3219,7 @@ components:
         subagentIds: { type: array, items: { type: string } }
         skillPaths: { type: array, items: { type: string } }
 
-    AgentPolicyCondition:
+    PolicyCondition:
       type: object
       required: [attribute, operator, value]
       properties:
@@ -3276,13 +3275,12 @@ components:
             properties:
               name: { type: string }
               workspaceId: { type: string }
-        policyIds:
+        policies:
           type: array
           items: { type: string }
-        policyMode:
-          type: string
-          enum: [enforce, audit]
-          description: Enforcement stage here. Falls back to the agent's mode.
+          description: >-
+            Policy ids added to whatever the agent already carries. Each policy
+            document carries its own mode, so attachment is only the list.
         denyTools:
           type: array
           items: { type: string }
@@ -3290,15 +3288,15 @@ components:
             Tool names withheld in this channel, applied after the tool set is
             built — so it also covers sandbox tools (bash, read, …) that
             config.tools cannot name. Narrowing only; unknown names are ignored.
-        threadPolicy:
+        replyIn:
           type: string
-          enum: [always-thread, inline]
+          enum: [thread, source]
           description: >-
-            Where the reply lands. always-thread opens a thread on the message;
-            inline answers in the channel, and only threads when the message
-            itself arrived in one. Slack only — no other provider gives the
-            runtime a choice of place. Defaults to always-thread in a channel
-            and inline in a DM.
+            Where the reply lands. thread opens a thread on the message; source
+            answers wherever the message came from, and only threads when the
+            message itself arrived in one. Slack only — no other provider gives
+            the runtime a choice of place. Defaults to thread in a channel and
+            source in a DM.
         workspaceScope:
           oneOf:
             - type: object
@@ -3387,7 +3385,7 @@ components:
         description:
           type: string
         document:
-          $ref: "#/components/schemas/AgentPolicyDocument"
+          $ref: "#/components/schemas/PolicyDocument"
 
     AgentPolicyUpdate:
       type: object
@@ -3397,7 +3395,7 @@ components:
         description:
           type: [string, "null"]
         document:
-          $ref: "#/components/schemas/AgentPolicyDocument"
+          $ref: "#/components/schemas/PolicyDocument"
         status:
           type: string
           enum: [active, deleted]

@@ -19,12 +19,15 @@ interface DecisionCase {
   input: Record<string, unknown>;
   /** Rule ids expected to match. Empty means the rule must not fire. */
   matchedRuleIds: string[];
+  /** Deny rules that fired but only recorded, because their policy is auditing. */
+  auditedRuleIds?: string[];
   allow: boolean;
 }
 
 interface Decision {
   allow?: boolean;
   matchedRuleIds?: string[];
+  auditedRuleIds?: string[];
 }
 
 interface PolicyListing {
@@ -86,6 +89,7 @@ const CASES: DecisionCase[] = [
       actorRoles: ["oncall"],
       policies: [
         {
+          mode: "enforce",
           rules: [
             {
               id: "r1",
@@ -98,6 +102,42 @@ const CASES: DecisionCase[] = [
       ],
     },
     matchedRuleIds: [],
+    allow: false,
+  },
+  // Mode rides on the policy: the same deny rule refuses or merely records,
+  // and a place with nothing enforcing must not fall through to default-deny.
+  {
+    name: "audit policy, deny rule fires but only records",
+    input: rolesInput("deny", "notIn", "oncall", ["sales"], "audit"),
+    matchedRuleIds: [],
+    auditedRuleIds: ["r1"],
+    allow: true,
+  },
+  {
+    name: "audit policy, no rule matches, default-deny stays off",
+    input: rolesInput("deny", "notIn", "oncall", ["oncall"], "audit"),
+    matchedRuleIds: [],
+    auditedRuleIds: [],
+    allow: true,
+  },
+  {
+    name: "enforcing policy alongside an auditing one still refuses",
+    input: {
+      action: "agent.invoke",
+      actorRoles: ["sales"],
+      policies: [
+        {
+          mode: "audit",
+          rules: [{ id: "watch", effect: "deny", actions: ["agent.invoke"] }],
+        },
+        {
+          mode: "enforce",
+          rules: [{ id: "block", effect: "deny", actions: ["agent.invoke"] }],
+        },
+      ],
+    },
+    matchedRuleIds: ["block"],
+    auditedRuleIds: ["watch"],
     allow: false,
   },
 ];
@@ -129,13 +169,20 @@ async function main(): Promise<number> {
     }
     const matched = (decision.matchedRuleIds ?? []).join(",");
     const want = decisionCase.matchedRuleIds.join(",");
-    if (matched === want && decision.allow === decisionCase.allow) {
+    const audited = (decision.auditedRuleIds ?? []).join(",");
+    const wantAudited = (decisionCase.auditedRuleIds ?? []).join(",");
+    if (
+      matched === want &&
+      audited === wantAudited &&
+      decision.allow === decisionCase.allow
+    ) {
       console.log(`PASS  ${decisionCase.name}`);
       continue;
     }
     console.error(
       `FAIL  ${decisionCase.name}: allow=${decision.allow} matched=[${matched}] ` +
-        `want allow=${decisionCase.allow} matched=[${want}]`,
+        `audited=[${audited}] want allow=${decisionCase.allow} ` +
+        `matched=[${want}] audited=[${wantAudited}]`,
     );
     failed += 1;
   }
@@ -167,7 +214,9 @@ async function reportDrift(): Promise<number> {
   const deployedLines = deployed.raw.trimEnd().split("\n");
   const localLines = local.trimEnd().split("\n");
   if (deployedLines.join("\n") === localLines.join("\n")) {
-    console.log(`In sync: OPA is running ${POLICY_PATH} (${localLines.length} lines).`);
+    console.log(
+      `In sync: OPA is running ${POLICY_PATH} (${localLines.length} lines).`,
+    );
 
     return 0;
   }
@@ -178,7 +227,9 @@ async function reportDrift(): Promise<number> {
   let shown = 0;
   for (let i = 0; i < Math.max(deployedLines.length, localLines.length); i++) {
     if (deployedLines[i] === localLines[i]) continue;
-    console.error(`  line ${i + 1}\n    deployed: ${deployedLines[i] ?? "<none>"}\n    repo:     ${localLines[i] ?? "<none>"}`);
+    console.error(
+      `  line ${i + 1}\n    deployed: ${deployedLines[i] ?? "<none>"}\n    repo:     ${localLines[i] ?? "<none>"}`,
+    );
     shown += 1;
     if (shown >= 10) {
       console.error("  ...");
@@ -219,11 +270,17 @@ async function evaluateLocal(
 ): Promise<Decision | null> {
   const proc = Bun.spawn(
     ["opa", "eval", "-d", POLICY_PATH, "-I", "-f", "json", DECISION_QUERY],
-    { stdin: new TextEncoder().encode(JSON.stringify(input)), stdout: "pipe", stderr: "pipe" },
+    {
+      stdin: new TextEncoder().encode(JSON.stringify(input)),
+      stdout: "pipe",
+      stderr: "pipe",
+    },
   );
   const out = await new Response(proc.stdout).text();
   if ((await proc.exited) !== 0) {
-    console.error(`  opa eval failed: ${await new Response(proc.stderr).text()}`);
+    console.error(
+      `  opa eval failed: ${await new Response(proc.stderr).text()}`,
+    );
 
     return null;
   }
@@ -268,12 +325,14 @@ function policyInput(
   operator: string,
   value: unknown,
   attributes: Record<string, unknown>,
+  policyMode: string = "enforce",
 ): Record<string, unknown> {
   return {
     action: "agent.invoke",
     ...attributes,
     policies: [
       {
+        mode: policyMode,
         rules: [
           {
             id: "r1",
@@ -294,10 +353,16 @@ function rolesInput(
   operator: string,
   value: unknown,
   actorRoles: string[],
+  policyMode: string = "enforce",
 ): Record<string, unknown> {
-  return policyInput(effect, "actorRoles", operator, value, {
-    actorRoles: actorRoles,
-  });
+  return policyInput(
+    effect,
+    "actorRoles",
+    operator,
+    value,
+    { actorRoles: actorRoles },
+    policyMode,
+  );
 }
 
 process.exit(await main());

@@ -1,7 +1,8 @@
 /**
- * Enforce-mode wiring for OPA-backed agent policy: createPolicyToolApproval
- * must act on denials when config.policy.mode is "enforce", stay shadow-only
- * in "audit", and authenticate against the OPA endpoint with OPA_API_TOKEN.
+ * Enforcement wiring for OPA-backed policy. Mode rides on the policy document,
+ * and the rego applies it, so the harness acts on the verdict it is given. What
+ * is left to check here is the OPA-unreachable path, which must fail closed only
+ * where something actually enforces, plus OPA_API_TOKEN authentication.
  */
 
 import { afterAll, describe, expect, it } from "bun:test";
@@ -13,24 +14,41 @@ import {
 } from "../src/harness/policy.ts";
 import { setStorageForTests, type Storage } from "../src/shared/storage.ts";
 
-const policyRecord = {
-  accountId: "acct_1",
-  policyId: "policy_a",
-  name: "deny-exec",
-  document: {
-    version: 1,
-    rules: [{ id: "deny-bash", effect: "deny", actions: ["workspace.exec"] }],
-  },
-  status: "active",
-  createdAt: "2026-07-02T00:00:00Z",
-  updatedAt: "2026-07-02T00:00:00Z",
-};
+let policyMode: "enforce" | "audit" = "enforce";
+
+function policyRecord() {
+  return {
+    accountId: "acct_1",
+    policyId: "policy_a",
+    name: "deny-exec",
+    document: {
+      version: 1,
+      mode: policyMode,
+      rules: [{ id: "deny-bash", effect: "deny", actions: ["workspace.exec"] }],
+    },
+    status: "active",
+    createdAt: "2026-07-02T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+  };
+}
 
 setStorageForTests({
   agentPolicies: {
-    getById: async () => policyRecord,
+    getById: async () => policyRecord(),
   },
 } as unknown as Storage);
+
+const ENFORCED_DENIAL = {
+  allow: false,
+  allowed: false,
+  mode: "enforce",
+  reason: "Denied by policy rule deny-bash",
+  matchedRuleIds: ["deny-bash"],
+  auditedRuleIds: [],
+};
+
+// Stands in for what the rego returns once it has applied the policy's mode.
+let opaResult: Record<string, unknown> = ENFORCED_DENIAL;
 
 const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];
@@ -45,15 +63,7 @@ const server = Bun.serve({
         : body,
     );
 
-    return Response.json({
-      result: {
-        allow: false,
-        allowed: false,
-        mode: "enforce",
-        reason: "Denied by policy rule deny-bash",
-        matchedRuleIds: ["deny-bash"],
-      },
-    });
+    return Response.json({ result: opaResult });
   },
 });
 
@@ -67,12 +77,9 @@ afterAll(() => {
   delete process.env.OPA_API_TOKEN;
 });
 
-function agentConfig(mode?: "enforce" | "audit") {
+function agentConfig() {
   return {
-    policy: {
-      policyIds: ["policy_a"],
-      ...(mode ? { mode: mode } : {}),
-    },
+    policies: ["policy_a"],
   } as Parameters<typeof createPolicyToolApproval>[0];
 }
 
@@ -84,6 +91,19 @@ const toolCallEvent = {
   },
   messages: [],
 } as never;
+
+async function withUnreachableOpa(run: () => Promise<void>): Promise<void> {
+  const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
+  const closedPort = closed.port;
+  closed.stop(true);
+  const previous = process.env.OPA_BASE_URL;
+  process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
+  try {
+    await run();
+  } finally {
+    process.env.OPA_BASE_URL = previous;
+  }
+}
 
 function decisionType(status: unknown): string | undefined {
   if (typeof status === "string") return status;
@@ -138,9 +158,9 @@ describe("agent policy enforce mode", () => {
     );
   });
 
-  it("blocks denied tool calls when mode is enforce", async () => {
+  it("acts on a denial the policy engine returned", async () => {
     const approval = await createPolicyToolApproval(
-      agentConfig("enforce"),
+      agentConfig(),
       { accountId: "acct_1", agentId: "agent_1" },
       [],
     );
@@ -149,36 +169,62 @@ describe("agent policy enforce mode", () => {
     expect(decisionType(status)).toBe("denied");
   });
 
-  it("approves despite denials when mode is audit (default)", async () => {
-    for (const config of [agentConfig("audit"), agentConfig()]) {
+  // An auditing policy is downgraded by the rego, not here: the harness must
+  // pass that verdict straight through rather than second-guessing it.
+  it("approves the verdict an auditing policy produced", async () => {
+    policyMode = "audit";
+    opaResult = {
+      allow: true,
+      allowed: true,
+      mode: "audit",
+      reason:
+        "Audited by policy rule deny-bash: would deny, policy is not enforcing",
+      matchedRuleIds: [],
+      auditedRuleIds: ["deny-bash"],
+    };
+    try {
       const approval = await createPolicyToolApproval(
-        config,
+        agentConfig(),
         { accountId: "acct_1", agentId: "agent_1" },
         [],
       );
       expect(approval).toBeDefined();
       const status = await approval!(toolCallEvent);
       expect(decisionType(status)).toBe("approved");
+    } finally {
+      policyMode = "enforce";
+      opaResult = ENFORCED_DENIAL;
     }
   });
 
-  it("fails closed in enforce mode when OPA is unreachable", async () => {
-    const closed = Bun.serve({ port: 0, fetch: () => new Response("") });
-    const closedPort = closed.port;
-    closed.stop(true);
-    const previous = process.env.OPA_BASE_URL;
-    process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
-    try {
+  it("fails closed when OPA is unreachable and a policy enforces", async () => {
+    await withUnreachableOpa(async () => {
       const approval = await createPolicyToolApproval(
-        agentConfig("enforce"),
+        agentConfig(),
         { accountId: "acct_1", agentId: "agent_1" },
         [],
       );
       expect(approval).toBeDefined();
-      const status = await approval!(toolCallEvent);
-      expect(decisionType(status)).toBe("denied");
+      expect(decisionType(await approval!(toolCallEvent))).toBe("denied");
+    });
+  });
+
+  // The mode lives in a document this path did read, so an outage must not turn
+  // a policy nobody has promoted yet into one that refuses.
+  it("stays open when OPA is unreachable and nothing enforces", async () => {
+    policyMode = "audit";
+    try {
+      await withUnreachableOpa(async () => {
+        const approval = await createPolicyToolApproval(
+          agentConfig(),
+          { accountId: "acct_1", agentId: "agent_1" },
+          [],
+        );
+        expect(approval).toBeDefined();
+        expect(decisionType(await approval!(toolCallEvent))).toBe("approved");
+      });
     } finally {
-      process.env.OPA_BASE_URL = previous;
+      policyMode = "enforce";
     }
   });
 
@@ -205,7 +251,7 @@ describe("agent policy enforce mode", () => {
 
   it("carries the channel place and person onto the policy input", async () => {
     const approval = await createPolicyToolApproval(
-      agentConfig("audit"),
+      agentConfig(),
       {
         accountId: "acct_1",
         agentId: "agent_1",
@@ -252,7 +298,7 @@ describe("agent policy enforce mode", () => {
 
 describe("agent.invoke gate", () => {
   it("refuses the tag in enforce mode and reports the rule that denied it", async () => {
-    const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+    const decision = await evaluateChannelInvoke(agentConfig(), {
       accountId: "acct_1",
       agentId: "agent_1",
       channel: "slack",
@@ -265,18 +311,36 @@ describe("agent.invoke gate", () => {
       mode: "enforce",
       reason: "Denied by policy rule deny-bash",
       matchedRuleIds: ["deny-bash"],
+      auditedRuleIds: [],
     });
   });
 
-  it("records the same denial without blocking in audit mode", async () => {
-    const decision = await evaluateChannelInvoke(agentConfig("audit"), {
-      accountId: "acct_1",
-      agentId: "agent_1",
-      channel: "slack",
-    });
+  // The same rule, from a policy nobody promoted: reported, and let through.
+  it("reports an audited denial and still admits the turn", async () => {
+    policyMode = "audit";
+    opaResult = {
+      allow: true,
+      allowed: true,
+      mode: "audit",
+      reason:
+        "Audited by policy rule deny-bash: would deny, policy is not enforcing",
+      matchedRuleIds: [],
+      auditedRuleIds: ["deny-bash"],
+    };
+    try {
+      const decision = await evaluateChannelInvoke(agentConfig(), {
+        accountId: "acct_1",
+        agentId: "agent_1",
+        channel: "slack",
+      });
 
-    expect(decision?.mode).toBe("audit");
-    expect(decision?.allowed).toBe(false);
+      expect(decision?.mode).toBe("audit");
+      expect(decision?.allowed).toBe(true);
+      expect(decision?.auditedRuleIds).toEqual(["deny-bash"]);
+    } finally {
+      policyMode = "enforce";
+      opaResult = ENFORCED_DENIAL;
+    }
   });
 
   it("stays out of the way when the agent has no policies assigned", async () => {
@@ -296,7 +360,7 @@ describe("agent.invoke gate", () => {
       agentPolicies: { getById: async (): Promise<null> => null },
     } as unknown as Storage);
     try {
-      const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+      const decision = await evaluateChannelInvoke(agentConfig(), {
         accountId: "acct_1",
         agentId: "agent_1",
         channel: "zalo",
@@ -307,10 +371,11 @@ describe("agent.invoke gate", () => {
         mode: "enforce",
         reason: "No allow policy rule matched",
         matchedRuleIds: [],
+        auditedRuleIds: [],
       });
     } finally {
       setStorageForTests({
-        agentPolicies: { getById: async () => policyRecord },
+        agentPolicies: { getById: async () => policyRecord() },
       } as unknown as Storage);
     }
   });
@@ -318,7 +383,7 @@ describe("agent.invoke gate", () => {
   it("sends the actor and channel to OPA as agent.invoke", async () => {
     // Drive its own evaluation: asserting on a sibling test's recorded input
     // passes only when that test ran first, and breaks under -t or .only.
-    await evaluateChannelInvoke(agentConfig("enforce"), {
+    await evaluateChannelInvoke(agentConfig(), {
       accountId: "acct_1",
       agentId: "agent_1",
       channel: "slack",
@@ -343,7 +408,7 @@ describe("agent.invoke gate", () => {
     const previous = process.env.OPA_BASE_URL;
     process.env.OPA_BASE_URL = `http://127.0.0.1:${closedPort}`;
     try {
-      const decision = await evaluateChannelInvoke(agentConfig("enforce"), {
+      const decision = await evaluateChannelInvoke(agentConfig(), {
         accountId: "acct_1",
         agentId: "agent_1",
       });

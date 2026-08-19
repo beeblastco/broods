@@ -38,7 +38,7 @@ export type AgentConfig = Record<string, unknown> & {
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
-  policy?: AgentPolicyConfig;
+  policies?: string[];
   publicAccess?: boolean;
 };
 
@@ -46,11 +46,6 @@ export interface AgentWorkspaceRef {
   name: string;
   workspaceId: string;
   sandbox?: string | null;
-}
-
-export interface AgentPolicyConfig {
-  policyIds?: string[];
-  mode?: "enforce" | "audit";
 }
 
 interface AgentDocLike {
@@ -153,11 +148,16 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
-  const policy = normalizeAgentPolicyConfig(config.policy);
-  if (policy) {
-    config.policy = policy;
+  if (config.policy !== undefined) {
+    throw new Error(
+      "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
+    );
+  }
+  const policies = normalizePolicyIds(config.policies);
+  if (policies) {
+    config.policies = policies;
   } else {
-    delete config.policy;
+    delete config.policies;
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
@@ -661,29 +661,16 @@ function normalizeSchedulerConfig(value: unknown): void {
   assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
 }
 
-function normalizeAgentPolicyConfig(
-  value: unknown,
-): AgentPolicyConfig | undefined {
+/**
+ * Validates the policy ids attached to an agent. Attachment is just the list:
+ * how hard each one bites is carried by the policy document itself.
+ */
+function normalizePolicyIds(value: unknown): string[] | undefined {
   if (value == null) return undefined;
-  if (!isPlainObject(value)) throw new Error("config.policy must be an object");
-  const config = value as Record<string, unknown>;
-  for (const key of Object.keys(config)) {
-    if (key !== "enabled" && key !== "policyIds" && key !== "mode")
-      throw new Error(`config.policy.${key} is not supported`);
-  }
-  assertOptionalBoolean(config.enabled, "config.policy.enabled");
-  assertOptionalStringArray(config.policyIds, "config.policy.policyIds");
-  assertOptionalEnum(config.mode, "config.policy.mode", ["enforce", "audit"]);
-  const normalized = {
-    ...(Array.isArray(config.policyIds) && config.policyIds.length > 0
-      ? { policyIds: config.policyIds as string[] }
-      : {}),
-    ...(config.mode !== undefined
-      ? { mode: config.mode as "enforce" | "audit" }
-      : {}),
-  };
+  assertOptionalStringArray(value, "config.policies");
+  const ids = [...new Set(value as string[])];
 
-  return normalized.policyIds ? normalized : undefined;
+  return ids.length > 0 ? ids : undefined;
 }
 
 function normalizeChannelsConfig(value: unknown): void {
