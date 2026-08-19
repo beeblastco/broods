@@ -35,7 +35,19 @@ Channel tools are automatic; do not add them to `config.tools`.
 
 `send-files` takes `file_paths`, a list of workspace documents, and is for anything that is not a picture: PDFs, spreadsheets, text files. Pictures go through `send-images`, because a picture the recipient sees inline and a file they download are different messages.
 
-The two split at the channel boundary, not in the prompt. A provider declares what it can do by implementing `sendImages` or `sendFiles`, the model only ever names workspace paths, and the adapter spends the batch the way its provider wants: Telegram groups up to ten attachments into one album and starts another for the rest, Slack stacks images into a single Block Kit message, Zalo has no album and posts them in sequence. A caption rides the first message only. Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
+The two split at the channel boundary, not in the prompt. A provider declares what it can do by implementing `sendImages` or `sendFiles`, the model only ever names workspace paths, and the adapter spends the batch the way its provider wants. A caption rides the first message only.
+
+Providers disagree on more than grouping: some fetch a URL you hand them, others accept only an upload. The adapter hides that, and a workspace attachment carries both a sealed link and a reader, so each provider takes whichever it needs and the bytes are read only when one actually uploads.
+
+| Channel | Pictures | Documents | Batch |
+| --- | --- | --- | --- |
+| Telegram | fetches the URL | fetches the URL | album of 2-10, then another |
+| Slack | Block Kit image blocks | uploads bytes (`files.uploadV2`) | one message, one upload |
+| Discord | uploads bytes | uploads bytes | one multipart message |
+| Zalo | fetches the URL | none | one per message |
+| GitHub, Pancake | none | none | text links only |
+
+Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
 
 `send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead — as documents where the provider has them, as download links where it does not. The reason for the rejection is logged, not shown to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 

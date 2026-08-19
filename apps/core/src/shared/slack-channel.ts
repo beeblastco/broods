@@ -16,6 +16,8 @@ import {
   postSlackMessage,
   sendSlackResponseUrl,
   SlackApiError,
+  uploadSlackFiles,
+  type SlackFileUpload,
 } from "@chat-adapter/slack/api";
 import {
   parseSlackWebhookBody,
@@ -28,12 +30,15 @@ import {
   ConsoleLogger,
   Image,
   type CardElement,
+  type ImageElement,
   type StreamChunk,
 } from "chat";
-import type {
-  ChannelActions,
-  ChannelAdapter,
-  ChannelParseResult,
+import {
+  channelAttachmentBytes,
+  channelAttachmentName,
+  type ChannelActions,
+  type ChannelAdapter,
+  type ChannelParseResult,
 } from "./channels.ts";
 import { isAllowedId } from "./channels.ts";
 import { parseCommand } from "./commands.ts";
@@ -716,9 +721,37 @@ function createSlackActions(
   const formatter = new SlackFormatConverter();
 
   return {
+    sendFiles: async function(files, caption): Promise<void> {
+      // Slack ignores an outbound URL attachment entirely; files.uploadV2 is the
+      // only way in, and it takes the whole batch in one call so the files land
+      // as a single upload rather than one message each.
+      await uploadSlackFiles(
+        await Promise.all(
+          files.map(async (file): Promise<SlackFileUpload> => {
+            const name = channelAttachmentName(file);
+
+            return {
+              data: await channelAttachmentBytes(file),
+              filename: name,
+              title: name,
+            };
+          }),
+        ),
+        {
+          token: botToken,
+          apiUrl: apiUrl,
+          channelId: source.channelId,
+          ...(caption ? { initialComment: caption } : {}),
+          ...(source.threadTs ? { threadTs: source.threadTs } : {}),
+        },
+      );
+    },
+
     sendImages: async function(images, caption): Promise<void> {
       // Block Kit stacks image blocks inside one message, so a batch stays a
-      // single post rather than a run of them.
+      // single post rather than a run of them. Pictures keep the URL path even
+      // though sendFiles uploads: an image block renders inline, while an
+      // uploaded file shows as an attachment to open.
       await postSlackCard(
         botToken,
         apiUrl,
@@ -726,8 +759,12 @@ function createSlackActions(
         Card({
           children: [
             ...(caption ? [CardText(caption)] : []),
-            ...images.map((image) =>
-              Image({ url: image.url, alt: image.name ?? caption ?? "Image" }),
+            ...images.map(
+              (image): ImageElement =>
+                Image({
+                  url: image.url,
+                  alt: image.name ?? caption ?? "Image",
+                }),
             ),
           ],
         }),

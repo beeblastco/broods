@@ -11,6 +11,7 @@ import { requireEnv } from "./shared/env.ts";
 import type { CoreRequest } from "./shared/http.ts";
 import { logDebug, logWarn } from "./shared/log.ts";
 import { MEDIA_PATH_PREFIX, openMediaTicket } from "./shared/media-ticket.ts";
+import { contentTypeForPath } from "./shared/media-types.ts";
 import { headS3Object, readS3Bytes } from "./shared/s3.ts";
 import { getStorage } from "./shared/storage.ts";
 import {
@@ -21,15 +22,6 @@ import {
 // Streaming would buy nothing here: chat pictures are small, and the cap exists
 // to stop a large workspace file from sitting in the pod's 1 GiB alongside a run.
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
-const MEDIA_EXTENSION_TYPES: Record<string, string> = {
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  pdf: "application/pdf",
-  png: "image/png",
-  svg: "image/svg+xml",
-  webp: "image/webp",
-};
 
 export function routesToMedia(method: string, pathname: string): boolean {
   const upperMethod = method.toUpperCase();
@@ -126,9 +118,8 @@ function mediaContentType(path: string, stored: string | undefined): string {
   if (stored && stored !== "application/octet-stream") {
     return stored;
   }
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
 
-  return MEDIA_EXTENSION_TYPES[extension] ?? "application/octet-stream";
+  return contentTypeForPath(path);
 }
 
 // One answer for a bad ticket, a deleted workspace and a missing file, so the

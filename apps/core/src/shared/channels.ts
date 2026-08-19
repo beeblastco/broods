@@ -146,6 +146,48 @@ export interface ChannelAdapter {
   ): Record<string, unknown>;
 }
 
+/**
+ * Bytes for an attachment, however this one happens to carry them.
+ * Providers that upload rather than fetch need the file itself. A workspace
+ * file arrives with `fetchData` so the object is read straight from storage and
+ * only when a provider actually asks; a picture named by public URL has no such
+ * reader, so it is fetched the same way the provider would have.
+ */
+export async function channelAttachmentBytes(
+  attachment: ChannelFile | ChannelImage,
+): Promise<Buffer> {
+  if (attachment.fetchData) {
+    return await attachment.fetchData();
+  }
+  const response = await fetch(attachment.url);
+  if (!response.ok) {
+    throw new Error(
+      `Could not read ${attachment.name ?? attachment.url} to upload it (${response.status})`,
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+/**
+ * Filename to upload an attachment under.
+ * Providers decide whether to preview a file from its name, so a nameless one
+ * would arrive extensionless and render as a generic download. Workspace files
+ * are named already; this is for a picture named only by URL.
+ */
+export function channelAttachmentName(
+  attachment: ChannelFile | ChannelImage,
+): string {
+  if (attachment.name) {
+    return attachment.name;
+  }
+  const fromUrl = attachment.url.split("?")[0]?.split("/").pop();
+
+  return fromUrl && fromUrl.includes(".")
+    ? fromUrl
+    : `file${attachment.type === "image" ? ".png" : ""}`;
+}
+
 export function extractText(content: UserContent): string {
   if (typeof content === "string") return content;
 

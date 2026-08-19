@@ -291,6 +291,87 @@ describe("telegram channel actions", () => {
 });
 
 describe("discord channel actions", () => {
+  it("uploads documents as multipart rather than posting a URL", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(jsonResponse({ id: "message-1" }));
+
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+      null,
+    ).actions(
+      createMessage({
+        applicationId: "app-1",
+        guildId: "guild-1",
+        channelId: "channel-1",
+        messageId: "message-1",
+      }),
+    );
+
+    await actions.sendFiles?.(
+      [
+        {
+          type: "file",
+          url: "https://gateway.test/media/token",
+          name: "declaration.pdf",
+          mimeType: "application/pdf",
+          fetchData: async (): Promise<Buffer> => Buffer.from("pdf-bytes"),
+        },
+      ],
+      "here you go",
+    );
+
+    // Discord has no URL attachment at all, so the bytes have to go up as
+    // multipart; a link in the payload would simply never render.
+    const body = fetchMock.calls[0]!.init?.body;
+    expect(body).toBeInstanceOf(FormData);
+    const form = body as FormData;
+    expect(JSON.parse(String(form.get("payload_json"))).content).toBe(
+      "here you go",
+    );
+    const upload = form.get("files[0]");
+    expect(upload).toBeInstanceOf(Blob);
+    expect(await (upload as Blob).text()).toBe("pdf-bytes");
+  });
+
+  it("names an unnamed upload from its URL so it can still preview", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      new Response("png-bytes"),
+      jsonResponse({ id: "message-1" }),
+    );
+
+    const actions = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      null,
+      null,
+    ).actions(
+      createMessage({
+        applicationId: "app-1",
+        guildId: "guild-1",
+        channelId: "channel-1",
+        messageId: "message-1",
+      }),
+    );
+
+    // The public push endpoint sends a bare URL with no name and no reader.
+    // Uploading that as "file" would arrive extensionless and refuse to preview,
+    // so the name comes off the URL and the bytes are fetched.
+    await actions.sendImages?.([
+      { type: "image", url: "https://cdn.example.com/a/chart.png?v=2" },
+    ]);
+
+    expect(toUrl(fetchMock.calls[0]!.input)).toBe(
+      "https://cdn.example.com/a/chart.png?v=2",
+    );
+    const form = fetchMock.calls[1]!.init?.body as FormData;
+    const upload = form.get("files[0]") as File;
+    expect(upload.name).toBe("chart.png");
+    expect(await upload.text()).toBe("png-bytes");
+  });
+
   it("uses the Chat SDK adapter for deferred replies and typing", async () => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(
@@ -465,6 +546,83 @@ describe("discord channel actions", () => {
 });
 
 describe("slack channel actions", () => {
+  it("uploads documents through files.uploadV2 in one batch", async (): Promise<void> => {
+    const fetchMock = installFetchMock();
+    fetchMock.responses.push(
+      jsonResponse({
+        ok: true,
+        upload_url: "https://files.slack.test/upload/1",
+        file_id: "F1",
+      }),
+      new Response("OK"),
+      jsonResponse({
+        ok: true,
+        upload_url: "https://files.slack.test/upload/2",
+        file_id: "F2",
+      }),
+      new Response("OK"),
+      jsonResponse({
+        ok: true,
+        files: [{ files: [{ id: "F1" }, { id: "F2" }] }],
+      }),
+    );
+
+    const actions = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      null,
+      "white_check_mark",
+    ).actions(
+      createMessage({
+        teamId: "T1",
+        channelId: "C1",
+        threadTs: "1713916800.000001",
+      }),
+    );
+
+    await actions.sendFiles?.(
+      [
+        {
+          type: "file",
+          url: "https://gateway.test/media/one",
+          name: "declaration.pdf",
+          mimeType: "application/pdf",
+          fetchData: async (): Promise<Buffer> => Buffer.from("pdf-bytes"),
+        },
+        {
+          type: "file",
+          url: "https://gateway.test/media/two",
+          name: "prices.csv",
+          mimeType: "text/csv",
+          fetchData: async (): Promise<Buffer> => Buffer.from("a,b"),
+        },
+      ],
+      "here you go",
+    );
+
+    // Slack ignores an outbound URL attachment, so the only way in is an
+    // upload, and both files share one completeUpload call rather than posting
+    // a message each.
+    const urls = fetchMock.calls.map((call): string => toUrl(call.input));
+    expect(
+      urls.filter((url) => url.includes("getUploadURLExternal")),
+    ).toHaveLength(2);
+    const complete = fetchMock.calls.find((call): boolean =>
+      toUrl(call.input).includes("completeUploadExternal"),
+    );
+    expect(complete).toBeDefined();
+    const body = Object.fromEntries(
+      new URLSearchParams(String(complete!.init?.body)),
+    );
+    expect(body.channel_id).toBe("C1");
+    expect(body.thread_ts).toBe("1713916800.000001");
+    expect(body.initial_comment).toBe("here you go");
+    expect(
+      JSON.parse(String(body.files)).map((f: { id: string }) => f.id),
+    ).toEqual(["F1", "F2"]);
+  });
+
   it("posts Slack image blocks and custom emoji stickers in the current thread", async (): Promise<void> => {
     const fetchMock = installFetchMock();
     fetchMock.responses.push(

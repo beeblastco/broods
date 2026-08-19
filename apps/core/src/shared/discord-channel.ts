@@ -4,11 +4,15 @@
  */
 
 import { DiscordAdapter, type DiscordThreadId } from "@chat-adapter/discord";
-import { ConsoleLogger } from "chat";
-import type {
-  ChannelActions,
-  ChannelAdapter,
-  ChannelParseResult,
+import { ConsoleLogger, type FileUpload } from "chat";
+import {
+  channelAttachmentBytes,
+  channelAttachmentName,
+  type ChannelActions,
+  type ChannelAdapter,
+  type ChannelFile,
+  type ChannelImage,
+  type ChannelParseResult,
 } from "./channels.ts";
 import { isAllowedId } from "./channels.ts";
 import { parseCommand, resolveDiscordCommand } from "./commands.ts";
@@ -379,7 +383,25 @@ function createDiscordActions(
         source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
     });
 
+  const sendAttachments = async function (
+    attachments: ChannelFile[] | ChannelImage[],
+    caption?: string,
+  ): Promise<void> {
+    await discord.postMessage(threadId, {
+      markdown: caption ?? "",
+      files: await discordUploads(attachments),
+    });
+  };
+
   return {
+    // Discord ignores an outbound URL attachment entirely — the API takes a
+    // multipart upload and nothing else — so both deliveries read the bytes and
+    // hand them over as one message. One body serves both because Discord
+    // decides which to render inline from the file itself; they stay separate
+    // keys so a channel can still advertise one without the other.
+    sendFiles: sendAttachments,
+    sendImages: sendAttachments,
+
     sendText: async function(text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
@@ -423,6 +445,23 @@ function createDiscordActions(
       return;
     },
   };
+}
+
+// Bytes read once per attachment, in parallel, because Discord takes the whole
+// batch in one multipart request and rejects a message with no content and no
+// files anyway.
+async function discordUploads(
+  attachments: ChannelFile[] | ChannelImage[],
+): Promise<FileUpload[]> {
+  return await Promise.all(
+    attachments.map(
+      async (attachment): Promise<FileUpload> => ({
+        data: await channelAttachmentBytes(attachment),
+        filename: channelAttachmentName(attachment),
+        ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+      }),
+    ),
+  );
 }
 
 /**

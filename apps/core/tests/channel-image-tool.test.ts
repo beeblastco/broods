@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { ChannelFile, ChannelImage } from "../src/shared/channels.ts";
+import { channelAttachmentBytes } from "../src/shared/channels.ts";
 import { openMediaTicket } from "../src/shared/media-ticket.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
@@ -23,7 +24,7 @@ mock.module("../src/shared/s3.ts", () => ({
   })),
   getS3ObjectUrl: mock(async () => "https://signed.example/photo"),
   readS3Text: mock(async () => ""),
-  readS3Bytes: mock(async () => new Uint8Array()),
+  readS3Bytes: mock(async () => new TextEncoder().encode("pdf-bytes")),
   listS3Prefix: mock(async () => []),
   writeS3Object: mock(async () => 0),
   deleteS3Object: mock(async () => {}),
@@ -183,7 +184,7 @@ describe("sendImagesTool", () => {
     });
 
     expect(sentText.startsWith("[safe] xem hình\nprofile.jpeg: ")).toBe(true);
-    expect(result).toContain("cannot attach documents");
+    expect(result).toContain("could not attach documents");
   });
 
   it("reports a missing workspace file instead of sending", async (): Promise<void> => {
@@ -314,7 +315,63 @@ describe("sendFilesTool", () => {
       namespace: NS,
       path: "docs/declaration.pdf",
     });
-    expect(result).toContain("cannot attach documents");
+    expect(result).toContain("could not attach documents");
+  });
+
+  it("falls back to download links when the upload is rejected", async (): Promise<void> => {
+    const { sendFilesTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    let sentText = "";
+    const context = channelContext(async function (): Promise<void> {});
+    const tools = sendFilesTool({
+      ...context,
+      actions: {
+        ...context.actions,
+        sendFiles: async function (): Promise<void> {
+          throw new Error("file too large");
+        },
+        sendText: async function (text: string): Promise<void> {
+          sentText = text;
+        },
+      },
+    });
+
+    // Uploading fails on the provider's terms — Discord caps a free guild at
+    // 10 MB — and the link needs no upload, so it is worth trying before the
+    // recipient gets nothing.
+    const result = await execute(tools["send-files"], {
+      file_paths: ["docs/declaration.pdf"],
+    });
+
+    expect(sentText).toContain("declaration.pdf: https://gateway.test/media/");
+    expect(result).toContain("could not attach documents");
+  });
+
+  it("carries a reader so an uploading provider can get the bytes", async (): Promise<void> => {
+    const { sendFilesTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    let sent: ChannelFile[] = [];
+    const context = channelContext(async function (): Promise<void> {});
+    const tools = sendFilesTool({
+      ...context,
+      actions: {
+        ...context.actions,
+        sendFiles: async function (files): Promise<void> {
+          sent = files;
+        },
+      },
+    });
+
+    await execute(tools["send-files"], {
+      file_paths: ["docs/declaration.pdf"],
+    });
+
+    // Slack and Discord ignore the URL and upload bytes, so every workspace
+    // attachment carries a reader they can call. It stays unread otherwise.
+    expect(typeof sent[0]!.fetchData).toBe("function");
+    expect(await channelAttachmentBytes(sent[0]!)).toEqual(
+      Buffer.from("pdf-bytes"),
+    );
   });
 
   it("reports a missing workspace file instead of sending", async (): Promise<void> => {
