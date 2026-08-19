@@ -81,7 +81,7 @@ describe("createTools", () => {
     });
 
     expect(Object.keys(tools).sort()).toEqual([
-      "send-image",
+      "send-images",
       "send-message",
       "send-reactions",
       "send-sticker",
@@ -90,8 +90,8 @@ describe("createTools", () => {
       conversationKey: "tg:target",
       message: "hello",
     });
-    await channelToolExecute(tools["send-image"], {
-      url: "https://example.com/image.png",
+    await channelToolExecute(tools["send-images"], {
+      urls: ["https://example.com/image.png"],
       caption: "caption",
     });
     await channelToolExecute(tools["send-reactions"], { emoji: "heart" });
@@ -102,7 +102,14 @@ describe("createTools", () => {
       message: "hello",
     });
     expect(sendImages).toHaveBeenCalledWith(
-      [{ type: "image", url: "https://example.com/image.png" }],
+      [
+        {
+          type: "image",
+          url: "https://example.com/image.png",
+          name: "image.png",
+          mimeType: "image/png",
+        },
+      ],
       "[safe] caption",
     );
     expect(reactToMessage).toHaveBeenCalledWith("heart");
@@ -161,7 +168,7 @@ describe("createTools", () => {
     };
     const tools = await createTools(context, {
       channels: { telegram: {} },
-      denyTools: ["send-image", "send-sticker"],
+      denyTools: ["send-images", "send-sticker"],
     });
 
     expect(Object.keys(tools).sort()).toEqual([

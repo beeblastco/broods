@@ -42,7 +42,7 @@ import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
 import {
   sendFilesTool,
-  sendImageTool,
+  sendImagesTool,
   sendMessageTool,
   sendReactionsTool,
   sendStickerTool,
@@ -227,7 +227,7 @@ export async function createTools(
   if (context.channel) {
     Object.assign(
       tools,
-      // send-image and send-files both deliver a workspace file, so they take
+      // send-images and send-files both deliver a workspace file, so they take
       // the same workspace list the sandbox tools read from, plus the account
       // that seals the link.
       sendFilesTool({
@@ -235,7 +235,7 @@ export async function createTools(
         workspaces: workspaces,
         ...(context.accountId ? { accountId: context.accountId } : {}),
       }),
-      sendImageTool({
+      sendImagesTool({
         ...context.channel,
         workspaces: workspaces,
         ...(context.accountId ? { accountId: context.accountId } : {}),

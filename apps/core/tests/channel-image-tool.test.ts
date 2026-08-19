@@ -1,7 +1,8 @@
 /**
- * send-image and send-files workspace delivery tests.
- * Cover handing a workspace file to a channel that only fetches public URLs,
- * and the split between a channel that attaches documents and one that cannot.
+ * send-images and send-files workspace delivery tests.
+ * Cover handing workspace files to a channel that only fetches public URLs, the
+ * split between a channel that attaches documents and one that cannot, and the
+ * rungs send-images drops through when a channel will not show pictures.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
@@ -56,21 +57,21 @@ afterEach(() => {
   s3ObjectExistsMock.mockImplementation(async () => true);
 });
 
-describe("sendImageTool", () => {
-  it("sends a workspace file as a durable media link", async (): Promise<void> => {
-    const { sendImageTool } =
+describe("sendImagesTool", () => {
+  it("sends workspace files as durable media links", async (): Promise<void> => {
+    const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
-    let sentUrl = "";
+    let sent: ChannelImage[] = [];
     let sentCaption: string | undefined;
-    const tools = sendImageTool(
+    const tools = sendImagesTool(
       channelContext(async function (images, caption): Promise<void> {
-        sentUrl = images[0]?.url ?? "";
+        sent = images;
         sentCaption = caption;
       }),
     );
 
-    const result = await execute(tools["send-image"], {
-      file_path: "profile.jpeg",
+    const result = await execute(tools["send-images"], {
+      file_paths: ["profile.jpeg", "charts/q3.png"],
       caption: "here you go",
     });
 
@@ -79,12 +80,19 @@ describe("sendImageTool", () => {
       `${NS}/profile.jpeg`,
     ]);
     expect(sentCaption).toBe("[safe] here you go");
-    expect(sentUrl.startsWith("https://gateway.test/media/")).toBe(true);
+    expect(sent.map((image) => image.type)).toEqual(["image", "image"]);
+    expect(sent.map((image) => image.mimeType)).toEqual([
+      "image/jpeg",
+      "image/png",
+    ]);
+    // The whole set reaches the channel in one call, so the adapter can group it
+    // the way its provider wants rather than posting one message per picture.
+    expect(sent[0]!.url.startsWith("https://gateway.test/media/")).toBe(true);
     // The link must survive on its own: everything the media route needs to find
     // the file again is sealed into the token, with no expiry to run out.
     expect(
       openMediaTicket(
-        sentUrl.slice("https://gateway.test/media/".length),
+        sent[0]!.url.slice("https://gateway.test/media/".length),
         SECRET,
       ),
     ).toEqual({
@@ -93,60 +101,142 @@ describe("sendImageTool", () => {
       namespace: NS,
       path: "profile.jpeg",
     });
-    expect(result).toContain("Image sent");
+    expect(result).toContain("2 image(s) sent");
+  });
+
+  it("falls back to documents when the channel cannot show pictures", async (): Promise<void> => {
+    const { sendImagesTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    let sent: ChannelFile[] = [];
+    const context = channelContext(async function (): Promise<void> {});
+    const tools = sendImagesTool({
+      ...context,
+      actions: {
+        sendText: context.actions.sendText,
+        sendTyping: context.actions.sendTyping,
+        reactToMessage: context.actions.reactToMessage,
+        sendFiles: async function (files): Promise<void> {
+          sent = files;
+        },
+      },
+    });
+
+    const result = await execute(tools["send-images"], {
+      file_paths: ["profile.jpeg"],
+    });
+
+    // Same sealed link, offered as something to download rather than look at.
+    expect(sent.map((file) => file.type)).toEqual(["file"]);
+    expect(sent[0]!.name).toBe("profile.jpeg");
+    expect(result).toContain("1 file(s) sent");
+  });
+
+  it("falls back to documents when the channel rejects the batch", async (): Promise<void> => {
+    const { sendImagesTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    let sent: ChannelFile[] = [];
+    const context = channelContext(async function (): Promise<void> {
+      throw new Error("media group rejected");
+    });
+    const tools = sendImagesTool({
+      ...context,
+      actions: {
+        ...context.actions,
+        sendFiles: async function (files): Promise<void> {
+          sent = files;
+        },
+      },
+    });
+
+    const result = await execute(tools["send-images"], {
+      file_paths: ["profile.jpeg"],
+    });
+
+    // A provider that takes the batch and refuses it must not cost the recipient
+    // the picture, so the error is logged and the next route down runs.
+    expect(sent.map((file) => file.name)).toEqual(["profile.jpeg"]);
+    expect(result).toContain("1 file(s) sent");
+  });
+
+  it("falls back to download links when the channel has no document endpoint", async (): Promise<void> => {
+    const { sendImagesTool } =
+      await import("../src/harness/tools/channel.tool.ts");
+    let sentText = "";
+    // Zalo's shape: it can send a photo but has no document endpoint at all, so
+    // a refused photo has only the text link left.
+    const context = channelContext(async function (): Promise<void> {
+      throw new Error("sendPhoto rejected");
+    });
+    const tools = sendImagesTool({
+      ...context,
+      actions: {
+        ...context.actions,
+        sendText: async function (text: string): Promise<void> {
+          sentText = text;
+        },
+      },
+    });
+
+    const result = await execute(tools["send-images"], {
+      file_paths: ["profile.jpeg"],
+      caption: "xem hình",
+    });
+
+    expect(sentText.startsWith("[safe] xem hình\nprofile.jpeg: ")).toBe(true);
+    expect(result).toContain("cannot attach documents");
   });
 
   it("reports a missing workspace file instead of sending", async (): Promise<void> => {
-    const { sendImageTool } =
+    const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     s3ObjectExistsMock.mockImplementation(async () => false);
     const sendImages = mock(async function (): Promise<void> {});
-    const tools = sendImageTool(channelContext(sendImages));
+    const tools = sendImagesTool(channelContext(sendImages));
 
-    const sent = execute(tools["send-image"], { file_path: "missing.png" });
+    const sent = execute(tools["send-images"], { file_paths: ["missing.png"] });
 
     await expect(sent).rejects.toThrow("Error: file not found: missing.png");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
   it("refuses both sources rather than picking one", async (): Promise<void> => {
-    const { sendImageTool } =
+    const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const sendImages = mock(async function (): Promise<void> {});
-    const tools = sendImageTool(channelContext(sendImages));
+    const tools = sendImagesTool(channelContext(sendImages));
 
-    const sent = execute(tools["send-image"], {
-      file_path: "profile.jpeg",
-      url: "https://example.com/other.png",
+    const sent = execute(tools["send-images"], {
+      file_paths: ["profile.jpeg"],
+      urls: ["https://example.com/other.png"],
     });
 
-    await expect(sent).rejects.toThrow("takes file_path or url, not both");
+    await expect(sent).rejects.toThrow("takes file_paths or urls, not both");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
-  it("requires either a workspace file or a URL", async (): Promise<void> => {
-    const { sendImageTool } =
+  it("requires either workspace files or URLs", async (): Promise<void> => {
+    const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const sendImages = mock(async function (): Promise<void> {});
-    const tools = sendImageTool(channelContext(sendImages));
+    const tools = sendImagesTool(channelContext(sendImages));
 
-    const sent = execute(tools["send-image"], { caption: "no image" });
+    const sent = execute(tools["send-images"], { caption: "no image" });
 
-    await expect(sent).rejects.toThrow("send-image needs either file_path");
+    await expect(sent).rejects.toThrow("send-images needs either file_paths");
     expect(sendImages).not.toHaveBeenCalled();
   });
 
   it("offers no workspace file path when no workspace is attached", async (): Promise<void> => {
-    const { sendImageTool } =
+    const { sendImagesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const context = channelContext(mock(async function (): Promise<void> {}));
-    const tools = sendImageTool({ ...context, workspaces: [] });
-    const schema = tools["send-image"]!.inputSchema as {
+    const tools = sendImagesTool({ ...context, workspaces: [] });
+    const schema = tools["send-images"]!.inputSchema as {
       jsonSchema: { properties: Record<string, unknown> };
     };
 
     expect(Object.keys(schema.jsonSchema.properties)).toEqual([
-      "url",
+      "urls",
       "caption",
     ]);
   });
