@@ -13,6 +13,8 @@ import { timingSafeEqual } from "node:crypto";
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelFile,
+  ChannelImage,
   ChannelParseResult,
 } from "./channels.ts";
 import { isAllowedId } from "./channels.ts";
@@ -21,6 +23,10 @@ import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
+// Telegram takes 2-10 attachments as a single album and one attachment on its
+// own; past ten it rejects the batch, so a longer list goes out as consecutive
+// albums rather than failing.
+const TELEGRAM_MEDIA_GROUP_MAX = 10;
 
 export interface TelegramSource {
   chatId: number;
@@ -127,16 +133,21 @@ export function createTelegramChannel(
       const source = toTelegramSource(msg.source);
 
       return {
-        sendImage: async function(url, caption): Promise<void> {
-          await transport.postMessage(source.threadId, {
-            raw: caption ?? "",
-            attachments: [
-              {
-                type: "image",
-                url: url,
-              },
-            ],
-          });
+        sendFiles: async function(files, caption): Promise<void> {
+          await postTelegramAttachments(
+            transport,
+            source.threadId,
+            files,
+            caption,
+          );
+        },
+        sendImages: async function(images, caption): Promise<void> {
+          await postTelegramAttachments(
+            transport,
+            source.threadId,
+            images,
+            caption,
+          );
         },
         sendSticker: async function(sticker): Promise<void> {
           const value = sticker.trim();
@@ -238,6 +249,28 @@ function assertTelegramStickerUrl(value: string): void {
     throw new Error(
       "Telegram sendSticker needs an absolute http(s) sticker URL",
     );
+  }
+}
+
+// One album per ten attachments, in order. The caption rides the first message
+// only: repeating it once per batch reads as the same message sent twice. The
+// Chat SDK picks the endpoint from `type`, so pictures land as photos the
+// recipient sees inline and documents as files they download.
+async function postTelegramAttachments(
+  transport: TelegramAdapter,
+  threadId: string,
+  attachments: ChannelFile[] | ChannelImage[],
+  caption: string | undefined,
+): Promise<void> {
+  for (
+    let index = 0;
+    index < attachments.length;
+    index += TELEGRAM_MEDIA_GROUP_MAX
+  ) {
+    await transport.postMessage(threadId, {
+      raw: index === 0 ? (caption ?? "") : "",
+      attachments: attachments.slice(index, index + TELEGRAM_MEDIA_GROUP_MAX),
+    });
   }
 }
 

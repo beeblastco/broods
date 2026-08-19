@@ -716,7 +716,9 @@ function createSlackActions(
   const formatter = new SlackFormatConverter();
 
   return {
-    sendImage: async function(url, caption): Promise<void> {
+    sendImages: async function(images, caption): Promise<void> {
+      // Block Kit stacks image blocks inside one message, so a batch stays a
+      // single post rather than a run of them.
       await postSlackCard(
         botToken,
         apiUrl,
@@ -724,7 +726,9 @@ function createSlackActions(
         Card({
           children: [
             ...(caption ? [CardText(caption)] : []),
-            Image({ url: url, alt: caption ?? "Image" }),
+            ...images.map((image) =>
+              Image({ url: image.url, alt: image.name ?? caption ?? "Image" }),
+            ),
           ],
         }),
       );

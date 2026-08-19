@@ -357,11 +357,13 @@ describe("zalo channel adapter", () => {
 
   it("sends an image through sendPhoto with the caption truncated", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
-      await actions.sendImage?.(
-        "https://cdn.example.com/chart.png",
+      await actions.sendImages?.(
+        [{ type: "image", url: "https://cdn.example.com/chart.png" }],
         "x".repeat(2100),
       );
-      await actions.sendImage?.("https://cdn.example.com/plain.png");
+      await actions.sendImages?.([
+        { type: "image", url: "https://cdn.example.com/plain.png" },
+      ]);
     });
 
     expect(calls).toEqual([
@@ -386,10 +388,12 @@ describe("zalo channel adapter", () => {
   it("rejects image URLs Zalo could not fetch", async () => {
     const calls = await captureZaloCalls(async (actions): Promise<void> => {
       await expect(
-        actions.sendImage?.("/workspace/chart.png"),
+        actions.sendImages?.([{ type: "image", url: "/workspace/chart.png" }]),
       ).rejects.toThrow("absolute http(s) image URL");
       await expect(
-        actions.sendImage?.("data:image/png;base64,iVBORw0KGgo="),
+        actions.sendImages?.([
+          { type: "image", url: "data:image/png;base64,iVBORw0KGgo=" },
+        ]),
       ).rejects.toThrow("absolute http(s) image URL");
     });
 

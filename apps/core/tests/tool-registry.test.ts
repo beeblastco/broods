@@ -50,7 +50,7 @@ describe("createTools", () => {
 
   it("automatically exposes channel interaction tools on channel turns", async (): Promise<void> => {
     const { createTools } = await import("../src/harness/tools/index.ts");
-    const sendImage = mock(async function (): Promise<void> {});
+    const sendImages = mock(async function (): Promise<void> {});
     const sendSticker = mock(async function (): Promise<void> {});
     const reactToMessage = mock(async function (): Promise<void> {});
     const dispatchSessionMessage = mock(
@@ -63,7 +63,7 @@ describe("createTools", () => {
       dispatchSessionMessage: dispatchSessionMessage,
       channel: {
         actions: {
-          sendImage: sendImage,
+          sendImages: sendImages,
           sendSticker: sendSticker,
           sendText: async function (): Promise<void> {},
           sendTyping: async function (): Promise<void> {},
@@ -101,8 +101,8 @@ describe("createTools", () => {
       conversationKey: "tg:target",
       message: "hello",
     });
-    expect(sendImage).toHaveBeenCalledWith(
-      "https://example.com/image.png",
+    expect(sendImages).toHaveBeenCalledWith(
+      [{ type: "image", url: "https://example.com/image.png" }],
       "[safe] caption",
     );
     expect(reactToMessage).toHaveBeenCalledWith("heart");
@@ -1311,7 +1311,7 @@ function cronSummary(): CronSummary {
 function channelToolContext(): ChannelToolContext {
   return {
     actions: {
-      sendImage: async function (): Promise<void> {},
+      sendImages: async function (): Promise<void> {},
       sendSticker: async function (): Promise<void> {},
       sendText: async function (): Promise<void> {},
       sendTyping: async function (): Promise<void> {},

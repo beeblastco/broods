@@ -25,12 +25,17 @@ Channel tools are automatic; do not add them to `config.tools`.
 | --- | --- |
 | `send-message` | Message another session |
 | `send-image` | Send an image, from a workspace file or a public URL |
+| `send-files` | Send workspace documents |
 | `send-sticker` | Send a sticker |
 | `send-reactions` | React to a message |
 
 `send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
 
 `send-image` takes `file_path` for an image in an attached workspace, or `url` for one already published on the web. `file_path` appears only when the agent has a workspace attached.
+
+`send-files` takes `file_paths`, a list of workspace documents, and is for anything that is not a picture: PDFs, spreadsheets, text files. Pictures go through `send-image`, because a picture the recipient sees inline and a file they download are different messages.
+
+The two split at the channel boundary, not in the prompt. A provider declares what it can do by implementing `sendImages` or `sendFiles`, the model only ever names workspace paths, and the adapter spends the batch the way its provider wants: Telegram groups up to ten attachments into one album and starts another for the rest, Slack stacks images into a single Block Kit message, Zalo has no album and posts them in sequence. A caption rides the first message only. Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
 
 Chat providers fetch the picture themselves rather than accepting an upload, and they do not all keep a copy: Zalo stores the URL and re-fetches it every time a viewer opens the photo. A workspace file is therefore handed over as a durable `/media/{ticket}` link served by core, not as a presigned S3 URL that would leave a broken image in chat history once it expired. Storage stays private, the sealed ticket is the only credential, and rotating `SERVICE_AUTH_SECRET` revokes every link ever issued.
 
