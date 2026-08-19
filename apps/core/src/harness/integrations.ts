@@ -1773,8 +1773,6 @@ export async function sendChannelReply(options: {
   channelName: string;
   source: Record<string, unknown>;
   text: string;
-  // When set, `text` becomes the image caption instead of its own message.
-  imageUrl?: string;
 }): Promise<void> {
   const registry = createChannelRegistry(options.config);
   const adapter = registry.webhookChannels.find(
@@ -1811,21 +1809,8 @@ export async function sendChannelReply(options: {
     content: text,
     source: options.source,
   };
-  const actions = adapter.actions(message);
-  if (options.imageUrl) {
-    if (!actions.sendImages) {
-      throw new Error(
-        `Channel ${options.channelName} cannot send images; send a link instead`,
-      );
-    }
-    await actions.sendImages(
-      [{ type: "image", url: options.imageUrl }],
-      text || undefined,
-    );
 
-    return;
-  }
-  await actions.sendText(text);
+  await adapter.actions(message).sendText(text);
 }
 
 function parsePublicEndpointPath(rawPath: string): PublicEndpointPath | null {
