@@ -11,7 +11,7 @@ import { logWarn } from "../log.ts";
 import { isPlainObject } from "../object.ts";
 import type {
   AgentBehaviorConfig,
-  AgentChannelWorkspaceScope,
+  ChannelPartition,
   AgentConfig,
   AgentWorkspaceRef,
 } from "./agent-config.ts";
@@ -25,7 +25,7 @@ const CHANNEL_CONFIG_KEYS = [
   "policies",
   "denyTools",
   "replyIn",
-  "workspaceScope",
+  "partition",
   "sandboxImages",
   "tagRoles",
 ] as const;
@@ -59,7 +59,7 @@ export interface ChannelRecordConfig {
    * gives the runtime a second place to reply.
    */
   replyIn?: ChannelReplyIn;
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   /** Images the agent may stand a sandbox up from for a thread in this channel. */
   sandboxImages?: string[];
   tagRoles?: ChannelTagRole[];
@@ -175,13 +175,13 @@ export function applyChannelRecord(
     // The scope entry is written even when the bound agent carries no config for
     // this channel — with an account-scoped webhook the credentials live on the
     // receiving agent, and an isolated workspace throws without a scope.
-    ...(channelConfig.workspaceScope
+    ...(channelConfig.partition
       ? {
           channels: {
             ...config.channels,
             [channelName]: {
               ...(isPlainObject(channelSettings) ? channelSettings : {}),
-              workspaceScope: channelConfig.workspaceScope,
+              partition: channelConfig.partition,
             },
           },
         }
@@ -217,7 +217,7 @@ export function normalizeChannelRecordConfig(
     "config.sandboxImages",
   );
   const replyIn = normalizeReplyIn(config.replyIn);
-  const workspaceScope = normalizeChannelWorkspaceScope(config.workspaceScope);
+  const partition = normalizeChannelPartition(config.partition);
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
   return {
@@ -227,7 +227,7 @@ export function normalizeChannelRecordConfig(
     ...(policies ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
     ...(replyIn ? { replyIn: replyIn } : {}),
-    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+    ...(partition ? { partition: partition } : {}),
     ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
     ...(tagRoles ? { tagRoles: tagRoles } : {}),
   };
@@ -385,32 +385,30 @@ function normalizeChannelWorkspaces(
   });
 }
 
-function normalizeChannelWorkspaceScope(
+function normalizeChannelPartition(
   value: unknown,
-): AgentChannelWorkspaceScope | undefined {
+): ChannelPartition | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
-    throw new Error("config.workspaceScope must be an object");
+    throw new Error("config.partition must be an object");
   }
   const scope = value as Record<string, unknown>;
-  if (scope.level === "channel") {
+  if (scope.by === "shared") {
     if (scope.alias !== undefined) {
       throw new Error(
-        "config.workspaceScope.alias is only supported when level is conversation",
+        "config.partition.alias is only supported when by is conversation",
       );
     }
 
-    return { level: "channel" };
+    return { by: "shared" };
   }
-  if (scope.level !== "conversation") {
-    throw new Error(
-      "config.workspaceScope.level must be one of: channel, conversation",
-    );
+  if (scope.by !== "conversation") {
+    throw new Error("config.partition.by must be one of: shared, conversation");
   }
 
   return {
-    level: "conversation",
-    alias: requireString(scope.alias, "config.workspaceScope.alias"),
+    by: "conversation",
+    alias: requireString(scope.alias, "config.partition.alias"),
   };
 }
 

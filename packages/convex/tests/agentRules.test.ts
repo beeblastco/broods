@@ -214,12 +214,12 @@ describe("agent rules", () => {
         channels: {
           slack: {
             id: "slack",
-            workspaceScope: { level: "channel", alias: "x" },
+            partition: { by: "shared", alias: "x" },
           },
         },
       }),
     ).toThrow(
-      "config.channels.slack.workspaceScope.alias is only supported when config.channels.slack.workspaceScope.level is conversation",
+      "config.channels.slack.partition.alias is only supported when config.channels.slack.partition.by is conversation",
     );
     expect(() =>
       normalizeAgentConfig({

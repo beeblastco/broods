@@ -532,17 +532,6 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   }
 }
 
-// `partition` is the authoring name; storage still reads `workspaceScope`.
-function workspaceScopeFromPartition(
-  partition: AnyConnectionDefinition["partition"],
-): { level: string; alias?: string } | undefined {
-  if (!partition) return undefined;
-
-  return partition.by === "shared"
-    ? { level: "channel" }
-    : { level: "conversation", alias: partition.alias };
-}
-
 function assertPartitionShape(
   partition: AnyConnectionDefinition["partition"],
   name: string,
@@ -1269,7 +1258,6 @@ function normalizeAgentConfig(
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-        const workspaceScope = workspaceScopeFromPartition(channel.partition);
         const allowedChannelIds = connectionReach(channel, reach);
 
         return [
@@ -1277,7 +1265,7 @@ function normalizeAgentConfig(
           {
             id: channelId,
             ...channel.config,
-            ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+            ...(channel.partition ? { partition: channel.partition } : {}),
             allowedChannelIds: allowedChannelIds,
           },
         ];
@@ -1634,10 +1622,10 @@ function resolveContainedResourcePath(
   );
 }
 
-// The SDK says `connection`, `agents` and `partition`; storage says `platform`,
-// `agentBindings` and `workspaceScope`. Translate here so the authoring names
-// never reach the wire and the connection's credentials never reach a channel
-// record — `rewriteValues` would otherwise inline the whole connection object.
+// The SDK says `connection` and `agents`; storage says `platform` and
+// `agentBindings`. Translate here so the authoring names never reach the wire
+// and the connection's credentials never reach a channel record, which
+// `rewriteValues` would otherwise inline as the whole connection object.
 function normalizeChannelConfig(name: string, value: unknown): unknown {
   const config = { ...(value as Record<string, unknown>) };
   const connection = config.connection;
@@ -1649,12 +1637,10 @@ function normalizeChannelConfig(name: string, value: unknown): unknown {
   delete config.connection;
   config.platform = connection.type;
 
-  const partition = config.partition as AnyConnectionDefinition["partition"];
-  assertPartitionShape(partition, `Channel "${name}"`);
-  if (partition) {
-    delete config.partition;
-    config.workspaceScope = workspaceScopeFromPartition(partition);
-  }
+  assertPartitionShape(
+    config.partition as AnyConnectionDefinition["partition"],
+    `Channel "${name}"`,
+  );
 
   return rewriteValues(config);
 }

@@ -556,7 +556,7 @@ export const support = defineAgent({ name: "support", connections: [one, two] })
   );
 });
 
-test("compileProject lowers partition into the stored workspaceScope", async () => {
+test("compileProject lowers partition into the stored partition", async () => {
   const cwd = await fixtureProject(
     "",
     `
@@ -601,11 +601,11 @@ export const support = defineAgent({
     channels: {
       slack: {
         id: "supportSlackChannel",
-        workspaceScope: { level: "channel" },
+        partition: { by: "shared" },
       },
       github: {
         id: "supportGithubChannel",
-        workspaceScope: { alias: "support", level: "conversation" },
+        partition: { alias: "support", by: "conversation" },
       },
     },
     workspaces: [{ name: "repo", workspaceId: "repo" }],
@@ -670,7 +670,7 @@ export const support = defineAgent({ name: "support", connections: [slack], work
     channels: {
       slack: {
         id: "supportSlackChannel",
-        workspaceScope: { level: "channel" },
+        partition: { by: "shared" },
       },
     },
   });

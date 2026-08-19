@@ -1793,12 +1793,7 @@ paths:
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
-        - {
-            name: stage,
-            in: query,
-            required: true,
-            schema: { type: string },
-          }
+        - { name: stage, in: query, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
@@ -1821,12 +1816,7 @@ paths:
       security: [{ BearerAuth: [] }]
       parameters:
         - { name: project, in: query, required: true, schema: { type: string } }
-        - {
-            name: stage,
-            in: query,
-            required: true,
-            schema: { type: string },
-          }
+        - { name: stage, in: query, required: true, schema: { type: string } }
       responses:
         "200":
           description: Tool list
@@ -3297,19 +3287,19 @@ components:
             message itself arrived in one. Slack only — no other provider gives
             the runtime a choice of place. Defaults to thread in a channel and
             source in a DM.
-        workspaceScope:
+        partition:
           oneOf:
             - type: object
-              required: [level]
+              required: [by]
               # alias is only meaningful on a conversation scope; the API rejects
               # it here, so the schema must too or clients validate what 400s.
               not: { required: [alias] }
               properties:
-                level: { type: string, enum: [channel] }
+                by: { type: string, enum: [shared] }
             - type: object
-              required: [level, alias]
+              required: [by, alias]
               properties:
-                level: { type: string, enum: [conversation] }
+                by: { type: string, enum: [conversation] }
                 alias: { type: string }
         sandboxImages:
           type: array
@@ -3809,18 +3799,18 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]
         github:
           type: object
           properties:
@@ -3863,18 +3853,18 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]
         slack:
           type: object
           properties:
@@ -3904,18 +3894,18 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]
         discord:
           type: object
           properties:
@@ -3957,18 +3947,18 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]
         pancake:
           type: object
           description: Pancake sends no signature header; the webhook URL must carry `?secret=<webhookSecret>`, checked on every request.
@@ -3991,18 +3981,18 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]
         zalo:
           type: object
           description: Official Zalo Bot API webhook channel for text messages in private chats and groups.
@@ -4032,15 +4022,15 @@ components:
               enum: [enabled, disabled]
               default: disabled
               description: Whether replies from this channel include a dashboard trace link. Off by default. Trace collection is unaffected.
-            workspaceScope:
+            partition:
               type: object
               description: "Hierarchical workspace isolation scope for workspaces with `isolation: true`."
-              required: [level]
+              required: [by]
               properties:
                 alias:
                   type: string
                   pattern: "^[A-Za-z0-9._-]+$"
-                  description: Model-visible child scope folder name. Required when level is conversation; not allowed when level is channel.
-                level:
+                  description: Model-visible child scope folder name. Required when by is conversation; not allowed when by is shared.
+                by:
                   type: string
-                  enum: [channel, conversation]
+                  enum: [shared, conversation]

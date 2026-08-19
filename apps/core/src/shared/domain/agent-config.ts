@@ -402,8 +402,16 @@ export interface AgentChannelsConfig {
   [key: string]: unknown;
 }
 
-export type ChannelWorkspaceScopeLevel = "channel" | "conversation";
-const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
+export type ChannelPartitionBy = "shared" | "conversation";
+const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
+
+/**
+ * How an attached partitioned workspace splits its folders for runs arriving
+ * through this door. `shared` mounts the workspace root; `conversation` mounts
+ * a private child folder per thread, issue or chat under `alias`.
+ */
+export type ChannelPartition =
+  { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
 
 // Every provider used to name its own reach list. They are one pair now, so a
 // stale key has to fail loudly here rather than sit in config doing nothing —
@@ -414,10 +422,6 @@ const RETIRED_REACH_KEYS = [
   ["allowedGuildIds", "allowedChannelIds"],
   ["allowedRepos", "allowedChannelIds"],
 ] as const;
-
-export type AgentChannelWorkspaceScope =
-  | { level: "channel"; alias?: never }
-  | { level: "conversation"; alias: string };
 
 // The adapter credential fields are spelled out rather than indexed off the
 // adapter configs so the published SDK types resolve without those packages;
@@ -473,7 +477,7 @@ export interface AgentTelegramChannelConfig {
   allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -494,7 +498,7 @@ export interface AgentGitHubChannelConfig {
   /** When false, the bot does not auto-trigger on new PRs (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to a PR. */
   triggerOnPROpen?: boolean;
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -507,7 +511,7 @@ export interface AgentSlackChannelConfig {
   allowedUserIds?: string[];
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -523,7 +527,7 @@ export interface AgentDiscordChannelConfig {
   /** Role ids that count as mentioning the agent, e.g. an on-call role. */
   mentionRoleIds?: string[];
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -536,7 +540,7 @@ export interface AgentPancakeChannelConfig {
   webhookSecret?: string;
   senderId?: string;
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -547,7 +551,7 @@ export interface AgentZaloChannelConfig {
   botToken?: string;
   webhookSecret?: string;
   trace?: "enabled" | "disabled";
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   [key: string]: unknown;
 }
 
@@ -1483,40 +1487,37 @@ function normalizeChannelIdentityConfig(
   assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
   if (config.workspaceIsolationScope !== undefined) {
     throw new Error(
-      `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
+      `${name}.workspaceIsolationScope is no longer supported; use ${name}.partition`,
     );
   }
-  if (config.workspaceScope === undefined) {
+  if (config.partition === undefined) {
     return;
   }
-  if (!isPlainObject(config.workspaceScope)) {
-    throw new Error(`${name}.workspaceScope must be an object`);
+  if (!isPlainObject(config.partition)) {
+    throw new Error(`${name}.partition must be an object`);
   }
-  const workspaceScope = config.workspaceScope as Record<string, unknown>;
+  const partition = config.partition as Record<string, unknown>;
   assertOptionalEnum(
-    workspaceScope.level,
-    `${name}.workspaceScope.level`,
-    CHANNEL_WORKSPACE_SCOPE_LEVELS,
+    partition.by,
+    `${name}.partition.by`,
+    CHANNEL_PARTITION_MODES,
   );
-  if (workspaceScope.level === undefined) {
+  if (partition.by === undefined) {
     throw new Error(
-      `${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`,
+      `${name}.partition.by must be one of: ${CHANNEL_PARTITION_MODES.join(", ")}`,
     );
   }
-  if (workspaceScope.level === "channel") {
-    if ("alias" in workspaceScope && workspaceScope.alias !== undefined) {
+  if (partition.by === "shared") {
+    if ("alias" in partition && partition.alias !== undefined) {
       throw new Error(
-        `${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`,
+        `${name}.partition.alias is only supported when ${name}.partition.by is conversation`,
       );
     }
 
     return;
   }
-  normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
-  assertWorkspaceScopeAlias(
-    workspaceScope.alias,
-    `${name}.workspaceScope.alias`,
-  );
+  normalizeRequiredString(partition.alias, `${name}.partition.alias`);
+  assertPartitionAlias(partition.alias, `${name}.partition.alias`);
 }
 
 function assertOptionalString(value: unknown, name: string): void {
@@ -1578,7 +1579,7 @@ function assertWorkspaceId(value: string, name: string): void {
   }
 }
 
-function assertWorkspaceScopeAlias(value: unknown, name: string): void {
+function assertPartitionAlias(value: unknown, name: string): void {
   if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
     throw new Error(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,

@@ -20,7 +20,7 @@
  */
 
 import type {
-  AgentChannelWorkspaceScope,
+  ChannelPartition,
   AgentConfig,
   ChannelReplyIn,
   PolicyDocument,
@@ -182,7 +182,7 @@ export interface ChannelRecordConfig {
    * gives the runtime a second place to reply.
    */
   replyIn?: ChannelReplyIn;
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
   /** Images the agent may stand a sandbox up from for a thread here. */
   sandboxImages?: string[];
   /** Named groups of people, readable from policy conditions as `userRoles`. */

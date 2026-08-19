@@ -39,7 +39,7 @@ import {
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
-  type AgentChannelWorkspaceScope,
+  type ChannelPartition,
   type AgentConfig,
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
@@ -1195,7 +1195,7 @@ async function handleChannelWebhook(
       });
       waitUntil(
         Promise.resolve().then(() =>
-          cleanupChannelWorkspaceScopes({
+          cleanupChannelPartitions({
             accountId: account.accountId,
             agentConfig: agent.config,
             channelName: parsed.channelName,
@@ -1425,20 +1425,18 @@ async function handleChannelWebhook(
   }
 }
 
-async function cleanupChannelWorkspaceScopes(options: {
+async function cleanupChannelPartitions(options: {
   accountId: string;
   agentConfig: AgentConfig;
   channelName: string;
   conversationKey: string;
 }): Promise<void> {
   const channelConfig = options.agentConfig.channels?.[options.channelName];
-  const rawWorkspaceScope = isPlainObject(channelConfig)
-    ? channelConfig.workspaceScope
+  const rawPartition = isPlainObject(channelConfig)
+    ? channelConfig.partition
     : undefined;
-  const workspaceScope = isChannelWorkspaceScope(rawWorkspaceScope)
-    ? rawWorkspaceScope
-    : undefined;
-  if (workspaceScope?.level !== "conversation") {
+  const partition = isChannelPartition(rawPartition) ? rawPartition : undefined;
+  if (partition?.by !== "conversation") {
     return;
   }
 
@@ -1466,7 +1464,7 @@ async function cleanupChannelWorkspaceScopes(options: {
           options.conversationKey,
           "conversation",
         ),
-        workspaceScope: workspaceScope,
+        partition: partition,
       },
     );
     reservedSandboxesReleased += await releaseReservedSandboxes(
@@ -1492,13 +1490,11 @@ async function cleanupChannelWorkspaceScopes(options: {
   });
 }
 
-function isChannelWorkspaceScope(
-  value: unknown,
-): value is AgentChannelWorkspaceScope {
+function isChannelPartition(value: unknown): value is ChannelPartition {
   if (!isPlainObject(value)) return false;
-  if (value.level === "channel") return value.alias === undefined;
+  if (value.by === "shared") return value.alias === undefined;
 
-  return value.level === "conversation" && typeof value.alias === "string";
+  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 // Attaches an onMessageReceived hook's opaque metadata to the newest user

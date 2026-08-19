@@ -47,7 +47,7 @@ request in
 
 ## Shapes
 
-- a **channel record** (`channelRecords`) is one row per real place a team talk — a Slack channel, a Discord channel, a repo — keyed `(account, platform, externalId)`. it bind that place to an agent and carry instructions, workspaces, `policies`, `denyTools`, `replyIn`, `workspaceScope`, `sandboxImages`, `tagRoles`. different thing from `config.channels`, which hold one adapter credentials.
+- a **channel record** (`channelRecords`) is one row per real place a team talk — a Slack channel, a Discord channel, a repo — keyed `(account, platform, externalId)`. it bind that place to an agent and carry instructions, workspaces, `policies`, `denyTools`, `replyIn`, `partition`, `sandboxImages`, `tagRoles`. different thing from `config.channels`, which hold one adapter credentials.
 - sandbox and workspace are separate account-scoped records (`sandboxConfig` / `workspaceConfig`). agent config point at them by id: `sandbox: "<id>"` + `workspaces: [{name, workspaceId}]`. CRUD live in the config plane; core keep lifecycle verbs only.
 - a referenced sandbox expose Claude-Code-style tools — `bash` always, `read`/`write`/`edit`/`glob`/`grep` only when a workspace is attached too. approval follow sandbox `permissionMode` (`edit` / `ask` / `bypass`). search/research tools stay opt-in through `config.tools`.
 - account model config under `config.model`: `provider`, `modelId`, normal Vercel AI SDK `streamText` settings, `providerOptions` for provider-specific options. provider constructor settings under `config.provider`.

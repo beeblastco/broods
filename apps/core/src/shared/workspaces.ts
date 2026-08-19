@@ -9,7 +9,7 @@
  */
 
 import type {
-  AgentChannelWorkspaceScope,
+  ChannelPartition,
   AgentConfig,
   AgentWorkspaceRef,
 } from "./domain/agent-config.ts";
@@ -69,7 +69,7 @@ export interface WorkspaceIsolationScope {
   channelName?: string;
   channelScopeKey?: string;
   conversationKey?: string;
-  workspaceScope?: AgentChannelWorkspaceScope;
+  partition?: ChannelPartition;
 }
 
 /** Derive the shared filesystem namespace for a workspace record. */
@@ -91,17 +91,17 @@ export function isolatedWorkspaceNamespace(
     return baseNamespace;
   }
 
-  const workspaceScope = scope.workspaceScope;
-  if (!workspaceScope) {
+  const partition = scope.partition;
+  if (!partition) {
     if (!scope.channelName) {
       return baseNamespace;
     }
     throw new Error(
-      "Workspace isolation requires the active channel to define workspaceScope",
+      "Workspace isolation requires the active channel to define partition",
     );
   }
 
-  if (workspaceScope.level === "channel") {
+  if (partition.by === "shared") {
     return baseNamespace;
   }
 
@@ -112,7 +112,7 @@ export function isolatedWorkspaceNamespace(
     );
   }
 
-  return `${baseNamespace}/${workspaceScope.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
+  return `${baseNamespace}/${partition.alias}/${normalizeFilesystemNamespace(conversationKey)}`;
 }
 
 /**

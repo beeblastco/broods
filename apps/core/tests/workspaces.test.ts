@@ -36,7 +36,7 @@ describe("workspaceNamespace", () => {
       channelName: "github",
       channelScopeKey: "slack:T123:C456",
       conversationKey: "slack:T123:C456:1719760000.000000",
-      workspaceScope: { level: "channel" as const },
+      partition: { by: "shared" as const },
     };
 
     expect(isolatedWorkspaceNamespace(base, false, scope)).toBe(base);
@@ -45,7 +45,7 @@ describe("workspaceNamespace", () => {
     expect(
       isolatedWorkspaceNamespace(base, true, {
         ...scope,
-        workspaceScope: { alias: "support", level: "conversation" },
+        partition: { alias: "support", by: "conversation" },
       }),
     ).toBe(
       `${base}/support/${normalizeFilesystemNamespace(scope.conversationKey)}`,
@@ -53,7 +53,7 @@ describe("workspaceNamespace", () => {
     expect(() =>
       isolatedWorkspaceNamespace(base, true, { channelName: "slack" }),
     ).toThrow(
-      "Workspace isolation requires the active channel to define workspaceScope",
+      "Workspace isolation requires the active channel to define partition",
     );
   });
 
@@ -63,7 +63,7 @@ describe("workspaceNamespace", () => {
       channelName: "slack",
       channelScopeKey: "slack:T123:C456",
       conversationKey: "slack:T123:C456:1719760000.000000",
-      workspaceScope: { level: "channel" as const },
+      partition: { by: "shared" as const },
     };
     const sameAliasParent = {
       ...parentScope,
@@ -76,7 +76,7 @@ describe("workspaceNamespace", () => {
       channelName: "github",
       channelScopeKey: "gh:owner/repo",
       conversationKey: "gh:owner/repo:issue:123",
-      workspaceScope: { alias: "support", level: "conversation" as const },
+      partition: { alias: "support", by: "conversation" as const },
     };
     const secondIssue = {
       ...firstIssue,
@@ -178,7 +178,7 @@ describe("resolveAgentRuntime", () => {
         channelName: "github",
         channelScopeKey: "gh:owner/repo",
         conversationKey: "gh:owner/repo:issue:123",
-        workspaceScope: { alias: "support", level: "conversation" },
+        partition: { alias: "support", by: "conversation" },
       },
     );
 
