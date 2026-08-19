@@ -383,24 +383,24 @@ function createDiscordActions(
         source.channelId ?? source.interactionId ?? source.messageId ?? "@me",
     });
 
+  const sendAttachments = async function (
+    attachments: ChannelFile[] | ChannelImage[],
+    caption?: string,
+  ): Promise<void> {
+    await discord.postMessage(threadId, {
+      markdown: caption ?? "",
+      files: await discordUploads(attachments),
+    });
+  };
+
   return {
     // Discord ignores an outbound URL attachment entirely — the API takes a
     // multipart upload and nothing else — so both deliveries read the bytes and
-    // hand them over as one message. Pictures and documents use the same call
-    // because Discord decides which to render inline from the file itself.
-    sendFiles: async function(files, caption): Promise<void> {
-      await discord.postMessage(threadId, {
-        markdown: caption ?? "",
-        files: await discordUploads(files),
-      });
-    },
-
-    sendImages: async function(images, caption): Promise<void> {
-      await discord.postMessage(threadId, {
-        markdown: caption ?? "",
-        files: await discordUploads(images),
-      });
-    },
+    // hand them over as one message. One body serves both because Discord
+    // decides which to render inline from the file itself; they stay separate
+    // keys so a channel can still advertise one without the other.
+    sendFiles: sendAttachments,
+    sendImages: sendAttachments,
 
     sendText: async function(text) {
       if (!source.interactionToken) {
@@ -447,12 +447,6 @@ function createDiscordActions(
   };
 }
 
-/**
- * Prefix the sender so the agent knows who is talking in a multi-person guild
- * channel, and turn `<@id>` mentions into readable names. Mentions that only
- * target the bot are dropped, and a command keeps its bare text so the leading
- * token still parses.
- */
 // Bytes read once per attachment, in parallel, because Discord takes the whole
 // batch in one multipart request and rejects a message with no content and no
 // files anyway.
@@ -470,6 +464,12 @@ async function discordUploads(
   );
 }
 
+/**
+ * Prefix the sender so the agent knows who is talking in a multi-person guild
+ * channel, and turn `<@id>` mentions into readable names. Mentions that only
+ * target the bot are dropped, and a command keeps its bare text so the leading
+ * token still parses.
+ */
 function formatDiscordMessageText(
   content: string,
   data: DiscordGatewayMessageData,

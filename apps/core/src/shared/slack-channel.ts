@@ -17,6 +17,7 @@ import {
   sendSlackResponseUrl,
   SlackApiError,
   uploadSlackFiles,
+  type SlackFileUpload,
 } from "@chat-adapter/slack/api";
 import {
   parseSlackWebhookBody,
@@ -29,6 +30,7 @@ import {
   ConsoleLogger,
   Image,
   type CardElement,
+  type ImageElement,
   type StreamChunk,
 } from "chat";
 import {
@@ -725,11 +727,15 @@ function createSlackActions(
       // as a single upload rather than one message each.
       await uploadSlackFiles(
         await Promise.all(
-          files.map(async (file) => ({
-            data: await channelAttachmentBytes(file),
-            filename: channelAttachmentName(file),
-            title: channelAttachmentName(file),
-          })),
+          files.map(async (file): Promise<SlackFileUpload> => {
+            const name = channelAttachmentName(file);
+
+            return {
+              data: await channelAttachmentBytes(file),
+              filename: name,
+              title: name,
+            };
+          }),
         ),
         {
           token: botToken,
@@ -753,8 +759,12 @@ function createSlackActions(
         Card({
           children: [
             ...(caption ? [CardText(caption)] : []),
-            ...images.map((image) =>
-              Image({ url: image.url, alt: image.name ?? caption ?? "Image" }),
+            ...images.map(
+              (image): ImageElement =>
+                Image({
+                  url: image.url,
+                  alt: image.name ?? caption ?? "Image",
+                }),
             ),
           ],
         }),

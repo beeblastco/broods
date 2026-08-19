@@ -4,12 +4,15 @@
  */
 
 import { jsonSchema, tool, type JSONSchema7, type ToolSet } from "ai";
-import type {
-  ChannelActions,
-  ChannelFile,
-  ChannelImage,
+import type { Attachment } from "chat";
+import {
+  channelAttachmentName,
+  type ChannelActions,
+  type ChannelFile,
+  type ChannelImage,
 } from "../../shared/channels.ts";
 import { logWarn } from "../../shared/log.ts";
+import { contentTypeForPath } from "../../shared/media-types.ts";
 import type { ResolvedWorkspace } from "../../shared/workspaces.ts";
 import type {
   RunSessionMessageDispatch,
@@ -24,6 +27,12 @@ import {
 } from "./filesystem-utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
+// Every provider that takes a batch has its own ceiling — Telegram ten per
+// album, Discord ten files a message — and when a provider uploads, the bytes of
+// every file in one call are resident at once. So the cap is a memory ceiling as
+// much as a protocol one.
+const MAX_ATTACHMENTS_PER_CALL = 10;
+
 export interface ChannelToolContext {
   actions: ChannelActions;
   channelName: string;
@@ -34,24 +43,6 @@ export interface ChannelToolContext {
   workspaces?: ResolvedWorkspace[];
   accountId?: string;
 }
-
-// Extensions the media route serves with a real content type. A chat client
-// decides whether to preview or download from that type, so an unmapped file
-// arrives as application/octet-stream and every client just downloads it.
-const FILE_MIME_TYPES: Record<string, string> = {
-  csv: "text/csv",
-  doc: "application/msword",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  gif: "image/gif",
-  jpeg: "image/jpeg",
-  jpg: "image/jpeg",
-  pdf: "application/pdf",
-  png: "image/png",
-  txt: "text/plain",
-  webp: "image/webp",
-  xls: "application/vnd.ms-excel",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-};
 
 interface SendFilesInput {
   file_paths: string[];
@@ -88,11 +79,12 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   if (workspaces.length === 0) {
     return {};
   }
-  const native = actions.sendFiles;
-
   return {
     "send-files": tool({
-      description: sendFilesDescription(channelName, native !== undefined),
+      description: sendFilesDescription(
+        channelName,
+        actions.sendFiles !== undefined,
+      ),
       inputSchema: jsonSchema<SendFilesInput>(sendFilesSchema(workspaces)),
       execute: async function (input): Promise<string> {
         const { file_paths, workspace, caption } = input;
@@ -104,17 +96,10 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
           return toolError("Error: no workspace attached");
         }
         const files = await Promise.all(
-          file_paths.map(async (path): Promise<ChannelFile> => {
-            const rel = toWorkspaceRelative(path);
-
-            return {
-              type: "file",
-              url: await workspaceMediaUrl(ws, rel, accountId),
-              name: rel.split("/").pop() || rel,
-              mimeType: fileMimeType(rel),
-              fetchData: () => workspaceReader(ws, rel),
-            };
-          }),
+          file_paths.map(
+            (path): Promise<ChannelFile> =>
+              workspaceAttachment("file", ws, path, accountId),
+          ),
         );
         const transformed = await context.transformText(caption ?? "");
         if (transformed === null) {
@@ -322,7 +307,7 @@ async function deliverFiles(
       });
     }
   }
-  const lines = files.map((file) => `${file.name}: ${file.url}`);
+  const lines = files.map((file): string => `${file.name}: ${file.url}`);
   await actions.sendText(
     caption ? `${caption}\n${lines.join("\n")}` : lines.join("\n"),
   );
@@ -330,12 +315,6 @@ async function deliverFiles(
   return toolText(
     `${channelName} could not attach documents, so ${files.length} download link(s) were sent as text instead. Do not send them again.`,
   );
-}
-
-function fileMimeType(rel: string): string {
-  const extension = rel.split(".").pop()?.toLowerCase() ?? "";
-
-  return FILE_MIME_TYPES[extension] ?? "application/octet-stream";
 }
 
 // A workspace file has no address of its own, so it is handed over as a durable
@@ -361,17 +340,10 @@ async function resolveImages(
     }
 
     return await Promise.all(
-      filePaths.map(async (path): Promise<ChannelImage> => {
-        const rel = toWorkspaceRelative(path);
-
-        return {
-          type: "image",
-          url: await workspaceMediaUrl(ws, rel, accountId),
-          name: rel.split("/").pop() || rel,
-          mimeType: fileMimeType(rel),
-          fetchData: () => workspaceReader(ws, rel),
-        };
-      }),
+      filePaths.map(
+        (path): Promise<ChannelImage> =>
+          workspaceAttachment("image", ws, path, accountId),
+      ),
     );
   }
   if (!urls?.length) {
@@ -381,31 +353,15 @@ async function resolveImages(
   }
 
   return urls.map((url): ChannelImage => {
-    const name = url.split("/").pop()?.split("?")[0] || "image";
+    const name = channelAttachmentName({ type: "image", url: url });
 
     return {
       type: "image",
       url: url,
       name: name,
-      mimeType: fileMimeType(name),
+      mimeType: contentTypeForPath(name),
     };
   });
-}
-
-// The same picture, offered as something to download instead of something to
-// look at. Only the delivery changes; the sealed link is the one already minted.
-function toChannelFile(image: ChannelImage): ChannelFile {
-  return { ...image, type: "file" };
-}
-
-// The Chat SDK types `fetchData` as returning a Buffer, so a workspace read is
-// wrapped rather than handed over raw. Nothing reads it unless the provider
-// uploads bytes, which keeps the object off the wire for Telegram and Zalo.
-async function workspaceReader(
-  ws: ResolvedWorkspace,
-  rel: string,
-): Promise<Buffer> {
-  return Buffer.from(await workspaceMediaBytes(ws, rel));
 }
 
 function sendFilesDescription(channelName: string, native: boolean): string {
@@ -413,7 +369,7 @@ function sendFilesDescription(channelName: string, native: boolean): string {
     ? `The files are attached to the ${channelName} conversation.`
     : `${channelName} has no document attachment, so the files are posted as download links the recipient opens themselves.`;
 
-  return `Sends one or more workspace documents to the current ${channelName} conversation immediately. ${delivery} Use it for anything that is not a picture: PDFs, spreadsheets, and text files. Pictures go through send-image instead.`;
+  return `Sends one or more workspace documents to the current ${channelName} conversation immediately. ${delivery} Use it for anything that is not a picture: PDFs, spreadsheets, and text files. Pictures go through send-images instead.`;
 }
 
 function sendFilesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
@@ -426,6 +382,7 @@ function sendFilesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
         type: "array",
         items: { type: "string" },
         minItems: 1,
+        maxItems: MAX_ATTACHMENTS_PER_CALL,
         description:
           "Paths to files in the workspace, each relative to the workspace root.",
       },
@@ -467,6 +424,7 @@ function sendImagesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
               type: "array",
               items: { type: "string" },
               minItems: 1,
+              maxItems: MAX_ATTACHMENTS_PER_CALL,
               description:
                 "Paths to image files in the workspace, each relative to the workspace root.",
             },
@@ -476,6 +434,7 @@ function sendImagesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
         type: "array",
         items: { type: "string" },
         minItems: 1,
+        maxItems: MAX_ATTACHMENTS_PER_CALL,
         description:
           "Absolute public http(s) URLs of images the chat provider can fetch.",
       },
@@ -486,5 +445,33 @@ function sendImagesSchema(workspaces: ResolvedWorkspace[]): JSONSchema7 {
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
     },
     additionalProperties: false,
+  };
+}
+
+// The same picture, offered as something to download instead of something to
+// look at. Only the delivery changes; the sealed link is the one already minted.
+function toChannelFile(image: ChannelImage): ChannelFile {
+  return { ...image, type: "file" };
+}
+
+// One workspace file, addressed both ways a provider might want it: the sealed
+// link for the ones that fetch, and a reader for the ones that upload. The
+// reader stays uncalled unless a provider asks, which keeps the object off the
+// wire for Telegram and Zalo.
+async function workspaceAttachment<T extends "file" | "image">(
+  type: T,
+  ws: ResolvedWorkspace,
+  path: string,
+  accountId: string,
+): Promise<Attachment & { type: T; url: string }> {
+  const rel = toWorkspaceRelative(path);
+
+  return {
+    type: type,
+    url: await workspaceMediaUrl(ws, rel, accountId),
+    name: rel.split("/").pop() || rel,
+    mimeType: contentTypeForPath(rel),
+    fetchData: async (): Promise<Buffer> =>
+      Buffer.from(await workspaceMediaBytes(ws, rel)),
   };
 }

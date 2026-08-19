@@ -45,7 +45,9 @@ Providers disagree on more than grouping: some fetch a URL you hand them, others
 | Slack | Block Kit image blocks | uploads bytes (`files.uploadV2`) | one message, one upload |
 | Discord | uploads bytes | uploads bytes | one multipart message |
 | Zalo | fetches the URL | none | one per message |
-| GitHub, Pancake | none | none | text links only | Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
+| GitHub, Pancake | none | none | text links only |
+
+Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
 
 `send-images` degrades rather than fails. If the channel has no picture endpoint, or accepts the batch and rejects it, the pictures go out through the `send-files` path instead — as documents where the provider has them, as download links where it does not. The reason for the rejection is logged, not shown to the recipient. A channel with neither endpoint does not get the tool at all, since a bare link is what `send-files` is already for.
 

@@ -299,6 +299,7 @@ describe("discord channel actions", () => {
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
       null,
+      null,
     ).actions(
       createMessage({
         applicationId: "app-1",
@@ -344,6 +345,7 @@ describe("discord channel actions", () => {
     const actions = createDiscordChannel(
       "bot-token",
       TEST_DISCORD_PUBLIC_KEY,
+      null,
       null,
     ).actions(
       createMessage({
@@ -568,6 +570,7 @@ describe("slack channel actions", () => {
     const actions = createSlackChannel(
       "bot-token",
       "signing-secret",
+      null,
       null,
       "white_check_mark",
     ).actions(

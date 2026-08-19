@@ -132,23 +132,24 @@ export function createTelegramChannel(
     actions: function(msg): ChannelActions {
       const source = toTelegramSource(msg.source);
 
+      const sendAttachments = async function (
+        attachments: ChannelFile[] | ChannelImage[],
+        caption?: string,
+      ): Promise<void> {
+        await postTelegramAttachments(
+          transport,
+          source.threadId,
+          attachments,
+          caption,
+        );
+      };
+
       return {
-        sendFiles: async function(files, caption): Promise<void> {
-          await postTelegramAttachments(
-            transport,
-            source.threadId,
-            files,
-            caption,
-          );
-        },
-        sendImages: async function(images, caption): Promise<void> {
-          await postTelegramAttachments(
-            transport,
-            source.threadId,
-            images,
-            caption,
-          );
-        },
+        // One body for both: the Chat SDK picks sendPhoto or sendDocument from
+        // each attachment's own `type`. They stay separate keys so a channel can
+        // advertise one without the other.
+        sendFiles: sendAttachments,
+        sendImages: sendAttachments,
         sendSticker: async function(sticker): Promise<void> {
           const value = sticker.trim();
           if (!value) {
