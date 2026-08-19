@@ -767,15 +767,8 @@ async function applyDeploymentKey(
   }
 }
 
-/** Surface non-fatal deploy advisories (e.g. env vars referenced but not set). */
+/** Surface non-fatal deploy advisories (e.g. policy refs that resolve to nothing). */
 function printSyncWarnings(result: RemoteManifestResponse): void {
-  const missing = result.warnings?.missingEnv ?? [];
-  if (missing.length > 0) {
-    printWarning(
-      `⚠ ${missing.length} env var(s) referenced in agent config but not set: ${missing.join(", ")}`,
-    );
-    for (const name of missing) console.log(`    broods env set ${name}`);
-  }
   const missingPolicies = result.warnings?.missingPolicies ?? [];
   if (missingPolicies.length > 0) {
     printWarning(
@@ -1383,8 +1376,9 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
   const diff = diffManifests(manifest, remote?.manifest ?? null);
   printDiffEntries(diff.filter((entry) => entry.operation !== "delete"));
 
-  // Push any `env("NAME")` values from .env.local up first, so this sync's configs
-  // resolve them and the missing-env warning only fires for genuinely-absent vars.
+  // Push any `env("NAME")` values from .env.local up first: the sync rejects a
+  // manifest whose env refs have no stored value, so this is what lets a local
+  // `.env.local` alone carry a dev stage.
   await syncLocalEnvVars(
     client,
     manifest,

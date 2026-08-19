@@ -80,15 +80,13 @@ const idsValidator = v.object({
 });
 
 /**
- * Non-fatal deploy advisories returned to the CLI. `missingEnv` lists env var
- * names referenced via `env("NAME")` in agent config but not yet stored for the
- * stage, so the operator can run `broods env set <NAME>`.
- * `missingPolicies` lists `policy.policyIds` refs that did not resolve to a
- * policy resource in this deploy, so a typo cannot silently weaken the
- * intended policy set.
+ * Non-fatal deploy advisories returned to the CLI. `missingPolicies` lists
+ * `policy.policyIds` refs that did not resolve to a policy resource in this
+ * deploy, so a typo cannot silently weaken the intended policy set. Unset
+ * `env("NAME")` refs are not advisory: they fail the sync outright, see
+ * `assertEnvRefsResolved`.
  */
 const warningsValidator = v.object({
-  missingEnv: v.array(v.string()),
   missingPolicies: v.array(v.string()),
 });
 
@@ -239,7 +237,7 @@ export const syncManifestBySecretHash = internalMutation({
       projectDoc._id,
       stageDoc._id,
     );
-    const missingEnv = new Set<string>();
+    assertEnvRefsResolved(manifest.resources, envValues);
     const missingPolicies = new Set<string>();
     const sandboxIds = await syncSandboxResources(ctx, {
       accountId: account._id,
@@ -247,7 +245,6 @@ export const syncManifestBySecretHash = internalMutation({
       stageId: stageDoc._id,
       resources: manifest.resources,
       envValues: envValues,
-      missingEnv: missingEnv,
     });
     const agentIds = await syncAgentResources(ctx, {
       account: account,
@@ -259,7 +256,6 @@ export const syncManifestBySecretHash = internalMutation({
       policyIds: policyIds,
       toolIds: externalIds.tools,
       envValues: envValues,
-      missingEnv: missingEnv,
       missingPolicies: missingPolicies,
     });
 
@@ -318,7 +314,6 @@ export const syncManifestBySecretHash = internalMutation({
       },
       ids: ids,
       warnings: {
-        missingEnv: [...missingEnv].sort(),
         missingPolicies: [...missingPolicies].sort(),
       },
     };
@@ -1041,6 +1036,33 @@ async function syncWorkspaceResources(
   return ids;
 }
 
+/**
+ * Every `env("NAME")` in the manifest must resolve to a value stored for the
+ * stage. An unset name used to sync through and fail later at run time against
+ * an unresolved `${NAME}` literal, so it fails the sync instead: the mutation
+ * rolls back, nothing is written, and the operator is told what to set.
+ */
+function assertEnvRefsResolved(
+  resources: CliResource[],
+  envValues: Record<string, string>,
+): void {
+  // Collected with the rewrite walker rather than a second traversal, so what
+  // counts as a reference here is always what substitution later looks for.
+  const referenced = new Set<string>();
+  for (const resource of resources) {
+    rewriteEnvRefs(asObject(resource.config), referenced);
+  }
+  const missing = [...referenced]
+    .filter((name) => envValues[name] === undefined)
+    .sort();
+  if (missing.length === 0) return;
+
+  throw new Error(
+    `env() references ${missing.length} variable(s) with no value set for this stage: ${missing.join(", ")}. ` +
+      "Set each one with `broods env set <NAME>` (or put it in .env.local and run `broods dev`), then sync again.",
+  );
+}
+
 function assertSupportedWorkspaceStorage(resource: CliResource): void {
   const config = plainRecord(resource.config);
   const storage = plainRecord(config.storage);
@@ -1119,11 +1141,9 @@ async function syncSandboxResources(
     stageId: Id<"stages">;
     resources: CliResource[];
     envValues: Record<string, string>;
-    missingEnv: Set<string>;
   },
 ): Promise<Record<string, string>> {
-  const { accountId, projectId, stageId, resources, envValues, missingEnv } =
-    options;
+  const { accountId, projectId, stageId, resources, envValues } = options;
   const ids: Record<string, string> = {};
   const sandboxes = resources.filter((entry) => entry.kind === "sandbox");
   if (sandboxes.length === 0) return ids;
@@ -1160,9 +1180,9 @@ async function syncSandboxResources(
     // Resolve `env("NAME")` refs to their stored values before encrypting, the
     // same way agent configs are resolved at sync time — core reads the
     // sandbox blob verbatim and has no placeholder substitution of its own.
-    // Missing names surface as a deploy warning instead of leaking a literal
-    // `${NAME}` into the sandbox environment. The resolved form is also what
-    // the rename comparison runs on, since `existingConfigs` is resolved too.
+    // Every name is known to have a value here, so no literal `${NAME}` can
+    // leak into the sandbox environment. The resolved form is also what the
+    // rename comparison runs on, since `existingConfigs` is resolved too.
     const envNames = new Set<string>();
     // `sourceConfig` keeps `${NAME}` placeholders; `resolvedConfig` bakes in
     // current values. We store both: resolved for core to read, source so
@@ -1170,9 +1190,6 @@ async function syncSandboxResources(
     // env-var change without a CLI re-sync (parity with agent configs).
     const sourceConfig = rewriteEnvRefs(asObject(resource.config), envNames);
     const resolvedConfig = substituteEnvPlaceholders(sourceConfig, envValues);
-    for (const envNameEntry of envNames) {
-      if (envValues[envNameEntry] === undefined) missingEnv.add(envNameEntry);
-    }
     const runtimeVariables = [...envNames].map((key) => ({
       key: key,
       value: "",
@@ -1610,7 +1627,6 @@ async function syncAgentResources(
     policyIds: Record<string, string>;
     toolIds: Record<string, string>;
     envValues: Record<string, string>;
-    missingEnv: Set<string>;
     missingPolicies: Set<string>;
   },
 ): Promise<Record<string, string>> {
@@ -1624,7 +1640,6 @@ async function syncAgentResources(
     policyIds,
     toolIds,
     envValues,
-    missingEnv,
     missingPolicies,
   } = options;
   const ids: Record<string, string> = {};
@@ -1677,18 +1692,10 @@ async function syncAgentResources(
       toolIds,
     );
     const flat = fromNestedAgentConfig(nested);
-    // Names referenced via `env("NAME")` but not yet stored for this stage.
-    // Surfaced as a deploy warning so a typo/rename can't silently no-op into
-    // an unresolved `${NAME}` placeholder at run time.
-    for (const envNameEntry of envNames) {
-      if (envValues[envNameEntry] === undefined) missingEnv.add(envNameEntry);
-    }
-    const runtimeVariables = [...envNames]
-      .filter((envNameEntry) => envValues[envNameEntry] !== undefined)
-      .map((envNameEntry) => ({
-        key: envNameEntry,
-        value: envValues[envNameEntry],
-      }));
+    const runtimeVariables = [...envNames].map((envNameEntry) => ({
+      key: envNameEntry,
+      value: envValues[envNameEntry],
+    }));
     const current = existing.find((entry) => entry.name === name);
     const target =
       current ??

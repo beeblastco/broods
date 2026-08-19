@@ -52,6 +52,16 @@ broods env set OPENAI_API_KEY
 
 Or let `broods dev` auto-push it from your local `.env.local`.
 
+Every reference has to resolve. `broods dev` and `broods deploy` reject a manifest whose `env("NAME")` has no value stored for the stage, and name the variables you still owe:
+
+```
+Sync manifest failed: 500 env() references 1 variable(s) with no value set for
+this stage: OPENAI_API_KEY. Set each one with `broods env set <NAME>` (or put it
+in .env.local and run `broods dev`), then sync again.
+```
+
+Nothing is written when that happens, so a misspelled or forgotten name fails the sync instead of reaching the runtime as a literal `${NAME}`.
+
 > `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
 
 ## Agents
