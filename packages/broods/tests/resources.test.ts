@@ -2175,6 +2175,24 @@ test("compileProject rejects an unusable channel id list", async () => {
   ).rejects.toThrow('Channel "lamy-internal" externalId lists 7788 twice');
 });
 
+test("compileProject rejects a wildcard as a channel id", async () => {
+  // Deploys clean today and binds nothing: the record never matches a room,
+  // while the id still opens the connection's reach so the bot answers
+  // everywhere with none of the channel's rules.
+  const bare = await fixtureProject("", zaloChannelSource(`chatId: "*"`));
+  await expect(compileProject({ cwd: bare, command: "dev" })).rejects.toThrow(
+    'Channel "lamy-internal" cannot use "*" as its id',
+  );
+
+  const inList = await fixtureProject(
+    "",
+    zaloChannelSource(`chatId: ["7788", "*"]`),
+  );
+  await expect(compileProject({ cwd: inList, command: "dev" })).rejects.toThrow(
+    'Channel "lamy-internal" cannot use "*" as its id',
+  );
+});
+
 test("compileProject rejects a fanned-out name that collides with another channel", async () => {
   const cwd = await fixtureProject(
     "",

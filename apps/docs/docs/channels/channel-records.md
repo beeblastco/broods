@@ -148,6 +148,8 @@ Nothing about storage changes: there is still one row per room, and the lookup o
 
 A room you never declare is not left out. On a lookup miss the runtime falls back to the connection's own agent, so its system prompt is already the default everywhere. Reach for a list when a set of rooms needs the things only a record carries, such as `denyTools`, `policies`, `tagRoles` or `replyIn`.
 
+`"*"` is not an id and is refused at deploy time. A record matches one exact room, so a wildcard would bind nothing while still opening the connection's reach: the bot would answer everywhere with none of the channel's rules, and nothing would report an error. To answer everywhere, set `allowedChannelIds: ["*"]` on the connection.
+
 ### Through the account API
 
 The API speaks the stored names: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`, and `agentBindings` where the CLI writes `agents`. Every other field is spelled the same on both sides.

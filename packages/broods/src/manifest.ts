@@ -934,7 +934,11 @@ async function toManifestResources(
  */
 function channelExternalIds(name: string, value: unknown): string[] {
   if (value === undefined) return [];
-  if (typeof value === "string") return [value];
+  if (typeof value === "string") {
+    assertNotReachWildcard(name, value);
+
+    return [value];
+  }
   if (!Array.isArray(value)) {
     throw new Error(
       `Channel "${name}" externalId must be a string or an array`,
@@ -953,10 +957,26 @@ function channelExternalIds(name: string, value: unknown): string[] {
     if (seen.has(id)) {
       throw new Error(`Channel "${name}" externalId lists ${id} twice`);
     }
+    assertNotReachWildcard(name, id);
     seen.add(id);
   }
 
   return value;
+}
+
+/**
+ * A record whose id is `*` matches only a chat whose id is literally an
+ * asterisk, so it binds nothing while still opening the connection's reach. It
+ * deploys clean and the bot looks wired up, so refuse it here.
+ */
+function assertNotReachWildcard(name: string, id: string): void {
+  if (id !== CHANNEL_REACH_WILDCARD) return;
+
+  throw new Error(
+    `Channel "${name}" cannot use "${CHANNEL_REACH_WILDCARD}" as its id: a record matches one exact room. ` +
+      `To answer everywhere, set allowedChannelIds: ["${CHANNEL_REACH_WILDCARD}"] on the connection; ` +
+      `undeclared rooms already fall back to its agent.`,
+  );
 }
 
 async function normalizeConfig(
