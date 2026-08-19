@@ -59,6 +59,7 @@ import {
   requireAuth,
 } from "./utils.ts";
 import {
+  formatChoiceRow,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
@@ -538,10 +539,14 @@ async function orgCommand(args: string[]): Promise<void> {
 
   if (isList) {
     for (const org of context.orgs) {
-      const marker = org.id === context.currentOrgId ? "*" : " ";
       const disabled =
         org.accountStatus === "active" ? "" : ` [${org.accountStatus} account]`;
-      console.log(`${marker} ${formatOrgChoice(org)}${disabled}`);
+      console.log(
+        formatChoiceRow(
+          `${formatOrgChoice(org)}${disabled}`,
+          org.id === context.currentOrgId,
+        ),
+      );
     }
     console.log(
       "\nOnly orgs where you are owner or admin can be selected from the CLI.",
@@ -641,8 +646,11 @@ async function stageCommand(args: string[]): Promise<void> {
     const stages = await client.listStages(scope.project);
     const selected = needle
       ? stages.find((stage) => stageNameEquals(stage.name, needle))
-      : await promptSelect("Select stage", stages, (stage) =>
-          formatStage(stage, scope.stage).trim(),
+      : await promptSelect(
+          "Select stage",
+          stages,
+          formatStageDetail,
+          stages.findIndex((stage) => stageNameEquals(stage.name, scope.stage)),
         );
     if (!selected) {
       throw new Error(
@@ -1201,10 +1209,16 @@ function formatProjectChoice(project: CliOnboardingProject): string {
 }
 
 function formatStage(stage: CliStage, current: string): string {
-  const marker = stageNameEquals(stage.name, current) ? "*" : " ";
+  return formatChoiceRow(
+    formatStageDetail(stage),
+    stageNameEquals(stage.name, current),
+  );
+}
+
+function formatStageDetail(stage: CliStage): string {
   const region = stage.deploymentRegion ? `, ${stage.deploymentRegion}` : "";
 
-  return `${marker} ${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
+  return `${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
 }
 
 /** Stage names match the way the backend matches them: trimmed, case-insensitive. */

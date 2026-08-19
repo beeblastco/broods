@@ -14,6 +14,7 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
+import { formatChoiceRow } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -140,8 +141,9 @@ export async function promptSelect<T>(
 
   console.log(label);
   options.forEach((option, index) => {
-    const marker = index === fallback ? "*" : " ";
-    console.log(`${marker} ${index + 1}. ${render(option)}`);
+    console.log(
+      formatChoiceRow(`${index + 1}. ${render(option)}`, index === fallback),
+    );
   });
 
   const question =
