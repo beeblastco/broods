@@ -5,7 +5,6 @@
 import { AuthKit } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { purgeUser } from "./model/cascade";
 
 export const authKit: AuthKit<DataModel> = new AuthKit<DataModel>(
   components.workOSAuthKit,

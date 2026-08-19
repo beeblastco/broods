@@ -39,6 +39,7 @@ import {
   headers as natsHeaders,
   RetentionPolicy,
   StorageType,
+  type ConsumerConfig,
   type ConsumerMessages,
   type NatsConnection,
   type Subscription,
@@ -579,7 +580,7 @@ export async function retainedMessageSubject(
 export function consumerStartPolicy(
   startSequence?: number,
   startTime?: string,
-) {
+): Partial<ConsumerConfig> {
   if (typeof startSequence === "number") {
     return {
       deliver_policy: DeliverPolicy.StartSequence,

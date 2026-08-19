@@ -920,7 +920,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onSaveName={handleSaveName}
                 onUpdateNodeConfig={(patch): void =>
                   onUpdateNodeData(node.id, {
-                    config: { ...(nodeData?.config ?? {}), ...patch },
+                    config: { ...nodeData?.config, ...patch },
                   })
                 }
                 onUpdateSkillPath={(p): void => {

@@ -7,14 +7,13 @@
  * project/stage pair, so neither slug is sent.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import { logError } from "../log.ts";
 import type { Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 
 export const taskUsage: Storage["taskUsage"] = {
-  record: async function(input): Promise<void> {
+  record: async function (input): Promise<void> {
     try {
       await getConvexClient().mutation(internal.usage.recordTaskUsage, {
         accountId: input.accountId as any,

@@ -52,8 +52,7 @@ export interface ExecuteAccountToolOptions {
 // The isolate tier inlines the bytes on a local child's stdin; the Lambda tier
 // gets a presigned GET, since an inlined bundle spends its 6 MB invoke quota.
 export type RunnerBundleSource =
-  | { bundleSourceB64: string }
-  | { bundleUrl: string };
+  { bundleSourceB64: string } | { bundleUrl: string };
 
 // Payload a runner reads on stdin. The AI SDK's ToolExecutionOptions ride along
 // so an uploaded bundle sees what the same tool would see running in-process.
@@ -308,7 +307,7 @@ function mergeToolConfig(
   agentConfig: unknown,
 ): Record<string, unknown> {
   return {
-    ...(defaultConfig ?? {}),
+    ...defaultConfig,
     ...(isPlainObject(agentConfig) ? agentConfig : {}),
   };
 }

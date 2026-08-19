@@ -41,7 +41,6 @@ import {
 import { sealTerminalTicket } from "../../core/src/shared/terminal-ticket.ts";
 import {
   createSubagentTaskId,
-  scopedDirectConversationKey,
   scopedDirectEventId,
 } from "../../core/src/shared/runtime-keys.ts";
 import { streamResponseSubject } from "../../core/src/shared/nats.ts";
@@ -276,8 +275,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
   const encoder = new TextEncoder();
   let consumerClosed = false;
   let consumerOptions:
-    | { deliver_policy?: DeliverPolicy; opt_start_seq?: number }
-    | undefined;
+    { deliver_policy?: DeliverPolicy; opt_start_seq?: number } | undefined;
   const streamEvent = (sequence: number, data: Record<string, unknown>) => ({
     seq: sequence,
     data: encoder.encode(
@@ -298,7 +296,7 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
   });
   const connection = zeroBufferConnection(
     async () => ({
-      [Symbol.asyncIterator]: async function*() {
+      [Symbol.asyncIterator]: async function* () {
         await Bun.sleep(50);
         yield streamEvent(21, { type: "text-delta", text: "future" });
         yield streamEvent(22, { type: "done" });
@@ -364,7 +362,11 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
       { replay: false, type: "text-delta" },
       { replay: false, type: "done" },
     ]);
-    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      100,
+      () => "consumer close",
+    );
     expect(
       sent.filter(
         (message) =>
@@ -404,7 +406,7 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
   });
   const connection = zeroBufferConnection(
     async () => ({
-      [Symbol.asyncIterator]: async function*() {
+      [Symbol.asyncIterator]: async function* () {
         yield streamEvent(10, { type: "text-delta", text: "first" });
         await Bun.sleep(2_100);
         if (consumerClosed) return;
@@ -462,7 +464,11 @@ test("finishes buffered replay before applying terminal tail grace", async () =>
         (message) => message.type === "done" || message.type === "error",
       ),
     ).toHaveLength(0);
-    await waitForCondition(() => consumerClosed, 100, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      100,
+      () => "consumer close",
+    );
   } finally {
     stopActiveRun(socket);
     globalThis.fetch = originalFetch;
@@ -497,7 +503,7 @@ test("replays a fresh buffered attach from its own subject, not the shared strea
   // to another conversation; this subject's own frames start at 10.
   const connection = zeroBufferConnection(
     async () => ({
-      [Symbol.asyncIterator]: async function*() {
+      [Symbol.asyncIterator]: async function* () {
         yield streamEvent(10, { type: "text-delta", text: "first" });
         yield streamEvent(12, { type: "done" });
       },
@@ -560,7 +566,7 @@ test("closes a zero-frame attach after durable completion and emits one terminal
   let consumerClosed = false;
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
-    [Symbol.asyncIterator]: async function*() {
+    [Symbol.asyncIterator]: async function* () {
       while (!consumerClosed) {
         await Bun.sleep(10);
       }
@@ -628,7 +634,7 @@ test("does not duplicate a streamed error when durable failure arrives without d
   let consumerClosed = false;
   let statusReads = 0;
   const connection = zeroBufferConnection(async () => ({
-    [Symbol.asyncIterator]: async function*() {
+    [Symbol.asyncIterator]: async function* () {
       yield {
         seq: 21,
         data: encoder.encode(
@@ -686,7 +692,11 @@ test("does not duplicate a streamed error when durable failure arrives without d
       async () => connection as never,
     );
 
-    await waitForCondition(() => consumerClosed, 700, () => "consumer close");
+    await waitForCondition(
+      () => consumerClosed,
+      700,
+      () => "consumer close",
+    );
     expect(
       sent.filter(
         (message) =>
@@ -708,7 +718,7 @@ test("closes a zero-frame queued execute consumer after durable completion", asy
   const socket = gatewaySocket(sent);
   let consumerClosed = false;
   const connection = zeroBufferConnection(async () => ({
-    [Symbol.asyncIterator]: async function*() {
+    [Symbol.asyncIterator]: async function* () {
       while (!consumerClosed) {
         await Bun.sleep(10);
       }
@@ -1134,9 +1144,9 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/workspaces")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123")).toBe(true);
   expect(isConfigHttpPath("/v1/workspaces/ws_123/files")).toBe(true);
-  expect(
-    isConfigHttpPath("/v1/workspaces/ws_123/download-links", "POST"),
-  ).toBe(true);
+  expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "POST")).toBe(
+    true,
+  );
   expect(isConfigHttpPath("/v1/workspaces/ws_123/download-links", "GET")).toBe(
     false,
   );
@@ -1994,7 +2004,7 @@ function replayThenLiveConnection(
       consumers: {
         get: async () => ({
           consume: async () => ({
-            [Symbol.asyncIterator]: async function*() {
+            [Symbol.asyncIterator]: async function* () {
               for (const message of messages) {
                 yield message;
               }

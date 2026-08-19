@@ -85,7 +85,7 @@ export class VercelSandboxExecutor implements SandboxExecutor {
         ...(cwd ? { cwd: cwd } : {}),
         env: {
           ...stringRecord(this.#config.envVars),
-          ...(request.envVars ?? {}),
+          ...request.envVars,
         },
         timeoutMs: request.timeoutSeconds * 1000,
       });
@@ -433,7 +433,7 @@ function vercelCreateOptions(
       (persistent ? lifecycle.idleTimeoutSeconds : request.timeoutSeconds) *
       1000,
     networkPolicy: vercelNetworkPolicy(config),
-    env: { ...stringRecord(config.envVars), ...(request.envVars ?? {}) },
+    env: { ...stringRecord(config.envVars), ...request.envVars },
     tags: { app: "broods", provider: "vercel" },
   };
 }
@@ -448,7 +448,11 @@ function vercelAuthOptions(config: SandboxExecutorConfig): {
   const teamId = configString(options.teamId) ?? optionalEnv("VERCEL_TEAM_ID");
   const projectId =
     configString(options.projectId) ?? optionalEnv("VERCEL_PROJECT_ID");
-  const missing = Object.entries({ token: token, teamId: teamId, projectId: projectId })
+  const missing = Object.entries({
+    token: token,
+    teamId: teamId,
+    projectId: projectId,
+  })
     .filter(([, value]) => !value)
     .map(([key]) => key);
   if (missing.length > 0) {

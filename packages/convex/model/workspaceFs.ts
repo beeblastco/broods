@@ -124,11 +124,9 @@ export async function uploadWorkspaceFile(
     target.bucket,
     key,
     content,
-    {
-      ...(typeof input.contentType === "string" && input.contentType
-        ? { contentType: input.contentType }
-        : {}),
-    },
+    typeof input.contentType === "string" && input.contentType
+      ? { contentType: input.contentType }
+      : {},
     target.access,
   );
 

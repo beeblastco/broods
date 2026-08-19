@@ -956,7 +956,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   const infraAnalysis = useMemo(
     () => analyzeCanvasInfra(nodes, edges),
     // Recompute only when the structural signature changes (positions excluded).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [infraKey],
   );
 
@@ -1020,7 +1019,6 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     return reachable;
     // BFS reads only node ids/types and edge endpoints — all captured by infraKey — so skip
     // the per-drag-frame recompute that `nodes` position churn would otherwise cause.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNode, infraKey]);
 
   const displayNodes = useMemo(() => {

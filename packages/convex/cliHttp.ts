@@ -432,21 +432,6 @@ function manifestMatchesRoute(
   return candidate.project === route.project && candidate.stage === route.stage;
 }
 
-function numberSearchParam(url: URL, name: string): number | undefined {
-  const raw = url.searchParams.get(name);
-  if (!raw) return undefined;
-  const value = Number(raw);
-
-  return Number.isFinite(value) ? value : undefined;
-}
-
-function booleanSearchParam(url: URL, name: string): boolean | undefined {
-  const raw = url.searchParams.get(name);
-  if (raw === null) return undefined;
-
-  return raw === "1" || raw === "true";
-}
-
 function isResourceKind(
   value: string,
 ): value is "agent" | "workspace" | "sandbox" | "cron" {

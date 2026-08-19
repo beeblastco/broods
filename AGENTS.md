@@ -36,3 +36,5 @@ outside repo, sibling of checkout:
 
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
 - before say done: run package own `bun run check` (lint + types) and `bun run format` (prettier). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
+- lint = oxlint, one `.oxlintrc.json` at root for the whole repo. no eslint, it does not support TS 7. workspace `check` is types only; `bun run lint` at root covers every workspace.
+- `bun run lint:types` is the type-aware pass (oxlint-tsgolint). not in `check` yet, it still has a backlog. do not add new findings.

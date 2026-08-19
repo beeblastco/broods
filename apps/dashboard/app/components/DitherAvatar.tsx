@@ -172,7 +172,6 @@ export function DitherAvatar({
 
   return (
     // Inline SVG data-URI — nothing for next/image to optimize.
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={uri}
       alt=""

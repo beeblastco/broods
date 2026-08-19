@@ -1,0 +1,71 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "promise"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "object-shorthand": ["error", "never"],
+    "typescript/explicit-module-boundary-types": "error"
+  },
+  "overrides": [
+    {
+      "files": ["apps/dashboard/**"],
+      "plugins": [
+        "eslint",
+        "typescript",
+        "unicorn",
+        "oxc",
+        "import",
+        "promise",
+        "react",
+        "jsx-a11y",
+        "nextjs"
+      ],
+      "rules": {
+        "react/exhaustive-deps": "warn",
+        "react/set-state-in-effect": "warn",
+        "nextjs/no-img-element": "warn",
+        "jsx-a11y/anchor-has-content": "warn",
+        "jsx-a11y/click-events-have-key-events": "warn",
+        "jsx-a11y/control-has-associated-label": "warn",
+        "jsx-a11y/label-has-associated-control": "warn",
+        "jsx-a11y/no-autofocus": "warn",
+        "jsx-a11y/no-noninteractive-element-interactions": "warn",
+        "jsx-a11y/no-static-element-interactions": "warn",
+        "jsx-a11y/prefer-tag-over-role": "warn"
+      }
+    },
+    {
+      "files": ["apps/dashboard/app/components/ui/**"],
+      "rules": {
+        "typescript/explicit-module-boundary-types": "off"
+      }
+    },
+    {
+      "files": ["**/tests/**", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "no-unsafe-optional-chaining": "off",
+        "require-yield": "off"
+      }
+    },
+    {
+      "files": ["apps/core/sst.config.ts"],
+      "rules": {
+        "typescript/triple-slash-reference": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    ".claude/**",
+    "**/.docusaurus/**",
+    "**/.next/**",
+    "**/.sst/**",
+    "**/_generated/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/out/**",
+    "**/*.d.ts"
+  ]
+}

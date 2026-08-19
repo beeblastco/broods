@@ -431,6 +431,7 @@ type SerializedCredential<T> = Extract<T, string | undefined>;
 
 type AssertAllExact<T extends readonly true[]> = T;
 
+// oxlint-disable-next-line no-unused-vars -- declaring the alias is the check.
 type ChannelCredentialDrift = AssertAllExact<
   [
     Exactly<TelegramAdapterConfig["apiUrl"], string | undefined>,
@@ -1560,23 +1561,6 @@ function normalizeRequiredString(value: unknown, name: string): string {
   }
 
   return value.trim();
-}
-
-function normalizeOptionalString(
-  value: unknown,
-  name: string,
-): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value !== "string") {
-    throw new Error(`${name} must be a string`);
-  }
-
-  const normalized = value.trim();
-
-  return normalized.length > 0 ? normalized : undefined;
 }
 
 function assertOptionalNonEmptyString(value: unknown, name: string): void {

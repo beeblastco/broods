@@ -170,7 +170,6 @@ export function SandboxInstancesTable({
     if (!refreshKey || refreshedPages.current.has(refreshKey)) return;
     refreshedPages.current.add(refreshKey);
     void refreshVisible();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
   function traceHref(traceId: string): string {

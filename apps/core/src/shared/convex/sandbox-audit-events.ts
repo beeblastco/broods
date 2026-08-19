@@ -4,7 +4,6 @@
  * temporarily unavailable.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const internal: any = require("@broods/convex/_generated/api").internal;
 import type { SandboxProvider } from "../domain/sandbox-config.ts";
 import { logError } from "../log.ts";

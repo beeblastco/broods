@@ -16,7 +16,6 @@ import type {
   AgentTelegramChannelConfig,
   ChannelReplyIn,
   PolicyDocument,
-  AgentHookEventName,
   AgentWebhookHookConfig,
   CreateCronInput,
   SandboxConfig,

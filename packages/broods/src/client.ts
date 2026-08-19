@@ -86,12 +86,7 @@ export interface AgentReference<Name extends string = string> {
 export interface ChannelReference {
   readonly kind: "channel";
   readonly type:
-    | "telegram"
-    | "github"
-    | "slack"
-    | "discord"
-    | "pancake"
-    | "zalo";
+    "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
   readonly agentName: string;
   readonly agentId: string;
   readonly accountId: string;
@@ -592,7 +587,7 @@ export class BroodsClient {
         ...init,
         headers: {
           "Content-Type": "application/json",
-          ...(init.headers ?? {}),
+          ...init.headers,
         },
       });
     } catch (error) {

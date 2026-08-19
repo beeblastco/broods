@@ -51,6 +51,11 @@ jobs:
         # from bun.lock; the Dockerfiles pin bun by digest and stay frozen.
         run: bun install --ignore-scripts --no-save
 
+      - name: Lint
+        # Reported separately from `bun run check` (which also runs it) so a lint
+        # failure is not read as a type error.
+        run: bun run lint
+
       - name: Typecheck
         run: bun run check
 
@@ -104,8 +109,8 @@ jobs:
       - name: Test convex
         run: bun run --filter @broods/convex test
 
-      - name: Lint dashboard
-        run: bun run --filter @broods/dashboard lint
+      - name: Check dashboard
+        run: bun run --filter @broods/dashboard check
 
       - name: Test dashboard
         run: bun run --filter @broods/dashboard test

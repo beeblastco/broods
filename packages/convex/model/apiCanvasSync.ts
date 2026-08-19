@@ -154,7 +154,7 @@ export async function syncApiAgentCanvasWiring(
       id: nodeId,
       type: kind,
       position: existing?.position ?? position,
-      data: { ...(existing?.data ?? {}), ...data },
+      data: { ...existing?.data, ...data },
     };
     nextById.set(nodeId, node);
 

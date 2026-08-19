@@ -280,7 +280,6 @@ export function useObservabilityStream(
         if (!destroyedRef.current) connectRef.current();
       }, RECONNECT_DELAY_MS);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     coreEndpoint.ok,
     wsBaseUrl,
@@ -306,7 +305,6 @@ export function useObservabilityStream(
     if (projectSlug && stageSlug && apiKey) {
       // Connecting to the WebSocket on mount is the effect's purpose; the status
       // setState it performs is intentional external-system synchronization.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       connect();
     }
 
@@ -316,7 +314,6 @@ export function useObservabilityStream(
       closeSocket();
     };
     // Re-run when connection params change; connect is stable unless they change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectSlug, stageSlug, apiKey, stream]);
 
   const refresh = useCallback(() => {

@@ -1071,10 +1071,6 @@ function assertSupportedWorkspaceSandboxMounts(resources: CliResource[]): void {
   );
   for (const agent of resources.filter((entry) => entry.kind === "agent")) {
     const config = plainRecord(agent.config);
-    const agentSandbox =
-      typeof config.sandbox === "string"
-        ? sandboxes.get(config.sandbox)
-        : undefined;
     const workspaces = config.workspaces;
     if (!Array.isArray(workspaces)) continue;
     for (const ref of workspaces) {

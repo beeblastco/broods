@@ -2,7 +2,7 @@
  * Project ownership lookups for auth-gated read/write contexts.
  */
 
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { getOrgMembership, orgRoleMeets, type OrgRole } from "./org";
 
@@ -10,7 +10,7 @@ export async function getOwnedProject(
   ctx: QueryCtx | MutationCtx,
   authId: string,
   projectId: Id<"projects">,
-) {
+): Promise<Doc<"projects"> | null> {
   return getProjectForRole(ctx, authId, projectId);
 }
 
@@ -19,7 +19,7 @@ export async function getProjectForRole(
   authId: string,
   projectId: Id<"projects">,
   requiredRole?: OrgRole,
-) {
+): Promise<Doc<"projects"> | null> {
   const project = await ctx.db.get(projectId);
   if (!project) return null;
   if (project.authId === authId) return project;

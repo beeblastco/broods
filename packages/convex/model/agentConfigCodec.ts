@@ -112,7 +112,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
   const agent: Record<string, unknown> = {
-    ...((extra.agent as Record<string, unknown> | undefined) ?? {}),
+    ...(extra.agent as Record<string, unknown> | undefined),
   };
   if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
   if (flat.systemPrompt && agent.system === undefined)
@@ -127,7 +127,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
 
   const model: Record<string, unknown> = {
-    ...((extra.model as Record<string, unknown> | undefined) ?? {}),
+    ...(extra.model as Record<string, unknown> | undefined),
   };
   if (flat.provider) model.provider = flat.provider;
   if (flat.modelId) model.modelId = flat.modelId;
@@ -139,7 +139,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const provider = extra.provider;
 
   const tools: Record<string, unknown> = {
-    ...((extra.tools as Record<string, unknown> | undefined) ?? {}),
+    ...(extra.tools as Record<string, unknown> | undefined),
   };
   if (
     flat.searchToolEnabled !== undefined &&
@@ -147,7 +147,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   ) {
     tools.googleSearch = {
       enabled: flat.searchToolEnabled,
-      ...(flat.searchToolConfig ?? {}),
+      ...flat.searchToolConfig,
     };
   }
 

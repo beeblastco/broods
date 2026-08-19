@@ -193,9 +193,10 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
     this.#shell = {
       exec: async (command, shellOptions) => {
         shellOptions?.abortSignal?.throwIfAborted();
-        const result = await this.#sandbox.exec(command, {
-          ...(shellOptions?.env ? { env: shellOptions.env } : {}),
-        });
+        const result = await this.#sandbox.exec(
+          command,
+          shellOptions?.env ? { env: shellOptions.env } : {},
+        );
         shellOptions?.abortSignal?.throwIfAborted();
 
         return {
@@ -235,7 +236,7 @@ class WorkdirHarnessSession implements BroodsSandboxDriverSession {
       command: options.command,
       workingDirectory:
         options.workingDirectory ?? this.#defaultWorkingDirectory,
-      env: { ...this.#env, ...(options.env ?? {}) },
+      env: { ...this.#env, ...options.env },
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
   }

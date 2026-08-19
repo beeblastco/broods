@@ -51,7 +51,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
           ...stringRecord(this.#config.envVars),
-          ...(request.envVars ?? {}),
+          ...request.envVars,
         },
       });
       const stdout = truncateText(
@@ -89,7 +89,7 @@ export class E2BSandboxExecutor implements SandboxExecutor {
         timeoutMs: request.timeoutSeconds * 1000,
         envs: {
           ...stringRecord(this.#config.envVars),
-          ...(request.envVars ?? {}),
+          ...request.envVars,
         },
       },
     );

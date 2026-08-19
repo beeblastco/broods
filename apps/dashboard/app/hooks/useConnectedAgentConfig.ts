@@ -90,7 +90,6 @@ export function useConnectedAgentConfig(
     useCallback(
       (state: unknown) =>
         findReachableAgentConfigId(state as ReactFlowState, nodeId, via),
-      // eslint-disable-next-line react-hooks/exhaustive-deps
       [nodeId, viaKey],
     ),
   ) as Id<"agentConfigs"> | undefined;

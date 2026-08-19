@@ -69,7 +69,7 @@ Usage notes:
           // Square brackets would break the index line's markdown link (and the
           // anchored pattern that replaces it), so fold them into spaces.
           const cleanTitle = (title ?? "")
-            .replace(/[\[\]]/g, " ")
+            .replace(/[[\]]/g, " ")
             .replace(/\s+/g, " ")
             .trim();
           const cleanDescription = (description ?? "")
