@@ -129,7 +129,7 @@ The per-platform id field is named for what the provider calls it: `channelId` f
 
 ### Through the account API
 
-The API speaks the stored id name: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`. Every other field is spelled the same on both sides.
+The API speaks the stored names: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`, and `agentBindings` where the CLI writes `agents`. Every other field is spelled the same on both sides.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";

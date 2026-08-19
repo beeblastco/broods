@@ -413,6 +413,13 @@ const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
 export type ChannelPartition =
   { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
 
+// Both spellings this field used to carry, kept so a stale key throws instead
+// of sitting in config doing nothing.
+const RETIRED_PARTITION_KEYS = [
+  "workspaceIsolationScope",
+  "workspaceScope",
+] as const;
+
 // Every provider used to name its own reach list. They are one pair now, so a
 // stale key has to fail loudly here rather than sit in config doing nothing —
 // the index signature on the channel configs means nothing else catches it.
@@ -1485,10 +1492,11 @@ function normalizeChannelIdentityConfig(
     `${name}.allowedChannelIds`,
   );
   assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
-  if (config.workspaceIsolationScope !== undefined) {
-    throw new Error(
-      `${name}.workspaceIsolationScope is no longer supported; use ${name}.partition`,
-    );
+  for (const retired of RETIRED_PARTITION_KEYS) {
+    if (config[retired] !== undefined)
+      throw new Error(
+        `${name}.${retired} is no longer supported; use ${name}.partition`,
+      );
   }
   if (config.partition === undefined) {
     return;

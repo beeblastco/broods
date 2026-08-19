@@ -1623,9 +1623,7 @@ function resolveContainedResourcePath(
 }
 
 // The SDK says `connection` and `agents`; storage says `platform` and
-// `agentBindings`. Translate here so the authoring names never reach the wire
-// and the connection's credentials never reach a channel record, which
-// `rewriteValues` would otherwise inline as the whole connection object.
+// `agentBindings`. Drop the credentials too, or `rewriteValues` inlines them.
 function normalizeChannelConfig(name: string, value: unknown): unknown {
   const config = { ...(value as Record<string, unknown>) };
   const connection = config.connection;

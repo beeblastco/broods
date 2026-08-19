@@ -28,6 +28,22 @@ describe("agent config validation", () => {
     ).toThrow(
       "config.channels.discord.allowedGuildIds is no longer supported; use config.channels.discord.allowedChannelIds",
     );
+    // The channel configs take an index signature, so the retired spellings of
+    // partition only fail if this rejects them.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { slack: { id: "sl", workspaceScope: { level: "channel" } } },
+      }),
+    ).toThrow(
+      "config.channels.slack.workspaceScope is no longer supported; use config.channels.slack.partition",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        channels: { slack: { id: "sl", workspaceIsolationScope: "channel" } },
+      }),
+    ).toThrow(
+      "config.channels.slack.workspaceIsolationScope is no longer supported; use config.channels.slack.partition",
+    );
     expect(() =>
       normalizeAgentConfig({
         channels: { slack: { id: "sl", allowedChannelIds: [""] } },

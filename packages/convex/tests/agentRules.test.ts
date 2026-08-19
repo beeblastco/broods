@@ -221,6 +221,17 @@ describe("agent rules", () => {
     ).toThrow(
       "config.channels.slack.partition.alias is only supported when config.channels.slack.partition.by is conversation",
     );
+    // The channel configs take an index signature, so the retired spellings of
+    // partition only fail if this rejects them.
+    expect(() =>
+      normalizeAgentConfig({
+        channels: {
+          slack: { id: "slack", workspaceScope: { level: "channel" } },
+        },
+      }),
+    ).toThrow(
+      "config.channels.slack.workspaceScope is no longer supported; use config.channels.slack.partition",
+    );
     expect(() =>
       normalizeAgentConfig({
         channels: { zalo: { id: "zalo", webhookSecret: "short" } },
