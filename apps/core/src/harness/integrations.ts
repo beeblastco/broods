@@ -1589,8 +1589,11 @@ async function processChannelMessage(
       }
     }
 
-    event.channel.sendTyping().catch(() => {});
-    event.channel.reactToMessage().catch(() => {});
+    // Best-effort acknowledgements. They must never fail the turn, but a bare
+    // catch left a missing typing indicator indistinguishable from one the
+    // provider rejected, so each outcome is recorded.
+    ackInbound(event, "sendTyping", () => event.channel.sendTyping());
+    ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
 
     await handlers.handleChannelRequest({
       ...event,
@@ -1628,6 +1631,34 @@ async function processChannelMessage(
       setObservabilityContext(previousObservabilityContext);
     }
   }
+}
+
+/**
+ * Run one best-effort inbound acknowledgement and record what the provider did
+ * with it. Never rethrows, so a channel that refuses the call still gets its
+ * turn; the debug line is what distinguishes "accepted" from "never sent".
+ */
+function ackInbound(
+  event: ChannelInboundEvent,
+  action: "reactToMessage" | "sendTyping",
+  send: () => Promise<void>,
+): void {
+  const scope = {
+    channel: event.channelName,
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+  };
+  void (async function (): Promise<void> {
+    try {
+      await send();
+      logDebug(`Channel ${action} accepted`, scope);
+    } catch (err) {
+      logWarn(`Channel ${action} failed`, {
+        ...scope,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  })();
 }
 
 /**
