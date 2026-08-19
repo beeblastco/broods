@@ -112,3 +112,48 @@ export const deleteOrphanedTools = internalMutation({
     };
   },
 });
+
+/**
+ * Drop the tombstones every remove path leaves behind. `accountTools`,
+ * `accountHooks`, `agentPolicies` and `channelRecords` are the four soft-delete
+ * tables: the dashboard, the internal mutations and `broods deploy --prune` all
+ * patch `status: "deleted"` rather than dropping the row, so tombstones survive
+ * until the owning stage or account is torn down. Run with `dryRun` first.
+ * @returns count of tombstones dropped per table
+ */
+export const purgeSoftDeletedRows = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    accountHooks: v.number(),
+    accountTools: v.number(),
+    agentPolicies: v.number(),
+    channelRecords: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const purged = {
+      accountHooks: 0,
+      accountTools: 0,
+      agentPolicies: 0,
+      channelRecords: 0,
+    };
+    // No `by_status` index on these tables, so scan and filter, the same way
+    // `deleteOrphanedTools` above walks `accountTools`.
+    const tables = [
+      "accountHooks",
+      "accountTools",
+      "agentPolicies",
+      "channelRecords",
+    ] as const;
+
+    for (const table of tables) {
+      const rows = await ctx.db.query(table).collect();
+      for (const row of rows) {
+        if (row.status !== "deleted") continue;
+        if (args.dryRun !== true) await ctx.db.delete(row._id);
+        purged[table] += 1;
+      }
+    }
+
+    return purged;
+  },
+});
