@@ -93,7 +93,7 @@ export function waitUntil(promise: Promise<unknown>): void {
 
 export async function drainInFlight(): Promise<void> {
   while (inFlight.size > 0) {
-    await Promise.allSettled([...inFlight]);
+    await Promise.allSettled(inFlight);
   }
 }
 

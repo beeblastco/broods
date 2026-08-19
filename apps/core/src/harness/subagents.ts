@@ -31,6 +31,7 @@ import {
 import {
   runAgentLoop,
   USER_STOP_MESSAGE,
+  type AgentLoopStream,
   type SubagentParentContext,
 } from "./harness.ts";
 import {
@@ -95,7 +96,6 @@ interface SubagentStreamState {
   emittedError: boolean;
 }
 
-type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type SubagentPublisherFactory = (
   task: ResolvedSubagentTask,
 ) => NatsPublisher | undefined;
@@ -1119,7 +1119,7 @@ function withoutNestedSubagents(config: AgentConfig): AgentConfig {
   return {
     ...config,
     subagent: {
-      ...(config.subagent ?? {}),
+      ...config.subagent,
       enabled: false,
     },
   };

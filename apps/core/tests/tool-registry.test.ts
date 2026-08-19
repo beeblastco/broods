@@ -352,7 +352,7 @@ describe("createTools", () => {
       [{ name: "notes", workspaceId: "ws_a", namespace: "fs-a" }],
       "ask",
     );
-    const tools = await createTools(context, {});
+    await createTools(context, {});
 
     await expect(approvalStatus("write", {}, context)).resolves.toBe(
       "user-approval",
@@ -1320,7 +1320,6 @@ function channelToolContext(): ChannelToolContext {
     },
     channelName: "test",
     transformText: async function (text: string): Promise<string> {
-
       return text;
     },
   };
@@ -1329,7 +1328,6 @@ function channelToolContext(): ChannelToolContext {
 function isChannelTestTool(
   candidate: ToolSet[string] | undefined,
 ): candidate is ToolSet[string] & ChannelTestTool {
-
   return typeof candidate?.execute === "function";
 }
 

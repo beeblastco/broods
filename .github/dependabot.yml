@@ -38,23 +38,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: chore(deps)
-    ignore:
-      # Pinned deliberately in root `overrides`; a bump here fights that.
-      - dependency-name: "@types/node"
-      - dependency-name: tar
-      - dependency-name: webpack
-      # eslint-config-next still ships eslint-plugin-react 7.x and
-      # typescript-eslint 8.x, neither of which runs on eslint 10 — the plugin
-      # calls the `context.getFilename()` that eslint 10 removed. Drop this once
-      # eslint-config-next peers eslint 10.
-      - dependency-name: eslint
-        update-types:
-          - version-update:semver-major
-      # typescript-eslint currently supports TypeScript <6.1.0; the dashboard
-      # lint job cannot load TypeScript 7 until that upstream peer range moves.
-      - dependency-name: typescript
-        update-types:
-          - version-update:semver-major
     groups:
       ai-sdk:
         patterns:

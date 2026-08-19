@@ -3,6 +3,7 @@
  * own multiple orgs; membership is tracked in the `orgMembers` join table.
  */
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -48,7 +49,9 @@ async function uniqueOrgSlug(
  * @param ctx query/mutation context.
  * @returns the account document, or null when none resolves.
  */
-export async function getActiveAccountForUser(ctx: QueryCtx) {
+export async function getActiveAccountForUser(
+  ctx: QueryCtx,
+): Promise<Doc<"accounts"> | null> {
   const authUser = await authKit.getAuthUser(ctx);
   if (!authUser) return null;
 

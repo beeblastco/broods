@@ -566,6 +566,7 @@ export function WorkspaceFilesTab({
     void pending
       .then((next) => {
         if (!cancelled && request === refreshRequestRef.current)
+          // oxlint-disable-next-line no-callback-in-promise -- state applier, not an error-first callback.
           applyRuntimeFiles(next);
       })
       .catch((err) => {

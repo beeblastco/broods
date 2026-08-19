@@ -209,8 +209,7 @@ const execBodies = (): string[] =>
     .map(
       (call) =>
         JSON.parse((call[1] as { body: string }).body).code as
-          | string
-          | undefined,
+          string | undefined,
     )
     .filter((code): code is string => typeof code === "string");
 const microvmRunInput = (): Record<string, unknown> => {
@@ -292,7 +291,6 @@ beforeEach(() => {
     "arn:aws:iam::123456789012:role/sandbox-s3mount";
   process.env.FILESYSTEM_BUCKET_NAME = "workspace-bucket";
   process.env.SKILLS_BUCKET_NAME = "skills-bucket";
-  ("persistent-sandbox-instance");
   process.env.MICROVM_IMAGE_IDENTIFIER =
     "arn:aws:lambda:us-east-1:123456789012:microvm-image:sandbox";
   process.env.MICROVM_EXECUTION_ROLE_ARN =
@@ -1357,9 +1355,8 @@ describe("createSandboxExecutor", () => {
   });
 
   it("launches persistent E2B background jobs with the native command API", async () => {
-    const { E2BSandboxExecutor } = await import(
-      "../src/harness/sandbox/e2b-executor.ts"
-    );
+    const { E2BSandboxExecutor } =
+      await import("../src/harness/sandbox/e2b-executor.ts");
     const executor = new E2BSandboxExecutor({
       provider: "e2b",
       persistent: true,
@@ -1674,9 +1671,8 @@ describe("createSandboxExecutor", () => {
   });
 
   it("runs Vercel lifecycle hooks explicitly for persistent sandboxes", async () => {
-    const { VercelSandboxExecutor } = await import(
-      "../src/harness/sandbox/vercel-executor.ts"
-    );
+    const { VercelSandboxExecutor } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
     const executor = new VercelSandboxExecutor({
       provider: "vercel",
       persistent: true,
@@ -1711,9 +1707,8 @@ describe("createSandboxExecutor", () => {
 
 describe("background job scripts", () => {
   it("builds a detached launch script with markers, a job cap, and parses status output", async () => {
-    const { launchScript, statusScript, parseJobStatus } = await import(
-      "../src/harness/sandbox/jobs.ts"
-    );
+    const { launchScript, statusScript, parseJobStatus } =
+      await import("../src/harness/sandbox/jobs.ts");
     const launch = launchScript(
       "/home/node/.jobs",
       "job_x",
@@ -1788,9 +1783,8 @@ describe("background job scripts", () => {
 
 describe("isSandboxGoneError", () => {
   it("treats not-found / gone errors as terminal (drop the instance row)", async () => {
-    const { isSandboxGoneError } = await import(
-      "../src/harness/sandbox/utils.ts"
-    );
+    const { isSandboxGoneError } =
+      await import("../src/harness/sandbox/utils.ts");
     expect(isSandboxGoneError({ statusCode: 404 })).toBe(true);
     expect(isSandboxGoneError({ status: 410 })).toBe(true);
     expect(isSandboxGoneError(new Error("Sandbox not found"))).toBe(true);
@@ -1798,9 +1792,8 @@ describe("isSandboxGoneError", () => {
   });
 
   it("treats auth / transient errors as non-terminal (keep the row, try next config)", async () => {
-    const { isSandboxGoneError } = await import(
-      "../src/harness/sandbox/utils.ts"
-    );
+    const { isSandboxGoneError } =
+      await import("../src/harness/sandbox/utils.ts");
     expect(isSandboxGoneError({ statusCode: 401 })).toBe(false);
     expect(isSandboxGoneError({ statusCode: 403 })).toBe(false);
     expect(isSandboxGoneError(new Error("connection reset"))).toBe(false);
@@ -1810,9 +1803,8 @@ describe("isSandboxGoneError", () => {
 
 describe("isNoRunnersError", () => {
   it("matches provider capacity / no-runner errors", async () => {
-    const { isNoRunnersError } = await import(
-      "../src/harness/sandbox/utils.ts"
-    );
+    const { isNoRunnersError } =
+      await import("../src/harness/sandbox/utils.ts");
     expect(isNoRunnersError(new Error("No available runners"))).toBe(true);
     expect(isNoRunnersError(new Error("no runner found for snapshot"))).toBe(
       true,
@@ -1821,9 +1813,8 @@ describe("isNoRunnersError", () => {
   });
 
   it("does not match unrelated errors", async () => {
-    const { isNoRunnersError } = await import(
-      "../src/harness/sandbox/utils.ts"
-    );
+    const { isNoRunnersError } =
+      await import("../src/harness/sandbox/utils.ts");
     expect(isNoRunnersError(new Error("connection reset"))).toBe(false);
     expect(isNoRunnersError({ statusCode: 404 })).toBe(false);
     expect(isNoRunnersError(undefined)).toBe(false);
@@ -1832,9 +1823,8 @@ describe("isNoRunnersError", () => {
 
 describe("classifyVercelError", () => {
   it("turns 401/403 auth failures into an actionable VERCEL_TOKEN message", async () => {
-    const { classifyVercelError } = await import(
-      "../src/harness/sandbox/vercel-executor.ts"
-    );
+    const { classifyVercelError } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
     // The SDK's documented bare-string form.
     expect(
       classifyVercelError(new Error("Status code 403 is not ok")).message,
@@ -1849,9 +1839,8 @@ describe("classifyVercelError", () => {
   });
 
   it("passes through unrelated errors without misclassifying stray 401/403 numbers", async () => {
-    const { classifyVercelError } = await import(
-      "../src/harness/sandbox/vercel-executor.ts"
-    );
+    const { classifyVercelError } =
+      await import("../src/harness/sandbox/vercel-executor.ts");
     const stray = classifyVercelError(
       new Error("operation failed after 403 attempts"),
     );
@@ -1865,9 +1854,8 @@ describe("classifyVercelError", () => {
 
 describe("workspaceNamespacePrefix", () => {
   it("prefixes namespaces with the sandbox mount root so harness and mount agree", async () => {
-    const { workspaceNamespacePrefix } = await import(
-      "../src/shared/sandbox.ts"
-    );
+    const { workspaceNamespacePrefix } =
+      await import("../src/shared/sandbox.ts");
     // Must match SandboxS3FilesAccessPoint.rootDirectories[].path in sst.config.ts.
     expect(workspaceNamespacePrefix("fs-abc")).toBe("fs-abc");
   });

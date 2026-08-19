@@ -279,7 +279,6 @@ export function SkillFilesTab({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skillMdUrl]);
 
   const hasSkillMd = (files ?? []).some((f) => f.path === "SKILL.md");

@@ -938,7 +938,7 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
   #sandboxEnvVars(
     requestEnvVars?: Record<string, string>,
   ): Record<string, string> {
-    return { ...stringRecord(this.#config.envVars), ...(requestEnvVars ?? {}) };
+    return { ...stringRecord(this.#config.envVars), ...requestEnvVars };
   }
 
   // POST the exec request to the VM endpoint, retrying while the snapshot warms.
@@ -1241,7 +1241,11 @@ export class MicrovmSandboxExecutor implements SandboxExecutor {
     if (!microvmId) throw new Error("no reserved MicroVM for this workspace");
     const { endpoint } = await this.#reconnect(microvmId);
 
-    return { microvmId: microvmId, endpoint: endpoint, jobsDir: this.#jobsDir(key) };
+    return {
+      microvmId: microvmId,
+      endpoint: endpoint,
+      jobsDir: this.#jobsDir(key),
+    };
   }
 
   async #terminate(microvmId: string): Promise<void> {

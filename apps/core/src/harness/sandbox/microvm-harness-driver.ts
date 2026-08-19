@@ -242,7 +242,7 @@ class MicrovmHarnessSession implements BroodsSandboxDriverSession {
       command: options.command,
       workingDirectory:
         options.workingDirectory ?? this.#defaultWorkingDirectory,
-      env: { ...this.#env, ...(options.env ?? {}) },
+      env: { ...this.#env, ...options.env },
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
     });
   }

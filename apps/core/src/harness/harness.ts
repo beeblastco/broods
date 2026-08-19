@@ -200,13 +200,27 @@ export interface AgentLoopOptions {
   hooks?: HookDispatcher;
 }
 
+// The agent stream plus the run's control surface: the accessors report loop
+// state a caller cannot read off the stream itself, and finalization is exposed
+// so a caller that drains the stream by hand can still settle the run.
+export type AgentLoopStream = ReturnType<typeof streamText> & {
+  consumeStream(): Promise<void>;
+  ensureFinalized(): Promise<void>;
+  didFail(): boolean;
+  failureText(): string | null;
+  approvalSummaries(): ToolApprovalSummary[];
+  hasStructuredOutput(): boolean;
+  finalResponse(): JSONValue | undefined;
+  traceId(): string;
+};
+
 export async function runAgentLoop(
   session: Session,
   turnContext: TurnContextSnapshot,
   agentConfig: AgentConfig,
   reply?: AgentReplyHooks,
   options: AgentLoopOptions = {},
-) {
+): Promise<AgentLoopStream> {
   let didFail = false;
   let failureText: string | null = null;
   let systemContextSnapshot = turnContext.systemContextSnapshot;
@@ -1009,7 +1023,9 @@ export async function runAgentLoop(
         conversationKey: session.conversationKey,
         attributes: attributes,
       });
-      recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
+      recordToolCallSummary(toolCallSummaries, toolCall, {
+        stepNumber: stepNumber,
+      });
       await lifecycle.emit("tool.call.started", {
         stepNumber: stepNumber,
         toolCall: toLifecycleValue(toolCall),
@@ -1174,7 +1190,9 @@ export async function runAgentLoop(
         lastStepText = stepText;
       }
       for (const toolCall of toolCalls) {
-        recordToolCallSummary(toolCallSummaries, toolCall, { stepNumber: stepNumber });
+        recordToolCallSummary(toolCallSummaries, toolCall, {
+          stepNumber: stepNumber,
+        });
       }
 
       // providerMetadata is typed as ProviderMetadata (Record<string, Record<string, unknown>>)

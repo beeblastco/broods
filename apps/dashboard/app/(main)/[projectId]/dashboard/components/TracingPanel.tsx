@@ -834,7 +834,6 @@ export function TracingPanel({
     if (index === -1) return;
     focusedRef.current = focusKey;
     const rootKey = `${focusTraceId}:${groups[index].root.spanId}`;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpanded((current) => new Set([...current, rootKey]));
     if (index >= visibleCount) {
       setVisibleCount(index + 1);

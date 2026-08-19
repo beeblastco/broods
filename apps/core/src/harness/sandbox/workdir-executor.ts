@@ -179,7 +179,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
         ...(cwd ? { cwd: cwd } : {}),
         env: {
           ...stringRecord(this.#config.envVars),
-          ...(request.envVars ?? {}),
+          ...request.envVars,
         },
       });
       const stdout = truncateText(
@@ -226,7 +226,7 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const result = await sandbox.exec(script, {
       env: {
         ...stringRecord(this.#config.envVars),
-        ...(request.envVars ?? {}),
+        ...request.envVars,
       },
     });
     if (result.exit_code !== 0) {
@@ -308,7 +308,10 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
     const externalImageId =
       configString(data.image_id) ?? configString(data.image);
 
-    return { snapshotId: snapshotId, ...(externalImageId ? { externalImageId: externalImageId } : {}) };
+    return {
+      snapshotId: snapshotId,
+      ...(externalImageId ? { externalImageId: externalImageId } : {}),
+    };
   }
 
   async getInstanceInfo(
@@ -321,7 +324,8 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
       return { externalId: externalId, state: mapWorkdirState(sandbox.state) };
     } catch (err) {
-      if (isSandboxGoneError(err)) return { externalId: externalId, state: "terminating" };
+      if (isSandboxGoneError(err))
+        return { externalId: externalId, state: "terminating" };
       throw err;
     }
   }
@@ -873,7 +877,10 @@ function workdirNetwork(
   if (network.mode === "allow-all") return { egress: "default" };
   if (network.mode === "deny-all") return { egress: "none" };
   const allow = [
-    ...(network.allowDomains ?? []).map((value) => ({ type: "domain", value: value })),
+    ...(network.allowDomains ?? []).map((value) => ({
+      type: "domain",
+      value: value,
+    })),
     ...(network.allowCidrs ?? []),
   ];
   if (allow.length === 0) return { egress: "none" };

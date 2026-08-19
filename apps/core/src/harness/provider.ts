@@ -83,9 +83,13 @@ export type ModelOutputSpec =
   | ReturnType<typeof Output.choice>
   | ReturnType<typeof Output.json>;
 
-// Name → AI SDK factory; `satisfies` fails the build if a name has no factory.
-// Built per call so each is read off its live binding, which keeps it mockable.
-export function modelProviderFactories() {
+// Name → AI SDK factory; the return type fails the build if a name has no
+// factory. Built per call so each is read off its live binding, keeping it
+// mockable.
+export function modelProviderFactories(): Record<
+  AccountModelProviderName,
+  ModelProviderFactory
+> {
   return {
     anthropic: createAnthropic,
     azure: createAzure,
@@ -108,7 +112,7 @@ export function modelProviderFactories() {
     vercel: createGateway,
     vertex: createGoogleVertex,
     xai: createXai,
-  } satisfies Record<AccountModelProviderName, ModelProviderFactory>;
+  };
 }
 
 export function resolveConfiguredModel(
@@ -544,4 +548,3 @@ function withoutStoredItemState(
     ),
   };
 }
-

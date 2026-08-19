@@ -32,7 +32,7 @@ export interface HookDispatcher {
 
 const NO_HOOKS: HookDispatcher = {
   hasHooksFor: () => false,
-  runMutation: async function() {
+  runMutation: async function () {
     return undefined;
   },
 };
@@ -71,7 +71,7 @@ export function createHookDispatcher(
 
   return {
     hasHooksFor: (event) => index.has(event),
-    runMutation: async function(event, payload) {
+    runMutation: async function (event, payload) {
       const records = index.get(event);
       if (!records || records.length === 0) {
         return undefined;
@@ -89,7 +89,7 @@ export function createHookDispatcher(
           });
           runState = state;
           if (mutation) {
-            merged = { ...(merged ?? {}), ...mutation };
+            merged = { ...merged, ...mutation };
           }
         }
 

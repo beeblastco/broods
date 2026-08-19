@@ -8,7 +8,6 @@ import { isPlainObject } from "../object.ts";
 
 const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
-const MAX_INPUT_LENGTH = 20_000;
 
 export type CronStatus = "active" | "paused";
 export type CronLastStatus = "started" | "completed" | "failed";

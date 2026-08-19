@@ -2,7 +2,7 @@
  * Org membership lookups and role enforcement.
  */
 
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 
 export type OrgRole = "owner" | "admin" | "member";
@@ -21,7 +21,7 @@ export async function getOrgMembership(
   ctx: QueryCtx | MutationCtx,
   orgId: Id<"orgs">,
   userId: Id<"users">,
-) {
+): Promise<Doc<"orgMembers"> | null> {
   const membership = await ctx.db
     .query("orgMembers")
     .withIndex("by_orgId_and_userId", (q) =>
@@ -39,7 +39,7 @@ export async function getOrgMembership(
 export async function getActiveOrgForUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
-) {
+): Promise<Doc<"orgs"> | null> {
   const memberships = await ctx.db
     .query("orgMembers")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -66,7 +66,7 @@ export async function requireOrgMember(
   orgId: Id<"orgs">,
   userId: Id<"users">,
   requiredRole?: OrgRole,
-) {
+): Promise<Doc<"orgMembers">> {
   const membership = await getOrgMembership(ctx, orgId, userId);
   if (!membership) {
     throw new Error("Not a member of this org");

@@ -328,7 +328,7 @@ async function materializeRuntimeNodes(
           description: description,
           managedBy: "dashboard",
           updatedAt: now,
-          ...(encrypted ?? {}),
+          ...encrypted,
         });
       }
       result.push(sandboxLayoutNode(node, data, existing._id));
@@ -349,7 +349,7 @@ async function materializeRuntimeNodes(
       managedBy: "dashboard",
       createdAt: now,
       updatedAt: now,
-      ...(encrypted ?? {}),
+      ...encrypted,
     });
     result.push(sandboxLayoutNode(node, data, createdId));
   }

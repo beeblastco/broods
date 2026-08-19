@@ -419,7 +419,7 @@ async function daytonaCreateOptions(
   const options = isPlainObject(config.options) ? config.options : {};
   const baseEnv = {
     ...(isStringRecord(config.envVars) ? config.envVars : {}),
-    ...(request.envVars ?? {}),
+    ...request.envVars,
   };
   const envVars = await daytonaEnvVars(config, request, baseEnv);
   // Persistent: auto-stop on idle (filesystem persists, harness restarts on next

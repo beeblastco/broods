@@ -23,8 +23,8 @@
   "devDependencies": {
     "@docusaurus/types": "3.10.2",
     "@docusaurus/tsconfig": "^3.10.2",
-    "@types/node": "^26.1.1",
-    "webpack": "5.109.0"
+    "@types/node": "^26.2.0",
+    "webpack": "5.109.2"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"

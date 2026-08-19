@@ -180,11 +180,12 @@ export class BroodsSandboxProvider implements HarnessV1SandboxProvider {
 
     if (options.onFirstCreate && isFirstCreate) {
       try {
-        await options.onFirstCreate(session.restricted(), {
-          ...(options.abortSignal !== undefined
+        await options.onFirstCreate(
+          session.restricted(),
+          options.abortSignal !== undefined
             ? { abortSignal: options.abortSignal }
-            : {}),
-        });
+            : {},
+        );
       } catch (setupError) {
         try {
           await session.destroy();
@@ -404,7 +405,7 @@ class BroodsNetworkSandboxSession
 
 function bytesToStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    start: function(controller) {
+    start: function (controller) {
       controller.enqueue(bytes);
       controller.close();
     },

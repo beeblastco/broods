@@ -47,7 +47,7 @@ export function SkillConfigTab({
         title="Skills"
         value={skills}
         onSave={(v) => {
-          const clean = { ...((v as Record<string, unknown>) ?? {}) };
+          const clean = { ...(v as Record<string, unknown>) };
           delete clean.publish;
           updateBranch(
             ["skills"],

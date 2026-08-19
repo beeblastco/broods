@@ -12,7 +12,7 @@ it("maps native text and JSON to their matching AI SDK result types", () => {
   const value = { status: "completed", response: ["a", null, 1] };
   expect(normalizeToolResultOutput(value)).toEqual({
     type: "json",
-    value,
+    value: value,
   });
 });
 

@@ -273,7 +273,7 @@ export function ToolConfigTab({
               agentConfig as FlatAgentConfig,
             ) as Record<string, unknown>;
             const tools: Record<string, unknown> = {
-              ...((nested.tools as Record<string, unknown> | undefined) ?? {}),
+              ...(nested.tools as Record<string, unknown> | undefined),
             };
             if (value === undefined) {
               delete tools[toolKey];

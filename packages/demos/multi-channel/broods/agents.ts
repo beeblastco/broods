@@ -1,6 +1,5 @@
 import {
   defineAgent,
-  defineGitHubChannel,
   defineGitHubConnection,
   defineSandbox,
   defineSkill,
@@ -23,11 +22,9 @@ const setupGitDevEnvironment = fs
   .trim();
 const githubGitUserName = process.env.GITHUB_BOT_USERNAME;
 const githubGitUserEmail = process.env.GITHUB_GIT_USER_EMAIL;
-const optionalSandboxGithubEnv = {
-  ...(process.env.GITHUB_INSTALLATION_ID
-    ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") }
-    : {}),
-};
+const optionalSandboxGithubEnv = process.env.GITHUB_INSTALLATION_ID
+  ? { GITHUB_INSTALLATION_ID: env("GITHUB_INSTALLATION_ID") }
+  : {};
 
 export const slack = defineSlackConnection({
   partition: { by: "shared" },

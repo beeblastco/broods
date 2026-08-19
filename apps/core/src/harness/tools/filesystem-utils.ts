@@ -10,6 +10,7 @@
  */
 
 import type { JSONObject } from "@ai-sdk/provider";
+import type { JSONSchema7 } from "ai";
 import type { SandboxPermissionMode } from "../../shared/domain/sandbox-config.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import {
@@ -188,7 +189,9 @@ export function resolveWorkspace(
   return workspace;
 }
 
-export function workspaceParamSchema(workspaces: ResolvedWorkspace[]) {
+export function workspaceParamSchema(
+  workspaces: ResolvedWorkspace[],
+): JSONSchema7 | undefined {
   // Only expose the selector when there is a genuine choice.
   if (workspaces.length <= 1) {
     return undefined;

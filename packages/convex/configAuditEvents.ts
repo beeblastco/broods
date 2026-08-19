@@ -7,14 +7,12 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import {
-  accountIdForProject,
   insertConfigAuditEvent,
   type ConfigAuditActor,
   type ConfigAuditResource,
 } from "./model/auditEvents";
 import {
   configAuditActorKindValidator,
-  configAuditEventsFields,
   configAuditResourceKindValidator,
 } from "./schema";
 

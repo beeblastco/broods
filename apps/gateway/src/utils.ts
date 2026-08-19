@@ -142,7 +142,9 @@ export async function mapWithConcurrency<T, R>(
   limit: number,
   mapper: (item: T) => Promise<R>,
 ): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  const results = Array.from<PromiseSettledResult<R>>({
+    length: items.length,
+  });
   let cursor = 0;
 
   const worker = async (): Promise<void> => {

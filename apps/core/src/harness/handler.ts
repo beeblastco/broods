@@ -19,84 +19,87 @@ import {
   type CronRecord,
 } from "../shared/domain/cron.ts";
 import {
-    booleanEnv,
-    getHarnessPublicUrl,
-    optionalEnv,
-    positiveIntegerEnv,
+  booleanEnv,
+  getHarnessPublicUrl,
+  optionalEnv,
+  positiveIntegerEnv,
 } from "../shared/env.ts";
 import {
-    errorResponse,
-    jsonResponse,
-    parseJsonBody,
-    type CoreRequest,
-    type RequestContext,
+  errorResponse,
+  jsonResponse,
+  parseJsonBody,
+  type CoreRequest,
+  type RequestContext,
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo } from "../shared/log.ts";
 import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
-    accountAgentScopedKey,
-    publicConversationKeyFromScoped,
-    scopedDirectConversationKey,
-    scopedDirectEventId,
+  accountAgentScopedKey,
+  publicConversationKeyFromScoped,
+  scopedDirectConversationKey,
+  scopedDirectEventId,
 } from "../shared/runtime-keys.ts";
 import { getStorage } from "../shared/storage.ts";
 import {
-    createPendingAsyncAgentResult,
-    getAsyncAgentResult,
-    markAsyncAgentResultAwaitingApproval,
-    markAsyncAgentResultCompleted,
-    markAsyncAgentResultFailed,
+  createPendingAsyncAgentResult,
+  getAsyncAgentResult,
+  markAsyncAgentResultAwaitingApproval,
+  markAsyncAgentResultCompleted,
+  markAsyncAgentResultFailed,
 } from "./async-agent-result.ts";
 import {
-    getAsyncToolResult,
-    getDetachedAsyncToolGroup,
-    listAsyncToolResultsByParentEvent,
-    sealDetachedAsyncToolGroup,
-    settleAsyncToolResultFromCallback,
-    verifyAsyncToolCompletionToken,
-    type AsyncToolDelivery,
-    type AsyncToolResultRecord,
+  getAsyncToolResult,
+  getDetachedAsyncToolGroup,
+  listAsyncToolResultsByParentEvent,
+  sealDetachedAsyncToolGroup,
+  settleAsyncToolResultFromCallback,
+  verifyAsyncToolCompletionToken,
+  type AsyncToolDelivery,
+  type AsyncToolResultRecord,
 } from "./async-tool-result.ts";
 import {
-    AsyncToolCoordinator,
-    completionToParentMessage,
+  AsyncToolCoordinator,
+  completionToParentMessage,
 } from "./async-tools.ts";
-import { runAgentLoop, type ToolApprovalSummary } from "./harness.ts";
 import {
-    applyMessageSendingHook,
-    createAgentHookDispatcher,
-    type HookDispatcher,
+  runAgentLoop,
+  type AgentLoopStream,
+  type ToolApprovalSummary,
+} from "./harness.ts";
+import {
+  applyMessageSendingHook,
+  createAgentHookDispatcher,
+  type HookDispatcher,
 } from "./hook-dispatcher.ts";
 import {
-    acceptIngress,
-    getConversationDispatchTarget,
-    getIngressStatus,
-    prepareSessionMessage,
-    type AppliedIngress,
-    type IngressAdmission,
-    type IngressDelivery,
-    type SessionMessageInput,
-    type SessionMessageResult,
+  acceptIngress,
+  getConversationDispatchTarget,
+  getIngressStatus,
+  prepareSessionMessage,
+  type AppliedIngress,
+  type IngressAdmission,
+  type IngressDelivery,
+  type SessionMessageInput,
+  type SessionMessageResult,
 } from "./ingress.ts";
 import {
-    channelActionsFromConfig,
-    rewriteLatestUserIngressText,
-    routeIncomingEvent,
-    sendChannelReply,
-    type AsyncDirectInboundEvent,
-    type AsyncToolCompletionInboundEvent,
-    type ChannelContextEvent,
-    type ChannelInboundEvent,
-    type DirectInboundEvent,
-    type IngressDispatchScope,
-    type SandboxJobCompletionInboundEvent,
-    type StatusInboundEvent,
+  channelActionsFromConfig,
+  rewriteLatestUserIngressText,
+  routeIncomingEvent,
+  sendChannelReply,
+  type AsyncDirectInboundEvent,
+  type AsyncToolCompletionInboundEvent,
+  type ChannelContextEvent,
+  type ChannelInboundEvent,
+  type DirectInboundEvent,
+  type IngressDispatchScope,
+  type SandboxJobCompletionInboundEvent,
+  type StatusInboundEvent,
 } from "./integrations.ts";
 import { Session, type ConversationIngressEvent } from "./session.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
-type AgentLoopStream = Awaited<ReturnType<typeof runAgentLoop>>;
 type ContinuationOutcome =
   | { kind: "pending"; pendingCount: number }
   | { kind: "ready"; invoked: boolean; publicEventId: string }
@@ -1016,7 +1019,9 @@ async function handleNatsWorkerRequest(
         agentConfig: event.agentConfig,
         consumeStream: (stream) => pipeAgentNatsStream(stream, fencedPublisher),
         onLoopErrorText: async (error) => {
-          fencedPublisher.publish({ type: "error", error: error }).catch(() => {});
+          fencedPublisher
+            .publish({ type: "error", error: error })
+            .catch(() => {});
         },
         onApprovalRequired: async (approvals) => {
           // The event also sends additional tool-approval-request so that the websocket gateway can easily
@@ -1045,11 +1050,12 @@ async function handleNatsWorkerRequest(
         result.approvals.length === 0 &&
         !asyncToolCoordinator.hasDetachedCallbacks
       ) {
-        await session.settleIngress("completed", {
-          ...(result.finalResponse !== undefined
+        await session.settleIngress(
+          "completed",
+          result.finalResponse !== undefined
             ? { result: result.finalResponse }
-            : {}),
-        });
+            : {},
+        );
       }
 
       if (asyncToolCoordinator.hasDetachedCallbacks) {
@@ -1330,9 +1336,10 @@ async function handleChannelRequest(
               error: result.failureText ?? AGENT_PROCESSING_FAILED,
             });
           } else if (terminal === "completed") {
-            await session.settleIngress("completed", {
-              ...(finalResult !== undefined ? { result: finalResult } : {}),
-            });
+            await session.settleIngress(
+              "completed",
+              finalResult !== undefined ? { result: finalResult } : {},
+            );
           } else if (result.hasDetachedCallbacks) {
             await session.settleIngress("completed", {
               result: { status: "waiting_for_async_tools" },
@@ -1830,7 +1837,6 @@ async function dispatchNextIngress(
 ): Promise<boolean> {
   const next = await session.takeNextIngress();
   if (!next) {
-
     return false;
   }
   await dispatchAppliedIngress(previous, next);
@@ -1847,7 +1853,6 @@ async function dispatchRecoveredIngress(
   admission: IngressAdmission,
 ): Promise<void> {
   if (!admission.recovered) {
-
     return;
   }
   try {
@@ -2066,7 +2071,7 @@ export function dispatchInProcessWorker(
 /** Awaited by the container bootstrap on shutdown so queued work is not lost. */
 export async function drainInProcessWorkers(): Promise<void> {
   while (inProcessWorkers.size > 0) {
-    await Promise.allSettled([...inProcessWorkers]);
+    await Promise.allSettled(inProcessWorkers);
   }
 }
 
@@ -2151,7 +2156,12 @@ export async function settleCronRun(
   if (!cronRun) return;
   const crons = getStorage().crons;
   if ("error" in outcome) {
-    await crons.failRun(accountId, cronRun.cronId, cronRun.runId, outcome.error);
+    await crons.failRun(
+      accountId,
+      cronRun.cronId,
+      cronRun.runId,
+      outcome.error,
+    );
   } else {
     await crons.completeRun(
       accountId,
@@ -2378,7 +2388,7 @@ function createDirectContinuationSseBody(
     // This callback runs during stream consumption, after handler() has already
     // returned and its observability scope has closed, so open a fresh one here
     // to keep the continuation's redaction/routing tenant-private.
-    start: function(controller) {
+    start: function (controller) {
       return runWithObservabilityScope(async () => {
         const subagentCoordinator = new SubagentCoordinator(
           session,
@@ -2420,11 +2430,12 @@ function createDirectContinuationSseBody(
             result.approvals.length === 0 &&
             !result.hasDetachedCallbacks
           ) {
-            await session.settleIngress("completed", {
-              ...(result.finalResponse !== undefined
+            await session.settleIngress(
+              "completed",
+              result.finalResponse !== undefined
                 ? { result: result.finalResponse }
-                : {}),
-            });
+                : {},
+            );
             transferred = await dispatchNextIngress(session, event);
           } else if (result.approvals.length > 0) {
             await session.settleIngress("completed", {
@@ -2636,7 +2647,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: approvals,
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2659,7 +2672,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: true,
         failureText: stream.failureText(),
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2678,7 +2693,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2690,7 +2707,9 @@ async function runParentContinuationLoop(options: {
       return {
         didFail: false,
         failureText: null,
-        ...(finalResponse !== undefined ? { finalResponse: finalResponse } : {}),
+        ...(finalResponse !== undefined
+          ? { finalResponse: finalResponse }
+          : {}),
         ...(traceId ? { traceId: traceId } : {}),
         approvals: [],
         hasDetachedCallbacks: options.asyncToolCoordinator.hasDetachedCallbacks,
@@ -2882,7 +2901,7 @@ function isErrorStreamChunk(chunk: unknown): boolean {
 function emptySseResponse(): Response {
   return new Response(
     new ReadableStream({
-      start: function(controller) {
+      start: function (controller) {
         controller.close();
       },
     }),
@@ -2893,7 +2912,7 @@ function emptySseResponse(): Response {
 function errorSseResponse(error: string, statusCode = 200): Response {
   return new Response(
     new ReadableStream({
-      start: function(controller) {
+      start: function (controller) {
         controller.enqueue(
           textEncoder.encode(
             `data: ${JSON.stringify({ type: "error", error: error })}\n\n`,

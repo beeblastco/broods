@@ -1553,7 +1553,7 @@ async function rememberEnvSyncValue(
 ): Promise<void> {
   const cache = await loadEnvSyncCache();
   const key = envCacheKey(scopeKey, project, stage);
-  cache[key] = { ...(cache[key] ?? {}), [name]: hashEnvValue(value) };
+  cache[key] = { ...cache[key], [name]: hashEnvValue(value) };
   await saveEnvSyncCache(cache);
 }
 
