@@ -54,10 +54,12 @@ import {
   promptConfirm,
   promptSecret,
   promptSelect,
+  promptSelectOrText,
   promptText,
   requireAuth,
 } from "./utils.ts";
 import {
+  formatChoiceRow,
   printDeploymentTarget,
   printDiffEntries,
   printEnvSync,
@@ -537,10 +539,14 @@ async function orgCommand(args: string[]): Promise<void> {
 
   if (isList) {
     for (const org of context.orgs) {
-      const marker = org.id === context.currentOrgId ? "*" : " ";
       const disabled =
         org.accountStatus === "active" ? "" : ` [${org.accountStatus} account]`;
-      console.log(`${marker} ${formatOrgChoice(org)}${disabled}`);
+      console.log(
+        formatChoiceRow(
+          `${formatOrgChoice(org)}${disabled}`,
+          org.id === context.currentOrgId,
+        ),
+      );
     }
     console.log(
       "\nOnly orgs where you are owner or admin can be selected from the CLI.",
@@ -558,7 +564,12 @@ async function orgCommand(args: string[]): Promise<void> {
           (org) =>
             org.slug === needle || org.name === needle || org.id === needle,
         )
-      : await promptSelect("Select organization", selectable, formatOrgChoice);
+      : await promptSelect(
+          "Select organization",
+          selectable,
+          formatOrgChoice,
+          selectable.findIndex((org) => org.id === context.currentOrgId),
+        );
     if (!selected) {
       throw new Error(
         `No selectable organization matches "${needle}". Run \`broods org list\`.`,
@@ -635,8 +646,11 @@ async function stageCommand(args: string[]): Promise<void> {
     const stages = await client.listStages(scope.project);
     const selected = needle
       ? stages.find((stage) => stageNameEquals(stage.name, needle))
-      : await promptSelect("Select stage", stages, (stage) =>
-          formatStage(stage, scope.stage).trim(),
+      : await promptSelect(
+          "Select stage",
+          stages,
+          formatStageDetail,
+          stages.findIndex((stage) => stageNameEquals(stage.name, scope.stage)),
         );
     if (!selected) {
       throw new Error(
@@ -935,9 +949,6 @@ async function streamDevLogs(
   }
 
   const minLevel = resolveMinLevel(args);
-  console.log(
-    `· live logs [${minLevel}+]${levelHint(minLevel)}. Full INFO/DEBUG history is in the dashboard.`,
-  );
   try {
     for await (const entry of subscribeObservabilityLogs(
       {
@@ -1030,10 +1041,12 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   }
 
   if (process.stdin.isTTY && needsRegion) {
+    const regions = [...SERVICE_REGIONS];
     region = await promptSelect(
       "Select service region",
-      [...SERVICE_REGIONS],
+      regions,
       (entry) => entry.label,
+      regions.findIndex((entry) => entry.region === region),
     ).then((entry) => entry.region);
   }
 
@@ -1188,11 +1201,24 @@ function formatOrgChoice(org: CliOnboardingOrg): string {
   return `${org.name} (${org.slug}, ${suffix}${plan})`;
 }
 
+/** The slug only earns a mention when it differs from the name. */
+function formatProjectChoice(project: CliOnboardingProject): string {
+  return project.slug === project.name
+    ? project.name
+    : `${project.name} (${project.slug})`;
+}
+
 function formatStage(stage: CliStage, current: string): string {
-  const marker = stageNameEquals(stage.name, current) ? "*" : " ";
+  return formatChoiceRow(
+    formatStageDetail(stage),
+    stageNameEquals(stage.name, current),
+  );
+}
+
+function formatStageDetail(stage: CliStage): string {
   const region = stage.deploymentRegion ? `, ${stage.deploymentRegion}` : "";
 
-  return `${marker} ${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
+  return `${stage.name} (${stage.kind}${region}) — ${stage.agentCount} agent(s), ${stage.variableCount} env var(s)`;
 }
 
 /** Stage names match the way the backend matches them: trimmed, case-insensitive. */
@@ -1226,6 +1252,7 @@ async function selectOnboardingOrg(
     [...activeOrgs, createNew],
     (entry) =>
       "kind" in entry ? "Create new organization" : formatOrgChoice(entry),
+    activeOrgs.findIndex((org) => org.id === context.currentOrgId),
   );
 
   if ("kind" in selected) {
@@ -1254,33 +1281,47 @@ function defaultProjectName(
   return exact?.name ?? inferred;
 }
 
+function findProject(
+  context: CliOnboardingContext,
+  needle: string,
+): CliOnboardingProject | undefined {
+  return context.projects.find(
+    (project) => project.name === needle || project.slug === needle,
+  );
+}
+
+/**
+ * Picks the project to sync: a number connects to that existing project after a
+ * confirmation, and any other answer (empty means the suggested name) creates a
+ * project under that name unless one already goes by it.
+ */
 async function selectOnboardingProject(
   context: CliOnboardingContext,
   inferred: string,
 ): Promise<string> {
+  const suggested = defaultProjectName(context, inferred);
   if (context.projects.length === 0) {
-    return promptText("Project name", inferred);
+    return promptText("Project name", suggested);
   }
 
-  const createNew = {
-    kind: "create" as const,
-    name: defaultProjectName(context, inferred),
-    slug: "",
-  };
-  const choices: Array<CliOnboardingProject | typeof createNew> = [
-    ...context.projects,
-    createNew,
-  ];
-  const selected = await promptSelect("Select project", choices, (entry) =>
-    "kind" in entry && entry.kind === "create"
-      ? `Create new project (${entry.name})`
-      : `${entry.name} (${entry.slug})`,
-  );
-  if ("kind" in selected && selected.kind === "create") {
-    return promptText("New project name", selected.name);
+  while (true) {
+    const answer = await promptSelectOrText(
+      "Select project",
+      context.projects,
+      formatProjectChoice,
+      { hint: "type a new project name", defaultValue: suggested },
+    );
+    const name = typeof answer === "string" ? answer : answer.name;
+    const existing = findProject(context, name);
+    if (!existing) return name;
+    if (
+      await promptConfirm(
+        `Continue with the existing project ${existing.name}?`,
+      )
+    ) {
+      return existing.name;
+    }
   }
-
-  return selected.name;
 }
 
 /**
