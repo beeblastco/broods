@@ -26,7 +26,7 @@ const CHANNEL_CONFIG_KEYS = [
   "policies",
   "denyTools",
   "replyIn",
-  "workspaceScope",
+  "partition",
   "sandboxImages",
   "tagRoles",
 ] as const;
@@ -38,8 +38,7 @@ export type ChannelRecordConfig = {
   policies?: string[];
   denyTools?: string[];
   replyIn?: ChannelReplyIn;
-  workspaceScope?:
-    { level: "channel" } | { level: "conversation"; alias: string };
+  partition?: { by: "shared" } | { by: "conversation"; alias: string };
   sandboxImages?: string[];
   tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 };
@@ -87,7 +86,7 @@ export function normalizeChannelRecordConfig(
     "config.sandboxImages",
   );
   const replyIn = normalizeReplyIn(config.replyIn);
-  const workspaceScope = normalizeWorkspaceScope(config.workspaceScope);
+  const partition = normalizePartition(config.partition);
   const tagRoles = normalizeTagRoles(config.tagRoles);
 
   return {
@@ -97,7 +96,7 @@ export function normalizeChannelRecordConfig(
     ...(policies ? { policies: policies } : {}),
     ...(denyTools ? { denyTools: denyTools } : {}),
     ...(replyIn ? { replyIn: replyIn } : {}),
-    ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+    ...(partition ? { partition: partition } : {}),
     ...(sandboxImages ? { sandboxImages: sandboxImages } : {}),
     ...(tagRoles ? { tagRoles: tagRoles } : {}),
   };
@@ -242,32 +241,28 @@ function normalizeWorkspaces(
   });
 }
 
-function normalizeWorkspaceScope(
-  value: unknown,
-): ChannelRecordConfig["workspaceScope"] {
+function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
-    throw new Error("config.workspaceScope must be an object");
+    throw new Error("config.partition must be an object");
   }
   const scope = value as Record<string, unknown>;
-  if (scope.level === "channel") {
+  if (scope.by === "shared") {
     if (scope.alias !== undefined) {
       throw new Error(
-        "config.workspaceScope.alias is only supported when level is conversation",
+        "config.partition.alias is only supported when by is conversation",
       );
     }
 
-    return { level: "channel" };
+    return { by: "shared" };
   }
-  if (scope.level !== "conversation") {
-    throw new Error(
-      "config.workspaceScope.level must be one of: channel, conversation",
-    );
+  if (scope.by !== "conversation") {
+    throw new Error("config.partition.by must be one of: shared, conversation");
   }
 
   return {
-    level: "conversation",
-    alias: requireString(scope.alias, "config.workspaceScope.alias"),
+    by: "conversation",
+    alias: requireString(scope.alias, "config.partition.alias"),
   };
 }
 

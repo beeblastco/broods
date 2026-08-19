@@ -40,7 +40,7 @@ async function upsertChannel(input: {
     instructions: input.instructions,
     // Each thread gets its own private folder under the channel workspace, so
     // two incidents in one channel never read each other's scratch files.
-    workspaceScope: { alias: "thread", level: "conversation" } as const,
+    partition: { alias: "thread", by: "conversation" } as const,
     replyIn: "thread" as const,
     ...input.extra,
   };

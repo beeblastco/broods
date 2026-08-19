@@ -14,6 +14,7 @@ import type {
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
+  ChannelPartition,
   ChannelReplyIn,
   PolicyDocument,
   AgentWebhookHookConfig,
@@ -27,6 +28,8 @@ import type {
   PancakeSource,
   ZaloSource,
 } from "./contracts.ts";
+
+export type { ChannelPartition };
 
 const RESOURCE_MARKER = Symbol.for("broods.resource");
 const CONFIG_MARKER = Symbol.for("broods.config");
@@ -195,14 +198,6 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
   /** `partition` is lifted out of the authored input, so it is not in here. */
   readonly config: Omit<Config, "partition">;
 }
-
-/**
- * How an attached partitioned workspace splits its folders for runs arriving
- * through this door. `shared` mounts the workspace root; `conversation` mounts
- * a private child folder per thread, issue or chat under `alias`.
- */
-export type ChannelPartition =
-  { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
 
 /**
  * An agent bound to a channel. Every bound agent runs when a message arrives;

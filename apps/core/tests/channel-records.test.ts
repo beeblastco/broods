@@ -571,14 +571,14 @@ describe("channel record layering", () => {
         platform: "slack",
         config: {
           agentBindings: [{ agentId: "a" }],
-          workspaceScope: { level: "conversation", alias: "support" },
+          partition: { by: "conversation", alias: "support" },
         },
       }),
       "slack",
     );
 
     expect(merged.channels?.slack).toMatchObject({
-      workspaceScope: { level: "conversation", alias: "support" },
+      partition: { by: "conversation", alias: "support" },
     });
   });
 
@@ -592,14 +592,14 @@ describe("channel record layering", () => {
         platform: "slack",
         config: {
           agentBindings: [{ agentId: "a" }],
-          workspaceScope: { level: "conversation", alias: "support" },
+          partition: { by: "conversation", alias: "support" },
         },
       }),
       "slack",
     );
 
     expect(merged.channels?.slack).toEqual({
-      workspaceScope: { level: "conversation", alias: "support" },
+      partition: { by: "conversation", alias: "support" },
     });
   });
 
@@ -696,18 +696,18 @@ describe("channel record validation", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: [{ agentId: "a" }],
-        workspaceScope: { level: "conversation" },
+        partition: { by: "conversation" },
       }),
-    ).toThrow("config.workspaceScope.alias must be a non-empty string");
+    ).toThrow("config.partition.alias must be a non-empty string");
   });
 
-  it("rejects an alias on a channel-level workspace scope", () => {
+  it("rejects an alias on a shared partition", () => {
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: [{ agentId: "a" }],
-        workspaceScope: { level: "channel", alias: "support" },
+        partition: { by: "shared", alias: "support" },
       }),
-    ).toThrow("only supported when level is conversation");
+    ).toThrow("only supported when by is conversation");
   });
 
   it("rejects an unknown reply target", () => {

@@ -82,7 +82,14 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "update_schedule",
   "write",
 ]);
-const CHANNEL_WORKSPACE_SCOPE_LEVELS = ["channel", "conversation"] as const;
+const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
+
+// Both spellings this field used to carry, kept so a stale key throws instead
+// of sitting in config doing nothing.
+const RETIRED_PARTITION_KEYS = [
+  "workspaceIsolationScope",
+  "workspaceScope",
+] as const;
 
 // Every provider used to name its own reach list. They are one pair now, so a
 // stale key has to fail loudly here rather than sit in config doing nothing.
@@ -812,38 +819,36 @@ function normalizeChannelIdentityConfig(
     `${name}.allowedChannelIds`,
   );
   assertOptionalStringArray(config.allowedUserIds, `${name}.allowedUserIds`);
-  if (config.workspaceIsolationScope !== undefined) {
-    throw new Error(
-      `${name}.workspaceIsolationScope is no longer supported; use ${name}.workspaceScope`,
-    );
-  }
-  if (config.workspaceScope === undefined) return;
-  if (!isPlainObject(config.workspaceScope))
-    throw new Error(`${name}.workspaceScope must be an object`);
-  const workspaceScope = config.workspaceScope as Record<string, unknown>;
-  assertOptionalEnum(
-    workspaceScope.level,
-    `${name}.workspaceScope.level`,
-    CHANNEL_WORKSPACE_SCOPE_LEVELS,
-  );
-  if (workspaceScope.level === undefined)
-    throw new Error(
-      `${name}.workspaceScope.level must be one of: ${CHANNEL_WORKSPACE_SCOPE_LEVELS.join(", ")}`,
-    );
-  if (workspaceScope.level === "channel") {
-    if ("alias" in workspaceScope && workspaceScope.alias !== undefined) {
+  for (const retired of RETIRED_PARTITION_KEYS) {
+    if (config[retired] !== undefined)
       throw new Error(
-        `${name}.workspaceScope.alias is only supported when ${name}.workspaceScope.level is conversation`,
+        `${name}.${retired} is no longer supported; use ${name}.partition`,
+      );
+  }
+  if (config.partition === undefined) return;
+  if (!isPlainObject(config.partition))
+    throw new Error(`${name}.partition must be an object`);
+  const partition = config.partition as Record<string, unknown>;
+  assertOptionalEnum(
+    partition.by,
+    `${name}.partition.by`,
+    CHANNEL_PARTITION_MODES,
+  );
+  if (partition.by === undefined)
+    throw new Error(
+      `${name}.partition.by must be one of: ${CHANNEL_PARTITION_MODES.join(", ")}`,
+    );
+  if (partition.by === "shared") {
+    if ("alias" in partition && partition.alias !== undefined) {
+      throw new Error(
+        `${name}.partition.alias is only supported when ${name}.partition.by is conversation`,
       );
     }
 
     return;
   }
-  normalizeRequiredString(workspaceScope.alias, `${name}.workspaceScope.alias`);
-  assertWorkspaceScopeAlias(
-    workspaceScope.alias,
-    `${name}.workspaceScope.alias`,
-  );
+  normalizeRequiredString(partition.alias, `${name}.partition.alias`);
+  assertPartitionAlias(partition.alias, `${name}.partition.alias`);
 }
 
 function validateConfigPatch(value: unknown, path: string): void {
@@ -983,7 +988,7 @@ function assertWorkspaceId(value: string, name: string): void {
     );
 }
 
-function assertWorkspaceScopeAlias(value: unknown, name: string): void {
+function assertPartitionAlias(value: unknown, name: string): void {
   if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value)) {
     throw new Error(
       `${name} must use only letters, numbers, dots, underscores, or hyphens`,

@@ -63,7 +63,7 @@ reading an agent still tells you its ceiling.
 | `workspaces`    | Selects from the agent's own; one it does not attach is ignored  |
 | `policies`      | Unioned with the agent's; each policy carries its own mode       |
 | `denyTools`     | Withholds tools here, after the set is built — covers `bash` too |
-| `partition`     | Overrides the channel's scope (`channel` or `conversation`)      |
+| `partition`     | Splits the workspace folder (`shared` or `conversation`)         |
 | `replyIn`       | Where the reply lands — `thread` or `source` (Slack only)        |
 | `sandboxImages` | Images the agent may stand a sandbox up from for a thread here   |
 | `tagRoles`      | Named groups of people, readable from policy as `userRoles`      |
@@ -129,7 +129,7 @@ The per-platform id field is named for what the provider calls it: `channelId` f
 
 ### Through the account API
 
-The API speaks the stored names, not the authoring ones: send `workspaceScope` where the CLI writes `partition`, and `externalId` where it writes `channelId`, `repo`, `chatId` or `conversationId`.
+The API speaks the stored names: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`, and `agentBindings` where the CLI writes `agents`. Every other field is spelled the same on both sides.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";
@@ -146,7 +146,7 @@ await client.createChannel({
     instructions: "Escalate billing questions to #finance.",
     // `agent_nhi` must already attach ws_incidents; this mounts it as "incidents" here.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
-    workspaceScope: { alias: "eng", level: "conversation" },
+    partition: { alias: "eng", by: "conversation" },
     replyIn: "thread",
     policies: ["policy_prod_data"],
     tagRoles: [{ roleId: "oncall", userIds: ["U777", "U778"] }],

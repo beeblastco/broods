@@ -56,7 +56,7 @@ export interface WorkspaceHarnessConfig {
 export interface WorkspaceConfig {
   storage: WorkspaceStorageConfig;
   // Enables hierarchical alias-scoped workspace folders. Channel configs must
-  // provide workspaceScope when an attached workspace sets this to true.
+  // provide partition when an attached workspace sets this to true.
   isolation?: boolean;
   harness?: WorkspaceHarnessConfig;
 }
@@ -231,7 +231,11 @@ export function normalizeCreateWorkspaceConfigInput(
   const description = optionalString(value.description, "description");
   const config = normalizeWorkspaceConfig(value.config);
 
-  return { name: name, ...(description ? { description: description } : {}), config: config };
+  return {
+    name: name,
+    ...(description ? { description: description } : {}),
+    config: config,
+  };
 }
 
 export function normalizeUpdateWorkspaceConfigInput(

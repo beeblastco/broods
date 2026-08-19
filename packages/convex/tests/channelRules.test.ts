@@ -52,23 +52,23 @@ describe("normalizeChannelRecordConfig", () => {
     expect(
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        workspaceScope: { level: "conversation", alias: "support" },
-      }).workspaceScope,
-    ).toEqual({ level: "conversation", alias: "support" });
+        partition: { by: "conversation", alias: "support" },
+      }).partition,
+    ).toEqual({ by: "conversation", alias: "support" });
 
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        workspaceScope: { level: "conversation" },
+        partition: { by: "conversation" },
       }),
-    ).toThrow("config.workspaceScope.alias must be a non-empty string");
+    ).toThrow("config.partition.alias must be a non-empty string");
 
     expect(() =>
       normalizeChannelRecordConfig({
         agentBindings: bindings,
-        workspaceScope: { level: "everything" },
+        partition: { by: "everything" },
       }),
-    ).toThrow("must be one of: channel, conversation");
+    ).toThrow("must be one of: shared, conversation");
   });
 
   it("validates the reply target enum", () => {
