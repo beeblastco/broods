@@ -359,7 +359,9 @@ export async function runAgentLoop(
     return `${serialized.slice(0, MAX_TRACE_ATTRIBUTE_CHARS)}...[truncated]`;
   };
 
-  const rootRunningAttributes = {
+  // Reassigned once the tool set is known, so the live root span carries the
+  // tools injected into the model alongside its system prompt and messages.
+  let rootRunningAttributes: Record<string, string | number | boolean> = {
     "task.id": session.eventId,
     "task.state": "running",
     "task.delivery": session.delivery?.kind ?? "direct",
@@ -367,6 +369,7 @@ export async function runAgentLoop(
     "model.provider": configuredModel.providerName,
     "model.id": agentConfig.model?.modelId ?? "unknown",
     "model.input": traceAttribute(turnContext.messages),
+    ...systemTraceAttributes(turnContext.system, traceAttribute),
     ...(subagentParent
       ? {
           "parent.task_id": subagentParent.parentTaskId,
@@ -737,6 +740,7 @@ export async function runAgentLoop(
       conversationKey: session.conversationKey,
       attributes: {
         ...rootRunningAttributes,
+        ...systemTraceAttributes(turnContext.system, traceAttribute),
         "task.state": status,
         "agent.step_count": stepCount,
         "agent.tool_call_count": toolCallCount,
@@ -848,6 +852,32 @@ export async function runAgentLoop(
     },
   );
 
+  // Re-publish the running root now that the tool set is resolved and an
+  // agent.started hook has had its chance to rewrite the system prompt, so a
+  // task that is still running already shows its full injected context.
+  rootRunningAttributes = {
+    ...rootRunningAttributes,
+    ...systemTraceAttributes(turnContext.system, traceAttribute),
+    "agent.tools": traceAttribute(Object.keys(tools)),
+    "agent.tool_count": Object.keys(tools).length,
+  };
+  otelRootSpan.setAttributes(rootRunningAttributes);
+  publishSpan({
+    traceId: traceId,
+    spanId: rootSpanId,
+    name: rootSpanName,
+    kind: rootSpanKind,
+    startTimeMs: runStartedAt,
+    // A running span has no known end; keep end == start like the first publish.
+    endTimeMs: runStartedAt,
+    durationMs: 0,
+    status: "running",
+    endpointId: session.endpointId,
+    agentId: session.agentId,
+    conversationKey: session.conversationKey,
+    attributes: rootRunningAttributes,
+  });
+
   const streamOptions: Parameters<typeof streamText>[0] = {
     maxOutputTokens: 16000,
     ...modelSettings,
@@ -914,6 +944,10 @@ export async function runAgentLoop(
         ephemeralSystem: turnContext.ephemeralSystem,
       });
       systemContextSnapshot = refreshed.systemContextSnapshot;
+      // Keep the turn's instructions current: system context grows mid-run
+      // (newly persisted rows, steering, skills a tool loaded), and the step and
+      // root spans both trace off this.
+      turnContext.system = refreshed.system;
 
       return {
         instructions: refreshed.system,
@@ -958,6 +992,7 @@ export async function runAgentLoop(
         "agent.step_number": stepNumber,
         "step.state": "running",
         "model.input": traceAttribute(messages),
+        ...systemTraceAttributes(turnContext.system, traceAttribute),
       };
       const tracked = startTrackedSpan(
         "model.step",
@@ -1975,6 +2010,28 @@ function formatUsageSummary(usage: LanguageModelUsage | undefined): string {
   const totals = usageTokenTotals(usage);
 
   return `${totals.inputTokens} in / ${totals.outputTokens} out / ${totals.totalTokens} total token(s)`;
+}
+
+// The system prompt is assembled per turn from the agent config plus every
+// injected block (memory index, workspace/memory/scheduler/skills/subagent
+// harness prompts, loaded skills, persisted system context, steering). Traces
+// carry the joined text the provider is actually instructed with, so a reader
+// can see the whole context a run had rather than only its chat messages. The
+// counts ride alongside because `serialize` truncates oversized payloads.
+export function systemTraceAttributes(
+  system: SystemModelMessage[],
+  serialize: (value: unknown) => string,
+): Record<string, string | number> {
+  return {
+    "model.system": serialize(
+      system.map((message) => message.content).join("\n\n"),
+    ),
+    "model.system_part_count": system.length,
+    "model.system_chars": system.reduce(
+      (total, message) => total + message.content.length,
+      0,
+    ),
+  };
 }
 
 // The SDK measures execute() directly, so it wins; the handler clock is only a

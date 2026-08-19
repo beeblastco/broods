@@ -2396,6 +2396,38 @@ function installHarnessEnv(): void {
   process.env.FILESYSTEM_BUCKET_NAME = "filesystem-bucket";
 }
 
+describe("system prompt trace attributes", () => {
+  it("records the joined instructions the provider is given, with real sizes", async () => {
+    const { systemTraceAttributes } = await import("../src/harness/harness.ts");
+    const system: SystemModelMessage[] = [
+      { role: "system", content: "You are a helpful agent." },
+      { role: "system", content: "<skills>\nload_skill first.\n</skills>" },
+    ];
+
+    // Traces must show every injected block, not just the agent's own prompt —
+    // the joined text is exactly what the provider receives as instructions.
+    expect(systemTraceAttributes(system, (value) => String(value))).toEqual({
+      "model.system":
+        "You are a helpful agent.\n\n<skills>\nload_skill first.\n</skills>",
+      "model.system_part_count": 2,
+      "model.system_chars": 60,
+    });
+  });
+
+  it("reports the pre-truncation size so a capped payload is not read as small", async () => {
+    const { systemTraceAttributes } = await import("../src/harness/harness.ts");
+    const system: SystemModelMessage[] = [
+      { role: "system", content: "x".repeat(100) },
+    ];
+    const attributes = systemTraceAttributes(system, (value) =>
+      String(value).slice(0, 10),
+    );
+
+    expect(attributes["model.system"]).toBe("x".repeat(10));
+    expect(attributes["model.system_chars"]).toBe(100);
+  });
+});
+
 describe("tool.call span duration", () => {
   it("reports what the SDK timed, not how late the handler was scheduled", async () => {
     // On parallel calls that scheduling gap is model time, which turned 4ms
