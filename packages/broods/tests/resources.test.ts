@@ -2101,6 +2101,131 @@ export const productEng = defineSlackChannel({
   });
 });
 
+test("compileProject fans a channel id list out to one record per id", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineZaloChannel, defineZaloConnection, env } from "${RESOURCES_MODULE}";
+
+export const zalo = defineZaloConnection({
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
+});
+
+export const staff = defineAgent({ name: "staff", connections: [zalo] });
+
+export const internal = defineZaloChannel({
+  name: "lamy-internal",
+  connection: zalo,
+  chatId: ["7788", "7789", "7790"],
+  denyTools: ["web_search"],
+});
+`,
+  );
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const records = manifest.resources.filter(
+    (resource) => resource.kind === "channelRecord",
+  );
+
+  expect(records.map((record) => record.name)).toEqual([
+    "lamy-internal-7788",
+    "lamy-internal-7789",
+    "lamy-internal-7790",
+  ]);
+  expect(records.map((record) => record.config)).toEqual([
+    { platform: "zalo", externalId: "7788", denyTools: ["web_search"] },
+    { platform: "zalo", externalId: "7789", denyTools: ["web_search"] },
+    { platform: "zalo", externalId: "7790", denyTools: ["web_search"] },
+  ]);
+  // Every declared id has to reach the gate. Miss this and the bot answers in
+  // one room of three, with no error anywhere.
+  const agent = manifest.resources.find(
+    (resource) => resource.kind === "agent" && resource.name === "staff",
+  );
+  expect(agent?.config).toMatchObject({
+    channels: { zalo: { allowedChannelIds: ["7788", "7789", "7790"] } },
+  });
+});
+
+test("compileProject leaves a single chat id as one record under its own name", async () => {
+  const cwd = await fixtureProject("", zaloChannelSource(`chatId: "7788"`));
+
+  const { manifest } = await compileProject({ cwd: cwd, command: "dev" });
+  const records = manifest.resources.filter(
+    (resource) => resource.kind === "channelRecord",
+  );
+
+  expect(records.map((record) => record.name)).toEqual(["lamy-internal"]);
+  expect(records[0]?.config).toMatchObject({ externalId: "7788" });
+});
+
+test("compileProject rejects an unusable channel id list", async () => {
+  const empty = await fixtureProject("", zaloChannelSource("chatId: []"));
+  await expect(compileProject({ cwd: empty, command: "dev" })).rejects.toThrow(
+    'Channel "lamy-internal" externalId must not be an empty array',
+  );
+
+  const repeated = await fixtureProject(
+    "",
+    zaloChannelSource(`chatId: ["7788", "7788"]`),
+  );
+  await expect(
+    compileProject({ cwd: repeated, command: "dev" }),
+  ).rejects.toThrow('Channel "lamy-internal" externalId lists 7788 twice');
+});
+
+test("compileProject rejects a fanned-out name that collides with another channel", async () => {
+  const cwd = await fixtureProject(
+    "",
+    `
+import { defineAgent, defineZaloChannel, defineZaloConnection, env } from "${RESOURCES_MODULE}";
+
+export const zalo = defineZaloConnection({
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
+});
+
+export const staff = defineAgent({ name: "staff", connections: [zalo] });
+
+export const internal = defineZaloChannel({
+  name: "lamy-internal",
+  connection: zalo,
+  chatId: ["7788", "7789"],
+});
+
+export const clash = defineZaloChannel({
+  name: "lamy-internal-7788",
+  connection: zalo,
+  chatId: "9999",
+});
+`,
+  );
+
+  await expect(compileProject({ cwd: cwd, command: "dev" })).rejects.toThrow(
+    "Duplicate resource: channelRecord:lamy-internal-7788",
+  );
+});
+
+function zaloChannelSource(chatId: string): string {
+  return `
+import { defineAgent, defineZaloChannel, defineZaloConnection, env } from "${RESOURCES_MODULE}";
+
+export const zalo = defineZaloConnection({
+  botToken: env("ZALO_BOT_TOKEN"),
+  webhookSecret: env("ZALO_WEBHOOK_SECRET"),
+});
+
+export const staff = defineAgent({ name: "staff", connections: [zalo] });
+
+export const internal = defineZaloChannel({
+  name: "lamy-internal",
+  connection: zalo,
+  ${chatId},
+});
+`;
+}
+
 async function fixtureProject(
   configSource?: string,
   resourcesSource?: string,

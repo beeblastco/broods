@@ -329,8 +329,11 @@ export type AnyConnectionDefinition =
  */
 export type ChannelDefinitionConfig = {
   connection: AnyConnectionDefinition;
-  /** Provider id of the place, from the per-platform field on the input. */
-  externalId: string;
+  /**
+   * Provider id of the place, from the per-platform field on the input. A list
+   * fans out to one record per id at deploy time.
+   */
+  externalId: string | readonly string[];
   /** Team, guild or repo owner the place sits in, when the provider has one. */
   workspaceRef?: string;
   /** Every one of these runs. Omit and the connection's own agent answers. */
@@ -387,8 +390,8 @@ export type TelegramChannelInput = ChannelRulesInput & {
 
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
-  /** Zalo user or group chat id. */
-  chatId: string;
+  /** Zalo user or group chat id, or several that share one set of rules. */
+  chatId: string | readonly string[];
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
@@ -719,11 +722,12 @@ function defineConnection<const Type extends ChannelType, Config>(
 
 // The per-platform id field is named for what the provider calls it, so the
 // value you paste is the value the field asks for. All of them normalize to the
-// one `externalId` the backend stores, and `platform` comes off the connection.
+// `externalId` the backend stores, one row per id, and `platform` comes off the
+// connection.
 function defineChannelResource<const Name extends string>(
   name: Name,
   description: string | undefined,
-  externalId: string,
+  externalId: string | readonly string[],
   workspaceRef: string | undefined,
   rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
 ): ChannelResource<Name> {

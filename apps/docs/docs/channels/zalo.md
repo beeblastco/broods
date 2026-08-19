@@ -46,6 +46,19 @@ export const standup = defineZaloChannel({
 
 Each chat is its own conversation, keyed by chat ID, so a group and a private chat with the same person never share history. A group chat ID is also the external ID for a channel record, so a record can bind one group to a different agent.
 
+`chatId` also takes a list when several groups run on identical rules:
+
+```ts
+export const internal = defineZaloChannel({
+  name: "internal",
+  connection: zalo,
+  chatId: ["7788", "7789", "7790"],
+  denyTools: ["web_search"],
+});
+```
+
+That deploys one record per id, named `internal-7788` and so on. See [channel records](./channel-records.md#one-set-of-rules-several-chats).
+
 ## Webhook
 
 Register the webhook URL `broods dev` printed for the stage. The URL never names
