@@ -12,13 +12,16 @@ export const DISCORD_GATEWAY_URL = "wss://gateway.discord.gg";
 
 // Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
 // a garbled HELLO from turning into a hot loop or a socket that never beats.
-export const HEARTBEAT_INTERVAL_BOUNDS = { min: 1_000, max: 300_000 };
+export const HEARTBEAT_MIN_MS = 1_000;
+export const HEARTBEAT_MAX_MS = 300_000;
 
 // A message in one of these lives in a thread; `channel_id` is the thread and
 // `parent_id` is the channel it hangs under.
 export const THREAD_CHANNEL_TYPES: ReadonlySet<number> = new Set([10, 11, 12]);
 
-const DISCORD_GATEWAY_HOSTS: readonly string[] = ["discord.gg", "discord.com"];
+// One DNS label. Discord's resume hosts look like `gateway-us-east1-b`.
+const GATEWAY_HOST_LABEL = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const GATEWAY_HOST_SUFFIX = ".discord.gg";
 
 /**
  * Close codes Discord will keep rejecting no matter how often we dial. Retrying
@@ -99,30 +102,40 @@ export interface ForwardedThread {
 }
 
 /**
- * The RESUME frame carries the bot token, so where a resume dials is a
- * credential decision, not a routing one. READY names its own host
- * (`resume_gateway_url`, e.g. `wss://gateway-us-east1-b.discord.gg`), so accept
- * only a wss URL on a Discord host and fall back to the default gateway
- * otherwise — a redirect elsewhere would hand the token to whoever sent it.
+ * Where a RESUME may dial, or null to fall back to the default gateway.
+ *
+ * The RESUME frame carries the bot token, so this is a credential decision, not
+ * a routing one. READY names its own host (`resume_gateway_url`, e.g.
+ * `wss://gateway-us-east1-b.discord.gg`), and following that name anywhere would
+ * hand the token to whoever chose it. So the host is not used as given: only its
+ * leading DNS label survives, and the result is rebuilt onto a literal Discord
+ * suffix. Anything else — another domain, a path, a port, a non-wss scheme —
+ * answers null.
  */
-export function isDiscordGatewayUrl(value: string): boolean {
+export function resumeGatewayUrl(value: string): string | null {
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return false;
+    return null;
   }
-  if (url.protocol !== "wss:") return false;
+  if (url.protocol !== "wss:" || url.port || url.pathname !== "/") return null;
+  if (!url.hostname.endsWith(GATEWAY_HOST_SUFFIX)) return null;
 
-  return DISCORD_GATEWAY_HOSTS.some(
-    (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
+  const label = url.hostname.slice(
+    0,
+    url.hostname.length - GATEWAY_HOST_SUFFIX.length,
   );
+  if (!GATEWAY_HOST_LABEL.test(label)) return null;
+
+  return `wss://${label}${GATEWAY_HOST_SUFFIX}`;
 }
 
 /** Milliseconds, clamped into a range a heartbeat can sanely run at. */
 export function heartbeatIntervalMs(value: unknown): number {
-  const bounds = HEARTBEAT_INTERVAL_BOUNDS;
-  if (typeof value !== "number" || !Number.isFinite(value)) return bounds.max;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return HEARTBEAT_MAX_MS;
+  }
 
-  return Math.min(bounds.max, Math.max(bounds.min, Math.floor(value)));
+  return Math.min(HEARTBEAT_MAX_MS, Math.max(HEARTBEAT_MIN_MS, value));
 }
