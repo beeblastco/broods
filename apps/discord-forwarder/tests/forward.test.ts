@@ -13,13 +13,11 @@ const MESSAGE: MessageCreate = {
 
 const TARGETS: ForwardTarget[] = [
   {
-    accountId: "account-1",
     agentId: "agent-1",
     agentName: "support",
     webhookUrl: "https://gateway.example.com/webhooks/account-1/discord",
   },
   {
-    accountId: "account-1",
     agentId: "agent-2",
     agentName: "triage",
     webhookUrl: "https://gateway.example.com/webhooks/account-1/dev/e1/discord",
@@ -59,13 +57,7 @@ afterEach(() => {
 describe("forwarding a gateway message", () => {
   it("posts the payload verbatim under the shape core accepts", async () => {
     const calls = captureFetch();
-    await forwardMessageCreate(
-      MESSAGE,
-      null,
-      "token-a",
-      [TARGETS[0]!],
-      "…en-a",
-    );
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(TARGETS[0]!.webhookUrl);
@@ -78,13 +70,7 @@ describe("forwarding a gateway message", () => {
 
   it("leaves a missing author.bot flag alone", async () => {
     const calls = captureFetch();
-    await forwardMessageCreate(
-      MESSAGE,
-      null,
-      "token-a",
-      [TARGETS[0]!],
-      "…en-a",
-    );
+    await forwardMessageCreate(MESSAGE, null, "token-a", [TARGETS[0]!]);
 
     const data = (calls[0]!.body as { data: { author: unknown } }).data;
     expect(data.author).toEqual({ id: "user-1", username: "ada" });
@@ -97,7 +83,6 @@ describe("forwarding a gateway message", () => {
       { id: "thread-1", parent_id: "channel-1" },
       "token-a",
       [TARGETS[0]!],
-      "…en-a",
     );
 
     expect(calls[0]!.body).toMatchObject({
@@ -110,7 +95,7 @@ describe("forwarding a gateway message", () => {
 
   it("fans one event out to every webhook the token serves", async () => {
     const calls = captureFetch();
-    await forwardMessageCreate(MESSAGE, null, "token-a", TARGETS, "…en-a");
+    await forwardMessageCreate(MESSAGE, null, "token-a", TARGETS);
 
     expect(calls.map((call) => call.url)).toEqual(
       TARGETS.map((target) => target.webhookUrl),
@@ -121,7 +106,7 @@ describe("forwarding a gateway message", () => {
     captureFetch(500);
 
     expect(
-      forwardMessageCreate(MESSAGE, null, "token-a", TARGETS, "…en-a"),
+      forwardMessageCreate(MESSAGE, null, "token-a", TARGETS),
     ).resolves.toBeUndefined();
   });
 });

@@ -27,7 +27,7 @@ import {
   type MessageCreate,
 } from "./discord.ts";
 import type { IdentifyBudget } from "./identify-budget.ts";
-import { logError, logInfo, logWarn } from "./log.ts";
+import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 
 // Sent when we close a socket ourselves and mean to RESUME. 1000 and 1001 tell
 // Discord the session is finished, which makes the next connect a fresh IDENTIFY.
@@ -41,46 +41,38 @@ export interface GatewaySocketOptions {
   budget: IdentifyBudget;
   config: ForwarderConfig;
   onMessageCreate: (data: MessageCreate) => void;
-  tokenHint: string;
 }
 
 export class GatewaySocket {
+  /** The bot's own Discord user id, learned from READY. Null before then. */
+  botIdentity: string | null = null;
+  state: SocketState = "stopped";
+
+  private readonly hint: string;
   private readonly options: GatewaySocketOptions;
 
   private attempt = 0;
   private awaitingAck = false;
-  private botUserId: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private resumeUrl: string | null = null;
-  private running = false;
   private sequence: number | null = null;
   private sessionId: string | null = null;
   private socket: WebSocket | null = null;
-  private socketState: SocketState = "stopped";
 
   constructor(options: GatewaySocketOptions) {
+    this.hint = tokenHint(options.botToken);
     this.options = options;
   }
 
-  /** The bot's own Discord user id, learned from READY. Null before then. */
-  get botIdentity(): string | null {
-    return this.botUserId;
-  }
-
-  get state(): SocketState {
-    return this.socketState;
-  }
-
   start(): void {
-    if (this.running) return;
-    this.running = true;
+    if (this.state !== "stopped") return;
+    this.state = "connecting";
     this.dial();
   }
 
   stop(): void {
-    this.running = false;
-    this.socketState = "stopped";
+    this.state = "stopped";
     this.clearTimers();
     const socket = this.socket;
     this.socket = null;
@@ -97,17 +89,22 @@ export class GatewaySocket {
   }
 
   private dial(): void {
-    if (!this.running) return;
-    const canResume = Boolean(this.resumeUrl && this.sessionId);
-    if (!canResume && !this.reserveIdentify()) return;
-
-    this.socketState = "connecting";
+    if (this.state === "stopped") return;
     // Rebuilt here, not just where it was stored: the URL this dials decides
     // where the RESUME frame's bot token goes, so nothing off the wire reaches
-    // it unrewritten.
-    const resumeUrl = this.resumeUrl ? resumeGatewayUrl(this.resumeUrl) : null;
-    const base = canResume && resumeUrl ? resumeUrl : DISCORD_GATEWAY_URL;
-    const socket = new WebSocket(`${base}/?v=10&encoding=json`);
+    // it unrewritten. A session whose URL does not survive that rebuild is no
+    // session, which is what makes one nullable value enough to decide both
+    // whether to reserve an IDENTIFY and whether to send RESUME.
+    const resumeUrl =
+      this.sessionId && this.resumeUrl
+        ? resumeGatewayUrl(this.resumeUrl)
+        : null;
+    if (!resumeUrl && !this.reserveIdentify()) return;
+
+    this.state = "connecting";
+    const socket = new WebSocket(
+      `${resumeUrl ?? DISCORD_GATEWAY_URL}/?v=10&encoding=json`,
+    );
     this.socket = socket;
 
     // A throw inside a socket listener escapes as an uncaught exception and
@@ -115,11 +112,11 @@ export class GatewaySocket {
     // malformed frame is not worth that, so it is logged and dropped.
     socket.addEventListener("message", (event: MessageEvent): void => {
       try {
-        this.handlePayload(socket, canResume, String(event.data));
+        this.handlePayload(socket, Boolean(resumeUrl), String(event.data));
       } catch (error) {
         logError("Discord gateway frame could not be handled", {
           error: error instanceof Error ? error.message : String(error),
-          tokenHint: this.options.tokenHint,
+          tokenHint: this.hint,
         });
       }
     });
@@ -144,7 +141,7 @@ export class GatewaySocket {
   private heartbeat(socket: WebSocket): void {
     if (this.awaitingAck) {
       logWarn("Discord gateway heartbeat unacknowledged, reconnecting", {
-        tokenHint: this.options.tokenHint,
+        tokenHint: this.hint,
       });
       socket.close(RESUMABLE_CLOSE_CODE, "heartbeat not acknowledged");
 
@@ -159,15 +156,15 @@ export class GatewaySocket {
     this.clearTimers();
     this.socket = null;
     this.awaitingAck = false;
-    if (!this.running) return;
+    if (this.state === "stopped") return;
 
     const fatal = FATAL_CLOSE_CODES.get(code);
     if (fatal) {
-      this.socketState = "fatal";
+      this.state = "fatal";
       logError("Discord gateway refused this bot, not reconnecting", {
         closeCode: code,
         detail: fatal,
-        tokenHint: this.options.tokenHint,
+        tokenHint: this.hint,
       });
 
       return;
@@ -181,7 +178,7 @@ export class GatewaySocket {
 
   private handlePayload(
     socket: WebSocket,
-    canResume: boolean,
+    resuming: boolean,
     raw: string,
   ): void {
     if (socket !== this.socket) return;
@@ -197,7 +194,7 @@ export class GatewaySocket {
       );
       this.send(
         socket,
-        canResume ? this.resumePayload() : this.identifyPayload(),
+        resuming ? this.resumePayload() : this.identifyPayload(),
       );
 
       return;
@@ -234,13 +231,13 @@ export class GatewaySocket {
 
     if (payload.t === "READY") {
       const ready = payload.d as GatewayReady;
-      this.botUserId = ready.user.id;
+      this.botIdentity = ready.user.id;
       this.resumeUrl = resumeGatewayUrl(ready.resume_gateway_url);
       if (!this.resumeUrl) {
         // Dropping it costs one IDENTIFY on the next reconnect. Following it
         // would post the bot token to whoever named the host.
         logWarn("Discord named a resume host outside Discord, ignoring it", {
-          tokenHint: this.options.tokenHint,
+          tokenHint: this.hint,
         });
       }
       this.sessionId = ready.session_id;
@@ -275,11 +272,11 @@ export class GatewaySocket {
 
   private markReady(message: string, botUsername?: string): void {
     this.attempt = 0;
-    this.socketState = "ready";
+    this.state = "ready";
     logInfo(message, {
-      botUserId: this.botUserId ?? undefined,
+      botUserId: this.botIdentity ?? undefined,
       botUsername: botUsername,
-      tokenHint: this.options.tokenHint,
+      tokenHint: this.hint,
     });
   }
 
@@ -289,14 +286,14 @@ export class GatewaySocket {
    * IDENTIFYs in 24 hours resets the bot token and emails its owner.
    */
   private reserveIdentify(): boolean {
-    const { botToken, budget, tokenHint } = this.options;
+    const { botToken, budget } = this.options;
     if (budget.consume(botToken)) return true;
 
     const retryAt = budget.retryAt(botToken) ?? Date.now();
     const waitMs = Math.max(1_000, retryAt - Date.now());
-    this.socketState = "exhausted";
+    this.state = "exhausted";
     logError("Discord IDENTIFY budget exhausted, holding off", {
-      tokenHint: tokenHint,
+      tokenHint: this.hint,
       waitSeconds: Math.round(waitMs / 1_000),
     });
     this.reconnectTimer = setTimeout(() => this.dial(), waitMs);
@@ -316,20 +313,16 @@ export class GatewaySocket {
   }
 
   private scheduleReconnect(code: number, reason: string): void {
-    const { botToken, budget, config, tokenHint } = this.options;
-    const delayMs = backoffDelayMs(
-      this.attempt,
-      config.backoffBaseMs,
-      config.backoffCeilingMs,
-    );
+    const { botToken, budget, config } = this.options;
+    const delayMs = backoffDelayMs(this.attempt, config.backoffCeilingMs);
     this.attempt += 1;
-    this.socketState = "backoff";
+    this.state = "backoff";
     logWarn("Discord gateway closed, reconnecting", {
       closeCode: code,
       identifiesLeft: budget.remaining(botToken),
       reason: reason || undefined,
       retryInSeconds: Math.round(delayMs / 1_000),
-      tokenHint: tokenHint,
+      tokenHint: this.hint,
     });
     this.reconnectTimer = setTimeout(() => this.dial(), delayMs);
   }

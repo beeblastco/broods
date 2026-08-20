@@ -149,11 +149,9 @@ describe("listConnections", () => {
     expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
       [
         {
-          accountId: scope.accountId,
           agentId: agentId,
           agentName: "tracy",
           botToken: "bot-token-1",
-          endpointId: "endpoint-1",
           webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
         },
       ],

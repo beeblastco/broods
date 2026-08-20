@@ -25,7 +25,7 @@ afterEach(() => {
 describe("thread directory", () => {
   it("reports the parent of a thread channel", async () => {
     stubChannel({ id: "thread-1", type: 11, parent_id: "channel-1" });
-    const directory = new ThreadDirectory("token-a", "…en-a");
+    const directory = new ThreadDirectory("token-a");
 
     expect(await directory.resolve("thread-1")).toEqual({
       id: "thread-1",
@@ -35,14 +35,14 @@ describe("thread directory", () => {
 
   it("reports nothing for an ordinary text channel", async () => {
     stubChannel({ id: "channel-1", type: 0 });
-    const directory = new ThreadDirectory("token-a", "…en-a");
+    const directory = new ThreadDirectory("token-a");
 
     expect(await directory.resolve("channel-1")).toBeNull();
   });
 
   it("looks a channel up once", async () => {
     const stub = stubChannel({ id: "channel-1", type: 0 });
-    const directory = new ThreadDirectory("token-a", "…en-a");
+    const directory = new ThreadDirectory("token-a");
     await directory.resolve("channel-1");
     await directory.resolve("channel-1");
 
@@ -51,7 +51,7 @@ describe("thread directory", () => {
 
   it("does not cache a failed lookup, so a rate limit self-heals", async () => {
     const stub = stubChannel(null, 429);
-    const directory = new ThreadDirectory("token-a", "…en-a");
+    const directory = new ThreadDirectory("token-a");
 
     expect(await directory.resolve("channel-1")).toBeNull();
     await directory.resolve("channel-1");

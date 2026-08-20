@@ -19,18 +19,18 @@ import {
   type DiscordChannel,
   type ForwardedThread,
 } from "./discord.ts";
-import { logWarn } from "./log.ts";
+import { logWarn, tokenHint } from "./log.ts";
 
 export class ThreadDirectory {
   private readonly botToken: string;
-  private readonly tokenHint: string;
+  private readonly hint: string;
   // Channel types never change, so one resolved answer holds for the life of
   // the process. Failed lookups are not cached, so a rate limit self-heals.
   private readonly cache = new Map<string, ForwardedThread | null>();
 
-  constructor(botToken: string, tokenHint: string) {
+  constructor(botToken: string) {
     this.botToken = botToken;
-    this.tokenHint = tokenHint;
+    this.hint = tokenHint(botToken);
   }
 
   /** The thread `channelId` is, or null when it is an ordinary channel. */
@@ -56,29 +56,22 @@ export class ThreadDirectory {
   private async fetchChannel(
     channelId: string,
   ): Promise<DiscordChannel | null> {
+    let detail: string;
     try {
       const response = await fetch(`${DISCORD_API_URL}/channels/${channelId}`, {
         headers: { Authorization: `Bot ${this.botToken}` },
       });
-      if (!response.ok) {
-        logWarn("Discord channel lookup failed", {
-          channelId: channelId,
-          status: response.status,
-          tokenHint: this.tokenHint,
-        });
-
-        return null;
-      }
-
-      return (await response.json()) as DiscordChannel;
+      if (response.ok) return (await response.json()) as DiscordChannel;
+      detail = `HTTP ${response.status}`;
     } catch (error) {
-      logWarn("Discord channel lookup failed", {
-        channelId: channelId,
-        error: error instanceof Error ? error.message : String(error),
-        tokenHint: this.tokenHint,
-      });
-
-      return null;
+      detail = error instanceof Error ? error.message : String(error);
     }
+    logWarn("Discord channel lookup failed", {
+      channelId: channelId,
+      detail: detail,
+      tokenHint: this.hint,
+    });
+
+    return null;
   }
 }

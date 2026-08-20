@@ -14,11 +14,9 @@ import { getConvexClient } from "../../core/src/shared/convex/client.ts";
 const internal: any = require("@broods/convex/_generated/api").internal;
 
 export interface DiscordConnection {
-  accountId: string;
   agentId: string;
   agentName: string;
   botToken: string;
-  endpointId: string;
   webhookPath: string;
 }
 

@@ -10,10 +10,9 @@
  */
 
 import type { ForwardedThread, MessageCreate } from "./discord.ts";
-import { logError, logWarn } from "./log.ts";
+import { logError, logWarn, tokenHint } from "./log.ts";
 
 export interface ForwardTarget {
-  accountId: string;
   agentId: string;
   agentName: string;
   webhookUrl: string;
@@ -24,23 +23,19 @@ export async function forwardMessageCreate(
   thread: ForwardedThread | null,
   botToken: string,
   targets: readonly ForwardTarget[],
-  tokenHint: string,
 ): Promise<void> {
   const body = JSON.stringify({
     type: "GATEWAY_MESSAGE_CREATE",
     data: thread ? { ...data, thread: thread } : data,
   });
 
-  await Promise.all(
-    targets.map((target) => post(target, body, botToken, tokenHint)),
-  );
+  await Promise.all(targets.map((target) => post(target, body, botToken)));
 }
 
 async function post(
   target: ForwardTarget,
   body: string,
   botToken: string,
-  tokenHint: string,
 ): Promise<void> {
   try {
     const response = await fetch(target.webhookUrl, {
@@ -56,7 +51,7 @@ async function post(
         agentId: target.agentId,
         agentName: target.agentName,
         status: response.status,
-        tokenHint: tokenHint,
+        tokenHint: tokenHint(botToken),
       });
     }
   } catch (error) {
@@ -64,7 +59,7 @@ async function post(
       agentId: target.agentId,
       agentName: target.agentName,
       error: error instanceof Error ? error.message : String(error),
-      tokenHint: tokenHint,
+      tokenHint: tokenHint(botToken),
     });
   }
 }

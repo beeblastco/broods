@@ -13,12 +13,15 @@
  * gets to remember anything. This is the belt to that pair of braces.
  */
 
+/** Discord's own accounting period. Not a preference: another value is wrong. */
+const WINDOW_MS = 24 * 60 * 60 * 1_000;
+
 export class IdentifyBudget {
   private readonly limit: number;
   private readonly windowMs: number;
   private readonly stamps = new Map<string, number[]>();
 
-  constructor(limit: number, windowMs: number) {
+  constructor(limit: number, windowMs: number = WINDOW_MS) {
     this.limit = limit;
     this.windowMs = windowMs;
   }

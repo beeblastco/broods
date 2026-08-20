@@ -25,14 +25,13 @@ export function tokenHint(botToken: string): string {
 }
 
 function emit(level: string, message: string, fields: LogFields): void {
-  const line: Record<string, unknown> = {
-    level: level,
-    service: "discord-forwarder",
-    message: message,
-  };
-  for (const [key, value] of Object.entries(fields)) {
-    if (value !== undefined) line[key] = value;
-  }
-
-  console.log(JSON.stringify(line));
+  // JSON.stringify omits undefined-valued keys, so optional fields need no guard.
+  console.log(
+    JSON.stringify({
+      level: level,
+      service: "discord-forwarder",
+      message: message,
+      ...fields,
+    }),
+  );
 }

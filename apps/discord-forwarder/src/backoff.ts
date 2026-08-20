@@ -6,17 +6,18 @@
  * lockstep after a Discord-side outage.
  */
 
+/** First retry, and the floor every later one is measured against. */
+const BASE_MS = 1_000;
 const JITTER_FRACTION = 0.2;
 
 export function backoffDelayMs(
   attempt: number,
-  baseMs: number,
   ceilingMs: number,
   random: () => number = Math.random,
 ): number {
-  const growth = baseMs * 2 ** Math.max(0, attempt);
+  const growth = BASE_MS * 2 ** Math.max(0, attempt);
   const capped = Math.min(ceilingMs, growth);
   const jitter = capped * JITTER_FRACTION * random();
 
-  return Math.max(baseMs, Math.round(capped - jitter));
+  return Math.max(BASE_MS, Math.round(capped - jitter));
 }

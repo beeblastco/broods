@@ -54,10 +54,7 @@ export class Forwarder {
     config: ForwarderConfig,
     createSocket: SocketFactory = (options) => new GatewaySocket(options),
   ) {
-    this.budget = new IdentifyBudget(
-      config.identifyLimit,
-      config.identifyWindowMs,
-    );
+    this.budget = new IdentifyBudget(config.identifyLimit);
     this.config = config;
     this.createSocket = createSocket;
   }
@@ -83,17 +80,17 @@ export class Forwarder {
     }
 
     for (const [botToken, targets] of desired) {
+      const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
       if (existing) {
-        // Only on a change: reconcile runs on a timer, and an unconditional warn
-        // would repeat this line for the life of the process.
-        if (existing.targets.length !== targets.length) {
-          warnOnSharedToken(botToken, targets);
+        // reconcile runs on a timer, so warn only when the fan-out itself moved.
+        if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
+          warnOnSharedToken(botToken, urls);
         }
         existing.targets = targets;
         continue;
       }
-      warnOnSharedToken(botToken, targets);
+      warnOnSharedToken(botToken, urls);
       this.managed.set(botToken, {
         socket: this.open(botToken, targets),
         targets: targets,
@@ -102,21 +99,16 @@ export class Forwarder {
   }
 
   status(): ForwarderStatus {
-    let targets = 0;
-    const sockets = [...this.managed].map(([botToken, entry]) => {
-      targets += entry.targets.length;
-
-      return {
-        botUserId: entry.socket.botIdentity,
-        state: entry.socket.state,
-        targets: entry.targets.length,
-        tokenHint: tokenHint(botToken),
-      };
-    });
+    const sockets = [...this.managed].map(([botToken, entry]) => ({
+      botUserId: entry.socket.botIdentity,
+      state: entry.socket.state,
+      targets: entry.targets.length,
+      tokenHint: tokenHint(botToken),
+    }));
 
     return {
       sockets: sockets,
-      targets: targets,
+      targets: sockets.reduce((total, socket) => total + socket.targets, 0),
     };
   }
 
@@ -126,8 +118,7 @@ export class Forwarder {
   }
 
   private open(botToken: string, targets: ForwardTarget[]): ForwarderSocket {
-    const hint = tokenHint(botToken);
-    const threads = new ThreadDirectory(botToken, hint);
+    const threads = new ThreadDirectory(botToken);
     const socket = this.createSocket({
       botToken: botToken,
       budget: this.budget,
@@ -136,13 +127,12 @@ export class Forwarder {
         // Read the targets through the map so a reconcile between events is
         // picked up without reopening the socket.
         const current = this.managed.get(botToken)?.targets ?? targets;
-        void deliver(data, threads, botToken, current, hint);
+        void deliver(data, threads, botToken, current);
       },
-      tokenHint: hint,
     });
     logInfo("Discord connection added", {
       targets: targets.length,
-      tokenHint: hint,
+      tokenHint: tokenHint(botToken),
     });
     socket.start();
 
@@ -163,7 +153,6 @@ export function groupConnectionsByToken(
   for (const connection of connections) {
     const targets = grouped.get(connection.botToken) ?? [];
     targets.push({
-      accountId: connection.accountId,
       agentId: connection.agentId,
       agentName: connection.agentName,
       webhookUrl: `${webhookBaseUrl}${connection.webhookPath}`,
@@ -179,21 +168,24 @@ async function deliver(
   threads: ThreadDirectory,
   botToken: string,
   targets: readonly ForwardTarget[],
-  hint: string,
 ): Promise<void> {
   const thread = await threads.resolve(data.channel_id);
-  await forwardMessageCreate(data, thread, botToken, targets, hint);
+  await forwardMessageCreate(data, thread, botToken, targets);
 }
 
 function warnOnSharedToken(
   botToken: string,
-  targets: readonly ForwardTarget[],
+  webhooks: readonly string[],
 ): void {
-  const paths = new Set(targets.map((target) => target.webhookUrl));
-  if (paths.size < 2) return;
+  if (webhooks.length < 2) return;
 
   logWarn("One Discord bot token serves several webhooks, every one will run", {
-    targets: paths.size,
+    targets: webhooks.length,
     tokenHint: tokenHint(botToken),
   });
+}
+
+/** The distinct webhooks a token fans out to, in a stable order. */
+function webhookUrls(targets: readonly ForwardTarget[]): string[] {
+  return [...new Set(targets.map((target) => target.webhookUrl))].sort();
 }

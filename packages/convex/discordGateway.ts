@@ -12,7 +12,7 @@
  * key in the two places that already hold it, convex and core.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
@@ -20,17 +20,17 @@ import { isPlainObject } from "./model/objects";
 import { agentsInStage } from "./model/projectScope";
 
 const discordConnectionValidator = v.object({
-  accountId: v.string(),
   agentId: v.string(),
   agentName: v.string(),
   botToken: v.string(),
-  endpointId: v.string(),
   /**
    * Path only. The forwarder joins it onto its own configured base URL, so the
    * config plane never has to know which gateway front door is in front of it.
    */
   webhookPath: v.string(),
 });
+
+type DiscordConnection = Infer<typeof discordConnectionValidator>;
 
 /**
  * Every deployed agent that configures a Discord bot token, one row per agent.
@@ -52,14 +52,7 @@ export const listConnections = internalQuery({
     }
 
     const deployments = await ctx.db.query("agentDeployments").collect();
-    const connections: Array<{
-      accountId: string;
-      agentId: string;
-      agentName: string;
-      botToken: string;
-      endpointId: string;
-      webhookPath: string;
-    }> = [];
+    const connections: DiscordConnection[] = [];
 
     for (const deployment of deployments) {
       if (deployment.status !== "active") continue;
@@ -75,11 +68,9 @@ export const listConnections = internalQuery({
         const botToken = await discordBotToken(agent, secret);
         if (!botToken) continue;
         connections.push({
-          accountId: deployment.accountId,
           agentId: agent._id,
           agentName: agent.name,
           botToken: botToken,
-          endpointId: deployment.endpointId,
           webhookPath: webhookPath(
             deployment.accountId,
             deployment.endpointId,
@@ -123,8 +114,12 @@ async function discordBotToken(
 }
 
 /**
- * Mirrors the webhook URL the CLI generates in `packages/broods/src/codegen.ts`:
- * production keeps the bare path, every other stage is addressed through its own
+ * The inbound webhook URL shape, which lives in three places by necessity: built
+ * here, built for the generated resource file in `packages/broods/src/codegen.ts`,
+ * and parsed by `matchWebhookPath` in `apps/core/src/harness/integrations.ts`.
+ * Change one, change all three.
+ *
+ * Production keeps the bare path; every other stage is addressed through its own
  * `endpointId` so two stages of one account never contend for a delivery.
  */
 function webhookPath(

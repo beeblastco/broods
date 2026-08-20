@@ -9,10 +9,8 @@ import {
 import type { GatewaySocketOptions } from "../src/socket.ts";
 
 const CONFIG: ForwarderConfig = {
-  backoffBaseMs: 1_000,
   backoffCeilingMs: 300_000,
   identifyLimit: 10,
-  identifyWindowMs: 60_000,
   pollIntervalMs: 30_000,
   port: 3000,
   webhookBaseUrl: "https://gateway.example.com",
@@ -39,11 +37,9 @@ function connection(
   overrides: Partial<DiscordConnection> = {},
 ): DiscordConnection {
   return {
-    accountId: "account-1",
     agentId: "agent-1",
     agentName: "support",
     botToken: "token-a",
-    endpointId: "endpoint-1",
     webhookPath: "/webhooks/account-1/dev/endpoint-1/discord",
     ...overrides,
   };
@@ -75,7 +71,6 @@ describe("grouping connections", () => {
 
     expect(grouped.get("token-a")).toEqual([
       {
-        accountId: "account-1",
         agentId: "agent-1",
         agentName: "support",
         webhookUrl:
