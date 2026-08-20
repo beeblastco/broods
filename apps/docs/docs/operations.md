@@ -31,6 +31,8 @@ broods env list                  # list names (values hidden)
 broods env rm OPENAI_API_KEY     # remove variable
 ```
 
+`rm` refuses while a synced agent or sandbox still reads the variable through `env("NAME")`, and names what holds the reference. Drop the `env()` reference from those resources and sync before removing the variable. Otherwise the stored config keeps the `${NAME}` placeholder that `env("NAME")` compiles to, and the runtime has nothing left to substitute for it. To rotate a secret, run `env set` again rather than removing it first.
+
 ### Observability
 
 The terminal tails warnings and errors by default. The full INFO and DEBUG history lives in the dashboard monitoring panel, which can page and filter it.

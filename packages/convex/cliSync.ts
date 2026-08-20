@@ -37,7 +37,10 @@ import {
   toNestedAgentConfig,
 } from "./model/agentConfigCodec";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
-import { loadEnvironmentVariableValues } from "./model/environmentValues";
+import {
+  assertEnvironmentVariableUnreferenced,
+  loadEnvironmentVariableValues,
+} from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
 import { stageNameEquals, resolveProjectStage } from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
@@ -820,6 +823,12 @@ export const removeEnvBySecretHash = internalMutation({
       )
       .unique();
     if (!existing) return { removed: false };
+    await assertEnvironmentVariableUnreferenced(
+      ctx,
+      resolved.projectDoc._id,
+      resolved.stageDoc._id,
+      normalizedName,
+    );
 
     await ctx.db.delete(existing._id);
     await refreshAgentConfigsForEnvironmentVariable(
