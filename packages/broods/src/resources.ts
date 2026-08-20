@@ -656,6 +656,11 @@ export type AnyResource =
  * It compiles to a `${NAME}` placeholder the harness fills in at run time. This is
  * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
  * bake the literal local value into the deployed config instead of deferring it.
+ *
+ * The reference must resolve: syncing a manifest whose `env("NAME")` has no value
+ * stored for the stage is rejected outright, so an unset or misspelled name fails
+ * the sync instead of reaching the runtime as a literal `${NAME}`. `broods dev`
+ * pushes matching `.env.local` values first, so a local value is enough there.
  */
 export const env: EnvAccessor = new Proxy(
   <const Name extends string>(name: Name): EnvRef<Name> => {
