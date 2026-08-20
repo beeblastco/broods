@@ -131,11 +131,17 @@ export function resumeGatewayUrl(value: string): string | null {
   return `wss://${label}${GATEWAY_HOST_SUFFIX}`;
 }
 
-/** Milliseconds, clamped into a range a heartbeat can sanely run at. */
+/**
+ * Milliseconds, clamped into a range a heartbeat can sanely run at. HELLO's
+ * interval drives a `setInterval`, so an unbounded value off the wire is either
+ * a hot loop or a socket that never beats.
+ */
 export function heartbeatIntervalMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return HEARTBEAT_MAX_MS;
   }
+  if (value > HEARTBEAT_MAX_MS) return HEARTBEAT_MAX_MS;
+  if (value < HEARTBEAT_MIN_MS) return HEARTBEAT_MIN_MS;
 
-  return Math.min(HEARTBEAT_MAX_MS, Math.max(HEARTBEAT_MIN_MS, value));
+  return value;
 }
