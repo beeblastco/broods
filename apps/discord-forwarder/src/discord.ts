@@ -10,9 +10,15 @@
 export const DISCORD_API_URL = "https://discord.com/api/v10";
 export const DISCORD_GATEWAY_URL = "wss://gateway.discord.gg";
 
+// Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
+// a garbled HELLO from turning into a hot loop or a socket that never beats.
+export const HEARTBEAT_INTERVAL_BOUNDS = { min: 1_000, max: 300_000 };
+
 // A message in one of these lives in a thread; `channel_id` is the thread and
 // `parent_id` is the channel it hangs under.
 export const THREAD_CHANNEL_TYPES: ReadonlySet<number> = new Set([10, 11, 12]);
+
+const DISCORD_GATEWAY_HOSTS: readonly string[] = ["discord.gg", "discord.com"];
 
 /**
  * Close codes Discord will keep rejecting no matter how often we dial. Retrying
@@ -56,8 +62,9 @@ export interface DiscordChannel {
   type: number;
 }
 
+/** `heartbeat_interval` is unknown until clamped; see `heartbeatIntervalMs`. */
 export interface GatewayHello {
-  heartbeat_interval: number;
+  heartbeat_interval?: unknown;
 }
 
 export interface GatewayPayload {
@@ -89,4 +96,33 @@ export interface MessageCreate {
 export interface ForwardedThread {
   id: string;
   parent_id: string;
+}
+
+/**
+ * The RESUME frame carries the bot token, so where a resume dials is a
+ * credential decision, not a routing one. READY names its own host
+ * (`resume_gateway_url`, e.g. `wss://gateway-us-east1-b.discord.gg`), so accept
+ * only a wss URL on a Discord host and fall back to the default gateway
+ * otherwise — a redirect elsewhere would hand the token to whoever sent it.
+ */
+export function isDiscordGatewayUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "wss:") return false;
+
+  return DISCORD_GATEWAY_HOSTS.some(
+    (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
+  );
+}
+
+/** Milliseconds, clamped into a range a heartbeat can sanely run at. */
+export function heartbeatIntervalMs(value: unknown): number {
+  const bounds = HEARTBEAT_INTERVAL_BOUNDS;
+  if (typeof value !== "number" || !Number.isFinite(value)) return bounds.max;
+
+  return Math.min(bounds.max, Math.max(bounds.min, Math.floor(value)));
 }

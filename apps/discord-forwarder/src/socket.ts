@@ -18,6 +18,8 @@ import {
   DISCORD_GATEWAY_URL,
   FATAL_CLOSE_CODES,
   GatewayOpcode,
+  heartbeatIntervalMs,
+  isDiscordGatewayUrl,
   SESSION_ENDING_CLOSE_CODES,
   type GatewayHello,
   type GatewayPayload,
@@ -100,7 +102,13 @@ export class GatewaySocket {
     if (!canResume && !this.reserveIdentify()) return;
 
     this.socketState = "connecting";
-    const base = canResume ? this.resumeUrl : DISCORD_GATEWAY_URL;
+    // Re-checked here, not just where it was stored: the URL this dials decides
+    // where the RESUME frame's bot token goes.
+    const resumeUrl = this.resumeUrl;
+    const base =
+      canResume && resumeUrl && isDiscordGatewayUrl(resumeUrl)
+        ? resumeUrl
+        : DISCORD_GATEWAY_URL;
     const socket = new WebSocket(`${base}/?v=10&encoding=json`);
     this.socket = socket;
 
@@ -187,7 +195,7 @@ export class GatewaySocket {
       this.awaitingAck = false;
       this.heartbeatTimer = setInterval(
         () => this.heartbeat(socket),
-        hello.heartbeat_interval,
+        heartbeatIntervalMs(hello.heartbeat_interval),
       );
       this.send(
         socket,
@@ -229,7 +237,16 @@ export class GatewaySocket {
     if (payload.t === "READY") {
       const ready = payload.d as GatewayReady;
       this.botUserId = ready.user.id;
-      this.resumeUrl = ready.resume_gateway_url;
+      if (isDiscordGatewayUrl(ready.resume_gateway_url)) {
+        this.resumeUrl = ready.resume_gateway_url;
+      } else {
+        // Dropping it costs one IDENTIFY on the next reconnect. Following it
+        // would post the bot token to whoever named the host.
+        this.resumeUrl = null;
+        logWarn("Discord named a resume host outside Discord, ignoring it", {
+          tokenHint: this.options.tokenHint,
+        });
+      }
       this.sessionId = ready.session_id;
       this.markReady("Discord gateway ready", ready.user.username);
 
