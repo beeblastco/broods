@@ -145,6 +145,41 @@ describe("discord channel adapter", () => {
     expect(parsed.message.source.commandToken).toBeUndefined();
   });
 
+  it("accepts a human author with no bot flag, the shape Discord actually sends", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["channel-1"]),
+      null,
+    );
+
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-3",
+          channel_id: "channel-1",
+          content: "ship it",
+          guild_id: "guild-1",
+          mentions: [],
+          mention_roles: [],
+          // Discord omits `bot` entirely for human authors.
+          author: { id: "user-1", username: "ada" },
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("message");
+    if (parsed.kind !== "message") {
+      throw new Error("Expected a bot-flag-less author to be treated as human");
+    }
+
+    expect(parsed.message.eventId).toBe("discord:message-3");
+    expect(parsed.message.content).toEqual([
+      { type: "text", text: "ada: ship it" },
+    ]);
+  });
+
   it("keys a slash command inside a thread to the same key as a gateway message", async () => {
     const adapter = createDiscordChannel(
       "bot-token",

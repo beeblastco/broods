@@ -40,6 +40,7 @@ import type * as cron from "../cron.js";
 import type * as cronPublic from "../cronPublic.js";
 import type * as crons from "../crons.js";
 import type * as deployKeys from "../deployKeys.js";
+import type * as discordGateway from "../discordGateway.js";
 import type * as environmentVariables from "../environmentVariables.js";
 import type * as http from "../http.js";
 import type * as lib_slug from "../lib/slug.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   cronPublic: typeof cronPublic;
   crons: typeof crons;
   deployKeys: typeof deployKeys;
+  discordGateway: typeof discordGateway;
   environmentVariables: typeof environmentVariables;
   http: typeof http;
   "lib/slug": typeof lib_slug;

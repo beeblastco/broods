@@ -153,6 +153,46 @@ Runtime notes:
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
 
+## Discord Gateway Forwarder
+
+Discord delivers regular messages only over a Gateway WebSocket, so a process
+has to hold one for every Discord-connected agent. That is
+`ghcr.io/beeblastco/broods-discord-forwarder`, built from
+`apps/discord-forwarder/Dockerfile` by the `Build Discord Forwarder Image`
+workflow and deployed from the infra repo
+(`kubernetes/charts/releases/discord-forwarder-dev.yaml` / `.yaml`).
+
+```mermaid
+flowchart LR
+    Discord((Discord Gateway)) -->|MESSAGE_CREATE| Fwd[broods-discord-forwarder]
+    Fwd -->|POST /webhooks/…/discord| Gateway[broods gateway]
+    Convex[(Convex config plane)] -->|bot tokens + webhook paths| Fwd
+    Gateway --> Pod[broods-core pod]
+```
+
+It needs `BROODS_WEBHOOK_BASE_URL` plus the same `CONVEX_URL` /
+`CONVEX_DEPLOY_KEY` pair core uses. It never holds
+`ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and returns only the bot
+token and webhook path.
+
+Operational constraints, in order of how much they matter:
+
+- **Single replica, `strategy: Recreate`.** Two pods means two sockets per bot
+  token, and Discord sends every event to both. Do not scale it, and do not let
+  a RollingUpdate surge a second pod.
+- **Discord resets a bot token after 1000 IDENTIFYs in 24 hours** and emails its
+  owner. The forwarder caps reconnect backoff at 300s and counts IDENTIFYs per
+  token, parking a socket rather than dialling past the limit. A restart loop is
+  the one failure mode that defeats the counter, which is why liveness
+  (`/healthz`) does not depend on the config plane — only readiness (`/readyz`)
+  does.
+- **Close code 4014 means Message Content Intent is off** in the Discord
+  developer portal. The forwarder logs it by name and stops; no config change on
+  the Broods side fixes it.
+
+`GET /healthz` reports per-socket state, so `state: "fatal"` on a token is the
+signal that a bot needs attention in the portal.
+
 ## Post-Deploy Account Setup (Self-Hosted)
 
 When self-hosting, the CLI still handles tenant configuration. After `broods deploy` syncs your resources, the CLI prints the agent-scoped webhook URLs. Register them with your channel providers (see the [Channels overview](channels/index.md)).
