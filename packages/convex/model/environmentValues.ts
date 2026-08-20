@@ -1,13 +1,54 @@
 /**
- * Shared loader for a stage's decrypted runtime-variable values, used by
- * CLI manifest sync and by the env-var change refresh paths that re-resolve
- * `${ENV_NAME}` placeholders. Keep value-decrypting logic here so callers never
- * re-implement the encrypted-blob read.
+ * A stage's runtime-variable values and the rules for removing one. Keep the
+ * encrypted-blob read here so callers never re-implement it.
  */
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
+
+/**
+ * Refuses to remove a variable that a synced resource still reads through
+ * `env("NAME")`, which would leave it holding an unresolvable `${NAME}`.
+ * @throws naming the resources that still reference it.
+ */
+export async function assertEnvironmentVariableUnreferenced(
+  ctx: QueryCtx | MutationCtx,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+  name: string,
+): Promise<void> {
+  // Both tables record their `env()` refs the same way, as a `runtimeVariables`
+  // key, which is what the refresh helpers match on too.
+  const agents = await ctx.db
+    .query("agentConfigs")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", projectId).eq("stageId", stageId),
+    )
+    .collect();
+  const sandboxes = await ctx.db
+    .query("sandboxConfigs")
+    .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+    .collect();
+  const referencing = [
+    ...agents
+      .filter((entry) =>
+        entry.runtimeVariables?.some((variable) => variable.key === name),
+      )
+      .map((entry) => `agent "${entry.name}"`),
+    ...sandboxes
+      .filter((entry) =>
+        entry.runtimeVariables?.some((variable) => variable.key === name),
+      )
+      .map((entry) => `sandbox "${entry.name}"`),
+  ].sort();
+  if (referencing.length === 0) return;
+
+  throw new Error(
+    `${name} is still referenced by ${referencing.join(", ")}. ` +
+      `Remove the env("${name}") reference from those resources and sync before deleting the variable.`,
+  );
+}
 
 /**
  * Reads every environment variable for a `(projectId, stageId)` and

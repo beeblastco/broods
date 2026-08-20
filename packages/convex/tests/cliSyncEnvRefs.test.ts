@@ -63,16 +63,60 @@ async function seedAccount(tt: T): Promise<Id<"accounts">> {
   });
 }
 
-const sync = (tt: T): Promise<unknown> =>
+const sandboxResource = {
+  kind: "sandbox" as const,
+  name: "env-ref-sandbox",
+  config: {
+    provider: "lambda",
+    size: "xsmall",
+    envVars: { API_KEY: { __beeblastEnv: true, name: ENV_NAME } },
+  },
+};
+
+const plainAgentResource = {
+  kind: "agent" as const,
+  name: agentResource.name,
+  config: {
+    model: { provider: "deepseek", modelId: "deepseek-v4-flash" },
+    agent: { system: "You are a helpful assistant." },
+  },
+};
+
+const syncResources = (tt: T, resources: unknown[]): Promise<unknown> =>
   tt.mutation(internal.cliSync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {
       version: 1 as const,
       project: PROJECT,
       stage: STAGE,
-      resources: [agentResource],
+      resources: resources as never,
     },
   });
+
+const sync = (tt: T): Promise<unknown> => syncResources(tt, [agentResource]);
+
+const setEnv = (tt: T, value: string): Promise<null> =>
+  tt.mutation(internal.cliSync.setEnvBySecretHash, {
+    secretHash: SECRET_HASH,
+    project: PROJECT,
+    stage: STAGE,
+    name: ENV_NAME,
+    value: value,
+  });
+
+const removeEnv = (tt: T): Promise<{ removed: boolean }> =>
+  tt.mutation(internal.cliSync.removeEnvBySecretHash, {
+    secretHash: SECRET_HASH,
+    project: PROJECT,
+    stage: STAGE,
+    name: ENV_NAME,
+  });
+
+const storedEnvCount = (tt: T): Promise<number> =>
+  tt.run(
+    async (ctx) =>
+      (await ctx.db.query("environmentVariables").collect()).length,
+  );
 
 /** What the harness actually receives: the config keeps `${NAME}`, the value
  * rides along in the agent's encrypted runtime variables. */
@@ -116,16 +160,57 @@ describe("cli sync rejects env() refs with no stored value", () => {
   test("bakes the value in once it is set", async () => {
     const tt = t();
     await seedAccount(tt);
-    await tt.mutation(internal.cliSync.setEnvBySecretHash, {
-      secretHash: SECRET_HASH,
-      project: PROJECT,
-      stage: STAGE,
-      name: ENV_NAME,
-      value: "sk-live-1",
-    });
+    await setEnv(tt, "sk-live-1");
 
     await sync(tt);
 
     expect(await runtimeValue(tt)).toBe("sk-live-1");
+  });
+});
+
+describe("removing an env var a synced resource still reads", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("refuses and names the agent holding the reference", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+    await sync(tt);
+
+    // Without this the delete strips the value and leaves the agent config
+    // holding a `${NAME}` nothing can resolve, the state sync now rejects.
+    await expect(removeEnv(tt)).rejects.toThrow(
+      `still referenced by agent "${agentResource.name}"`,
+    );
+    expect(await storedEnvCount(tt)).toBe(1);
+    expect(await runtimeValue(tt)).toBe("sk-live-1");
+  });
+
+  test("refuses for a sandbox reference too", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+    await syncResources(tt, [plainAgentResource, sandboxResource]);
+
+    await expect(removeEnv(tt)).rejects.toThrow(
+      `still referenced by sandbox "${sandboxResource.name}"`,
+    );
+    expect(await storedEnvCount(tt)).toBe(1);
+  });
+
+  test("allows the removal once nothing references it", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+    await sync(tt);
+    await syncResources(tt, [plainAgentResource]);
+
+    expect(await removeEnv(tt)).toEqual({ removed: true });
+    expect(await storedEnvCount(tt)).toBe(0);
   });
 });

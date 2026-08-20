@@ -60,7 +60,7 @@ this stage: OPENAI_API_KEY. Set each one with `broods env set <NAME>` (or put it
 in .env.local and run `broods dev`), then sync again.
 ```
 
-Nothing is written when that happens, so a misspelled or forgotten name fails the sync instead of reaching the runtime as a literal `${NAME}`.
+Nothing is written when that happens, so a misspelled or forgotten name fails the sync instead of reaching the runtime as a literal `${NAME}`. The rule holds in reverse too: `broods env rm` refuses while a synced agent or sandbox still reads the variable.
 
 > `env` is **not** `process.env`. Using `process.env.OPENAI_API_KEY` would bake your local value into the deployed config. Always use `env("NAME")` for anything that should stay server-side.
 
