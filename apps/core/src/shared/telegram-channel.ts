@@ -21,12 +21,18 @@ import { isAllowedId } from "./channels.ts";
 import { logWarn } from "./log.ts";
 import { TELEGRAM_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
+const BOT_COMMAND_ENTITY = "bot_command";
+const MENTION_ENTITY = "mention";
 const TELEGRAM_SAFE_RAW_CHUNK_SIZE = 3500;
 const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 // Telegram takes 2-10 attachments as a single album and one attachment on its
 // own; past ten it rejects the batch, so a longer list goes out as consecutive
 // albums rather than failing.
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
+
+export interface TelegramChannelOptions {
+  botUsername?: string;
+}
 
 export interface TelegramSource {
   chatId: number;
@@ -44,7 +50,9 @@ export function createTelegramChannel(
   allowedUserIds: Set<string> | null,
   reactionEmoji: string,
   apiUrl?: string,
+  options: TelegramChannelOptions = {},
 ): ChannelAdapter {
+  const botUsername = normalizeBotUsername(options.botUsername);
   const transport = new TelegramAdapter({
     apiUrl: apiUrl,
     botToken: botToken,
@@ -94,6 +102,12 @@ export function createTelegramChannel(
         return { kind: "ignore" };
       }
 
+      // Only a message addressed to the agent runs it; the rest is stored so a
+      // later mention still sees what the chat said. Without a configured
+      // botUsername a mention cannot be recognised, so every message keeps
+      // running the agent.
+      const runAgent =
+        !botUsername || addressesTelegramBot(message, botUsername);
       const parsed = transport.parseMessage(message);
       const source: TelegramSource = {
         chatId: message.chat.id,
@@ -107,7 +121,7 @@ export function createTelegramChannel(
       };
 
       return {
-        kind: "message",
+        kind: runAgent ? "message" : "context",
         message: {
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
@@ -199,8 +213,80 @@ export function createTelegramChannel(
   };
 }
 
+/**
+ * Whether the message asks the agent to answer. A private chat always does. In a
+ * group the agent answers an @-mention, a slash command, or a reply to one of
+ * its own messages; anything else is people talking to each other.
+ *
+ * Another bot never triggers a run, so two bots sharing a group cannot mention
+ * each other into a loop.
+ */
+function addressesTelegramBot(
+  message: TelegramMessage,
+  botUsername: string,
+): boolean {
+  if (message.from?.is_bot) {
+    return false;
+  }
+  if (message.chat.type === "private") {
+    return true;
+  }
+
+  return (
+    mentionsTelegramBot(message, botUsername) ||
+    repliesToTelegramBot(message, botUsername)
+  );
+}
+
 function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.edited_message ?? null;
+}
+
+/**
+ * Telegram tags every `@name` and `/command` in the text with an entity, so the
+ * entities decide this rather than a substring search. A bare `/command` counts
+ * as addressed: Telegram only appends `@name` to a command when a group holds
+ * more than one bot.
+ */
+function mentionsTelegramBot(
+  message: TelegramMessage,
+  botUsername: string,
+): boolean {
+  const text = message.text ?? "";
+
+  return (message.entities ?? []).some((entity): boolean => {
+    const value = text
+      .slice(entity.offset, entity.offset + entity.length)
+      .toLowerCase();
+    if (entity.type === MENTION_ENTITY) {
+      return value === `@${botUsername}`;
+    }
+    if (entity.type !== BOT_COMMAND_ENTITY) {
+      return false;
+    }
+    const target = value.split("@")[1];
+
+    return target === undefined || target === botUsername;
+  });
+}
+
+// BotFather hands out the name without a leading `@`, but people paste it both
+// ways, and Telegram treats usernames case-insensitively.
+function normalizeBotUsername(value: string | undefined): string | null {
+  const name = value?.trim().replace(/^@/, "").toLowerCase();
+
+  return name ? name : null;
+}
+
+function repliesToTelegramBot(
+  message: TelegramMessage,
+  botUsername: string,
+): boolean {
+  const author = message.reply_to_message?.from;
+
+  return (
+    author?.is_bot === true && author.username?.toLowerCase() === botUsername
+  );
 }
 
 async function callTelegramBotApi(

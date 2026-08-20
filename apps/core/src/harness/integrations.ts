@@ -2341,6 +2341,7 @@ function createTelegramChannelFromConfig(
     reachSet(channel.allowedUserIds),
     channel.reactionEmoji ?? "👀",
     channel.apiUrl,
+    channel.botUsername ? { botUsername: channel.botUsername } : {},
   );
 }
 

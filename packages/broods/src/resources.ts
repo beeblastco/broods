@@ -235,7 +235,11 @@ export type TelegramConnectionInput = EnvRefString<
   RequiredChannelKeys<
     Pick<
       AgentTelegramChannelConfig,
-      "apiUrl" | "botToken" | "webhookSecret" | "reactionEmoji"
+      | "apiUrl"
+      | "botToken"
+      | "webhookSecret"
+      | "botUsername"
+      | "reactionEmoji"
     >,
     "botToken" | "webhookSecret"
   >
