@@ -4,6 +4,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
+import type { CliManifestResource } from "../cliTypes";
 import type { Id } from "../_generated/dataModel";
 import { loadAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import schema from "../schema";
@@ -82,14 +83,17 @@ const plainAgentResource = {
   },
 };
 
-const syncResources = (tt: T, resources: unknown[]): Promise<unknown> =>
+const syncResources = (
+  tt: T,
+  resources: CliManifestResource[],
+): Promise<unknown> =>
   tt.mutation(internal.cliSync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {
       version: 1 as const,
       project: PROJECT,
       stage: STAGE,
-      resources: resources as never,
+      resources: resources,
     },
   });
 
