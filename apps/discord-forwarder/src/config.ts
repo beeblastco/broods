@@ -28,6 +28,25 @@ export function forwarderConfigFromEnv(): ForwarderConfig {
     identifyLimit: positiveIntegerEnv("DISCORD_IDENTIFY_LIMIT", 500),
     pollIntervalMs: positiveIntegerEnv("DISCORD_POLL_INTERVAL_MS", 30_000),
     port: positiveIntegerEnv("PORT", 3000),
-    webhookBaseUrl: requireEnv("BROODS_WEBHOOK_BASE_URL").replace(/\/+$/, ""),
+    webhookBaseUrl: webhookBaseUrlEnv(),
   };
+}
+
+/**
+ * Parsed at startup, not at first use. `requireEnv` only proves the value is
+ * present, and this one is joined onto a path and POSTed to: a typo that is
+ * merely absent from `new URL` would otherwise start cleanly and then fail every
+ * forwarded message, which reads as Discord being broken.
+ */
+function webhookBaseUrlEnv(): string {
+  const value = requireEnv("BROODS_WEBHOOK_BASE_URL").replace(/\/+$/, "");
+  try {
+    new URL(value);
+  } catch {
+    throw new Error(
+      `BROODS_WEBHOOK_BASE_URL is not a URL: ${JSON.stringify(value)}`,
+    );
+  }
+
+  return value;
 }

@@ -105,7 +105,7 @@ describe("forwarding a gateway message", () => {
   it("survives a webhook rejecting the delivery", async () => {
     captureFetch(500);
 
-    expect(
+    await expect(
       forwardMessageCreate(MESSAGE, null, "token-a", TARGETS),
     ).resolves.toBeUndefined();
   });

@@ -10,6 +10,12 @@
 export const DISCORD_API_URL = "https://discord.com/api/v10";
 export const DISCORD_GATEWAY_URL = "wss://gateway.discord.gg";
 
+// Bun puts no deadline on `fetch`, so every outbound call here sets one. Without
+// it a peer that accepts and never answers leaves a promise pending for the life
+// of the process, and the logging on that path never runs — the message is lost
+// silently, which is the one failure mode worse than a logged failure.
+export const FETCH_TIMEOUT_MS = 10_000;
+
 // Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
 // a garbled HELLO from turning into a hot loop or a socket that never beats.
 export const HEARTBEAT_MIN_MS = 1_000;

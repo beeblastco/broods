@@ -57,4 +57,38 @@ describe("thread directory", () => {
     await directory.resolve("channel-1");
     expect(stub.requests).toHaveLength(2);
   });
+
+  it("asks Discord for the channel by id", async () => {
+    const stub = stubChannel({ id: "channel-1", type: 0 });
+    await new ThreadDirectory("token-a").resolve("channel-1");
+
+    expect(stub.requests).toEqual([
+      "https://discord.com/api/v10/channels/channel-1",
+    ]);
+  });
+
+  it("reports nothing for a thread type that names no parent", async () => {
+    stubChannel({ id: "thread-1", type: 11 });
+    const directory = new ThreadDirectory("token-a");
+
+    expect(await directory.resolve("thread-1")).toBeNull();
+  });
+
+  it("shares one request across a burst on the same channel", async () => {
+    const stub = stubChannel({ id: "thread-1", type: 11, parent_id: "c-1" });
+    const directory = new ThreadDirectory("token-a");
+
+    const resolved = await Promise.all([
+      directory.resolve("thread-1"),
+      directory.resolve("thread-1"),
+      directory.resolve("thread-1"),
+    ]);
+
+    expect(stub.requests).toHaveLength(1);
+    expect(resolved).toEqual([
+      { id: "thread-1", parent_id: "c-1" },
+      { id: "thread-1", parent_id: "c-1" },
+      { id: "thread-1", parent_id: "c-1" },
+    ]);
+  });
 });

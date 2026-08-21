@@ -6,7 +6,7 @@
  * lockstep after a Discord-side outage.
  */
 
-/** First retry, and the floor every later one is measured against. */
+/** What the first retry doubles up from. */
 const BASE_MS = 1_000;
 const JITTER_FRACTION = 0.2;
 
@@ -19,5 +19,8 @@ export function backoffDelayMs(
   const capped = Math.min(ceilingMs, growth);
   const jitter = capped * JITTER_FRACTION * random();
 
-  return Math.max(BASE_MS, Math.round(capped - jitter));
+  // No floor at BASE_MS. Clamping there would erase the jitter on attempt 0,
+  // where `capped` *is* BASE_MS, and the first retry after a Discord-side outage
+  // is exactly when every token would otherwise re-dial in lockstep.
+  return Math.round(capped - jitter);
 }

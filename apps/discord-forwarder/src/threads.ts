@@ -15,6 +15,7 @@
 
 import {
   DISCORD_API_URL,
+  FETCH_TIMEOUT_MS,
   THREAD_CHANNEL_TYPES,
   type DiscordChannel,
   type ForwardedThread,
@@ -27,6 +28,14 @@ export class ThreadDirectory {
   // Channel types never change, so one resolved answer holds for the life of
   // the process. Failed lookups are not cached, so a rate limit self-heals.
   private readonly cache = new Map<string, ForwardedThread | null>();
+  // Lookups already in the air, so a burst of messages in one uncached thread
+  // shares a single request instead of racing to make the same one. The cache
+  // alone cannot do this: it is only written once the response has landed, which
+  // is the window a burst arrives in.
+  private readonly inFlight = new Map<
+    string,
+    Promise<ForwardedThread | null>
+  >();
 
   constructor(botToken: string) {
     this.botToken = botToken;
@@ -37,17 +46,15 @@ export class ThreadDirectory {
   async resolve(channelId: string): Promise<ForwardedThread | null> {
     const cached = this.cache.get(channelId);
     if (cached !== undefined) return cached;
+    const pending = this.inFlight.get(channelId);
+    if (pending) return pending;
 
-    const channel = await this.fetchChannel(channelId);
-    if (!channel) return null;
+    const lookup = this.lookup(channelId).finally(() =>
+      this.inFlight.delete(channelId),
+    );
+    this.inFlight.set(channelId, lookup);
 
-    const thread =
-      THREAD_CHANNEL_TYPES.has(channel.type) && channel.parent_id
-        ? { id: channel.id, parent_id: channel.parent_id }
-        : null;
-    this.cache.set(channelId, thread);
-
-    return thread;
+    return lookup;
   }
 
   // Answers null on any failure rather than throwing: this runs inside a socket
@@ -60,6 +67,7 @@ export class ThreadDirectory {
     try {
       const response = await fetch(`${DISCORD_API_URL}/channels/${channelId}`, {
         headers: { Authorization: `Bot ${this.botToken}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (response.ok) return (await response.json()) as DiscordChannel;
       detail = `HTTP ${response.status}`;
@@ -73,5 +81,19 @@ export class ThreadDirectory {
     });
 
     return null;
+  }
+
+  /** Resolves and caches, or answers null without caching when the call failed. */
+  private async lookup(channelId: string): Promise<ForwardedThread | null> {
+    const channel = await this.fetchChannel(channelId);
+    if (!channel) return null;
+
+    const thread =
+      THREAD_CHANNEL_TYPES.has(channel.type) && channel.parent_id
+        ? { id: channel.id, parent_id: channel.parent_id }
+        : null;
+    this.cache.set(channelId, thread);
+
+    return thread;
   }
 }

@@ -156,7 +156,10 @@ The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.
 ## Discord Gateway Forwarder
 
 Discord delivers regular messages only over a Gateway WebSocket, so a process
-has to hold one for every Discord-connected agent. That is
+has to hold one for every Discord bot token. Per token, not per agent: Discord
+counts connections against the token and delivers every event to each of them,
+so two agents sharing a token share one socket and it fans out to both of their
+webhooks. That is
 `ghcr.io/beeblastco/broods-discord-forwarder`, built from
 `apps/discord-forwarder/Dockerfile` by the `Build Discord Forwarder Image`
 workflow and deployed from the infra repo

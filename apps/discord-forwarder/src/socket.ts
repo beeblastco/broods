@@ -193,6 +193,9 @@ export class GatewaySocket {
     if (payload.op === GatewayOpcode.Hello) {
       const hello = payload.d as GatewayHello;
       this.awaitingAck = false;
+      // Discord sends one HELLO per connection, but a second would orphan the
+      // first interval past `clearTimers`, leaving it beating on a dead socket.
+      if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = setInterval(
         () => this.heartbeat(socket),
         heartbeatIntervalMs(hello.heartbeat_interval),

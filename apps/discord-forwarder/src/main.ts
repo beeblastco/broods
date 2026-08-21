@@ -28,28 +28,25 @@ if (import.meta.main) {
     }
   };
 
-  await poll();
-  const timer = setInterval(() => void poll(), config.pollIntervalMs);
-
   // Liveness and readiness are separate on purpose. `/healthz` answers while the
   // process is alive; only `/readyz` waits on the config plane, so a Convex
   // outage cannot turn into a restart loop that spends IDENTIFY budget.
   const server = Bun.serve({
-    hostname: process.env.HOSTNAME ?? "0.0.0.0",
     port: config.port,
     fetch: (request: Request): Response => {
       const path = new URL(request.url).pathname;
       if (path !== "/" && path !== "/healthz" && path !== "/readyz") {
         return new Response("Not found", { status: 404 });
       }
-      const healthy = path !== "/readyz" || ready;
+      const status = ready ? "ok" : "starting";
+      // Only readiness carries the socket detail. The other two are what the
+      // kubelet polls, they need one field, and none of these paths is
+      // authenticated — so the bot hints stay off the ones nothing reads.
+      if (path !== "/readyz") return Response.json({ status: status });
 
       return Response.json(
-        {
-          status: ready ? "ok" : "starting",
-          ...forwarder.status(),
-        },
-        { status: healthy ? 200 : 503 },
+        { status: status, ...forwarder.status() },
+        { status: ready ? 200 : 503 },
       );
     },
   });
@@ -59,6 +56,12 @@ if (import.meta.main) {
     port: server.port,
     webhookBaseUrl: config.webhookBaseUrl,
   });
+
+  // Bound after the server, not before: the first poll waits on Convex, and a
+  // process that has not opened its port yet fails the liveness probe. Readiness
+  // stays false until this lands, which is the signal that belongs to Convex.
+  await poll();
+  const timer = setInterval(() => void poll(), config.pollIntervalMs);
 
   const shutdown = (): void => {
     clearInterval(timer);

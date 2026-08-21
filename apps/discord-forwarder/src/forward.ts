@@ -9,7 +9,11 @@
  * every other forwarder still broken.
  */
 
-import type { ForwardedThread, MessageCreate } from "./discord.ts";
+import {
+  FETCH_TIMEOUT_MS,
+  type ForwardedThread,
+  type MessageCreate,
+} from "./discord.ts";
 import { logError, logWarn, tokenHint } from "./log.ts";
 
 export interface ForwardTarget {
@@ -45,6 +49,7 @@ async function post(
         "x-discord-gateway-token": botToken,
       },
       body: body,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!response.ok) {
       logWarn("Forward rejected by core", {

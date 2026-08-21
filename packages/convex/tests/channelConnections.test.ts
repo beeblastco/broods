@@ -270,6 +270,26 @@ describe("listConnections", () => {
     expect(new Set(connections.map((entry) => entry.botToken))).toEqual(
       new Set(["shared-token"]),
     );
+    // Named, not counted: two rows for the same agent would also be length 2.
+    expect(new Set(connections.map((entry) => entry.agentName))).toEqual(
+      new Set(["tracy", "triage"]),
+    );
+  });
+
+  test("refuses to answer at all without the encryption secret", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
+    await seedDeployment(tt, scope, "endpoint-1");
+    delete process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+
+    // Every poll fails on this, so it must throw rather than read as "no agents
+    // configure Discord" and quietly close every socket.
+    await expect(
+      tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).rejects.toThrow("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
   });
 
   test.each(["telegram", "slack", "zalo"])(
