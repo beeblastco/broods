@@ -51,7 +51,7 @@ Discord replies are delivered through `@chat-adapter/discord` final-message meth
 ## Mentions and the gateway forwarder
 
 Discord POSTs interactions — slash commands, buttons — to your app's
-interactions endpoint over plain HTTP. Regular messages never reach an
+interactions endpoint as ordinary HTTPS requests. Regular messages never reach an
 interactions endpoint; they arrive only over a Gateway WebSocket. That is a
 Discord routing rule, not something configuration changes.
 

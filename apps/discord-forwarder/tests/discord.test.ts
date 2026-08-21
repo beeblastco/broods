@@ -29,6 +29,22 @@ describe("resume host", () => {
     expect(resumeGatewayUrl("wss://a.b.discord.gg")).toBeNull();
   });
 
+  it("strips credentials rather than dialling them", () => {
+    // `URL` reports the hostname without userinfo, so rebuilding from the label
+    // drops it. Pinned because the rebuild is the only thing that does: an
+    // allow-list on the raw string would have carried these straight through.
+    expect(resumeGatewayUrl("wss://user:pass@gateway.discord.gg")).toBe(
+      "wss://gateway.discord.gg",
+    );
+    expect(resumeGatewayUrl("wss://evil.example.com@gateway.discord.gg")).toBe(
+      "wss://gateway.discord.gg",
+    );
+    // Userinfo must not be a way to smuggle the real host past the suffix check.
+    expect(resumeGatewayUrl("wss://gateway.discord.gg@evil.example.com")).toBe(
+      null,
+    );
+  });
+
   it("refuses anything that is not a bare wss URL", () => {
     expect(resumeGatewayUrl("ws://gateway.discord.gg")).toBeNull();
     expect(resumeGatewayUrl("https://gateway.discord.gg")).toBeNull();

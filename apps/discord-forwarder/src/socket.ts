@@ -33,6 +33,11 @@ import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 // Discord the session is finished, which makes the next connect a fresh IDENTIFY.
 const RESUMABLE_CLOSE_CODE = 4000;
 
+// Discord sends HELLO within about a second of the socket opening. Well past
+// that and the connection is not going to start working on its own — see the
+// watchdog in `dial`.
+const CONNECT_DEADLINE_MS = 30_000;
+
 export type SocketState =
   "backoff" | "connecting" | "exhausted" | "fatal" | "ready" | "stopped";
 
@@ -53,6 +58,7 @@ export class GatewaySocket {
 
   private attempt = 0;
   private awaitingAck = false;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private resumeUrl: string | null = null;
@@ -82,8 +88,10 @@ export class GatewaySocket {
   }
 
   private clearTimers(): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.connectTimer = null;
     this.heartbeatTimer = null;
     this.reconnectTimer = null;
   }
@@ -130,6 +138,20 @@ export class GatewaySocket {
     });
     // An error is always followed by a close, so let the close handler decide.
     socket.addEventListener("error", (): void => socket.close());
+
+    // Every other timer in this class is armed by an event that has to arrive
+    // first: the heartbeat by HELLO, the reconnect by a close. So a socket that
+    // opens and then goes silent — no HELLO, or a READY this code cannot read —
+    // holds no timer at all and stays half-open for the life of the process,
+    // with that bot quietly answering nothing. This is the one timer that does
+    // not wait to be invited.
+    this.connectTimer = setTimeout(() => {
+      if (this.socket !== socket) return;
+      logWarn("Discord gateway never became ready, reconnecting", {
+        tokenHint: this.hint,
+      });
+      socket.close(RESUMABLE_CLOSE_CODE, "never became ready");
+    }, CONNECT_DEADLINE_MS);
   }
 
   private forgetSession(): void {
@@ -279,6 +301,8 @@ export class GatewaySocket {
   }
 
   private markReady(message: string, botUsername?: string): void {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
     this.attempt = 0;
     this.state = "ready";
     logInfo(message, {

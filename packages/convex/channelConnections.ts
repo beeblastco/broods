@@ -33,7 +33,7 @@ const channelConnectionValidator = v.object({
   webhookPath: v.string(),
 });
 
-type ChannelConnection = Infer<typeof channelConnectionValidator>;
+export type ChannelConnection = Infer<typeof channelConnectionValidator>;
 
 /**
  * The slice of a decrypted agent config this file reads. The stored blob is

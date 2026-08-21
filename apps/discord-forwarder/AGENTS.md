@@ -2,11 +2,11 @@
 
 Holds the Discord Gateway sockets nobody else does. `src/main.ts` is the only entry (`bun src/main.ts`). paths relative to `apps/discord-forwarder/`.
 
-Discord POSTs interactions — slash commands, buttons — to `interactions_endpoint_url` over plain HTTP, but regular messages only ever arrive over a Gateway WebSocket. That is a Discord routing rule, not a setting. So without this process a Discord agent answers `/new` and silently ignores every mention, which reads as a broken agent rather than missing infrastructure.
+Discord POSTs interactions — slash commands, buttons — to `interactions_endpoint_url` as an ordinary HTTPS request, but regular messages only ever arrive over a Gateway WebSocket. That is a Discord routing rule, not a setting. So without this process a Discord agent answers `/new` and silently ignores every mention, which reads as a broken agent rather than missing infrastructure.
 
 It polls the config plane, opens one socket per Discord bot token, and POSTs each `MESSAGE_CREATE` to that token's channel webhooks in the shape core's Discord adapter already accepts:
 
-```
+```text
 POST {BROODS_WEBHOOK_BASE_URL}/webhooks/{accountId}/dev/{endpointId}/discord
 x-discord-gateway-token: <bot token>
 

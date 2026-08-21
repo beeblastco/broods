@@ -39,6 +39,10 @@ describe("identify budget", () => {
 
     expect(budget.consume("token", start + 1)).toBe(false);
     expect(budget.retryAt("token", start + 1)).toBe(start + 60_000);
+    // `GatewaySocket.reserveIdentify` re-dials at exactly this instant, so the
+    // boundary has to be inclusive or that wake-up is refused and the socket
+    // parks for another whole window.
+    expect(budget.consume("token", start + 60_000)).toBe(true);
   });
 
   it("has no retry time while the window has room", () => {

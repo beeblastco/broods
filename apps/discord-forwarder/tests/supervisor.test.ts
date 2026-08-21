@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ForwarderConfig } from "../src/config.ts";
-import type { DiscordConnection } from "../src/connections.ts";
+import type { ChannelConnection } from "../src/connections.ts";
 import type { MessageCreate } from "../src/discord.ts";
 import type { GatewaySocketOptions } from "../src/socket.ts";
 import {
@@ -35,8 +35,8 @@ class StubSocket implements ForwarderSocket {
 }
 
 function connection(
-  overrides: Partial<DiscordConnection> = {},
-): DiscordConnection {
+  overrides: Partial<ChannelConnection> = {},
+): ChannelConnection {
   return {
     agentId: "agent-1",
     agentName: "support",

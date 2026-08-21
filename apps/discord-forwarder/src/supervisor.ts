@@ -9,11 +9,11 @@
  */
 
 import type { ForwarderConfig } from "./config.ts";
-import type { DiscordConnection } from "./connections.ts";
+import type { ChannelConnection } from "./connections.ts";
 import type { MessageCreate } from "./discord.ts";
 import { forwardMessageCreate, type ForwardTarget } from "./forward.ts";
 import { IdentifyBudget } from "./identify-budget.ts";
-import { logInfo, logWarn, tokenHint } from "./log.ts";
+import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 import {
   GatewaySocket,
   type GatewaySocketOptions,
@@ -64,7 +64,7 @@ export class Forwarder {
    * every connection, and re-points the rest. An unchanged token keeps its
    * socket: its session, sequence number and IDENTIFY history all survive.
    */
-  reconcile(connections: readonly DiscordConnection[]): void {
+  reconcile(connections: readonly ChannelConnection[]): void {
     const desired = groupConnectionsByToken(
       connections,
       this.config.webhookBaseUrl,
@@ -141,7 +141,14 @@ export class Forwarder {
       budget: this.budget,
       config: this.config,
       onMessageCreate: (data: MessageCreate): void => {
-        void this.deliver(botToken, threads, data);
+        // Nothing below is meant to reject, but an unhandled rejection here
+        // takes the process down, and a restart is another IDENTIFY.
+        void this.deliver(botToken, threads, data).catch((error: unknown) => {
+          logError("Discord message could not be delivered", {
+            error: error instanceof Error ? error.message : String(error),
+            tokenHint: tokenHint(botToken),
+          });
+        });
       },
     });
     // Registered before the socket starts, so the first event to arrive always
@@ -161,7 +168,7 @@ export class Forwarder {
  * sockets — Discord would then deliver every event twice.
  */
 export function groupConnectionsByToken(
-  connections: readonly DiscordConnection[],
+  connections: readonly ChannelConnection[],
   webhookBaseUrl: string,
 ): Map<string, ForwardTarget[]> {
   const grouped = new Map<string, ForwardTarget[]>();

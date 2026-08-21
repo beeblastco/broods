@@ -7,6 +7,7 @@
  * Discord-specific; this is the caller that asks it for `discord`.
  */
 
+import type { ChannelConnection } from "@broods/convex/channelConnections";
 import { getConvexClient } from "../../core/src/shared/convex/client.ts";
 
 // ConvexHttpClient's typed `query` only accepts public function refs and the
@@ -14,17 +15,13 @@ import { getConvexClient } from "../../core/src/shared/convex/client.ts";
 // exactly as apps/core does. Deploy-key auth permits the call.
 const internal: any = require("@broods/convex/_generated/api").internal;
 
-export interface DiscordConnection {
-  agentId: string;
-  agentName: string;
-  botToken: string;
-  webhookPath: string;
-}
+// The query already describes its own rows, so the shape lives in one place.
+export type { ChannelConnection };
 
 /** One entry per deployed agent that configures a Discord bot token. */
-export async function listDiscordConnections(): Promise<DiscordConnection[]> {
+export async function listDiscordConnections(): Promise<ChannelConnection[]> {
   return (await getConvexClient().query(
     internal.channelConnections.listConnections,
     { channel: "discord" },
-  )) as DiscordConnection[];
+  )) as ChannelConnection[];
 }
