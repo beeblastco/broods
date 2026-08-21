@@ -6,6 +6,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY apps/core/package.json ./apps/core/
 COPY apps/dashboard/package.json ./apps/dashboard/
+COPY apps/discord-forwarder/package.json ./apps/discord-forwarder/
 COPY apps/docs/package.json ./apps/docs/
 COPY apps/gateway/package.json ./apps/gateway/
 COPY packages/ai-sdk-sandbox/package.json ./packages/ai-sdk-sandbox/
