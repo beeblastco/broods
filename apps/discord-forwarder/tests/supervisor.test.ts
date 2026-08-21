@@ -172,7 +172,10 @@ describe("reconcile", () => {
       input: string | URL | Request,
     ): Promise<Response> => {
       const url = String(input);
-      if (url.startsWith("https://discord.com")) {
+      // Matched on the parsed host, not a prefix: `startsWith` would also accept
+      // `https://discord.com.example.test`, which is the substring-sanitisation
+      // shape worth never writing, test or not.
+      if (new URL(url).hostname === "discord.com") {
         await new Promise<void>((resolve) => {
           releaseLookup = resolve;
         });
