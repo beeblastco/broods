@@ -19,18 +19,32 @@ import { requireEnv } from "../env.ts";
 
 let cached: ConvexHttpClient | null = null;
 
-export function getConvexClient(): ConvexHttpClient {
-  if (cached) return cached;
-  const url = requireEnv("CONVEX_URL");
-  const deployKey = requireEnv("CONVEX_DEPLOY_KEY");
+/**
+ * An admin-authenticated client for one named deployment. Separate from
+ * `getConvexClient` because a process can serve more than one: the Discord
+ * forwarder reads every config plane, and each has its own URL and deploy key.
+ */
+export function createConvexClient(
+  url: string,
+  deployKey: string,
+): ConvexHttpClient {
   const client = new ConvexHttpClient(url);
   // setAdminAuth is marked @internal and stripped from the public typings.
   (client as unknown as { setAdminAuth(key: string): void }).setAdminAuth(
     deployKey,
   );
-  cached = client;
 
   return client;
+}
+
+export function getConvexClient(): ConvexHttpClient {
+  if (cached) return cached;
+  cached = createConvexClient(
+    requireEnv("CONVEX_URL"),
+    requireEnv("CONVEX_DEPLOY_KEY"),
+  );
+
+  return cached;
 }
 
 /** Reset the cached client. Tests only. */

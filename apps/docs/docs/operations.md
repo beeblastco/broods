@@ -163,7 +163,7 @@ webhooks. That is
 `ghcr.io/beeblastco/broods-discord-forwarder`, built from
 `apps/discord-forwarder/Dockerfile` by the `Build Discord Forwarder Image`
 workflow and deployed from the infra repo
-(`kubernetes/charts/releases/discord-forwarder-dev.yaml` / `.yaml`).
+(`kubernetes/charts/releases/discord-forwarder.yaml`).
 
 ```mermaid
 flowchart LR
@@ -173,10 +173,19 @@ flowchart LR
     Gateway --> Pod[broods-core pod]
 ```
 
-It needs `BROODS_WEBHOOK_BASE_URL` plus the same `CONVEX_URL` /
-`CONVEX_DEPLOY_KEY` pair core uses. It never holds
-`ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and returns only the bot
-token and webhook path, through `channelConnections.listConnections`.
+There is one release, not one per stage. `BROODS_CONFIG_PLANES` lists the Convex
+deployments it reads as a JSON array of `{name, convexUrl, webhookBaseUrl}`, and
+each plane's admin credential comes from `CONVEX_DEPLOY_KEY_<NAME>` — plane `dev`
+reads `CONVEX_DEPLOY_KEY_DEV`. Adding a deployment is one array entry and one
+secret key. It never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and
+returns only the bot token and webhook path, through
+`channelConnections.listConnections`.
+
+Sharing one process across planes is not a tidiness choice. Discord counts
+connections against the bot token, and nothing stops the same token being
+deployed to both dev and prod, so a forwarder per stage would hold two sockets
+for it and answer every message twice. One process keys sockets by token and
+fans that token's event out to both planes' webhooks instead.
 
 Only Discord needs this. Telegram, Slack, Zalo, GitHub and Pancake all deliver
 regular messages to a registered webhook URL, so nothing has to stay connected
@@ -187,8 +196,9 @@ Mode, Telegram long polling) reuses the same read.
 Operational constraints, in order of how much they matter:
 
 - **Single replica, `strategy: Recreate`.** Two pods means two sockets per bot
-  token, and Discord sends every event to both. Do not scale it, and do not let
-  a RollingUpdate surge a second pod.
+  token, and Discord sends every event to both. Do not scale it, do not let a
+  RollingUpdate surge a second pod, and do not stand up a second release per
+  stage — add a plane to the existing one instead.
 - **Discord resets a bot token after 1000 IDENTIFYs in 24 hours** and emails its
   owner. The forwarder caps reconnect backoff at 300s and counts IDENTIFYs per
   token, parking a socket rather than dialling past the limit. A restart loop is

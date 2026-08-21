@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ForwarderConfig } from "../src/config.ts";
-import type { ChannelConnection } from "../src/connections.ts";
+import type { ForwarderConnection } from "../src/connections.ts";
 import type { MessageCreate } from "../src/discord.ts";
 import type { GatewaySocketOptions } from "../src/socket.ts";
 import {
@@ -12,9 +12,9 @@ import {
 const CONFIG: ForwarderConfig = {
   backoffCeilingMs: 300_000,
   identifyLimit: 10,
+  planes: [],
   pollIntervalMs: 30_000,
   port: 3000,
-  webhookBaseUrl: "https://gateway.example.com",
 };
 
 class StubSocket implements ForwarderSocket {
@@ -35,13 +35,14 @@ class StubSocket implements ForwarderSocket {
 }
 
 function connection(
-  overrides: Partial<ChannelConnection> = {},
-): ChannelConnection {
+  overrides: Partial<ForwarderConnection> = {},
+): ForwarderConnection {
   return {
     agentId: "agent-1",
     agentName: "support",
     botToken: "token-a",
-    webhookPath: "/webhooks/account-1/dev/endpoint-1/discord",
+    webhookUrl:
+      "https://gateway.example.com/webhooks/account-1/dev/endpoint-1/discord",
     ...overrides,
   };
 }
@@ -64,11 +65,8 @@ function stubbedForwarder(): {
 }
 
 describe("grouping connections", () => {
-  it("joins the webhook path onto the configured base URL", () => {
-    const grouped = groupConnectionsByToken(
-      [connection()],
-      CONFIG.webhookBaseUrl,
-    );
+  it("keys each connection's resolved webhook by bot token", () => {
+    const grouped = groupConnectionsByToken([connection()]);
 
     expect(grouped.get("token-a")).toEqual([
       {
@@ -81,13 +79,31 @@ describe("grouping connections", () => {
   });
 
   it("keeps two agents on one token to a single socket", () => {
-    const grouped = groupConnectionsByToken(
-      [
-        connection(),
-        connection({ agentId: "agent-2", webhookPath: "/webhooks/a/discord" }),
-      ],
-      CONFIG.webhookBaseUrl,
-    );
+    const grouped = groupConnectionsByToken([
+      connection(),
+      connection({
+        agentId: "agent-2",
+        webhookUrl: "https://gateway.example.com/webhooks/a/discord",
+      }),
+    ]);
+
+    expect(grouped.size).toBe(1);
+    expect(grouped.get("token-a")).toHaveLength(2);
+  });
+
+  // The reason one process reads every config plane rather than one process per
+  // plane: two planes sharing a bot token have to share its socket, or Discord
+  // delivers every event to both and the message is answered twice.
+  it("keeps a token deployed to two planes on a single socket", () => {
+    const grouped = groupConnectionsByToken([
+      connection({
+        webhookUrl: "https://gateway.dev.example.com/webhooks/a/discord",
+      }),
+      connection({
+        agentId: "agent-2",
+        webhookUrl: "https://gateway.example.com/webhooks/b/discord",
+      }),
+    ]);
 
     expect(grouped.size).toBe(1);
     expect(grouped.get("token-a")).toHaveLength(2);
@@ -141,7 +157,10 @@ describe("reconcile", () => {
     forwarder.reconcile([connection()]);
     forwarder.reconcile([
       connection(),
-      connection({ agentId: "agent-2", webhookPath: "/webhooks/a/discord" }),
+      connection({
+        agentId: "agent-2",
+        webhookUrl: "https://gateway.example.com/webhooks/a/discord",
+      }),
     ]);
 
     expect(sockets.get("token-a")?.started).toBe(1);
@@ -194,11 +213,15 @@ describe("reconcile", () => {
 
         return new StubSocket();
       });
-      forwarder.reconcile([connection({ webhookPath: "/webhooks/old" })]);
+      forwarder.reconcile([
+        connection({ webhookUrl: "https://gateway.example.com/webhooks/old" }),
+      ]);
       deliver?.({ channel_id: "channel-1", id: "message-1" });
 
       await until(() => releaseLookup !== undefined);
-      forwarder.reconcile([connection({ webhookPath: "/webhooks/new" })]);
+      forwarder.reconcile([
+        connection({ webhookUrl: "https://gateway.example.com/webhooks/new" }),
+      ]);
       releaseLookup?.();
       await until(() => posted.length > 0);
 

@@ -18,7 +18,7 @@ if (import.meta.main) {
 
   const poll = async (): Promise<void> => {
     try {
-      const connections = await listDiscordConnections();
+      const connections = await listDiscordConnections(config.planes);
       forwarder.reconcile(connections);
       ready = true;
     } catch (error) {
@@ -52,9 +52,9 @@ if (import.meta.main) {
   });
 
   logInfo("Discord forwarder listening", {
+    planes: config.planes.map((plane) => plane.name).join(","),
     pollIntervalMs: config.pollIntervalMs,
     port: server.port,
-    webhookBaseUrl: config.webhookBaseUrl,
   });
 
   // Bound after the server, not before: the first poll waits on Convex, and a

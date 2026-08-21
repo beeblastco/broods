@@ -9,7 +9,7 @@
  */
 
 import type { ForwarderConfig } from "./config.ts";
-import type { ChannelConnection } from "./connections.ts";
+import type { ForwarderConnection } from "./connections.ts";
 import type { MessageCreate } from "./discord.ts";
 import { forwardMessageCreate, type ForwardTarget } from "./forward.ts";
 import { IdentifyBudget } from "./identify-budget.ts";
@@ -64,11 +64,8 @@ export class Forwarder {
    * every connection, and re-points the rest. An unchanged token keeps its
    * socket: its session, sequence number and IDENTIFY history all survive.
    */
-  reconcile(connections: readonly ChannelConnection[]): void {
-    const desired = groupConnectionsByToken(
-      connections,
-      this.config.webhookBaseUrl,
-    );
+  reconcile(connections: readonly ForwarderConnection[]): void {
+    const desired = groupConnectionsByToken(connections);
 
     for (const [botToken, entry] of this.managed) {
       if (desired.has(botToken)) continue;
@@ -165,11 +162,12 @@ export class Forwarder {
 /**
  * One socket per bot token, fanned out to every webhook that token serves.
  * Two agents sharing a token is unusual but legal, and it must not become two
- * sockets — Discord would then deliver every event twice.
+ * sockets — Discord would then deliver every event twice. The connections may
+ * come from different config planes, so the same token deployed to both is one
+ * socket here rather than one per plane.
  */
 export function groupConnectionsByToken(
-  connections: readonly ChannelConnection[],
-  webhookBaseUrl: string,
+  connections: readonly ForwarderConnection[],
 ): Map<string, ForwardTarget[]> {
   const grouped = new Map<string, ForwardTarget[]>();
   for (const connection of connections) {
@@ -177,7 +175,7 @@ export function groupConnectionsByToken(
     targets.push({
       agentId: connection.agentId,
       agentName: connection.agentName,
-      webhookUrl: `${webhookBaseUrl}${connection.webhookPath}`,
+      webhookUrl: connection.webhookUrl,
     });
     grouped.set(connection.botToken, targets);
   }

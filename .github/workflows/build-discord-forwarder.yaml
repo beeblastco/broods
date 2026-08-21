@@ -68,16 +68,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # dev only for now: infra holds a `discord-forwarder-dev` release and no
-  # production one yet, and dispatching a workflow that does not exist fails the
-  # run. Add the `main` branch here in the same change that adds the prod release.
+  # One release, not one per stage: it serves every config plane, so there is no
+  # `-dev` variant to choose between. Rolled from `dev` alone because `main` only
+  # ever fast-forwards from it — a `main` build is never newer than the `dev` one
+  # that already shipped, so rolling on both would reinstall older code on
+  # promote.
   rollout:
     needs: build
     if: ${{ github.ref_name == 'dev' }}
     permissions: {}
     uses: ./.github/workflows/rollout.yaml
     with:
-      workflow: deploy-discord-forwarder-dev.yaml
+      workflow: deploy-discord-forwarder.yaml
       tag: ${{ github.sha }}
     secrets:
       dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}
