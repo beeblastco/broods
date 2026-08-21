@@ -90,11 +90,16 @@ export class GatewaySocket {
 
   private dial(): void {
     if (this.state === "stopped") return;
-    // Rebuilt here, not just where it was stored: the URL this dials decides
-    // where the RESUME frame's bot token goes, so nothing off the wire reaches
-    // it unrewritten. A session whose URL does not survive that rebuild is no
-    // session, which is what makes one nullable value enough to decide both
-    // whether to reserve an IDENTIFY and whether to send RESUME.
+    // `resumeUrl` only ever holds a value this same function already rebuilt, so
+    // at runtime this second pass cannot change it. It is here for the sink: the
+    // URL decides where the RESUME frame's bot token goes, and sanitizing at the
+    // point of use keeps that provable locally, by eye and to the taint analyzer,
+    // instead of resting on the field's every assignment staying clean. Do not
+    // "simplify" it away — it costs one regex per dial.
+    //
+    // A session whose URL does not survive the rebuild is no session, which is
+    // what makes one nullable value enough to decide both whether to reserve an
+    // IDENTIFY and whether to send RESUME.
     const resumeUrl =
       this.sessionId && this.resumeUrl
         ? resumeGatewayUrl(this.resumeUrl)

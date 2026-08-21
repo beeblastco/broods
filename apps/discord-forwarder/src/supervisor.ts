@@ -91,10 +91,7 @@ export class Forwarder {
         continue;
       }
       warnOnSharedToken(botToken, urls);
-      this.managed.set(botToken, {
-        socket: this.open(botToken, targets),
-        targets: targets,
-      });
+      this.open(botToken, targets);
     }
   }
 
@@ -117,26 +114,38 @@ export class Forwarder {
     this.managed.clear();
   }
 
-  private open(botToken: string, targets: ForwardTarget[]): ForwarderSocket {
+  private async deliver(
+    botToken: string,
+    threads: ThreadDirectory,
+    data: MessageCreate,
+  ): Promise<void> {
+    // Read through the map rather than closing over an array, so a reconcile
+    // between two events is picked up without reopening the socket.
+    const targets = this.managed.get(botToken)?.targets;
+    if (!targets?.length) return;
+
+    const thread = await threads.resolve(data.channel_id);
+    await forwardMessageCreate(data, thread, botToken, targets);
+  }
+
+  private open(botToken: string, targets: ForwardTarget[]): void {
     const threads = new ThreadDirectory(botToken);
     const socket = this.createSocket({
       botToken: botToken,
       budget: this.budget,
       config: this.config,
       onMessageCreate: (data: MessageCreate): void => {
-        // Read the targets through the map so a reconcile between events is
-        // picked up without reopening the socket.
-        const current = this.managed.get(botToken)?.targets ?? targets;
-        void deliver(data, threads, botToken, current);
+        void this.deliver(botToken, threads, data);
       },
     });
+    // Registered before the socket starts, so the first event to arrive always
+    // finds its targets.
+    this.managed.set(botToken, { socket: socket, targets: targets });
     logInfo("Discord connection added", {
       targets: targets.length,
       tokenHint: tokenHint(botToken),
     });
     socket.start();
-
-    return socket;
   }
 }
 
@@ -161,16 +170,6 @@ export function groupConnectionsByToken(
   }
 
   return grouped;
-}
-
-async function deliver(
-  data: MessageCreate,
-  threads: ThreadDirectory,
-  botToken: string,
-  targets: readonly ForwardTarget[],
-): Promise<void> {
-  const thread = await threads.resolve(data.channel_id);
-  await forwardMessageCreate(data, thread, botToken, targets);
 }
 
 function warnOnSharedToken(

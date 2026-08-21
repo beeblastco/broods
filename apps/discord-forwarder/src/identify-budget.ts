@@ -32,15 +32,13 @@ export class IdentifyBudget {
    */
   consume(token: string, now: number = Date.now()): boolean {
     const live = this.live(token, now);
-    if (live.length >= this.limit) {
-      this.stamps.set(token, live);
-
-      return false;
-    }
-    live.push(now);
+    const allowed = live.length < this.limit;
+    if (allowed) live.push(now);
+    // Stored either way: `live` is pruned, so writing it back on refusal is what
+    // lets an exhausted token recover once its oldest stamps age out.
     this.stamps.set(token, live);
 
-    return true;
+    return allowed;
   }
 
   /** How many IDENTIFYs `token` has left in the current window. */
