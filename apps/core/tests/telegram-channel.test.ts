@@ -322,7 +322,11 @@ describe("telegram channel adapter", () => {
         message: createMessage({
           text: "/new@tracy_bot",
           chat: GROUP_CHAT,
-          entities: entityFor("/new@tracy_bot", "/new@tracy_bot", "bot_command"),
+          entities: entityFor(
+            "/new@tracy_bot",
+            "/new@tracy_bot",
+            "bot_command",
+          ),
         }),
       }),
     );
@@ -334,7 +338,11 @@ describe("telegram channel adapter", () => {
         message: createMessage({
           text: "/new@steve_bot",
           chat: GROUP_CHAT,
-          entities: entityFor("/new@steve_bot", "/new@steve_bot", "bot_command"),
+          entities: entityFor(
+            "/new@steve_bot",
+            "/new@steve_bot",
+            "bot_command",
+          ),
         }),
       }),
     );
