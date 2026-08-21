@@ -103,6 +103,12 @@ jobs:
       - name: Test gateway
         run: bun run --filter @broods/gateway test
 
+      - name: Check discord forwarder
+        run: bun run --filter @broods/discord-forwarder check
+
+      - name: Test discord forwarder
+        run: bun run --filter @broods/discord-forwarder test
+
       - name: Check convex
         run: bun run --filter @broods/convex check
 

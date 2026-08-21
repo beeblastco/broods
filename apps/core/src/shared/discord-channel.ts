@@ -512,6 +512,10 @@ function gatewayAck(): Extract<ChannelParseResult, { kind: "response" }> {
   };
 }
 
+// `author.bot` is optional on purpose: Discord omits the field entirely for
+// human authors, so requiring a boolean here rejected every real message and
+// left the forwarder to invent a field Discord never sends. An absent flag means
+// human, which is how `data.author.bot` reads at the call site.
 function isGatewayMessage(
   data: DiscordGatewayMessageData,
 ): data is Required<
@@ -530,7 +534,7 @@ function isGatewayMessage(
     data.author &&
     typeof data.author.id === "string" &&
     typeof data.author.username === "string" &&
-    typeof data.author.bot === "boolean",
+    (data.author.bot === undefined || typeof data.author.bot === "boolean"),
   );
 }
 
