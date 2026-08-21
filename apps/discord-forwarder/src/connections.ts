@@ -1,9 +1,10 @@
 /**
  * Reads Discord connections from the config plane.
  *
- * `packages/convex/discordGateway.ts` does the decryption, so this process never
- * holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — only a Convex deploy key, the same
- * credential core authenticates storage reads with.
+ * `packages/convex/channelConnections.ts` does the decryption, so this process
+ * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — only a Convex deploy key, the
+ * same credential core authenticates storage reads with. That query is not
+ * Discord-specific; this is the caller that asks it for `discord`.
  */
 
 import { getConvexClient } from "../../core/src/shared/convex/client.ts";
@@ -23,7 +24,7 @@ export interface DiscordConnection {
 /** One entry per deployed agent that configures a Discord bot token. */
 export async function listDiscordConnections(): Promise<DiscordConnection[]> {
   return (await getConvexClient().query(
-    internal.discordGateway.listConnections,
-    {},
+    internal.channelConnections.listConnections,
+    { channel: "discord" },
   )) as DiscordConnection[];
 }

@@ -1,58 +1,71 @@
 /**
- * The Discord gateway forwarder's view of the config plane.
+ * Where a channel's bot token and inbound webhook path live, for a process that
+ * has to hold a connection open on the agent's behalf.
  *
- * Discord only POSTs interactions (slash commands, buttons) to an
- * interactions endpoint; regular messages arrive over a Gateway WebSocket that
- * somebody has to hold. `apps/discord-forwarder` holds one socket per bot token
- * and POSTs each `MESSAGE_CREATE` to the agent's channel webhook.
+ * `apps/discord-forwarder` is the first and so far only caller, because Discord
+ * is the only channel that cannot deliver a regular message over HTTP: it POSTs
+ * interactions (slash commands, buttons) to an endpoint, but ordinary messages
+ * arrive only over a Gateway WebSocket. Telegram, Slack, Zalo, GitHub and
+ * Pancake all register a plain webhook URL and need nothing held open, so they
+ * have no forwarder today. The query takes a channel name anyway: the read is
+ * not Discord-shaped, and Slack Socket Mode or Telegram long polling would want
+ * exactly this answer.
  *
- * It needs two things and nothing else: the bot token to identify with, and the
- * webhook path to post to. Resolving that here — rather than shipping
- * `ACCOUNT_CONFIG_ENCRYPTION_SECRET` to a third process — keeps the decryption
- * key in the two places that already hold it, convex and core.
+ * Resolving it here rather than shipping `ACCOUNT_CONFIG_ENCRYPTION_SECRET` to a
+ * third process keeps the decryption key in the two places that already hold it,
+ * convex and core.
  */
 
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { internalQuery } from "./_generated/server";
 import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
-import { isPlainObject } from "./model/objects";
 import { agentsInStage } from "./model/projectScope";
 
-const discordConnectionValidator = v.object({
+const channelConnectionValidator = v.object({
   agentId: v.string(),
   agentName: v.string(),
   botToken: v.string(),
   /**
-   * Path only. The forwarder joins it onto its own configured base URL, so the
+   * Path only. The caller joins it onto its own configured base URL, so the
    * config plane never has to know which gateway front door is in front of it.
    */
   webhookPath: v.string(),
 });
 
-type DiscordConnection = Infer<typeof discordConnectionValidator>;
+type ChannelConnection = Infer<typeof channelConnectionValidator>;
 
 /**
- * Every deployed agent that configures a Discord bot token, one row per agent.
+ * The slice of a decrypted agent config this file reads. The stored blob is
+ * `Record<string, unknown>`, so this is the shape we assert at the one boundary
+ * where it is read; every field stays optional and unknown-typed, and the caller
+ * checks the one value it uses.
+ */
+interface ChannelConfigView {
+  channels?: Record<string, { botToken?: unknown } | undefined>;
+}
+
+/**
+ * Every deployed agent that configures a bot token for `channel`, one row each.
  *
  * Walks active deployments rather than the whole `agents` table: a deployment
  * row is what mints an `endpointId`, and an agent with no deployed stage has no
- * webhook URL to forward to. Agents whose Discord config carries no `botToken`
- * are interaction-only and cannot be identified with, so they are absent.
+ * webhook URL to forward to. An agent whose channel config carries no `botToken`
+ * cannot authenticate a connection, so it is absent.
  */
 export const listConnections = internalQuery({
-  args: {},
-  returns: v.array(discordConnectionValidator),
-  handler: async (ctx) => {
+  args: { channel: v.string() },
+  returns: v.array(channelConnectionValidator),
+  handler: async (ctx, args) => {
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     if (!secret) {
       throw new Error(
-        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read Discord bot tokens",
+        "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to read channel bot tokens",
       );
     }
 
     const deployments = await ctx.db.query("agentDeployments").collect();
-    const connections: DiscordConnection[] = [];
+    const connections: ChannelConnection[] = [];
 
     for (const deployment of deployments) {
       if (deployment.status !== "active") continue;
@@ -65,7 +78,7 @@ export const listConnections = internalQuery({
       );
 
       for (const agent of agents) {
-        const botToken = await discordBotToken(agent, secret);
+        const botToken = await channelBotToken(agent, args.channel, secret);
         if (!botToken) continue;
         connections.push({
           agentId: agent._id,
@@ -74,6 +87,7 @@ export const listConnections = internalQuery({
           webhookPath: webhookPath(
             deployment.accountId,
             deployment.endpointId,
+            args.channel,
             stage,
           ),
         });
@@ -84,33 +98,27 @@ export const listConnections = internalQuery({
   },
 });
 
-/** The agent's configured Discord bot token, or null when it has none. */
-async function discordBotToken(
+/** The agent's configured bot token for `channel`, or null when it has none. */
+async function channelBotToken(
   agent: Doc<"agents">,
+  channel: string,
   secret: string,
 ): Promise<string | null> {
   if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
     return null;
   }
 
-  const config = await decryptAgentConfigBlob(
+  const config = (await decryptAgentConfigBlob(
     {
       ciphertext: agent.encryptedConfig,
       iv: agent.encryptionIv,
       tag: agent.encryptionTag,
     },
     secret,
-  );
-  if (!config) return null;
+  )) as ChannelConfigView | null;
+  const botToken = config?.channels?.[channel]?.botToken;
 
-  const channels = config.channels;
-  if (!isPlainObject(channels)) return null;
-  const discord = channels.discord;
-  if (!isPlainObject(discord)) return null;
-
-  return typeof discord.botToken === "string" && discord.botToken
-    ? discord.botToken
-    : null;
+  return typeof botToken === "string" && botToken ? botToken : null;
 }
 
 /**
@@ -125,12 +133,14 @@ async function discordBotToken(
 function webhookPath(
   accountId: string,
   endpointId: string,
+  channel: string,
   stage: Doc<"stages">,
 ): string {
   const account = encodeURIComponent(accountId);
+  const name = encodeURIComponent(channel);
   if (stage.kind === undefined || stage.kind === "production") {
-    return `/webhooks/${account}/discord`;
+    return `/webhooks/${account}/${name}`;
   }
 
-  return `/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/discord`;
+  return `/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
 }

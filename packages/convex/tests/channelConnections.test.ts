@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-/** What the Discord gateway forwarder sees: bot tokens and the webhook to post them to. */
+/** What a connection-holding process sees: a channel's bot token and the webhook to post to. */
 
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
@@ -42,7 +42,7 @@ async function seedScope(
     const accountId = await ctx.db.insert("accounts", {
       orgId: orgId,
       username: "beeblast-dev",
-      secretHash: "hash-discord-gateway",
+      secretHash: "hash-channel-connections",
       status: "active" as const,
       createdAt: now,
       updatedAt: now,
@@ -134,6 +134,13 @@ const discordConfig = (botToken: string): Record<string, unknown> => ({
   channels: { discord: { botToken: botToken, publicKey: "pk" } },
 });
 
+const channelConfig = (
+  channel: string,
+  botToken: string,
+): Record<string, unknown> => ({
+  channels: { [channel]: { botToken: botToken } },
+});
+
 describe("listConnections", () => {
   test("returns the bot token and the stage-scoped webhook path", async () => {
     const tt = t();
@@ -146,16 +153,18 @@ describe("listConnections", () => {
     );
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
-      [
-        {
-          agentId: agentId,
-          agentName: "tracy",
-          botToken: "bot-token-1",
-          webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
-        },
-      ],
-    );
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([
+      {
+        agentId: agentId,
+        agentName: "tracy",
+        botToken: "bot-token-1",
+        webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/discord`,
+      },
+    ]);
   });
 
   test("a production stage keeps the bare webhook path", async () => {
@@ -165,8 +174,8 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
 
     const connections = await tt.query(
-      internal.discordGateway.listConnections,
-      {},
+      internal.channelConnections.listConnections,
+      { channel: "discord" },
     );
 
     expect(connections[0]?.webhookPath).toBe(
@@ -181,8 +190,8 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
 
     const connections = await tt.query(
-      internal.discordGateway.listConnections,
-      {},
+      internal.channelConnections.listConnections,
+      { channel: "discord" },
     );
 
     expect(connections[0]?.webhookPath).toBe(
@@ -198,9 +207,11 @@ describe("listConnections", () => {
     });
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
-      [],
-    );
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([]);
   });
 
   test("skips an agent with no Discord channel at all", async () => {
@@ -211,9 +222,11 @@ describe("listConnections", () => {
     });
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
-      [],
-    );
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([]);
   });
 
   test("skips a revoked deployment, which has no live webhook", async () => {
@@ -222,9 +235,11 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1", "revoked");
 
-    expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
-      [],
-    );
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([]);
   });
 
   test("skips an undeployed stage, which has no endpointId to address", async () => {
@@ -232,9 +247,11 @@ describe("listConnections", () => {
     const scope = await seedScope(tt);
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
 
-    expect(await tt.query(internal.discordGateway.listConnections, {})).toEqual(
-      [],
-    );
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([]);
   });
 
   test("returns one row per agent when two share a bot token", async () => {
@@ -245,13 +262,49 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
 
     const connections = await tt.query(
-      internal.discordGateway.listConnections,
-      {},
+      internal.channelConnections.listConnections,
+      { channel: "discord" },
     );
 
     expect(connections).toHaveLength(2);
     expect(new Set(connections.map((entry) => entry.botToken))).toEqual(
       new Set(["shared-token"]),
     );
+  });
+
+  test.each(["telegram", "slack", "zalo"])(
+    "reads %s the same way, with the channel in the webhook path",
+    async (channel) => {
+      const tt = t();
+      const scope = await seedScope(tt);
+      await seedAgent(tt, scope, "tracy", channelConfig(channel, "token-1"));
+      await seedDeployment(tt, scope, "endpoint-1");
+
+      expect(
+        await tt.query(internal.channelConnections.listConnections, {
+          channel: channel,
+        }),
+      ).toEqual([
+        {
+          agentId: expect.any(String),
+          agentName: "tracy",
+          botToken: "token-1",
+          webhookPath: `/webhooks/${scope.accountId}/dev/endpoint-1/${channel}`,
+        },
+      ]);
+    },
+  );
+
+  test("one channel's token never answers for another", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    await seedAgent(tt, scope, "tracy", channelConfig("slack", "xoxb-1"));
+    await seedDeployment(tt, scope, "endpoint-1");
+
+    expect(
+      await tt.query(internal.channelConnections.listConnections, {
+        channel: "discord",
+      }),
+    ).toEqual([]);
   });
 });

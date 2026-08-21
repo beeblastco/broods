@@ -173,7 +173,13 @@ flowchart LR
 It needs `BROODS_WEBHOOK_BASE_URL` plus the same `CONVEX_URL` /
 `CONVEX_DEPLOY_KEY` pair core uses. It never holds
 `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and returns only the bot
-token and webhook path.
+token and webhook path, through `channelConnections.listConnections`.
+
+Only Discord needs this. Telegram, Slack, Zalo, GitHub and Pancake all deliver
+regular messages to a registered webhook URL, so nothing has to stay connected
+on their behalf. The Convex query takes a channel name rather than assuming
+Discord, so a transport that does need a held-open connection (Slack Socket
+Mode, Telegram long polling) reuses the same read.
 
 Operational constraints, in order of how much they matter:
 
