@@ -1,12 +1,13 @@
 import { describe, expect, it } from "bun:test";
 import type { ForwarderConfig } from "../src/config.ts";
 import type { DiscordConnection } from "../src/connections.ts";
+import type { MessageCreate } from "../src/discord.ts";
+import type { GatewaySocketOptions } from "../src/socket.ts";
 import {
   Forwarder,
   groupConnectionsByToken,
   type ForwarderSocket,
 } from "../src/supervisor.ts";
-import type { GatewaySocketOptions } from "../src/socket.ts";
 
 const CONFIG: ForwarderConfig = {
   backoffCeilingMs: 300_000,
@@ -159,4 +160,57 @@ describe("reconcile", () => {
     expect(sockets.get("token-b")?.stopped).toBe(1);
     expect(forwarder.status().sockets).toHaveLength(0);
   });
+
+  // The thread lookup waits on Discord, so a poll can land mid-delivery. Reading
+  // the targets before that await would post to the webhooks the token had when
+  // the message arrived rather than the ones it has now.
+  it("posts where reconcile last pointed the token, not where it started", async () => {
+    const realFetch = globalThis.fetch;
+    const posted: string[] = [];
+    let releaseLookup: (() => void) | undefined;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+    ): Promise<Response> => {
+      const url = String(input);
+      if (url.startsWith("https://discord.com")) {
+        await new Promise<void>((resolve) => {
+          releaseLookup = resolve;
+        });
+
+        return Response.json({ id: "channel-1", type: 0 });
+      }
+      posted.push(url);
+
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      let deliver: ((data: MessageCreate) => void) | undefined;
+      const forwarder = new Forwarder(CONFIG, (options) => {
+        deliver = options.onMessageCreate;
+
+        return new StubSocket();
+      });
+      forwarder.reconcile([connection({ webhookPath: "/webhooks/old" })]);
+      deliver?.({ channel_id: "channel-1", id: "message-1" });
+
+      await until(() => releaseLookup !== undefined);
+      forwarder.reconcile([connection({ webhookPath: "/webhooks/new" })]);
+      releaseLookup?.();
+      await until(() => posted.length > 0);
+
+      expect(posted).toEqual(["https://gateway.example.com/webhooks/new"]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });
+
+/** Waits for a fire-and-forget delivery to reach the state under test. */
+async function until(done: () => boolean): Promise<void> {
+  for (let tick = 0; tick < 100; tick += 1) {
+    if (done()) return;
+    await Bun.sleep(1);
+  }
+  throw new Error("condition never became true");
+}

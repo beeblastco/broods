@@ -119,12 +119,18 @@ export class Forwarder {
     threads: ThreadDirectory,
     data: MessageCreate,
   ): Promise<void> {
-    // Read through the map rather than closing over an array, so a reconcile
-    // between two events is picked up without reopening the socket.
+    // Nothing to deliver to once the token is gone, and no reason to ask Discord
+    // about the channel either.
+    if (!this.managed.has(botToken)) return;
+
+    const thread = await threads.resolve(data.channel_id);
+    // Read after the lookup, not before. `resolve` can wait on Discord, and
+    // `reconcile` replaces the array outright, so a set read on the way in is
+    // already stale by here — which is the whole reason this goes through the map
+    // instead of closing over the array.
     const targets = this.managed.get(botToken)?.targets;
     if (!targets?.length) return;
 
-    const thread = await threads.resolve(data.channel_id);
     await forwardMessageCreate(data, thread, botToken, targets);
   }
 
