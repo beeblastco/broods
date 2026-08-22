@@ -181,6 +181,12 @@ secret key. It never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts a
 returns only the bot token and webhook path, through
 `channelConnections.listConnections`.
 
+A plane is isolated from its neighbours. One that fails a poll keeps serving
+whatever it last answered, so a Convex blip cannot read as "every token here was
+deleted" and close its sockets; one that has never answered contributes nothing,
+so a deployment whose backend is not live yet does not stop the others from
+running. Only a poll where no plane answered leaves the pod unready.
+
 Sharing one process across planes is not a tidiness choice. Discord counts
 connections against the bot token, and nothing stops the same token being
 deployed to both dev and prod, so a forwarder per stage would hold two sockets
