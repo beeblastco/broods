@@ -706,6 +706,10 @@ function normalizeTelegramConfig(value: unknown): void {
     "config.channels.telegram.webhookSecret",
   );
   assertOptionalString(
+    config.botUsername,
+    "config.channels.telegram.botUsername",
+  );
+  assertOptionalString(
     config.reactionEmoji,
     "config.channels.telegram.reactionEmoji",
   );

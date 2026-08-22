@@ -14,6 +14,7 @@ import { defineAgent, defineTelegramChannel, defineTelegramConnection, env } fro
 export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
   webhookSecret: env("TELEGRAM_WEBHOOK_SECRET"),
+  botUsername: "my_bot",
   reactionEmoji: "👀",
   apiUrl: "https://api.telegram.org",
 });
@@ -47,10 +48,34 @@ Channel telegram (telegram): https://gateway.broods.app/webhooks/acct_.../dev/st
 
 - `botToken`: Provided by BotFather.
 - `webhookSecret`: A secret string to verify incoming webhooks.
+- `botUsername` (optional, recommended): the bot's own @username. Set it to answer only when the agent is addressed — see below.
 - `channels` (optional): `["*"]` to answer in every chat instead of only the declared ones.
 - `allowedUserIds` (optional): Telegram user ids allowed to trigger the agent. Everyone, when omitted.
 - `reactionEmoji` (optional): Emoji to use for reactions, defaults to "👀".
 - `apiUrl` (optional): Telegram Bot API base URL. This maps to `TelegramAdapterConfig["apiUrl"]`.
+
+## Being tagged
+
+With `botUsername` set, a group message runs the agent only when it addresses
+the agent: an `@name` mention, a slash command, or a reply to one of the agent's
+own messages. Every other message in an allowed chat is stored as channel
+context and costs nothing, so a later mention still sees what the chat said.
+This matches Discord, where `botUserId` does the same job, and Slack, where only
+`app_mention` runs the agent.
+
+A private chat always runs the agent. There is nobody else in the room to
+address, so no tag is needed.
+
+Another bot never triggers a run, whether or not it tags the agent. Two bots
+sharing a group therefore cannot mention each other into a loop.
+
+Without `botUsername` a mention cannot be recognised, so the agent keeps
+answering every message rather than going silent. Set it as soon as the bot
+shares a group with people who are not talking to it.
+
+A bare `/command` counts as addressing the agent, because Telegram only appends
+`@name` to a command when a group holds more than one bot. In a group with
+several bots, use `/command@name` so only the intended one answers.
 
 Telegram private chats stream through Chat SDK rich draft previews and persist the final response. Group chats receive one final reply. MarkdownV2 formatting is delegated to Chat SDK.
 

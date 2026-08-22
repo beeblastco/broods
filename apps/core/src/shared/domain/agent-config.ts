@@ -482,6 +482,8 @@ export interface AgentTelegramChannelConfig {
   webhookSecret?: string;
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
+  /** Bot's @username, e.g. `tracy_bot`. Set it to answer only when the agent is mentioned. */
+  botUsername?: string;
   reactionEmoji?: string;
   trace?: "enabled" | "disabled";
   partition?: ChannelPartition;
@@ -1371,6 +1373,10 @@ function normalizeTelegramConfig(value: unknown): void {
   assertOptionalString(
     config.webhookSecret,
     "config.channels.telegram.webhookSecret",
+  );
+  assertOptionalString(
+    config.botUsername,
+    "config.channels.telegram.botUsername",
   );
   assertOptionalString(
     config.reactionEmoji,

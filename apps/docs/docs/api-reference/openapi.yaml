@@ -3792,6 +3792,9 @@ components:
               items:
                 type: string
               description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
+            botUsername:
+              type: string
+              description: Bot's @username, e.g. `tracy_bot`. When set, group messages run the agent only if they mention it, reply to it, or carry a slash command. Every message keeps running the agent when omitted.
             reactionEmoji:
               type: string
             trace:
