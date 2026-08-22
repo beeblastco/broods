@@ -1,0 +1,85 @@
+name: Build Discord Forwarder Image
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "apps/discord-forwarder/**"
+      # The two core modules the forwarder imports by relative path. Nothing
+      # declares that dependency, so name them here or a rename ships broken.
+      - "apps/core/src/shared/env.ts"
+      - "apps/core/src/shared/convex/client.ts"
+      # Copied into the image, and it owns the config-plane query the forwarder
+      # reads, so a change there ships broken without a rebuild.
+      - "packages/convex/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/build-discord-forwarder.yaml"
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/beeblastco/broods-discord-forwarder
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Install dependencies
+        run: bun install --ignore-scripts --no-save
+
+      - name: Type-check discord forwarder
+        run: bun run --filter @broods/discord-forwarder check
+
+      - name: Test discord forwarder
+        run: bun run --filter @broods/discord-forwarder test
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/discord-forwarder/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # One release, not one per stage: it serves every config plane, so there is no
+  # `-dev` variant to choose between. Rolled from `dev` alone because `main` only
+  # ever fast-forwards from it — a `main` build is never newer than the `dev` one
+  # that already shipped, so rolling on both would reinstall older code on
+  # promote.
+  rollout:
+    needs: build
+    if: ${{ github.ref_name == 'dev' }}
+    permissions: {}
+    uses: ./.github/workflows/rollout.yaml
+    with:
+      workflow: deploy-discord-forwarder.yaml
+      tag: ${{ github.sha }}
+    secrets:
+      dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

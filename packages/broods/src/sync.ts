@@ -18,8 +18,8 @@ export interface SyncClientOptions {
 export interface RemoteManifestResponse {
   manifest: CliManifest;
   ids: GeneratedIds;
-  /** Non-fatal deploy advisories (e.g. referenced-but-unset env vars, unresolved policy refs). */
-  warnings?: { missingEnv?: string[]; missingPolicies?: string[] };
+  /** Non-fatal deploy advisories (e.g. policy refs that resolve to nothing). */
+  warnings?: { missingPolicies?: string[] };
   /**
    * The stage's runtime API key context. Deployments include the plaintext
    * `apiKey` so the CLI can write `BROODS_API_KEY` locally.
@@ -136,7 +136,11 @@ export class BroodsSyncClient {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifest: manifest, prune: prune, rotateRuntimeKey: rotateRuntimeKey }),
+        body: JSON.stringify({
+          manifest: manifest,
+          prune: prune,
+          rotateRuntimeKey: rotateRuntimeKey,
+        }),
       },
     );
     await assertOk(response, "Sync manifest failed");
@@ -561,8 +565,22 @@ function assertStageRouteMounted(response: Response): void {
   );
 }
 
+/**
+ * Turns a failed response into an error carrying the server's own reason. The
+ * config plane answers with `{ error, detail? }`, and `detail` is where manifest
+ * validation failures (an unset `env()` ref, an unsupported mount) explain
+ * themselves — printing the raw JSON instead buries them.
+ */
 async function assertOk(response: Response, message: string): Promise<void> {
-  if (!response.ok) {
-    throw new Error(`${message}: ${response.status} ${await response.text()}`);
+  if (response.ok) return;
+  const body = await response.text();
+  let reason = body;
+  try {
+    const parsed = JSON.parse(body) as { error?: string; detail?: string };
+    reason = parsed.detail ?? parsed.error ?? body;
+  } catch {
+    // Not JSON: the raw body is the best reason available.
   }
+
+  throw new Error(`${message}: ${response.status} ${reason}`);
 }

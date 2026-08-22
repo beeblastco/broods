@@ -63,7 +63,7 @@ reading an agent still tells you its ceiling.
 | `workspaces`    | Selects from the agent's own; one it does not attach is ignored  |
 | `policies`      | Unioned with the agent's; each policy carries its own mode       |
 | `denyTools`     | Withholds tools here, after the set is built — covers `bash` too |
-| `partition`     | Overrides the channel's scope (`channel` or `conversation`)      |
+| `partition`     | Splits the workspace folder (`shared` or `conversation`)         |
 | `replyIn`       | Where the reply lands — `thread` or `source` (Slack only)        |
 | `sandboxImages` | Images the agent may stand a sandbox up from for a thread here   |
 | `tagRoles`      | Named groups of people, readable from policy as `userRoles`      |
@@ -127,9 +127,32 @@ Nothing points back at a channel — the connection does not list its channels, 
 
 The per-platform id field is named for what the provider calls it: `channelId` for Slack and Discord, `repo` for GitHub, `chatId` for Telegram and Zalo, `conversationId` for Pancake. All of them are stored as `externalId`.
 
+### One set of rules, several chats
+
+Zalo's `chatId` also takes a list, for when several rooms run on identical rules:
+
+```ts
+export const internalGroups = defineZaloChannel({
+  name: "lamy-internal",
+  connection: zaloConnection,
+  chatId: ["7788", "7789", "7790"],
+  instructions: internalPrompt,
+  policies: [internalAccess],
+  denyTools: ["web_search"],
+});
+```
+
+That deploys three records, `lamy-internal-7788`, `-7789` and `-7790`, each holding the same config. Adding a fourth room is one string. The suffix comes from the id rather than a position, so deleting one leaves the others untouched instead of renaming them.
+
+Nothing about storage changes: there is still one row per room, and the lookup on each inbound message is still a single exact match on `externalId`. The list is an authoring convenience that expands at deploy time, so the ids have to be known when you deploy.
+
+A room you never declare is not left out. On a lookup miss the runtime falls back to the connection's own agent, so its system prompt is already the default everywhere. Reach for a list when a set of rooms needs the things only a record carries, such as `denyTools`, `policies`, `tagRoles` or `replyIn`.
+
+`"*"` is not an id and is refused at deploy time. A record matches one exact room, so a wildcard would bind nothing while still opening the connection's reach: the bot would answer everywhere with none of the channel's rules, and nothing would report an error. To answer everywhere, set `allowedChannelIds: ["*"]` on the connection.
+
 ### Through the account API
 
-The API speaks the stored names, not the authoring ones: send `workspaceScope` where the CLI writes `partition`, and `externalId` where it writes `channelId`, `repo`, `chatId` or `conversationId`.
+The API speaks the stored names: send `externalId` where the CLI writes `channelId`, `repo`, `chatId` or `conversationId`, and `agentBindings` where the CLI writes `agents`. Every other field is spelled the same on both sides.
 
 ```ts
 import { BroodsAccountClient } from "broods/account";
@@ -146,7 +169,7 @@ await client.createChannel({
     instructions: "Escalate billing questions to #finance.",
     // `agent_nhi` must already attach ws_incidents; this mounts it as "incidents" here.
     workspaces: [{ name: "incidents", workspaceId: "ws_incidents" }],
-    workspaceScope: { alias: "eng", level: "conversation" },
+    partition: { alias: "eng", by: "conversation" },
     replyIn: "thread",
     policies: ["policy_prod_data"],
     tagRoles: [{ roleId: "oncall", userIds: ["U777", "U778"] }],

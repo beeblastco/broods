@@ -170,6 +170,7 @@ export async function compileProject(
   )
     .flat()
     .sort((a, b) => `${a.kind}:${a.name}`.localeCompare(`${b.kind}:${b.name}`));
+  assertUniqueResources(manifestResources);
 
   return {
     config: config,
@@ -532,17 +533,6 @@ function assertWorkspaceIsolationConsistency(resources: AnyResource[]): void {
   }
 }
 
-// `partition` is the authoring name; storage still reads `workspaceScope`.
-function workspaceScopeFromPartition(
-  partition: AnyConnectionDefinition["partition"],
-): { level: string; alias?: string } | undefined {
-  if (!partition) return undefined;
-
-  return partition.by === "shared"
-    ? { level: "channel" }
-    : { level: "conversation", alias: partition.alias };
-}
-
 function assertPartitionShape(
   partition: AnyConnectionDefinition["partition"],
   name: string,
@@ -701,7 +691,9 @@ function assertExportedHarnessSandboxes(resources: AnyResource[]): void {
   }
 }
 
-function assertUniqueResources(resources: AnyResource[]): void {
+function assertUniqueResources(
+  resources: Array<{ kind: string; name: string }>,
+): void {
   const seen = new Set<string>();
   for (const resource of resources) {
     const key = `${resource.kind}:${resource.name}`;
@@ -870,9 +862,10 @@ function declaredReach(resources: AnyResource[]): DeclaredReach {
       externalId?: unknown;
     };
     if (!isConnectionDefinition(config.connection)) continue;
-    if (typeof config.externalId !== "string") continue;
+    const ids = channelExternalIds(resource.name, config.externalId);
+    if (ids.length === 0) continue;
     const declared = reach.get(config.connection) ?? new Set<string>();
-    declared.add(config.externalId);
+    for (const id of ids) declared.add(id);
     reach.set(config.connection, declared);
   }
 
@@ -907,6 +900,24 @@ async function toManifestResources(
     ];
   }
 
+  if (resource.kind === "channelRecord") {
+    const config = resource.config as Record<string, unknown>;
+    const ids = channelExternalIds(resource.name, config.externalId);
+
+    // Suffix with the id, never an index: deleting the first of three would
+    // renumber the rest, so cliSync would prune and recreate rows that never
+    // changed.
+    return ids.map((id) => ({
+      kind: resource.kind,
+      name: ids.length === 1 ? resource.name : `${resource.name}-${id}`,
+      ...(resource.description ? { description: resource.description } : {}),
+      config: normalizeChannelConfig(resource.name, {
+        ...config,
+        externalId: id,
+      }),
+    }));
+  }
+
   return [
     {
       kind: resource.kind,
@@ -915,6 +926,57 @@ async function toManifestResources(
       config: await normalizeConfig(entry, projectRoot),
     },
   ];
+}
+
+/**
+ * The ids one channel declares. A single string stays one record; a list fans
+ * out to one record per id, so several rooms share one set of rules.
+ */
+function channelExternalIds(name: string, value: unknown): string[] {
+  if (value === undefined) return [];
+  if (typeof value === "string") {
+    assertNotReachWildcard(name, value);
+
+    return [value];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `Channel "${name}" externalId must be a string or an array`,
+    );
+  }
+  if (value.length === 0) {
+    throw new Error(`Channel "${name}" externalId must not be an empty array`);
+  }
+  const seen = new Set<string>();
+  for (const id of value) {
+    if (typeof id !== "string" || id.length === 0) {
+      throw new Error(
+        `Channel "${name}" externalId must be an array of non-empty strings`,
+      );
+    }
+    if (seen.has(id)) {
+      throw new Error(`Channel "${name}" externalId lists ${id} twice`);
+    }
+    assertNotReachWildcard(name, id);
+    seen.add(id);
+  }
+
+  return value;
+}
+
+/**
+ * A record whose id is `*` matches only a chat whose id is literally an
+ * asterisk, so it binds nothing while still opening the connection's reach. It
+ * deploys clean and the bot looks wired up, so refuse it here.
+ */
+function assertNotReachWildcard(name: string, id: string): void {
+  if (id !== CHANNEL_REACH_WILDCARD) return;
+
+  throw new Error(
+    `Channel "${name}" cannot use "${CHANNEL_REACH_WILDCARD}" as its id: a record matches one exact room. ` +
+      `To answer everywhere, set allowedChannelIds: ["${CHANNEL_REACH_WILDCARD}"] on the connection; ` +
+      `undeclared rooms already fall back to its agent.`,
+  );
 }
 
 async function normalizeConfig(
@@ -944,10 +1006,6 @@ async function normalizeConfig(
     }
 
     return rewriteValues(config);
-  }
-
-  if (resource.kind === "channelRecord") {
-    return normalizeChannelConfig(resource.name, resource.config);
   }
 
   if (resource.kind === "tool") {
@@ -1269,7 +1327,6 @@ function normalizeAgentConfig(
           );
         }
         const channelId = `${resource.name}${capitalize(channel.type)}Channel`;
-        const workspaceScope = workspaceScopeFromPartition(channel.partition);
         const allowedChannelIds = connectionReach(channel, reach);
 
         return [
@@ -1277,7 +1334,7 @@ function normalizeAgentConfig(
           {
             id: channelId,
             ...channel.config,
-            ...(workspaceScope ? { workspaceScope: workspaceScope } : {}),
+            ...(channel.partition ? { partition: channel.partition } : {}),
             allowedChannelIds: allowedChannelIds,
           },
         ];
@@ -1634,10 +1691,8 @@ function resolveContainedResourcePath(
   );
 }
 
-// The SDK says `connection`, `agents` and `partition`; storage says `platform`,
-// `agentBindings` and `workspaceScope`. Translate here so the authoring names
-// never reach the wire and the connection's credentials never reach a channel
-// record — `rewriteValues` would otherwise inline the whole connection object.
+// The SDK says `connection` and `agents`; storage says `platform` and
+// `agentBindings`. Drop the credentials too, or `rewriteValues` inlines them.
 function normalizeChannelConfig(name: string, value: unknown): unknown {
   const config = { ...(value as Record<string, unknown>) };
   const connection = config.connection;
@@ -1649,12 +1704,10 @@ function normalizeChannelConfig(name: string, value: unknown): unknown {
   delete config.connection;
   config.platform = connection.type;
 
-  const partition = config.partition as AnyConnectionDefinition["partition"];
-  assertPartitionShape(partition, `Channel "${name}"`);
-  if (partition) {
-    delete config.partition;
-    config.workspaceScope = workspaceScopeFromPartition(partition);
-  }
+  assertPartitionShape(
+    config.partition as AnyConnectionDefinition["partition"],
+    `Channel "${name}"`,
+  );
 
   return rewriteValues(config);
 }

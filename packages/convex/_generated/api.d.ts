@@ -23,6 +23,7 @@ import type * as awsCrons from "../awsCrons.js";
 import type * as awsSkills from "../awsSkills.js";
 import type * as awsWorkspaceFiles from "../awsWorkspaceFiles.js";
 import type * as canvas from "../canvas.js";
+import type * as channelConnections from "../channelConnections.js";
 import type * as channelRecords from "../channelRecords.js";
 import type * as cliAuth from "../cliAuth.js";
 import type * as cliAuthHttp from "../cliAuthHttp.js";
@@ -127,6 +128,7 @@ declare const fullApi: ApiFromModules<{
   awsSkills: typeof awsSkills;
   awsWorkspaceFiles: typeof awsWorkspaceFiles;
   canvas: typeof canvas;
+  channelConnections: typeof channelConnections;
   channelRecords: typeof channelRecords;
   cliAuth: typeof cliAuth;
   cliAuthHttp: typeof cliAuthHttp;

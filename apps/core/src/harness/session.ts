@@ -15,7 +15,7 @@ import {
 import type { ChannelActions } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import type {
-  AgentChannelWorkspaceScope,
+  ChannelPartition,
   AgentConfig,
 } from "../shared/domain/agent-config.ts";
 import type { SandboxPermissionMode } from "../shared/domain/sandbox-config.ts";
@@ -526,7 +526,10 @@ export class Session {
       system: system,
       ephemeralSystem: ephemeralSystem,
       systemContextSnapshot: systemContextSnapshot,
-      timings: { prepareStartedMs: prepareStartedMs, prepareEndedMs: Date.now() },
+      timings: {
+        prepareStartedMs: prepareStartedMs,
+        prepareEndedMs: Date.now(),
+      },
     };
   }
 
@@ -707,16 +710,14 @@ export class Session {
     ];
   }
 
-  private channelWorkspaceScope(): AgentChannelWorkspaceScope | undefined {
+  private channelPartition(): ChannelPartition | undefined {
     if (this.delivery?.kind !== "channel") {
       return undefined;
     }
     const config = this.agentConfig.channels?.[this.delivery.channelName];
-    const workspaceScope = isPlainObject(config)
-      ? config.workspaceScope
-      : undefined;
+    const partition = isPlainObject(config) ? config.partition : undefined;
 
-    return isWorkspaceScope(workspaceScope) ? workspaceScope : undefined;
+    return isPartition(partition) ? partition : undefined;
   }
 
   private defaultWorkspaceHasSandbox(): boolean {
@@ -757,7 +758,7 @@ export class Session {
             : undefined,
         channelScopeKey: channelScopeKey,
         conversationKey: conversationScopeKey,
-        workspaceScope: this.channelWorkspaceScope(),
+        partition: this.channelPartition(),
       },
     ).then((resolved) => {
       this.resolvedRuntime = resolved;
@@ -1278,11 +1279,11 @@ function isToolApprovalResponseMessage(
   );
 }
 
-function isWorkspaceScope(value: unknown): value is AgentChannelWorkspaceScope {
+function isPartition(value: unknown): value is ChannelPartition {
   if (!isPlainObject(value)) return false;
-  if (value.level === "channel") return value.alias === undefined;
+  if (value.by === "shared") return value.alias === undefined;
 
-  return value.level === "conversation" && typeof value.alias === "string";
+  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 function projectActiveConversationEntries(

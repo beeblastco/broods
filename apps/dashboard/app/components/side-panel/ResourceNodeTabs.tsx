@@ -257,10 +257,9 @@ export function WorkspaceResourceDetailsTab({
         {config.isolation === true && (
           <ExpandBlock>
             <p className="text-[11px] text-muted-foreground">
-              Every channel attached to this workspace must set
-              `workspaceScope`. A `conversation` scope mounts a private child
-              folder per thread, issue, or PR; a `channel` scope mounts the
-              workspace root.
+              Every channel attached to this workspace must set `partition`. A
+              `conversation` scope mounts a private child folder per thread,
+              issue, or PR; a `shared` scope mounts the workspace root.
             </p>
           </ExpandBlock>
         )}

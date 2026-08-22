@@ -139,6 +139,20 @@
         "typescript": "^7.0.2",
       },
     },
+    "apps/discord-forwarder": {
+      "name": "@broods/discord-forwarder",
+      "version": "0.1.0",
+      "dependencies": {
+        "@broods/convex": "workspace:*",
+        "convex": "^1.44.0",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.3.14",
+      },
+      "peerDependencies": {
+        "typescript": "^7.0.2",
+      },
+    },
     "apps/docs": {
       "name": "@broods/docs",
       "dependencies": {
@@ -189,7 +203,7 @@
     },
     "packages/broods": {
       "name": "broods",
-      "version": "0.17.4",
+      "version": "0.21.0",
       "bin": {
         "broods": "dist/cli/index.js",
       },
@@ -670,6 +684,8 @@
     "@broods/core": ["@broods/core@workspace:apps/core"],
 
     "@broods/dashboard": ["@broods/dashboard@workspace:apps/dashboard"],
+
+    "@broods/discord-forwarder": ["@broods/discord-forwarder@workspace:apps/discord-forwarder"],
 
     "@broods/docs": ["@broods/docs@workspace:apps/docs"],
 

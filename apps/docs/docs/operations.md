@@ -31,6 +31,8 @@ broods env list                  # list names (values hidden)
 broods env rm OPENAI_API_KEY     # remove variable
 ```
 
+`rm` refuses while a synced agent or sandbox still reads the variable through `env("NAME")`, and names what holds the reference. Drop the `env()` reference from those resources and sync before removing the variable. Otherwise the stored config keeps the `${NAME}` placeholder that `env("NAME")` compiles to, and the runtime has nothing left to substitute for it. To rotate a secret, run `env set` again rather than removing it first.
+
 ### Observability
 
 The terminal tails warnings and errors by default. The full INFO and DEBUG history lives in the dashboard monitoring panel, which can page and filter it.
@@ -150,6 +152,71 @@ Runtime notes:
 - Cron schedules publish onto the cron-runs event bus from SST output `cronSchedulerTargetArn`; the bus rule forwards to the API destination, which POSTs to `${PUBLIC_BASE_URL}/v1/cron-runs` through the gateway. The Convex deployment env vars stay `CRON_SCHEDULER_TARGET_ARN`, `CRON_SCHEDULER_ROLE_ARN`, and `CRON_SCHEDULER_GROUP_NAME`; flip `CRON_SCHEDULER_TARGET_ARN` to the bus ARN at cutover with no code change.
 
 The pods are deployed from the infra repo (`kubernetes/charts/releases/core-dev.yaml` / `core.yaml`) behind the gateway.
+
+## Discord Gateway Forwarder
+
+Discord delivers regular messages only over a Gateway WebSocket, so a process
+has to hold one for every Discord bot token. Per token, not per agent: Discord
+counts connections against the token and delivers every event to each of them,
+so two agents sharing a token share one socket and it fans out to both of their
+webhooks. That is
+`ghcr.io/beeblastco/broods-discord-forwarder`, built from
+`apps/discord-forwarder/Dockerfile` by the `Build Discord Forwarder Image`
+workflow and deployed from the infra repo
+(`kubernetes/charts/releases/discord-forwarder.yaml`).
+
+```mermaid
+flowchart LR
+    Discord((Discord Gateway)) -->|MESSAGE_CREATE| Fwd[broods-discord-forwarder]
+    Fwd -->|POST /webhooks/…/discord| Gateway[broods gateway]
+    Convex[(Convex config plane)] -->|bot tokens + webhook paths| Fwd
+    Gateway --> Pod[broods-core pod]
+```
+
+There is one release, not one per stage. `BROODS_CONFIG_PLANES` lists the Convex
+deployments it reads as a JSON array of `{name, convexUrl, webhookBaseUrl}`, and
+each plane's admin credential comes from `CONVEX_DEPLOY_KEY_<NAME>` — plane `dev`
+reads `CONVEX_DEPLOY_KEY_DEV`. Adding a deployment is one array entry and one
+secret key. It never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and
+returns only the bot token and webhook path, through
+`channelConnections.listConnections`.
+
+A plane is isolated from its neighbours. One that fails a poll keeps serving
+whatever it last answered, so a Convex blip cannot read as "every token here was
+deleted" and close its sockets; one that has never answered contributes nothing,
+so a deployment whose backend is not live yet does not stop the others from
+running. Only a poll where no plane answered leaves the pod unready.
+
+Sharing one process across planes is not a tidiness choice. Discord counts
+connections against the bot token, and nothing stops the same token being
+deployed to both dev and prod, so a forwarder per stage would hold two sockets
+for it and answer every message twice. One process keys sockets by token and
+fans that token's event out to both planes' webhooks instead.
+
+Only Discord needs this. Telegram, Slack, Zalo, GitHub and Pancake all deliver
+regular messages to a registered webhook URL, so nothing has to stay connected
+on their behalf. The Convex query takes a channel name rather than assuming
+Discord, so a transport that does need a held-open connection (Slack Socket
+Mode, Telegram long polling) reuses the same read.
+
+Operational constraints, in order of how much they matter:
+
+- **Single replica, `strategy: Recreate`.** Two pods means two sockets per bot
+  token, and Discord sends every event to both. Do not scale it, do not let a
+  RollingUpdate surge a second pod, and do not stand up a second release per
+  stage — add a plane to the existing one instead.
+- **Discord resets a bot token after 1000 IDENTIFYs in 24 hours** and emails its
+  owner. The forwarder caps reconnect backoff at 300s and counts IDENTIFYs per
+  token, parking a socket rather than dialling past the limit. A restart loop is
+  the one failure mode that defeats the counter, which is why liveness
+  (`/healthz`) does not depend on the config plane — only readiness (`/readyz`)
+  does.
+- **Close code 4014 means Message Content Intent is off** in the Discord
+  developer portal. The forwarder logs it by name and stops; no config change on
+  the Broods side fixes it.
+
+`GET /healthz` reports per-socket state, so `state: "fatal"` on a token is the
+signal that a bot needs attention in the portal.
 
 ## Post-Deploy Account Setup (Self-Hosted)
 

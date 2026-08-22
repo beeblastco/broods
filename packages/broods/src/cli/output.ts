@@ -6,6 +6,7 @@ import type { DiffEntry } from "../sync.ts";
 
 const RESET = "\x1b[0m";
 const DIM = "\x1b[2m";
+const BOLD = "\x1b[1m";
 const UNDERLINE = "\x1b[4m";
 const GREEN = "\x1b[32m";
 const YELLOW = "\x1b[33m";
@@ -23,6 +24,20 @@ export interface DeploymentTarget {
   project: string;
   stage: string;
   dashboardUrl: string;
+}
+
+/**
+ * One row of a picker or listing, marked with `*` and highlighted when it is the
+ * entry already in use — the one an empty answer keeps.
+ */
+export function formatChoiceRow(
+  text: string,
+  current: boolean,
+  options: FormatOptions = {},
+): string {
+  const row = `${current ? "*" : " "} ${text}`;
+
+  return current ? paint(row, `${BOLD}${CYAN}`, shouldUseColor(options)) : row;
 }
 
 export function formatDeploymentTarget(

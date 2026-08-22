@@ -14,6 +14,7 @@ import type {
   AgentGitHubChannelConfig,
   AgentSlackChannelConfig,
   AgentTelegramChannelConfig,
+  ChannelPartition,
   ChannelReplyIn,
   PolicyDocument,
   AgentWebhookHookConfig,
@@ -27,6 +28,8 @@ import type {
   PancakeSource,
   ZaloSource,
 } from "./contracts.ts";
+
+export type { ChannelPartition };
 
 const RESOURCE_MARKER = Symbol.for("broods.resource");
 const CONFIG_MARKER = Symbol.for("broods.config");
@@ -197,14 +200,6 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
 }
 
 /**
- * How an attached partitioned workspace splits its folders for runs arriving
- * through this door. `shared` mounts the workspace root; `conversation` mounts
- * a private child folder per thread, issue or chat under `alias`.
- */
-export type ChannelPartition =
-  { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
-
-/**
  * An agent bound to a channel. Every bound agent runs when a message arrives;
  * `reply: false` runs it with a silenced channel, so it can work without
  * speaking in the room.
@@ -334,8 +329,11 @@ export type AnyConnectionDefinition =
  */
 export type ChannelDefinitionConfig = {
   connection: AnyConnectionDefinition;
-  /** Provider id of the place, from the per-platform field on the input. */
-  externalId: string;
+  /**
+   * Provider id of the place, from the per-platform field on the input. A list
+   * fans out to one record per id at deploy time.
+   */
+  externalId: string | readonly string[];
   /** Team, guild or repo owner the place sits in, when the provider has one. */
   workspaceRef?: string;
   /** Every one of these runs. Omit and the connection's own agent answers. */
@@ -392,8 +390,8 @@ export type TelegramChannelInput = ChannelRulesInput & {
 
 export type ZaloChannelInput = ChannelRulesInput & {
   connection: ZaloConnectionDefinition;
-  /** Zalo user or group chat id. */
-  chatId: string;
+  /** Zalo user or group chat id, or several that share one set of rules. */
+  chatId: string | readonly string[];
 };
 
 export type PancakeChannelInput = ChannelRulesInput & {
@@ -658,6 +656,11 @@ export type AnyResource =
  * It compiles to a `${NAME}` placeholder the harness fills in at run time. This is
  * NOT `process.env`: agent configs are compiled locally, so `process.env.NAME` would
  * bake the literal local value into the deployed config instead of deferring it.
+ *
+ * The reference must resolve: syncing a manifest whose `env("NAME")` has no value
+ * stored for the stage is rejected outright, so an unset or misspelled name fails
+ * the sync instead of reaching the runtime as a literal `${NAME}`. `broods dev`
+ * pushes matching `.env.local` values first, so a local value is enough there.
  */
 export const env: EnvAccessor = new Proxy(
   <const Name extends string>(name: Name): EnvRef<Name> => {
@@ -724,11 +727,12 @@ function defineConnection<const Type extends ChannelType, Config>(
 
 // The per-platform id field is named for what the provider calls it, so the
 // value you paste is the value the field asks for. All of them normalize to the
-// one `externalId` the backend stores, and `platform` comes off the connection.
+// `externalId` the backend stores, one row per id, and `platform` comes off the
+// connection.
 function defineChannelResource<const Name extends string>(
   name: Name,
   description: string | undefined,
-  externalId: string,
+  externalId: string | readonly string[],
   workspaceRef: string | undefined,
   rules: Omit<ChannelDefinitionConfig, "externalId" | "workspaceRef">,
 ): ChannelResource<Name> {

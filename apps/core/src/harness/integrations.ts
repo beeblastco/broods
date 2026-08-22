@@ -39,7 +39,7 @@ import {
   RUN_OVERRIDE_RESERVED_MODEL_KEYS,
   toChannelRuntimeAgentConfig,
   toRuntimeAgentConfig,
-  type AgentChannelWorkspaceScope,
+  type ChannelPartition,
   type AgentConfig,
   type RunOverrides,
 } from "../shared/domain/agent-config.ts";
@@ -1195,7 +1195,7 @@ async function handleChannelWebhook(
       });
       waitUntil(
         Promise.resolve().then(() =>
-          cleanupChannelWorkspaceScopes({
+          cleanupChannelPartitions({
             accountId: account.accountId,
             agentConfig: agent.config,
             channelName: parsed.channelName,
@@ -1425,20 +1425,18 @@ async function handleChannelWebhook(
   }
 }
 
-async function cleanupChannelWorkspaceScopes(options: {
+async function cleanupChannelPartitions(options: {
   accountId: string;
   agentConfig: AgentConfig;
   channelName: string;
   conversationKey: string;
 }): Promise<void> {
   const channelConfig = options.agentConfig.channels?.[options.channelName];
-  const rawWorkspaceScope = isPlainObject(channelConfig)
-    ? channelConfig.workspaceScope
+  const rawPartition = isPlainObject(channelConfig)
+    ? channelConfig.partition
     : undefined;
-  const workspaceScope = isChannelWorkspaceScope(rawWorkspaceScope)
-    ? rawWorkspaceScope
-    : undefined;
-  if (workspaceScope?.level !== "conversation") {
+  const partition = isChannelPartition(rawPartition) ? rawPartition : undefined;
+  if (partition?.by !== "conversation") {
     return;
   }
 
@@ -1466,7 +1464,7 @@ async function cleanupChannelWorkspaceScopes(options: {
           options.conversationKey,
           "conversation",
         ),
-        workspaceScope: workspaceScope,
+        partition: partition,
       },
     );
     reservedSandboxesReleased += await releaseReservedSandboxes(
@@ -1492,13 +1490,11 @@ async function cleanupChannelWorkspaceScopes(options: {
   });
 }
 
-function isChannelWorkspaceScope(
-  value: unknown,
-): value is AgentChannelWorkspaceScope {
+function isChannelPartition(value: unknown): value is ChannelPartition {
   if (!isPlainObject(value)) return false;
-  if (value.level === "channel") return value.alias === undefined;
+  if (value.by === "shared") return value.alias === undefined;
 
-  return value.level === "conversation" && typeof value.alias === "string";
+  return value.by === "conversation" && typeof value.alias === "string";
 }
 
 // Attaches an onMessageReceived hook's opaque metadata to the newest user
@@ -1593,8 +1589,11 @@ async function processChannelMessage(
       }
     }
 
-    event.channel.sendTyping().catch(() => {});
-    event.channel.reactToMessage().catch(() => {});
+    // Best-effort acknowledgements. They must never fail the turn, but a bare
+    // catch left a missing typing indicator indistinguishable from one the
+    // provider rejected, so each outcome is recorded.
+    ackInbound(event, "sendTyping", () => event.channel.sendTyping());
+    ackInbound(event, "reactToMessage", () => event.channel.reactToMessage());
 
     await handlers.handleChannelRequest({
       ...event,
@@ -1632,6 +1631,34 @@ async function processChannelMessage(
       setObservabilityContext(previousObservabilityContext);
     }
   }
+}
+
+/**
+ * Run one best-effort inbound acknowledgement and record what the provider did
+ * with it. Never rethrows, so a channel that refuses the call still gets its
+ * turn; the debug line is what distinguishes "accepted" from "never sent".
+ */
+function ackInbound(
+  event: ChannelInboundEvent,
+  action: "reactToMessage" | "sendTyping",
+  send: () => Promise<void>,
+): void {
+  const scope = {
+    channel: event.channelName,
+    eventId: event.eventId,
+    conversationKey: event.conversationKey,
+  };
+  void (async function (): Promise<void> {
+    try {
+      await send();
+      logDebug(`Channel ${action} accepted`, scope);
+    } catch (err) {
+      logWarn(`Channel ${action} failed`, {
+        ...scope,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  })();
 }
 
 /**

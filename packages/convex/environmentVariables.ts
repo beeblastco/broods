@@ -13,6 +13,7 @@ import {
   encryptAgentConfigBlob,
 } from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
+import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
   accountIdForProject,
@@ -298,6 +299,12 @@ export const remove = mutation({
 
     const stage = await getOwnedStage(ctx, user.id, variable.stageId);
     if (!stage) throw new Error("Variable not found.");
+    await assertEnvironmentVariableUnreferenced(
+      ctx,
+      variable.projectId,
+      variable.stageId,
+      variable.name,
+    );
 
     await ctx.db.delete(variableId);
     await refreshAgentConfigsForEnvironmentVariable(

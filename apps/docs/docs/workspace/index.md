@@ -211,9 +211,9 @@ flowchart TD
   Child --> Private["MEMORY.md · TASKS.md · files for this conversation only"]
 ```
 
-| Workspace setting              | Connection setting                               | What happens                                                                          |
-| ------------------------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| `partitioned` omitted or `false` | `partition` is not allowed                  | every run mounts the same workspace root                                              |
+| Workspace setting                | Connection setting                             | What happens                                                                         |
+| -------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `partitioned` omitted or `false` | `partition` is not allowed                     | every run mounts the same workspace root                                             |
 | `partitioned: true`              | every attached connection must set `partition` | shared runs mount the workspace root; conversation runs mount a private child folder |
 
 If any connection defines `partition`, at least one attached workspace must use
@@ -297,7 +297,7 @@ With that setup:
 | ------------------------------ | --------------------------------------------------------------------------- |
 | Slack `T123 / C456 / thread A` | shares the channel working folder with Slack `thread B` in the same channel |
 | GitHub `owner/repo#123`        | gets a separate working folder from `owner/repo#456`                        |
-| Telegram chat `123`            | scoped to chat `123`; `shared` and `conversation` are usually the same key |
+| Telegram chat `123`            | scoped to chat `123`; `shared` and `conversation` are usually the same key  |
 
 Use this mixed mode when providers should not all use the same granularity. For example:
 
@@ -352,7 +352,7 @@ unbounded storage growth.
 | GitHub pull request                     | PR `closed`                | yes              |
 | Slack, Discord, Telegram, Pancake, Zalo | none — a thread never ends | **no**           |
 
-Only `level: "conversation"` folders are reclaimed; a `level: "channel"` scope mounts the
+Only `by: "conversation"` folders are reclaimed; a `by: "shared"` scope mounts the
 workspace root, which is never deleted automatically. Reclaim is fire-and-forget after the
 webhook is acknowledged, so a closed issue's folder disappears shortly after, not
 synchronously.
@@ -360,7 +360,7 @@ synchronously.
 The chat platforms have no equivalent of "closed", so a `conversation`-scoped folder there
 accumulates one prefix per thread for as long as the workspace exists. If you scope a chat
 channel per conversation, plan to prune it yourself — through the workspace Files view or
-the workspace-files API — or scope it at `level: "channel"` instead.
+the workspace-files API — or scope it at `by: "shared"` instead.
 
 The harness toggles are per feature: `workspace.harness.workspace.enabled: false`
 suppresses the workspace guidance prompt, and `workspace.harness.memory.enabled: false`

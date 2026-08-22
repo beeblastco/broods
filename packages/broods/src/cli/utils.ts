@@ -14,6 +14,7 @@ import {
   type StoredAuthConfig,
 } from "../config.ts";
 import { loadBroodsRuntimeConfig } from "../runtime-config.ts";
+import { formatChoiceRow } from "./output.ts";
 
 const LOGIN_TIMEOUT_MS = 3 * 60 * 1000;
 
@@ -119,29 +120,80 @@ export async function promptText(
   }
 }
 
+/**
+ * Numbered picker. `defaultIndex` marks that option with `*` and makes an empty
+ * answer pick it, so the usual case is one Enter.
+ */
 export async function promptSelect<T>(
   label: string,
   options: T[],
   render: (option: T) => string,
+  defaultIndex?: number,
 ): Promise<T> {
   if (options.length === 0) throw new Error(`${label}: no options available`);
   if (options.length === 1) return options[0]!;
+  const fallback =
+    defaultIndex !== undefined &&
+    defaultIndex >= 0 &&
+    defaultIndex < options.length
+      ? defaultIndex
+      : undefined;
 
   console.log(label);
   options.forEach((option, index) => {
-    console.log(`  ${index + 1}. ${render(option)}`);
+    console.log(
+      formatChoiceRow(`${index + 1}. ${render(option)}`, index === fallback),
+    );
   });
 
+  const question =
+    fallback === undefined
+      ? `Choose 1-${options.length}: `
+      : `Choose 1-${options.length} [${fallback + 1}]: `;
   const rl = createInterface({ input: input, output: output });
   try {
     while (true) {
-      const answer = (await rl.question(`Choose 1-${options.length}: `)).trim();
+      const answer = (await rl.question(question)).trim();
+      if (answer === "" && fallback !== undefined) return options[fallback]!;
       const index = Number(answer);
       if (Number.isInteger(index) && index >= 1 && index <= options.length) {
         return options[index - 1]!;
       }
       console.log(`Enter a number from 1 to ${options.length}.`);
     }
+  } finally {
+    rl.close();
+  }
+}
+
+/**
+ * Numbered picker that doubles as a text field: a number picks that option,
+ * empty takes `freeText.defaultValue`, anything else comes back as typed.
+ */
+export async function promptSelectOrText<T extends object>(
+  label: string,
+  options: T[],
+  render: (option: T) => string,
+  freeText: { hint: string; defaultValue: string },
+): Promise<T | string> {
+  console.log(label);
+  options.forEach((option, index) => {
+    console.log(`  ${index + 1}. ${render(option)}`);
+  });
+
+  const range = options.length > 0 ? `Choose 1-${options.length}, or ` : "";
+  const rl = createInterface({ input: input, output: output });
+  try {
+    const answer = (
+      await rl.question(`${range}${freeText.hint} [${freeText.defaultValue}]: `)
+    ).trim();
+    if (answer === "") return freeText.defaultValue;
+    const index = Number(answer);
+    if (Number.isInteger(index) && index >= 1 && index <= options.length) {
+      return options[index - 1]!;
+    }
+
+    return answer;
   } finally {
     rl.close();
   }
