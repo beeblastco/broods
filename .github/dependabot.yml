@@ -11,6 +11,14 @@
 # Everything is grouped. The AI SDK packages pin `ai` at an exact version inside
 # their own manifests, so one PR per package would each install a second copy of
 # `ai` and break type identity; the `ai-sdk` group keeps them in one commit.
+#
+# For the same reason, any `@ai-sdk/*` package that itself pins `ai` must be an
+# exact pin too (`harness*`, `otel`, `policy-opa`, `tui`). A caret there is
+# invisible to Dependabot once the range is satisfied, so `ai` moves and the
+# caret package stays behind on the `ai` it pinned. That is two copies again,
+# and it surfaces as an unassignable `ChatTransport` in `packages/broods`, not
+# as a version error. The provider packages take `@ai-sdk/provider` rather than
+# `ai`, so carets are fine on those.
 
 version: 2
 
