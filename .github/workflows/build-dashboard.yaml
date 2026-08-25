@@ -82,10 +82,14 @@ jobs:
   rollout:
     needs: build
     if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
-    permissions: {}
+    # The dashboard reads Convex directly, so its image must not reach the
+    # cluster before the schema it expects.
+    permissions:
+      actions: read
     uses: ./.github/workflows/rollout.yaml
     with:
       workflow: ${{ github.ref_name == 'main' && 'deploy-dashboard.yaml' || 'deploy-dashboard-dev.yaml' }}
       tag: ${{ github.sha }}
+      awaitWorkflows: deploy-convex.yaml
     secrets:
       dispatchToken: ${{ secrets.INFRA_DISPATCH_TOKEN }}

@@ -16,6 +16,14 @@ on:
         description: "Image tag to roll (a commit sha)"
         required: true
         type: string
+      awaitWorkflows:
+        description: >-
+          Space-separated workflow files in this repo that must have succeeded
+          for this sha before the image is allowed onto the cluster. Each is
+          skipped when it did not run for this commit.
+        required: false
+        default: ""
+        type: string
     secrets:
       dispatchToken:
         description: "Fine-grained PAT for the infra repo, Actions: read and write"
@@ -24,11 +32,70 @@ on:
 jobs:
   rollout:
     runs-on: ubuntu-24.04
-    # A rollout that has not finished in 20 minutes is stuck, not slow: infra
-    # caps the Helm wait at 5m and the rollout status at another 5m.
-    timeout-minutes: 20
-    permissions: {}
+    # 20 minutes for the prerequisite gate and 20 for the roll. A rollout that
+    # has not finished in 20 is stuck, not slow: infra caps the Helm wait at 5m
+    # and the rollout status at another 5m. Each step carries its own half, so
+    # a hung prerequisite cannot eat the budget the roll needs.
+    timeout-minutes: 40
+    # Reading this repo's own run list is how the prerequisite gate works, and
+    # the repository default is read-only. A called workflow can never hold more
+    # than its caller, so every caller grants this too.
+    permissions:
+      actions: read
     steps:
+      - name: Wait for the prerequisites of this sha
+        if: inputs.awaitWorkflows != ''
+        timeout-minutes: 20
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AWAIT_WORKFLOWS: ${{ inputs.awaitWorkflows }}
+          SHA: ${{ inputs.tag }}
+        # A push fans out to every workflow whose paths it touched, and nothing
+        # orders them. Left alone, a core image reaches the cluster while the
+        # Convex deploy carrying the schema it expects is still running.
+        run: |
+          set -euo pipefail
+
+          # 20 minutes per prerequisite, matching the step timeout that bounds
+          # them all. One that has not settled by then is stuck, and rolling
+          # anyway is the failure this gate exists to stop.
+          DEADLINE=120
+
+          for AWAIT in $AWAIT_WORKFLOWS; do
+            RUNS="repos/$GITHUB_REPOSITORY/actions/workflows/$AWAIT/runs?head_sha=$SHA&per_page=1"
+
+            # GitHub creates a run for every workflow a push triggers before any
+            # job starts, and this job only runs after the image build. So by
+            # now the answer is settled: no run means this commit did not touch
+            # what $AWAIT watches, and there is nothing to wait for.
+            if [[ "$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')" == "absent" ]]; then
+              echo "$AWAIT did not run for $SHA; nothing to wait for."
+              continue
+            fi
+
+            echo "Waiting for $AWAIT to settle for $SHA"
+            for _ in $(seq 1 "$DEADLINE"); do
+              STATUS=$(gh api "$RUNS" --jq '.workflow_runs[0].status // "absent"')
+              if [[ "$STATUS" == "completed" ]]; then
+                break
+              fi
+              sleep 10
+            done
+
+            # Still in_progress at the deadline leaves conclusion null, which
+            # lands here as "none" and fails — a stuck prerequisite is not a
+            # reason to roll.
+            CONCLUSION=$(gh api "$RUNS" --jq '.workflow_runs[0].conclusion // "none"')
+            if [[ "$CONCLUSION" != "success" ]]; then
+              echo "$AWAIT for $SHA concluded '$CONCLUSION'." >&2
+              echo "Refusing to roll an image ahead of the backend it expects." >&2
+              exit 1
+            fi
+
+            echo "$AWAIT succeeded for $SHA."
+          done
+
       - name: Roll the pod and wait for the rollout
         shell: bash
         env:
