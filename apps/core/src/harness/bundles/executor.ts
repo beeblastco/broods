@@ -2,7 +2,8 @@
  * Uploaded-tool dispatch and the sandbox-tier invoker. Routes by
  * runtime tier: pure/fetch-only bundles run in the in-core V8 isolate
  * (../isolate/executor.ts); node/npm/native bundles run in the tool-runner Lambda
- * (apps/lambda). Detached-async needs a persistent reservation and is rejected
+ * (apps/lambda); http tools POST to their stored endpoint via ./http-executor.ts.
+ * Detached-async needs a persistent reservation and is rejected
  * here (#82). Payload shape and frame protocol come from ./payload.ts.
  */
 
@@ -13,6 +14,7 @@ import {
 import { requireEnv } from "../../shared/env.ts";
 import { isPlainObject } from "../../shared/object.ts";
 import { emitIsolateLog } from "../isolate/executor.ts";
+import { streamAccountToolToEndpoint } from "./http-executor.ts";
 import {
   FrameQueue,
   abortSignalFromOptions,
@@ -54,6 +56,12 @@ export async function* streamAccountTool(
         "runs as a detached-async job",
       ),
     );
+  }
+
+  if (options.tool.runtime === "http") {
+    yield* streamAccountToolToEndpoint(options);
+
+    return;
   }
 
   if (options.tool.runtime === "sandbox") {

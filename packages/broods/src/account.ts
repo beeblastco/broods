@@ -204,8 +204,13 @@ export interface AccountTool {
   name: string;
   description: string;
   inputSchema: unknown;
-  sha256: string;
-  runtime: "isolate" | "sandbox";
+  /** Bundle checksum. Absent for http tools. */
+  sha256?: string;
+  runtime: "isolate" | "sandbox" | "http";
+  /** Https endpoint the input is POSTed to. Set only for http tools. */
+  endpointUrl?: string;
+  /** Static headers sent with every call; values may reference `${NAME}` env vars. Set only for http tools. */
+  endpointHeaders?: Record<string, string>;
   defaultConfig?: unknown;
   status: string;
   createdAt: string;
@@ -213,23 +218,35 @@ export interface AccountTool {
   deletedAt?: string;
 }
 
-/** Fields accepted by `POST /v1/tools`. `bundle` is already-bundled JavaScript module source. */
+/**
+ * Fields accepted by `POST /v1/tools`. Either `bundle` (already-bundled
+ * JavaScript module source) or — with `runtime: "http"` — an https
+ * `endpointUrl` the tool input is POSTed to. The two tiers are exclusive.
+ */
 export interface CreateToolInput {
   name: string;
   description: string;
   inputSchema: unknown;
-  bundle: string;
-  runtime?: "isolate" | "sandbox";
+  bundle?: string;
+  runtime?: "isolate" | "sandbox" | "http";
+  endpointUrl?: string;
+  endpointHeaders?: Record<string, string>;
   defaultConfig?: unknown;
 }
 
-/** Fields accepted by `PATCH /v1/tools/{toolId}`; every field is optional. Omitting `bundle` keeps the stored one. */
+/**
+ * Fields accepted by `PATCH /v1/tools/{toolId}`; every field is optional.
+ * Omitting `bundle` keeps the stored one; switching between bundled and http
+ * clears the other tier's fields.
+ */
 export interface UpdateToolInput {
   name?: string;
   description?: string;
   inputSchema?: unknown;
   bundle?: string;
-  runtime?: "isolate" | "sandbox";
+  runtime?: "isolate" | "sandbox" | "http";
+  endpointUrl?: string;
+  endpointHeaders?: Record<string, string>;
   defaultConfig?: unknown;
 }
 

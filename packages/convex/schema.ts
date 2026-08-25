@@ -220,9 +220,25 @@ export const accountToolsFields = {
   name: v.string(),
   description: v.string(),
   inputSchema: v.any(),
-  bundleStorageKey: v.string(),
-  sha256: v.string(),
-  runtime: v.optional(v.union(v.literal("isolate"), v.literal("sandbox"))),
+  // Absent on `runtime: "http"` tools, which POST to a user-hosted endpoint
+  // instead of carrying executable bytes.
+  bundleStorageKey: v.optional(v.string()),
+  sha256: v.optional(v.string()),
+  runtime: v.optional(
+    v.union(
+      v.literal("isolate"),
+      v.literal("sandbox"),
+      v.literal("http"),
+    ),
+  ),
+  /** Endpoint tools only: the https URL every call POSTs its input to. */
+  endpointUrl: v.optional(v.string()),
+  /**
+   * Endpoint tools only: literal non-secret headers sent with every call.
+   * Secret values belong in `config.tools.<id>.env` as `${NAME}` references;
+   * core resolves them against the agent's encrypted runtime config at call time.
+   */
+  endpointHeaders: v.optional(v.record(v.string(), v.string())),
   defaultConfig: v.optional(v.any()),
   status: v.union(v.literal("active"), v.literal("deleted")),
   createdAt: v.number(),

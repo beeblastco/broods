@@ -5,6 +5,7 @@ import { normalizeAccountHookUpload } from "../model/accountHooks.ts";
 import {
   inferAccountToolRuntime,
   normalizeAccountToolUpload,
+  requireFullToolUpload,
 } from "../model/accountTools.ts";
 
 const MAX_ISOLATE_BUNDLE_BYTES = 1_000_000;
@@ -215,5 +216,191 @@ describe("canvas save path", () => {
     ).rejects.toThrow(
       `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
     );
+  });
+});
+
+describe("http tier", () => {
+  const httpCreate = {
+    name: "lookup",
+    description: "Looks things up.",
+    inputSchema: { type: "object" },
+    runtime: "http" as const,
+    endpointUrl: "https://api.example.com/lookup",
+  };
+
+  // A create carries no bundle at all: no hash, no S3 key, and headers default
+  // to an empty set so the executor always has a record to send.
+  it("normalizes an endpoint tool without bundle fields", async () => {
+    await expect(
+      normalizeAccountToolUpload(httpCreate, { requireBundle: true }),
+    ).resolves.toEqual({
+      name: "lookup",
+      description: "Looks things up.",
+      inputSchema: { type: "object" },
+      runtime: "http",
+      endpointUrl: "https://api.example.com/lookup",
+      endpointHeaders: {},
+    });
+  });
+
+  it("keeps declared static headers and trims the URL", async () => {
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          ...httpCreate,
+          endpointUrl: "  https://api.example.com/lookup  ",
+          endpointHeaders: {
+            Authorization: "Bearer ${API_TOKEN}",
+            "X-Tool-Source": "broods",
+          },
+        },
+        { requireBundle: true },
+      ),
+    ).resolves.toMatchObject({
+      endpointUrl: "https://api.example.com/lookup",
+      endpointHeaders: {
+        Authorization: "Bearer ${API_TOKEN}",
+        "X-Tool-Source": "broods",
+      },
+    });
+  });
+
+  it("rejects the tiers mixing", async () => {
+    await expect(
+      normalizeAccountToolUpload(
+        { ...httpCreate, bundle: "export default {};" },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow("tool.bundle must not be set for http tools");
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          name: "bundled",
+          description: "Bundled.",
+          inputSchema: { type: "object" },
+          bundle: "export default {};",
+          runtime: "isolate",
+          endpointUrl: "https://api.example.com/x",
+        },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow(
+      "tool.endpointUrl and tool.endpointHeaders are only valid for http tools",
+    );
+  });
+
+  it("requires an https URL", async () => {
+    for (const [endpointUrl, message] of [
+      ["", "tool.endpointUrl must be a valid URL"],
+      ["not a url", "tool.endpointUrl must be a valid URL"],
+      ["http://api.example.com/lookup", "tool.endpointUrl must use https"],
+      [42, "tool.endpointUrl must be a string"],
+      // An http create with the field absent fails the same way — undefined is
+      // not a string.
+      [undefined, "tool.endpointUrl must be a string"],
+    ] as const) {
+      await expect(
+        normalizeAccountToolUpload(
+          { ...httpCreate, endpointUrl: endpointUrl },
+          { requireBundle: true },
+        ),
+      ).rejects.toThrow(message);
+    }
+  });
+
+  it("bounds the header set", async () => {
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          ...httpCreate,
+          endpointHeaders: Object.fromEntries(
+            Array.from({ length: 33 }, (_, i) => [`X-H${i}`, "v"]),
+          ),
+        },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow("tool.endpointHeaders must contain at most 32 headers");
+
+    await expect(
+      normalizeAccountToolUpload(
+        { ...httpCreate, endpointHeaders: { "Bad Header:": "v" } },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow("tool.endpointHeaders keys must be header names");
+
+    await expect(
+      normalizeAccountToolUpload(
+        { ...httpCreate, endpointHeaders: { "X-Token": 7 } },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow("tool.endpointHeaders.X-Token must be a string");
+
+    await expect(
+      normalizeAccountToolUpload(
+        {
+          ...httpCreate,
+          endpointHeaders: { "X-Big": "a".repeat(9 * 1024) },
+        },
+        { requireBundle: true },
+      ),
+    ).rejects.toThrow("tool.endpointHeaders must be 8192 bytes or smaller");
+  });
+
+  // PATCH semantics: absent means keep. Switching tiers must restate `runtime`
+  // explicitly — a bare bundle arriving on a stored http row is rejected rather
+  // than silently flipping the row back to a bundled tier.
+  it("patches within a tier and switches only with an explicit runtime", async () => {
+    await expect(
+      normalizeAccountToolUpload(
+        { endpointHeaders: { "X-Trace": "1" } },
+        { requireBundle: false, currentRuntime: "http" },
+      ),
+    ).resolves.toEqual({ endpointHeaders: { "X-Trace": "1" } });
+
+    await expect(
+      normalizeAccountToolUpload(
+        { bundle: "export default {};" },
+        { requireBundle: false, currentRuntime: "http" },
+      ),
+    ).rejects.toThrow("tool.bundle must not be set for http tools");
+
+    const switchedToSandbox = "export default {}; import 'node:fs';";
+    await expect(
+      normalizeAccountToolUpload(
+        { bundle: switchedToSandbox, runtime: "sandbox" },
+        { requireBundle: false, currentRuntime: "http" },
+      ),
+    ).resolves.toMatchObject({
+      runtime: "sandbox",
+      sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+
+    await expect(
+      normalizeAccountToolUpload(
+        { runtime: "http", endpointUrl: "https://api.example.com/v2" },
+        { requireBundle: false, currentRuntime: "sandbox" },
+      ),
+    ).resolves.toEqual({
+      runtime: "http",
+      endpointUrl: "https://api.example.com/v2",
+    });
+  });
+
+  it("narrows a full upload for create-path callers", async () => {
+    const upload = await normalizeAccountToolUpload(httpCreate, {
+      requireBundle: true,
+    });
+    const full = requireFullToolUpload(upload);
+    expect(full.name).toBe("lookup");
+    expect(full.description).toBe("Looks things up.");
+    expect(full.inputSchema).toEqual({ type: "object" });
+
+    // A PATCH result has no name — the create path must not accept it.
+    const patched = await normalizeAccountToolUpload(
+      { endpointHeaders: {} },
+      { requireBundle: false, currentRuntime: "http" },
+    );
+    expect(() => requireFullToolUpload(patched)).toThrow();
   });
 });

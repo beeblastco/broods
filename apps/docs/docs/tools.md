@@ -29,11 +29,11 @@ flowchart LR
 
 ## Current Tools
 
-| Tool                  | File                                                                                                                                       | External dependency                                                              | Config key                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------- |
-| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                           | `config.tools.<providerTool>` |
-| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                                   | —                             |
-| Uploaded custom tool  | S3 bundle + account tool metadata                                                                                                          | V8 isolate for `runtime: "isolate"`; tool-runner Lambda for `runtime: "sandbox"` | `config.tools.<toolId>`       |
+| Tool                  | File                                                                                                                                       | External dependency                                                                                                 | Config key                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Provider-defined tool | [`src/harness/tools/provider-tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/provider-tool.ts)         | The configured AI SDK provider's own `tools` namespace                                                              | `config.tools.<providerTool>` |
+| `async_status`        | [`src/harness/tools/async-status.tool.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/harness/tools/async-status.tool.ts) | — (auto-registered, see below)                                                                                      | —                             |
+| Uploaded custom tool  | S3 bundle + account tool metadata (http tier: metadata only)                                                                               | V8 isolate for `runtime: "isolate"`; tool-runner Lambda for `runtime: "sandbox"`; direct POST for `runtime: "http"` | `config.tools.<toolId>`       |
 
 Provider-defined tool names come from the provider package, not from core. With `config.model.provider: "google"` that includes `googleSearch`, `urlContext`, `googleMaps`, `codeExecution`, `fileSearch`, and `enterpriseWebSearch`; other providers expose their own set. A name the configured provider does not expose is rejected when the agent runs, with the available names listed in the error.
 
@@ -60,8 +60,11 @@ Provider-defined tools are executed by the provider during the model call, not b
 
 - `runtime: "isolate"` for pure-compute JavaScript/TypeScript with no `node:` imports, `require`, npm/native dependencies, Web Streams, or reads off the `process` / `Buffer` globals. Reading `process` through a namespace object (`globalThis.process?.versions?.node`) is the standard runtime feature probe: it is guarded, falls through in an isolate, and does not force the sandbox tier. So is naming your own function or property `process` — only reading it as a namespace counts.
 - `runtime: "sandbox"` for code that needs Node, npm, native modules, or Web Streams. Anything importing the `ai` package lands here.
+- `runtime: "http"` when you upload no bundle at all but declare an https `endpointUrl` instead: every call POSTs the tool input as JSON to your service and the JSON (or plain-text) response becomes the tool result. There is nothing to scan, hash, or store in S3 — the tiers are mutually exclusive, so an http tool carries no bundle fields and a bundled tool carries no endpoint fields.
 
 Both tiers give you timers, `console`, `AbortController`, `fetch`, `TextEncoder` / `TextDecoder`, `URL` / `URLSearchParams`, `atob` / `btoa`, and `crypto.randomUUID` / `crypto.getRandomValues`. The isolate tier stops there: no filesystem, no module imports, no Web Streams, no Node globals. The sandbox tier is a full Node runtime. Outbound requests from the isolate tier are guarded against SSRF — private and metadata addresses are blocked.
+
+**The http tier.** A call sends `POST endpointUrl` with `Content-Type: application/json`, the tool input as the JSON body, and your static `endpointHeaders`. Header values may reference variables as `${NAME}`; each reference resolves against the same merged config env a bundle would see (`defaultConfig` overlaid by the enabling agent's `tools.<tool>.config.env`), so secrets stay in encrypted agent config. An unresolved reference fails the call rather than sending the literal text. Responses are SSRF-guarded like isolate-tier `fetch`: private and metadata addresses are blocked. A non-2xx status fails the tool with an excerpt of the response body; the response body (JSON parsed when possible) becomes the result. There is a 30-second timeout per call; streaming (`yield`) is not available on this tier.
 
 Async-generator tools stream on both tiers: each `yield` is delivered as a
 preliminary tool result while the tool is still running, and the last one is the
@@ -275,7 +278,7 @@ export const myTool = defineTool({
 
 Prefer the implementation in its own file? Pass `path` instead of `execute` and export the tool as the module's default.
 
-Bundle size is capped per tier: **1 MB** on the isolate tier, **10 MB** on the sandbox tier. The tier is classified from the bundle, so a dependency that pulls in Node builtins moves a tool to the sandbox tier and the larger cap at the same time.
+Bundle size is capped per tier: **1 MB** on the isolate tier, **10 MB** on the sandbox tier. The tier is classified from the bundle, so a dependency that pulls in Node builtins moves a tool to the sandbox tier and the larger cap at the same time. Http tools carry no bundle and have no size cap — your endpoint owns the code.
 
 The raw account-management API does not run a build step. When calling it directly, provide an already-bundled JavaScript module. See the [API Reference](/api-reference) `POST /v1/tools` for the raw shape.
 

@@ -6,12 +6,13 @@
 
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   action,
   internalMutation,
   internalQuery,
   query,
+  type ActionCtx,
 } from "./_generated/server";
 import { authKit } from "./auth";
 import {
@@ -89,9 +90,10 @@ export const listForStage = query({
 });
 
 /**
- * Save a canvas-authored tool. An action, not a mutation: the source has to
- * reach S3 as a bundle before the row can point at it, otherwise the tool would
- * exist in config but fail the moment an agent called it.
+ * Save a canvas-authored tool. An action, not a mutation: bundle source has to
+ * reach S3 before the row can point at it, otherwise the tool would exist in
+ * config but fail the moment an agent called it. Endpoint tools skip the
+ * bundle entirely: they POST to a user-hosted https URL at call time.
  */
 export const saveForNode = action({
   args: {
@@ -100,6 +102,8 @@ export const saveForNode = action({
     nodeId: v.string(),
     nodeLabel: v.string(),
     sourceCode: v.optional(v.string()),
+    endpointUrl: v.optional(v.string()),
+    endpointHeaders: v.optional(v.record(v.string(), v.string())),
     description: v.optional(v.string()),
     inputSchema: v.optional(v.any()),
     disabled: v.optional(v.boolean()),
@@ -112,52 +116,42 @@ export const saveForNode = action({
       nodeId: args.nodeId,
     });
 
-    // A first save with no source would bundle the empty string, so the tool
-    // would exist in config and fail the moment an agent called it.
-    const sourceCode = args.sourceCode ?? context.existing?.sourceCode ?? "";
-    if (!sourceCode.trim()) {
-      throw new Error("Write the tool source before saving it.");
+    // An explicit endpoint URL switches the node to (or updates) an http
+    // tool; a node that is already one stays one unless a source arrives.
+    const isHttpTool =
+      args.endpointUrl !== undefined || context.existing?.runtime === "http";
+
+    if (!isHttpTool) {
+      return await ctx.runMutation(internal.toolService.upsertForNode, {
+        ...(await bundleToolFields(ctx, args, context)),
+        accountId: context.accountId,
+        projectId: args.projectId,
+        stageId: args.stageId,
+        nodeId: args.nodeId,
+        name: args.nodeLabel,
+        ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
+      });
     }
 
-    // The canvas stores what was typed — there is no bundler on this path, so a
-    // dependency or Node API cannot resolve at run time no matter which tier it
-    // lands on. Reject it here instead of saving a tool that fails when called.
-    if (inferAccountToolRuntime(sourceCode) === "sandbox") {
-      throw new Error(
-        "This tool needs packages or Node APIs that the editor cannot run. Build it in your broods project and deploy it with the CLI.",
-      );
-    }
-
-    // The same gate the CLI upload runs: name, input schema, bundle size bound
-    // and hash, all from the one implementation both paths share.
+    // The same gate the CLI upload runs, pinned to the http tier: name,
+    // https-only URL and header bounds all come from the shared model.
     const upload = await normalizeAccountToolUpload(
       {
         name: toolName(args.nodeLabel),
-        bundle: sourceCode,
-        runtime: "isolate",
-        ...(args.description !== undefined
-          ? { description: args.description }
+        runtime: "http",
+        ...(context.existing?.runtime !== "http" ||
+        args.endpointUrl !== undefined
+          ? { endpointUrl: args.endpointUrl }
+          : {}),
+        ...(args.endpointHeaders !== undefined
+          ? { endpointHeaders: args.endpointHeaders }
           : {}),
         ...(args.inputSchema !== undefined
           ? { inputSchema: args.inputSchema }
           : {}),
       },
-      {
-        requireBundle: false,
-        currentRuntime: context.existing?.runtime,
-      },
+      { requireBundle: false, currentRuntime: context.existing?.runtime },
     );
-    const sha256 = upload.sha256!;
-    const runtime = upload.runtime!;
-    // Only re-upload when the source actually changed; the key is the digest.
-    const bundleStorageKey =
-      context.existing && context.existing.sha256 === sha256
-        ? context.existing.bundleStorageKey
-        : await putToolBundle(ctx, {
-            accountId: context.accountId,
-            sha256: sha256,
-            bundle: sourceCode,
-          });
 
     return await ctx.runMutation(internal.toolService.upsertForNode, {
       accountId: context.accountId,
@@ -165,12 +159,12 @@ export const saveForNode = action({
       stageId: args.stageId,
       nodeId: args.nodeId,
       name: args.nodeLabel,
-      sourceCode: sourceCode,
-      sha256: sha256,
-      bundleStorageKey: bundleStorageKey,
-      runtime: runtime,
-      ...(upload.description !== undefined
-        ? { description: upload.description }
+      runtime: "http",
+      ...(upload.endpointUrl !== undefined
+        ? { endpointUrl: upload.endpointUrl }
+        : {}),
+      ...(upload.endpointHeaders !== undefined
+        ? { endpointHeaders: upload.endpointHeaders }
         : {}),
       ...(upload.inputSchema !== undefined
         ? { inputSchema: upload.inputSchema }
@@ -179,6 +173,84 @@ export const saveForNode = action({
     });
   },
 });
+
+/**
+ * Validate and stage the bundle side of a source-managed tool save: inline
+ * source checks, tier inference and the S3 upload whose key the row carries.
+ */
+async function bundleToolFields(
+  ctx: ActionCtx,
+  args: {
+    sourceCode?: string;
+    description?: string;
+    inputSchema?: unknown;
+  },
+  context: { accountId: Id<"accounts">; existing: Doc<"accountTools"> | null },
+): Promise<{
+  sourceCode: string;
+  sha256: string;
+  bundleStorageKey: string;
+  runtime: "isolate" | "sandbox";
+}> {
+  // A first save with no source would bundle the empty string, so the tool
+  // would exist in config and fail the moment an agent called it.
+  const sourceCode = args.sourceCode ?? context.existing?.sourceCode ?? "";
+  if (!sourceCode.trim()) {
+    throw new Error("Write the tool source before saving it.");
+  }
+
+  // The canvas stores what was typed — there is no bundler on this path, so a
+  // dependency or Node API cannot resolve at run time no matter which tier it
+  // lands on. Reject it here instead of saving a tool that fails when called.
+  if (inferAccountToolRuntime(sourceCode) === "sandbox") {
+    throw new Error(
+      "This tool needs packages or Node APIs that the editor cannot run. Build it in your broods project and deploy it with the CLI.",
+    );
+  }
+
+  // The same gate the CLI upload runs: name, input schema, bundle size bound
+  // and hash, all from the one implementation both paths share.
+  const upload = await normalizeAccountToolUpload(
+    {
+      name: "bundle",
+      bundle: sourceCode,
+      runtime: "isolate",
+      ...(args.description !== undefined
+        ? { description: args.description }
+        : {}),
+      ...(args.inputSchema !== undefined
+        ? { inputSchema: args.inputSchema }
+        : {}),
+    },
+    {
+      requireBundle: false,
+      currentRuntime: context.existing?.runtime,
+    },
+  );
+  const sha256 = upload.sha256;
+  if (sha256 === undefined) {
+    throw new Error("Tool bundle hashing failed.");
+  }
+  // Only re-upload when the source actually changed; the key is the digest.
+  const bundleStorageKey =
+    context.existing &&
+    context.existing.sha256 === sha256 &&
+    context.existing.bundleStorageKey !== undefined
+      ? context.existing.bundleStorageKey
+      : await putToolBundle(ctx, {
+          accountId: context.accountId,
+          sha256: sha256,
+          bundle: sourceCode,
+        });
+
+  return {
+    sourceCode: sourceCode,
+    sha256: sha256,
+    bundleStorageKey: bundleStorageKey,
+    // Pinned above: canvas saves always run inline source on the isolate.
+    runtime: "isolate" as const,
+  };
+}
 
 /**
  * Presigned download for a tool whose code only exists as an uploaded bundle.
@@ -199,6 +271,11 @@ export const bundleUrlForNode = action({
       nodeId: nodeId,
     });
     if (!tool) throw new Error("Tool configuration not found.");
+    if (!tool.bundleStorageKey) {
+      throw new Error(
+        "This tool calls your own endpoint, so there is no bundle to download.",
+      );
+    }
 
     return await ctx.runAction(internal.awsBundles.toolBundleUrl, {
       bundleStorageKey: tool.bundleStorageKey,
@@ -228,14 +305,6 @@ export const execute = action({
     });
     if (!tool) throw new Error("Tool configuration not found.");
     if (tool.disabled === true) throw new Error("Tool is disabled.");
-    // An uploaded tool has no inline source, and the executor takes source
-    // rather than a bundle key — running it here would execute an empty module
-    // and report the emptiness as the tool's own result.
-    if (!tool.sourceCode) {
-      throw new Error(
-        "This tool runs from an uploaded bundle. Test it from your project with the CLI.",
-      );
-    }
 
     const normalizedInput = input ?? {};
     const inputBytes = new TextEncoder().encode(
@@ -250,31 +319,59 @@ export const execute = action({
       Math.max(Math.trunc(timeoutMs ?? MAX_TOOL_TIMEOUT_MS), 1_000),
       MAX_TOOL_TIMEOUT_MS,
     );
-    const url =
-      process.env.CUSTOM_TOOL_EXECUTOR_URL?.trim().replace(/\/+$/, "") ?? "";
-    const secret = process.env.CUSTOM_TOOL_EXECUTOR_SECRET?.trim() ?? "";
-    const secretHeader =
-      process.env.CUSTOM_TOOL_EXECUTOR_SECRET_HEADER?.trim() ||
-      "X-Executor-Secret";
-    if (!url || !secret) {
-      throw new Error(
-        "CUSTOM_TOOL_EXECUTOR_URL and CUSTOM_TOOL_EXECUTOR_SECRET must be configured.",
-      );
-    }
 
-    const upstream = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [secretHeader]: secret,
-      },
-      body: JSON.stringify({
-        language: "javascript",
-        sourceCode: tool.sourceCode,
-        input: normalizedInput,
-        timeoutMs: boundedTimeoutMs,
-      }),
-    });
+    // Endpoint tools call the user's own service directly; everything else
+    // runs through the shared executor. Either way what passes here is what
+    // the agent calls. Headers are stored as literals — secret values live in
+    // agent runtime config and are resolved in core at run time.
+    let upstream: Response;
+    if (tool.runtime === "http") {
+      if (!tool.endpointUrl) throw new Error("Endpoint URL missing.");
+      upstream = await fetch(tool.endpointUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...tool.endpointHeaders,
+        },
+        body: JSON.stringify(normalizedInput),
+        signal: AbortSignal.timeout(boundedTimeoutMs),
+      });
+    } else {
+      // An uploaded tool has no inline source, and the executor takes source
+      // rather than a bundle key — running it here would execute an empty module
+      // and report the emptiness as the tool's own result.
+      if (!tool.sourceCode) {
+        throw new Error(
+          "This tool runs from an uploaded bundle. Test it from your project with the CLI.",
+        );
+      }
+
+      const url =
+        process.env.CUSTOM_TOOL_EXECUTOR_URL?.trim().replace(/\/+$/, "") ?? "";
+      const secret = process.env.CUSTOM_TOOL_EXECUTOR_SECRET?.trim() ?? "";
+      const secretHeader =
+        process.env.CUSTOM_TOOL_EXECUTOR_SECRET_HEADER?.trim() ||
+        "X-Executor-Secret";
+      if (!url || !secret) {
+        throw new Error(
+          "CUSTOM_TOOL_EXECUTOR_URL and CUSTOM_TOOL_EXECUTOR_SECRET must be configured.",
+        );
+      }
+
+      upstream = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [secretHeader]: secret,
+        },
+        body: JSON.stringify({
+          language: "javascript",
+          sourceCode: tool.sourceCode,
+          input: normalizedInput,
+          timeoutMs: boundedTimeoutMs,
+        }),
+      });
+    }
 
     const rawBody = await upstream.text().catch(() => "");
     if (new TextEncoder().encode(rawBody).byteLength > MAX_TOOL_OUTPUT_BYTES) {
@@ -346,14 +443,21 @@ export const upsertForNode = internalMutation({
     stageId: v.id("stages"),
     nodeId: v.string(),
     name: v.string(),
-    sourceCode: v.string(),
-    sha256: v.string(),
-    bundleStorageKey: v.string(),
+    // Absent for `runtime: "http"` tools, which carry an endpoint instead.
+    sourceCode: v.optional(v.string()),
+    sha256: v.optional(v.string()),
+    bundleStorageKey: v.optional(v.string()),
     description: v.optional(v.string()),
     inputSchema: v.optional(v.any()),
-    // Required: the caller classifies the bundle, so there is no default tier
-    // left to guess wrong.
-    runtime: v.union(v.literal("isolate"), v.literal("sandbox")),
+    // Required: the caller classifies the execution tier, so there is no
+    // default left to guess wrong.
+    runtime: v.union(
+      v.literal("isolate"),
+      v.literal("sandbox"),
+      v.literal("http"),
+    ),
+    endpointUrl: v.optional(v.string()),
+    endpointHeaders: v.optional(v.record(v.string(), v.string())),
     disabled: v.optional(v.boolean()),
   },
   returns: v.id("accountTools"),
@@ -366,6 +470,23 @@ export const upsertForNode = internalMutation({
       )
       .first();
 
+    // A row carries exactly one execution definition: bundle bytes for the
+    // isolate/sandbox tiers, an https endpoint for http tools. Keying every
+    // write off this keeps a row from claiming both after a tier switch.
+    const bundleFields =
+      args.runtime === "http"
+        ? null
+        : args.sha256 && args.bundleStorageKey
+          ? {
+              sourceCode: args.sourceCode ?? "",
+              sha256: args.sha256,
+              bundleStorageKey: args.bundleStorageKey,
+            }
+          : null;
+    if (args.runtime !== "http" && !bundleFields) {
+      throw new Error("A bundled tool needs its bundle key and hash.");
+    }
+
     if (existing) {
       // Carry the scope and revive the row: a legacy or tombstoned match is
       // still this node's tool, and the index holds only one row per node.
@@ -374,9 +495,6 @@ export const upsertForNode = internalMutation({
         status: "active",
         deletedAt: undefined,
         name: toolName(args.name) || existing.name,
-        sourceCode: args.sourceCode,
-        sha256: args.sha256,
-        bundleStorageKey: args.bundleStorageKey,
         ...(args.description !== undefined
           ? { description: args.description }
           : {}),
@@ -385,6 +503,26 @@ export const upsertForNode = internalMutation({
           : {}),
         runtime: args.runtime,
         ...(args.disabled !== undefined ? { disabled: args.disabled } : {}),
+        ...(bundleFields
+          ? {
+              ...bundleFields,
+              // And back again: stale endpoint config must not survive.
+              endpointUrl: undefined,
+              endpointHeaders: undefined,
+            }
+          : {
+              // Dropping to http must not leave executable bytes behind that
+              // the row no longer claims to run.
+              sourceCode: undefined,
+              sha256: undefined,
+              bundleStorageKey: undefined,
+              ...(args.endpointUrl !== undefined
+                ? { endpointUrl: args.endpointUrl }
+                : {}),
+              ...(args.endpointHeaders !== undefined
+                ? { endpointHeaders: args.endpointHeaders }
+                : {}),
+            }),
         updatedAt: now,
       });
 
@@ -402,9 +540,10 @@ export const upsertForNode = internalMutation({
         type: "object",
         properties: {},
       },
-      bundleStorageKey: args.bundleStorageKey,
-      sha256: args.sha256,
-      sourceCode: args.sourceCode,
+      ...(bundleFields ?? {
+        endpointUrl: args.endpointUrl,
+        endpointHeaders: args.endpointHeaders ?? {},
+      }),
       runtime: args.runtime,
       disabled: args.disabled,
       status: "active",

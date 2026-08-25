@@ -15,7 +15,10 @@ import {
   sha256Hex,
 } from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
-import { normalizeAccountToolUpload } from "./model/accountTools";
+import {
+  normalizeAccountToolUpload,
+  requireFullToolUpload,
+} from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
 import {
   ACCOUNT_ENV_VAR_NAME_PATTERN,
@@ -2115,14 +2118,34 @@ async function handleToolRoute(
       });
     }
     if (req.method === "POST") {
-      const upload = await normalizeAccountToolUpload(await req.json(), {
-        requireBundle: true,
-      });
-      const bundleStorageKey = await putToolBundle(ctx, {
-        accountId: accountId,
-        sha256: upload.sha256,
-        bundle: upload.bundle,
-      });
+      const upload = requireFullToolUpload(
+        await normalizeAccountToolUpload(await req.json(), {
+          requireBundle: true,
+        }),
+      );
+      // Bundle tiers carry bytes; http tools carry an endpoint. The
+      // normalizer guarantees exactly one side exists.
+      const executionArgs =
+        upload.runtime === "http"
+          ? {
+              runtime: upload.runtime,
+              endpointUrl: upload.endpointUrl,
+              endpointHeaders: upload.endpointHeaders,
+            }
+          : upload.bundle !== undefined && upload.sha256 !== undefined
+            ? {
+                runtime: upload.runtime,
+                sha256: upload.sha256,
+                bundleStorageKey: await putToolBundle(ctx, {
+                  accountId: accountId,
+                  sha256: upload.sha256,
+                  bundle: upload.bundle,
+                }),
+              }
+            : null;
+      if (!executionArgs) {
+        throw new Error("Tool bundle hashing failed.");
+      }
       const createdId = await ctx.runMutation(internal.accountTools.create, {
         accountId: accountId,
         projectId: scope.projectId,
@@ -2130,9 +2153,7 @@ async function handleToolRoute(
         name: upload.name,
         description: upload.description,
         inputSchema: upload.inputSchema,
-        bundleStorageKey: bundleStorageKey,
-        sha256: upload.sha256,
-        runtime: upload.runtime,
+        ...executionArgs,
         ...(upload.defaultConfig !== undefined
           ? { defaultConfig: upload.defaultConfig }
           : {}),
@@ -2204,6 +2225,12 @@ async function handleToolRoute(
         ? { bundleStorageKey: bundleStorageKey, sha256: upload.sha256 }
         : {}),
       ...(upload.runtime !== undefined ? { runtime: upload.runtime } : {}),
+      ...(upload.endpointUrl !== undefined
+        ? { endpointUrl: upload.endpointUrl }
+        : {}),
+      ...(upload.endpointHeaders !== undefined
+        ? { endpointHeaders: upload.endpointHeaders }
+        : {}),
       ...(upload.defaultConfig !== undefined
         ? { defaultConfig: upload.defaultConfig }
         : {}),

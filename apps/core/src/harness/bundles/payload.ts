@@ -134,16 +134,24 @@ export async function createRunnerPayload(options: {
   experimentalContext?: unknown;
   bundleTransport: "inline" | "presigned-url";
 }): Promise<RunnerPayload> {
+  // Only the bundle tiers build runner payloads; an http tool never reaches
+  // this function because dispatch routes it to ./http-executor.ts first.
+  const { bundleStorageKey, sha256 } = options.tool;
+  if (!bundleStorageKey || !sha256) {
+    throw new Error(
+      `Tool "${options.tool.name}" does not carry bundle bytes to run.`,
+    );
+  }
   const messages = boundedMessages(options.messages);
 
   return {
     ...(await bundleSource(
       options.bundleTransport,
       options.bucket,
-      options.tool.bundleStorageKey,
-      options.tool.sha256,
+      bundleStorageKey,
+      sha256,
     )),
-    expectedSha256: options.tool.sha256,
+    expectedSha256: sha256,
     toolName: options.tool.name,
     input: options.input,
     config: mergeToolConfig(options.tool.defaultConfig, options.config.config),
@@ -302,7 +310,12 @@ function evictOldestBundles(): void {
   }
 }
 
-function mergeToolConfig(
+/**
+ * The per-tool config a runner sees: the row's defaultConfig merged under the
+ * agent's own tool config slice. Also the `${NAME}` resolution source for the
+ * http tier's endpoint headers, matching what a bundle sees as ctx.config.
+ */
+export function mergeToolConfig(
   defaultConfig: Record<string, unknown> | undefined,
   agentConfig: unknown,
 ): Record<string, unknown> {

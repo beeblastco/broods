@@ -246,6 +246,116 @@ describe("streamAccountTool dispatcher", () => {
 const runnerPath = process.env.BROODS_TEST_ISOLATE_RUNNER_PATH;
 const realRunnerIt = runnerPath ? it : it.skip;
 
+// The http tier POSTs to the stored endpoint instead of running bundle bytes,
+// so there is no executor output to fake — the interesting behavior is what it
+// refuses to send and where it refuses to connect. Loopback targets are denied
+// by the same pinned-fetch bridge bundles get, which keeps every case here off
+// the network.
+describe("http tier", () => {
+  async function drain(
+    gen: AsyncGenerator<unknown, void, void>,
+  ): Promise<void> {
+    for await (const _ of gen) {
+      /* drain */
+    }
+  }
+
+  function endpointTool(overrides: Partial<AccountToolRecord> = {}) {
+    return { ...accountToolRecord("http"), ...overrides };
+  }
+
+  // bun:test's `.rejects` matcher is not typed as thenable, so awaiting it
+  // trips the type-aware lint; these capture the rejection directly instead.
+  async function drainedMessage(
+    run: () => Promise<void>,
+  ): Promise<string | undefined> {
+    try {
+      await run();
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+
+    return undefined;
+  }
+
+  it("routes http tools away from both bundle executors", async () => {
+    const isolateExecutor = mock(async function* () {
+      yield { isolate: true };
+    });
+    const sandboxExecutor = mock(async function* () {
+      yield { sandbox: true };
+    });
+    const { streamAccountTool } =
+      await import("../src/harness/bundles/executor.ts");
+
+    expect(
+      await drainedMessage(() =>
+        drain(
+          streamAccountTool({
+            accountId: "acct_test",
+            tool: endpointTool(),
+            input: {},
+            config: {},
+            isolateExecutor: isolateExecutor,
+            sandboxExecutor: sandboxExecutor,
+          }),
+        ),
+      ),
+    ).toContain("missing its endpoint URL");
+    expect(isolateExecutor).not.toHaveBeenCalled();
+    expect(sandboxExecutor).not.toHaveBeenCalled();
+  });
+
+  // Header references resolve against ctx.config.env before anything is sent;
+  // an unresolved secret must fail the call rather than reach the wire.
+  it("fails a call whose header reference is unset in config env", async () => {
+    const { streamAccountToolToEndpoint } =
+      await import("../src/harness/bundles/http-executor.ts");
+
+    expect(
+      await drainedMessage(() =>
+        drain(
+          streamAccountToolToEndpoint({
+            accountId: "acct_test",
+            tool: endpointTool({
+              endpointUrl: "https://127.0.0.1/lookup",
+              endpointHeaders: { Authorization: "Bearer ${API_TOKEN}" },
+            }),
+            input: {},
+            config: {},
+          }),
+        ),
+      ),
+    ).toContain(
+      'header "Authorization" references ${API_TOKEN}, which is not set under config.tools',
+    );
+  });
+
+  // With the reference resolved, execution gets as far as the egress guard —
+  // the loopback deny proves substitution happened and the guard sits in front
+  // of a tenant-chosen URL.
+  it("resolves header references from config env before connecting", async () => {
+    const { streamAccountToolToEndpoint } =
+      await import("../src/harness/bundles/http-executor.ts");
+
+    expect(
+      await drainedMessage(() =>
+        drain(
+          streamAccountToolToEndpoint({
+            accountId: "acct_test",
+            tool: endpointTool({
+              endpointUrl: "https://127.0.0.1/lookup",
+              endpointHeaders: { Authorization: "Bearer ${API_TOKEN}" },
+            }),
+            input: {},
+            config: { config: { env: { API_TOKEN: "s3cr3t" } } },
+          }),
+        ),
+      ),
+    ).toContain("blocked private or metadata address");
+  });
+});
+
 describe("isolate runner", () => {
   realRunnerIt(
     "runs a trivial bundle and returns the final result",
@@ -601,8 +711,18 @@ describe("isolate pooled worker (--pool)", () => {
       const source =
         "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
       const { byCall } = await runPoolRunner([
-        { callId: "1", tenantId: "acct_a", toolName: "counter", source: source },
-        { callId: "2", tenantId: "acct_a", toolName: "counter", source: source },
+        {
+          callId: "1",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
+        {
+          callId: "2",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
       ]);
 
       // Same tenant reuses the isolate, but the fresh context resets globals, so
@@ -686,9 +806,8 @@ describe("streamIsolatePayload cross-process abort", () => {
     else process.env.ISOLATE_POOL = savedPool;
     // Never hand a worker spawned against this file's stub runner to whatever
     // runs next: the pool outlives the file that filled it.
-    const { shutdownIsolatePool } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { shutdownIsolatePool } =
+      await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
     for (const dir of created.splice(0))
       await rm(dir, { recursive: true, force: true });

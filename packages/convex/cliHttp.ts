@@ -10,7 +10,10 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
-import { normalizeAccountToolUpload } from "./model/accountTools";
+import {
+  normalizeAccountToolUpload,
+  requireFullToolUpload,
+} from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
 import type { ProjectStageScope } from "./model/projectScope";
 
@@ -655,9 +658,17 @@ async function syncToolResources(
       },
       { requireBundle: true },
     );
+    // Manifests always carry a bundle here, so the normalizer returned a hash;
+    // it would have rejected runtime "http" combined with one.
+    if (upload.bundle === undefined || upload.sha256 === undefined) {
+      throw new Error(`tool:${resource.name}: bundle hashing failed`);
+    }
+    const fullUpload = requireFullToolUpload(upload);
     const current = existing.get(resource.name);
     const bundleStorageKey =
-      current?.sha256 === upload.sha256
+      current &&
+      current.sha256 === upload.sha256 &&
+      current.bundleStorageKey !== undefined
         ? current.bundleStorageKey
         : await putToolBundle(ctx, {
             accountId: accountId,
@@ -668,9 +679,9 @@ async function syncToolResources(
       await ctx.runMutation(internal.accountTools.update, {
         accountId: accountId,
         toolId: current._id,
-        name: upload.name,
-        description: upload.description,
-        inputSchema: upload.inputSchema,
+        name: fullUpload.name,
+        description: fullUpload.description,
+        inputSchema: fullUpload.inputSchema,
         bundleStorageKey: bundleStorageKey,
         sha256: upload.sha256,
         runtime: upload.runtime,
@@ -684,9 +695,9 @@ async function syncToolResources(
         accountId: accountId,
         projectId: scope.projectId,
         stageId: scope.stageId,
-        name: upload.name,
-        description: upload.description,
-        inputSchema: upload.inputSchema,
+        name: fullUpload.name,
+        description: fullUpload.description,
+        inputSchema: fullUpload.inputSchema,
         bundleStorageKey: bundleStorageKey,
         sha256: upload.sha256,
         runtime: upload.runtime,

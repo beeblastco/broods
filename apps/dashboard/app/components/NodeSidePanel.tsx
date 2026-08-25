@@ -999,6 +999,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 stageId={stageId}
                 nodeId={node.id}
                 nodeLabel={editName || nodeData.label}
+                nodeConfig={nodeData?.config}
               />
             </TabsContent>
           )}

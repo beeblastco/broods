@@ -6,7 +6,7 @@ import { Box, Code, FileUp } from "lucide-react";
 
 const SOURCE_OPTIONS = [
   { key: "docker", label: "From Docker image", icon: Box },
-  { key: "upload", label: "Upload code file (.js, .py)", icon: FileUp },
+  { key: "upload", label: "Upload code file (.js, .mjs)", icon: FileUp },
   { key: "scratch", label: "Custom from scratch", icon: Code },
 ] as const;
 

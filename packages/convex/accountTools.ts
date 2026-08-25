@@ -15,7 +15,11 @@ const accountToolDoc = v.object({
   _creationTime: v.number(),
 });
 
-const runtimeValidator = v.union(v.literal("isolate"), v.literal("sandbox"));
+const runtimeValidator = v.union(
+  v.literal("isolate"),
+  v.literal("sandbox"),
+  v.literal("http"),
+);
 
 export const getById = internalQuery({
   args: {
@@ -101,9 +105,12 @@ export const create = internalMutation({
     name: v.string(),
     description: v.string(),
     inputSchema: v.any(),
-    bundleStorageKey: v.string(),
-    sha256: v.string(),
+    // Absent for `runtime: "http"` tools, which carry an endpoint instead.
+    bundleStorageKey: v.optional(v.string()),
+    sha256: v.optional(v.string()),
     runtime: v.optional(runtimeValidator),
+    endpointUrl: v.optional(v.string()),
+    endpointHeaders: v.optional(v.record(v.string(), v.string())),
     defaultConfig: v.optional(v.any()),
     sourceCode: v.optional(v.string()),
   },
@@ -136,9 +143,17 @@ export const create = internalMutation({
       name: args.name,
       description: args.description,
       inputSchema: args.inputSchema,
-      bundleStorageKey: args.bundleStorageKey,
-      sha256: args.sha256,
+      ...(args.bundleStorageKey !== undefined
+        ? { bundleStorageKey: args.bundleStorageKey }
+        : {}),
+      ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
       runtime: args.runtime ?? "sandbox",
+      ...(args.endpointUrl !== undefined
+        ? { endpointUrl: args.endpointUrl }
+        : {}),
+      ...(args.endpointHeaders !== undefined
+        ? { endpointHeaders: args.endpointHeaders }
+        : {}),
       defaultConfig: args.defaultConfig,
       sourceCode: args.sourceCode,
       status: "active",
@@ -158,6 +173,8 @@ export const update = internalMutation({
     bundleStorageKey: v.optional(v.string()),
     sha256: v.optional(v.string()),
     runtime: v.optional(runtimeValidator),
+    endpointUrl: v.optional(v.string()),
+    endpointHeaders: v.optional(v.record(v.string(), v.string())),
     defaultConfig: v.optional(v.any()),
     sourceCode: v.optional(v.string()),
   },
@@ -172,6 +189,18 @@ export const update = internalMutation({
       throw new Error("Tool does not belong to the supplied accountId");
     }
 
+    // A row carries exactly one execution definition. A runtime change drops
+    // the other tier's fields instead of leaving dead bytes or endpoints.
+    const targetRuntime = args.runtime ?? doc.runtime;
+    const switchedToHttp =
+      args.runtime !== undefined &&
+      targetRuntime === "http" &&
+      doc.runtime !== "http";
+    const switchedToBundle =
+      args.runtime !== undefined &&
+      targetRuntime !== "http" &&
+      doc.runtime === "http";
+
     await ctx.db.patch(normalized, {
       ...(args.name !== undefined ? { name: args.name } : {}),
       ...(args.description !== undefined
@@ -180,11 +209,23 @@ export const update = internalMutation({
       ...(args.inputSchema !== undefined
         ? { inputSchema: args.inputSchema }
         : {}),
+      ...(switchedToHttp
+        ? { sourceCode: undefined, sha256: undefined, bundleStorageKey: undefined }
+        : {}),
+      ...(switchedToBundle
+        ? { endpointUrl: undefined, endpointHeaders: undefined }
+        : {}),
       ...(args.bundleStorageKey !== undefined
         ? { bundleStorageKey: args.bundleStorageKey }
         : {}),
       ...(args.sha256 !== undefined ? { sha256: args.sha256 } : {}),
       ...(args.runtime !== undefined ? { runtime: args.runtime } : {}),
+      ...(args.endpointUrl !== undefined
+        ? { endpointUrl: args.endpointUrl }
+        : {}),
+      ...(args.endpointHeaders !== undefined
+        ? { endpointHeaders: args.endpointHeaders }
+        : {}),
       ...(args.sourceCode !== undefined ? { sourceCode: args.sourceCode } : {}),
       ...(args.defaultConfig !== undefined
         ? {

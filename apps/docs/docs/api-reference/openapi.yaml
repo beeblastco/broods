@@ -3652,7 +3652,13 @@ components:
 
     AccountToolCreate:
       type: object
-      required: [name, description, inputSchema, bundle]
+      description: >-
+        Either a bundled tool (`bundle` set, `runtime` isolate or sandbox) or an
+        http tool (`runtime: "http"` with `endpointUrl`). The two tiers are
+        mutually exclusive.
+      oneOf:
+        - required: [name, description, inputSchema, bundle]
+        - required: [name, description, inputSchema, runtime, endpointUrl]
       properties:
         name:
           type: string
@@ -3664,17 +3670,27 @@ components:
           description: JSON Schema for the AI SDK tool input.
         bundle:
           type: string
-          description: Already-bundled JavaScript module source.
+          description: Already-bundled JavaScript module source. Must not be set for http tools.
         runtime:
           type: string
-          enum: [isolate, sandbox]
-          description: Execution tier. Inferred from the bundle on create when omitted.
+          enum: [isolate, sandbox, http]
+          description: Execution tier. Inferred from the bundle on create when omitted; "http" requires endpointUrl and forbids bundle.
+        endpointUrl:
+          type: string
+          format: uri
+          description: Https URL the tool input is POSTed to as JSON. Only valid with runtime "http".
+        endpointHeaders:
+          type: object
+          additionalProperties:
+            type: string
+          description: Static headers sent with every call. Values may reference `${NAME}` variables resolved from the agent's tool config env at run time.
         defaultConfig:
           type: object
           description: Non-secret default runtime config.
 
     AccountToolUpdate:
       type: object
+      description: Omitted fields keep their stored values. Switching between bundled and http clears the other tier's fields.
       properties:
         name:
           type: string
@@ -3686,7 +3702,15 @@ components:
           type: string
         runtime:
           type: string
-          enum: [isolate, sandbox]
+          enum: [isolate, sandbox, http]
+        endpointUrl:
+          type: string
+          format: uri
+          description: Only valid when the resulting runtime is "http". Send an empty object in endpointHeaders to clear headers.
+        endpointHeaders:
+          type: object
+          additionalProperties:
+            type: string
         defaultConfig:
           type: object
 
@@ -3710,9 +3734,19 @@ components:
           type: object
         sha256:
           type: string
+          description: Bundle checksum. Absent for http tools.
         runtime:
           type: string
-          enum: [isolate, sandbox]
+          enum: [isolate, sandbox, http]
+        endpointUrl:
+          type: string
+          format: uri
+          description: Set only for http tools.
+        endpointHeaders:
+          type: object
+          additionalProperties:
+            type: string
+          description: Set only for http tools.
         defaultConfig:
           type: object
         status:

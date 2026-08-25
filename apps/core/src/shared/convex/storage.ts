@@ -616,9 +616,12 @@ interface ConvexAccountToolDoc {
   name: string;
   description: string;
   inputSchema: AccountToolRecord["inputSchema"];
-  bundleStorageKey: string;
-  sha256: string;
-  runtime?: "isolate" | "sandbox";
+  // Absent on `runtime: "http"` tools, which carry an endpoint instead.
+  bundleStorageKey?: string;
+  sha256?: string;
+  runtime?: "isolate" | "sandbox" | "http";
+  endpointUrl?: string;
+  endpointHeaders?: Record<string, string>;
   defaultConfig?: Record<string, unknown>;
   status: "active" | "deleted";
   createdAt: number;
@@ -637,9 +640,17 @@ function accountToolFromConvex(
     name: doc.name,
     description: doc.description,
     inputSchema: doc.inputSchema,
-    bundleStorageKey: doc.bundleStorageKey,
-    sha256: doc.sha256,
-    runtime: doc.runtime === "isolate" ? "isolate" : "sandbox",
+    runtime: doc.runtime ?? "sandbox",
+    ...(doc.bundleStorageKey !== undefined
+      ? { bundleStorageKey: doc.bundleStorageKey }
+      : {}),
+    ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
+    ...(doc.endpointUrl !== undefined
+      ? { endpointUrl: doc.endpointUrl }
+      : {}),
+    ...(doc.endpointHeaders !== undefined
+      ? { endpointHeaders: doc.endpointHeaders }
+      : {}),
     ...(doc.defaultConfig !== undefined
       ? { defaultConfig: doc.defaultConfig }
       : {}),

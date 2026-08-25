@@ -866,11 +866,17 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
     scheduleSave();
   }, [scheduleSave]);
 
-  /** Stable handler for tool source picker selection. */
-  const onToolSelect = useCallback(() => {
-    // TODO: handle "docker" and "upload" sources with dedicated flows
-    addNode("tool", "Tool");
-  }, [addNode]);
+  /** Stable handler for tool source picker selection; bakes the source like skills do. */
+  const onToolSelect = useCallback(
+    (source: "docker" | "upload" | "scratch") => {
+      addNode(
+        "tool",
+        "Tool",
+        source === "scratch" ? undefined : { config: { toolSource: source } },
+      );
+    },
+    [addNode],
+  );
 
   /** Adds a skill node with the chosen source type baked into its config. */
   const onSkillSelect = useCallback(

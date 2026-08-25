@@ -192,8 +192,9 @@ export function ToolTestTab({
 
   // The executor takes source, not a bundle key, so an uploaded tool has
   // nothing to hand it. Offering Run here would report an empty module's output
-  // as the tool's own result.
-  if (toolService.sourceCode === undefined) {
+  // as the tool's own result. An http tool has no source either, but it runs
+  // server-side against its endpoint, so it stays testable right here.
+  if (toolService.sourceCode === undefined && toolService.runtime !== "http") {
     return (
       <div className="flex flex-1 items-center justify-center p-4">
         <p className="text-center text-xs text-muted-foreground">
