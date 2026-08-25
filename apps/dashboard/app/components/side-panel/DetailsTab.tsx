@@ -15,6 +15,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/app/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/app/components/ui/collapsible";
 import { Input } from "@/app/components/ui/input";
 import {
   Select,
@@ -45,6 +50,7 @@ import type { Doc, Id } from "@broods/convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import {
   Check,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -627,10 +633,10 @@ export function DetailsTab({
         </>
       )}
 
-      {/* Public access controls */}
+      {/* Developer API access */}
       <div className="flex flex-col gap-3">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Public API
+          Developer API access
         </span>
         {onUpdatePublicAccess && (
           <ToggleRow
@@ -648,174 +654,194 @@ export function DetailsTab({
           </p>
         </div>
 
-        {!activeDeployment ? (
-          <div className="flex flex-col gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 p-3">
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <KeyRound className="size-3.5" />
-              No runtime API key yet
-            </span>
-            <p className="text-[11px] text-muted-foreground">
-              Generate the stage&apos;s key to reveal the endpoint URLs.{" "}
-              <code>broods deploy</code> also mints it automatically.
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8 w-fit cursor-pointer text-xs"
-              disabled={isSavingKey}
-              onClick={() => void onGenerateKey?.()}
-            >
-              {isSavingKey ? "Generating…" : "Generate API key"}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2.5">
-            {!publicAccess ? (
-              <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                Endpoint URLs are hidden while public access is off. Requests to
-                this agent over the public endpoint are refused until you enable
-                public access above.
-              </p>
-            ) : !coreEndpoint.ok ? (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
-                {coreEndpoint.message}
-              </p>
-            ) : (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                    Endpoint URL (HTTP/SSE)
-                  </span>
-                  <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                    <code className="flex-1 text-xs text-foreground break-all">
-                      {endpointUrl}
-                    </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 cursor-pointer text-muted-foreground"
-                      onClick={() => handleCopy(endpointUrl, "url")}
-                    >
-                      {copiedField === "url" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
-                    <Wifi className="size-3" />
-                    WebSocket URL
-                  </span>
-                  <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                    <code className="flex-1 text-xs text-foreground break-all">
-                      {websocketUrl}
-                    </code>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 cursor-pointer text-muted-foreground"
-                      onClick={() => handleCopy(websocketUrl, "websocket")}
-                    >
-                      {copiedField === "websocket" ? (
-                        <Check className="size-3" />
-                      ) : (
-                        <Copy className="size-3" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {agentConfig?.agentId && (
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                  Agent ID
-                </span>
-                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                  <code className="flex-1 text-xs text-foreground break-all">
-                    {agentConfig.agentId}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
-                    onClick={() =>
-                      handleCopy(agentConfig.agentId as string, "agentid")
-                    }
-                  >
-                    {copiedField === "agentid" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
-                </div>
-                <span className="text-[11px] text-muted-foreground">
-                  Pass this as <code>agentId</code> in the invoke payload.
-                </span>
-              </div>
-            )}
-
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                  API Key (stage-wide)
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
-                  disabled={isSavingKey}
-                  onClick={() => setRotateOpen(true)}
-                >
-                  <RefreshCw
-                    className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
-                  />
-                  Rotate
-                </Button>
-              </div>
-              {deploymentApiKey ? (
-                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
-                  <code className="flex-1 text-xs text-foreground break-all">
-                    {showApiKey ? deploymentApiKey : "\u2022".repeat(20)}
-                  </code>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    aria-label={showApiKey ? "Hide API key" : "Show API key"}
-                  >
-                    {showApiKey ? (
-                      <EyeOff className="size-3" />
-                    ) : (
-                      <Eye className="size-3" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 cursor-pointer text-muted-foreground"
-                    onClick={() => handleCopy(deploymentApiKey, "apikey")}
-                  >
-                    {copiedField === "apikey" ? (
-                      <Check className="size-3" />
-                    ) : (
-                      <Copy className="size-3" />
-                    )}
-                  </Button>
-                </div>
-              ) : (
-                <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                  Loading the encrypted runtime key…
-                </p>
-              )}
+        {activeDeployment ? (
+          <>
+            <div className="flex items-center gap-2 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2">
+              <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+              <span className="text-xs font-medium text-foreground">Live</span>
+              <span className="ml-auto truncate text-[11px] text-muted-foreground">
+                {activeDeployment.endpointId}
+              </span>
             </div>
+            <Collapsible>
+              <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-1.5 rounded-md px-1 py-1 text-left text-[11px] uppercase tracking-wider text-muted-foreground hover:text-foreground">
+                <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
+                Endpoint URLs &amp; runtime key
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="mt-1 flex flex-col gap-2.5 border-l-2 border-border pl-3">
+                  {!publicAccess ? (
+                    <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                      Endpoint URLs are hidden while public access is off.
+                      Requests to this agent over the public endpoint are
+                      refused until you enable public access above.
+                    </p>
+                  ) : !coreEndpoint.ok ? (
+                    <p className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+                      {coreEndpoint.message}
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                          Endpoint URL (HTTP/SSE)
+                        </span>
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                          <code className="flex-1 text-xs text-foreground break-all">
+                            {endpointUrl}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="shrink-0 cursor-pointer text-muted-foreground"
+                            onClick={() => handleCopy(endpointUrl, "url")}
+                          >
+                            {copiedField === "url" ? (
+                              <Check className="size-3" />
+                            ) : (
+                              <Copy className="size-3" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+                          <Wifi className="size-3" />
+                          WebSocket URL
+                        </span>
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                          <code className="flex-1 text-xs text-foreground break-all">
+                            {websocketUrl}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="shrink-0 cursor-pointer text-muted-foreground"
+                            onClick={() =>
+                              handleCopy(websocketUrl, "websocket")
+                            }
+                          >
+                            {copiedField === "websocket" ? (
+                              <Check className="size-3" />
+                            ) : (
+                              <Copy className="size-3" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {agentConfig?.agentId && (
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                        Agent ID
+                      </span>
+                      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                        <code className="flex-1 text-xs text-foreground break-all">
+                          {agentConfig.agentId}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 cursor-pointer text-muted-foreground"
+                          onClick={() =>
+                            handleCopy(agentConfig.agentId as string, "agentid")
+                          }
+                        >
+                          {copiedField === "agentid" ? (
+                            <Check className="size-3" />
+                          ) : (
+                            <Copy className="size-3" />
+                          )}
+                        </Button>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        Pass this as <code>agentId</code> in the invoke payload.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                        API Key (stage-wide)
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 cursor-pointer gap-1 px-1.5 text-[11px] text-muted-foreground"
+                        disabled={isSavingKey}
+                        onClick={() => setRotateOpen(true)}
+                      >
+                        <RefreshCw
+                          className={`size-3 ${isSavingKey ? "animate-spin" : ""}`}
+                        />
+                        Rotate
+                      </Button>
+                    </div>
+                    {deploymentApiKey ? (
+                      <div className="flex items-center gap-2 rounded-md border border-border bg-muted/50 px-2.5 py-1.5">
+                        <code className="flex-1 text-xs text-foreground break-all">
+                          {showApiKey ? deploymentApiKey : "\u2022".repeat(20)}
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 cursor-pointer text-muted-foreground"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          aria-label={
+                            showApiKey ? "Hide API key" : "Show API key"
+                          }
+                        >
+                          {showApiKey ? (
+                            <EyeOff className="size-3" />
+                          ) : (
+                            <Eye className="size-3" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 cursor-pointer text-muted-foreground"
+                          onClick={() => handleCopy(deploymentApiKey, "apikey")}
+                        >
+                          {copiedField === "apikey" ? (
+                            <Check className="size-3" />
+                          ) : (
+                            <Copy className="size-3" />
+                          )}
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
+                        Loading the encrypted runtime key…
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </>
+        ) : (
+          <div className="flex items-center gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 px-2.5 py-2">
+            <KeyRound className="size-3.5 shrink-0 text-muted-foreground" />
+            <p className="flex-1 text-[11px] text-muted-foreground">
+              No runtime key on this stage yet. <code>broods deploy</code> also
+              mints it automatically.
+            </p>
+            {onGenerateKey && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 shrink-0 cursor-pointer gap-1 px-1.5 text-[11px]"
+                disabled={isSavingKey}
+                onClick={() => void onGenerateKey()}
+              >
+                {isSavingKey ? "Generating…" : "Generate"}
+              </Button>
+            )}
           </div>
         )}
       </div>

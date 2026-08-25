@@ -246,7 +246,10 @@ export async function ensureStageDeployment(
   };
 }
 
-/** Resolve the project's org account, slug, and the stage's slug. */
+/**
+ * Resolve the project's org account, slug, and the stage's slug. Returns null
+ * when the org has no provisioned API account yet.
+ */
 async function resolveStageContext(
   ctx: MutationCtx,
   projectId: Id<"projects">,
@@ -263,11 +266,7 @@ async function resolveStageContext(
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
     .unique();
-  if (!account) {
-    throw new Error(
-      "Provision your organization's API account first (Settings → API Access).",
-    );
-  }
+  if (!account) return null;
 
   return {
     account: account,
@@ -276,6 +275,9 @@ async function resolveStageContext(
     authId: project.authId,
   };
 }
+
+const MISSING_ACCOUNT_ERROR =
+  "Provision your organization's API account first (Settings → API Access).";
 
 /** Record a dashboard deployment mutation without storing runtime keys. */
 async function recordDeploymentAudit(
@@ -396,6 +398,7 @@ export const ensureForStage = mutation({
     );
     if (!project) throw new Error("Project not found.");
     const context = await resolveStageContext(ctx, projectId, stageId);
+    if (!context) throw new Error(MISSING_ACCOUNT_ERROR);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,
@@ -418,6 +421,43 @@ export const ensureForStage = mutation({
 });
 
 /**
+ * Dashboard auto-live: make sure the stage has a runtime deployment so a
+ * just-created agent is invocable without a manual key-generation step.
+ * No-ops when the org has no provisioned API account yet (mirroring
+ * `ensureAgentsRowForConfig`); the manual generate path stays available as
+ * recovery. The caller must have verified project/stage ownership.
+ */
+export async function ensureAutoLiveDeployment(
+  ctx: MutationCtx,
+  args: {
+    authId: string;
+    actor: ConfigAuditActor;
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+  },
+): Promise<void> {
+  const context = await resolveStageContext(ctx, args.projectId, args.stageId);
+  if (!context) return;
+
+  const result = await ensureStageDeployment(ctx, {
+    authId: context.authId,
+    accountId: context.account._id,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    projectSlug: context.projectSlug,
+    stageSlug: context.stageSlug,
+  });
+  await recordDeploymentAudit(ctx, args.actor, {
+    accountId: context.account._id,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    action: "ready",
+    endpointId: result.endpointId,
+    summary: "Runtime deployment provisioned with agent creation",
+  });
+}
+
+/**
  * Regenerate the stage's runtime key and return the new plaintext. If the
  * stage has no key yet this mints the first one (same as
  * `ensureForStage`), so a rotate is always safe to call.
@@ -437,6 +477,7 @@ export const rotate = mutation({
     );
     if (!project) throw new Error("Project not found.");
     const context = await resolveStageContext(ctx, projectId, stageId);
+    if (!context) throw new Error(MISSING_ACCOUNT_ERROR);
     const result = await ensureStageDeployment(ctx, {
       authId: context.authId,
       accountId: context.account._id,

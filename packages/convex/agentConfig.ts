@@ -11,6 +11,7 @@ import {
   syncAgentRowFields,
 } from "./model/agentSync";
 import { authKit } from "./auth";
+import { ensureAutoLiveDeployment } from "./agentDeployments";
 import {
   accountIdForProject,
   auditDetailsJson,
@@ -234,6 +235,16 @@ export const create = mutation({
     // provisioned with a broods account.
     await ensureAgentsRowForConfig(ctx, configId, authUser.id);
     await pushEncryptedConfigToAgentRow(ctx, configId);
+
+    // Auto-live: mint the stage runtime deployment so the agent is
+    // invocable immediately, no manual key-generation step. No-ops when
+    // the org has no API account yet.
+    await ensureAutoLiveDeployment(ctx, {
+      authId: authUser.id,
+      actor: dashboardAuditActor(authUser),
+      projectId: projectId,
+      stageId: stageId,
+    });
     const created = await ctx.db.get(configId);
     await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
       projectId: projectId,
