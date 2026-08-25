@@ -64,7 +64,11 @@ jobs:
   rollout:
     needs: build
     if: ${{ github.ref_name == 'dev' || github.ref_name == 'main' }}
-    permissions: {}
+    # No prerequisite gate: this image depends on neither Convex nor the
+    # AWS data plane. The grant is still required because rollout.yaml
+    # declares it and a called workflow can never hold more than its caller.
+    permissions:
+      actions: read
     uses: ./.github/workflows/rollout.yaml
     with:
       workflow: ${{ github.ref_name == 'main' && 'deploy-gateway.yaml' || 'deploy-gateway-dev.yaml' }}
