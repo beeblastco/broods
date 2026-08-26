@@ -211,6 +211,9 @@ export interface SessionOptions {
   channelActions?: ChannelActions;
   // Absent for the ordinary channel/API paths, where a person is waiting.
   trigger?: RunTrigger;
+  // True only for direct turns the account owner drives through the
+  // dashboard's internal test endpoint. Gates the self-configuration toolset.
+  ownerSession?: boolean;
 }
 
 /**
@@ -229,6 +232,7 @@ export class Session {
   readonly ownerGeneration: number | undefined;
   readonly channelActions: ChannelActions | undefined;
   readonly trigger: RunTrigger | undefined;
+  readonly ownerSession: boolean;
   private readonly agentConfig: AgentConfig;
   private messageSequence = 0;
   private hasLoggedMissingMemoryFile = false;
@@ -256,6 +260,7 @@ export class Session {
     this.ownerGeneration = options.ownerGeneration;
     this.channelActions = options.channelActions;
     this.trigger = options.trigger;
+    this.ownerSession = options.ownerSession === true;
   }
 
   /** Rejects a side effect when this run no longer owns the conversation. */
@@ -695,6 +700,12 @@ export class Session {
             },
           ]
         : [];
+    // Owner session (ticket 21): the person on the other side is the account
+    // owner working on this agent from the dashboard, so surface the
+    // self-configuration tools and their ground rules.
+    const ownerSessionSystem: SystemModelMessage[] = this.ownerSession
+      ? [{ role: "system", content: OWNER_SESSION_SYSTEM_PROMPT }]
+      : [];
 
     return [
       ...agentSystemMessages(this.agentConfig.agent?.system),
@@ -704,6 +715,7 @@ export class Session {
       ...schedulerSystem,
       ...skillsSystem,
       ...subagentSystem,
+      ...ownerSessionSystem,
       ...this.loadedSkillPrompts,
       ...promptMessages,
       ...ephemeralSystem,
@@ -1137,6 +1149,14 @@ function formatMemorySystemPrompt(
 
   return `Current workspace memory index (${MEMORY_INDEX_PATH}) content:\n\n${sections}`;
 }
+
+const OWNER_SESSION_SYSTEM_PROMPT = [
+  "You are talking to your owner in the dashboard. You can inspect your own setup and propose improvements:",
+  "- Use read_own_config, list_skill_library, list_connectors, read_recent_failures, and run_health_check to answer questions about yourself truthfully — always read before answering, never guess your own configuration.",
+  "- When asked to learn something or do a task better, draft a skill with propose_skill; suggest configuration edits with propose_config_change and new integrations with propose_connector or propose_context_folder.",
+  "- Proposals are not applied by you: each returns pending_user_review and takes effect only after your owner approves it in the dashboard.",
+  "- If something needs an API key or token, call request_credential. NEVER ask your owner to paste a secret into this chat, and never repeat a secret if one appears.",
+].join("\n");
 
 function formatSchedulerSystemPrompt(now: Date): string {
   return `<scheduler>

@@ -79,3 +79,8 @@ keep it short — what the file boundary is, what belong there, where near-by lo
 - `config.connectors.allowed` resolve in `harness/connectors.ts` from `createTools`, before `denyTools`. enabled-only; a broken/unreachable connector degrade to absent tools + one WARN log, never a crashed run.
 - tool naming convention: MCP tools register as `mcp_<label-slug>_<toolName>`; the GitHub token connector register one `github_<label-slug>_request` tool. slug = lowercase, non-alphanumeric → `_`, 32 chars max.
 - secrets: connector rows store AES-GCM blobs made by the config plane with `ACCOUNT_CONFIG_ENCRYPTION_SECRET` (same mechanism as agent/sandbox configs). core decrypt with `decodeStoredConfigObject`; the model never see a token or header value.
+
+## Self-config toolset (ticket 21)
+
+- an **owner session** is a direct run that authenticated as the account (service token/account secret) AND carried `X-Broods-Owner-Session: 1`. `directOwnerSession` in `harness/owner-session.ts` is the one seam that decides it — the deployment-key path passes its own auth kind through the same function, so a spoofed header can never mint an owner session. cron construction clears the flag in `prepareDirectTurn`.
+- the tools (`harness/tools/self-config.tool.ts`) are **read + propose only**. reads go through `sanitizeConfigForSelfInspection` (`shared/domain/self-config.ts`) or drop encrypted fields — a secret must never reach the model. propose tools return `{version, proposal:{kind,payload}, status:"pending_user_review"}`; the dashboard renders that as a card and the OWNER's identity applies it. never add a config write here.

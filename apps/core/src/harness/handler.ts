@@ -1568,6 +1568,9 @@ async function prepareDirectTurn(
         ) ?? undefined)
       : undefined,
     trigger: event.cronRun ? "cron" : undefined,
+    // Never an owner session on a cron trigger: the run reads stored
+    // instructions as a fresh request, exactly the case the gate exists for.
+    ownerSession: event.ownerSession === true && !event.cronRun,
   });
   try {
     const ephemeralSystem = await session.appendIngressEvents(event.events);

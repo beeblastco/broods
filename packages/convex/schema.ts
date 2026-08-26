@@ -1354,6 +1354,12 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId", ["accountId"])
+    // Ticket 21: agent-scoped recent-failure reads for the self-config toolset.
+    .index("by_agentId_and_status_and_updatedAt", [
+      "agentId",
+      "status",
+      "updatedAt",
+    ])
     .index("by_expiresAt", ["expiresAt"])
     .index("by_statusExpiresAt", ["statusExpiresAt"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)

@@ -145,6 +145,10 @@ export const invoke = httpAction(async (ctx, request) => {
       Authorization: `Bearer ${secret}`,
       "X-Account-Id": scope.accountId,
       "Content-Type": "application/json",
+      // Owner-session marker (ticket 21): this endpoint only serves the
+      // authenticated account owner, so their test runs get the self-config
+      // toolset. Core honors this header ONLY on account-auth requests.
+      "X-Broods-Owner-Session": "1",
     },
     body: JSON.stringify({
       agentId: scope.agentId,

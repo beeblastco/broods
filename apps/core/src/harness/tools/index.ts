@@ -59,6 +59,7 @@ import getSubagentStatusTool from "./get-subagent-status.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
 import { createConnectorTools } from "../connectors.ts";
+import { createSelfConfigTools } from "./self-config.tool.ts";
 import memoryTool from "./memory.tool.ts";
 import { providerDefinedTool } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
@@ -418,6 +419,27 @@ export async function createTools(
     tools,
     await createConnectorTools(context.accountId, agentConfig.connectors),
   );
+
+  // Self-configuration toolset (ticket 21): only when the session is an owner
+  // session — the dashboard's internal test endpoint with account auth plus
+  // the owner-session marker. Channel, public, and cron runs never see these
+  // (the marker seam in owner-session.ts refuses every other auth kind, and
+  // the handler clears it on cron triggers).
+  if (context.session?.ownerSession === true && context.accountId) {
+    Object.assign(
+      tools,
+      createSelfConfigTools(
+        {
+          accountId: context.accountId,
+          ...(context.session.agentId
+            ? { agentId: context.session.agentId }
+            : {}),
+          ...(context.workspaces ? { workspaces: context.workspaces } : {}),
+        },
+        agentConfig,
+      ),
+    );
+  }
 
   // Withhold last, so a channel's deny list covers sandbox and account tools too
   // — those are derived from workspaces and ids, never from config.tools.
