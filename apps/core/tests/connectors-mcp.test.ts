@@ -7,11 +7,14 @@
  * real server in production.
  */
 
-import { createServer, type Server } from "node:http";
+import { createServer, type Server as HttpServer } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   connectorSlug,
   createConnectorTools,
@@ -21,7 +24,7 @@ import {
 import { encryptConfigObject } from "../src/shared/domain/agent-config.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 
-let httpServer: Server;
+let httpServer: HttpServer;
 let serverUrl = "";
 let echoCalls = 0;
 let sawAuthHeader = "";
@@ -32,20 +35,34 @@ beforeAll(async () => {
   httpServer = createServer((req, res) => {
     sawAuthHeader = String(req.headers["x-test-auth"] ?? "");
     // A fresh server+transport per request: the stateless streamable-HTTP
-    // pattern from the SDK docs, ideal for a test.
-    const mcp = new McpServer({ name: "test-mcp", version: "1.0.0" });
-    mcp.registerTool(
-      "echo_upper",
-      {
-        description: "Echo the input, uppercased",
-        inputSchema: { text: z.string() },
-      },
-      async ({ text }) => {
-        echoCalls += 1;
-
-        return { content: [{ type: "text", text: text.toUpperCase() }] };
-      },
+    // pattern from the SDK docs, ideal for a test. Low-level Server API so
+    // the test needs no zod dependency.
+    const mcp = new Server(
+      { name: "test-mcp", version: "1.0.0" },
+      { capabilities: { tools: {} } },
     );
+    mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: [
+        {
+          name: "echo_upper",
+          description: "Echo the input, uppercased",
+          inputSchema: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+          },
+        },
+      ],
+    }));
+    mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
+      echoCalls += 1;
+      const text = String(
+        (request.params.arguments as { text?: unknown } | undefined)?.text ??
+          "",
+      );
+
+      return { content: [{ type: "text", text: text.toUpperCase() }] };
+    });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
