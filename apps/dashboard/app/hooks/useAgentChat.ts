@@ -4,6 +4,10 @@
  * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
+import {
+  isStreamProtocolError,
+  runtimeStreamErrorText,
+} from "@/app/lib/chatErrors";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import type { UIMessage } from "ai";
 import {
@@ -75,6 +79,18 @@ type WsServerMessage =
 function toUiMessageChunk(
   part: { type: string } & Record<string, unknown>,
 ): { type: string } & Record<string, unknown> {
+  // Same field mismatch for error frames: the runtime says `error`, the
+  // schema requires `errorText`. Without this the failure frame is dropped
+  // and the chat sits on "Thinking …" instead of showing the error card.
+  if (
+    part.type === "error" &&
+    typeof part.error === "string" &&
+    !("errorText" in part)
+  ) {
+    const { error, ...errorRest } = part;
+
+    return { ...errorRest, type: part.type, errorText: error };
+  }
   const isDelta = part.type === "text-delta" || part.type === "reasoning-delta";
   if (!isDelta || typeof part.text !== "string" || "delta" in part) {
     return part;
@@ -159,11 +175,12 @@ async function startHttpSseStream(options: {
   });
 
   if (!response.ok) {
-    const responseBody = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
+    // Keep the whole body: the error card's resolver reads the `code` field
+    // out of the core service's JSON payload, and the raw text is preserved
+    // behind the card's "Show details" disclosure.
+    const responseBody = await response.text().catch(() => "");
     throw new Error(
-      responseBody.error ??
+      responseBody.trim() ||
         `HTTP stream request failed with status ${response.status}.`,
     );
   }
@@ -281,7 +298,11 @@ async function startWebSocketSseStream(options: {
 
     const finishStream = () => {
       if (streamController) {
-        streamController.close();
+        try {
+          streamController.close();
+        } catch {
+          // Consumer already errored the stream — nothing left to signal.
+        }
         streamController = null;
       }
       if (socket.readyState === WebSocket.OPEN) {
@@ -484,12 +505,20 @@ async function startWebSocketSseStream(options: {
       }
 
       if (streamController) {
-        if (event.code === 1000 || signal.aborted) {
-          streamController.close();
-        } else {
-          streamController.error(
-            new Error(event.reason || "WebSocket connection closed."),
-          );
+        // The consumer can have errored the stream already (e.g.
+        // `readUIMessageStream` terminating on a chunk-ordering violation);
+        // close()/error() then throw an uncaught TypeError inside the socket
+        // handler. The stream is finished either way — swallow it.
+        try {
+          if (event.code === 1000 || signal.aborted) {
+            streamController.close();
+          } else {
+            streamController.error(
+              new Error(event.reason || "WebSocket connection closed."),
+            );
+          }
+        } catch {
+          // Already closed or errored — nothing left to signal.
         }
         streamController = null;
       }
@@ -935,6 +964,19 @@ export function useAgentChat({
             transform: function (result, transformController) {
               if (result.success) {
                 transformController.enqueue(result.value);
+
+                return;
+              }
+              // The runtime frames stream errors as `{type:"error", error}`,
+              // which fails the schema (it wants `errorText`) and used to be
+              // dropped here — leaving the chat on "Thinking …" forever when
+              // e.g. the provider API key is missing. Re-frame, don't drop.
+              const errorText = runtimeStreamErrorText(result.rawValue);
+              if (errorText !== null) {
+                transformController.enqueue({
+                  type: "error",
+                  errorText: errorText,
+                });
               }
             },
           }),
@@ -970,6 +1012,27 @@ export function useAgentChat({
               : err instanceof Error
                 ? err.message
                 : String(err);
+        // Chunk-ordering complaints from `readUIMessageStream` are protocol
+        // noise, not a user-facing condition (see ticket 14 for the cause).
+        // Log them; when a reply already rendered, surface nothing at all.
+        if (isStreamProtocolError(message)) {
+          console.warn("[agent-chat] stream protocol warning:", message);
+          const replyRendered = messagesRef.current.some(
+            (m) =>
+              m.role === "assistant" &&
+              m.parts.some(
+                (part) =>
+                  part.type === "text" &&
+                  "text" in part &&
+                  part.text.trim().length > 0,
+              ),
+          );
+          if (replyRendered) {
+            setStatus("ready");
+
+            return;
+          }
+        }
         setError(new Error(message));
         setStatus("error");
       }

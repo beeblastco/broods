@@ -786,6 +786,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
   const resolvedName = isAgent
     ? (agentConfig?.name ?? "")
     : (nodeData?.label ?? "");
+  // The Test tab's error cards point users at Details ("Open Details").
+  const openDetailsTab = useCallback(() => {
+    setActiveTab("details");
+  }, []);
+
   // Warmed from the tab trigger only. Preloading on open cost every panel view
   // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
   // was ever used; intent to open it lands early enough to hide the fetch.
@@ -1061,6 +1066,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   // fail with `{"error":"Agent not found"}`.
                   agentId={agentConfig?.agentId ?? ""}
                   nodeColor={nodeData?.properties?.color}
+                  onOpenDetails={openDetailsTab}
                 />
               ) : node ? (
                 <ToolTestTab

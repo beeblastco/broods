@@ -13,7 +13,13 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
+import { Button } from "@/app/components/ui/button";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
+import {
+  resolveChatError,
+  type ChatErrorActionKind,
+  type ChatErrorPresentation,
+} from "@/app/lib/chatErrors";
 import type { UIMessage } from "ai";
 import {
   ArrowUp,
@@ -23,7 +29,8 @@ import {
   Terminal,
   Wrench,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 /**
@@ -162,11 +169,14 @@ export function TestTab({
   deploymentApiKey,
   agentId,
   nodeColor,
+  onOpenDetails,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
   agentId: string;
   nodeColor?: string;
+  /** Switches the side panel to the Details tab (error-card action). */
+  onOpenDetails?: () => void;
 }): React.JSX.Element {
   if (!activeDeployment) {
     return (
@@ -205,6 +215,7 @@ export function TestTab({
       projectSlug={activeDeployment.projectSlug}
       nodeColor={nodeColor}
       stageSlug={activeDeployment.stageSlug}
+      onOpenDetails={onOpenDetails}
     />
   );
 }
@@ -217,6 +228,7 @@ function ChatWindow({
   projectSlug,
   nodeColor,
   stageSlug,
+  onOpenDetails,
 }: {
   endpointId: string;
   agentId: string;
@@ -224,6 +236,7 @@ function ChatWindow({
   projectSlug?: string;
   nodeColor?: string;
   stageSlug?: string;
+  onOpenDetails?: () => void;
 }) {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
@@ -236,6 +249,47 @@ function ChatWindow({
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
+  const router = useRouter();
+  const params = useParams<{ projectId: string }>();
+  const searchParams = useSearchParams();
+
+  const handleErrorAction = useCallback(
+    (kind: ChatErrorActionKind) => {
+      if (kind === "open-details") {
+        onOpenDetails?.();
+
+        return;
+      }
+      if (kind === "open-env-vars") {
+        // Same href shape the settings page builds: keep the current params
+        // (e.g. ?stage=) so the variables shown match the stage being tested.
+        const next = new URLSearchParams(searchParams.toString());
+        next.set("tab", "variables");
+        router.push(`/${params.projectId}/settings?${next.toString()}`);
+
+        return;
+      }
+      if (kind === "retry") {
+        const lastUserText = [...messages]
+          .reverse()
+          .find((m) => m.role === "user")
+          ?.parts.filter((p) => p.type === "text")
+          .map((p) => ("text" in p ? p.text : ""))
+          .join("");
+        if (lastUserText) {
+          void sendMessage(lastUserText);
+        }
+      }
+    },
+    [
+      messages,
+      onOpenDetails,
+      params.projectId,
+      router,
+      searchParams,
+      sendMessage,
+    ],
+  );
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -268,7 +322,12 @@ function ChatWindow({
         {status === "streaming" && !hasAssistantMessage && (
           <ThinkingIndicator nodeColor={nodeColor} />
         )}
-        {error && <p className="text-xs text-destructive">{error.message}</p>}
+        {error && (
+          <ChatErrorCard
+            presentation={resolveChatError(error.message)}
+            onAction={handleErrorAction}
+          />
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -321,6 +380,50 @@ function ChatWindow({
           </InputGroupAddon>
         </InputGroup>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Error card rendered in the transcript where a send failed: one plain
+ * sentence, at most one action, and the raw payload behind a disclosure.
+ */
+function ChatErrorCard({
+  presentation,
+  onAction,
+}: {
+  presentation: ChatErrorPresentation;
+  onAction: (kind: ChatErrorActionKind) => void;
+}) {
+  const { title, detail, action, raw } = presentation;
+
+  return (
+    <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2.5">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      {detail && (
+        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+      )}
+      {action && action.kind !== "none" && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="mt-2 h-7 text-xs"
+          onClick={() => onAction(action.kind)}
+        >
+          {action.label}
+        </Button>
+      )}
+      <Collapsible>
+        <CollapsibleTrigger className="group mt-2 flex cursor-pointer items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+          <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
+          Show details
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre className="mt-1 max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-md border border-red-500/20 bg-red-500/5 px-2.5 py-2 font-mono text-xs text-muted-foreground">
+            {raw}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }
