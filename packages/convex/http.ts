@@ -8,6 +8,10 @@ import Stripe from "stripe";
 import { components, internal } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
+import {
+  invoke as agentTestInvoke,
+  preflight as agentTestPreflight,
+} from "./agentTestHttp";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
@@ -215,6 +219,19 @@ http.route({ path: "/v1/crons", method: "POST", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "PATCH", handler: configHttp });
 http.route({ pathPrefix: "/v1/crons/", method: "DELETE", handler: configHttp });
+
+// Owner-authenticated internal agent test chat (dashboard only; WorkOS JWT).
+// Served straight from the Convex site URL — deliberately not a gateway path.
+http.route({
+  path: "/v1/dashboard/test-agent",
+  method: "POST",
+  handler: agentTestInvoke,
+});
+http.route({
+  path: "/v1/dashboard/test-agent",
+  method: "OPTIONS",
+  handler: agentTestPreflight,
+});
 
 export default http;
 

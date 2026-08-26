@@ -127,6 +127,64 @@ type HttpStreamResult = {
   sessionId?: string;
 };
 
+/**
+ * Owner-authenticated internal test transport (ticket 15): the Convex
+ * `/v1/dashboard/test-agent` HTTP action proxies the turn to the runtime's
+ * internal caller class, which is never gated on Public access. Serves the
+ * same AI-SDK SSE stream as the public HTTP path.
+ */
+export interface InternalTestTransport {
+  invokeUrl: string;
+  configId: string;
+  /** Returns the caller's WorkOS session JWT, or null when signed out. */
+  fetchToken: () => Promise<string | null>;
+}
+
+async function startInternalSseStream(options: {
+  transport: InternalTestTransport;
+  message: string;
+  sessionId?: string;
+  signal: AbortSignal;
+}): Promise<HttpStreamResult> {
+  const { transport, message, sessionId, signal } = options;
+  const token = await transport.fetchToken();
+  if (!token) {
+    throw new Error("You are signed out. Sign in again to test this agent.");
+  }
+  const conversationKey = sessionId || `chat-${crypto.randomUUID()}`;
+
+  const response = await fetch(transport.invokeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      configId: transport.configId,
+      text: message,
+      conversationKey: conversationKey,
+    }),
+    signal: signal,
+  });
+
+  if (!response.ok) {
+    // Keep the whole body for the error card's resolver + raw disclosure.
+    const responseBody = await response.text().catch(() => "");
+    throw new Error(
+      responseBody.trim() ||
+        `Internal test request failed with status ${response.status}.`,
+    );
+  }
+  if (!response.body) {
+    throw new Error("Response body is empty");
+  }
+
+  return {
+    stream: response.body,
+    sessionId: response.headers.get("X-Session-Id") ?? conversationKey,
+  };
+}
+
 async function startHttpSseStream(options: {
   endpointId: string;
   agentId: string;
@@ -766,6 +824,7 @@ export function useAgentChat({
   webSocketEnabled,
   initialMessages,
   initialSessionId,
+  internalTransport,
 }: {
   endpointId: string;
   agentId: string;
@@ -780,6 +839,12 @@ export function useAgentChat({
   initialMessages?: UIMessage[];
   /** Conversation key the next send continues instead of starting fresh. */
   initialSessionId?: string;
+  /**
+   * When set, sends go through the owner-authenticated internal endpoint
+   * instead of the public runtime endpoint — private agents answer without
+   * Public access. Pass a stable (memoised) object.
+   */
+  internalTransport?: InternalTestTransport;
 }): AgentChat {
   const [messages, setMessages] = useState<UIMessage[]>(
     () => initialMessages ?? [],
@@ -838,12 +903,26 @@ export function useAgentChat({
       subagentMessageIdsRef.current = {};
 
       try {
-        if (!coreEndpointOk) {
+        if (!internalTransport && !coreEndpointOk) {
           throw new Error(coreEndpointMessage);
         }
 
         let streamBody: ReadableStream<Uint8Array> | null = null;
+        if (internalTransport) {
+          const internalResult = await startInternalSseStream({
+            transport: internalTransport,
+            message: trimmed,
+            sessionId: sessionIdRef.current,
+            signal: controller.signal,
+          });
+          streamBody = internalResult.stream;
+          if (internalResult.sessionId) {
+            sessionIdRef.current = internalResult.sessionId;
+            setSessionId(internalResult.sessionId);
+          }
+        }
         if (
+          !streamBody &&
           webSocketEnabled &&
           typeof window !== "undefined" &&
           "WebSocket" in window
@@ -986,16 +1065,32 @@ export function useAgentChat({
 
                 return;
               }
-              // The runtime frames stream errors as `{type:"error", error}`,
-              // which fails the schema (it wants `errorText`) and used to be
-              // dropped here — leaving the chat on "Thinking …" forever when
-              // e.g. the provider API key is missing. Re-frame, don't drop.
+              // The runtime's SSE frames differ from the schema in two known
+              // ways — deltas carry `text` where it wants `delta`, and errors
+              // carry `error` where it wants `errorText` — and used to be
+              // dropped here, leaving an empty reply or an endless
+              // "Thinking …". Re-frame them (same fix the WebSocket path
+              // applies) instead of dropping.
               const errorText = runtimeStreamErrorText(result.rawValue);
               if (errorText !== null) {
                 transformController.enqueue({
                   type: "error",
                   errorText: errorText,
                 });
+
+                return;
+              }
+              const raw = result.rawValue as
+                ({ type?: unknown } & Record<string, unknown>) | null;
+              if (raw && typeof raw.type === "string") {
+                const reframed = toUiMessageChunk(
+                  raw as { type: string } & Record<string, unknown>,
+                );
+                if (reframed !== raw) {
+                  transformController.enqueue(
+                    reframed as (typeof result & { success: true })["value"],
+                  );
+                }
               }
             },
           }),
@@ -1067,6 +1162,7 @@ export function useAgentChat({
       baseUrl,
       websocketBaseUrl,
       webSocketEnabled,
+      internalTransport,
     ],
   );
 

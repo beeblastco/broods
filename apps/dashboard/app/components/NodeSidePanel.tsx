@@ -791,6 +791,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setActiveTab("details");
   }, []);
 
+  // Mirrors DetailsTab's read of the per-agent public-endpoint opt-in; the
+  // Test tab uses it to choose the internal (owner-auth) transport.
+  const agentPublicAccess =
+    (agentConfig?.extraConfig as Record<string, unknown> | undefined)
+      ?.publicAccess === true;
+
   // Warmed from the tab trigger only. Preloading on open cost every panel view
   // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
   // was ever used; intent to open it lands early enough to hide the fetch.
@@ -1068,6 +1074,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   nodeColor={nodeData?.properties?.color}
                   onOpenDetails={openDetailsTab}
                   agentConfigId={agentConfigId}
+                  publicAccess={agentPublicAccess}
                 />
               ) : node ? (
                 <ToolTestTab

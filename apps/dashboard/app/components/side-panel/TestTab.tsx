@@ -15,7 +15,12 @@ import {
 } from "@/app/components/ui/input-group";
 import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
-import { useAgentChat } from "@/app/hooks/useAgentChat";
+import {
+  useAgentChat,
+  type InternalTestTransport,
+} from "@/app/hooks/useAgentChat";
+import { convexSiteUrl } from "@/app/lib/convexSite";
+import { useAccessToken } from "@workos-inc/authkit-nextjs/components";
 import {
   resolveChatError,
   type ChatErrorActionKind,
@@ -46,7 +51,7 @@ import {
   X,
 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 /**
@@ -187,6 +192,7 @@ export function TestTab({
   nodeColor,
   onOpenDetails,
   agentConfigId,
+  publicAccess,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
@@ -196,7 +202,25 @@ export function TestTab({
   onOpenDetails?: () => void;
   /** Enables persisted conversation history when present. */
   agentConfigId?: Id<"agentConfigs">;
+  /** Whether the agent's public endpoint is enabled (Details toggle). */
+  publicAccess?: boolean;
 }): React.JSX.Element {
+  const { getAccessToken } = useAccessToken();
+  // Private agents test through the owner-authenticated internal endpoint —
+  // Public access is no longer a prerequisite for pressing Test. Public
+  // agents keep the streaming WebSocket path (with its subagent frames).
+  const internalTransport = useMemo<InternalTestTransport | undefined>(() => {
+    if (publicAccess === true || !agentConfigId) return undefined;
+    const siteUrl = convexSiteUrl();
+    if (!siteUrl) return undefined;
+
+    return {
+      invokeUrl: `${siteUrl}/v1/dashboard/test-agent`,
+      configId: agentConfigId,
+      fetchToken: async () => (await getAccessToken()) ?? null,
+    };
+  }, [publicAccess, agentConfigId, getAccessToken]);
+
   if (!activeDeployment) {
     return (
       <div className="flex flex-1 items-center justify-center p-4">
@@ -234,6 +258,7 @@ export function TestTab({
     nodeColor: nodeColor,
     stageSlug: activeDeployment.stageSlug,
     onOpenDetails: onOpenDetails,
+    internalTransport: internalTransport,
   };
 
   return agentConfigId ? (
@@ -268,6 +293,7 @@ function ConversationChat({
   nodeColor?: string;
   stageSlug?: string;
   onOpenDetails?: () => void;
+  internalTransport?: InternalTestTransport;
   agentConfigId: Id<"agentConfigs">;
 }) {
   const convex = useConvex();
@@ -639,6 +665,7 @@ function ChatWindow({
   nodeColor,
   stageSlug,
   onOpenDetails,
+  internalTransport,
   initialMessages,
   initialSessionId,
   onNewChat,
@@ -650,6 +677,8 @@ function ChatWindow({
   nodeColor?: string;
   stageSlug?: string;
   onOpenDetails?: () => void;
+  /** Routes sends through the owner-authenticated internal endpoint. */
+  internalTransport?: InternalTestTransport;
   /** Persisted transcript to hydrate with (remount via `key` to switch). */
   initialMessages?: UIMessage[];
   /** Conversation key the next send continues. */
@@ -666,6 +695,7 @@ function ChatWindow({
     webSocketEnabled: true,
     initialMessages: initialMessages,
     initialSessionId: initialSessionId,
+    internalTransport: internalTransport,
   });
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
