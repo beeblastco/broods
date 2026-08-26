@@ -100,10 +100,16 @@ export async function promptSecret(label: string): Promise<string> {
   }
 }
 
+/**
+ * Free-text prompt with an editable default. Returns the default (or "") when
+ * stdin is not a TTY, so a CI run errors on the missing value instead of
+ * hanging on a question nobody can answer.
+ */
 export async function promptText(
   label: string,
   defaultValue?: string,
 ): Promise<string> {
+  if (!input.isTTY) return defaultValue ?? "";
   const rl = createInterface({ input: input, output: output });
   try {
     const pending = rl.question(`${label}: `);

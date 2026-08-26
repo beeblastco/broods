@@ -11,6 +11,7 @@ import { authKit } from "./auth";
 import { exchange as cliAuthExchange } from "./cliAuthHttp";
 import { handle as cliHttp } from "./cliHttp";
 import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
+import { handle as cliProjectsHttp } from "./cliProjectsHttp";
 import { handle as cliStagesHttp } from "./cliStagesHttp";
 import { handle as configHttp } from "./configHttp";
 
@@ -46,6 +47,20 @@ http.route({
   path: "/v1/account/onboarding",
   method: "POST",
   handler: cliOnboardingHttp,
+});
+
+// Bare `/v1/account/projects` only: the `/v1/account/projects/` prefix routes
+// below carry a project name and belong to the deploy-key handler.
+http.route({
+  path: "/v1/account/projects",
+  method: "GET",
+  handler: cliProjectsHttp,
+});
+
+http.route({
+  path: "/v1/account/projects",
+  method: "DELETE",
+  handler: cliProjectsHttp,
 });
 
 http.route({

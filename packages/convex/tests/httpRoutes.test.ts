@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import http from "../http";
 import { handle as cliHttp } from "../cliHttp";
+import { handle as cliProjectsHttp } from "../cliProjectsHttp";
 import { handle as cliStagesHttp } from "../cliStagesHttp";
 
 // A handler that configHttp knows how to dispatch is still a 404 until the
@@ -88,6 +89,18 @@ describe("config-plane HTTP routes", () => {
       const route = http.lookup("/v1/account/stages", method);
       expect(route, `${method} /v1/account/stages`).toBeTruthy();
       expect(route?.[0], `${method} /v1/account/stages`).toBe(cliStagesHttp);
+    }
+  });
+
+  // The bare path sits directly above the `/v1/account/projects/` pathPrefix
+  // that cliHttp owns, so assert which handler wins rather than truthiness.
+  it("mounts the CLI project surface on its own handler", () => {
+    for (const method of ["GET", "DELETE"] as const) {
+      const route = http.lookup("/v1/account/projects", method);
+      expect(route, `${method} /v1/account/projects`).toBeTruthy();
+      expect(route?.[0], `${method} /v1/account/projects`).toBe(
+        cliProjectsHttp,
+      );
     }
   });
 

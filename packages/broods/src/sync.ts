@@ -85,6 +85,21 @@ export interface CliStage {
   updatedAt: number;
 }
 
+/** A project of the logged-in account's org, with the counts `broods project` prints. */
+export interface CliProject {
+  id: string;
+  name: string;
+  slug: string;
+  /** No stage, agent, variable, deployment or workspace file left in it. */
+  empty: boolean;
+  stageCount: number;
+  agentCount: number;
+  variableCount: number;
+  deploymentCount: number;
+  fileCount: number;
+  updatedAt: number;
+}
+
 /** A stored environment variable as listed by the CLI (name only; value is write-only). */
 export interface CliEnvVar {
   name: string;
@@ -294,7 +309,7 @@ export class BroodsSyncClient {
         },
       },
     );
-    assertStageRouteMounted(response);
+    assertRouteMounted(response, "/v1/account/stages", "broods stage");
     await assertOk(response, "List stages failed");
     const payload = (await response.json()) as { stages?: CliStage[] };
 
@@ -318,13 +333,55 @@ export class BroodsSyncClient {
         ...(duplicateFrom ? { from: duplicateFrom } : {}),
       }),
     });
-    assertStageRouteMounted(response);
+    assertRouteMounted(response, "/v1/account/stages", "broods stage");
     await assertOk(response, "Create stage failed");
 
     return (await response.json()) as {
       stage: CliStage;
       clonedFrom: string | null;
     };
+  }
+
+  /** Every project in the logged-in account's org, empty ones sorted last. */
+  async listProjects(): Promise<CliProject[]> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/projects`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+      },
+    );
+    assertRouteMounted(response, "/v1/account/projects", "broods project");
+    await assertOk(response, "List projects failed");
+    const payload = (await response.json()) as { projects?: CliProject[] };
+
+    return payload.projects ?? [];
+  }
+
+  /**
+   * Deletes a project and everything under it: stages, agents, canvas, env
+   * vars, crons and workspace files. Takes the project id from `listProjects`
+   * (names are not unique). Returns what the project held, or null when the id
+   * matches nothing.
+   */
+  async deleteProject(projectId: string): Promise<CliProject | null> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
+      {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+      },
+    );
+    assertRouteMounted(response, "/v1/account/projects", "broods project");
+    if (response.status === 404) return null;
+    await assertOk(response, "Delete project failed");
+    const payload = (await response.json()) as { deleted?: CliProject };
+
+    return payload.deleted ?? null;
   }
 
   async createOnboardingOrg(name: string): Promise<CliOnboardingContext> {
@@ -552,16 +609,20 @@ function sortValue(value: unknown): unknown {
 }
 
 /**
- * A 404 the router produced (rather than the handler) means the deployment
- * predates `/v1/account/stages`, which reads as "project not found" otherwise.
+ * A 404 that is not JSON came from the router, not the handler: the deployment
+ * predates the route. Says so, rather than letting it read as "not found".
  */
-function assertStageRouteMounted(response: Response): void {
+function assertRouteMounted(
+  response: Response,
+  route: string,
+  command: string,
+): void {
   if (response.status !== 404) return;
   const contentType = response.headers.get("Content-Type") ?? "";
   if (contentType.includes("application/json")) return;
 
   throw new Error(
-    "This broods deployment has no /v1/account/stages route yet. Update the backend to use `broods stage`.",
+    `This broods deployment has no ${route} route yet. Update the backend to use \`${command}\`.`,
   );
 }
 
