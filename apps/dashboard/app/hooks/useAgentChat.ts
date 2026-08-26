@@ -77,8 +77,11 @@ type WsServerMessage =
  * everything else passes through untouched. Without this the schema rejected
  * every delta, the transform silently dropped it, and the chat sat on
  * "Thinking …" forever while the agent was in fact answering correctly.
+ *
+ * Exported for the frame-translation tests, which replay live-captured
+ * runtime frames through this exact function.
  */
-function toUiMessageChunk(
+export function toUiMessageChunk(
   part: { type: string } & Record<string, unknown>,
 ): { type: string } & Record<string, unknown> {
   // Same field mismatch for error frames: the runtime says `error`, the
@@ -93,6 +96,54 @@ function toUiMessageChunk(
 
     return { ...errorRest, type: part.type, errorText: error };
   }
+
+  // Tool frames arrive as `streamText` full-stream parts, which the UI chunk
+  // schema does not accept — without these mappings every one was silently
+  // dropped and tool use was invisible in the chat. Shapes verified against
+  // a live frame dump (see ticket 14):
+  //   tool-input-start/-delta carry the call id as `id` (UI wants
+  //   `toolCallId`) and the delta as `delta` (UI wants `inputTextDelta`);
+  //   `tool-call` -> `tool-input-available`; `tool-result` ->
+  //   `tool-output-available`; `tool-error` -> `tool-output-error` with a
+  //   string `errorText`. `tool-input-end` has no UI equivalent (the
+  //   tool-call frame that follows carries the final input) and is dropped
+  //   by the schema, which is correct.
+  if (part.type === "tool-input-start" && typeof part.id === "string") {
+    const { id, ...rest } = part;
+
+    return { ...rest, type: part.type, toolCallId: id };
+  }
+  if (
+    part.type === "tool-input-delta" &&
+    typeof part.id === "string" &&
+    typeof part.delta === "string"
+  ) {
+    const { id, delta, ...rest } = part;
+
+    return {
+      ...rest,
+      type: part.type,
+      toolCallId: id,
+      inputTextDelta: delta,
+    };
+  }
+  if (part.type === "tool-call" && typeof part.toolCallId === "string") {
+    return { ...part, type: "tool-input-available" };
+  }
+  if (part.type === "tool-result" && typeof part.toolCallId === "string") {
+    return { ...part, type: "tool-output-available" };
+  }
+  if (part.type === "tool-error" && typeof part.toolCallId === "string") {
+    const { error, ...rest } = part;
+
+    return {
+      ...rest,
+      type: "tool-output-error",
+      errorText:
+        typeof error === "string" ? error : JSON.stringify(error ?? null),
+    };
+  }
+
   const isDelta = part.type === "text-delta" || part.type === "reasoning-delta";
   if (!isDelta || typeof part.text !== "string" || "delta" in part) {
     return part;

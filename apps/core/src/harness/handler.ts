@@ -32,7 +32,11 @@ import {
   type RequestContext,
 } from "../shared/http.ts";
 import { logDebug, logError, logInfo } from "../shared/log.ts";
-import { LiveNatsPublisher, type NatsPublisher } from "../shared/nats.ts";
+import {
+  createOrderedFencedPublisher,
+  LiveNatsPublisher,
+  type NatsPublisher,
+} from "../shared/nats.ts";
 import { runWithObservabilityScope } from "../shared/otel.ts";
 import {
   accountAgentScopedKey,
@@ -974,13 +978,14 @@ async function handleNatsWorkerRequest(
 
     ({ session } = turn);
     const { turnContext } = turn;
-    const fencedPublisher: NatsPublisher = {
-      publish: async (data) => {
-        await session!.assertCurrentOwner();
-        await publisher.publish(data);
-      },
-      close: () => publisher.close(),
-    };
+    // Ownership fences stay concurrent, but the sends are serialized:
+    // `pipeAgentNatsStream` fires publishes without awaiting, and letting each
+    // race its own ownership round-trip stored frames out of stream order
+    // (the WebSocket path then delivered text-delta before text-start).
+    const fencedPublisher: NatsPublisher = createOrderedFencedPublisher(
+      publisher,
+      () => session!.assertCurrentOwner(),
+    );
     if (!isRunnableModelInput(turnContext.messages.at(-1))) {
       transferred = await settleFailedIngressAndDrain(
         session,
