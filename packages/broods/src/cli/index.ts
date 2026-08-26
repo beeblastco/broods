@@ -26,6 +26,7 @@ import {
   type CliOnboardingContext,
   type CliOnboardingOrg,
   type CliOnboardingProject,
+  type CliProject,
   type CliStage,
   diffManifests,
   BroodsSyncClient,
@@ -98,6 +99,7 @@ Usage: broods <command> [subcommand] [options]
 
 Project:
   init                 Create a broods/ project shell
+  project              List the org's projects, or delete one
   dev                  Watch + sync the current stage and live-tail agent logs
   diff                 Show local desired state vs remote state
   deploy               Sync Production once and write BROODS_API_KEY to .env.local
@@ -217,6 +219,19 @@ A prompt is sent as the first turn; redirected output streams plain text and
 therefore requires a prompt.
 
 ${GLOBAL_OPTIONS}`,
+  project: `Usage: broods project <list|delete> [name]
+
+Subcommands:
+  list                 List the org's projects and what each one still holds
+  delete <name>        Delete a project and everything under it
+
+Deleting takes the project's stages, agents, canvas, environment variables and
+workspace files with it, on every stage. There is no undo.
+
+Options:
+  --yes                 Skip the confirmation prompt
+
+${GLOBAL_OPTIONS}`,
   stage: `Usage: broods stage <list|use|create> [name]
 
 Subcommands:
@@ -291,6 +306,10 @@ async function main(): Promise<void> {
       return;
     case "org":
       await orgCommand(args);
+
+      return;
+    case "project":
+      await projectCommand(args);
 
       return;
     case "stage":
@@ -595,6 +614,90 @@ async function orgCommand(args: string[]): Promise<void> {
     await client.createOnboardingOrg(name),
     args,
   );
+}
+
+async function projectCommand(args: string[]): Promise<void> {
+  const [subcommand, needle] = positionalArgs(args);
+  if (!subcommand) {
+    console.log(commandHelp("project"));
+
+    return;
+  }
+  const isList = subcommand === "list" || subcommand === "ls";
+  const isDelete = subcommand === "delete" || subcommand === "rm";
+  // Reject a typo before the login round trip, or it surfaces as a network
+  // error instead of the usage the caller actually needs.
+  if (!isList && !isDelete) {
+    throw new Error(
+      `Unknown project subcommand: ${subcommand}\n\n${commandHelp("project")}`,
+    );
+  }
+
+  const runtime = loadBroodsRuntimeConfig();
+  const dashboardUrl =
+    optionValue(args, "--dashboard-url") ??
+    runtime.dashboardUrl ??
+    DEFAULT_DASHBOARD_URL;
+  const scope = targetScope(args);
+  const auth = await requireAuthOrLogin(dashboardUrl);
+  const client = new BroodsSyncClient({
+    baseUrl: auth.baseUrl,
+    token: auth.token,
+  });
+
+  if (isList) {
+    const projects = await client.listProjects();
+    if (projects.length === 0) {
+      console.log("This org has no projects yet. `broods dev` creates one.");
+
+      return;
+    }
+    console.log("Projects:");
+    for (const project of projects) {
+      console.log(formatProject(project, scope.project));
+    }
+    const empty = projects.filter((project) => project.empty);
+    if (empty.length > 0) {
+      console.log(
+        `\n${empty.length} empty project(s). Delete one with \`broods project delete <name>\`.`,
+      );
+    }
+
+    return;
+  }
+
+  const name = needle ?? (await promptText("Project to delete", ""));
+  if (!name.trim()) throw new Error("Project name is required.");
+  const projects = await client.listProjects();
+  const target = projects.find(
+    (project) => project.name === name || project.slug === name,
+  );
+  if (!target) {
+    throw new Error(
+      `No project named "${name}". Existing: ${projects.map((project) => project.name).join(", ")}.`,
+    );
+  }
+  // Naming what dies is the whole safety story here: the counts are the only
+  // signal separating an abandoned shell from somebody's live stage.
+  if (!hasFlag(args, "--yes")) {
+    console.log(`Deleting ${target.name} removes ${describeContents(target)}.`);
+    const confirmed = await promptConfirm(
+      `Permanently delete project ${target.name}?`,
+    );
+    if (!confirmed) {
+      console.log("Left it alone. Pass --yes to skip this prompt.");
+
+      return;
+    }
+  }
+  const deleted = await client.deleteProject(target.name);
+  if (!deleted) throw new Error(`Project ${target.name} was not found.`);
+  console.log(`Deleted project ${deleted.name} (${describeContents(deleted)})`);
+  if (deleted.name === scope.project) {
+    console.log(
+      "That was the project this directory points at. Update BROODS_PROJECT in .env.local.",
+    );
+  }
 }
 
 async function stageCommand(args: string[]): Promise<void> {
@@ -1199,6 +1302,21 @@ function formatProjectChoice(project: CliOnboardingProject): string {
   return project.slug === project.name
     ? project.name
     : `${project.name} (${project.slug})`;
+}
+
+function describeContents(project: CliProject): string {
+  return project.empty
+    ? "nothing (it is already empty)"
+    : `${project.stageCount} stage(s), ${project.agentCount} agent(s), ${project.variableCount} env var(s), ${project.deploymentCount} deployment(s)`;
+}
+
+function formatProject(project: CliProject, current: string): string {
+  const contents = project.empty ? "empty" : describeContents(project);
+
+  return formatChoiceRow(
+    `${project.name} — ${contents}`,
+    project.name === current,
+  );
 }
 
 function formatStage(stage: CliStage, current: string): string {

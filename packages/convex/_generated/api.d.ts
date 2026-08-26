@@ -29,6 +29,8 @@ import type * as cliAuth from "../cliAuth.js";
 import type * as cliAuthHttp from "../cliAuthHttp.js";
 import type * as cliHttp from "../cliHttp.js";
 import type * as cliOnboardingHttp from "../cliOnboardingHttp.js";
+import type * as cliProjects from "../cliProjects.js";
+import type * as cliProjectsHttp from "../cliProjectsHttp.js";
 import type * as cliStages from "../cliStages.js";
 import type * as cliStagesHttp from "../cliStagesHttp.js";
 import type * as cliSync from "../cliSync.js";
@@ -134,6 +136,8 @@ declare const fullApi: ApiFromModules<{
   cliAuthHttp: typeof cliAuthHttp;
   cliHttp: typeof cliHttp;
   cliOnboardingHttp: typeof cliOnboardingHttp;
+  cliProjects: typeof cliProjects;
+  cliProjectsHttp: typeof cliProjectsHttp;
   cliStages: typeof cliStages;
   cliStagesHttp: typeof cliStagesHttp;
   cliSync: typeof cliSync;
