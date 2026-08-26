@@ -815,6 +815,24 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
 
+  // Enabled skill names for the Agent tab's /slash autocomplete — same
+  // source of truth as the Skills tab (skills.allowed trailing segments).
+  const agentEnabledSkillNames = useMemo(() => {
+    const skills = readAgentBranch<Record<string, unknown>>(
+      agentConfig as FlatAgentConfig | undefined,
+      "skills",
+    );
+    const allowed = Array.isArray(skills.allowed)
+      ? (skills.allowed as string[])
+      : [];
+
+    return allowed.map((ref) => {
+      const slash = ref.lastIndexOf("/");
+
+      return slash >= 0 ? ref.slice(slash + 1) : ref;
+    });
+  }, [agentConfig]);
+
   // Warmed from the tab trigger only. Preloading on open cost every panel view
   // the test bundle (Streamdown, Mermaid, KaTeX, Shiki) whether or not the tab
   // was ever used; intent to open it lands early enough to hide the fetch.
@@ -1099,6 +1117,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onOpenDetails={openDetailsTab}
                 agentConfigId={agentConfigId}
                 publicAccess={agentPublicAccess}
+                enabledSkillNames={agentEnabledSkillNames}
               />
             </TabsContent>
           )}

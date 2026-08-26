@@ -31,6 +31,11 @@ import {
   uiMessagesFromStoredEvents,
   type StoredConversationEventRow,
 } from "@/app/lib/conversationHistory";
+import {
+  matchSkillSlashPrefix,
+  parseSkillSlash,
+  skillSlashMessage,
+} from "@/app/lib/skillSlash";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
@@ -193,6 +198,7 @@ export function TestTab({
   onOpenDetails,
   agentConfigId,
   publicAccess,
+  enabledSkillNames,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
@@ -204,6 +210,8 @@ export function TestTab({
   agentConfigId?: Id<"agentConfigs">;
   /** Whether the agent's public endpoint is enabled (Details toggle). */
   publicAccess?: boolean;
+  /** Enabled skill names for the composer's /slash autocomplete. */
+  enabledSkillNames?: string[];
 }): React.JSX.Element {
   const { getAccessToken } = useAccessToken();
   // Private agents test through the owner-authenticated internal endpoint —
@@ -259,6 +267,7 @@ export function TestTab({
     stageSlug: activeDeployment.stageSlug,
     onOpenDetails: onOpenDetails,
     internalTransport: internalTransport,
+    enabledSkillNames: enabledSkillNames,
   };
 
   return agentConfigId ? (
@@ -294,6 +303,7 @@ function ConversationChat({
   stageSlug?: string;
   onOpenDetails?: () => void;
   internalTransport?: InternalTestTransport;
+  enabledSkillNames?: string[];
   agentConfigId: Id<"agentConfigs">;
 }) {
   const convex = useConvex();
@@ -669,6 +679,7 @@ function ChatWindow({
   initialMessages,
   initialSessionId,
   onNewChat,
+  enabledSkillNames,
 }: {
   endpointId: string;
   agentId: string;
@@ -685,6 +696,8 @@ function ChatWindow({
   initialSessionId?: string;
   /** Overrides the composer's reset control when history drives the chat. */
   onNewChat?: () => void;
+  /** Enabled skill names for the /slash autocomplete. */
+  enabledSkillNames?: string[];
 }) {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
@@ -747,10 +760,19 @@ function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  /** Expand a leading /skill-name into an explicit load-skill ask. */
+  function outgoingText(raw: string): string {
+    const slash = parseSkillSlash(raw.trim(), enabledSkillNames ?? []);
+
+    return slash ? skillSlashMessage(slash) : raw;
+  }
+
+  const slashMatches = matchSkillSlashPrefix(input, enabledSkillNames ?? []);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!input.trim() || status === "streaming") return;
-    sendMessage(input);
+    sendMessage(outgoingText(input));
     setInput("");
   }
 
@@ -784,6 +806,20 @@ function ChatWindow({
 
       {/* Input bar */}
       <form onSubmit={handleSubmit} className="shrink-0 p-3">
+        {slashMatches.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {slashMatches.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="cursor-pointer rounded-md border border-border bg-muted/50 px-2 py-0.5 font-mono text-[11px] text-foreground hover:bg-muted transition-colors"
+                onClick={() => setInput(`/${name} `)}
+              >
+                /{name}
+              </button>
+            ))}
+          </div>
+        )}
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
             value={input}
@@ -793,8 +829,13 @@ function ChatWindow({
             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                if (slashMatches.length > 0 && slashMatches[0]) {
+                  setInput(`/${slashMatches[0]} `);
+
+                  return;
+                }
                 if (input.trim() && status !== "streaming") {
-                  sendMessage(input);
+                  sendMessage(outgoingText(input));
                   setInput("");
                 }
               }

@@ -17,16 +17,9 @@ import {
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
 import { includesSkillRef, withoutSkillRef } from "@/app/lib/skillRefs";
-import {
-  clearSkillsBearerToken,
-  getSkillsBearerToken,
-  setSkillsBearerToken,
-} from "@/app/lib/skillsCredentials";
 import { api } from "@broods/convex/_generated/api";
 import { useAction } from "convex/react";
 import {
-  Eye,
-  EyeOff,
   FolderOpen,
   GitBranch,
   Loader2,
@@ -41,38 +34,6 @@ type SkillsSlice = {
   enabled?: boolean;
   allowed?: string[];
 };
-
-function TokenInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const [show, setShow] = useState(false);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      <Input
-        type={show ? "text" : "password"}
-        value={value}
-        placeholder="fp_acct_…"
-        className="h-7 flex-1 font-mono text-[11px]"
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <Button
-        size="icon-xs"
-        variant="ghost"
-        className="cursor-pointer"
-        type="button"
-        onClick={() => setShow((v) => !v)}
-        aria-label={show ? "Hide token" : "Show token"}
-      >
-        {show ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-      </Button>
-    </div>
-  );
-}
 
 function SourceCard({
   icon,
@@ -102,7 +63,6 @@ function SourceCard({
 function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
   const createFromGithub = useAction(api.skillsPublic.createFromGithub);
   const [url, setUrl] = useState("");
-  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
   const [status, setStatus] = useState<{
     type: "idle" | "busy" | "error";
     message?: string;
@@ -110,23 +70,16 @@ function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
 
   async function handleImport() {
     const trimmedUrl = url.trim();
-    const trimmedToken = token.trim();
-    if (!trimmedUrl || !trimmedToken) return;
+    if (!trimmedUrl) return;
 
-    setSkillsBearerToken(trimmedToken);
     setStatus({ type: "busy" });
     try {
-      const result = await createFromGithub({
-        bearerToken: trimmedToken,
-        githubUrl: trimmedUrl,
-      });
+      // Signed-in identity authenticates the call — the account secret never
+      // touches the browser (ticket 17's auth fix).
+      const result = await createFromGithub({ githubUrl: trimmedUrl });
       onSuccess(result.path);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
-        clearSkillsBearerToken();
-        setToken("");
-      }
       setStatus({ type: "error", message: msg });
     }
   }
@@ -149,16 +102,6 @@ function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Your broods Bearer token (starts with{" "}
-          <code className="rounded bg-muted px-1">fp_acct_</code>). Saved in
-          session only.
-        </p>
-        <TokenInput value={token} onChange={setToken} />
-      </div>
-
       {status.type === "error" && (
         <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
           {status.message}
@@ -168,7 +111,7 @@ function GithubForm({ onSuccess }: { onSuccess: (skillPath: string) => void }) {
       <Button
         size="sm"
         className="h-8 cursor-pointer gap-1.5 text-xs disabled:cursor-not-allowed"
-        disabled={!url.trim() || !token.trim() || status.type === "busy"}
+        disabled={!url.trim() || status.type === "busy"}
         onClick={() => void handleImport()}
       >
         {status.type === "busy" && (
@@ -191,7 +134,6 @@ function JsonForm({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
-  const [token, setToken] = useState(() => getSkillsBearerToken() ?? "");
   const [status, setStatus] = useState<{
     type: "idle" | "busy" | "success" | "error";
     message?: string;
@@ -200,20 +142,14 @@ function JsonForm({
   const nameValid =
     /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/.test(name) || /^[a-z0-9]$/.test(name);
   const canSubmit =
-    nameValid &&
-    description.trim() &&
-    content.trim() &&
-    token.trim() &&
-    status.type !== "busy";
+    nameValid && description.trim() && content.trim() && status.type !== "busy";
   const isUpdate = !!existingPath || status.type === "success";
 
   async function handleSubmit() {
     if (!canSubmit) return;
-    setSkillsBearerToken(token.trim());
     setStatus({ type: "busy" });
     try {
       const result = await createFromJson({
-        bearerToken: token.trim(),
         name: name,
         description: description.trim(),
         content: content.trim(),
@@ -222,10 +158,6 @@ function JsonForm({
       onSuccess(result.path);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
-        clearSkillsBearerToken();
-        setToken("");
-      }
       setStatus({ type: "error", message: msg });
     }
   }
@@ -280,14 +212,6 @@ function JsonForm({
           placeholder="# My Skill&#10;&#10;When the user asks about X, you should..."
           className="min-h-25 resize-y font-mono text-xs"
         />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <SectionHeader>Account token</SectionHeader>
-        <p className="text-[11px] text-muted-foreground">
-          Your broods Bearer token. Saved in session only.
-        </p>
-        <TokenInput value={token} onChange={setToken} />
       </div>
 
       {status.type === "error" && (

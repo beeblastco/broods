@@ -66,7 +66,6 @@ export type StageDeployment = {
   updatedAt: number;
 };
 
-
 export type AgentProvider = AccountModelProviderName;
 type AgentProviderConfig = Partial<Record<AgentProvider, { apiKey?: string }>>;
 type RuntimeVariable = { key: string; value: string };
@@ -89,7 +88,6 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   xhigh: "Extra high",
   max: "Max",
 };
-
 
 export function DetailsTab({
   agentConfig,
