@@ -26,6 +26,7 @@ import type * as awsWorkspaceFiles from "../awsWorkspaceFiles.js";
 import type * as canvas from "../canvas.js";
 import type * as channelConnections from "../channelConnections.js";
 import type * as channelRecords from "../channelRecords.js";
+import type * as channelsPublic from "../channelsPublic.js";
 import type * as cliAuth from "../cliAuth.js";
 import type * as cliAuthHttp from "../cliAuthHttp.js";
 import type * as cliHttp from "../cliHttp.js";
@@ -141,6 +142,7 @@ declare const fullApi: ApiFromModules<{
   canvas: typeof canvas;
   channelConnections: typeof channelConnections;
   channelRecords: typeof channelRecords;
+  channelsPublic: typeof channelsPublic;
   cliAuth: typeof cliAuth;
   cliAuthHttp: typeof cliAuthHttp;
   cliHttp: typeof cliHttp;
