@@ -110,6 +110,9 @@ export function workspaceRootFor(config: SandboxExecutorConfig): string {
     : DEFAULT_WORKSPACE_ROOT;
 }
 
+// The reservation key a namespace-less run reconnects on. resolveAgentRuntime
+// derives one per agent for a persistent agent sandbox, so this normally reads back
+// a value the runtime supplied rather than one the author had to write.
 function statelessReservationKeyFor(
   config: SandboxExecutorConfig,
 ): string | undefined {

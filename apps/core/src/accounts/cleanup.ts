@@ -16,7 +16,10 @@ import { deleteS3Prefix } from "../shared/s3.ts";
 import { releaseReservedSandboxes } from "../shared/sandbox-cleanup.ts";
 import { skillsBucketName } from "../shared/skills.ts";
 import { getStorage } from "../shared/storage.ts";
-import { workspaceNamespace } from "../shared/workspaces.ts";
+import {
+  agentSandboxReservationKey,
+  workspaceNamespace,
+} from "../shared/workspaces.ts";
 
 const ACCOUNT_RUNTIME_DELETE_MAX_BATCHES = 100;
 
@@ -37,9 +40,28 @@ export async function deleteAccountRuntimeData(
   const workspaces = await getStorage().workspaceConfigs.list(
     account.accountId,
   );
+  const agents = await getStorage().agents.list(account.accountId);
+  // Two kinds of reservation key: a workspace reserves on its namespace, an agent's
+  // own sandbox on the key derived for it. The release path treats them the same, so
+  // both lists go in together — miss the second and the machines leak at the provider.
   const reservedSandboxesReleased = await releaseReservedSandboxes(
     account.accountId,
-    workspaces.map((w) => workspaceNamespace(account.accountId, w.workspaceId)),
+    [
+      ...workspaces.map((w) =>
+        workspaceNamespace(account.accountId, w.workspaceId),
+      ),
+      ...agents.flatMap((agent) =>
+        typeof agent.config.sandbox === "string" && agent.config.sandbox
+          ? [
+              agentSandboxReservationKey(
+                account.accountId,
+                agent.agentId,
+                agent.config.sandbox,
+              ),
+            ]
+          : [],
+      ),
+    ],
   );
   const [runtimeDeleted, filesystemObjectsDeleted] = await Promise.all([
     deleteConvexRuntimeRows(account.accountId),

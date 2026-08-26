@@ -545,6 +545,10 @@ export const reservedSandbox = defineSandbox({
 
 Supported providers: `sandbox`, `lambda`, `e2b`, `daytona`, `vercel`.
 
+`persistent: true` reserves a long-lived machine: one per workspace where a workspace is
+attached, and one per agent where none is. `options.reservationKey` pins that identity
+yourself — two sandboxes carrying the same key share one machine.
+
 See [Workspace & Sandbox](workspace/index.md) for the full sandbox model.
 
 ## Workspaces

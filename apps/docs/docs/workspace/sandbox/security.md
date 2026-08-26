@@ -46,8 +46,8 @@ and **workspace scoping** (a run can only touch its own files).
   release. `persistent` is what makes the filesystem outlive the call; nothing makes it
   outlive the reservation. So the mount is still the only storage that survives the sandbox
   itself — the gate is about that, not about how long the machine happens to stick around.
-  (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so there
-  `persistent` also needs an explicit `options.reservationKey` to mean anything.)
+  (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so it
+  reserves on a key derived per agent — or on the `options.reservationKey` you pin.)
   See [Network](./lambda.md) for the egress boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 

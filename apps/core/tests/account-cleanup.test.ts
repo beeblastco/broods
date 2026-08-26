@@ -53,6 +53,13 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
         return 0;
       },
     },
+    // Agents are listed too: an agent's own sandbox reserves on a derived key, not
+    // on a workspace namespace, so cleanup has to release both kinds.
+    agents: {
+      list: async function() {
+        return [];
+      },
+    },
     sandboxConfigs: {
       removeAllForAccount: async function () {
         return 0;

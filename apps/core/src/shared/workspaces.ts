@@ -72,6 +72,30 @@ export interface WorkspaceIsolationScope {
   partition?: ChannelPartition;
 }
 
+// Who the runtime is being resolved for. The agent's own sandbox is reserved per
+// agent, so resolution needs the agent identity as well as the account.
+export interface AgentRuntimeIdentity {
+  accountId?: string;
+  agentId?: string;
+}
+
+/**
+ * Derive the reservation key for an agent's OWN sandbox — the one a run reaches
+ * with no workspace mounted, so there is no filesystem namespace to key the
+ * reservation on. Scoped by `accountId:agentId:sandboxId`, mirroring
+ * workspaceNamespace's account-plus-record scope: the same agent reconnects to the
+ * same machine, two agents never land on one by accident, and re-pointing an agent
+ * at a different sandbox record hands it that record's machine instead of one built
+ * from the old record's image.
+ */
+export function agentSandboxReservationKey(
+  accountId: string,
+  agentId: string,
+  sandboxId: string,
+): string {
+  return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
+}
+
 /** Derive the shared filesystem namespace for a workspace record. */
 export function workspaceNamespace(
   accountId: string | undefined,
@@ -121,9 +145,10 @@ export function isolatedWorkspaceNamespace(
  */
 export async function resolveAgentRuntime(
   agentConfig: AgentConfig,
-  accountId: string | undefined,
+  identity: AgentRuntimeIdentity,
   isolationScope: WorkspaceIsolationScope = {},
 ): Promise<ResolvedAgentRuntime> {
+  const accountId = identity.accountId;
   const storage = getStorage();
   const sandboxCache = new Map<string, WorkspaceSandboxConfig>();
 
@@ -153,10 +178,11 @@ export async function resolveAgentRuntime(
     return resolved;
   }
 
-  const sandbox =
+  const sandboxId =
     typeof agentConfig.sandbox === "string" && agentConfig.sandbox.length > 0
-      ? await loadSandbox(agentConfig.sandbox)
+      ? agentConfig.sandbox
       : undefined;
+  const sandbox = sandboxId ? await loadSandbox(sandboxId) : undefined;
 
   const workspaces: ResolvedWorkspace[] = [];
   for (const ref of agentConfig.workspaces ?? []) {
@@ -218,7 +244,51 @@ export async function resolveAgentRuntime(
     });
   }
 
-  return { ...(sandbox ? { sandbox: sandbox } : {}), workspaces: workspaces };
+  // Only the agent-level copy carries the derived reservation key: it is the one a
+  // workspace-less run reaches. The copies the workspaces inherit stay untouched,
+  // because those runs key their reservation on the workspace namespace instead.
+  const agentSandbox =
+    sandbox && sandboxId
+      ? reservedAgentSandbox(sandbox, accountId, identity.agentId, sandboxId)
+      : undefined;
+
+  return {
+    ...(agentSandbox ? { sandbox: agentSandbox } : {}),
+    workspaces: workspaces,
+  };
+}
+
+/**
+ * Give a persistent agent-level sandbox the reservation key its workspace-less runs
+ * key persistence on, so `persistent: true` means "my files survive" without the
+ * author also supplying `options.reservationKey`. An explicit key always wins (pin
+ * one to share a machine deliberately), and a sandbox that is not persistent, or an
+ * identity too thin to derive from, is returned untouched.
+ */
+function reservedAgentSandbox(
+  sandbox: WorkspaceSandboxConfig,
+  accountId: string | undefined,
+  agentId: string | undefined,
+  sandboxId: string,
+): WorkspaceSandboxConfig {
+  const options = sandbox.options ?? {};
+  const pinned = options.reservationKey;
+  if (
+    sandbox.persistent !== true ||
+    !accountId ||
+    !agentId ||
+    (typeof pinned === "string" && pinned.trim().length > 0)
+  ) {
+    return sandbox;
+  }
+
+  return {
+    ...sandbox,
+    options: {
+      ...options,
+      reservationKey: agentSandboxReservationKey(accountId, agentId, sandboxId),
+    },
+  };
 }
 
 /**

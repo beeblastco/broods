@@ -750,7 +750,7 @@ export class Session {
     );
     this.resolvedRuntimePromise ??= resolveAgentRuntime(
       this.agentConfig,
-      this.accountId,
+      { accountId: this.accountId, agentId: this.agentId },
       {
         channelName:
           this.delivery?.kind === "channel"

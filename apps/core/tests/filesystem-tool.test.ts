@@ -281,6 +281,14 @@ function sandboxExecPayloads(): Array<Record<string, unknown>> {
     );
 }
 
+// Control-plane commands the executor sent, by type. One RunMicrovm across two
+// calls means the second call reconnected instead of booting its own VM.
+function microvmCommandsOfType(type: string): unknown[] {
+  return microvmSendMock.mock.calls
+    .map((call) => call[0] as { _type?: string })
+    .filter((command) => command?._type === type);
+}
+
 async function tool(
   name: "bash" | "read" | "write" | "edit" | "glob" | "grep",
   ctx: never,
@@ -533,9 +541,9 @@ describe("sandbox tool set", () => {
   });
 
   it("bash only promises a reserved standalone sandbox when it can reconnect", async () => {
-    // A run with no workspace has no namespace to key a reservation on, so
-    // `persistent` alone is not enough — claiming otherwise tells the model its
-    // files survive when index.ts is logging that those runs are ephemeral.
+    // A run with no workspace reconnects on options.reservationKey, which
+    // resolveAgentRuntime derives upstream. The tool reads it rather than deriving
+    // it, so an unkeyed config still has to describe itself as throwaway.
     const bare = await tool("bash", borrowedSandboxCtx());
     expect(bare.description).toContain("reaches durable storage");
     expect(bare.description).not.toContain("That sandbox is reserved");
@@ -551,6 +559,47 @@ describe("sandbox tool set", () => {
     const keyed = await tool("bash", ctx as never);
     expect(keyed.description).toContain("That sandbox is reserved");
     expect(keyed.description).toContain("only the workspace outlives it");
+  });
+
+  it("keeps two calls on one MicroVM when a persistent agent sandbox has no workspace", async () => {
+    // The whole point of `persistent: true`. With no workspace there is no
+    // filesystem namespace to key the reservation on, so resolveAgentRuntime
+    // derives one; without it both calls boot and terminate their own VM and the
+    // file the first one wrote is gone.
+    const { setStorageForTests } = await import("../src/shared/storage.ts");
+    const { resolveAgentRuntime } = await import("../src/shared/workspaces.ts");
+    setStorageForTests({
+      sandboxConfigs: {
+        getById: async () => ({
+          sandboxId: "sb_reserved",
+          name: "reserved",
+          config: {
+            provider: "lambda",
+            persistent: true,
+            network: { mode: "allow-all" },
+          },
+        }),
+      },
+      workspaceConfigs: { getById: async () => null },
+    } as never);
+    const resolved = await resolveAgentRuntime(
+      { sandbox: "sb_reserved" },
+      { accountId: "acct_reserved", agentId: "ag_reserved" },
+    );
+    setStorageForTests(null);
+
+    const bash = await tool("bash", {
+      workspaces: [],
+      agentSandbox: resolved.sandbox,
+      agentSandboxPermissionMode: "bypass",
+    } as never);
+    await bash.execute({ command: "echo one > state.txt" });
+    await bash.execute({ command: "cat state.txt" });
+
+    expect(microvmCommandsOfType("RunMicrovm")).toHaveLength(1);
+    // A reserved VM is never torn down after the call, which is what lets the
+    // second command read back what the first one wrote.
+    expect(microvmCommandsOfType("TerminateMicrovm")).toHaveLength(0);
   });
 
   it("bash describes the write guard only where it actually applies", async () => {

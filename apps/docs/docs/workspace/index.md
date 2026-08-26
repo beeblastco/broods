@@ -119,7 +119,7 @@ Plus the agent-level cases:
 
 | Agent references                                         | Tools exposed                                                                  |
 | -------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| sandbox, **no** workspace                                | `bash` only — **stateless** (each call is a fresh container; nothing persists) |
+| sandbox, **no** workspace                                | `bash` only — a fresh container each call, unless the sandbox is `persistent` |
 | sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)            |
 | neither sandbox nor workspace                            | none                                                                           |
 
@@ -159,12 +159,16 @@ own machine". `workspace` keeps defaulting to the **default workspace**, so rela
 keep landing in durable storage unless the model deliberately passes `sandbox: true`.
 
 "Nothing reaches durable storage" is about the **mount**, not about the machine. A
-`sandbox: true` run gets a fresh container each call — unless that sandbox is `persistent`
-**and** carries an `options.reservationKey`, which is what lets a run with no workspace
-namespace reconnect to the same reserved instance. With both set, its filesystem does
-survive between calls, until the reservation ends. Without the key, `persistent` alone
-changes nothing for these runs and the harness logs a warning saying so. Either way the
-workspace mount is the only storage that outlives the sandbox.
+`sandbox: true` run gets a fresh container each call — unless that sandbox is `persistent`,
+in which case its filesystem survives between calls until the reservation ends. A run with
+no workspace has no filesystem namespace to key that reservation on, so the harness derives
+one from `accountId:agentId:sandboxId`: each agent gets its own reserved machine, and
+re-pointing an agent at a different sandbox record gives it that record's machine rather
+than one built from the old record's image.
+
+Set `options.reservationKey` to name the reservation yourself. Two sandboxes carrying the
+same key share one machine, which is the way to put several agents on one deliberately.
+Either way the workspace mount is the only storage that outlives the sandbox.
 
 ## permissionMode
 

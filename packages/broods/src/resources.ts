@@ -105,13 +105,28 @@ export type ResourceInput<Name extends string, Config> = {
 } & Config;
 
 /**
+ * Provider-specific sandbox knobs. Open-ended, but `reservationKey` is spelled out
+ * because it is the one option the harness itself reads: it names the reserved
+ * machine a `persistent` sandbox reconnects to when no workspace is mounted. Leave
+ * it unset and each agent gets its own; pin the same string on two sandboxes to put
+ * them deliberately on one machine.
+ */
+export type SandboxDefinitionOptions = Record<string, unknown> & {
+  reservationKey?: string;
+};
+
+/**
  * Code-first sandbox config surface. Mirrors core's `SandboxConfig` but lets
  * `envVars` values be `env("NAME")` references (compiled to `${NAME}` placeholders
  * at sync time, exactly like provider `apiKey`). Add overrides here if more
  * sandbox fields should accept env refs.
  */
-export type SandboxDefinitionConfig = Omit<SandboxConfig, "envVars"> & {
+export type SandboxDefinitionConfig = Omit<
+  SandboxConfig,
+  "envVars" | "options"
+> & {
   envVars?: Record<string, string | EnvRef | undefined>;
+  options?: SandboxDefinitionOptions;
 };
 
 export type HarnessType = NonNullable<AgentConfig["harness"]>["type"];
