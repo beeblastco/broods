@@ -130,6 +130,7 @@ export function DetailsTab({
   onUpdateModelReasoning,
   onUpdatePublicAccess,
   onUpdatePolicyConfig,
+  onUpdateSystemPrompt,
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   projectId: Id<"projects"> | undefined;
@@ -164,6 +165,7 @@ export function DetailsTab({
   }) => Promise<void>;
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
   onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
+  onUpdateSystemPrompt?: (systemPrompt: string) => Promise<void>;
 }): React.JSX.Element {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
@@ -187,7 +189,17 @@ export function DetailsTab({
   const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(
     readCustomBaseUrl(agentConfig),
   );
+  const [editSystemPrompt, setEditSystemPrompt] = useState(
+    agentConfig?.systemPrompt ?? "",
+  );
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [syncedSystemPrompt, setSyncedSystemPrompt] = useState(
+    agentConfig?.systemPrompt,
+  );
+  if (agentConfig?.systemPrompt !== syncedSystemPrompt) {
+    setSyncedSystemPrompt(agentConfig?.systemPrompt);
+    setEditSystemPrompt(agentConfig?.systemPrompt ?? "");
+  }
 
   // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
   const allTools = agentConfig
@@ -492,6 +504,23 @@ export function DetailsTab({
                 running the agent.
               </p>
             )}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              System Prompt
+            </span>
+            <Textarea
+              value={editSystemPrompt}
+              onChange={(event) => setEditSystemPrompt(event.target.value)}
+              onBlur={() => {
+                if (editSystemPrompt !== (agentConfig.systemPrompt ?? "")) {
+                  void onUpdateSystemPrompt?.(editSystemPrompt);
+                }
+              }}
+              placeholder="Tell this agent how to behave, what to avoid, and how to use its skills."
+              className="min-h-28 resize-y text-xs leading-5"
+            />
           </div>
 
           {/* Reasoning — budget tokens (Anthropic/MiniMax/Google) + effort (OpenAI/Anthropic),

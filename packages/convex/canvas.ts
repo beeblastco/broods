@@ -429,6 +429,88 @@ export const getByProject = query({
   },
 });
 
+/**
+ * The single layout-persist pipeline: materialize runtime resource rows, prune
+ * orphans, and write the layout row. Shared by the dashboard's `saveLayout`
+ * and the Builder's canvas ops, so both paths get identical resource semantics.
+ * Caller must have verified project/stage ownership.
+ */
+export async function persistLayout(
+  ctx: MutationCtx,
+  args: {
+    authId: string;
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    nodes: CanvasNode[];
+    edges: Array<{
+      id: string;
+      source: string;
+      target: string;
+      animated?: boolean;
+    }>;
+  },
+): Promise<{
+  layoutId: Id<"canvasLayouts">;
+  nodes: CanvasNode[];
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    animated?: boolean;
+  }>;
+}> {
+  const now = Date.now();
+  const project = await ctx.db.get(args.projectId);
+  if (!project) throw new Error("Project not found.");
+  const account = await accountForProject(ctx, project);
+  const existing = await ctx.db
+    .query("canvasLayouts")
+    .withIndex("by_projectId_and_stageId", (q) =>
+      q.eq("projectId", args.projectId).eq("stageId", args.stageId),
+    )
+    .unique();
+  const persistedNodes = await materializeRuntimeNodes(
+    ctx,
+    account,
+    args.projectId,
+    args.stageId,
+    args.nodes,
+    (existing?.nodes ?? []) as CanvasNode[],
+  );
+  if (
+    resourceReferenceSignature(persistedNodes) !==
+    resourceReferenceSignature((existing?.nodes ?? []) as CanvasNode[])
+  ) {
+    await pruneOrphanedDashboardRows(
+      ctx,
+      account,
+      args.stageId,
+      persistedNodes,
+    );
+  }
+
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      nodes: persistedNodes,
+      edges: args.edges,
+      updatedAt: now,
+    });
+
+    return { layoutId: existing._id, nodes: persistedNodes, edges: args.edges };
+  }
+
+  const layoutId = await ctx.db.insert("canvasLayouts", {
+    authId: args.authId,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    nodes: persistedNodes,
+    edges: args.edges,
+    updatedAt: now,
+  });
+
+  return { layoutId: layoutId, nodes: persistedNodes, edges: args.edges };
+}
+
 export const saveLayout = mutation({
   args: {
     projectId: v.id("projects"),
@@ -449,49 +531,13 @@ export const saveLayout = mutation({
       throw new Error("Stage not found.");
     }
 
-    const now = Date.now();
-    const account = await accountForProject(ctx, project);
-    const existing = await ctx.db
-      .query("canvasLayouts")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .unique();
-    const persistedNodes = await materializeRuntimeNodes(
-      ctx,
-      account,
-      projectId,
-      stageId,
-      nodes,
-      (existing?.nodes ?? []) as CanvasNode[],
-    );
-    if (
-      resourceReferenceSignature(persistedNodes) !==
-      resourceReferenceSignature((existing?.nodes ?? []) as CanvasNode[])
-    ) {
-      await pruneOrphanedDashboardRows(ctx, account, stageId, persistedNodes);
-    }
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        nodes: persistedNodes,
-        edges: edges,
-        updatedAt: now,
-      });
-
-      return { layoutId: existing._id, nodes: persistedNodes, edges: edges };
-    }
-
-    const layoutId = await ctx.db.insert("canvasLayouts", {
+    return persistLayout(ctx, {
       authId: authUser.id,
       projectId: projectId,
       stageId: stageId,
-      nodes: persistedNodes,
+      nodes: nodes as CanvasNode[],
       edges: edges,
-      updatedAt: now,
     });
-
-    return { layoutId: layoutId, nodes: persistedNodes, edges: edges };
   },
 });
 

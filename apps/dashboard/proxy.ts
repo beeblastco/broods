@@ -9,7 +9,12 @@ const authProxy = authkitProxy({
   redirectUri: redirectUri,
   middlewareAuth: {
     enabled: true,
-    unauthenticatedPaths: ["/healthz", "/auth/callback", "/auth/sign-in"],
+    unauthenticatedPaths: [
+      "/healthz",
+      "/auth/callback",
+      "/auth/sign-in",
+      "/local-preview",
+    ],
   },
 });
 

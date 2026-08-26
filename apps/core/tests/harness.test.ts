@@ -2383,6 +2383,7 @@ function usageStorage(writes: TaskUsageInput[]): Storage {
     agentPolicies: null as never,
     accountTools: null as never,
     accountHooks: null as never,
+    builder: null as never,
     taskUsage: {
       record: async function (input) {
         writes.push(input);

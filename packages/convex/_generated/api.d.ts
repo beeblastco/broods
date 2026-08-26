@@ -22,6 +22,7 @@ import type * as awsBundles from "../awsBundles.js";
 import type * as awsCrons from "../awsCrons.js";
 import type * as awsSkills from "../awsSkills.js";
 import type * as awsWorkspaceFiles from "../awsWorkspaceFiles.js";
+import type * as builder from "../builder.js";
 import type * as canvas from "../canvas.js";
 import type * as channelConnections from "../channelConnections.js";
 import type * as channelRecords from "../channelRecords.js";
@@ -127,6 +128,7 @@ declare const fullApi: ApiFromModules<{
   awsCrons: typeof awsCrons;
   awsSkills: typeof awsSkills;
   awsWorkspaceFiles: typeof awsWorkspaceFiles;
+  builder: typeof builder;
   canvas: typeof canvas;
   channelConnections: typeof channelConnections;
   channelRecords: typeof channelRecords;

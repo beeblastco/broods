@@ -967,6 +967,196 @@ describe("createTools", () => {
     ).toEqual({});
   });
 
+  it("withholds the builder canvas tools until the agent opts in", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    expect(await createTools(builderToolContext(), {})).toEqual({});
+    expect(
+      await createTools(createToolContext(), {
+        builder: { enabled: true },
+      }),
+    ).toEqual({});
+  });
+
+  it("exposes the builder canvas tools when the agent opts in", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const snapshot = mock(async function () {
+      return {
+        projectId: "proj_test",
+        stageId: "stage_test",
+        nodes: [],
+        edges: [],
+      };
+    });
+    setStorageForTests(storageWithBuilder({ canvasSnapshot: snapshot }));
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "add_agent",
+      "connect_channel",
+      "connect_nodes",
+      "draft_skill",
+      "list_canvas",
+      "remove_node",
+      "test_skill",
+      "update_node",
+    ]);
+    await channelToolExecute(tools.list_canvas, {});
+    expect(snapshot).toHaveBeenCalledWith("acct_test", "agent_test");
+  });
+
+  it("adds a canvas agent scoped to the calling runtime agent", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+    const addAgent = mock(async function () {
+      return {
+        nodeId: "1770000000000",
+        configId: "cfg_test",
+        detail: "Created 'Scout' on the canvas.",
+      };
+    });
+    setStorageForTests(storageWithBuilder({ addAgent: addAgent }));
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    await channelToolExecute(tools.add_agent, {
+      name: "Scout",
+      connectFromNodeId: "node_0",
+    });
+    expect(addAgent).toHaveBeenCalledWith("acct_test", "agent_test", {
+      name: "Scout",
+      connectFromNodeId: "node_0",
+    });
+  });
+
+  it("exposes draft_skill and test_skill when builder is enabled", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    expect(Object.keys(tools).sort()).toEqual([
+      "add_agent",
+      "connect_channel",
+      "connect_nodes",
+      "draft_skill",
+      "list_canvas",
+      "remove_node",
+      "test_skill",
+      "update_node",
+    ]);
+  });
+
+  it("draft_skill rejects an invalid skill name", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    const result = (await channelToolExecute(tools.draft_skill, {
+      name: "UPPERCASE",
+      description: "A test skill",
+      content: "# Skill\nInstructions here.",
+    })) as string;
+
+    const parsed = JSON.parse(result);
+    expect(parsed.type).toBe("draftSkill");
+    expect(parsed.valid).toBe(false);
+    expect(parsed.errors).toBeArray();
+    expect(parsed.errors.length).toBeGreaterThan(0);
+    expect(parsed.detail).toContain("validation error");
+  });
+
+  it("draft_skill succeeds with a valid skill", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    const result = (await channelToolExecute(tools.draft_skill, {
+      name: "my-skill",
+      description: "A helpful skill for testing.",
+      content: "# my-skill\nYou are a test assistant.",
+    })) as string;
+
+    const parsed = JSON.parse(result);
+    expect(parsed.type).toBe("draftSkill");
+    expect(parsed.valid).toBe(true);
+    expect(parsed.name).toBe("my-skill");
+    expect(parsed.skillPath).toBe("acct_test/my-skill");
+    expect(parsed.errors).toBeUndefined();
+  });
+
+  it("draft_skill rejects empty content", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    const result = (await channelToolExecute(tools.draft_skill, {
+      name: "my-skill",
+      description: "A helpful skill.",
+      content: "",
+    })) as string;
+
+    const parsed = JSON.parse(result);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.errors).toContain("Skill content must not be empty.");
+  });
+
+  it("test_skill validates prompts and returns structured result", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    const result = (await channelToolExecute(tools.test_skill, {
+      name: "my-skill",
+      description: "A helpful skill.",
+      content: "# my-skill\nYou are a test assistant.",
+      prompts: ["Hello, can you help me?", "What do you do?"],
+    })) as string;
+
+    const parsed = JSON.parse(result);
+    expect(parsed.type).toBe("testSkill");
+    expect(parsed.valid).toBe(true);
+    expect(parsed.name).toBe("my-skill");
+    expect(parsed.skillPath).toBe("acct_test/my-skill");
+    expect(parsed.prompts).toHaveLength(2);
+    expect(parsed.prompts[0].status).toBe("validated");
+    expect(parsed.prompts[1].status).toBe("validated");
+    expect(parsed.detail).toContain("2 prompts validated");
+  });
+
+  it("test_skill fails when prompts array is empty", async () => {
+    const { createTools } = await import("../src/harness/tools/index.ts");
+
+    const tools = await createTools(builderToolContext(), {
+      builder: { enabled: true },
+    });
+
+    const result = (await channelToolExecute(tools.test_skill, {
+      name: "my-skill",
+      description: "A helpful skill.",
+      content: "# my-skill\nInstructions.",
+      prompts: [],
+    })) as string;
+
+    const parsed = JSON.parse(result);
+    expect(parsed.valid).toBe(false);
+    expect(parsed.prompts).toHaveLength(0);
+    expect(parsed.detail).toContain("At least one test prompt is required");
+  });
+
   it("schedules a one-time task and rejects a malformed expression", async () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const create = mock(async function (): Promise<CronSummary> {
@@ -1289,6 +1479,32 @@ function schedulerToolContext(
   };
 }
 
+/** Tool context for a dashboard-provisioned Builder session. */
+function builderToolContext(): Omit<ToolContext, "config"> {
+  return {
+    ...createToolContext(),
+    conversationKey: "acct:acct_test:agent:agent_test:builder:s1:c1",
+    session: { agentId: "agent_test" } as unknown as Session,
+  };
+}
+
+function storageWithBuilder(builder: Partial<Storage["builder"]>): Storage {
+  return {
+    accounts: {} as never,
+    agents: {} as never,
+    channelRecords: {} as never,
+    agentDeployments: {} as never,
+    crons: {} as never,
+    sandboxConfigs: {} as never,
+    workspaceConfigs: {} as never,
+    agentPolicies: {} as never,
+    accountTools: {} as never,
+    accountHooks: {} as never,
+    builder: builder as Storage["builder"],
+    taskUsage: {} as never,
+  };
+}
+
 function cronRecord(overrides: Partial<CronRecord> = {}): CronRecord {
   return {
     ...cronSummary(),
@@ -1401,6 +1617,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     agentPolicies: {} as never,
     accountTools: {} as never,
     accountHooks: {} as never,
+    builder: {} as never,
     taskUsage: {} as never,
   };
 }
@@ -1436,6 +1653,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
+    builder: {} as never,
     taskUsage: { record: async function () {} },
   } as Storage;
 }

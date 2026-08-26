@@ -210,7 +210,11 @@ export const update = internalMutation({
         ? { inputSchema: args.inputSchema }
         : {}),
       ...(switchedToHttp
-        ? { sourceCode: undefined, sha256: undefined, bundleStorageKey: undefined }
+        ? {
+            sourceCode: undefined,
+            sha256: undefined,
+            bundleStorageKey: undefined,
+          }
         : {}),
       ...(switchedToBundle
         ? { endpointUrl: undefined, endpointHeaders: undefined }

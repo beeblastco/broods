@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Loader2,
   RotateCcw,
+  Sparkles,
   Terminal,
   Wrench,
 } from "lucide-react";
@@ -162,11 +163,13 @@ export function TestTab({
   deploymentApiKey,
   agentId,
   nodeColor,
+  slashSkills = [],
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
   agentId: string;
   nodeColor?: string;
+  slashSkills?: string[];
 }): React.JSX.Element {
   if (!activeDeployment) {
     return (
@@ -205,6 +208,7 @@ export function TestTab({
       projectSlug={activeDeployment.projectSlug}
       nodeColor={nodeColor}
       stageSlug={activeDeployment.stageSlug}
+      slashSkills={slashSkills}
     />
   );
 }
@@ -217,6 +221,7 @@ function ChatWindow({
   projectSlug,
   nodeColor,
   stageSlug,
+  slashSkills,
 }: {
   endpointId: string;
   agentId: string;
@@ -224,6 +229,7 @@ function ChatWindow({
   projectSlug?: string;
   nodeColor?: string;
   stageSlug?: string;
+  slashSkills: string[];
 }) {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
@@ -236,6 +242,14 @@ function ChatWindow({
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
+  const slashOptions = slashSkills
+    .map((skill) => ({
+      name: skill,
+      command: `/${skill.toLowerCase().replaceAll(" ", "-")}`,
+    }))
+    .filter((skill) => skill.command.startsWith(input.trim().toLowerCase()));
+  const showSlashOptions =
+    input.trim().startsWith("/") && slashOptions.length > 0;
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -274,6 +288,22 @@ function ChatWindow({
 
       {/* Input bar */}
       <form onSubmit={handleSubmit} className="shrink-0 p-3">
+        {showSlashOptions && (
+          <div className="mb-2 rounded-lg border border-border bg-card p-1">
+            {slashOptions.map((skill) => (
+              <button
+                key={skill.command}
+                type="button"
+                onClick={() => setInput(`${skill.command} `)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Sparkles className="size-3.5" />
+                <span className="font-mono">{skill.command}</span>
+                <span className="truncate">{skill.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
             value={input}

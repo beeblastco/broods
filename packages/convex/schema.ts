@@ -225,11 +225,7 @@ export const accountToolsFields = {
   bundleStorageKey: v.optional(v.string()),
   sha256: v.optional(v.string()),
   runtime: v.optional(
-    v.union(
-      v.literal("isolate"),
-      v.literal("sandbox"),
-      v.literal("http"),
-    ),
+    v.union(v.literal("isolate"), v.literal("sandbox"), v.literal("http")),
   ),
   /** Endpoint tools only: the https URL every call POSTs its input to. */
   endpointUrl: v.optional(v.string()),

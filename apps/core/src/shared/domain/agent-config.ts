@@ -147,6 +147,8 @@ export interface AgentConfig {
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
+  /** Enables the Builder canvas-editing tool group (dashboard-managed agents). */
+  builder?: AgentBuilderConfig;
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
@@ -230,6 +232,12 @@ export interface AgentSkillsConfig {
  * billable agent runs long after the turn that asked for it.
  */
 export interface AgentSchedulerConfig {
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
+/** Opt-in for the Builder canvas-editing tools (dashboard-provisioned agents). */
+export interface AgentBuilderConfig {
   enabled?: boolean;
   [key: string]: unknown;
 }
@@ -689,6 +697,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
+  normalizeBuilderConfig(config.builder);
   if (config.policy !== undefined) {
     throw new Error(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
@@ -1307,6 +1316,18 @@ function normalizeSchedulerConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
+}
+
+function normalizeBuilderConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.builder must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  assertOptionalBoolean(config.enabled, "config.builder.enabled");
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {

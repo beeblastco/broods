@@ -40,6 +40,7 @@ import type { Session } from "../session.ts";
 import accountTool from "./custom.tool.ts";
 import asyncStatusTool from "./async-status.tool.ts";
 import bashTool from "./bash.tool.ts";
+import { builderTools } from "./builder.tool.ts";
 import {
   sendFilesTool,
   sendImagesTool,
@@ -330,6 +331,22 @@ export async function createTools(
       listSchedulesTool(scheduledTaskContext),
       scheduleTool(scheduledTaskContext),
       updateScheduleTool(scheduledTaskContext),
+    );
+  }
+
+  // Builder canvas tools: only the dashboard-provisioned Builder agent opts
+  // in, and only on an account-scoped deployment session (the config plane
+  // re-resolves project/stage from that agent identity on every call).
+  if (
+    agentConfig.builder?.enabled === true &&
+    context.accountId &&
+    context.session?.agentId
+  ) {
+    const accountId = context.accountId;
+    const runtimeAgentId = context.session.agentId;
+    Object.assign(
+      tools,
+      builderTools({ accountId: accountId, runtimeAgentId: runtimeAgentId }),
     );
   }
 

@@ -36,6 +36,10 @@ import type {
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
 import type { AgentDeploymentScope, Storage } from "../storage.ts";
+import type {
+  BuilderCanvasSnapshot,
+  BuilderOpResult,
+} from "../domain/builder-canvas.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
 
@@ -645,9 +649,7 @@ function accountToolFromConvex(
       ? { bundleStorageKey: doc.bundleStorageKey }
       : {}),
     ...(doc.sha256 !== undefined ? { sha256: doc.sha256 } : {}),
-    ...(doc.endpointUrl !== undefined
-      ? { endpointUrl: doc.endpointUrl }
-      : {}),
+    ...(doc.endpointUrl !== undefined ? { endpointUrl: doc.endpointUrl } : {}),
     ...(doc.endpointHeaders !== undefined
       ? { endpointHeaders: doc.endpointHeaders }
       : {}),
@@ -738,6 +740,79 @@ const agentPolicies: Storage["agentPolicies"] = {
   },
 };
 
+const builder: Storage["builder"] = {
+  canvasSnapshot: async function (accountId, runtimeAgentId) {
+    return (await getConvexClient().query(internal.builder.canvasSnapshot, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+    })) as BuilderCanvasSnapshot;
+  },
+  addAgent: async function (accountId, runtimeAgentId, input) {
+    return (await getConvexClient().mutation(internal.builder.addAgent, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+      name: input.name,
+      description: input.description,
+      systemPrompt: input.systemPrompt,
+      modelId: input.modelId,
+      connectFromNodeId: input.connectFromNodeId,
+    })) as BuilderOpResult;
+  },
+  updateNode: async function (accountId, runtimeAgentId, input) {
+    return (await getConvexClient().mutation(internal.builder.updateNode, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+      nodeId: input.nodeId,
+      label: input.label,
+      description: input.description,
+      systemPrompt: input.systemPrompt,
+    })) as BuilderOpResult;
+  },
+  connectNodes: async function (accountId, runtimeAgentId, input) {
+    return (await getConvexClient().mutation(internal.builder.connectNodes, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+      sourceNodeId: input.sourceNodeId,
+      targetNodeId: input.targetNodeId,
+    })) as BuilderOpResult;
+  },
+  removeNode: async function (accountId, runtimeAgentId, nodeId) {
+    return (await getConvexClient().mutation(internal.builder.removeNode, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+      nodeId: nodeId,
+    })) as BuilderOpResult;
+  },
+  commitBuilderSkill: async function (
+    projectId,
+    stageId,
+    runtimeAgentId,
+    input,
+  ) {
+    return (await getConvexClient().mutation(
+      internal.builder.commitBuilderSkill,
+      {
+        projectId: projectId as any,
+        stageId: stageId as any,
+        runtimeAgentId: runtimeAgentId,
+        skillPath: input.skillPath,
+        name: input.name,
+        description: input.description,
+        connectFromNodeId: input.connectFromNodeId,
+      },
+    )) as BuilderOpResult;
+  },
+  connectChannel: async function (accountId, runtimeAgentId, input) {
+    return (await getConvexClient().mutation(internal.builder.connectChannel, {
+      accountId: accountId as any,
+      runtimeAgentId: runtimeAgentId,
+      agentNodeId: input.agentNodeId,
+      channel: input.channel,
+      credentials: input.credentials,
+    })) as BuilderOpResult;
+  },
+};
+
 const accountTools: Storage["accountTools"] = {
   getById: async function (accountId, toolId) {
     const doc = await getConvexClient().query(internal.accountTools.getById, {
@@ -797,5 +872,6 @@ export const convexStorage: Storage = {
   agentPolicies: agentPolicies,
   accountTools: accountTools,
   accountHooks: accountHooks,
+  builder: builder,
   taskUsage: taskUsage,
 };

@@ -7,6 +7,15 @@ import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
+import type {
+  BuilderAddAgentInput,
+  BuilderCanvasSnapshot,
+  BuilderChannelKind,
+  BuilderCommitSkillInput,
+  BuilderConnectNodesInput,
+  BuilderOpResult,
+  BuilderUpdateNodeInput,
+} from "./domain/builder-canvas.ts";
 import type { PolicyRecord } from "./domain/policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
@@ -213,6 +222,52 @@ interface AgentPolicyStore {
 }
 
 /**
+ * Builder canvas ops. Every call carries the invoking runtime agent's id so
+ * the config plane re-resolves (and enforces) the project/stage scope itself.
+ */
+interface BuilderStore {
+  canvasSnapshot(
+    accountId: string,
+    runtimeAgentId: string,
+  ): Promise<BuilderCanvasSnapshot>;
+  addAgent(
+    accountId: string,
+    runtimeAgentId: string,
+    input: BuilderAddAgentInput,
+  ): Promise<BuilderOpResult>;
+  updateNode(
+    accountId: string,
+    runtimeAgentId: string,
+    input: BuilderUpdateNodeInput,
+  ): Promise<BuilderOpResult>;
+  connectNodes(
+    accountId: string,
+    runtimeAgentId: string,
+    input: BuilderConnectNodesInput,
+  ): Promise<BuilderOpResult>;
+  removeNode(
+    accountId: string,
+    runtimeAgentId: string,
+    nodeId: string,
+  ): Promise<BuilderOpResult>;
+  commitBuilderSkill(
+    projectId: string,
+    stageId: string,
+    runtimeAgentId: string,
+    input: BuilderCommitSkillInput,
+  ): Promise<BuilderOpResult>;
+  connectChannel(
+    accountId: string,
+    runtimeAgentId: string,
+    input: {
+      agentNodeId: string;
+      channel: BuilderChannelKind;
+      credentials: Record<string, string>;
+    },
+  ): Promise<BuilderOpResult>;
+}
+
+/**
  * Writes per-task usage counts. The Convex storage adapter implements this;
  * it inserts one raw-count row per finished task and folds into a rollup
  * 5-minute Convex usageRollups bucket.
@@ -232,6 +287,7 @@ export interface Storage {
   accountTools: AccountToolStore;
   accountHooks: AccountHookStore;
   agentPolicies: AgentPolicyStore;
+  builder: BuilderStore;
   taskUsage: TaskUsageStore;
 }
 

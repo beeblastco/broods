@@ -166,8 +166,8 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
     ...(extra.skills ? { skills: extra.skills } : {}),
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
-    ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
+    ...(extra.builder ? { builder: extra.builder } : {}),
     // Top-level scalar carried in extraConfig so it flows through every
     // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
     ...(typeof extra.publicAccess === "boolean"

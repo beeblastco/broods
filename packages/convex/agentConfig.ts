@@ -22,7 +22,10 @@ import {
 import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
-import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
+import {
+  ACCOUNT_MODEL_PROVIDER_NAMES,
+  type AccountModelProviderName,
+} from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
 
 const agentProviderValidator = v.union(
@@ -123,6 +126,58 @@ export const getById = query({
   },
 });
 
+/**
+ * Insert a new agentConfigs row — the shared core of the dashboard's `create`
+ * and the Builder's add-agent op. Caller must have verified project/stage
+ * ownership.
+ */
+export async function insertAgentConfigRow(
+  ctx: MutationCtx,
+  args: {
+    authId: string;
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    name: string;
+    provider?: AccountModelProviderName;
+    modelId?: string;
+    customBaseUrl?: string;
+    description?: string;
+    systemPrompt?: string;
+  },
+): Promise<Id<"agentConfigs">> {
+  const { provider, customBaseUrl } = args;
+  if (provider === "custom" && !customBaseUrl?.trim()) {
+    throw new Error("customBaseUrl is required for the custom provider");
+  }
+
+  return await ctx.db.insert("agentConfigs", {
+    authId: args.authId,
+    name: args.name.trim(),
+    description: args.description?.trim() || undefined,
+    agentId: undefined,
+    projectId: args.projectId,
+    stageId: args.stageId,
+    provider: provider,
+    modelId: args.modelId?.trim() || "gpt-4.1-mini",
+    systemPrompt: args.systemPrompt?.trim() || undefined,
+    ...(provider === "custom" && customBaseUrl?.trim()
+      ? {
+          extraConfig: {
+            provider: {
+              custom: {
+                base_url: customBaseUrl.trim(),
+                baseURL: customBaseUrl.trim(),
+              },
+            },
+          },
+        }
+      : {}),
+    memoryToolEnabled: true,
+    searchToolEnabled: false,
+    updatedAt: Date.now(),
+  });
+}
+
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -161,35 +216,16 @@ export const create = mutation({
     }
 
     const now = Date.now();
-    const trimmedName = name.trim();
-    if (provider === "custom" && !customBaseUrl?.trim()) {
-      throw new Error("customBaseUrl is required for the custom provider");
-    }
-    const configId = await ctx.db.insert("agentConfigs", {
+    const configId = await insertAgentConfigRow(ctx, {
       authId: authUser.id,
-      name: trimmedName,
-      description: description?.trim() || undefined,
-      agentId: undefined,
       projectId: projectId,
       stageId: stageId,
+      name: name,
       provider: provider,
-      modelId: modelId?.trim() || "gpt-4.1-mini",
-      systemPrompt: systemPrompt?.trim() || undefined,
-      ...(provider === "custom" && customBaseUrl?.trim()
-        ? {
-            extraConfig: {
-              provider: {
-                custom: {
-                  base_url: customBaseUrl.trim(),
-                  baseURL: customBaseUrl.trim(),
-                },
-              },
-            },
-          }
-        : {}),
-      memoryToolEnabled: true,
-      searchToolEnabled: false,
-      updatedAt: now,
+      modelId: modelId,
+      customBaseUrl: customBaseUrl,
+      description: description,
+      systemPrompt: systemPrompt,
     });
 
     await ctx.db.patch(projectId, { updatedAt: now });
@@ -207,7 +243,7 @@ export const create = mutation({
         type: "agent" as const,
         position: position,
         data: {
-          label: trimmedName,
+          label: name.trim(),
           status: "idle" as const,
           agentConfigId: configId,
         },
@@ -252,7 +288,7 @@ export const create = mutation({
       action: "created",
       agentId: created?.agentId,
       configId: configId,
-      name: trimmedName,
+      name: name.trim(),
       summary: "Agent configuration created",
       details: { configId: configId },
     });

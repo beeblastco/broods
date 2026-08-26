@@ -1028,10 +1028,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
   }, [selectedNode, infraKey]);
 
   const displayNodes = useMemo(() => {
-    if (!focusedIds) return nodes;
-
-    return nodes.map((n) => {
-      if (focusedIds.has(n.id)) return n;
+    const base = nodes.map((n) => {
+      if (!focusedIds || focusedIds.has(n.id)) return n;
       let dimmed = dimmedNodeCache.get(n);
       if (!dimmed) {
         dimmed = { ...n, style: { ...n.style, opacity: 0.25 } };
@@ -1040,6 +1038,7 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
 
       return dimmed;
     });
+    return base;
   }, [nodes, focusedIds]);
 
   const displayEdges = useMemo(() => {
