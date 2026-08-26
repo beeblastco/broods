@@ -336,3 +336,85 @@ export async function deleteAgentConversation(
 
   return { deleted: batch.length, hasMore: hasMore };
 }
+
+/** A deliverable file the agent produced in a conversation (ticket 13). */
+export interface DeliverableFile {
+  path: string;
+  workspaceId: string;
+  sizeBytes?: number;
+  foundAt: number;
+}
+
+/**
+ * Merge newly found deliverables into the stored list: same (workspaceId,
+ * path) replaces (newest wins), everything else appends, ordered by foundAt.
+ */
+export function mergeDeliverables(
+  existing: DeliverableFile[] | undefined,
+  found: DeliverableFile[],
+): DeliverableFile[] {
+  const byKey = new Map<string, DeliverableFile>();
+  for (const file of [...(existing ?? []), ...found]) {
+    byKey.set(`${file.workspaceId}\u0000${file.path}`, file);
+  }
+
+  return [...byKey.values()].sort((a, b) => a.foundAt - b.foundAt);
+}
+
+/** Upsert the deliverables list on a conversation's annotation row. */
+export async function recordConversationDeliverables(
+  ctx: MutationCtx,
+  scope: AgentConversationScope,
+  publicConversationKey: string,
+  found: DeliverableFile[],
+): Promise<void> {
+  const key = scopedKey(scope, publicConversationKey);
+  const firstRow = await ctx.db
+    .query("runtimeConversationEvents")
+    .withIndex("by_conversationKey_and_cursor", (q) =>
+      q.eq("conversationKey", key),
+    )
+    .first();
+  if (!firstRow) throw new Error("Conversation not found");
+
+  const annotation = await ctx.db
+    .query("conversations")
+    .withIndex("by_conversationKey", (q) => q.eq("conversationKey", key))
+    .unique();
+  if (annotation && annotation.accountId !== scope.accountId) {
+    throw new Error("Conversation not found");
+  }
+
+  if (annotation) {
+    await ctx.db.patch(annotation._id, {
+      deliverables: mergeDeliverables(annotation.deliverables, found),
+    });
+
+    return;
+  }
+  const now = Date.now();
+  await ctx.db.insert("conversations", {
+    accountId: scope.accountId,
+    agentId: scope.agentId,
+    createdAt: now,
+    lastMessageAt: now,
+    conversationKey: key,
+    deliverables: mergeDeliverables(undefined, found),
+  });
+}
+
+/** Read the deliverables recorded for one conversation. */
+export async function readConversationDeliverables(
+  ctx: QueryCtx | MutationCtx,
+  scope: AgentConversationScope,
+  publicConversationKey: string,
+): Promise<DeliverableFile[]> {
+  const key = scopedKey(scope, publicConversationKey);
+  const annotation = await ctx.db
+    .query("conversations")
+    .withIndex("by_conversationKey", (q) => q.eq("conversationKey", key))
+    .unique();
+  if (!annotation || annotation.accountId !== scope.accountId) return [];
+
+  return annotation.deliverables ?? [];
+}

@@ -26,6 +26,12 @@ export interface AgentChat {
   error: Error | null;
   /** The conversation key the chat is on, once the server has assigned one. */
   sessionId: string | undefined;
+  /**
+   * Returns the conversation key, generating one up front when the
+   * conversation hasn't started — pre-send attachment uploads need a stable
+   * key for their `chat-uploads/<conversation>/` prefix (ticket 13).
+   */
+  ensureSessionId: () => string;
   sendMessage: (text: string) => Promise<void>;
   resetChat: () => void;
 }
@@ -1217,6 +1223,16 @@ export function useAgentChat({
     ],
   );
 
+  const ensureSessionId = useCallback(() => {
+    if (!sessionIdRef.current) {
+      const key = `chat-${crypto.randomUUID()}`;
+      sessionIdRef.current = key;
+      setSessionId(key);
+    }
+
+    return sessionIdRef.current;
+  }, []);
+
   /** Reset chat history and server session for a new conversation. */
   const resetChat = useCallback(() => {
     abortRef.current?.abort();
@@ -1235,6 +1251,7 @@ export function useAgentChat({
     status: status,
     error: error,
     sessionId: sessionId,
+    ensureSessionId: ensureSessionId,
     sendMessage: sendMessage,
     resetChat: resetChat,
   };

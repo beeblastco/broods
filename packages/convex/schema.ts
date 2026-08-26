@@ -717,6 +717,19 @@ export const conversationsFields = {
   // carry user-facing metadata (title) for those transcripts. Absent on rows
   // that predate the link.
   conversationKey: v.optional(v.string()),
+  // Files the agent produced during this conversation (ticket 13): detected by
+  // the dashboard's around-run workspace diff and kept here so the cards
+  // survive the panel closing. Paths are workspace-relative.
+  deliverables: v.optional(
+    v.array(
+      v.object({
+        path: v.string(),
+        workspaceId: v.string(),
+        sizeBytes: v.optional(v.number()),
+        foundAt: v.number(),
+      }),
+    ),
+  ),
 };
 
 /** Message in a conversation. Role + content + arbitrary metadata. */

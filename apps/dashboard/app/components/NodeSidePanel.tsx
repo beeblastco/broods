@@ -809,6 +809,28 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     setActiveTab("details");
   }, []);
 
+  // The Agent tab's attach control points at Context when no folder exists.
+  const openContextTab = useCallback(() => {
+    setActiveTab("context");
+  }, []);
+
+  // First attached working folder — enables chat attachments (ticket 13).
+  const agentWorkspaceRef = useMemo(() => {
+    const nested = agentConfig
+      ? (toNestedAgentConfig(
+          agentConfig as unknown as FlatAgentConfig,
+        ) as Record<string, unknown>)
+      : {};
+    const refs = Array.isArray(nested.workspaces)
+      ? (nested.workspaces as Array<{ name?: string; workspaceId?: string }>)
+      : [];
+    const first = refs[0];
+
+    return first?.name && first.workspaceId
+      ? { name: first.name, workspaceId: first.workspaceId }
+      : undefined;
+  }, [agentConfig]);
+
   // Mirrors DetailsTab's read of the per-agent public-endpoint opt-in; the
   // Test tab uses it to choose the internal (owner-auth) transport.
   const agentPublicAccess =
@@ -1118,6 +1140,9 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 agentConfigId={agentConfigId}
                 publicAccess={agentPublicAccess}
                 enabledSkillNames={agentEnabledSkillNames}
+                workspaceRef={agentWorkspaceRef}
+                onOpenContext={openContextTab}
+                projectId={projectId}
               />
             </TabsContent>
           )}

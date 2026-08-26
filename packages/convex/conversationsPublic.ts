@@ -17,6 +17,8 @@ import {
   deleteAgentConversation,
   listAgentConversations,
   listConversationMessages,
+  readConversationDeliverables,
+  recordConversationDeliverables,
   renameAgentConversation,
   resolveAgentConversationScope,
 } from "./model/conversationHistory";
@@ -133,5 +135,73 @@ export const deleteConversation = mutation({
     if (!scope) throw new Error("Agent not found");
 
     return await deleteAgentConversation(ctx, scope, args.conversationKey);
+  },
+});
+
+const deliverableFile = v.object({
+  path: v.string(),
+  workspaceId: v.string(),
+  sizeBytes: v.optional(v.number()),
+  foundAt: v.number(),
+});
+
+/**
+ * Record files the agent produced in a conversation (ticket 13): the
+ * dashboard diffs the workspace around each run and persists what appeared,
+ * so the deliverable cards survive the panel closing.
+ */
+export const recordDeliverables = mutation({
+  args: {
+    configId: v.id("agentConfigs"),
+    conversationKey: v.string(),
+    files: v.array(deliverableFile),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const scope = await resolveAgentConversationScope(
+      ctx,
+      user.id,
+      args.configId,
+    );
+    if (!scope) throw new Error("Agent not found");
+    await recordConversationDeliverables(
+      ctx,
+      scope,
+      args.conversationKey,
+      args.files,
+    );
+
+    return null;
+  },
+});
+
+/** The deliverables recorded for one conversation, oldest first. */
+export const listDeliverables = query({
+  args: {
+    configId: v.id("agentConfigs"),
+    conversationKey: v.string(),
+  },
+  returns: v.array(deliverableFile),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const scope = await resolveAgentConversationScope(
+      ctx,
+      user.id,
+      args.configId,
+    );
+    if (!scope) return [];
+
+    return await readConversationDeliverables(ctx, scope, args.conversationKey);
   },
 });

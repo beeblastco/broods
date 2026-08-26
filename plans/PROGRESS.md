@@ -124,3 +124,30 @@ tickets; all parked validations re-run before ticket 24 if it clears.
   limit)** — additionally these need the runtime (agent replies), also down.
 - NOTE: ticket 13 (attachments in chat) is next per build order and depends on this
   ticket's folders; it is buildable but its live proof has the same park.
+
+
+## Ticket 13 — attachments in, deliverables out
+
+- Status: **built + unit-tested; live validation PARKED on the Convex plan limit**
+- Branch: `feat/chat-attachments` (base `feat/context-tab`), pushed
+- Attachments in: paperclip in the Agent-tab composer; uploads go through the real
+  `workspaceFilesPublic.upload` into the agent's first attached folder under
+  `chat-uploads/<conversationKey>/` (the hook grew `ensureSessionId()` so a fresh
+  conversation gets its stable key before the first send); removable chips above the
+  composer; on send the message text lists the real workspace paths ("read them with
+  your file tools"); with no folder attached the control shows a plain-language hint
+  with an "Open Context" jump — nothing silently uploads.
+- Deliverables out: at send time the workspace file list is snapshotted; when the run
+  leaves `streaming`, a second listing is diffed (new or modified, excluding `memory/`
+  and `chat-uploads/`) and recorded via `conversationsPublic.recordDeliverables` onto
+  the ticket-11 annotation row (new optional `deliverables` column on `conversations`);
+  the transcript renders a reactive "Files from this conversation" card block
+  (name/size/download via `getDownloadUrl`) that persists across close/reopen because
+  it reads the annotation (`listDeliverables` query).
+- Scope note: cards render as a per-conversation block at the end of the transcript
+  rather than interleaved at the exact message position — the runtime store carries no
+  per-turn marker to anchor them to; the ticket's persistence requirement is met.
+- Tests: `deliverables.test.ts` (merge semantics, annotation round-trip across runs,
+  cross-account scope nulls) — convex 207 pass; dashboard 80 pass; checks exit 0; root
+  lint exit 0.
+- Live validation steps 1–5: **PARKED (Convex plan limit + runtime down)**.
