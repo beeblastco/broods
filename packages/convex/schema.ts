@@ -712,6 +712,11 @@ export const conversationsFields = {
   title: v.optional(v.string()),
   createdAt: v.number(),
   lastMessageAt: v.number(),
+  // Scoped runtime conversation key this row annotates. The runtime persists
+  // transcripts in `runtimeConversationEvents` keyed by this string; rows here
+  // carry user-facing metadata (title) for those transcripts. Absent on rows
+  // that predate the link.
+  conversationKey: v.optional(v.string()),
 };
 
 /** Message in a conversation. Role + content + arbitrary metadata. */
@@ -1250,7 +1255,8 @@ export default defineSchema({
     .index("by_updatedAt", ["updatedAt"]),
   conversations: defineTable(conversationsFields)
     .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
+    .index("by_accountId_and_agentId", ["accountId", "agentId"])
+    .index("by_conversationKey", ["conversationKey"]),
   messages: defineTable(messagesFields)
     .index("by_conversationId", ["conversationId"])
     .index("by_accountId", ["accountId"]),

@@ -24,6 +24,8 @@ export interface AgentChat {
   messages: UIMessage[];
   status: ChatStatus;
   error: Error | null;
+  /** The conversation key the chat is on, once the server has assigned one. */
+  sessionId: string | undefined;
   sendMessage: (text: string) => Promise<void>;
   resetChat: () => void;
 }
@@ -762,6 +764,8 @@ export function useAgentChat({
   projectSlug,
   stageSlug,
   webSocketEnabled,
+  initialMessages,
+  initialSessionId,
 }: {
   endpointId: string;
   agentId: string;
@@ -769,11 +773,24 @@ export function useAgentChat({
   projectSlug?: string;
   stageSlug?: string;
   webSocketEnabled: boolean;
+  /**
+   * Persisted transcript to hydrate the chat with. Read once on mount —
+   * callers remount (React `key`) to switch conversations.
+   */
+  initialMessages?: UIMessage[];
+  /** Conversation key the next send continues instead of starting fresh. */
+  initialSessionId?: string;
 }): AgentChat {
-  const [messages, setMessages] = useState<UIMessage[]>([]);
+  const [messages, setMessages] = useState<UIMessage[]>(
+    () => initialMessages ?? [],
+  );
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [error, setError] = useState<Error | null>(null);
-  const sessionIdRef = useRef<string | undefined>(undefined);
+  // Ref for send-time reads; state mirror so callers can react to the key.
+  const [sessionId, setSessionId] = useState<string | undefined>(
+    initialSessionId,
+  );
+  const sessionIdRef = useRef<string | undefined>(initialSessionId);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<UIMessage[]>([]);
   const mainAssistantMessageIdRef = useRef<string | null>(null);
@@ -842,8 +859,9 @@ export function useAgentChat({
               message: trimmed,
               sessionId: sessionIdRef.current,
               signal: controller.signal,
-              onMeta: ({ sessionId }) => {
-                sessionIdRef.current = sessionId;
+              onMeta: ({ sessionId: assignedSessionId }) => {
+                sessionIdRef.current = assignedSessionId;
+                setSessionId(assignedSessionId);
               },
               onContinuationDelta: (delta) => {
                 setMessages((prev) => {
@@ -952,6 +970,7 @@ export function useAgentChat({
           streamBody = httpResult.stream;
           if (httpResult.sessionId) {
             sessionIdRef.current = httpResult.sessionId;
+            setSessionId(httpResult.sessionId);
           }
         }
 
@@ -1058,6 +1077,7 @@ export function useAgentChat({
     setStatus("ready");
     setError(null);
     sessionIdRef.current = undefined;
+    setSessionId(undefined);
     mainAssistantMessageIdRef.current = null;
     continuationMessageIdRef.current = null;
     subagentMessageIdsRef.current = {};
@@ -1067,6 +1087,7 @@ export function useAgentChat({
     messages: messages,
     status: status,
     error: error,
+    sessionId: sessionId,
     sendMessage: sendMessage,
     resetChat: resetChat,
   };

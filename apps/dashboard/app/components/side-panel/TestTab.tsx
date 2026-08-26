@@ -14,20 +14,36 @@ import {
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
 import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
 import { useAgentChat } from "@/app/hooks/useAgentChat";
 import {
   resolveChatError,
   type ChatErrorActionKind,
   type ChatErrorPresentation,
 } from "@/app/lib/chatErrors";
+import {
+  relativeTime,
+  uiMessagesFromStoredEvents,
+  type StoredConversationEventRow,
+} from "@/app/lib/conversationHistory";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
+import { useConvex, useMutation, useQuery } from "convex/react";
 import {
   ArrowUp,
+  Check,
+  ChevronDown,
   ChevronRight,
+  History,
   Loader2,
+  Pencil,
+  Plus,
   RotateCcw,
   Terminal,
+  Trash2,
   Wrench,
+  X,
 } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
@@ -170,6 +186,7 @@ export function TestTab({
   agentId,
   nodeColor,
   onOpenDetails,
+  agentConfigId,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
@@ -177,6 +194,8 @@ export function TestTab({
   nodeColor?: string;
   /** Switches the side panel to the Details tab (error-card action). */
   onOpenDetails?: () => void;
+  /** Enables persisted conversation history when present. */
+  agentConfigId?: Id<"agentConfigs">;
 }): React.JSX.Element {
   if (!activeDeployment) {
     return (
@@ -207,16 +226,407 @@ export function TestTab({
     );
   }
 
+  const chatProps = {
+    endpointId: activeDeployment.endpointId,
+    agentId: agentId,
+    apiKey: deploymentApiKey,
+    projectSlug: activeDeployment.projectSlug,
+    nodeColor: nodeColor,
+    stageSlug: activeDeployment.stageSlug,
+    onOpenDetails: onOpenDetails,
+  };
+
+  return agentConfigId ? (
+    <ConversationChat {...chatProps} agentConfigId={agentConfigId} />
+  ) : (
+    <ChatWindow {...chatProps} />
+  );
+}
+
+/** How the chat is addressed: a fresh conversation or a persisted one. */
+type ConversationSelection =
+  | { kind: "new"; nonce: number }
+  | { kind: "existing"; conversationKey: string };
+
+/** Bound on transcript pages loaded per conversation (100 events each). */
+const MAX_TRANSCRIPT_PAGES = 20;
+
+/**
+ * Chat with persisted history: a conversation picker over the runtime's
+ * transcript store, hydrating `ChatWindow` (remounted per conversation via
+ * `key`) with the stored messages so a conversation survives the panel
+ * closing. See conversationsPublic.ts for the read side.
+ */
+function ConversationChat({
+  agentConfigId,
+  ...chatProps
+}: {
+  endpointId: string;
+  agentId: string;
+  apiKey: string;
+  projectSlug?: string;
+  nodeColor?: string;
+  stageSlug?: string;
+  onOpenDetails?: () => void;
+  agentConfigId: Id<"agentConfigs">;
+}) {
+  const convex = useConvex();
+  const history = useQuery(api.conversationsPublic.listForAgent, {
+    configId: agentConfigId,
+  });
+  const [selection, setSelection] = useState<ConversationSelection | null>(
+    null,
+  );
+  // Pick the most recent conversation once per agent, when history first
+  // loads. Done during render, guarded by the synced id (repo pattern).
+  const [syncedConfigId, setSyncedConfigId] =
+    useState<Id<"agentConfigs"> | null>(null);
+  if (history !== undefined && syncedConfigId !== agentConfigId) {
+    setSyncedConfigId(agentConfigId);
+    const latest = history.conversations[0];
+    setSelection(
+      latest
+        ? { kind: "existing", conversationKey: latest.conversationKey }
+        : { kind: "new", nonce: 0 },
+    );
+  }
+
+  // Load the selected conversation's transcript (paged, oldest first).
+  const [transcript, setTranscript] = useState<{
+    conversationKey: string;
+    messages: UIMessage[];
+  } | null>(null);
+  useEffect(() => {
+    if (selection?.kind !== "existing") return;
+    const conversationKey = selection.conversationKey;
+    let cancelled = false;
+    void (async () => {
+      const rows: StoredConversationEventRow[] = [];
+      let afterCursor: string | undefined;
+      for (let pageIndex = 0; pageIndex < MAX_TRANSCRIPT_PAGES; pageIndex++) {
+        const result = await convex.query(
+          api.conversationsPublic.listMessages,
+          {
+            configId: agentConfigId,
+            conversationKey: conversationKey,
+            afterCursor: afterCursor,
+          },
+        );
+        rows.push(...result.page);
+        if (result.isDone || !result.continueCursor) break;
+        afterCursor = result.continueCursor;
+      }
+      if (!cancelled) {
+        setTranscript({
+          conversationKey: conversationKey,
+          messages: uiMessagesFromStoredEvents(rows),
+        });
+      }
+    })().catch((error: unknown) => {
+      if (!cancelled) {
+        console.warn("[agent-chat] failed to load conversation:", error);
+        setTranscript({ conversationKey: conversationKey, messages: [] });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentConfigId, convex, selection]);
+
+  const startNewConversation = useCallback(() => {
+    setSelection((previous) => ({
+      kind: "new",
+      nonce: previous?.kind === "new" ? previous.nonce + 1 : 0,
+    }));
+  }, []);
+
+  const conversations = history?.conversations ?? [];
+  const currentTitle =
+    selection?.kind === "existing"
+      ? (conversations.find(
+          (entry) => entry.conversationKey === selection.conversationKey,
+        )?.title ?? "Conversation")
+      : "New conversation";
+
+  const transcriptReady =
+    selection?.kind === "existing" &&
+    transcript?.conversationKey === selection.conversationKey;
+
   return (
-    <ChatWindow
-      endpointId={activeDeployment.endpointId}
-      agentId={agentId}
-      apiKey={deploymentApiKey}
-      projectSlug={activeDeployment.projectSlug}
-      nodeColor={nodeColor}
-      stageSlug={activeDeployment.stageSlug}
-      onOpenDetails={onOpenDetails}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <ConversationListHeader
+        agentConfigId={agentConfigId}
+        conversations={conversations}
+        currentTitle={currentTitle}
+        selectedKey={
+          selection?.kind === "existing" ? selection.conversationKey : null
+        }
+        onSelect={(conversationKey) =>
+          setSelection({ kind: "existing", conversationKey: conversationKey })
+        }
+        onNewConversation={startNewConversation}
+        onDeletedSelected={startNewConversation}
+      />
+      {selection === null ||
+      (selection.kind === "existing" && !transcriptReady) ? (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : selection.kind === "new" ? (
+        <ChatWindow key={`new-${selection.nonce}`} {...chatProps} />
+      ) : (
+        <ChatWindow
+          key={selection.conversationKey}
+          {...chatProps}
+          initialMessages={transcript?.messages}
+          initialSessionId={selection.conversationKey}
+          onNewChat={startNewConversation}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Rename field, focused on mount (opens only from an explicit user click). */
+function RenameInput({
+  value,
+  onChange,
+  onKeyDown,
+  className,
+}: {
+  value: string;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  className?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <Input
+      ref={inputRef}
+      value={value}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      className={className}
     />
+  );
+}
+
+/** One row of the conversation picker, as served by `listForAgent`. */
+interface ConversationRow {
+  conversationKey: string;
+  title: string;
+  createdAt: number;
+  lastMessageAt: number;
+}
+
+/**
+ * Header bar naming the open conversation, with a collapsible picker holding
+ * per-conversation rename (inline) and delete (two-step confirm).
+ */
+function ConversationListHeader({
+  agentConfigId,
+  conversations,
+  currentTitle,
+  selectedKey,
+  onSelect,
+  onNewConversation,
+  onDeletedSelected,
+}: {
+  agentConfigId: Id<"agentConfigs">;
+  conversations: ConversationRow[];
+  currentTitle: string;
+  selectedKey: string | null;
+  onSelect: (conversationKey: string) => void;
+  onNewConversation: () => void;
+  onDeletedSelected: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const renameConversation = useMutation(
+    api.conversationsPublic.renameConversation,
+  );
+  const deleteConversation = useMutation(
+    api.conversationsPublic.deleteConversation,
+  );
+
+  async function submitRename(conversationKey: string) {
+    const title = renameDraft.trim();
+    setRenamingKey(null);
+    if (!title) return;
+    await renameConversation({
+      configId: agentConfigId,
+      conversationKey: conversationKey,
+      title: title,
+    });
+  }
+
+  async function submitDelete(conversationKey: string) {
+    setConfirmDeleteKey(null);
+    // Batched server-side; loop until the conversation is fully gone.
+    for (;;) {
+      const result = await deleteConversation({
+        configId: agentConfigId,
+        conversationKey: conversationKey,
+      });
+      if (!result.hasMore) break;
+    }
+    if (conversationKey === selectedKey) {
+      onDeletedSelected();
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-b">
+      <div className="flex items-center gap-1 px-3 py-1.5">
+        <button
+          type="button"
+          className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-foreground hover:bg-muted/50 transition-colors"
+          onClick={() => setOpen((previous) => !previous)}
+          title="Conversation history"
+        >
+          <History className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate font-medium">{currentTitle}</span>
+          <ChevronDown
+            className={`size-3 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+        <span className="flex-1" />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-2 text-xs"
+          onClick={onNewConversation}
+          title="New conversation"
+        >
+          <Plus className="size-3" />
+          New
+        </Button>
+      </div>
+      {open && (
+        <div className="max-h-56 overflow-y-auto border-t px-1.5 py-1.5">
+          {conversations.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              No conversations yet.
+            </p>
+          )}
+          {conversations.map((conversation) => (
+            <div
+              key={conversation.conversationKey}
+              className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-muted/50 ${
+                conversation.conversationKey === selectedKey
+                  ? "bg-muted/60"
+                  : ""
+              }`}
+            >
+              {renamingKey === conversation.conversationKey ? (
+                <>
+                  <RenameInput
+                    value={renameDraft}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        void submitRename(conversation.conversationKey);
+                      }
+                      if (event.key === "Escape") setRenamingKey(null);
+                    }}
+                    className="h-6 flex-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                    onClick={() =>
+                      void submitRename(conversation.conversationKey)
+                    }
+                    title="Save name"
+                  >
+                    <Check className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => setRenamingKey(null)}
+                    title="Cancel"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                    onClick={() => {
+                      onSelect(conversation.conversationKey);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="truncate text-foreground">
+                      {conversation.title}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {relativeTime(conversation.lastMessageAt)}
+                    </span>
+                  </button>
+                  {confirmDeleteKey === conversation.conversationKey ? (
+                    <>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded px-1 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                        onClick={() =>
+                          void submitDelete(conversation.conversationKey)
+                        }
+                      >
+                        Delete?
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                        onClick={() => setConfirmDeleteKey(null)}
+                        title="Cancel"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                        onClick={() => {
+                          setRenamingKey(conversation.conversationKey);
+                          setRenameDraft(conversation.title);
+                        }}
+                        title="Rename"
+                      >
+                        <Pencil className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+                        onClick={() =>
+                          setConfirmDeleteKey(conversation.conversationKey)
+                        }
+                        title="Delete"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -229,6 +639,9 @@ function ChatWindow({
   nodeColor,
   stageSlug,
   onOpenDetails,
+  initialMessages,
+  initialSessionId,
+  onNewChat,
 }: {
   endpointId: string;
   agentId: string;
@@ -237,6 +650,12 @@ function ChatWindow({
   nodeColor?: string;
   stageSlug?: string;
   onOpenDetails?: () => void;
+  /** Persisted transcript to hydrate with (remount via `key` to switch). */
+  initialMessages?: UIMessage[];
+  /** Conversation key the next send continues. */
+  initialSessionId?: string;
+  /** Overrides the composer's reset control when history drives the chat. */
+  onNewChat?: () => void;
 }) {
   const { messages, status, error, sendMessage, resetChat } = useAgentChat({
     endpointId: endpointId,
@@ -245,6 +664,8 @@ function ChatWindow({
     projectSlug: projectSlug,
     stageSlug: stageSlug,
     webSocketEnabled: true,
+    initialMessages: initialMessages,
+    initialSessionId: initialSessionId,
   });
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -358,7 +779,7 @@ function ChatWindow({
               <InputGroupButton
                 size="icon-xs"
                 variant="ghost"
-                onClick={resetChat}
+                onClick={onNewChat ?? resetChat}
                 title="New chat"
               >
                 <RotateCcw className="size-3.5" />

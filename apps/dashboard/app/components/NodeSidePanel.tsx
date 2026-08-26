@@ -1067,6 +1067,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                   agentId={agentConfig?.agentId ?? ""}
                   nodeColor={nodeData?.properties?.color}
                   onOpenDetails={openDetailsTab}
+                  agentConfigId={agentConfigId}
                 />
               ) : node ? (
                 <ToolTestTab
