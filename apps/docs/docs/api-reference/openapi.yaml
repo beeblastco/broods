@@ -3066,6 +3066,8 @@ components:
           $ref: "#/components/schemas/SubagentConfig"
         scheduler:
           $ref: "#/components/schemas/SchedulerConfig"
+        connectors:
+          $ref: "#/components/schemas/ConnectorsConfig"
         policies:
           type: array
           items: { type: string }
@@ -3591,6 +3593,31 @@ components:
       properties:
         enabled:
           type: boolean
+
+    ConnectorsConfig:
+      type: object
+      description: >-
+        Connected services and MCP servers this agent may use. Each entry
+        references an account-scoped connector (created in the dashboard) by
+        id; `enabled` is the per-agent toggle. Enabled MCP connectors resolve
+        into the server's advertised tools at run time; a GitHub token
+        connector resolves into an authenticated GitHub API request tool.
+      properties:
+        allowed:
+          type: array
+          items:
+            type: object
+            required: [provider, connectorId, enabled]
+            properties:
+              provider:
+                type: string
+                description: '"github" for token connectors; "mcp" for custom MCP servers.'
+              connectorId:
+                type: string
+                description: Id of the connector row.
+              enabled:
+                type: boolean
+                description: Per-agent toggle. Permanent, never session-scoped.
 
     SubagentConfig:
       type: object

@@ -168,6 +168,7 @@ export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
     ...(extra.subagent ? { subagent: extra.subagent } : {}),
     ...(extra.policy ? { policy: extra.policy } : {}),
     ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
+    ...(extra.connectors ? { connectors: extra.connectors } : {}),
     // Top-level scalar carried in extraConfig so it flows through every
     // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
     ...(typeof extra.publicAccess === "boolean"
@@ -297,6 +298,7 @@ const NESTED_BRANCHES = [
   "subagent",
   "policy",
   "scheduler",
+  "connectors",
 ] as const;
 
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {

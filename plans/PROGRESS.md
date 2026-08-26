@@ -151,3 +151,44 @@ tickets; all parked validations re-run before ticket 24 if it clears.
   cross-account scope nulls) — convex 207 pass; dashboard 80 pass; checks exit 0; root
   lint exit 0.
 - Live validation steps 1–5: **PARKED (Convex plan limit + runtime down)**.
+
+
+## Ticket 19 — connectors substrate
+
+- Status: **built + unit/integration-tested; Convex deployed; core deploy checkpoint next;
+  live validation PARKED on the Convex plan limit**
+- Branch: `feat/connectors-substrate` (base `feat/chat-attachments`), pushed
+- Schema (public contract, all surfaces walked):
+  - core `AgentConnectorRef`/`AgentConnectorsConfig` + `normalizeConnectorsConfig`
+    (scheduler pattern) wired into `normalizeAgentConfig`; codec flat↔nested
+    (`connectors` in NESTED_BRANCHES both directions); SDK `AgentDefinitionConfig` +
+    manifest allowed keys; `openapi.yaml` ConnectorsConfig schema; docs/tools.md.
+  - `connectors` table (account-scoped; secrets as AES-GCM blobs via the EXISTING
+    account-config mechanism — encryptAgentConfigBlob convex-side,
+    decodeStoredConfigObject core-side; no second secrets path; the sandbox rows
+    already prove this cross-plane round-trip, and a core test re-proves it).
+- `connectorsPublic.ts`: createTokenConnector (real GET /user BEFORE `connected`;
+  GitHub's own error surfaces), createCustomMcpConnector (real initialize +
+  tools/list handshake; advertised tool names stored), checkConnector (re-validates,
+  updates status/lastError — ticket 23's hook), deleteConnector, listConnectors
+  (secret-free summaries). All WorkOS-authenticated via the active workspace.
+- Core MCP client (`harness/connectors.ts`): @modelcontextprotocol/sdk streamable
+  HTTP; per-connector auth headers from the decrypted secret; resolves enabled refs
+  in `createTools` BEFORE denyTools; naming `mcp_<label>_<tool>` /
+  `github_<label>_request` (documented in apps/core/AGENTS.md); connect/list/call
+  timeouts; failure containment per connector (absent tools + WARN, never a crash).
+- **Reuse decision (ticket 04's question):** token-kind execution does NOT reuse the
+  account-tools endpoint tier — that tier executes uploaded bundles, not
+  per-connector credentialed HTTP; a dedicated ~40-line `github_<label>_request`
+  tool was smaller than adapting it.
+- Tests: core `connectors-config.test.ts` (normalize accept/reject) +
+  `connectors-mcp.test.ts` — a REAL in-process streamable-HTTP MCP server (SDK server
+  half over node:http): initialize → tools/list → registered tool → call round-trips
+  (echo_upper returns HELLO), auth header from the encrypted secret reaches the
+  server, disabled ref resolves nothing, unreachable server degrades gracefully;
+  plus the cross-plane secret round-trip. Convex `connectorValidation.test.ts`
+  (GitHub ok/Bad-credentials, full MCP handshake incl. session header + SSE-framed
+  responses + specific initialize failure). 212 convex tests pass, core suite next
+  to run in full at the checkpoint.
+- Live validation (steps 1–4 of the ticket): **PARKED (Convex plan limit)** — and
+  step 4's GitHub PAT is additionally parked on missing credentials.

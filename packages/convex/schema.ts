@@ -747,6 +747,34 @@ export const messagesFields = {
   createdAt: v.number(),
 };
 
+/**
+ * Connected external services and MCP servers (ticket 19). Account-scoped;
+ * agents reference rows by id via `config.connectors.allowed`. Secrets are
+ * AES-GCM blobs via the existing account-config mechanism — never plaintext.
+ */
+export const connectorsFields = {
+  accountId: v.id("accounts"),
+  /** "github" for token connectors; "mcp" for custom MCP servers. */
+  provider: v.string(),
+  label: v.string(),
+  authKind: v.union(v.literal("token"), v.literal("mcp")),
+  /** MCP server URL (not a secret; headers are). */
+  url: v.optional(v.string()),
+  /** Encrypted secret payload: {token} or {headers}. */
+  encryptedSecret: v.optional(v.string()),
+  secretIv: v.optional(v.string()),
+  secretTag: v.optional(v.string()),
+  status: v.union(v.literal("connected"), v.literal("error")),
+  lastCheckedAt: v.optional(v.number()),
+  lastError: v.optional(v.string()),
+  /** Tool names the MCP server advertised at the last successful handshake. */
+  toolNames: v.optional(v.array(v.string())),
+  /** For token connectors: the login the validation call authenticated as. */
+  validatedLogin: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
 /** Skill metadata; binary content lives in S3 under accountId-prefixed keys. */
 export const skillsFields = {
   accountId: v.id("accounts"),
@@ -1273,6 +1301,9 @@ export default defineSchema({
   messages: defineTable(messagesFields)
     .index("by_conversationId", ["conversationId"])
     .index("by_accountId", ["accountId"]),
+  connectors: defineTable(connectorsFields).index("by_accountId", [
+    "accountId",
+  ]),
   skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])

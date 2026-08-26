@@ -560,7 +560,10 @@ export type ProviderConfigInput = Partial<
 >;
 
 export type AgentDefinitionConfig = EnvRefString<
-  Pick<AgentConfig, "agent" | "model" | "scheduler" | "session" | "tools">
+  Pick<
+    AgentConfig,
+    "agent" | "model" | "scheduler" | "connectors" | "session" | "tools"
+  >
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;
   hooks?: AgentHooks & {

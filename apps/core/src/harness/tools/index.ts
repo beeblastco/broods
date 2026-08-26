@@ -58,6 +58,7 @@ import globTool from "./glob.tool.ts";
 import getSubagentStatusTool from "./get-subagent-status.tool.ts";
 import grepTool from "./grep.tool.ts";
 import loadSkillTool from "./load-skill.tool.ts";
+import { createConnectorTools } from "../connectors.ts";
 import memoryTool from "./memory.tool.ts";
 import { providerDefinedTool } from "./provider-tool.ts";
 import readTool from "./read.tool.ts";
@@ -409,6 +410,14 @@ export async function createTools(
       }),
     );
   }
+
+  // Connector tools (ticket 19): enabled connectors resolve into live MCP or
+  // provider tools. Failures degrade to absence, never a crashed run; deny
+  // lists below still cover them because this runs before withholdTools.
+  Object.assign(
+    tools,
+    await createConnectorTools(context.accountId, agentConfig.connectors),
+  );
 
   // Withhold last, so a channel's deny list covers sandbox and account tools too
   // — those are derived from workspaces and ids, never from config.tools.
