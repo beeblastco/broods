@@ -1211,6 +1211,12 @@ async function handleAgentConfigRoute(
       accountId: accountId,
       agentId: agentId,
     });
+    // The agent row is gone; its conversations, queued work and status rows go
+    // with it, in batches that continue on their own.
+    await ctx.runMutation(internal.runtime.deleteAgentRuntimeData, {
+      accountId: accountId,
+      agentId: agentId,
+    });
     await writeAudit(ctx, {
       accountId: accountId,
       actor: actor,

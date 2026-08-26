@@ -3,6 +3,7 @@
  */
 
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import {
@@ -517,7 +518,20 @@ export const remove = mutation({
       const normalized = ctx.db.normalizeId("agents", existing.agentId);
       if (normalized) {
         const agent = await ctx.db.get(normalized);
-        if (agent) await ctx.db.delete(normalized);
+        if (agent) {
+          await ctx.db.delete(normalized);
+          // Its conversations, queued work and status rows are keyed by agent
+          // and nothing else would ever collect them. Batches continue on their
+          // own, so this is scheduled rather than awaited to completion.
+          await ctx.scheduler.runAfter(
+            0,
+            internal.runtime.deleteAgentRuntimeData,
+            {
+              accountId: agent.accountId,
+              agentId: normalized,
+            },
+          );
+        }
       }
     }
 

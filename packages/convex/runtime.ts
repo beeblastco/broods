@@ -19,6 +19,7 @@ import {
 const DAY_SECONDS = 24 * 60 * 60;
 const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
+const RUNTIME_DELETE_BATCH_SIZE = 100;
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
 // coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
@@ -807,6 +808,137 @@ export const deleteSandboxReservation = internalMutation({
       await ctx.db.delete(row._id);
 
     return null;
+  },
+});
+
+/**
+ * Deletes one bounded batch of the runtime rows owned by a single agent, so a
+ * deleted agent does not leave its conversations, queued work and status rows
+ * behind for the account-wide purge that may never run.
+ *
+ * Every table reached here is keyed by the account-and-agent scoped
+ * conversation key, which lets each read be a prefix range over that key rather
+ * than a scan of the account's rows. Tables with no conversation key
+ * (`runtimeClaims`, async tool groups, sandbox reservations) stay with
+ * `deleteAccountRuntimeData`: they carry no agent, so no prefix identifies them.
+ *
+ * Like the account purge, this accepts an agent that is already gone: the caller
+ * deletes the row and drains the rows afterwards.
+ * @returns per-table deletion counts and their total
+ */
+export const deleteAgentRuntimeData = internalMutation({
+  args: {
+    accountId: v.string(),
+    agentId: v.string(),
+  },
+  returns: v.object({
+    conversationsDeleted: v.number(),
+    coordinatorDeleted: v.number(),
+    ingressDeleted: v.number(),
+    applicationDeleted: v.number(),
+    harnessSessionDeleted: v.number(),
+    asyncAgentResultDeleted: v.number(),
+    asyncToolResultDeleted: v.number(),
+    totalDeleted: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const prefix = `acct:${args.accountId}:agent:${args.agentId}:`;
+    // Every key under this agent sorts between the prefix and the prefix plus
+    // the highest code point, which is what makes each read a range, not a scan.
+    const prefixEnd = `${prefix}\uffff`;
+    const conversationRows = await ctx.db
+      .query("runtimeConversationEvents")
+      .withIndex("by_conversationKey_and_cursor", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const coordinatorRows = await ctx.db
+      .query("runtimeConversationCoordinators")
+      .withIndex("by_conversationKey", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const ingressRows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_conversationKey_and_sequence", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const applicationRows = await ctx.db
+      .query("runtimeIngressApplications")
+      .withIndex("by_conversationKey_and_createdAt", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const harnessSessionRows = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const asyncAgentRows = await ctx.db
+      .query("runtimeAsyncAgentResults")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    const asyncToolRows = await ctx.db
+      .query("runtimeAsyncToolResults")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .take(RUNTIME_DELETE_BATCH_SIZE);
+    // The async result tables index the account, not the key, so the agent
+    // filter happens here rather than in the range.
+    const asyncAgentOwned = asyncAgentRows.filter((row) =>
+      row.conversationKey.startsWith(prefix),
+    );
+    const asyncToolOwned = asyncToolRows.filter((row) =>
+      row.conversationKey.startsWith(prefix),
+    );
+    for (const row of [
+      ...conversationRows,
+      ...coordinatorRows,
+      ...ingressRows,
+      ...applicationRows,
+      ...harnessSessionRows,
+      ...asyncAgentOwned,
+      ...asyncToolOwned,
+    ])
+      await ctx.db.delete(row._id);
+    // A full batch means the table had more than one pass can hold, so keep
+    // going. The caller fires this once and never has to loop.
+    if (
+      [
+        conversationRows,
+        coordinatorRows,
+        ingressRows,
+        applicationRows,
+        harnessSessionRows,
+        asyncAgentRows,
+        asyncToolRows,
+      ].some((batch) => batch.length === RUNTIME_DELETE_BATCH_SIZE)
+    ) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.runtime.deleteAgentRuntimeData,
+        args,
+      );
+    }
+
+    return {
+      conversationsDeleted: conversationRows.length,
+      coordinatorDeleted: coordinatorRows.length,
+      ingressDeleted: ingressRows.length,
+      applicationDeleted: applicationRows.length,
+      harnessSessionDeleted: harnessSessionRows.length,
+      asyncAgentResultDeleted: asyncAgentOwned.length,
+      asyncToolResultDeleted: asyncToolOwned.length,
+      totalDeleted:
+        conversationRows.length +
+        coordinatorRows.length +
+        ingressRows.length +
+        applicationRows.length +
+        harnessSessionRows.length +
+        asyncAgentOwned.length +
+        asyncToolOwned.length,
+    };
   },
 });
 
