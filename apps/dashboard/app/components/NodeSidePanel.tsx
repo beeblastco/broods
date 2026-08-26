@@ -1147,7 +1147,10 @@ export const NodeSidePanel = memo(function NodeSidePanel({
               value="context"
               className="flex flex-col overflow-y-auto"
             >
-              <AgentContextTab agentConfig={agentConfig} />
+              <AgentContextTab
+                agentConfig={agentConfig}
+                projectId={projectId}
+              />
             </TabsContent>
           )}
 

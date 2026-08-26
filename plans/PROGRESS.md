@@ -100,3 +100,27 @@ tickets; all parked validations re-run before ticket 24 if it clears.
   false-positives: the flagged setStates run after an await inside a useEffect-driven
   action fetch).
 - Live validation steps 1–7: **PARKED (Convex plan limit)**.
+
+
+## Ticket 18 — context tab (the agent's desk)
+
+- Status: **built + unit-tested; live validation PARKED on the Convex plan limit**
+- Branch: `feat/context-tab` (base `feat/skills-library`), pushed
+- Backend: `workspaceConfigsPublic.{createWorkingFolder,detachWorkingFolder}` mutations
+  (WorkOS auth → conversationHistory scope resolver → stage-scoped `workspaceConfigs`
+  insert `managedBy:"dashboard"` mirroring canvas.ts's shape, sandbox ensured with the
+  default `{provider:"sandbox", permissionMode:"ask", network:deny-all}` config encrypted
+  via `encryptAgentConfigBlob`, refs attached through `pushEncryptedConfigToAgentRow`).
+  Narrow-and-add transforms extracted pure into `model/workingFolders.ts` and unit-tested
+  (attach preserves every branch; detach removes exactly one ref; 4 tests).
+- UI: Context tab now real — create folder (one click + name), per-folder file browser
+  (upload/download/delete/refresh via the already-real `workspaceFilesPublic` actions,
+  modified-time shown), Memory section (renders memory/MEMORY.md, edit + save, clear with
+  confirm — same file actions), detach with confirm.
+- Tests: convex 204 pass (4 new), dashboard 80 pass, checks exit 0, root lint exit 0
+  (2 more heuristic set-state-in-effect warnings on the new effect-driven action fetches).
+- Live validation steps 1–6 (upload→agent quotes file, agent writes file→appears+downloads,
+  memory teach/edit/fresh-conversation, detach removes access): **PARKED (Convex plan
+  limit)** — additionally these need the runtime (agent replies), also down.
+- NOTE: ticket 13 (attachments in chat) is next per build order and depends on this
+  ticket's folders; it is buildable but its live proof has the same park.
