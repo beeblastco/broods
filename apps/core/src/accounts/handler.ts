@@ -32,7 +32,6 @@ import {
   normalizeCreateAccountInput,
   type AccountRecord,
 } from "../shared/domain/accounts.ts";
-import { isCronsConfigured } from "../shared/domain/cron.ts";
 import { requireEnv } from "../shared/env.ts";
 import {
   errorResponse,
@@ -620,10 +619,6 @@ async function deleteAccountResponse(
 }
 
 async function deleteAccountCrons(accountId: string): Promise<number> {
-  if (!isCronsConfigured()) {
-    return 0;
-  }
-
   const cronsStore = getStorage().crons;
   const crons = await cronsStore.list(accountId);
   await Promise.all(

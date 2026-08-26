@@ -29,12 +29,7 @@ export interface SandboxAuditActor {
   name?: string;
 }
 
-/** Convex mode is active only when both env vars are present (see CLAUDE.md). */
-function convexEnabled(): boolean {
-  return Boolean(process.env.CONVEX_URL && process.env.CONVEX_DEPLOY_KEY);
-}
-
-/** Records one sandbox lifecycle audit event in Convex when Convex is enabled. */
+/** Records one sandbox lifecycle audit event in Convex. */
 export async function recordSandboxAuditEvent(input: {
   accountId: string;
   sandboxConfigId?: string;
@@ -51,7 +46,6 @@ export async function recordSandboxAuditEvent(input: {
   durationMs?: number;
   truncated?: boolean;
 }): Promise<void> {
-  if (!convexEnabled()) return;
   const actor = input.actor ?? { source: "unknown" as const };
   try {
     await getConvexClient().mutation(internal.sandbox.auditEvents.insert, {

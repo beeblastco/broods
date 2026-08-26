@@ -3,8 +3,8 @@
  * those endpoints authorize against. The account-manage suspend/resume/terminate
  * endpoints call the writes after the provider lifecycle call succeeds so the
  * dashboard's live sandboxInstances query reflects the new state. Fire-and-forget
- * safe — gated on convex mode and wrapped so a mirror failure never fails the
- * lifecycle request. See usage.ts for the same pattern.
+ * safe — wrapped so a mirror failure never fails the lifecycle request. See usage.ts
+ * for the same pattern.
  */
 
 const internal: any = require("@broods/convex/_generated/api").internal;
@@ -17,11 +17,6 @@ import type {
 import { getConvexClient } from "./client.ts";
 import { recordSandboxAuditEvent } from "./sandbox-audit-events.ts";
 
-/** Convex mode is active only when both env vars are present (see CLAUDE.md). */
-function convexEnabled(): boolean {
-  return Boolean(process.env.CONVEX_URL && process.env.CONVEX_DEPLOY_KEY);
-}
-
 export type SandboxInstanceStatus =
   | "running"
   | "suspended"
@@ -30,8 +25,8 @@ export type SandboxInstanceStatus =
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
- * it live. No-op outside convex mode or when the config carries no control-plane
- * identity (synthetic/stateless configs). Idempotent — safe on reconnect.
+ * it live. No-op when the config carries no control-plane identity
+ * (synthetic/stateless configs). Idempotent — safe on reconnect.
  *
  * `ephemeral` marks a per-call instance: the row exists only while the call runs, so
  * it is flagged uncontrollable for the dashboard and skips the audit event a real
@@ -45,7 +40,7 @@ export async function upsertSandboxInstance(
   metadata?: SandboxRunMetadata,
   options?: { ephemeral?: boolean },
 ): Promise<void> {
-  if (!controlPlane || !convexEnabled()) return;
+  if (!controlPlane) return;
   try {
     await getConvexClient().mutation(internal.sandbox.instances.upsert, {
       accountId: controlPlane.accountId as any,
@@ -113,8 +108,8 @@ export async function upsertSandboxInstance(
 }
 
 /**
- * Mirrors a suspend/resume status transition into Convex. No-op outside convex
- * mode or when no row matches the reservation key.
+ * Mirrors a suspend/resume status transition into Convex. No-op when no row
+ * matches the reservation key.
  * @param observed the status was read off the provider, not caused by a use, so
  * it must not move the row's "last used" clock.
  */
@@ -124,7 +119,6 @@ export async function setSandboxInstanceStatus(
   status: SandboxInstanceStatus,
   observed = false,
 ): Promise<void> {
-  if (!convexEnabled()) return;
   try {
     await getConvexClient().mutation(internal.sandbox.instances.setStatus, {
       accountId: accountId as any,
@@ -160,15 +154,11 @@ export async function sandboxInstanceIsControllable(
   return controllable === true;
 }
 
-/**
- * Removes a terminated instance's row from Convex. No-op outside convex mode or
- * when no row matches the reservation key.
- */
+/** Removes a terminated instance's row. No-op when no row matches the key. */
 export async function removeSandboxInstance(
   accountId: string,
   reservationKey: string,
 ): Promise<void> {
-  if (!convexEnabled()) return;
   try {
     await getConvexClient().mutation(internal.sandbox.instances.remove, {
       accountId: accountId as any,
