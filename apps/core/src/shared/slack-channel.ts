@@ -29,6 +29,7 @@ import {
   CardText,
   ConsoleLogger,
   Image,
+  type Attachment,
   type CardElement,
   type ImageElement,
   type StreamChunk,
@@ -56,6 +57,22 @@ const REASONING_FLUSH_INTERVAL_MS = 500;
 // Cap on the text a single task accumulates in the card, whether appended
 // delta-by-delta (reasoning details) or set once (tool output).
 const SLACK_TASK_TEXT_LIMIT = 1200;
+
+// The one message subtype that is a message rather than an event about one.
+const SLACK_FILE_SHARE_SUBTYPE = "file_share";
+
+// Hosts a Slack bot token may be sent to. A file URL arrives inside a webhook
+// body, so without this an attacker who can post to a channel could name a host
+// of their choosing and be handed the workspace's token.
+const SLACK_FILE_HOST_SUFFIXES = [
+  ".slack.com",
+  ".slack-edge.com",
+  ".slack-files.com",
+];
+
+// Slack signs a file URL and then redirects to its CDN; more hops than this is
+// a loop, not a download.
+const SLACK_FILE_MAX_REDIRECTS = 5;
 
 type SlackUserNameResolver = (userId: string) => Promise<string | null>;
 
@@ -430,6 +447,7 @@ export function createSlackChannel(
 
       return parseEventCallback(
         req.body,
+        botToken,
         allowedChannelIds,
         allowedUserIds,
         userNameResolver ?? createSlackUserNameResolver(slack),
@@ -525,6 +543,7 @@ async function normalizeSlackMentions(
 
 async function parseEventCallback(
   body: string,
+  botToken: string,
   allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   resolveUserName: SlackUserNameResolver,
@@ -615,6 +634,7 @@ async function parseEventCallback(
   const userName = payload.event.user
     ? await resolveSlackUserName(payload.event.user, resolveUserName)
     : undefined;
+  const attachments = slackAttachments(payload.event.files ?? [], botToken);
   const source: SlackSource = {
     teamId: payload.team_id,
     channelId: channelId,
@@ -640,6 +660,7 @@ async function parseEventCallback(
       ),
       channelName: "slack",
       content: [{ type: "text", text: text }],
+      ...(attachments.length > 0 ? { attachments: attachments } : {}),
       identity: {
         workspaceRef: payload.team_id,
         channelId: channelId,
@@ -959,6 +980,114 @@ function getSlackReplyThreadTs(
   return event.thread_ts;
 }
 
+/**
+ * The files on a Slack message, as Chat SDK attachments.
+ *
+ * Slack never puts the bytes in the webhook — only a `url_private` that answers
+ * nothing without the bot token — so each attachment carries a reader that adds
+ * the bearer header. The Chat SDK builds the same thing, but only along its own
+ * `handleWebhook` path, which this adapter does not take: it parses the raw
+ * event so it can gate on channel, sender and mention before anything else runs.
+ */
+function slackAttachments(
+  files: NonNullable<SlackEvent["files"]>,
+  botToken: string,
+): Attachment[] {
+  return files.flatMap((file): Attachment[] => {
+    const url = file.url_private;
+    if (!url) {
+      return [];
+    }
+    const mimeType = slackFileMediaType(file);
+
+    return [
+      {
+        type: slackAttachmentType(mimeType),
+        url: url,
+        ...(file.name ? { name: file.name } : {}),
+        ...(mimeType ? { mimeType: mimeType } : {}),
+        ...(file.size !== undefined ? { size: file.size } : {}),
+        ...(file.original_w !== undefined ? { width: file.original_w } : {}),
+        ...(file.original_h !== undefined ? { height: file.original_h } : {}),
+        fetchData: (): Promise<Buffer> => fetchSlackFile(url, botToken),
+      },
+    ];
+  });
+}
+
+function slackAttachmentType(mimeType: string | undefined): Attachment["type"] {
+  if (mimeType?.startsWith("image/")) return "image";
+  if (mimeType?.startsWith("video/")) return "video";
+  if (mimeType?.startsWith("audio/")) return "audio";
+
+  return "file";
+}
+
+// Slack serves a recorded voice clip as video/* even though there is no picture
+// in it. Left alone, the file is offered to the model as a video and refused by
+// every provider that would happily have listened to it.
+function slackFileMediaType(
+  file: NonNullable<SlackEvent["files"]>[number],
+): string | undefined {
+  const mimeType = file.mimetype;
+  const subtype = (file as { subtype?: string }).subtype;
+
+  return subtype === "slack_audio" && mimeType?.startsWith("video/")
+    ? mimeType.replace("video/", "audio/")
+    : mimeType;
+}
+
+/**
+ * Downloads one Slack file with the bot token.
+ *
+ * The host is checked before the token is attached, and redirects are followed
+ * by hand so the token is dropped the moment a hop leaves Slack. Slack also
+ * answers an expired or unscoped token with 200 and an HTML login page rather
+ * than a 401, so the content type is the only reliable failure signal.
+ */
+async function fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
+  let target = assertSlackFileUrl(url);
+  for (let hop = 0; hop < SLACK_FILE_MAX_REDIRECTS; hop++) {
+    const response = await fetch(target, {
+      headers: { authorization: `Bearer ${botToken}` },
+      redirect: "manual",
+    });
+    const location = response.headers.get("location");
+    if (location && response.status >= 300 && response.status < 400) {
+      target = assertSlackFileUrl(new URL(location, target).toString());
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`Slack answered ${response.status}`);
+    }
+    if ((response.headers.get("content-type") ?? "").includes("text/html")) {
+      throw new Error(
+        "Slack returned its login page instead of the file — the app needs the files:read scope",
+      );
+    }
+
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  throw new Error("Slack file download redirected too many times");
+}
+
+function assertSlackFileUrl(raw: string): URL {
+  const url = new URL(raw);
+  if (url.protocol !== "https:") {
+    throw new Error(`refusing to send the Slack token over ${url.protocol}`);
+  }
+  const host = url.hostname.toLowerCase();
+  if (
+    host !== "slack.com" &&
+    !SLACK_FILE_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))
+  ) {
+    throw new Error(`refusing to send the Slack token to ${host}`);
+  }
+
+  return url;
+}
+
 function getUnsupportedSlackEventReason(event: SlackEvent): string {
   if (event.bot_id) return "bot_message";
   if (event.subtype) return `unsupported_subtype:${event.subtype}`;
@@ -998,7 +1127,14 @@ function isStreamChunk(value: unknown): value is StreamChunk {
 }
 
 function isSupportedSlackEvent(event: SlackEvent): boolean {
-  if (event.subtype || event.bot_id) {
+  if (event.bot_id) {
+    return false;
+  }
+  // Every subtype but one is a message about a message — a join, a pin, an edit
+  // — and answering those is noise. `file_share` is the exception: it is how
+  // Slack delivers an ordinary message that happens to carry an upload, so
+  // rejecting it dropped every file anyone ever sent the agent.
+  if (event.subtype && event.subtype !== SLACK_FILE_SHARE_SUBTYPE) {
     return false;
   }
 

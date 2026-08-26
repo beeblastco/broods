@@ -385,7 +385,139 @@ describe("telegram channel adapter", () => {
 
     expect(parsed.kind).toBe("context");
   });
+
+  it("accepts a photo with no caption and carries it as an attachment", async () => {
+    const parsed = await parseTelegram({
+      update_id: 30,
+      message: {
+        ...createMessage({}),
+        photo: [
+          { file_id: "small", file_unique_id: "u1", width: 90, height: 90 },
+          { file_id: "large", file_unique_id: "u2", width: 1280, height: 1280 },
+        ],
+      },
+    });
+
+    // A captionless photo used to be dropped for having no text.
+    expect(parsed.content).toBe("");
+    // Telegram offers a photo at several sizes; the largest is the one to read.
+    expect(parsed.attachments?.[0]).toMatchObject({
+      type: "image",
+      mimeType: "image/jpeg",
+      fetchMetadata: { fileId: "large" },
+    });
+  });
+
+  it("reads a caption as the message text and keeps the document beside it", async () => {
+    const parsed = await parseTelegram({
+      update_id: 31,
+      message: {
+        ...createMessage({}),
+        caption: "the quarterly numbers",
+        document: {
+          file_id: "doc-1",
+          file_name: "q3.pdf",
+          mime_type: "application/pdf",
+          file_size: 1024,
+        },
+      },
+    });
+
+    expect(parsed.content).toBe("the quarterly numbers");
+    expect(parsed.attachments).toEqual([
+      expect.objectContaining({
+        type: "file",
+        name: "q3.pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+      }),
+    ]);
+  });
+
+  it("answers a caption that @-mentions the bot", async () => {
+    const caption = "@tracy_bot what is this?";
+    const parsed = await createGatedAdapter().parse(
+      createRequest({
+        update_id: 32,
+        message: {
+          ...createMessage({ chat: GROUP_CHAT }),
+          caption: caption,
+          // A caption's mentions are indexed against caption_entities, so a
+          // gate reading `entities` never sees them.
+          caption_entities: entityFor(caption, "@tracy_bot", "mention"),
+          photo: [{ file_id: "p1", file_unique_id: "u1", width: 8, height: 8 }],
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("message");
+  });
+
+  it("reads a static sticker the Chat SDK does not model, and skips an animated one", async () => {
+    const parsed = await parseTelegram({
+      update_id: 33,
+      message: {
+        ...createMessage({}),
+        sticker: { file_id: "st-1", file_unique_id: "u1", emoji: "🎉" },
+      },
+    });
+
+    expect(parsed.attachments).toEqual([
+      expect.objectContaining({
+        type: "image",
+        name: "sticker-🎉.webp",
+        mimeType: "image/webp",
+      }),
+    ]);
+
+    // A .tgs or .webm sticker is not a picture any model can read, and the
+    // emoji says more than a failed download would.
+    const animated = await parseTelegram({
+      update_id: 34,
+      message: {
+        ...createMessage({ text: "nice" }),
+        sticker: { file_id: "st-2", file_unique_id: "u2", is_animated: true },
+      },
+    });
+    expect(animated.attachments).toBeUndefined();
+  });
+
+  it("still ignores a message carrying neither text nor media", async () => {
+    const adapter = createTelegramChannel(
+      "bot-token",
+      "secret",
+      null,
+      null,
+      "👀",
+    );
+
+    expect(
+      (
+        await adapter.parse(
+          createRequest({ update_id: 35, message: createMessage({}) }),
+        )
+      ).kind,
+    ).toBe("ignore");
+  });
 });
+
+// The normalized message a Telegram update produces, or a thrown error naming
+// why the update was refused.
+async function parseTelegram(payload: Record<string, unknown>) {
+  const adapter = createTelegramChannel(
+    "bot-token",
+    "secret",
+    null,
+    null,
+    "👀",
+  );
+  const parsed = await adapter.parse(createRequest(payload));
+  if (parsed.kind !== "message") {
+    throw new Error(`Expected an accepted Telegram message, got ${parsed.kind}`);
+  }
+
+  return parsed.message;
+}
 
 function createGatedAdapter(botUsername: string = "tracy_bot") {
   return createTelegramChannel(

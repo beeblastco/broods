@@ -225,7 +225,104 @@ describe("pancake channel adapter", () => {
       await adapter.authenticate(createPancakeRequest(validPayload(), "")),
     ).toBe(false);
   });
+
+  it("accepts a photo with no message text and carries it as an attachment", async () => {
+    const message = await parsePancakeMedia({
+      message: "",
+      attachments: [
+        {
+          id: "att-1",
+          type: "photo",
+          url: "https://content.pancake.vn/1/photo.jpg",
+          title: "receipt.jpg",
+          mime_type: "image/jpeg",
+        },
+      ],
+    });
+
+    expect(message.attachments).toEqual([
+      {
+        type: "image",
+        url: "https://content.pancake.vn/1/photo.jpg",
+        name: "receipt.jpg",
+        mimeType: "image/jpeg",
+      },
+    ]);
+  });
+
+  it("reads a video from where Pancake hides its URL, and drops what has no file", async () => {
+    const message = await parsePancakeMedia({
+      message: "look",
+      attachments: [
+        {
+          id: "att-2",
+          type: "video",
+          video_data: { url: "https://content.pancake.vn/1/clip.mp4" },
+        },
+        // A share card arrives in the same array with nothing behind it.
+        { id: "att-3", type: "share", url: "https://example.com/article" },
+      ],
+    });
+
+    expect(message.attachments).toEqual([
+      { type: "video", url: "https://content.pancake.vn/1/clip.mp4" },
+    ]);
+  });
+
+  it("gives two captionless photos different event ids", async () => {
+    // The message id repeats across edits, so the event id folds in the content
+    // — without the attachments in it the second photo dedupes away as a replay.
+    const first = await parsePancakeMedia({
+      message: "",
+      attachments: [
+        { id: "a", type: "photo", url: "https://content.pancake.vn/1/a.jpg" },
+      ],
+    });
+    const second = await parsePancakeMedia({
+      message: "",
+      attachments: [
+        { id: "b", type: "photo", url: "https://content.pancake.vn/1/b.jpg" },
+      ],
+    });
+
+    expect(first.eventId).not.toBe(second.eventId);
+  });
+
+  it("still ignores a message with neither text nor attachments", async () => {
+    const adapter = createPancakeChannel(
+      "page-1",
+      "page-token",
+      "secret",
+      null,
+      null,
+    );
+    const parsed = await adapter.parse(
+      createPancakeRequest(validPayload({ message: { message: "" } })),
+    );
+
+    expect(parsed.kind).toBe("ignore");
+  });
 });
+
+async function parsePancakeMedia(message: Record<string, unknown>) {
+  const adapter = createPancakeChannel(
+    "page-1",
+    "page-token",
+    "secret",
+    null,
+    null,
+  );
+  const parsed = await adapter.parse(
+    createPancakeRequest(validPayload({ message: message })),
+  );
+  if (parsed.kind !== "message") {
+    throw new Error(
+      `Expected the Pancake media message to be accepted, got ${parsed.kind}`,
+    );
+  }
+
+  return parsed.message;
+}
 
 function createPancakeRequest(
   payload: Record<string, unknown>,

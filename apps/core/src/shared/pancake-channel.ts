@@ -9,15 +9,25 @@
 
 import { createHash } from "node:crypto";
 import { timingSafeStringEqual } from "./auth.ts";
+import type { Attachment } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
+  ChannelFile,
+  ChannelImage,
   ChannelParseResult,
   ChannelRequest,
 } from "./channels.ts";
-import { isAllowedId } from "./channels.ts";
+import {
+  channelAttachmentBytes,
+  channelAttachmentName,
+  isAllowedId,
+} from "./channels.ts";
 import { logDebug, logInfo, logWarn } from "./log.ts";
+import { contentTypeForPath } from "./media-types.ts";
 import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
+
+const PANCAKE_API_BASE = "https://pages.fm/api/public_api/v1/";
 
 interface PancakeConversation {
   id?: string;
@@ -29,12 +39,27 @@ interface PancakeConversation {
   };
 }
 
+/**
+ * One item in a Pancake message's `attachments` array. A photo names its URL
+ * directly; a video hides it one level down in `video_data`. Anything else —
+ * a share card, a fallback link preview — has no file behind it.
+ */
+interface PancakeAttachment {
+  id?: string;
+  type?: string;
+  url?: string;
+  title?: string;
+  mime_type?: string;
+  video_data?: { url?: string };
+}
+
 interface PancakeMessage {
   id?: string;
   conversation_id?: string;
   page_id?: string;
   message?: string;
   original_message?: string;
+  attachments?: PancakeAttachment[];
   type?: string;
   inserted_at?: string;
   from?: {
@@ -77,10 +102,26 @@ export function createPancakeActions(
   source: PancakeSource,
   senderId?: string,
 ): ChannelActions {
+  const sendAttachments = (
+    attachments: ChannelFile[] | ChannelImage[],
+    caption?: string,
+  ): Promise<void> =>
+    sendPancakeAttachments(
+      pageAccessToken,
+      source,
+      attachments,
+      caption,
+      senderId,
+    );
+
   return {
     sendText: (text) =>
       sendPancakeMessage(pageAccessToken, source, text, senderId),
-    sendTyping: async function () {
+    // Pancake uploads both the same way and lets the recipient's client decide
+    // what to preview, so one body serves each.
+    sendFiles: sendAttachments,
+    sendImages: sendAttachments,
+    sendTyping: async function() {
       return;
     },
     reactToMessage: async function () {
@@ -139,27 +180,6 @@ async function sendPancakeMessage(
   text: string,
   senderId?: string,
 ): Promise<void> {
-  const url = new URL(
-    `https://pages.fm/api/public_api/v1/pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(
-      source.conversationId,
-    )}/messages`,
-  );
-  url.searchParams.set("page_access_token", pageAccessToken);
-
-  const payload =
-    source.messageType === "COMMENT"
-      ? {
-          action: "reply_comment",
-          message_id: source.messageId,
-          message: text,
-          ...(senderId ? { sender_id: senderId } : {}),
-        }
-      : {
-          action: "reply_inbox",
-          message: text,
-          ...(senderId ? { sender_id: senderId } : {}),
-        };
-
   logDebug("Pancake send message request", {
     pageId: source.pageId,
     conversationId: source.conversationId,
@@ -168,11 +188,100 @@ async function sendPancakeMessage(
     hasSenderId: Boolean(senderId),
     textLength: text.length,
   });
+  await postPancakeMessage(pageAccessToken, source, {
+    message: text,
+    ...(senderId ? { sender_id: senderId } : {}),
+  });
+}
 
+/**
+ * Sends pictures or documents on Pancake, which takes neither directly.
+ *
+ * Every file goes up to `upload_contents` first and comes back as a content id,
+ * and the message then references those ids. Pancake accepts one content id per
+ * message, so a batch becomes a batch of messages — the caption rides the first,
+ * because repeating it once per file reads as the same message sent over again.
+ */
+async function sendPancakeAttachments(
+  pageAccessToken: string,
+  source: PancakeSource,
+  attachments: ChannelFile[] | ChannelImage[],
+  caption?: string,
+  senderId?: string,
+): Promise<void> {
+  for (const [index, attachment] of attachments.entries()) {
+    const contentId = await uploadPancakeContent(
+      pageAccessToken,
+      source.pageId,
+      attachment,
+    );
+    const text = index === 0 ? caption?.trim() : undefined;
+    await postPancakeMessage(pageAccessToken, source, {
+      content_ids: [contentId],
+      ...(text ? { message: text } : {}),
+      ...(senderId ? { sender_id: senderId } : {}),
+    });
+  }
+}
+
+async function uploadPancakeContent(
+  pageAccessToken: string,
+  pageId: string,
+  attachment: ChannelFile | ChannelImage,
+): Promise<string> {
+  const name = channelAttachmentName(attachment);
+  const form = new FormData();
+  form.set(
+    "file",
+    new File([await channelAttachmentBytes(attachment)], name, {
+      type: attachment.mimeType ?? contentTypeForPath(name),
+    }),
+  );
+  const response = await fetch(
+    pancakeApiUrl(
+      `pages/${encodeURIComponent(pageId)}/upload_contents`,
+      pageAccessToken,
+    ),
+    { method: "POST", body: form },
+  );
+  const bodyText = await response.text();
+  const body = parseJsonBody(bodyText);
+  const contentId = (body as { id?: string } | null)?.id;
+  if (!response.ok || !contentId) {
+    throw new Error(
+      `Pancake upload of ${name} failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
+    );
+  }
+
+  return contentId;
+}
+
+// The one POST both a text reply and an attachment reply go through. `action`
+// is not the caller's to choose: a comment must be answered as a comment and an
+// inbox message as an inbox message, and that is decided by where it came from.
+async function postPancakeMessage(
+  pageAccessToken: string,
+  source: PancakeSource,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const url = pancakeApiUrl(
+    `pages/${encodeURIComponent(source.pageId)}/conversations/${encodeURIComponent(
+      source.conversationId,
+    )}/messages`,
+    pageAccessToken,
+  );
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(
+      source.messageType === "COMMENT"
+        ? {
+            action: "reply_comment",
+            message_id: source.messageId,
+            ...payload,
+          }
+        : { action: "reply_inbox", ...payload },
+    ),
   });
   const bodyText = await response.text();
   const body = parseJsonBody(bodyText);
@@ -197,6 +306,13 @@ async function sendPancakeMessage(
   });
 }
 
+function pancakeApiUrl(path: string, pageAccessToken: string): URL {
+  const url = new URL(path, PANCAKE_API_BASE);
+  url.searchParams.set("page_access_token", pageAccessToken);
+
+  return url;
+}
+
 function formatPancakeError(
   body: { message?: string } | null,
   bodyText: string,
@@ -204,8 +320,52 @@ function formatPancakeError(
   return body?.message ?? (bodyText || "unknown_error");
 }
 
-function hashEventText(text: string): string {
-  return createHash("sha256").update(text).digest("hex").slice(0, 12);
+// Pancake reuses a message id across edits, so the event id folds in what the
+// message actually said. Attachment identity belongs in it for the same reason:
+// two captionless photos would otherwise hash identically and the second would
+// dedupe away as a replay of the first.
+function hashEventContent(
+  text: string | undefined,
+  attachments: Attachment[],
+): string {
+  const identity = [
+    text ?? "",
+    ...attachments.map((attachment) => attachment.url ?? ""),
+  ].join("\n");
+
+  return createHash("sha256").update(identity).digest("hex").slice(0, 12);
+}
+
+/**
+ * The photos and videos on a Pancake message, as Chat SDK attachments.
+ *
+ * Pancake hosts every upload itself and names it by URL, so there is no token to
+ * attach and nothing to resolve first — the link in the webhook is the file. A
+ * share card or link preview arrives in the same array with no file behind it,
+ * and is dropped rather than turned into a broken download.
+ */
+function pancakeAttachments(
+  value: PancakeAttachment[] | undefined,
+): Attachment[] {
+  return (value ?? []).flatMap((attachment): Attachment[] => {
+    if (attachment.type !== "photo" && attachment.type !== "video") {
+      return [];
+    }
+    const isPhoto = attachment.type === "photo";
+    const url = isPhoto ? attachment.url : attachment.video_data?.url;
+    if (!url?.trim()) {
+      return [];
+    }
+
+    return [
+      {
+        type: isPhoto ? "image" : "video",
+        url: url,
+        ...(attachment.title ? { name: attachment.title } : {}),
+        ...(attachment.mime_type ? { mimeType: attachment.mime_type } : {}),
+      },
+    ];
+  });
 }
 
 function isPancakeMessageType(
@@ -288,10 +448,12 @@ function parsePancakeWebhook(
   const conversation = payload.data?.conversation;
   const message = payload.data?.message;
   const text = message?.message?.trim();
+  const attachments = pancakeAttachments(message?.attachments);
+  // A customer who sends only a photo is still a customer asking something.
   if (
     !conversation?.id ||
     !message?.id ||
-    !text ||
+    (!text && attachments.length === 0) ||
     !isPancakeMessageType(message.type)
   ) {
     logDebug("Pancake webhook ignored", {
@@ -300,6 +462,7 @@ function parsePancakeWebhook(
       conversationId: conversation?.id,
       messageId: message?.id,
       hasText: Boolean(text),
+      attachmentCount: attachments.length,
       messageType: message?.type,
     });
 
@@ -350,7 +513,8 @@ function parsePancakeWebhook(
     conversationId: conversation.id,
     messageId: message.id,
     messageType: message.type,
-    textLength: text.length,
+    textLength: text?.length ?? 0,
+    attachmentCount: attachments.length,
     tagIds: normalizePancakeTagIds(conversation.tags),
   });
 
@@ -370,10 +534,11 @@ function parsePancakeWebhook(
     kind: "message",
     ack: { statusCode: 200 },
     message: {
-      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventText(text)}`,
+      eventId: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${message.id}:${hashEventContent(text, attachments)}`,
       conversationKey: `${PANCAKE_INTEGRATION_PREFIX}${pageId}:${conversation.id}`,
       channelName: "pancake",
-      content: [{ type: "text", text: text }],
+      content: [{ type: "text", text: text ?? "" }],
+      ...(attachments.length > 0 ? { attachments: attachments } : {}),
       identity: {
         workspaceRef: pageId,
         channelId: conversation.id,

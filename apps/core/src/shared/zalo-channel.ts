@@ -4,7 +4,7 @@
  */
 
 import { timingSafeEqual } from "node:crypto";
-import type { UserContent } from "ai";
+import type { Attachment } from "chat";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -179,7 +179,7 @@ export function createZaloChannel(
       }
 
       const message = update.message;
-      const content = zaloMessageContent(eventName, message);
+      const media = zaloMessageMedia(eventName, message);
       const chatId = message?.chat?.id;
       const senderId = message?.from?.id;
       const messageId = message?.message_id;
@@ -193,7 +193,8 @@ export function createZaloChannel(
       if (!senderId) {
         return ignoreZaloUpdate(update, "missing_sender_id");
       }
-      if (!content) {
+      if (!media) {
+
         return ignoreZaloUpdate(update, missingContentReason);
       }
       if (!isZaloChatType(chatType)) {
@@ -234,7 +235,10 @@ export function createZaloChannel(
           eventId: `${ZALO_INTEGRATION_PREFIX}${update.event_name}:${chatId}:${senderId}:${messageId}`,
           conversationKey: `${ZALO_INTEGRATION_PREFIX}${chatId}`,
           channelName: "zalo",
-          content: content,
+          content: media.text,
+          ...(media.attachments.length > 0
+            ? { attachments: media.attachments }
+            : {}),
           identity: {
             channelId: chatId,
             ...(senderId ? { userId: senderId } : {}),
@@ -467,58 +471,75 @@ function zaloHttpUrl(raw: unknown): string | null {
     : null;
 }
 
-// Zalo hosts every attachment as a URL, so inbound media becomes AI SDK URL
-// parts — strings, because the conversation is persisted as JSON.
-function zaloMessageContent(
+/**
+ * What a Zalo update carries: its text, and the media beside it.
+ *
+ * Zalo hosts every attachment as a plain URL with no token on it, so an
+ * attachment here is just that link — the harness reads it once, stores it in
+ * the workspace and hands the model a durable one. Passing Zalo's own URL
+ * through instead would work for exactly one turn: it is dropped when the
+ * message is persisted, and Zalo's links do not stay good forever either.
+ *
+ * Returns null when the event named media the payload did not actually carry,
+ * which is what the caller reports as the event's missing-content reason.
+ */
+function zaloMessageMedia(
   eventName: string,
   message: ZaloMessage | undefined,
-): UserContent | null {
+): { text: string; attachments: Attachment[] } | null {
   const caption =
     typeof message?.caption === "string" ? message.caption.trim() : "";
   switch (eventName) {
     case "message.text.received": {
       const text = typeof message?.text === "string" ? message.text.trim() : "";
 
-      return text || null;
+      return text ? { text: text, attachments: [] } : null;
     }
     case "message.image.received": {
       const photo = zaloHttpUrl(message?.photo);
-      if (!photo) {
-        return null;
-      }
 
-      return caption
-        ? [
-            { type: "text", text: caption },
-            { type: "image", image: photo },
-          ]
-        : [{ type: "image", image: photo }];
+      return photo
+        ? {
+            text: caption,
+            attachments: [{ type: "image", url: photo, name: "photo" }],
+          }
+        : null;
     }
     case "message.sticker.received": {
       const sticker = zaloHttpUrl(message?.url);
 
-      return sticker ? [{ type: "image", image: sticker }] : null;
+      return sticker
+        ? {
+            text: "",
+            attachments: [{ type: "image", url: sticker, name: "sticker" }],
+          }
+        : null;
     }
     case "message.voice.received": {
       const voice = zaloHttpUrl(message?.voice_url);
       if (!voice) {
         return null;
       }
-      // An audio type Zalo never sends goes over as a link, so the turn survives
-      // instead of failing at the provider.
-      const isVoiceNote = new URL(voice).pathname
-        .toLowerCase()
+      // Zalo deals in one audio format. Anything else is a link it has given us
+      // a name for but no content type, so it goes over as text and the turn
+      // survives instead of failing at the provider.
+      const isVoiceNote = new URL(voice)
+        .pathname.toLowerCase()
         .endsWith(ZALO_VOICE_EXTENSION);
 
       return isVoiceNote
-        ? [
-            {
-              type: "file",
-              data: voice,
-              mediaType: ZALO_VOICE_MEDIA_TYPE,
-            },
-          ]
-        : [{ type: "text", text: `Voice message: ${voice}` }];
+        ? {
+            text: caption,
+            attachments: [
+              {
+                type: "audio",
+                url: voice,
+                name: `voice${ZALO_VOICE_EXTENSION}`,
+                mimeType: ZALO_VOICE_MEDIA_TYPE,
+              },
+            ],
+          }
+        : { text: `Voice message: ${voice}`, attachments: [] };
     }
     default:
       return null;

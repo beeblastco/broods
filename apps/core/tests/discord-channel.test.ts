@@ -448,7 +448,131 @@ describe("discord channel adapter", () => {
       }),
     ).toBe(false);
   });
+
+  it("accepts an upload with no message text and carries it as an attachment", async () => {
+    // An image-only message used to be dropped as `empty_message`.
+    const message = await parseGatewayMedia("message-media-1", "", [
+      {
+        id: "a1",
+        url: "https://cdn.discordapp.com/attachments/1/2/chart.png?ex=abc",
+        filename: "chart.png",
+        content_type: "image/png",
+        size: 4096,
+        width: 800,
+        height: 600,
+      },
+    ]);
+
+    expect(message.attachments).toEqual([
+      expect.objectContaining({
+        type: "image",
+        url: "https://cdn.discordapp.com/attachments/1/2/chart.png?ex=abc",
+        name: "chart.png",
+        mimeType: "image/png",
+        width: 800,
+        height: 600,
+      }),
+    ]);
+  });
+
+  it("reads a voice message by its shape, since Discord labels it application/ogg", async () => {
+    const message = await parseGatewayMedia("message-media-2", "", [
+      {
+        id: "a2",
+        url: "https://cdn.discordapp.com/attachments/1/3/voice-message.ogg",
+        filename: "voice-message.ogg",
+        content_type: "application/ogg",
+        duration_secs: 4.2,
+        waveform: "AAAA",
+      },
+    ]);
+
+    expect(message.attachments?.[0]).toMatchObject({ type: "audio" });
+    // The claimed type is dropped on purpose: keeping `application/ogg` would
+    // let it override the sniff that identifies the real codec.
+    expect(message.attachments?.[0]?.mimeType).toBeUndefined();
+  });
+
+  it("carries a sticker as the picture Discord serves for it", async () => {
+    const message = await parseGatewayMedia("message-media-3", "nice", [], [
+      { id: "555", name: "party-blob", format_type: 1 },
+      // Lottie is a JSON animation with no raster form, so there is nothing
+      // worth fetching.
+      { id: "666", name: "spinny", format_type: 3 },
+    ]);
+
+    expect(message.attachments).toEqual([
+      expect.objectContaining({
+        type: "image",
+        url: "https://media.discordapp.net/stickers/555.png",
+        name: "party-blob.png",
+      }),
+    ]);
+  });
+
+  it("still ignores a message with neither text nor media", async () => {
+    const adapter = createDiscordChannel(
+      "bot-token",
+      TEST_DISCORD_PUBLIC_KEY,
+      new Set(["channel-1"]),
+      null,
+    );
+    const parsed = await adapter.parse(
+      createGatewayRequest({
+        type: "GATEWAY_MESSAGE_CREATE",
+        data: {
+          id: "message-media-4",
+          channel_id: "channel-1",
+          content: "   ",
+          guild_id: "guild-1",
+          mentions: [],
+          mention_roles: [],
+          attachments: [],
+          author: { id: "user-1", username: "ada", bot: false },
+        },
+      }),
+    );
+
+    expect(parsed.kind).toBe("ignore");
+  });
 });
+
+async function parseGatewayMedia(
+  id: string,
+  content: string,
+  attachments: Array<Record<string, unknown>>,
+  stickerItems: Array<Record<string, unknown>> = [],
+) {
+  const adapter = createDiscordChannel(
+    "bot-token",
+    TEST_DISCORD_PUBLIC_KEY,
+    new Set(["channel-1"]),
+    null,
+  );
+  const parsed = await adapter.parse(
+    createGatewayRequest({
+      type: "GATEWAY_MESSAGE_CREATE",
+      data: {
+        id: id,
+        channel_id: "channel-1",
+        content: content,
+        guild_id: "guild-1",
+        mentions: [],
+        mention_roles: [],
+        attachments: attachments,
+        ...(stickerItems.length > 0 ? { sticker_items: stickerItems } : {}),
+        author: { id: "user-1", username: "ada", bot: false },
+      },
+    }),
+  );
+  if (parsed.kind !== "message") {
+    throw new Error(
+      `Expected the Discord media message to be accepted, got ${parsed.kind}`,
+    );
+  }
+
+  return parsed.message;
+}
 
 function createRequest(payload: Record<string, unknown>) {
   return {

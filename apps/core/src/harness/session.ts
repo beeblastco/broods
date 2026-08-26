@@ -10,8 +10,10 @@ import {
   type ModelMessage,
   type SystemModelMessage,
   type ToolModelMessage,
+  type UserContent,
   type UserModelMessage,
 } from "ai";
+import type { Attachment } from "chat";
 import type { ChannelActions } from "../shared/channels.ts";
 import { runtime } from "../shared/convex/runtime.ts";
 import type {
@@ -34,6 +36,7 @@ import {
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
+import { ingestInboundAttachments } from "./channel-media.ts";
 import {
   compactSessionContext,
   isCompactionSummaryMessage,
@@ -311,6 +314,37 @@ export class Session {
       ownerGeneration: this.ownerGeneration,
       leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
     });
+  }
+
+  /**
+   * Stores the media a channel delivered and folds it into the newest user event.
+   *
+   * Runs here rather than in the adapter because the workspace the bytes land in
+   * is only known once the runtime resolves, and because parsing happens before
+   * the webhook is acknowledged — downloading there would hold the provider's
+   * connection open for the length of a video. The events come back unchanged
+   * when there is nothing attached, so every caller can route through it.
+   */
+  async ingestAttachments(
+    events: ConversationIngressEvent[],
+    attachments: Attachment[] | undefined,
+    channelName: string,
+  ): Promise<ConversationIngressEvent[]> {
+    if (!attachments?.length) {
+      return events;
+    }
+    const runtimeConfig = await this.ensureResolvedRuntime();
+    const parts = await ingestInboundAttachments(attachments, {
+      accountId: this.accountId,
+      channelName: channelName,
+      eventId: this.eventId,
+      provider: this.agentConfig.model?.provider,
+      // The first workspace is the agent's default, the same one the file tools
+      // write to when the model names none.
+      workspace: runtimeConfig.workspaces[0],
+    });
+
+    return parts.length > 0 ? appendToLatestUserEvent(events, parts) : events;
   }
 
   async appendIngressEvents(
@@ -1047,6 +1081,36 @@ export function stripEnvelopeFieldsFromMessages(
   });
 }
 
+/**
+ * Puts the stored media on the message it arrived with — the newest user event.
+ * Earlier events are the context a channel batched ahead of it, and attaching a
+ * picture to one of those would date it to the wrong turn. A string content is
+ * widened to parts, since that is the only shape that holds a picture.
+ */
+function appendToLatestUserEvent(
+  events: ConversationIngressEvent[],
+  parts: Exclude<UserContent, string>,
+): ConversationIngressEvent[] {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    if (event.role !== "user") continue;
+    // An empty text part is dropped rather than carried: a picture sent with no
+    // caption is a message whose text field a channel still filled in with "",
+    // and some providers reject a text part that says nothing.
+    const existing = (
+      typeof event.content === "string"
+        ? [{ type: "text" as const, text: event.content }]
+        : event.content
+    ).filter((part) => part.type !== "text" || part.text.length > 0);
+    const next = [...events];
+    next[index] = { ...event, content: [...existing, ...parts] };
+
+    return next;
+  }
+
+  return [...events, { role: "user", content: parts }];
+}
+
 function agentSystemMessages(
   system: string | SystemModelMessage | SystemModelMessage[] | undefined,
 ): SystemModelMessage[] {
@@ -1382,7 +1446,17 @@ function sanitizeToolMessage(
 }
 
 /**
- * Filters user message to only text content parts.
+ * Filters a user message to what a stored row can hold.
+ *
+ * Text and media named by URL keep their part: a sealed media link is a short
+ * string that still resolves on every later turn, which is the whole reason
+ * inbound attachments are stored and linked rather than inlined. Media carrying
+ * its own bytes is dropped — a base64 picture is megabytes of row per turn, and
+ * the model already saw it in the turn it arrived.
+ *
+ * A message left with nothing keeps a note rather than becoming null: dropping
+ * the row entirely would leave the assistant's reply in history answering a user
+ * turn that is not there.
  */
 function sanitizeUserMessage(
   message: UserModelMessage,
@@ -1391,9 +1465,39 @@ function sanitizeUserMessage(
     return message;
   }
 
-  const content = message.content.filter((part) => part.type === "text");
+  const content = message.content.filter(
+    (part) =>
+      part.type === "text" ||
+      (part.type === "image" && isStorableMediaReference(part.image)) ||
+      (part.type === "file" && isStorableMediaReference(part.data)),
+  );
+  if (content.length > 0) {
+    return { ...message, content: content };
+  }
 
-  return content.length > 0 ? { ...message, content: content } : null;
+  return message.content.length > 0
+    ? {
+        ...message,
+        content: [{ type: "text", text: "[attachment not retained]" }],
+      }
+    : null;
+}
+
+// Whether a media part points at its bytes instead of carrying them. A URL
+// object or an `http(s)` string is a reference; a base64 string, a Buffer or a
+// typed array is the payload itself. A `data:` URL is a payload wearing a URL's
+// clothes, so it is excluded by the scheme check rather than by the type.
+// A file part may also tag its data (`{ type: "url", url }`), which the direct
+// API accepts, so that shape unwraps to the same check.
+function isStorableMediaReference(value: unknown): boolean {
+  if (isPlainObject(value) && value.type === "url") {
+    return isStorableMediaReference(value.url);
+  }
+  if (value instanceof URL) {
+    return value.protocol === "http:" || value.protocol === "https:";
+  }
+
+  return typeof value === "string" && /^https?:\/\//i.test(value);
 }
 
 function toStoredConversationEvent<

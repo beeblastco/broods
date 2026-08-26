@@ -1244,7 +1244,13 @@ async function handleChannelRequest(
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
   });
-  let incoming: ConversationIngressEvent[] = event.events;
+  // Once, before the drain loop: the attachments belong to the message that
+  // arrived, and a follow-up taken off the queue brings its own.
+  let incoming: ConversationIngressEvent[] = await session.ingestAttachments(
+    event.events,
+    event.attachments,
+    event.channelName,
+  );
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
@@ -1445,7 +1451,13 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     return;
   }
 
-  await session.appendIngressEvents(event.events);
+  await session.appendIngressEvents(
+    await session.ingestAttachments(
+      event.events,
+      event.attachments,
+      event.channelName,
+    ),
+  );
   logDebug("Channel context persisted", {
     channel: event.channelName,
     accountId: event.accountId,
