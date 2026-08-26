@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 /** An `env("NAME")` with no stored value must fail the sync, not warn. */
 
+import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
@@ -218,3 +219,44 @@ describe("removing an env var a synced resource still reads", () => {
     expect(await storedEnvCount(tt)).toBe(0);
   });
 });
+
+describe("the value digest env list returns", () => {
+  beforeEach(() => {
+    vi.stubEnv("ACCOUNT_CONFIG_ENCRYPTION_SECRET", "test-config-secret");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // `broods env sync` compares this against its own sha256 of the `.env.local`
+  // value, so the two have to be the same function over the same bytes.
+  test("is the plain sha256 of the stored value", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+
+    expect(await listedDigest(tt)).toBe(
+      createHash("sha256").update("sk-live-1").digest("hex"),
+    );
+  });
+
+  test("follows a rotation, which is what makes drift visible", async () => {
+    const tt = t();
+    await seedAccount(tt);
+    await setEnv(tt, "sk-live-1");
+    const before = await listedDigest(tt);
+    await setEnv(tt, "sk-live-2");
+
+    expect(await listedDigest(tt)).not.toBe(before);
+  });
+});
+
+const listedDigest = async (tt: T): Promise<string | undefined> => {
+  const variables = await tt.query(internal.cliSync.listEnvBySecretHash, {
+    secretHash: SECRET_HASH,
+    project: PROJECT,
+    stage: STAGE,
+  });
+
+  return variables.find((entry) => entry.name === ENV_NAME)?.valueDigest;
+};

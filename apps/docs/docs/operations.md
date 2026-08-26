@@ -29,9 +29,38 @@ broods env set OPENAI_API_KEY    # store encrypted secret
 broods env get OPENAI_API_KEY    # reveal value (audited)
 broods env list                  # list names (values hidden)
 broods env rm OPENAI_API_KEY     # remove variable
+broods env sync                  # push every env("NAME") from .env.local
+```
+
+`set` also reads a piped value, so a secret can come straight from another tool:
+
+```bash
+echo "$VALUE" | broods env set SOME_NAME
 ```
 
 `rm` refuses while a synced agent or sandbox still reads the variable through `env("NAME")`, and names what holds the reference. Drop the `env()` reference from those resources and sync before removing the variable. Otherwise the stored config keeps the `${NAME}` placeholder that `env("NAME")` compiles to, and the runtime has nothing left to substitute for it. To rotate a secret, run `env set` again rather than removing it first.
+
+### Keeping a stage in step with .env.local
+
+A rotated secret is invisible until something reads it. `env list` prints names, `diff` compares resources, `agent get` reports the channels as connected — and the stage keeps serving the old value until a webhook comes back 401.
+
+`broods env sync` closes that gap. It pushes every `env("NAME")` your project references from `.env.local` to the current stage, skipping the ones the stage already holds the same value for, and prints what moved:
+
+```text
+▌ ↑ Synced 1 env var(s) from .env.local: ZALO_WEBHOOK_SECRET
+3 other referenced variable(s) already in step with demo-app/production.
+1 referenced variable(s) live only on demo-app/production: SLACK_SIGNING_SECRET
+```
+
+The last line is the referenced names `.env.local` does not carry — a secret set straight on the stage. `env sync` leaves those alone; naming them is what separates them from the ones it does control.
+
+The stage stores a SHA-256 digest beside each encrypted value, so the CLI can compare the two sides without either revealing a secret. `broods diff` uses the same comparison and warns when they disagree:
+
+```text
+⚠ .env.local and demo-app/development disagree on 1 variable(s): ZALO_WEBHOOK_SECRET — run `broods env sync` to push the local values.
+```
+
+`sync` only touches names the project references through `env("NAME")` — never `BROODS_*` control vars or unrelated `.env.local` keys — and never deletes. `broods dev` runs the same push on every sync. `broods deploy` does not: Production secrets stay an explicit `env set` or `env sync`, so a stale local value cannot ride a deploy into production.
 
 ### Observability
 

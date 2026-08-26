@@ -13,7 +13,10 @@ import {
   encryptAgentConfigBlob,
 } from "./model/agentConfigCodec";
 import { refreshAgentConfigsForEnvironmentVariable } from "./model/agentSync";
-import { assertEnvironmentVariableUnreferenced } from "./model/environmentValues";
+import {
+  assertEnvironmentVariableUnreferenced,
+  hashEnvironmentValue,
+} from "./model/environmentValues";
 import { refreshSandboxConfigsForEnvironmentVariable } from "./model/sandboxConfigSync";
 import {
   accountIdForProject,
@@ -162,11 +165,13 @@ export const set = mutation({
       { value: value },
       encryptionSecret(),
     );
+    const valueDigest = await hashEnvironmentValue(value);
     if (existing) {
       await ctx.db.patch(existing._id, {
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         tag: encrypted.tag,
+        valueDigest: valueDigest,
         updatedAt: now,
       });
 
@@ -203,6 +208,7 @@ export const set = mutation({
       ciphertext: encrypted.ciphertext,
       iv: encrypted.iv,
       tag: encrypted.tag,
+      valueDigest: valueDigest,
       updatedAt: now,
     });
 

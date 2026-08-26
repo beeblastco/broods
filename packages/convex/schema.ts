@@ -597,6 +597,8 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
+  /** SHA-256 hex of the plaintext value; absent on rows written before this field. */
+  valueDigest: v.optional(v.string()),
   updatedAt: v.number(),
 };
 
