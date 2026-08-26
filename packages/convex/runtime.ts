@@ -878,28 +878,24 @@ export const deleteAgentRuntimeData = internalMutation({
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const asyncAgentRows = await ctx.db
       .query("runtimeAsyncAgentResults")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_conversationKey", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
       .take(RUNTIME_DELETE_BATCH_SIZE);
     const asyncToolRows = await ctx.db
       .query("runtimeAsyncToolResults")
-      .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .withIndex("by_conversationKey", (q) =>
+        q.gte("conversationKey", prefix).lt("conversationKey", prefixEnd),
+      )
       .take(RUNTIME_DELETE_BATCH_SIZE);
-    // The async result tables index the account, not the key, so the agent
-    // filter happens here rather than in the range.
-    const asyncAgentOwned = asyncAgentRows.filter((row) =>
-      row.conversationKey.startsWith(prefix),
-    );
-    const asyncToolOwned = asyncToolRows.filter((row) =>
-      row.conversationKey.startsWith(prefix),
-    );
     for (const row of [
       ...conversationRows,
       ...coordinatorRows,
       ...ingressRows,
       ...applicationRows,
       ...harnessSessionRows,
-      ...asyncAgentOwned,
-      ...asyncToolOwned,
+      ...asyncAgentRows,
+      ...asyncToolRows,
     ])
       await ctx.db.delete(row._id);
     // A full batch means the table had more than one pass can hold, so keep
@@ -928,16 +924,16 @@ export const deleteAgentRuntimeData = internalMutation({
       ingressDeleted: ingressRows.length,
       applicationDeleted: applicationRows.length,
       harnessSessionDeleted: harnessSessionRows.length,
-      asyncAgentResultDeleted: asyncAgentOwned.length,
-      asyncToolResultDeleted: asyncToolOwned.length,
+      asyncAgentResultDeleted: asyncAgentRows.length,
+      asyncToolResultDeleted: asyncToolRows.length,
       totalDeleted:
         conversationRows.length +
         coordinatorRows.length +
         ingressRows.length +
         applicationRows.length +
         harnessSessionRows.length +
-        asyncAgentOwned.length +
-        asyncToolOwned.length,
+        asyncAgentRows.length +
+        asyncToolRows.length,
     };
   },
 });
