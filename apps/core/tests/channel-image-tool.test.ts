@@ -5,7 +5,15 @@
  * rungs send-images drops through when a channel will not show pictures.
  */
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  mock,
+  spyOn,
+} from "bun:test";
 import type { ToolExecuteFunction, ToolSet } from "ai";
 import type { ChannelToolContext } from "../src/harness/tools/channel.tool.ts";
 import type { ChannelFile, ChannelImage } from "../src/shared/channels.ts";
@@ -391,12 +399,38 @@ describe("sendFilesTool", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 
-  it("is not registered when no workspace is attached", async (): Promise<void> => {
+  it("is not registered when no workspace is attached, and says so", async (): Promise<void> => {
     const { sendFilesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const context = channelContext(async function (): Promise<void> {});
+    const lines: string[] = [];
+    const write = spyOn(process.stdout, "write").mockImplementation(function (
+      chunk: string | Uint8Array,
+    ): boolean {
+      lines.push(chunk.toString());
 
-    expect(sendFilesTool({ ...context, workspaces: [] })).toEqual({});
+      return true;
+    });
+
+    const tools = sendFilesTool({ ...context, workspaces: [] });
+    write.mockRestore();
+
+    expect(tools).toEqual({});
+    // The absence is otherwise invisible: the model loses its only file
+    // delivery mid-run and the trace carries no WARN and no ERROR at all, so
+    // the run reads as the model ignoring instructions.
+    const warned = lines
+      .map((line): Record<string, unknown> => JSON.parse(line))
+      .filter((entry): boolean => entry.level === "WARN");
+
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toMatchObject({
+      message:
+        "send-files not registered: sending files needs an attached workspace",
+      channel: "zalo",
+      attachedWorkspaces: 0,
+      sendImagesUrlOnly: true,
+    });
   });
 });
 

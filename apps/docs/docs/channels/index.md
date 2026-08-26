@@ -35,6 +35,8 @@ Channel tools are automatic; do not add them to `config.tools`.
 
 `send-files` takes `file_paths`, a list of workspace documents, and is for anything that is not a picture: PDFs, spreadsheets, text files. Pictures go through `send-images`, because a picture the recipient sees inline and a file they download are different messages.
 
+Sending files requires an attached workspace. A file leaves as a sealed `/media/{ticket}` link minted per workspace and account, and a file written in a bare agent sandbox has no such address, so there is nothing to hand the provider. An agent with `sandbox` but no `workspaces` therefore gets no `send-files` at all, and its `send-images` accepts `urls` only. The harness logs a warning naming that cause when it happens, so a run that improvises is traceable to the missing workspace rather than to the model.
+
 The two split at the channel boundary, not in the prompt. A provider declares what it can do by implementing `sendImages` or `sendFiles`, the model only ever names workspace paths, and the adapter spends the batch the way its provider wants. A caption rides the first message only.
 
 Providers disagree on more than grouping: some fetch a URL you hand them, others accept only an upload. The adapter hides that, and a workspace attachment carries both a sealed link and a reader, so each provider takes whichever it needs and the bytes are read only when one actually uploads.
