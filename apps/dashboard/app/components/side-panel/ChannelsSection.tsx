@@ -95,7 +95,7 @@ const CHANNELS: ChannelKind[] = [
         placeholder: "https://api.github.com",
       },
       {
-        key: "userName",
+        key: "botUserName",
         label: "Bot username (for @-mention gating)",
         type: "text",
         placeholder: "my-bot",

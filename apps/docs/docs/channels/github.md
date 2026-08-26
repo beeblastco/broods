@@ -36,9 +36,9 @@ export const myAgent = defineAgent({
 - `channels` (optional): `["*"]` to answer in every repository the App is installed on, instead of only the declared ones. A GitHub App's install list already narrows this, so the wildcard is the common choice here.
 - `allowedUserIds` (optional): GitHub logins allowed to trigger the agent. Everyone, when omitted.
 - `apiUrl` (optional): GitHub API base URL, for example for GitHub Enterprise. This maps to `GitHubAdapterConfig["apiUrl"]`.
-- `userName` (optional): Bot username for @-mention detection (e.g. `"my-bot"` or `"my-bot[bot]"`). When set, the bot only responds to comments that mention `@userName`. Without this, the bot responds to all human comments.
+- `botUserName` (optional): Bot username for @-mention detection (e.g. `"my-bot"` or `"my-bot[bot]"`). When set, the bot only responds to comments that mention `@botUserName`. Without this, the bot responds to all human comments.
 - `botUserId` (optional): Bot's numeric GitHub user ID for self-message detection. Auto-detected from the GitHub API when omitted.
-- `triggerOnIssueOpen` (optional): When `false`, the bot does not auto-trigger on new issues (`opened`, `edited`, `reopened`). Defaults to `true`. Set to `false` if you only want the bot to respond to comments (e.g. `@mention` gating via `userName`).
+- `triggerOnIssueOpen` (optional): When `false`, the bot does not auto-trigger on new issues (`opened`, `edited`, `reopened`). Defaults to `true`. Set to `false` if you only want the bot to respond to comments (e.g. `@mention` gating via `botUserName`).
 - `triggerOnPROpen` (optional): When `false`, the bot does not auto-trigger on new pull requests (`opened`, `edited`, `reopened`). Defaults to `true`. Set to `false` if you only want the bot to respond to comments.
 
 ## Runtime Behavior

@@ -245,7 +245,7 @@ export type GitHubConnectionInput = EnvRefString<
       | "webhookSecret"
       | "appId"
       | "privateKey"
-      | "userName"
+      | "botUserName"
       | "botUserId"
       | "triggerOnIssueOpen"
       | "triggerOnPROpen"
