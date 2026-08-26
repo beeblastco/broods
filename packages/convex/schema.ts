@@ -1306,11 +1306,13 @@ export default defineSchema({
   runtimeAsyncAgentResults: defineTable(runtimeAsyncAgentResultsFields)
     .index("by_eventId", ["eventId"])
     .index("by_accountId", ["accountId"])
+    .index("by_conversationKey", ["conversationKey"])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncToolResults: defineTable(runtimeAsyncToolResultsFields)
     .index("by_resultId", ["resultId"])
     .index("by_parentEventId", ["parentEventId"])
     .index("by_accountId", ["accountId"])
+    .index("by_conversationKey", ["conversationKey"])
     .index("by_expiresAt", ["expiresAt"]),
   runtimeAsyncToolGroups: defineTable(runtimeAsyncToolGroupsFields)
     .index("by_parentEventId", ["parentEventId"])

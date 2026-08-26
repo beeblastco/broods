@@ -788,3 +788,157 @@ describe("runtime persistence", () => {
     });
   });
 });
+
+describe("runtime.deleteAgentRuntimeData", () => {
+  const ACCOUNT = "purge-account";
+  const AGENT = "purge-agent";
+  const OTHER_AGENT = "keeper-agent";
+  /** Mirrors the batch size the mutation pages with. */
+  const RUNTIME_DELETE_BATCH_SIZE = 100;
+  const FAR_FUTURE_EXPIRY = 9_999_999_999;
+
+  /** Two agents in one account, each with a row in every key-scoped table. */
+  async function seedTwoAgents(t: ReturnType<typeof runtimeTest>) {
+    await t.run(async (ctx) => {
+      for (const agentId of [AGENT, OTHER_AGENT]) {
+        const conversationKey = `acct:${ACCOUNT}:agent:${agentId}:tg:1`;
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: ACCOUNT,
+          conversationKey: conversationKey,
+          cursor: "001",
+          event: { text: "hi" },
+        });
+        await ctx.db.insert("runtimeConversationCoordinators", {
+          accountId: ACCOUNT,
+          agentId: agentId,
+          conversationKey: conversationKey,
+          ownerGeneration: 1,
+          queuedCount: 0,
+          queuedBytes: 0,
+          nextSequence: 1,
+          updatedAt: 1,
+        });
+        await ctx.db.insert("runtimeHarnessSessions", {
+          accountId: ACCOUNT,
+          conversationKey: conversationKey,
+          harnessType: "claude-code" as const,
+          sessionId: `session-${agentId}`,
+          resumeState: null,
+          updatedAt: 1,
+        });
+      }
+    });
+  }
+
+  test("deletes only the named agent's rows", async () => {
+    const t = runtimeTest();
+    await seedTwoAgents(t);
+
+    const result = await t.mutation(internal.runtime.deleteAgentRuntimeData, {
+      accountId: ACCOUNT,
+      agentId: AGENT,
+    });
+
+    expect(result).toMatchObject({
+      conversationsDeleted: 1,
+      coordinatorDeleted: 1,
+      harnessSessionDeleted: 1,
+      totalDeleted: 3,
+    });
+    await t.run(async (ctx) => {
+      const survivors = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_accountId", (q) => q.eq("accountId", ACCOUNT))
+        .collect();
+      expect(survivors.map((row) => row.agentId)).toEqual([OTHER_AGENT]);
+    });
+  });
+
+  test("reports nothing to do for an agent with no rows", async () => {
+    const t = runtimeTest();
+    await seedTwoAgents(t);
+
+    expect(
+      await t.mutation(internal.runtime.deleteAgentRuntimeData, {
+        accountId: ACCOUNT,
+        agentId: "never-ran",
+      }),
+    ).toMatchObject({ totalDeleted: 0 });
+  });
+
+  test("an agent id that prefixes another does not take its rows", async () => {
+    const t = runtimeTest();
+    await t.run(async (ctx) => {
+      for (const agentId of ["ag1", "ag10"]) {
+        await ctx.db.insert("runtimeConversationEvents", {
+          accountId: ACCOUNT,
+          conversationKey: `acct:${ACCOUNT}:agent:${agentId}:tg:1`,
+          cursor: "001",
+          event: { text: "hi" },
+        });
+      }
+    });
+
+    const result = await t.mutation(internal.runtime.deleteAgentRuntimeData, {
+      accountId: ACCOUNT,
+      agentId: "ag1",
+    });
+
+    expect(result.conversationsDeleted).toBe(1);
+    await t.run(async (ctx) => {
+      const left = await ctx.db
+        .query("runtimeConversationEvents")
+        .withIndex("by_accountId", (q) => q.eq("accountId", ACCOUNT))
+        .collect();
+      expect(left.map((row) => row.conversationKey)).toEqual([
+        `acct:${ACCOUNT}:agent:ag10:tg:1`,
+      ]);
+    });
+  });
+
+  test("a busy sibling agent does not keep the purge rescheduling", async () => {
+    const t = runtimeTest();
+    await t.run(async (ctx) => {
+      // A full batch of rows belonging to someone else. Read over an index that
+      // is not the conversation key, these would come back every pass, delete
+      // nothing and reschedule forever.
+      for (let index = 0; index < RUNTIME_DELETE_BATCH_SIZE; index += 1)
+        await ctx.db.insert("runtimeAsyncAgentResults", {
+          accountId: ACCOUNT,
+          eventId: `keeper-${index}`,
+          conversationKey: `acct:${ACCOUNT}:agent:${OTHER_AGENT}:api:c${index}`,
+          status: "completed" as const,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          expiresAt: FAR_FUTURE_EXPIRY,
+        });
+      await ctx.db.insert("runtimeAsyncAgentResults", {
+        accountId: ACCOUNT,
+        eventId: "doomed",
+        conversationKey: `acct:${ACCOUNT}:agent:${AGENT}:api:c0`,
+        status: "completed" as const,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        expiresAt: FAR_FUTURE_EXPIRY,
+      });
+    });
+
+    expect(
+      await t.mutation(internal.runtime.deleteAgentRuntimeData, {
+        accountId: ACCOUNT,
+        agentId: AGENT,
+      }),
+    ).toMatchObject({ asyncAgentResultDeleted: 1, totalDeleted: 1 });
+    await t.run(async (ctx) => {
+      const survivors = await ctx.db
+        .query("runtimeAsyncAgentResults")
+        .withIndex("by_accountId", (q) => q.eq("accountId", ACCOUNT))
+        .collect();
+      expect(survivors).toHaveLength(RUNTIME_DELETE_BATCH_SIZE);
+      const pending = await ctx.db.system
+        .query("_scheduled_functions")
+        .collect();
+      expect(pending).toHaveLength(0);
+    });
+  });
+});
