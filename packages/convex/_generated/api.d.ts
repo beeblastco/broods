@@ -97,6 +97,7 @@ import type * as sandboxInstances from "../sandboxInstances.js";
 import type * as sandboxPublic from "../sandboxPublic.js";
 import type * as sandboxSnapshots from "../sandboxSnapshots.js";
 import type * as skills from "../skills.js";
+import type * as skillsLibraryPublic from "../skillsLibraryPublic.js";
 import type * as skillsPublic from "../skillsPublic.js";
 import type * as stage from "../stage.js";
 import type * as stripe from "../stripe.js";
@@ -207,6 +208,7 @@ declare const fullApi: ApiFromModules<{
   sandboxPublic: typeof sandboxPublic;
   sandboxSnapshots: typeof sandboxSnapshots;
   skills: typeof skills;
+  skillsLibraryPublic: typeof skillsLibraryPublic;
   skillsPublic: typeof skillsPublic;
   stage: typeof stage;
   stripe: typeof stripe;

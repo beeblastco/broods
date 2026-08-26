@@ -4,7 +4,10 @@
 import { useInfraAnalysis } from "@/app/components/canvas/InfraAnalysisContext";
 import type { BaseNodeData } from "@/app/components/node/BaseNode";
 import { agentStatusConfig } from "@/app/components/node/BaseNode";
-import { ConfigTab } from "@/app/components/side-panel/ConfigTab";
+import { AgentAdvancedSettings } from "@/app/components/side-panel/AgentAdvancedSettings";
+import { AgentConnectorsTab } from "@/app/components/side-panel/AgentConnectorsTab";
+import { AgentContextTab } from "@/app/components/side-panel/AgentContextTab";
+import { AgentSkillsTab } from "@/app/components/side-panel/AgentSkillsTab";
 import {
   DetailsTab,
   type AgentProvider,
@@ -45,6 +48,7 @@ import {
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
+import { mergeNestedAgentConfig } from "@/app/lib/agentConfigMerge";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import {
   isRuntimeVariable,
@@ -472,17 +476,12 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       if (!agentConfigId || !agentConfig) return;
 
       const edited = (value as Record<string, unknown>) ?? {};
-      // Preserve all existing branches (tools, skills, workspace, etc.);
-      // only replace the three branches the Config tab exposes.
+      // Merge-safe save (00 §2a defect fix): every branch present in the edit
+      // replaces that branch, every branch the edit doesn't mention survives.
+      // The old Config tab kept only agent/model/provider and silently
+      // dropped scheduler/workspaces/sandbox/everything else.
       const base = toNestedAgentConfig(agentConfig) as Record<string, unknown>;
-      const merged: Record<string, unknown> = { ...base };
-      for (const branch of ["agent", "model", "provider"] as const) {
-        if (branch in edited) {
-          merged[branch] = edited[branch];
-        } else {
-          delete merged[branch];
-        }
-      }
+      const merged = mergeNestedAgentConfig(base, edited);
       const patch = fromNestedAgentConfig(merged);
       await updateConfig({
         configId: agentConfigId,
@@ -756,6 +755,25 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     [agentConfigId, agentConfig, selectedProvider, updateConfig],
   );
 
+  // Details identity fields (description, system prompt) — plain columns on
+  // the config row; the codec surfaces systemPrompt as `agent.system`.
+  const handleUpdateIdentity = useCallback(
+    async (patch: { description?: string; systemPrompt?: string }) => {
+      if (!agentConfigId) return;
+
+      await updateConfig({
+        configId: agentConfigId,
+        ...(patch.description !== undefined
+          ? { description: patch.description }
+          : {}),
+        ...(patch.systemPrompt !== undefined
+          ? { systemPrompt: patch.systemPrompt }
+          : {}),
+      });
+    },
+    [agentConfigId, updateConfig],
+  );
+
   const handleUpdateChannelConfig = useCallback(
     async (kind: string, config: Record<string, unknown> | null) => {
       if (!agentConfigId || !agentConfig) return;
@@ -868,10 +886,25 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 (nodeData?.config?.skillSource ?? "") === "files")) && (
               <TabsTrigger value="files">Files</TabsTrigger>
             )}
-            {(isAgent || isTool || isWorkspace || isSandbox || isSkill) && (
+            {isAgent && (
+              <TabsTrigger
+                value="agent"
+                onMouseEnter={warmTestTab}
+                onFocus={warmTestTab}
+                onPointerDown={warmTestTab}
+              >
+                Agent
+              </TabsTrigger>
+            )}
+            {isAgent && <TabsTrigger value="skills">Skills</TabsTrigger>}
+            {isAgent && (
+              <TabsTrigger value="connectors">Connectors</TabsTrigger>
+            )}
+            {isAgent && <TabsTrigger value="context">Context</TabsTrigger>}
+            {(isTool || isWorkspace || isSandbox || isSkill) && (
               <TabsTrigger value="config">Config</TabsTrigger>
             )}
-            {(isAgent || nodeType === "tool") && (
+            {nodeType === "tool" && (
               <TabsTrigger
                 value="test"
                 onMouseEnter={warmTestTab}
@@ -900,18 +933,15 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 editName={editName}
                 setEditName={setEditName}
                 onSaveName={handleSaveName}
-                onUpdateOutputFormat={handleUpdateOutputFormat}
                 onGenerateKey={handleGenerateKey}
                 onRotateKey={handleRotateKey}
                 isSavingKey={isSavingKey}
                 selectedProvider={selectedProvider}
                 runtimeVariables={runtimeVariables}
                 onSaveModelSettings={handleSaveModelSettings}
-                onUpdateToolConfig={handleUpdateToolConfig}
-                onUpdateChannelConfig={handleUpdateChannelConfig}
                 onUpdateModelReasoning={handleUpdateModelReasoning}
                 onUpdatePublicAccess={handleUpdatePublicAccess}
-                onUpdatePolicyConfig={handleUpdatePolicyConfig}
+                onUpdateIdentity={handleUpdateIdentity}
               />
             ) : isTool && node ? (
               <ToolDetailsTab
@@ -1014,15 +1044,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Config tab — agent and tool */}
-          {isAgent && (
-            <TabsContent
-              value="config"
-              className="flex flex-col overflow-hidden"
-            >
-              <ConfigTab agentConfig={agentConfig} onSave={handleSaveConfig} />
-            </TabsContent>
-          )}
+          {/* Config tab — non-agent nodes only (agents: Settings > Advanced) */}
           {isTool && node && (
             <TabsContent
               value="config"
@@ -1059,30 +1081,65 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             </TabsContent>
           )}
 
-          {/* Test tab — agent and tool only */}
-          {(isAgent || nodeType === "tool") && (
+          {/* Agent tab — the chat (renamed from Test, ticket 16) */}
+          {isAgent && (
+            <TabsContent
+              value="agent"
+              className="flex flex-col overflow-hidden"
+            >
+              <TestTab
+                activeDeployment={activeDeployment}
+                deploymentApiKey={resolvedDeploymentApiKey}
+                // The runtime resolves agents by their `agents` row id, which
+                // the config stores as `agentId` — NOT by the `agentConfigs`
+                // document id. Passing the latter made every Test-tab send
+                // fail with `{"error":"Agent not found"}`.
+                agentId={agentConfig?.agentId ?? ""}
+                nodeColor={nodeData?.properties?.color}
+                onOpenDetails={openDetailsTab}
+                agentConfigId={agentConfigId}
+                publicAccess={agentPublicAccess}
+              />
+            </TabsContent>
+          )}
+
+          {/* Skills / Connectors / Context — agent nodes only (ticket 16) */}
+          {isAgent && (
+            <TabsContent
+              value="skills"
+              className="flex flex-col overflow-y-auto"
+            >
+              <AgentSkillsTab agentConfig={agentConfig} />
+            </TabsContent>
+          )}
+          {isAgent && (
+            <TabsContent
+              value="connectors"
+              className="flex flex-col overflow-y-auto"
+            >
+              <AgentConnectorsTab
+                agentConfig={agentConfig}
+                onUpdateChannelConfig={handleUpdateChannelConfig}
+              />
+            </TabsContent>
+          )}
+          {isAgent && (
+            <TabsContent
+              value="context"
+              className="flex flex-col overflow-y-auto"
+            >
+              <AgentContextTab agentConfig={agentConfig} />
+            </TabsContent>
+          )}
+
+          {/* Test tab — tool nodes only */}
+          {nodeType === "tool" && node && (
             <TabsContent value="test" className="flex flex-col overflow-hidden">
-              {isAgent ? (
-                <TestTab
-                  activeDeployment={activeDeployment}
-                  deploymentApiKey={resolvedDeploymentApiKey}
-                  // The runtime resolves agents by their `agents` row id, which
-                  // the config stores as `agentId` — NOT by the `agentConfigs`
-                  // document id. Passing the latter made every Test-tab send
-                  // fail with `{"error":"Agent not found"}`.
-                  agentId={agentConfig?.agentId ?? ""}
-                  nodeColor={nodeData?.properties?.color}
-                  onOpenDetails={openDetailsTab}
-                  agentConfigId={agentConfigId}
-                  publicAccess={agentPublicAccess}
-                />
-              ) : node ? (
-                <ToolTestTab
-                  projectId={projectId}
-                  stageId={stageId}
-                  nodeId={node.id}
-                />
-              ) : null}
+              <ToolTestTab
+                projectId={projectId}
+                stageId={stageId}
+                nodeId={node.id}
+              />
             </TabsContent>
           )}
 
@@ -1091,6 +1148,20 @@ export const NodeSidePanel = memo(function NodeSidePanel({
             value="settings"
             className="flex flex-col overflow-y-auto"
           >
+            {isAgent && (
+              <div className="p-4 pb-0">
+                <AgentAdvancedSettings
+                  agentConfig={agentConfig}
+                  projectId={projectId}
+                  stageId={stageId}
+                  selectedProvider={selectedProvider}
+                  onUpdateToolConfig={handleUpdateToolConfig}
+                  onUpdateOutputFormat={handleUpdateOutputFormat}
+                  onUpdatePolicyConfig={handleUpdatePolicyConfig}
+                  onSaveConfig={handleSaveConfig}
+                />
+              </div>
+            )}
             <SettingsTab
               nodeType={nodeType}
               nodeName={resolvedName}

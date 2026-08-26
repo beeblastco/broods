@@ -1,7 +1,6 @@
 "use client";
 
 /** Details tab showing editable agent name, deployment credentials, and built-in tool config. */
-import { ChannelsSection } from "@/app/components/side-panel/ChannelsSection";
 import {
   ExpandBlock,
   ToggleRow,
@@ -24,7 +23,6 @@ import {
   SelectValue,
 } from "@/app/components/ui/select";
 import { Separator } from "@/app/components/ui/separator";
-import { Switch } from "@/app/components/ui/switch";
 import { Textarea } from "@/app/components/ui/textarea";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
@@ -33,7 +31,6 @@ import {
 } from "@broods/convex/model/modelProviders";
 import {
   readAgentBranch,
-  readAgentPolicies,
   readModelReasoning,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
@@ -53,7 +50,7 @@ import {
   RefreshCw,
   Wifi,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 /**
  * Public (hash-free) view of a stage's runtime deployment, as returned by
@@ -69,12 +66,6 @@ export type StageDeployment = {
   updatedAt: number;
 };
 
-type OutputFormatConfig = {
-  type?: string;
-  schema?: unknown;
-  name?: string;
-  description?: string;
-};
 
 export type AgentProvider = AccountModelProviderName;
 type AgentProviderConfig = Partial<Record<AgentProvider, { apiKey?: string }>>;
@@ -99,14 +90,6 @@ const REASONING_EFFORT_LABELS: Record<string, string> = {
   max: "Max",
 };
 
-const DEFAULT_OUTPUT_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  additionalProperties: true,
-  properties: {
-    answer: { type: "string" },
-  },
-  required: ["answer"],
-};
 
 export function DetailsTab({
   agentConfig,
@@ -117,18 +100,15 @@ export function DetailsTab({
   editName,
   setEditName,
   onSaveName,
-  onUpdateOutputFormat,
   onGenerateKey,
   onRotateKey,
   isSavingKey,
   selectedProvider,
   runtimeVariables: _runtimeVariables,
   onSaveModelSettings,
-  onUpdateToolConfig,
-  onUpdateChannelConfig,
   onUpdateModelReasoning,
   onUpdatePublicAccess,
-  onUpdatePolicyConfig,
+  onUpdateIdentity,
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   projectId: Id<"projects"> | undefined;
@@ -138,7 +118,6 @@ export function DetailsTab({
   editName: string;
   setEditName: (name: string) => void;
   onSaveName: () => void;
-  onUpdateOutputFormat?: (outputFormat: Record<string, unknown> | null) => void;
   onGenerateKey?: () => Promise<boolean>;
   onRotateKey?: () => Promise<boolean>;
   isSavingKey?: boolean;
@@ -150,20 +129,16 @@ export function DetailsTab({
     customBaseUrl?: string;
     providerApiKeyName?: string | null;
   }) => Promise<void>;
-  onUpdateToolConfig?: (
-    toolName: string,
-    config: Record<string, unknown> | null,
-  ) => Promise<void>;
-  onUpdateChannelConfig?: (
-    kind: string,
-    config: Record<string, unknown> | null,
-  ) => Promise<void>;
   onUpdateModelReasoning?: (next: {
     budgetTokens?: number;
     effort?: string;
   }) => Promise<void>;
   onUpdatePublicAccess?: (enabled: boolean) => Promise<void>;
-  onUpdatePolicyConfig?: (policies: string[] | null) => Promise<void>;
+  /** Saves the identity fields (description, system prompt). */
+  onUpdateIdentity?: (patch: {
+    description?: string;
+    systemPrompt?: string;
+  }) => Promise<void>;
 }): React.JSX.Element {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
@@ -176,11 +151,6 @@ export function DetailsTab({
     setSyncedApiKey(deploymentApiKey);
     setShowApiKey(Boolean(deploymentApiKey));
   }
-  const [outputSchemaText, setOutputSchemaText] = useState("");
-  const [hasEditedOutputSchema, setHasEditedOutputSchema] = useState(false);
-  const [outputSchemaError, setOutputSchemaError] = useState<string | null>(
-    null,
-  );
   const [editProvider, setEditProvider] =
     useState<AgentProvider>(selectedProvider);
   const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
@@ -195,19 +165,13 @@ export function DetailsTab({
   const [providerApiKeyError, setProviderApiKeyError] = useState<string | null>(
     null,
   );
-  const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Built-in tool configs derived from agentConfig (reads extraConfig.tools, falls back to flat columns)
-  const allTools = agentConfig
-    ? (readAgentBranch(
-        agentConfig as unknown as FlatAgentConfig,
-        "tools",
-      ) as Record<string, unknown>)
-    : {};
-  const googleSearchCfg = isPlainObject(allTools.googleSearch)
-    ? (allTools.googleSearch as Record<string, unknown>)
-    : { enabled: agentConfig?.searchToolEnabled };
-  const googleSearchEnabled = googleSearchCfg.enabled === true;
+  // Identity fields — auto-save on blur, mirroring the name field.
+  const [editDescription, setEditDescription] = useState(
+    agentConfig?.description ?? "",
+  );
+  const [editSystemPrompt, setEditSystemPrompt] = useState(
+    agentConfig?.systemPrompt ?? "",
+  );
 
   // Reasoning lives under model.providerOptions.<provider>.* (Vercel AI SDK shape).
   const modelBranch = agentConfig
@@ -246,32 +210,11 @@ export function DetailsTab({
   const publicAccess =
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
-  const policyOptions = useQuery(
-    api.agentPolicies.listForStage,
-    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
-  ) as Doc<"agentPolicies">[] | undefined;
   const environmentVariables = useQuery(
     api.environmentVariables.list,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as EnvironmentVariable[] | undefined;
   const setEnvironmentVariable = useMutation(api.environmentVariables.set);
-  // Attachment is only the list. Whether a policy blocks or just records is
-  // carried by the policy document, and edited with it.
-  const assignedPolicyIds = readAgentPolicies(
-    agentConfig as unknown as FlatAgentConfig,
-  );
-
-  const outputFormat =
-    agentConfig?.outputFormat && isPlainObject(agentConfig.outputFormat)
-      ? (agentConfig.outputFormat as OutputFormatConfig)
-      : undefined;
-  const outputFormatEnabled = outputFormat !== undefined;
-  const schemaFromConfigText = isPlainObject(outputFormat?.schema)
-    ? JSON.stringify(outputFormat.schema, null, 2)
-    : "";
-  const displayOutputSchemaText = hasEditedOutputSchema
-    ? outputSchemaText
-    : schemaFromConfigText;
   const providerLabel = MODEL_PROVIDERS[editProvider].label;
   const trimmedApiKeyName = editProviderApiKeyName.trim();
   const selectedApiKeyVariable = environmentVariables?.find(
@@ -287,104 +230,6 @@ export function DetailsTab({
           : selectedApiKeyVariable.hasValue
             ? "ready"
             : "empty";
-
-  function buildOutputFormatPayload(
-    schema: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const next: Record<string, unknown> = {
-      type: "object",
-      schema: schema,
-    };
-
-    if (
-      typeof outputFormat?.name === "string" &&
-      outputFormat.name.trim().length > 0
-    ) {
-      next.name = outputFormat.name.trim();
-    }
-    if (
-      typeof outputFormat?.description === "string" &&
-      outputFormat.description.trim().length > 0
-    ) {
-      next.description = outputFormat.description.trim();
-    }
-
-    return next;
-  }
-
-  function parseSchemaText(input: string): Record<string, unknown> | null {
-    try {
-      const parsed = JSON.parse(input);
-      if (!isPlainObject(parsed)) {
-        setOutputSchemaError("Schema must be a JSON object.");
-
-        return null;
-      }
-      setOutputSchemaError(null);
-
-      return parsed;
-    } catch {
-      setOutputSchemaError("Invalid schema JSON.");
-
-      return null;
-    }
-  }
-
-  function handleToggleOutputFormat(enabled: boolean) {
-    if (!enabled) {
-      setOutputSchemaError(null);
-      setHasEditedOutputSchema(false);
-      setOutputSchemaText("");
-      onUpdateOutputFormat?.(null);
-
-      return;
-    }
-
-    const existingSchema = isPlainObject(outputFormat?.schema)
-      ? (outputFormat.schema as Record<string, unknown>)
-      : undefined;
-    setOutputSchemaError(null);
-
-    if (existingSchema) {
-      setHasEditedOutputSchema(true);
-      setOutputSchemaText(JSON.stringify(existingSchema, null, 2));
-      onUpdateOutputFormat?.(buildOutputFormatPayload(existingSchema));
-    } else {
-      setHasEditedOutputSchema(true);
-      setOutputSchemaText(JSON.stringify(DEFAULT_OUTPUT_SCHEMA, null, 2));
-      onUpdateOutputFormat?.(buildOutputFormatPayload(DEFAULT_OUTPUT_SCHEMA));
-    }
-  }
-
-  function handleApplySchema() {
-    const parsed = parseSchemaText(displayOutputSchemaText);
-    if (!parsed) {
-      return;
-    }
-    setHasEditedOutputSchema(true);
-    setOutputSchemaText(JSON.stringify(parsed, null, 2));
-    onUpdateOutputFormat?.(buildOutputFormatPayload(parsed));
-  }
-
-  function handleImportSchemaFile(file: File | undefined) {
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const content = typeof reader.result === "string" ? reader.result : "";
-      const parsed = parseSchemaText(content);
-      if (!parsed) {
-        return;
-      }
-      setHasEditedOutputSchema(true);
-      setOutputSchemaText(JSON.stringify(parsed, null, 2));
-      onUpdateOutputFormat?.(buildOutputFormatPayload(parsed));
-    };
-    reader.onerror = () => {
-      setOutputSchemaError("Failed to read schema file.");
-    };
-    reader.readAsText(file);
-  }
 
   function handleCopy(value: string, field: string) {
     navigator.clipboard.writeText(value);
@@ -440,15 +285,6 @@ export function DetailsTab({
     }
   }
 
-  function togglePolicyId(policyId: string) {
-    const nextIds = assignedPolicyIds.includes(policyId)
-      ? assignedPolicyIds.filter((entry) => entry !== policyId)
-      : [...assignedPolicyIds, policyId];
-
-    // Nothing attached means nothing to evaluate: clear the field.
-    void onUpdatePolicyConfig?.(nextIds.length === 0 ? null : nextIds);
-  }
-
   return (
     <div className="flex flex-1 flex-col gap-5 p-4">
       {/* Editable name — auto-saves on blur / Enter */}
@@ -470,16 +306,42 @@ export function DetailsTab({
       {/* Agent info */}
       {agentConfig && (
         <>
-          {agentConfig.description && (
-            <div className="flex flex-col gap-1.5">
-              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Description
-              </span>
-              <p className="text-xs text-foreground">
-                {agentConfig.description}
-              </p>
-            </div>
-          )}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Description
+            </span>
+            <Textarea
+              value={editDescription}
+              onChange={(e) => setEditDescription(e.target.value)}
+              onBlur={() => {
+                const trimmed = editDescription.trim();
+                if (trimmed !== (agentConfig.description ?? "")) {
+                  void onUpdateIdentity?.({ description: trimmed });
+                }
+              }}
+              placeholder="What is this agent for? (shown to your team, not the agent)"
+              rows={2}
+              className="min-h-0 resize-y text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Instructions
+            </span>
+            <Textarea
+              value={editSystemPrompt}
+              onChange={(e) => setEditSystemPrompt(e.target.value)}
+              onBlur={() => {
+                const trimmed = editSystemPrompt.trim();
+                if (trimmed !== (agentConfig.systemPrompt ?? "")) {
+                  void onUpdateIdentity?.({ systemPrompt: trimmed });
+                }
+              }}
+              placeholder="How should this agent behave? Its personality, rules, and tone — it reads this before every reply."
+              rows={4}
+              className="min-h-0 resize-y text-xs"
+            />
+          </div>
           <div className="flex flex-col gap-2">
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
               Provider & Model
@@ -759,55 +621,15 @@ export function DetailsTab({
 
       <Separator />
 
-      {onUpdatePolicyConfig && (
-        <>
-          <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Runtime Policy
-            </span>
-            <p className="text-[11px] text-muted-foreground">
-              Each policy carries its own mode: audit records decisions without
-              blocking, enforce blocks the tool calls it denies. Set it on the
-              policy in Settings.
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {(policyOptions ?? []).map((policy) => {
-                const selected = assignedPolicyIds.includes(policy._id);
-
-                return (
-                  <Button
-                    key={policy._id}
-                    type="button"
-                    variant={selected ? "secondary" : "outline"}
-                    size="sm"
-                    className="h-8 justify-start truncate text-xs"
-                    onClick={() => togglePolicyId(policy._id)}
-                  >
-                    {policy.name}
-                  </Button>
-                );
-              })}
-              {policyOptions && policyOptions.length === 0 && (
-                <p className="rounded-md border border-border bg-muted/40 px-2.5 py-2 text-xs text-muted-foreground">
-                  No policies in this stage.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <Separator />
-        </>
-      )}
-
       {/* Public access controls */}
       <div className="flex flex-col gap-3">
         <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-          Public API
+          Access
         </span>
         {onUpdatePublicAccess && (
           <ToggleRow
             label="Public access"
-            description="Reachable over HTTP/SSE and WebSocket with the runtime API key"
+            description="Let apps outside Broods reach this agent with its API key"
             checked={publicAccess}
             onCheckedChange={(next) => void onUpdatePublicAccess(next)}
           />
@@ -815,8 +637,8 @@ export function DetailsTab({
         <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
           <p className="text-[11px] text-muted-foreground">
             {publicAccess
-              ? "This agent is reachable over HTTP/SSE and WebSocket with the stage's runtime API key. Select the agent per request with its Agent ID below."
-              : "Secured by default — this agent is not publicly accessible. Reach it through an internal endpoint or a channel webhook, or enable public access above."}
+              ? "Anyone with this stage's API key can talk to this agent at the addresses below."
+              : "Private — only you can talk to it here, and any channels you connect. Turn on public access to call it from your own apps."}
           </p>
         </div>
 
@@ -928,7 +750,7 @@ export function DetailsTab({
                   </Button>
                 </div>
                 <span className="text-[11px] text-muted-foreground">
-                  Pass this as <code>agentId</code> in the invoke payload.
+                  Identifies this agent in API requests.
                 </span>
               </div>
             )}
@@ -991,140 +813,6 @@ export function DetailsTab({
           </div>
         )}
       </div>
-
-      {/* Built-in Tools */}
-      {agentConfig && onUpdateToolConfig && (
-        <>
-          <Separator />
-          <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Provider Tools
-            </span>
-
-            {/* Google Search */}
-            <ToggleRow
-              label="Google Search"
-              description={
-                selectedProvider === "google"
-                  ? "Grounded search via Google"
-                  : "Requires Google provider"
-              }
-              checked={googleSearchEnabled}
-              disabled={selectedProvider !== "google"}
-              onCheckedChange={(next) =>
-                void onUpdateToolConfig("googleSearch", {
-                  ...googleSearchCfg,
-                  enabled: next,
-                })
-              }
-            />
-            {googleSearchEnabled && selectedProvider === "google" && (
-              <ExpandBlock>
-                <ToggleRow
-                  label="Needs approval"
-                  checked={googleSearchCfg.needsApproval === true}
-                  onCheckedChange={(next) =>
-                    void onUpdateToolConfig("googleSearch", {
-                      ...googleSearchCfg,
-                      needsApproval: next,
-                    })
-                  }
-                />
-              </ExpandBlock>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Output format schema */}
-      {agentConfig && (
-        <>
-          <Separator />
-          <div className="flex flex-col gap-3">
-            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Output Format
-            </span>
-            <div className="flex items-center justify-between">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-medium text-foreground">
-                  Structured Output
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  Import a JSON schema or write one manually
-                </span>
-              </div>
-              <Switch
-                checked={outputFormatEnabled}
-                onCheckedChange={(checked) => handleToggleOutputFormat(checked)}
-              />
-            </div>
-
-            {outputFormatEnabled && (
-              <div className="ml-1 flex flex-col gap-2.5 border-l-2 border-border pl-3">
-                <input
-                  ref={schemaFileInputRef}
-                  type="file"
-                  accept="application/json,.json"
-                  className="hidden"
-                  onChange={(e) => {
-                    handleImportSchemaFile(e.target.files?.[0]);
-                    e.currentTarget.value = "";
-                  }}
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px]"
-                    onClick={() => schemaFileInputRef.current?.click()}
-                  >
-                    Import Schema
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px]"
-                    onClick={handleApplySchema}
-                  >
-                    Save Schema
-                  </Button>
-                </div>
-                <Textarea
-                  value={displayOutputSchemaText}
-                  onChange={(e) => {
-                    setHasEditedOutputSchema(true);
-                    setOutputSchemaText(e.target.value);
-                    setOutputSchemaError(null);
-                  }}
-                  placeholder={
-                    '{\n  "type": "object",\n  "additionalProperties": true,\n  "properties": {\n    "answer": { "type": "string" }\n  },\n  "required": ["answer"]\n}'
-                  }
-                  spellCheck={false}
-                  className="min-h-36 resize-y font-mono text-xs"
-                />
-                {outputSchemaError && (
-                  <p className="text-xs text-destructive">
-                    {outputSchemaError}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Channels — inbound webhook integrations on the agent's `channels` branch */}
-      {agentConfig && onUpdateChannelConfig && (
-        <>
-          <Separator />
-          <ChannelsSection
-            agentConfig={agentConfig}
-            onUpdateChannel={onUpdateChannelConfig}
-          />
-        </>
-      )}
 
       <Dialog
         open={rotateOpen}
