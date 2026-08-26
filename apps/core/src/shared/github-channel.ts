@@ -102,7 +102,7 @@ export function createGitHubChannel(
   allowedChannelIds: Set<string> | null,
   allowedUserIds: Set<string> | null,
   apiUrl?: string,
-  userName?: string,
+  botUserName?: string,
   botUserId?: number,
   options?: { triggerOnIssueOpen?: boolean; triggerOnPROpen?: boolean },
 ): ChannelAdapter {
@@ -111,7 +111,7 @@ export function createGitHubChannel(
     appId: appId,
     privateKey: normalizePrivateKey(privateKey),
     webhookSecret: webhookSecret,
-    userName: userName,
+    userName: botUserName,
     botUserId: botUserId,
     logger: new ConsoleLogger("error").child("github"),
   });
@@ -179,7 +179,7 @@ export function createGitHubChannel(
             repo,
             fullName,
             options,
-            userName,
+            botUserName,
           );
         case "issue_comment":
           return parseIssueCommentEvent(
@@ -193,7 +193,7 @@ export function createGitHubChannel(
               apiUrl: apiUrl,
               appId: appId,
               privateKey: privateKey,
-              botUserName: userName,
+              botUserName: botUserName,
             },
           );
         case "pull_request":
@@ -205,7 +205,7 @@ export function createGitHubChannel(
             repo,
             fullName,
             options,
-            userName,
+            botUserName,
           );
         case "pull_request_review_comment":
           return parseReviewCommentEvent(
@@ -219,7 +219,7 @@ export function createGitHubChannel(
               apiUrl: apiUrl,
               appId: appId,
               privateKey: privateKey,
-              botUserName: userName,
+              botUserName: botUserName,
             },
           );
         default:

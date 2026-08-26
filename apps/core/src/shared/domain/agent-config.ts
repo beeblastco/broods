@@ -499,7 +499,7 @@ export interface AgentGitHubChannelConfig {
   allowedChannelIds?: string[];
   allowedUserIds?: string[];
   /** Bot username for @-mention detection (e.g. "my-bot" or "my-bot[bot]"). */
-  userName?: string;
+  botUserName?: string;
   /** Bot's numeric GitHub user ID for self-message detection. */
   botUserId?: number;
   /** When false, the bot does not auto-trigger on new issues (opened/edited/reopened). Defaults to true. The bot still triggers when assigned to an issue. */
@@ -1397,7 +1397,10 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalString(config.userName, "config.channels.github.userName");
+  assertOptionalString(
+    config.botUserName,
+    "config.channels.github.botUserName",
+  );
   assertOptionalPositiveInteger(
     config.botUserId,
     "config.channels.github.botUserId",

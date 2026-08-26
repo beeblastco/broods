@@ -728,7 +728,10 @@ function normalizeGitHubConfig(value: unknown): void {
   );
   assertOptionalString(config.appId, "config.channels.github.appId");
   assertOptionalString(config.privateKey, "config.channels.github.privateKey");
-  assertOptionalString(config.userName, "config.channels.github.userName");
+  assertOptionalString(
+    config.botUserName,
+    "config.channels.github.botUserName",
+  );
   assertOptionalPositiveInteger(
     config.botUserId,
     "config.channels.github.botUserId",

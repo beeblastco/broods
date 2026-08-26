@@ -312,7 +312,7 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("ignores issue comments without @-mention when userName is configured", async () => {
+  it("ignores issue comments without @-mention when botUserName is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
@@ -347,7 +347,7 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("accepts issue comments with @-mention when userName is configured", async () => {
+  it("accepts issue comments with @-mention when botUserName is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
@@ -572,7 +572,7 @@ describe("github channel adapter", () => {
     expect(context).not.toContain("@my-bot can you review this?");
   });
 
-  it("accepts review comments with @-mention when userName is configured", async () => {
+  it("accepts review comments with @-mention when botUserName is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
@@ -607,7 +607,7 @@ describe("github channel adapter", () => {
     expect(parsed.kind).toBe("message");
   });
 
-  it("ignores review comments without @-mention when userName is configured", async () => {
+  it("ignores review comments without @-mention when botUserName is configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",
@@ -707,7 +707,7 @@ describe("github channel adapter", () => {
     expect(parsed).toEqual({ kind: "ignore" });
   });
 
-  it("ignores issue assigned when userName is not configured", async () => {
+  it("ignores issue assigned when botUserName is not configured", async () => {
     const adapter = createGitHubChannel(
       "webhook-secret",
       "app-id",

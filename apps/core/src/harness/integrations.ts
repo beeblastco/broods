@@ -2387,7 +2387,7 @@ function createGitHubChannelFromConfig(
     reachSet(channel.allowedChannelIds),
     reachSet(channel.allowedUserIds),
     channel.apiUrl,
-    channel.userName,
+    channel.botUserName,
     channel.botUserId,
     {
       triggerOnIssueOpen: channel.triggerOnIssueOpen,

@@ -73,7 +73,7 @@ export const github = defineGitHubConnection({
   appId: env("GITHUB_APP_ID"),
   privateKey: env("GITHUB_PRIVATE_KEY"),
   webhookSecret: env("GITHUB_WEBHOOK_SECRET"),
-  userName: env("GITHUB_BOT_USERNAME"),
+  botUserName: env("GITHUB_BOT_USERNAME"),
   triggerOnIssueOpen: false,
   triggerOnPROpen: false,
 });

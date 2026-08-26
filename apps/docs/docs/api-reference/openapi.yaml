@@ -3839,7 +3839,7 @@ components:
               items:
                 type: string
               description: Provider user ids allowed to trigger the agent. Everyone when omitted or set to ["*"].
-            userName:
+            botUserName:
               type: string
               description: Bot username for @-mention detection (e.g. `my-bot` or `my-bot[bot]`). When set, the bot only responds to comments that mention it.
             botUserId:
