@@ -20,6 +20,7 @@ export const runtimeQueries = {
   getIngressStatus: internal.runtimeIngress.getStatus,
   isCurrentIngressOwner: internal.runtimeIngress.isCurrentOwner,
   listConnectors: internal.connectors.listForRuntime,
+  listRecentAgentFailures: internal.runtimeIngress.listRecentAgentFailures,
 } as const;
 
 export const runtimeMutations = {

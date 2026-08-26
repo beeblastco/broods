@@ -192,3 +192,46 @@ tickets; all parked validations re-run before ticket 24 if it clears.
   to run in full at the checkpoint.
 - Live validation (steps 1–4 of the ticket): **PARKED (Convex plan limit)** — and
   step 4's GitHub PAT is additionally parked on missing credentials.
+
+
+## Core deploy checkpoint #1 (after ticket 19)
+
+- Executed per §5a. Complication found: local `dev` carried **two unpushed commits by
+  the user** (07158e21 "bring-your-own endpoint tier", 487a8279 "agents go live
+  automatically", authored 2026-08-25) that were never on origin/dev and conflicted
+  with the stack (schema.ts). NOT resolved blind and NOT published: preserved
+  untouched on branch **`dev-local-unpushed-20260825`**; local dev reset to
+  origin/dev (a clean ancestor of the stack) and the stack merged with a merge
+  commit. → **Needs (human):** decide whether to rebase/push those two commits;
+  nothing was lost.
+- Merge 8c26279e pushed. First CI wave: Build Core failed on a test-only zod import
+  (hoisted locally, absent from @broods/core's manifest). Fixed forward
+  (b98043a1, zod-free low-level MCP test server), cherry-picked onto the substrate
+  branch, dev re-merged (661a8eb8 after integrating the SDK version-bump bot commit
+  18c35c7a). Second CI wave in progress; runtime probe follows green CI.
+
+## Ticket 20 — connectors tab
+
+- Status: **built; unit-covered via 19's suites; live validation PARKED (Convex plan
+  limit + no GitHub PAT/Telegram token provided)**
+- Branch: `feat/connectors-tab` (base `feat/connectors-substrate`), pushed
+- Manage list: connector cards with the row's REAL status (`connected` /
+  `connected as <login>` / error + lastError with time), per-agent toggle writing
+  `connectors.allowed` merge-safe, Check (re-runs validation via
+  `checkConnector`), Remove (two-step confirm; deletes row + this agent's ref).
+- Add flows: Custom MCP (label/URL/headers → real handshake; card shows the
+  server's real tool names; handshake failures shown verbatim), GitHub PAT
+  (password field → `createTokenConnector`; card shows the authenticated login).
+  Google Drive rendered as an honest "coming soon" (ticket 09 blocked), no dead
+  button.
+- Channels upgraded: per-configured-channel status card validating with ONE real
+  call via new `channelsPublic.validateChannel` — Telegram getMe, Slack auth.test,
+  Discord /users/@me; GitHub App/Pancake/Zalo honestly say "Saved — will verify on
+  first message" (no cheap authenticated call; documented). `${ENV}` placeholder
+  secrets also report unverified. Re-validates automatically when the saved config
+  changes (validate-on-save via Convex reactivity). Each card shows the
+  `/webhooks/{accountId}/{kind}` URL with copy + a per-provider "where to paste"
+  hint. ChannelsSection itself remains the editor (move, not rewrite).
+- Live validation steps 1–5 (incl. the real Telegram end-to-end proof): **PARKED —
+  Convex plan limit; steps 3–4 additionally need the GitHub PAT / Telegram bot
+  token, both blank in the dispatch credentials.**

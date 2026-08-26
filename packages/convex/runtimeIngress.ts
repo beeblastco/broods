@@ -1171,3 +1171,48 @@ export const maintain = internalMutation({
     return { expired: expired, deleted: deleted };
   },
 });
+
+/**
+ * Ticket 21 (self-config toolset): the agent's recent failed runs, newest
+ * first, for the owner-session `read_recent_failures` tool. Account-checked
+ * so one agent id can never read another account's failures.
+ */
+export const listRecentAgentFailures = internalQuery({
+  args: {
+    accountId: v.string(),
+    agentId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      conversationKey: v.string(),
+      error: v.optional(v.string()),
+      stoppedByUser: v.optional(v.boolean()),
+      updatedAt: v.number(),
+      eventId: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(args.limit ?? 10, 1), 50);
+    const rows = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_agentId_and_status_and_updatedAt", (q) =>
+        q.eq("agentId", args.agentId).eq("status", "failed"),
+      )
+      .order("desc")
+      .take(limit * 2);
+
+    return rows
+      .filter((row) => row.accountId === args.accountId)
+      .slice(0, limit)
+      .map((row) => ({
+        conversationKey: row.conversationKey,
+        ...(row.error !== undefined ? { error: row.error } : {}),
+        ...(row.stoppedByUser !== undefined
+          ? { stoppedByUser: row.stoppedByUser }
+          : {}),
+        updatedAt: row.updatedAt,
+        eventId: row.eventId,
+      }));
+  },
+});

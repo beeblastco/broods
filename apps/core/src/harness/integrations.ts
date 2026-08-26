@@ -17,6 +17,7 @@ import {
   userModelMessageSchema,
 } from "ai";
 import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
+import { directOwnerSession } from "./owner-session.ts";
 import type {
   ChannelActions,
   ChannelAdapter,
@@ -162,6 +163,10 @@ export interface DirectInboundEvent {
   // `oneShot` marks a cron whose schedule fires once: the job is deleted when
   // this run settles, because EventBridge has already dropped the schedule.
   cronRun?: { cronId: string; runId: string; oneShot?: boolean };
+  // True only when the account owner is driving this run from the dashboard's
+  // internal test endpoint (account auth + owner-session marker). Gates the
+  // self-configuration toolset; never set on deployment-key/channel/cron work.
+  ownerSession?: boolean;
 }
 
 /** The scope a queued envelope needs to be rebuilt into its own run. */
@@ -756,6 +761,9 @@ async function handleHttpRequest(
         projectSlug: auth.projectSlug,
         stageSlug: auth.stageSlug,
         publicDeploymentIngress: publicDeploymentIngress(auth),
+        // Deployment-key callers can never be owner sessions; the seam
+        // returns false for this auth kind even when the header is spoofed.
+        ownerSession: directOwnerSession(auth.kind, request.headers),
       });
     } catch (err) {
       return badRequestResponse(err);
@@ -779,6 +787,7 @@ async function handleHttpRequest(
       account,
       context.agentLoader,
     );
+    const ownerSession = directOwnerSession(auth?.kind, request.headers);
     if (isAsyncPath(request.path)) {
       if (!handlers.handleAsyncRequest) {
         return notFoundResponse();
@@ -795,10 +804,14 @@ async function handleHttpRequest(
       return handlers.handleAsyncRequest({
         ...parsed,
         statusUrl: statusUrl,
+        ownerSession: ownerSession,
       });
     }
 
-    return handlers.handleDirectRequest(parsed);
+    return handlers.handleDirectRequest({
+      ...parsed,
+      ownerSession: ownerSession,
+    });
   } catch (err) {
     return badRequestResponse(err);
   }
