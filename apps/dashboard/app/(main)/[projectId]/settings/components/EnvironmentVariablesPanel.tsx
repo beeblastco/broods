@@ -156,7 +156,7 @@ export function EnvironmentVariablesPanel({
                   revealed[v._id] || (
                     <span className="text-muted-foreground">empty</span>
                   )
-                ) : v.value ? (
+                ) : v.hasValue ? (
                   "••••••••"
                 ) : (
                   <span className="text-muted-foreground">empty</span>

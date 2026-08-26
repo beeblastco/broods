@@ -102,6 +102,12 @@ function SelectContent({
         side={side}
         sideOffset={sideOffset}
         alignItemWithTrigger={alignItemWithTrigger}
+        // Sits above `Dialog`'s own `z-50`: a Select is routinely opened from
+        // inside a dialog (the agent create/edit forms), and at an equal
+        // z-index the dialog painted over the option list, leaving every
+        // option unclickable. `dropdown-menu` and `context-menu` already set
+        // `isolate z-50` here; only Select was missing it.
+        className="isolate z-[60] outline-none"
       >
         <SelectPrimitive.Popup
           data-slot="select-content"

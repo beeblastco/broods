@@ -599,6 +599,12 @@ export const environmentVariablesFields = {
   tag: v.string(),
   /** SHA-256 hex of the plaintext value; absent on rows written before this field. */
   valueDigest: v.optional(v.string()),
+  /**
+   * Whether the stored value is non-empty, recorded at write time so reactive
+   * list queries can report readiness without decrypting secrets. Absent on
+   * older rows; readers treat absent as true until the next write corrects it.
+   */
+  hasValue: v.optional(v.boolean()),
   updatedAt: v.number(),
 };
 

@@ -42,7 +42,8 @@ import { toErrorMessage } from "@/app/lib/errors";
 import { isPlainObject } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Doc, Id } from "@broods/convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import {
   Check,
   Copy,
@@ -76,7 +77,11 @@ type OutputFormatConfig = {
 };
 
 export type AgentProvider = AccountModelProviderName;
+type AgentProviderConfig = Partial<Record<AgentProvider, { apiKey?: string }>>;
 type RuntimeVariable = { key: string; value: string };
+type EnvironmentVariable = FunctionReturnType<
+  typeof api.environmentVariables.list
+>[number];
 
 const providerOptions: Array<{ value: AgentProvider; label: string }> =
   ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => ({
@@ -117,7 +122,7 @@ export function DetailsTab({
   onRotateKey,
   isSavingKey,
   selectedProvider,
-  runtimeVariables,
+  runtimeVariables: _runtimeVariables,
   onSaveModelSettings,
   onUpdateToolConfig,
   onUpdateChannelConfig,
@@ -143,6 +148,7 @@ export function DetailsTab({
     provider: AgentProvider;
     modelId: string;
     customBaseUrl?: string;
+    providerApiKeyName?: string | null;
   }) => Promise<void>;
   onUpdateToolConfig?: (
     toolName: string,
@@ -180,6 +186,14 @@ export function DetailsTab({
   const [editModelId, setEditModelId] = useState(agentConfig?.modelId ?? "");
   const [editCustomBaseUrl, setEditCustomBaseUrl] = useState(
     readCustomBaseUrl(agentConfig),
+  );
+  const [editProviderApiKeyName, setEditProviderApiKeyName] = useState(
+    readProviderApiKeyName(agentConfig, selectedProvider),
+  );
+  const [newProviderApiKeyValue, setNewProviderApiKeyValue] = useState("");
+  const [isSavingProviderApiKey, setIsSavingProviderApiKey] = useState(false);
+  const [providerApiKeyError, setProviderApiKeyError] = useState<string | null>(
+    null,
   );
   const schemaFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -236,6 +250,11 @@ export function DetailsTab({
     api.agentPolicies.listForStage,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
+  const environmentVariables = useQuery(
+    api.environmentVariables.list,
+    projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
+  ) as EnvironmentVariable[] | undefined;
+  const setEnvironmentVariable = useMutation(api.environmentVariables.set);
   // Attachment is only the list. Whether a policy blocks or just records is
   // carried by the policy document, and edited with it.
   const assignedPolicyIds = readAgentPolicies(
@@ -253,13 +272,21 @@ export function DetailsTab({
   const displayOutputSchemaText = hasEditedOutputSchema
     ? outputSchemaText
     : schemaFromConfigText;
-  const hasOpenAiApiKeyVariable = runtimeVariables.some((entry) => {
-    const normalized = entry.key.trim().toUpperCase();
-
-    return normalized === "OPENAI_API_KEY" || normalized === "API_KEY";
-  });
-  const openAiVariableRequired =
-    editProvider === "openai" && !hasOpenAiApiKeyVariable;
+  const providerLabel = MODEL_PROVIDERS[editProvider].label;
+  const trimmedApiKeyName = editProviderApiKeyName.trim();
+  const selectedApiKeyVariable = environmentVariables?.find(
+    (entry) => entry.name === trimmedApiKeyName,
+  );
+  const apiKeyStatus =
+    trimmedApiKeyName.length === 0
+      ? "missing"
+      : environmentVariables === undefined
+        ? "loading"
+        : selectedApiKeyVariable === undefined
+          ? "not-found"
+          : selectedApiKeyVariable.hasValue
+            ? "ready"
+            : "empty";
 
   function buildOutputFormatPayload(
     schema: Record<string, unknown>,
@@ -370,6 +397,7 @@ export function DetailsTab({
     provider: AgentProvider,
     modelId: string,
     customBaseUrl = editCustomBaseUrl,
+    providerApiKeyName: string | null = editProviderApiKeyName,
   ) {
     const trimmed = modelId.trim();
     if (!trimmed) {
@@ -380,11 +408,36 @@ export function DetailsTab({
       return;
     }
 
+    const trimmedProviderApiKeyName = providerApiKeyName?.trim() ?? "";
     void onSaveModelSettings?.({
       provider: provider,
       modelId: trimmed,
       ...(provider === "custom" ? { customBaseUrl: trimmedBaseUrl } : {}),
+      providerApiKeyName:
+        trimmedProviderApiKeyName.length > 0 ? trimmedProviderApiKeyName : null,
     });
+  }
+
+  async function saveInlineProviderApiKey() {
+    const name = editProviderApiKeyName.trim();
+    if (!name || !projectId || !stageId || isSavingProviderApiKey) return;
+
+    setIsSavingProviderApiKey(true);
+    setProviderApiKeyError(null);
+    try {
+      await setEnvironmentVariable({
+        projectId: projectId,
+        stageId: stageId,
+        name: name,
+        value: newProviderApiKeyValue,
+      });
+      setNewProviderApiKeyValue("");
+      saveModel(editProvider, editModelId, editCustomBaseUrl, name);
+    } catch (err) {
+      setProviderApiKeyError(toErrorMessage(err));
+    } finally {
+      setIsSavingProviderApiKey(false);
+    }
   }
 
   function togglePolicyId(policyId: string) {
@@ -437,8 +490,19 @@ export function DetailsTab({
               onValueChange={(value) => {
                 if (value === null) return;
                 const nextProvider = value as AgentProvider;
+                const nextApiKeyName = readProviderApiKeyName(
+                  agentConfig,
+                  nextProvider,
+                );
                 setEditProvider(nextProvider);
-                saveModel(nextProvider, editModelId, editCustomBaseUrl);
+                setEditProviderApiKeyName(nextApiKeyName);
+                setProviderApiKeyError(null);
+                saveModel(
+                  nextProvider,
+                  editModelId,
+                  editCustomBaseUrl,
+                  nextApiKeyName,
+                );
               }}
             >
               <SelectTrigger className="h-8 w-full cursor-pointer text-xs">
@@ -480,11 +544,119 @@ export function DetailsTab({
                 }}
               />
             )}
-            {openAiVariableRequired && (
-              <p className="text-xs text-destructive">
-                Add <code>OPENAI_API_KEY</code> in the Variables tab before
-                running the agent.
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <Select
+                items={
+                  environmentVariables?.map((entry) => ({
+                    value: entry.name,
+                    label: entry.name,
+                  })) ?? []
+                }
+                value={selectedApiKeyVariable ? trimmedApiKeyName : ""}
+                onValueChange={(value) => {
+                  if (value === null) return;
+                  setEditProviderApiKeyName(value);
+                  setProviderApiKeyError(null);
+                  saveModel(
+                    editProvider,
+                    editModelId,
+                    editCustomBaseUrl,
+                    value,
+                  );
+                }}
+              >
+                <SelectTrigger className="h-8 min-w-0 cursor-pointer text-xs">
+                  <SelectValue placeholder={`${providerLabel} API Key`} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(environmentVariables ?? []).map((entry) => (
+                    <SelectItem key={entry.name} value={entry.name}>
+                      {entry.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={editProviderApiKeyName}
+                onChange={(event) => {
+                  setEditProviderApiKeyName(event.target.value);
+                  setProviderApiKeyError(null);
+                }}
+                className="h-8 min-w-0 font-mono text-xs"
+                placeholder="ENV_VAR_NAME"
+                onBlur={() =>
+                  saveModel(
+                    editProvider,
+                    editModelId,
+                    editCustomBaseUrl,
+                    editProviderApiKeyName,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    saveModel(
+                      editProvider,
+                      editModelId,
+                      editCustomBaseUrl,
+                      editProviderApiKeyName,
+                    );
+                  }
+                }}
+              />
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <Input
+                type="password"
+                value={newProviderApiKeyValue}
+                onChange={(event) =>
+                  setNewProviderApiKeyValue(event.target.value)
+                }
+                className="h-8 min-w-0 font-mono text-xs"
+                placeholder="Paste value"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 cursor-pointer gap-1.5 px-2 text-xs"
+                disabled={
+                  trimmedApiKeyName.length === 0 || isSavingProviderApiKey
+                }
+                onClick={saveInlineProviderApiKey}
+              >
+                <KeyRound className="size-3.5" />
+                {isSavingProviderApiKey ? "Saving" : "Save"}
+              </Button>
+            </div>
+            {apiKeyStatus === "ready" && (
+              <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                <Check className="size-3.5" />
+                {trimmedApiKeyName} is ready for {providerLabel}.
               </p>
+            )}
+            {apiKeyStatus === "empty" && (
+              <p className="text-xs text-destructive">
+                {trimmedApiKeyName} exists in Environment variables, but its
+                value is empty.
+              </p>
+            )}
+            {apiKeyStatus === "not-found" && (
+              <p className="text-xs text-destructive">
+                {trimmedApiKeyName} was not found in Environment variables for
+                this stage.
+              </p>
+            )}
+            {apiKeyStatus === "missing" && (
+              <p className="text-xs text-muted-foreground">
+                No {providerLabel} API key selected.
+              </p>
+            )}
+            {apiKeyStatus === "loading" && (
+              <p className="text-xs text-muted-foreground">
+                Checking {trimmedApiKeyName} in Environment variables.
+              </p>
+            )}
+            {providerApiKeyError && (
+              <p className="text-xs text-destructive">{providerApiKeyError}</p>
             )}
           </div>
 
@@ -1024,4 +1196,25 @@ function readCustomBaseUrl(
     typeof custom.base_url === "string" ? custom.base_url : custom.baseURL;
 
   return typeof value === "string" ? value : "";
+}
+
+function readProviderApiKeyName(
+  agentConfig: Doc<"agentConfigs"> | null | undefined,
+  providerName: AgentProvider,
+): string {
+  const provider = (
+    agentConfig?.extraConfig as
+      | {
+          provider?: AgentProviderConfig;
+        }
+      | undefined
+  )?.provider;
+  const apiKey = provider?.[providerName]?.apiKey;
+  if (typeof apiKey !== "string") {
+    return "";
+  }
+
+  const match = /^\$\{([^}]+)\}$/.exec(apiKey.trim());
+
+  return match?.[1] ?? apiKey;
 }

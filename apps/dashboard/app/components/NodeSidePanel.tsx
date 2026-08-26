@@ -507,6 +507,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     provider: AgentProvider;
     modelId: string;
     customBaseUrl?: string;
+    providerApiKeyName?: string | null;
   }): Promise<void> {
     if (!agentConfigId) return;
 
@@ -515,10 +516,32 @@ export const NodeSidePanel = memo(function NodeSidePanel({
       : {};
     const currentProvider = isPlainObject(base.provider) ? base.provider : {};
     const nextProviderConfig = { ...currentProvider };
+    const selectedProviderConfig =
+      currentProvider[next.provider] !== null &&
+      typeof currentProvider[next.provider] === "object" &&
+      !Array.isArray(currentProvider[next.provider])
+        ? {
+            ...(currentProvider[next.provider] as Record<string, unknown>),
+          }
+        : {};
+    if (next.providerApiKeyName !== undefined) {
+      if (next.providerApiKeyName) {
+        selectedProviderConfig.apiKey = `\${${next.providerApiKeyName}}`;
+      } else {
+        delete selectedProviderConfig.apiKey;
+      }
+    }
+    if (Object.keys(selectedProviderConfig).length > 0) {
+      nextProviderConfig[next.provider] = selectedProviderConfig;
+    } else {
+      delete nextProviderConfig[next.provider];
+    }
     if (next.provider === "custom") {
       nextProviderConfig.custom = {
-        ...(isPlainObject(currentProvider.custom)
-          ? currentProvider.custom
+        ...(nextProviderConfig.custom !== null &&
+        typeof nextProviderConfig.custom === "object" &&
+        !Array.isArray(nextProviderConfig.custom)
+          ? (nextProviderConfig.custom as Record<string, unknown>)
           : {}),
         base_url: next.customBaseUrl,
         baseURL: next.customBaseUrl,
