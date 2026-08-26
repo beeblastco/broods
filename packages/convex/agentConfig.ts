@@ -11,6 +11,10 @@ import {
   pushEncryptedConfigToAgentRow,
   syncAgentRowFields,
 } from "./model/agentSync";
+import {
+  toNestedAgentConfig,
+  type FlatAgentConfig,
+} from "./model/agentConfigCodec";
 import { authKit } from "./auth";
 import {
   accountIdForProject,
@@ -22,6 +26,7 @@ import {
 import { getOwnedStage } from "./model/ownership/stage";
 import { getOwnedProject } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
+import { loadEnvironmentVariableValues } from "./model/environmentValues";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
 
@@ -42,6 +47,7 @@ const workspaceRefValidator = v.object({
 });
 
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
+const ENV_PLACEHOLDER_PATTERN = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 /** Coerces unknown JSON-ish values into a mutable record for patching. */
 function asRecord(value: unknown): Record<string, unknown> {
@@ -61,6 +67,73 @@ function maskRuntimeVariables<
       value: MASKED_RUNTIME_VARIABLE_VALUE,
     })),
   };
+}
+
+function collectEnvPlaceholderNames(
+  value: unknown,
+  names = new Set<string>(),
+): Set<string> {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(ENV_PLACEHOLDER_PATTERN)) {
+      names.add(match[1]);
+    }
+
+    return names;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectEnvPlaceholderNames(entry, names);
+    }
+
+    return names;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const entry of Object.values(value)) {
+      collectEnvPlaceholderNames(entry, names);
+    }
+  }
+
+  return names;
+}
+
+async function syncRuntimeVariablesFromEnvironment(
+  ctx: MutationCtx,
+  config: FlatAgentConfig & {
+    _id: Id<"agentConfigs">;
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+  },
+): Promise<void> {
+  const names = collectEnvPlaceholderNames(toNestedAgentConfig(config));
+  if (names.size === 0) {
+    await saveAgentRuntimeSecrets(ctx, config._id, []);
+    await ctx.db.patch(config._id, {
+      runtimeVariables: [],
+      updatedAt: Date.now(),
+    });
+
+    return;
+  }
+
+  const values = await loadEnvironmentVariableValues(
+    ctx,
+    config.projectId,
+    config.stageId,
+  );
+  const runtimeVariables = await saveAgentRuntimeSecrets(
+    ctx,
+    config._id,
+    [...names].map((key) => ({
+      key: key,
+      value: Object.prototype.hasOwnProperty.call(values, key)
+        ? values[key]
+        : "",
+    })),
+  );
+  await ctx.db.patch(config._id, {
+    runtimeVariables: runtimeVariables,
+    updatedAt: Date.now(),
+  });
 }
 
 /** Returns true when the caller may edit a project-scoped agent config. */
@@ -307,6 +380,10 @@ export const update = mutation({
     }
 
     await ctx.db.patch(configId, { ...patch, updatedAt: Date.now() });
+    const patched = await ctx.db.get(configId);
+    if (!Array.isArray(patch.runtimeVariables) && patched) {
+      await syncRuntimeVariablesFromEnvironment(ctx, patched);
+    }
 
     // Keep the broods `agents` row aligned; this also provisions
     // the runtime row when an org account was created after the config.

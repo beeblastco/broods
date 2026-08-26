@@ -73,3 +73,9 @@ import ...
 ```
 
 keep it short — what the file boundary is, what belong there, where near-by logic go. never list functions in it.
+
+## Connectors (ticket 19)
+
+- `config.connectors.allowed` resolve in `harness/connectors.ts` from `createTools`, before `denyTools`. enabled-only; a broken/unreachable connector degrade to absent tools + one WARN log, never a crashed run.
+- tool naming convention: MCP tools register as `mcp_<label-slug>_<toolName>`; the GitHub token connector register one `github_<label-slug>_request` tool. slug = lowercase, non-alphanumeric → `_`, 32 chars max.
+- secrets: connector rows store AES-GCM blobs made by the config plane with `ACCOUNT_CONFIG_ENCRYPTION_SECRET` (same mechanism as agent/sandbox configs). core decrypt with `decodeStoredConfigObject`; the model never see a token or header value.

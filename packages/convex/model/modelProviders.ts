@@ -58,7 +58,7 @@ export const MODEL_PROVIDERS = {
     label: "Vercel AI Gateway",
     modelPlaceholder: "openai/gpt-4.1-mini",
   },
-  vertex: { label: "Google Vertex AI", modelPlaceholder: "gemini-2.5-flash" },
+  vertex: { label: "Google Vertex AI", modelPlaceholder: "gemini-3.7-flash" },
   xai: { label: "xAI Grok", modelPlaceholder: "grok-4" },
 } as const satisfies Record<string, ModelProviderMeta>;
 

@@ -147,6 +147,8 @@ export interface AgentConfig {
   skills?: AgentSkillsConfig;
   subagent?: AgentSubagentConfig;
   scheduler?: AgentSchedulerConfig;
+  /** Connected services and MCP servers this agent may use (ticket 19). */
+  connectors?: AgentConnectorsConfig;
   /** Policies that gate this agent. Each one carries its own enforcement mode. */
   policies?: string[];
   // Opt-in flag for the public runtime endpoint (SSE/WebSocket via the stage
@@ -232,6 +234,22 @@ export interface AgentSkillsConfig {
 export interface AgentSchedulerConfig {
   enabled?: boolean;
   [key: string]: unknown;
+}
+
+/**
+ * One connector enabled for an agent. `connectorId` names a row in the
+ * config plane's `connectors` table (account-scoped); `enabled` is the
+ * per-agent toggle — a permanent property of the agent, never
+ * session-scoped (ticket 05's decision).
+ */
+export interface AgentConnectorRef {
+  provider: string;
+  connectorId: string;
+  enabled: boolean;
+}
+
+export interface AgentConnectorsConfig {
+  allowed?: AgentConnectorRef[];
 }
 
 export interface AgentSubagentConfig {
@@ -689,6 +707,7 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
+  normalizeConnectorsConfig(config.connectors);
   if (config.policy !== undefined) {
     throw new Error(
       "config.policy is no longer supported; use config.policies, and set mode on the policy itself",
@@ -1307,6 +1326,47 @@ function normalizeSchedulerConfig(value: unknown): void {
 
   const config = value as Record<string, unknown>;
   assertOptionalBoolean(config.enabled, "config.scheduler.enabled");
+}
+
+export function normalizeConnectorsConfig(value: unknown): void {
+  if (value == null) {
+    return;
+  }
+  if (!isPlainObject(value)) {
+    throw new Error("config.connectors must be an object");
+  }
+
+  const config = value as Record<string, unknown>;
+  if (config.allowed == null) {
+    return;
+  }
+  if (!Array.isArray(config.allowed)) {
+    throw new Error("config.connectors.allowed must be an array");
+  }
+  for (const [index, entry] of config.allowed.entries()) {
+    if (!isPlainObject(entry)) {
+      throw new Error(`config.connectors.allowed[${index}] must be an object`);
+    }
+    const ref = entry as Record<string, unknown>;
+    if (typeof ref.provider !== "string" || ref.provider.trim().length === 0) {
+      throw new Error(
+        `config.connectors.allowed[${index}].provider must be a non-empty string`,
+      );
+    }
+    if (
+      typeof ref.connectorId !== "string" ||
+      ref.connectorId.trim().length === 0
+    ) {
+      throw new Error(
+        `config.connectors.allowed[${index}].connectorId must be a non-empty string`,
+      );
+    }
+    if (typeof ref.enabled !== "boolean") {
+      throw new Error(
+        `config.connectors.allowed[${index}].enabled must be a boolean`,
+      );
+    }
+  }
 }
 
 function normalizeToolConfig(toolName: string, value: unknown): void {

@@ -4,6 +4,10 @@
  * Streaming chat hook for testing a deployed agent via the core service API.
  * Uses AI SDK utilities to parse the UIMessage SSE stream.
  */
+import {
+  isStreamProtocolError,
+  runtimeStreamErrorText,
+} from "@/app/lib/chatErrors";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import type { UIMessage } from "ai";
 import {
@@ -20,6 +24,14 @@ export interface AgentChat {
   messages: UIMessage[];
   status: ChatStatus;
   error: Error | null;
+  /** The conversation key the chat is on, once the server has assigned one. */
+  sessionId: string | undefined;
+  /**
+   * Returns the conversation key, generating one up front when the
+   * conversation hasn't started — pre-send attachment uploads need a stable
+   * key for their `chat-uploads/<conversation>/` prefix (ticket 13).
+   */
+  ensureSessionId: () => string;
   sendMessage: (text: string) => Promise<void>;
   resetChat: () => void;
 }
@@ -46,8 +58,106 @@ type WsServerMessage =
       toolNames?: string[];
     }
   | { type: "subagent_result"; output: string }
+  /**
+   * The runtime's resumable-stream frame: one AI-SDK stream part wrapped with
+   * replay bookkeeping. `data` carries the same payload the HTTP/SSE path
+   * emits after `data: `, and `data.type === "done"` is the terminal marker —
+   * the socket itself is left open by the server.
+   */
+  | {
+      type: "output";
+      data: { type: string } & Record<string, unknown>;
+      eventId?: string;
+      cursor?: string;
+      replay?: boolean;
+    }
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
+
+/**
+ * Re-shape a runtime stream part into the AI SDK's UI-message-chunk form.
+ *
+ * The runtime emits `streamText`'s text-stream parts, which carry the payload
+ * as `text`, while `uiMessageChunkSchema` (used by `parseJsonEventStream`
+ * below) requires `delta`. The names differ only for the *-delta parts, so
+ * everything else passes through untouched. Without this the schema rejected
+ * every delta, the transform silently dropped it, and the chat sat on
+ * "Thinking …" forever while the agent was in fact answering correctly.
+ *
+ * Exported for the frame-translation tests, which replay live-captured
+ * runtime frames through this exact function.
+ */
+export function toUiMessageChunk(
+  part: { type: string } & Record<string, unknown>,
+): { type: string } & Record<string, unknown> {
+  // Same field mismatch for error frames: the runtime says `error`, the
+  // schema requires `errorText`. Without this the failure frame is dropped
+  // and the chat sits on "Thinking …" instead of showing the error card.
+  if (
+    part.type === "error" &&
+    typeof part.error === "string" &&
+    !("errorText" in part)
+  ) {
+    const { error, ...errorRest } = part;
+
+    return { ...errorRest, type: part.type, errorText: error };
+  }
+
+  // Tool frames arrive as `streamText` full-stream parts, which the UI chunk
+  // schema does not accept — without these mappings every one was silently
+  // dropped and tool use was invisible in the chat. Shapes verified against
+  // a live frame dump (see ticket 14):
+  //   tool-input-start/-delta carry the call id as `id` (UI wants
+  //   `toolCallId`) and the delta as `delta` (UI wants `inputTextDelta`);
+  //   `tool-call` -> `tool-input-available`; `tool-result` ->
+  //   `tool-output-available`; `tool-error` -> `tool-output-error` with a
+  //   string `errorText`. `tool-input-end` has no UI equivalent (the
+  //   tool-call frame that follows carries the final input) and is dropped
+  //   by the schema, which is correct.
+  if (part.type === "tool-input-start" && typeof part.id === "string") {
+    const { id, ...rest } = part;
+
+    return { ...rest, type: part.type, toolCallId: id };
+  }
+  if (
+    part.type === "tool-input-delta" &&
+    typeof part.id === "string" &&
+    typeof part.delta === "string"
+  ) {
+    const { id, delta, ...rest } = part;
+
+    return {
+      ...rest,
+      type: part.type,
+      toolCallId: id,
+      inputTextDelta: delta,
+    };
+  }
+  if (part.type === "tool-call" && typeof part.toolCallId === "string") {
+    return { ...part, type: "tool-input-available" };
+  }
+  if (part.type === "tool-result" && typeof part.toolCallId === "string") {
+    return { ...part, type: "tool-output-available" };
+  }
+  if (part.type === "tool-error" && typeof part.toolCallId === "string") {
+    const { error, ...rest } = part;
+
+    return {
+      ...rest,
+      type: "tool-output-error",
+      errorText:
+        typeof error === "string" ? error : JSON.stringify(error ?? null),
+    };
+  }
+
+  const isDelta = part.type === "text-delta" || part.type === "reasoning-delta";
+  if (!isDelta || typeof part.text !== "string" || "delta" in part) {
+    return part;
+  }
+  const { text, ...rest } = part;
+
+  return { ...rest, type: part.type, delta: text };
+}
 
 type SubagentPanelEvent = {
   phase: "started" | "tool_call" | "tool_result";
@@ -73,6 +183,64 @@ type HttpStreamResult = {
   stream: ReadableStream<Uint8Array>;
   sessionId?: string;
 };
+
+/**
+ * Owner-authenticated internal test transport (ticket 15): the Convex
+ * `/v1/dashboard/test-agent` HTTP action proxies the turn to the runtime's
+ * internal caller class, which is never gated on Public access. Serves the
+ * same AI-SDK SSE stream as the public HTTP path.
+ */
+export interface InternalTestTransport {
+  invokeUrl: string;
+  configId: string;
+  /** Returns the caller's WorkOS session JWT, or null when signed out. */
+  fetchToken: () => Promise<string | null>;
+}
+
+async function startInternalSseStream(options: {
+  transport: InternalTestTransport;
+  message: string;
+  sessionId?: string;
+  signal: AbortSignal;
+}): Promise<HttpStreamResult> {
+  const { transport, message, sessionId, signal } = options;
+  const token = await transport.fetchToken();
+  if (!token) {
+    throw new Error("You are signed out. Sign in again to test this agent.");
+  }
+  const conversationKey = sessionId || `chat-${crypto.randomUUID()}`;
+
+  const response = await fetch(transport.invokeUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      configId: transport.configId,
+      text: message,
+      conversationKey: conversationKey,
+    }),
+    signal: signal,
+  });
+
+  if (!response.ok) {
+    // Keep the whole body for the error card's resolver + raw disclosure.
+    const responseBody = await response.text().catch(() => "");
+    throw new Error(
+      responseBody.trim() ||
+        `Internal test request failed with status ${response.status}.`,
+    );
+  }
+  if (!response.body) {
+    throw new Error("Response body is empty");
+  }
+
+  return {
+    stream: response.body,
+    sessionId: response.headers.get("X-Session-Id") ?? conversationKey,
+  };
+}
 
 async function startHttpSseStream(options: {
   endpointId: string;
@@ -124,11 +292,12 @@ async function startHttpSseStream(options: {
   });
 
   if (!response.ok) {
-    const responseBody = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
+    // Keep the whole body: the error card's resolver reads the `code` field
+    // out of the core service's JSON payload, and the raw text is preserved
+    // behind the card's "Show details" disclosure.
+    const responseBody = await response.text().catch(() => "");
     throw new Error(
-      responseBody.error ??
+      responseBody.trim() ||
         `HTTP stream request failed with status ${response.status}.`,
     );
   }
@@ -200,6 +369,12 @@ async function startWebSocketSseStream(options: {
     null;
   let opened = false;
   let settled = false;
+  // Text part ids we have already forwarded a `text-start` for. The runtime's
+  // resumable stream does not guarantee ordering, so a `text-delta` can arrive
+  // before its `text-start`; `readUIMessageStream` then rejects the whole
+  // stream with "Received text-delta for missing text part". Synthesising the
+  // missing start keeps the reply renderable whatever order frames land in.
+  const startedTextIds = new Set<string>();
 
   const stream = new ReadableStream<Uint8Array>({
     start: function (controller) {
@@ -229,13 +404,22 @@ async function startWebSocketSseStream(options: {
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING
       ) {
-        socket.close(1011, error.message);
+        // 1011 is a SERVER-only close code: `close()` throws
+        // InvalidAccessError when a page passes anything outside 1000 or
+        // 3000-4999. Relaying the server's code here crashed the handler
+        // mid-failure, which swallowed the real error and left the UI stuck
+        // on "Thinking …". Close normally and let `error` carry the reason.
+        socket.close(1000, error.message.slice(0, 120));
       }
     };
 
     const finishStream = () => {
       if (streamController) {
-        streamController.close();
+        try {
+          streamController.close();
+        } catch {
+          // Consumer already errored the stream — nothing left to signal.
+        }
         streamController = null;
       }
       if (socket.readyState === WebSocket.OPEN) {
@@ -328,6 +512,55 @@ async function startWebSocketSseStream(options: {
         return;
       }
 
+      // Resumable-stream frames. The runtime wraps each AI-SDK stream part in
+      // an `output` envelope instead of sending a raw `sse` chunk, so re-frame
+      // it as SSE for the shared reader. Without this branch every content
+      // frame was dropped and the UI streamed nothing at all.
+      if (payload.type === "output") {
+        if (payload.data.type === "done") {
+          finishStream();
+
+          return;
+        }
+        if (streamController) {
+          const chunk = toUiMessageChunk(payload.data);
+          const partId = typeof chunk.id === "string" ? chunk.id : null;
+          const startType =
+            chunk.type === "reasoning-delta" || chunk.type === "reasoning-end"
+              ? "reasoning-start"
+              : "text-start";
+          if (partId !== null) {
+            if (
+              chunk.type === "text-start" ||
+              chunk.type === "reasoning-start"
+            ) {
+              // A start we already synthesised below: forwarding the real one
+              // too would open a second part with the same id and orphan the
+              // text collected so far.
+              if (startedTextIds.has(partId)) {
+                return;
+              }
+              startedTextIds.add(partId);
+            } else if (
+              /^(text|reasoning)-(delta|end)$/.test(chunk.type) &&
+              !startedTextIds.has(partId)
+            ) {
+              startedTextIds.add(partId);
+              streamController.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: startType, id: partId })}\n\n`,
+                ),
+              );
+            }
+          }
+          streamController.enqueue(
+            encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+          );
+        }
+
+        return;
+      }
+
       if (payload.type === "subagent_result") {
         onSubagentResult(payload.output);
 
@@ -389,12 +622,20 @@ async function startWebSocketSseStream(options: {
       }
 
       if (streamController) {
-        if (event.code === 1000 || signal.aborted) {
-          streamController.close();
-        } else {
-          streamController.error(
-            new Error(event.reason || "WebSocket connection closed."),
-          );
+        // The consumer can have errored the stream already (e.g.
+        // `readUIMessageStream` terminating on a chunk-ordering violation);
+        // close()/error() then throw an uncaught TypeError inside the socket
+        // handler. The stream is finished either way — swallow it.
+        try {
+          if (event.code === 1000 || signal.aborted) {
+            streamController.close();
+          } else {
+            streamController.error(
+              new Error(event.reason || "WebSocket connection closed."),
+            );
+          }
+        } catch {
+          // Already closed or errored — nothing left to signal.
         }
         streamController = null;
       }
@@ -638,6 +879,9 @@ export function useAgentChat({
   projectSlug,
   stageSlug,
   webSocketEnabled,
+  initialMessages,
+  initialSessionId,
+  internalTransport,
 }: {
   endpointId: string;
   agentId: string;
@@ -645,11 +889,30 @@ export function useAgentChat({
   projectSlug?: string;
   stageSlug?: string;
   webSocketEnabled: boolean;
+  /**
+   * Persisted transcript to hydrate the chat with. Read once on mount —
+   * callers remount (React `key`) to switch conversations.
+   */
+  initialMessages?: UIMessage[];
+  /** Conversation key the next send continues instead of starting fresh. */
+  initialSessionId?: string;
+  /**
+   * When set, sends go through the owner-authenticated internal endpoint
+   * instead of the public runtime endpoint — private agents answer without
+   * Public access. Pass a stable (memoised) object.
+   */
+  internalTransport?: InternalTestTransport;
 }): AgentChat {
-  const [messages, setMessages] = useState<UIMessage[]>([]);
+  const [messages, setMessages] = useState<UIMessage[]>(
+    () => initialMessages ?? [],
+  );
   const [status, setStatus] = useState<ChatStatus>("ready");
   const [error, setError] = useState<Error | null>(null);
-  const sessionIdRef = useRef<string | undefined>(undefined);
+  // Ref for send-time reads; state mirror so callers can react to the key.
+  const [sessionId, setSessionId] = useState<string | undefined>(
+    initialSessionId,
+  );
+  const sessionIdRef = useRef<string | undefined>(initialSessionId);
   const abortRef = useRef<AbortController | null>(null);
   const messagesRef = useRef<UIMessage[]>([]);
   const mainAssistantMessageIdRef = useRef<string | null>(null);
@@ -697,12 +960,26 @@ export function useAgentChat({
       subagentMessageIdsRef.current = {};
 
       try {
-        if (!coreEndpointOk) {
+        if (!internalTransport && !coreEndpointOk) {
           throw new Error(coreEndpointMessage);
         }
 
         let streamBody: ReadableStream<Uint8Array> | null = null;
+        if (internalTransport) {
+          const internalResult = await startInternalSseStream({
+            transport: internalTransport,
+            message: trimmed,
+            sessionId: sessionIdRef.current,
+            signal: controller.signal,
+          });
+          streamBody = internalResult.stream;
+          if (internalResult.sessionId) {
+            sessionIdRef.current = internalResult.sessionId;
+            setSessionId(internalResult.sessionId);
+          }
+        }
         if (
+          !streamBody &&
           webSocketEnabled &&
           typeof window !== "undefined" &&
           "WebSocket" in window
@@ -718,8 +995,9 @@ export function useAgentChat({
               message: trimmed,
               sessionId: sessionIdRef.current,
               signal: controller.signal,
-              onMeta: ({ sessionId }) => {
-                sessionIdRef.current = sessionId;
+              onMeta: ({ sessionId: assignedSessionId }) => {
+                sessionIdRef.current = assignedSessionId;
+                setSessionId(assignedSessionId);
               },
               onContinuationDelta: (delta) => {
                 setMessages((prev) => {
@@ -828,6 +1106,7 @@ export function useAgentChat({
           streamBody = httpResult.stream;
           if (httpResult.sessionId) {
             sessionIdRef.current = httpResult.sessionId;
+            setSessionId(httpResult.sessionId);
           }
         }
 
@@ -840,6 +1119,35 @@ export function useAgentChat({
             transform: function (result, transformController) {
               if (result.success) {
                 transformController.enqueue(result.value);
+
+                return;
+              }
+              // The runtime's SSE frames differ from the schema in two known
+              // ways — deltas carry `text` where it wants `delta`, and errors
+              // carry `error` where it wants `errorText` — and used to be
+              // dropped here, leaving an empty reply or an endless
+              // "Thinking …". Re-frame them (same fix the WebSocket path
+              // applies) instead of dropping.
+              const errorText = runtimeStreamErrorText(result.rawValue);
+              if (errorText !== null) {
+                transformController.enqueue({
+                  type: "error",
+                  errorText: errorText,
+                });
+
+                return;
+              }
+              const raw = result.rawValue as
+                ({ type?: unknown } & Record<string, unknown>) | null;
+              if (raw && typeof raw.type === "string") {
+                const reframed = toUiMessageChunk(
+                  raw as { type: string } & Record<string, unknown>,
+                );
+                if (reframed !== raw) {
+                  transformController.enqueue(
+                    reframed as (typeof result & { success: true })["value"],
+                  );
+                }
               }
             },
           }),
@@ -875,6 +1183,27 @@ export function useAgentChat({
               : err instanceof Error
                 ? err.message
                 : String(err);
+        // Chunk-ordering complaints from `readUIMessageStream` are protocol
+        // noise, not a user-facing condition (see ticket 14 for the cause).
+        // Log them; when a reply already rendered, surface nothing at all.
+        if (isStreamProtocolError(message)) {
+          console.warn("[agent-chat] stream protocol warning:", message);
+          const replyRendered = messagesRef.current.some(
+            (m) =>
+              m.role === "assistant" &&
+              m.parts.some(
+                (part) =>
+                  part.type === "text" &&
+                  "text" in part &&
+                  part.text.trim().length > 0,
+              ),
+          );
+          if (replyRendered) {
+            setStatus("ready");
+
+            return;
+          }
+        }
         setError(new Error(message));
         setStatus("error");
       }
@@ -890,8 +1219,19 @@ export function useAgentChat({
       baseUrl,
       websocketBaseUrl,
       webSocketEnabled,
+      internalTransport,
     ],
   );
+
+  const ensureSessionId = useCallback(() => {
+    if (!sessionIdRef.current) {
+      const key = `chat-${crypto.randomUUID()}`;
+      sessionIdRef.current = key;
+      setSessionId(key);
+    }
+
+    return sessionIdRef.current;
+  }, []);
 
   /** Reset chat history and server session for a new conversation. */
   const resetChat = useCallback(() => {
@@ -900,6 +1240,7 @@ export function useAgentChat({
     setStatus("ready");
     setError(null);
     sessionIdRef.current = undefined;
+    setSessionId(undefined);
     mainAssistantMessageIdRef.current = null;
     continuationMessageIdRef.current = null;
     subagentMessageIdsRef.current = {};
@@ -909,6 +1250,8 @@ export function useAgentChat({
     messages: messages,
     status: status,
     error: error,
+    sessionId: sessionId,
+    ensureSessionId: ensureSessionId,
     sendMessage: sendMessage,
     resetChat: resetChat,
   };

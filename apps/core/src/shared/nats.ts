@@ -174,6 +174,11 @@ export class LiveNatsPublisher implements NatsPublisher {
   private streamReady: Promise<void> | null = null;
   private readonly subject: string;
   private sequence = 0;
+  // Serializes the actual sends. `publish` awaits connection setup before
+  // writing; without this chain, concurrent callers could resume from those
+  // awaits in any order and store frames out of stream order (the WebSocket
+  // path then delivers text-delta before text-start).
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly url: string,
@@ -203,7 +208,10 @@ export class LiveNatsPublisher implements NatsPublisher {
   }
 
   async publish(data: Record<string, unknown>): Promise<void> {
-    try {
+    // Assign the wire sequence synchronously, before any await, so it always
+    // reflects call order even when callers overlap.
+    const sequence = ++this.sequence;
+    const send = async (): Promise<void> => {
       const connection = await this.getConnection();
       // Ensure the stream exists before the first publish so it captures from the
       // first token; memoized, so later tokens skip straight to publishing.
@@ -212,22 +220,27 @@ export class LiveNatsPublisher implements NatsPublisher {
       }
       await this.streamReady;
 
-      this.sequence++;
       const event = {
         type: "stream",
         headers: this.headers,
         data: data,
-        sequence: this.sequence,
+        sequence: sequence,
       };
       // Core publish: fire-and-forget at core-NATS speed for live subscribers,
       // while the bound stream captures the same message for replay. Nats-Msg-Id
       // makes it idempotent within the stream's duplicate_window so a retry never
       // stores a duplicate.
       const hdrs = natsHeaders();
-      hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${this.sequence}`);
+      hdrs.set("Nats-Msg-Id", `${this.headers.eventId}:${sequence}`);
       connection.publish(this.subject, ENCODER.encode(JSON.stringify(event)), {
         headers: hdrs,
       });
+    };
+    const link = this.tail.then(send);
+    // Keep the chain alive past a failed send; each publish stays best-effort.
+    this.tail = link.catch(() => {});
+    try {
+      await link;
     } catch {
       // Publishing is best-effort per event; close() drains queued writes.
     }
@@ -245,6 +258,44 @@ export class LiveNatsPublisher implements NatsPublisher {
       }
     }
   }
+}
+
+/**
+ * Wraps a publisher so every publish first passes a fence (e.g. the
+ * conversation-ownership check) while the actual sends stay in call order.
+ *
+ * The fences run concurrently — each is a network round-trip, and serializing
+ * them would throttle token streaming — but the publishes are chained, so a
+ * slow fence on an early chunk can no longer let a later chunk reach the
+ * stream first. Unordered frames were exactly how the WebSocket path
+ * delivered `text-delta` before `text-start` while the SSE path (which does
+ * not pass through this) stayed ordered.
+ *
+ * A rejected fence skips that chunk (publishing stays best-effort per event,
+ * matching the previous behavior) without stalling the chain.
+ */
+export function createOrderedFencedPublisher(
+  publisher: NatsPublisher,
+  fence: () => Promise<void>,
+): NatsPublisher {
+  let tail: Promise<void> = Promise.resolve();
+
+  return {
+    publish: (data: Record<string, unknown>): Promise<void> => {
+      const fencePassed = fence();
+      // Mark a rejection as observed now; the chain link below still awaits
+      // (and rethrows) the original promise when its turn comes.
+      fencePassed.catch(() => {});
+      const link = tail.then(async () => {
+        await fencePassed;
+        await publisher.publish(data);
+      });
+      tail = link.catch(() => {});
+
+      return link;
+    },
+    close: () => publisher.close(),
+  };
 }
 
 // Create the response stream once per process; idempotent across concurrent

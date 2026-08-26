@@ -14,6 +14,7 @@ type RegisteredFunction = {
 };
 
 const registeredModules = {
+  connectors: require("@broods/convex/connectors"),
   runtime: require("@broods/convex/runtime"),
   runtimeIngress: require("@broods/convex/runtimeIngress"),
 } as Record<string, Record<string, RegisteredFunction | undefined>>;

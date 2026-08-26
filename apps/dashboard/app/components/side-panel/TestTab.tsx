@@ -13,17 +13,53 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/app/components/ui/input-group";
-import { useAgentChat } from "@/app/hooks/useAgentChat";
+import { Button } from "@/app/components/ui/button";
+import { Input } from "@/app/components/ui/input";
+import {
+  useAgentChat,
+  type InternalTestTransport,
+} from "@/app/hooks/useAgentChat";
+import { convexSiteUrl } from "@/app/lib/convexSite";
+import { useAccessToken } from "@workos-inc/authkit-nextjs/components";
+import {
+  resolveChatError,
+  type ChatErrorActionKind,
+  type ChatErrorPresentation,
+} from "@/app/lib/chatErrors";
+import {
+  relativeTime,
+  uiMessagesFromStoredEvents,
+  type StoredConversationEventRow,
+} from "@/app/lib/conversationHistory";
+import {
+  matchSkillSlashPrefix,
+  parseSkillSlash,
+  skillSlashMessage,
+} from "@/app/lib/skillSlash";
+import { api } from "@broods/convex/_generated/api";
+import type { Id } from "@broods/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
+import { useAction, useConvex, useMutation, useQuery } from "convex/react";
 import {
   ArrowUp,
+  Check,
+  ChevronDown,
   ChevronRight,
+  Download,
+  FileText,
+  History,
   Loader2,
+  Paperclip,
+  Pencil,
+  Plus,
   RotateCcw,
   Terminal,
+  Trash2,
   Wrench,
+  X,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
 /**
@@ -162,12 +198,48 @@ export function TestTab({
   deploymentApiKey,
   agentId,
   nodeColor,
+  onOpenDetails,
+  agentConfigId,
+  publicAccess,
+  enabledSkillNames,
+  workspaceRef,
+  onOpenContext,
+  projectId,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
   agentId: string;
   nodeColor?: string;
+  /** Switches the side panel to the Details tab (error-card action). */
+  onOpenDetails?: () => void;
+  /** Enables persisted conversation history when present. */
+  agentConfigId?: Id<"agentConfigs">;
+  /** Whether the agent's public endpoint is enabled (Details toggle). */
+  publicAccess?: boolean;
+  /** Enabled skill names for the composer's /slash autocomplete. */
+  enabledSkillNames?: string[];
+  /** First attached working folder — enables chat attachments (ticket 13). */
+  workspaceRef?: { name: string; workspaceId: string };
+  /** Switches the side panel to the Context tab. */
+  onOpenContext?: () => void;
+  projectId?: Id<"projects">;
 }): React.JSX.Element {
+  const { getAccessToken } = useAccessToken();
+  // Private agents test through the owner-authenticated internal endpoint —
+  // Public access is no longer a prerequisite for pressing Test. Public
+  // agents keep the streaming WebSocket path (with its subagent frames).
+  const internalTransport = useMemo<InternalTestTransport | undefined>(() => {
+    if (publicAccess === true || !agentConfigId) return undefined;
+    const siteUrl = convexSiteUrl();
+    if (!siteUrl) return undefined;
+
+    return {
+      invokeUrl: `${siteUrl}/v1/dashboard/test-agent`,
+      configId: agentConfigId,
+      fetchToken: async () => (await getAccessToken()) ?? null,
+    };
+  }, [publicAccess, agentConfigId, getAccessToken]);
+
   if (!activeDeployment) {
     return (
       <div className="flex flex-1 items-center justify-center p-4">
@@ -197,15 +269,419 @@ export function TestTab({
     );
   }
 
+  const chatProps = {
+    endpointId: activeDeployment.endpointId,
+    agentId: agentId,
+    apiKey: deploymentApiKey,
+    projectSlug: activeDeployment.projectSlug,
+    nodeColor: nodeColor,
+    stageSlug: activeDeployment.stageSlug,
+    onOpenDetails: onOpenDetails,
+    internalTransport: internalTransport,
+    enabledSkillNames: enabledSkillNames,
+    workspaceRef: workspaceRef,
+    onOpenContext: onOpenContext,
+    dashboardProjectId: projectId,
+    chatAgentConfigId: agentConfigId,
+  };
+
+  return agentConfigId ? (
+    <ConversationChat {...chatProps} agentConfigId={agentConfigId} />
+  ) : (
+    <ChatWindow {...chatProps} />
+  );
+}
+
+/** How the chat is addressed: a fresh conversation or a persisted one. */
+type ConversationSelection =
+  | { kind: "new"; nonce: number }
+  | { kind: "existing"; conversationKey: string };
+
+/** Bound on transcript pages loaded per conversation (100 events each). */
+const MAX_TRANSCRIPT_PAGES = 20;
+
+/**
+ * Chat with persisted history: a conversation picker over the runtime's
+ * transcript store, hydrating `ChatWindow` (remounted per conversation via
+ * `key`) with the stored messages so a conversation survives the panel
+ * closing. See conversationsPublic.ts for the read side.
+ */
+function ConversationChat({
+  agentConfigId,
+  ...chatProps
+}: {
+  endpointId: string;
+  agentId: string;
+  apiKey: string;
+  projectSlug?: string;
+  nodeColor?: string;
+  stageSlug?: string;
+  onOpenDetails?: () => void;
+  internalTransport?: InternalTestTransport;
+  enabledSkillNames?: string[];
+  workspaceRef?: { name: string; workspaceId: string };
+  onOpenContext?: () => void;
+  dashboardProjectId?: Id<"projects">;
+  chatAgentConfigId?: Id<"agentConfigs">;
+  agentConfigId: Id<"agentConfigs">;
+}) {
+  const convex = useConvex();
+  const history = useQuery(api.conversationsPublic.listForAgent, {
+    configId: agentConfigId,
+  });
+  const [selection, setSelection] = useState<ConversationSelection | null>(
+    null,
+  );
+  // Pick the most recent conversation once per agent, when history first
+  // loads. Done during render, guarded by the synced id (repo pattern).
+  const [syncedConfigId, setSyncedConfigId] =
+    useState<Id<"agentConfigs"> | null>(null);
+  if (history !== undefined && syncedConfigId !== agentConfigId) {
+    setSyncedConfigId(agentConfigId);
+    const latest = history.conversations[0];
+    setSelection(
+      latest
+        ? { kind: "existing", conversationKey: latest.conversationKey }
+        : { kind: "new", nonce: 0 },
+    );
+  }
+
+  // Load the selected conversation's transcript (paged, oldest first).
+  const [transcript, setTranscript] = useState<{
+    conversationKey: string;
+    messages: UIMessage[];
+  } | null>(null);
+  useEffect(() => {
+    if (selection?.kind !== "existing") return;
+    const conversationKey = selection.conversationKey;
+    let cancelled = false;
+    void (async () => {
+      const rows: StoredConversationEventRow[] = [];
+      let afterCursor: string | undefined;
+      for (let pageIndex = 0; pageIndex < MAX_TRANSCRIPT_PAGES; pageIndex++) {
+        const result = await convex.query(
+          api.conversationsPublic.listMessages,
+          {
+            configId: agentConfigId,
+            conversationKey: conversationKey,
+            afterCursor: afterCursor,
+          },
+        );
+        rows.push(...result.page);
+        if (result.isDone || !result.continueCursor) break;
+        afterCursor = result.continueCursor;
+      }
+      if (!cancelled) {
+        setTranscript({
+          conversationKey: conversationKey,
+          messages: uiMessagesFromStoredEvents(rows),
+        });
+      }
+    })().catch((error: unknown) => {
+      if (!cancelled) {
+        console.warn("[agent-chat] failed to load conversation:", error);
+        setTranscript({ conversationKey: conversationKey, messages: [] });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentConfigId, convex, selection]);
+
+  const startNewConversation = useCallback(() => {
+    setSelection((previous) => ({
+      kind: "new",
+      nonce: previous?.kind === "new" ? previous.nonce + 1 : 0,
+    }));
+  }, []);
+
+  const conversations = history?.conversations ?? [];
+  const currentTitle =
+    selection?.kind === "existing"
+      ? (conversations.find(
+          (entry) => entry.conversationKey === selection.conversationKey,
+        )?.title ?? "Conversation")
+      : "New conversation";
+
+  const transcriptReady =
+    selection?.kind === "existing" &&
+    transcript?.conversationKey === selection.conversationKey;
+
   return (
-    <ChatWindow
-      endpointId={activeDeployment.endpointId}
-      agentId={agentId}
-      apiKey={deploymentApiKey}
-      projectSlug={activeDeployment.projectSlug}
-      nodeColor={nodeColor}
-      stageSlug={activeDeployment.stageSlug}
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <ConversationListHeader
+        agentConfigId={agentConfigId}
+        conversations={conversations}
+        currentTitle={currentTitle}
+        selectedKey={
+          selection?.kind === "existing" ? selection.conversationKey : null
+        }
+        onSelect={(conversationKey) =>
+          setSelection({ kind: "existing", conversationKey: conversationKey })
+        }
+        onNewConversation={startNewConversation}
+        onDeletedSelected={startNewConversation}
+      />
+      {selection === null ||
+      (selection.kind === "existing" && !transcriptReady) ? (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      ) : selection.kind === "new" ? (
+        <ChatWindow key={`new-${selection.nonce}`} {...chatProps} />
+      ) : (
+        <ChatWindow
+          key={selection.conversationKey}
+          {...chatProps}
+          initialMessages={transcript?.messages}
+          initialSessionId={selection.conversationKey}
+          onNewChat={startNewConversation}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Rename field, focused on mount (opens only from an explicit user click). */
+function RenameInput({
+  value,
+  onChange,
+  onKeyDown,
+  className,
+}: {
+  value: string;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  className?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <Input
+      ref={inputRef}
+      value={value}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      className={className}
     />
+  );
+}
+
+/** One row of the conversation picker, as served by `listForAgent`. */
+interface ConversationRow {
+  conversationKey: string;
+  title: string;
+  createdAt: number;
+  lastMessageAt: number;
+}
+
+/**
+ * Header bar naming the open conversation, with a collapsible picker holding
+ * per-conversation rename (inline) and delete (two-step confirm).
+ */
+function ConversationListHeader({
+  agentConfigId,
+  conversations,
+  currentTitle,
+  selectedKey,
+  onSelect,
+  onNewConversation,
+  onDeletedSelected,
+}: {
+  agentConfigId: Id<"agentConfigs">;
+  conversations: ConversationRow[];
+  currentTitle: string;
+  selectedKey: string | null;
+  onSelect: (conversationKey: string) => void;
+  onNewConversation: () => void;
+  onDeletedSelected: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [renamingKey, setRenamingKey] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string | null>(null);
+  const renameConversation = useMutation(
+    api.conversationsPublic.renameConversation,
+  );
+  const deleteConversation = useMutation(
+    api.conversationsPublic.deleteConversation,
+  );
+
+  async function submitRename(conversationKey: string) {
+    const title = renameDraft.trim();
+    setRenamingKey(null);
+    if (!title) return;
+    await renameConversation({
+      configId: agentConfigId,
+      conversationKey: conversationKey,
+      title: title,
+    });
+  }
+
+  async function submitDelete(conversationKey: string) {
+    setConfirmDeleteKey(null);
+    // Batched server-side; loop until the conversation is fully gone.
+    for (;;) {
+      const result = await deleteConversation({
+        configId: agentConfigId,
+        conversationKey: conversationKey,
+      });
+      if (!result.hasMore) break;
+    }
+    if (conversationKey === selectedKey) {
+      onDeletedSelected();
+    }
+  }
+
+  return (
+    <div className="shrink-0 border-b">
+      <div className="flex items-center gap-1 px-3 py-1.5">
+        <button
+          type="button"
+          className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-foreground hover:bg-muted/50 transition-colors"
+          onClick={() => setOpen((previous) => !previous)}
+          title="Conversation history"
+        >
+          <History className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="truncate font-medium">{currentTitle}</span>
+          <ChevronDown
+            className={`size-3 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+        <span className="flex-1" />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 gap-1 px-2 text-xs"
+          onClick={onNewConversation}
+          title="New conversation"
+        >
+          <Plus className="size-3" />
+          New
+        </Button>
+      </div>
+      {open && (
+        <div className="max-h-56 overflow-y-auto border-t px-1.5 py-1.5">
+          {conversations.length === 0 && (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              No conversations yet.
+            </p>
+          )}
+          {conversations.map((conversation) => (
+            <div
+              key={conversation.conversationKey}
+              className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-muted/50 ${
+                conversation.conversationKey === selectedKey
+                  ? "bg-muted/60"
+                  : ""
+              }`}
+            >
+              {renamingKey === conversation.conversationKey ? (
+                <>
+                  <RenameInput
+                    value={renameDraft}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        void submitRename(conversation.conversationKey);
+                      }
+                      if (event.key === "Escape") setRenamingKey(null);
+                    }}
+                    className="h-6 flex-1 text-xs"
+                  />
+                  <button
+                    type="button"
+                    className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                    onClick={() =>
+                      void submitRename(conversation.conversationKey)
+                    }
+                    title="Save name"
+                  >
+                    <Check className="size-3" />
+                  </button>
+                  <button
+                    type="button"
+                    className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                    onClick={() => setRenamingKey(null)}
+                    title="Cancel"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+                    onClick={() => {
+                      onSelect(conversation.conversationKey);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="truncate text-foreground">
+                      {conversation.title}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+                      {relativeTime(conversation.lastMessageAt)}
+                    </span>
+                  </button>
+                  {confirmDeleteKey === conversation.conversationKey ? (
+                    <>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded px-1 py-0.5 text-[10px] font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+                        onClick={() =>
+                          void submitDelete(conversation.conversationKey)
+                        }
+                      >
+                        Delete?
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground"
+                        onClick={() => setConfirmDeleteKey(null)}
+                        title="Cancel"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                        onClick={() => {
+                          setRenamingKey(conversation.conversationKey);
+                          setRenameDraft(conversation.title);
+                        }}
+                        title="Rename"
+                      >
+                        <Pencil className="size-3" />
+                      </button>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+                        onClick={() =>
+                          setConfirmDeleteKey(conversation.conversationKey)
+                        }
+                        title="Delete"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -217,6 +693,16 @@ function ChatWindow({
   projectSlug,
   nodeColor,
   stageSlug,
+  onOpenDetails,
+  internalTransport,
+  initialMessages,
+  initialSessionId,
+  onNewChat,
+  enabledSkillNames,
+  workspaceRef,
+  onOpenContext,
+  dashboardProjectId,
+  chatAgentConfigId,
 }: {
   endpointId: string;
   agentId: string;
@@ -224,29 +710,253 @@ function ChatWindow({
   projectSlug?: string;
   nodeColor?: string;
   stageSlug?: string;
+  onOpenDetails?: () => void;
+  /** Routes sends through the owner-authenticated internal endpoint. */
+  internalTransport?: InternalTestTransport;
+  /** Persisted transcript to hydrate with (remount via `key` to switch). */
+  initialMessages?: UIMessage[];
+  /** Conversation key the next send continues. */
+  initialSessionId?: string;
+  /** Overrides the composer's reset control when history drives the chat. */
+  onNewChat?: () => void;
+  /** Enabled skill names for the /slash autocomplete. */
+  enabledSkillNames?: string[];
+  /** First attached working folder — enables chat attachments (ticket 13). */
+  workspaceRef?: { name: string; workspaceId: string };
+  onOpenContext?: () => void;
+  dashboardProjectId?: Id<"projects">;
+  chatAgentConfigId?: Id<"agentConfigs">;
 }) {
-  const { messages, status, error, sendMessage, resetChat } = useAgentChat({
+  const {
+    messages,
+    status,
+    error,
+    ensureSessionId,
+    sessionId,
+    sendMessage,
+    resetChat,
+  } = useAgentChat({
     endpointId: endpointId,
     agentId: agentId,
     apiKey: apiKey,
     projectSlug: projectSlug,
     stageSlug: stageSlug,
     webSocketEnabled: true,
+    initialMessages: initialMessages,
+    initialSessionId: initialSessionId,
+    internalTransport: internalTransport,
   });
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasAssistantMessage = messages.some((m) => m.role === "assistant");
+  const router = useRouter();
+  const params = useParams<{ projectId: string }>();
+  const searchParams = useSearchParams();
+
+  const handleErrorAction = useCallback(
+    (kind: ChatErrorActionKind) => {
+      if (kind === "open-details") {
+        onOpenDetails?.();
+
+        return;
+      }
+      if (kind === "open-env-vars") {
+        // Same href shape the settings page builds: keep the current params
+        // (e.g. ?stage=) so the variables shown match the stage being tested.
+        const next = new URLSearchParams(searchParams.toString());
+        next.set("tab", "variables");
+        router.push(`/${params.projectId}/settings?${next.toString()}`);
+
+        return;
+      }
+      if (kind === "retry") {
+        const lastUserText = [...messages]
+          .reverse()
+          .find((m) => m.role === "user")
+          ?.parts.filter((p) => p.type === "text")
+          .map((p) => ("text" in p ? p.text : ""))
+          .join("");
+        if (lastUserText) {
+          void sendMessage(lastUserText);
+        }
+      }
+    },
+    [
+      messages,
+      onOpenDetails,
+      params.projectId,
+      router,
+      searchParams,
+      sendMessage,
+    ],
+  );
+
+  // --- Attachments in / deliverables out (ticket 13) ---
+  const uploadFile = useAction(api.workspaceFilesPublic.upload);
+  const listFiles = useAction(api.workspaceFilesPublic.list);
+  const getDownloadUrl = useAction(api.workspaceFilesPublic.getDownloadUrl);
+  const recordDeliverables = useMutation(
+    api.conversationsPublic.recordDeliverables,
+  );
+  const deliverables = useQuery(
+    api.conversationsPublic.listDeliverables,
+    chatAgentConfigId && sessionId
+      ? { configId: chatAgentConfigId, conversationKey: sessionId }
+      : "skip",
+  );
+  const [attachments, setAttachments] = useState<
+    Array<{ path: string; name: string; sizeBytes?: number }>
+  >([]);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [showAttachHint, setShowAttachHint] = useState(false);
+  const attachInputRef = useRef<HTMLInputElement | null>(null);
+  // Workspace file listing (path -> updatedAt) captured at send time; the
+  // post-run diff against it is what detects deliverables.
+  const baselineRef = useRef<Promise<Map<string, string>> | null>(null);
+  const prevStatusRef = useRef(status);
+
+  const snapshotWorkspace = useCallback(async (): Promise<
+    Map<string, string>
+  > => {
+    if (!workspaceRef || !dashboardProjectId) return new Map();
+    try {
+      const rows = await listFiles({
+        projectId: dashboardProjectId,
+        workspaceId: workspaceRef.workspaceId,
+      });
+
+      return new Map(
+        rows
+          .filter((row) => !row.isFolder)
+          .map((row) => [row.path, row.updatedAt ?? ""]),
+      );
+    } catch {
+      return new Map();
+    }
+  }, [dashboardProjectId, listFiles, workspaceRef]);
+
+  const finishRunDiff = useCallback(async () => {
+    const baselinePromise = baselineRef.current;
+    baselineRef.current = null;
+    if (
+      !baselinePromise ||
+      !workspaceRef ||
+      !dashboardProjectId ||
+      !chatAgentConfigId ||
+      !sessionId
+    ) {
+      return;
+    }
+    try {
+      const baseline = await baselinePromise;
+      const rows = await listFiles({
+        projectId: dashboardProjectId,
+        workspaceId: workspaceRef.workspaceId,
+      });
+      const found = rows.filter(
+        (row) =>
+          !row.isFolder &&
+          !row.path.startsWith("memory/") &&
+          !row.path.startsWith("chat-uploads/") &&
+          (!baseline.has(row.path) ||
+            baseline.get(row.path) !== (row.updatedAt ?? "")),
+      );
+      if (found.length === 0) return;
+      await recordDeliverables({
+        configId: chatAgentConfigId,
+        conversationKey: sessionId,
+        files: found.map((row) => ({
+          path: row.path,
+          workspaceId: workspaceRef.workspaceId,
+          ...(row.sizeBytes !== undefined ? { sizeBytes: row.sizeBytes } : {}),
+          foundAt: Date.now(),
+        })),
+      });
+    } catch (err) {
+      console.warn("[agent-chat] deliverable diff failed:", err);
+    }
+  }, [
+    chatAgentConfigId,
+    dashboardProjectId,
+    listFiles,
+    recordDeliverables,
+    sessionId,
+    workspaceRef,
+  ]);
+
+  // A run just finished: diff the workspace against the send-time snapshot.
+  useEffect(() => {
+    if (prevStatusRef.current === "streaming" && status !== "streaming") {
+      void finishRunDiff();
+    }
+    prevStatusRef.current = status;
+  }, [status, finishRunDiff]);
+
+  async function handleAttachFile(file: File | undefined) {
+    if (!file || !workspaceRef || !dashboardProjectId) return;
+    setAttachBusy(true);
+    setAttachError(null);
+    try {
+      const key = ensureSessionId();
+      const path = `chat-uploads/${key}/${file.name}`;
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      await uploadFile({
+        projectId: dashboardProjectId,
+        workspaceId: workspaceRef.workspaceId,
+        path: path,
+        contentBase64: btoa(binary),
+        ...(file.type ? { contentType: file.type } : {}),
+      });
+      setAttachments((prev) => [
+        ...prev,
+        { path: path, name: file.name, sizeBytes: file.size },
+      ]);
+    } catch (err) {
+      setAttachError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  /** Prefix the outgoing message with the attached files' real paths. */
+  function withAttachments(text: string): string {
+    if (attachments.length === 0 || !workspaceRef) return text;
+    const listing = attachments
+      .map((attachment) => `- ${attachment.path}`)
+      .join("\n");
+
+    return `I put ${attachments.length} file(s) in your workspace "${workspaceRef.name}" for this conversation:\n${listing}\nRead them with your file tools when relevant.\n\n${text}`;
+  }
+
+  function dispatchMessage(raw: string) {
+    baselineRef.current = snapshotWorkspace();
+    void sendMessage(withAttachments(outgoingText(raw)));
+    setAttachments([]);
+    setInput("");
+  }
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  /** Expand a leading /skill-name into an explicit load-skill ask. */
+  function outgoingText(raw: string): string {
+    const slash = parseSkillSlash(raw.trim(), enabledSkillNames ?? []);
+
+    return slash ? skillSlashMessage(slash) : raw;
+  }
+
+  const slashMatches = matchSkillSlashPrefix(input, enabledSkillNames ?? []);
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!input.trim() || status === "streaming") return;
-    sendMessage(input);
-    setInput("");
+    dispatchMessage(input);
   }
 
   return (
@@ -268,12 +978,130 @@ function ChatWindow({
         {status === "streaming" && !hasAssistantMessage && (
           <ThinkingIndicator nodeColor={nodeColor} />
         )}
-        {error && <p className="text-xs text-destructive">{error.message}</p>}
+        {(deliverables ?? []).length > 0 && (
+          <div className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              Files from this conversation
+            </span>
+            {(deliverables ?? []).map((file) => (
+              <div
+                key={`${file.workspaceId}:${file.path}`}
+                className="flex items-center gap-2 rounded-md border border-border/60 bg-background/40 px-2 py-1.5"
+              >
+                <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-mono text-[11px] text-foreground">
+                    {file.path}
+                  </span>
+                  {file.sizeBytes !== undefined && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {file.sizeBytes < 1024
+                        ? `${file.sizeBytes} B`
+                        : `${(file.sizeBytes / 1024).toFixed(1)} KB`}
+                    </span>
+                  )}
+                </div>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-6 shrink-0 text-muted-foreground"
+                  title="Download"
+                  onClick={() =>
+                    void (async () => {
+                      if (!dashboardProjectId) return;
+                      const url = await getDownloadUrl({
+                        projectId: dashboardProjectId,
+                        workspaceId: file.workspaceId,
+                        path: file.path,
+                      });
+                      window.open(url, "_blank", "noopener,noreferrer");
+                    })()
+                  }
+                >
+                  <Download className="size-3" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {error && (
+          <ChatErrorCard
+            presentation={resolveChatError(error.message)}
+            onAction={handleErrorAction}
+          />
+        )}
         <div ref={bottomRef} />
       </div>
 
       {/* Input bar */}
       <form onSubmit={handleSubmit} className="shrink-0 p-3">
+        <input
+          ref={attachInputRef}
+          type="file"
+          className="hidden"
+          onChange={(e) => {
+            void handleAttachFile(e.target.files?.[0]);
+            e.currentTarget.value = "";
+          }}
+        />
+        {attachments.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.path}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[11px] text-foreground"
+              >
+                <Paperclip className="size-3" />
+                {attachment.name}
+                <button
+                  type="button"
+                  className="cursor-pointer text-muted-foreground hover:text-foreground"
+                  title="Remove attachment"
+                  onClick={() =>
+                    setAttachments((prev) =>
+                      prev.filter((entry) => entry.path !== attachment.path),
+                    )
+                  }
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {attachError && (
+          <p className="mb-1.5 rounded-md bg-destructive/10 px-2 py-1 text-[11px] text-destructive">
+            {attachError}
+          </p>
+        )}
+        {showAttachHint && !workspaceRef && (
+          <p className="mb-1.5 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2 py-1.5 text-[11px] text-muted-foreground">
+            To share files, first give this agent a working folder.
+            {onOpenContext && (
+              <button
+                type="button"
+                className="cursor-pointer font-medium text-foreground underline underline-offset-2"
+                onClick={onOpenContext}
+              >
+                Open Context
+              </button>
+            )}
+          </p>
+        )}
+        {slashMatches.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {slashMatches.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className="cursor-pointer rounded-md border border-border bg-muted/50 px-2 py-0.5 font-mono text-[11px] text-foreground hover:bg-muted transition-colors"
+                onClick={() => setInput(`/${name} `)}
+              >
+                /{name}
+              </button>
+            ))}
+          </div>
+        )}
         <InputGroup className="rounded-lg">
           <InputGroupTextarea
             value={input}
@@ -283,9 +1111,13 @@ function ChatWindow({
             onKeyDown={(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
+                if (slashMatches.length > 0 && slashMatches[0]) {
+                  setInput(`/${slashMatches[0]} `);
+
+                  return;
+                }
                 if (input.trim() && status !== "streaming") {
-                  sendMessage(input);
-                  setInput("");
+                  dispatchMessage(input);
                 }
               }
             }}
@@ -296,14 +1128,42 @@ function ChatWindow({
           />
           <InputGroupAddon align="block-end" className="pt-0">
             <div className="flex w-full items-center justify-between">
-              <InputGroupButton
-                size="icon-xs"
-                variant="ghost"
-                onClick={resetChat}
-                title="New chat"
-              >
-                <RotateCcw className="size-3.5" />
-              </InputGroupButton>
+              <div className="flex items-center gap-0.5">
+                <InputGroupButton
+                  size="icon-xs"
+                  variant="ghost"
+                  onClick={onNewChat ?? resetChat}
+                  title="New chat"
+                >
+                  <RotateCcw className="size-3.5" />
+                </InputGroupButton>
+                <InputGroupButton
+                  size="icon-xs"
+                  variant="ghost"
+                  className={workspaceRef ? "" : "opacity-50"}
+                  disabled={attachBusy}
+                  onClick={() => {
+                    if (!workspaceRef) {
+                      setShowAttachHint(true);
+
+                      return;
+                    }
+                    setShowAttachHint(false);
+                    attachInputRef.current?.click();
+                  }}
+                  title={
+                    workspaceRef
+                      ? "Attach a file"
+                      : "Attach a file — needs a working folder (see Context)"
+                  }
+                >
+                  {attachBusy ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Paperclip className="size-3.5" />
+                  )}
+                </InputGroupButton>
+              </div>
               <InputGroupButton
                 type="submit"
                 size="icon-xs"
@@ -321,6 +1181,50 @@ function ChatWindow({
           </InputGroupAddon>
         </InputGroup>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Error card rendered in the transcript where a send failed: one plain
+ * sentence, at most one action, and the raw payload behind a disclosure.
+ */
+function ChatErrorCard({
+  presentation,
+  onAction,
+}: {
+  presentation: ChatErrorPresentation;
+  onAction: (kind: ChatErrorActionKind) => void;
+}) {
+  const { title, detail, action, raw } = presentation;
+
+  return (
+    <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2.5">
+      <p className="text-sm font-medium text-foreground">{title}</p>
+      {detail && (
+        <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
+      )}
+      {action && action.kind !== "none" && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="mt-2 h-7 text-xs"
+          onClick={() => onAction(action.kind)}
+        >
+          {action.label}
+        </Button>
+      )}
+      <Collapsible>
+        <CollapsibleTrigger className="group mt-2 flex cursor-pointer items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+          <ChevronRight className="size-3 shrink-0 transition-transform group-data-panel-open:rotate-90" />
+          Show details
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <pre className="mt-1 max-h-40 max-w-full overflow-y-auto overflow-x-auto whitespace-pre-wrap wrap-break-word rounded-md border border-red-500/20 bg-red-500/5 px-2.5 py-2 font-mono text-xs text-muted-foreground">
+            {raw}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

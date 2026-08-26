@@ -5,7 +5,12 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+} from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
 import {
@@ -33,6 +38,7 @@ const environmentVariableDoc = v.object({
   stageId: v.id("stages"),
   name: v.string(),
   value: v.string(),
+  hasValue: v.boolean(),
   updatedAt: v.number(),
 });
 
@@ -53,6 +59,7 @@ function maskEnvironmentVariable(variable: {
   projectId: Id<"projects">;
   stageId: Id<"stages">;
   name: string;
+  hasValue?: boolean;
   updatedAt: number;
 }) {
   return {
@@ -62,6 +69,7 @@ function maskEnvironmentVariable(variable: {
     stageId: variable.stageId,
     name: variable.name,
     value: "********",
+    hasValue: variable.hasValue ?? true,
     updatedAt: variable.updatedAt,
   };
 }
@@ -96,6 +104,107 @@ async function recordEnvironmentVariableAudit(
     summary: input.summary,
     detailsJson: auditDetailsJson({ name: input.name }),
   });
+}
+
+async function upsertEnvironmentVariable(
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  input: {
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    name: string;
+    value: string;
+  },
+): Promise<Id<"environmentVariables">> {
+  const trimmedName = input.name.trim();
+  if (!trimmedName) throw new Error("Variable name is required.");
+
+  const existing = await ctx.db
+    .query("environmentVariables")
+    .withIndex("by_stageId_and_name", (q) =>
+      q.eq("stageId", input.stageId).eq("name", trimmedName),
+    )
+    .unique();
+
+  const now = Date.now();
+  const encrypted = await encryptAgentConfigBlob(
+    { value: input.value },
+    encryptionSecret(),
+  );
+  const valueDigest = await hashEnvironmentValue(input.value);
+  const hasValue = input.value.length > 0;
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      ciphertext: encrypted.ciphertext,
+      iv: encrypted.iv,
+      tag: encrypted.tag,
+      valueDigest: valueDigest,
+      hasValue: hasValue,
+      updatedAt: now,
+    });
+
+    await refreshAgentConfigsForEnvironmentVariable(
+      ctx,
+      input.projectId,
+      input.stageId,
+      trimmedName,
+      input.value,
+    );
+    await refreshSandboxConfigsForEnvironmentVariable(
+      ctx,
+      input.projectId,
+      input.stageId,
+      trimmedName,
+      input.value,
+    );
+    await recordEnvironmentVariableAudit(ctx, actor, {
+      projectId: input.projectId,
+      stageId: input.stageId,
+      variableId: existing._id,
+      action: "updated",
+      name: trimmedName,
+      summary: "Environment variable updated",
+    });
+
+    return existing._id;
+  }
+
+  const variableId = await ctx.db.insert("environmentVariables", {
+    projectId: input.projectId,
+    stageId: input.stageId,
+    name: trimmedName,
+    ciphertext: encrypted.ciphertext,
+    iv: encrypted.iv,
+    tag: encrypted.tag,
+    valueDigest: valueDigest,
+    hasValue: hasValue,
+    updatedAt: now,
+  });
+
+  await refreshAgentConfigsForEnvironmentVariable(
+    ctx,
+    input.projectId,
+    input.stageId,
+    trimmedName,
+    input.value,
+  );
+  await refreshSandboxConfigsForEnvironmentVariable(
+    ctx,
+    input.projectId,
+    input.stageId,
+    trimmedName,
+    input.value,
+  );
+  await recordEnvironmentVariableAudit(ctx, actor, {
+    projectId: input.projectId,
+    stageId: input.stageId,
+    variableId: variableId,
+    action: "created",
+    name: trimmedName,
+    summary: "Environment variable created",
+  });
+
+  return variableId;
 }
 
 export const list = query({
@@ -150,93 +259,30 @@ export const set = mutation({
       throw new Error("Stage not found.");
     }
 
-    const trimmedName = name.trim();
-    if (!trimmedName) throw new Error("Variable name is required.");
-
-    const existing = await ctx.db
-      .query("environmentVariables")
-      .withIndex("by_stageId_and_name", (q) =>
-        q.eq("stageId", stageId).eq("name", trimmedName),
-      )
-      .unique();
-
-    const now = Date.now();
-    const encrypted = await encryptAgentConfigBlob(
-      { value: value },
-      encryptionSecret(),
-    );
-    const valueDigest = await hashEnvironmentValue(value);
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        ciphertext: encrypted.ciphertext,
-        iv: encrypted.iv,
-        tag: encrypted.tag,
-        valueDigest: valueDigest,
-        updatedAt: now,
-      });
-
-      await refreshAgentConfigsForEnvironmentVariable(
-        ctx,
-        projectId,
-        stageId,
-        trimmedName,
-        value,
-      );
-      await refreshSandboxConfigsForEnvironmentVariable(
-        ctx,
-        projectId,
-        stageId,
-        trimmedName,
-        value,
-      );
-      await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-        projectId: projectId,
-        stageId: stageId,
-        variableId: existing._id,
-        action: "updated",
-        name: trimmedName,
-        summary: "Environment variable updated",
-      });
-
-      return existing._id;
-    }
-
-    const variableId = await ctx.db.insert("environmentVariables", {
+    return await upsertEnvironmentVariable(ctx, dashboardAuditActor(user), {
       projectId: projectId,
       stageId: stageId,
-      name: trimmedName,
-      ciphertext: encrypted.ciphertext,
-      iv: encrypted.iv,
-      tag: encrypted.tag,
-      valueDigest: valueDigest,
-      updatedAt: now,
+      name: name,
+      value: value,
     });
-
-    await refreshAgentConfigsForEnvironmentVariable(
-      ctx,
-      projectId,
-      stageId,
-      trimmedName,
-      value,
-    );
-    await refreshSandboxConfigsForEnvironmentVariable(
-      ctx,
-      projectId,
-      stageId,
-      trimmedName,
-      value,
-    );
-    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-      projectId: projectId,
-      stageId: stageId,
-      variableId: variableId,
-      action: "created",
-      name: trimmedName,
-      summary: "Environment variable created",
-    });
-
-    return variableId;
   },
+});
+
+/** Test utility for exercising the same write path without WorkOS AuthKit. */
+export const setForTest = internalMutation({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    name: v.string(),
+    value: v.string(),
+  },
+  returns: v.id("environmentVariables"),
+  handler: async (ctx, args) =>
+    await upsertEnvironmentVariable(
+      ctx,
+      { kind: "service", id: "environmentVariables.setForTest" },
+      args,
+    ),
 });
 
 /**

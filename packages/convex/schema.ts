@@ -599,6 +599,12 @@ export const environmentVariablesFields = {
   tag: v.string(),
   /** SHA-256 hex of the plaintext value; absent on rows written before this field. */
   valueDigest: v.optional(v.string()),
+  /**
+   * Whether the stored value is non-empty, recorded at write time so reactive
+   * list queries can report readiness without decrypting secrets. Absent on
+   * older rows; readers treat absent as true until the next write corrects it.
+   */
+  hasValue: v.optional(v.boolean()),
   updatedAt: v.number(),
 };
 
@@ -706,6 +712,24 @@ export const conversationsFields = {
   title: v.optional(v.string()),
   createdAt: v.number(),
   lastMessageAt: v.number(),
+  // Scoped runtime conversation key this row annotates. The runtime persists
+  // transcripts in `runtimeConversationEvents` keyed by this string; rows here
+  // carry user-facing metadata (title) for those transcripts. Absent on rows
+  // that predate the link.
+  conversationKey: v.optional(v.string()),
+  // Files the agent produced during this conversation (ticket 13): detected by
+  // the dashboard's around-run workspace diff and kept here so the cards
+  // survive the panel closing. Paths are workspace-relative.
+  deliverables: v.optional(
+    v.array(
+      v.object({
+        path: v.string(),
+        workspaceId: v.string(),
+        sizeBytes: v.optional(v.number()),
+        foundAt: v.number(),
+      }),
+    ),
+  ),
 };
 
 /** Message in a conversation. Role + content + arbitrary metadata. */
@@ -721,6 +745,34 @@ export const messagesFields = {
   content: v.string(),
   metadata: v.optional(v.any()),
   createdAt: v.number(),
+};
+
+/**
+ * Connected external services and MCP servers (ticket 19). Account-scoped;
+ * agents reference rows by id via `config.connectors.allowed`. Secrets are
+ * AES-GCM blobs via the existing account-config mechanism — never plaintext.
+ */
+export const connectorsFields = {
+  accountId: v.id("accounts"),
+  /** "github" for token connectors; "mcp" for custom MCP servers. */
+  provider: v.string(),
+  label: v.string(),
+  authKind: v.union(v.literal("token"), v.literal("mcp")),
+  /** MCP server URL (not a secret; headers are). */
+  url: v.optional(v.string()),
+  /** Encrypted secret payload: {token} or {headers}. */
+  encryptedSecret: v.optional(v.string()),
+  secretIv: v.optional(v.string()),
+  secretTag: v.optional(v.string()),
+  status: v.union(v.literal("connected"), v.literal("error")),
+  lastCheckedAt: v.optional(v.number()),
+  lastError: v.optional(v.string()),
+  /** Tool names the MCP server advertised at the last successful handshake. */
+  toolNames: v.optional(v.array(v.string())),
+  /** For token connectors: the login the validation call authenticated as. */
+  validatedLogin: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
 };
 
 /** Skill metadata; binary content lives in S3 under accountId-prefixed keys. */
@@ -1244,10 +1296,14 @@ export default defineSchema({
     .index("by_updatedAt", ["updatedAt"]),
   conversations: defineTable(conversationsFields)
     .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
+    .index("by_accountId_and_agentId", ["accountId", "agentId"])
+    .index("by_conversationKey", ["conversationKey"]),
   messages: defineTable(messagesFields)
     .index("by_conversationId", ["conversationId"])
     .index("by_accountId", ["accountId"]),
+  connectors: defineTable(connectorsFields).index("by_accountId", [
+    "accountId",
+  ]),
   skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])

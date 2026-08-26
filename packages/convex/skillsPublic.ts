@@ -11,13 +11,15 @@ import { createHash } from "node:crypto";
 import { v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { authKit } from "./auth";
 import {
   createJsonSkillFiles,
   createOrReplaceSkill,
+  deleteSkill,
   fetchGitHubSkillFiles,
   getSkill,
+  listAccountSkills,
   readSkillFileBytes,
 } from "./model/skills";
 
@@ -49,6 +51,29 @@ async function requireAccountForToken(
 }
 
 /**
+ * Resolve the acting account: a supplied Bearer token wins (CLI/REST parity),
+ * otherwise the signed-in user's active workspace account. The dashboard
+ * passes no token any more — it must never hold the account secret in the
+ * browser (ticket 17's auth fix).
+ */
+async function resolveActingAccountId(
+  ctx: ActionCtx,
+  bearerToken: string | undefined,
+): Promise<Id<"accounts">> {
+  if (bearerToken) {
+    const account = await requireAccountForToken(ctx, bearerToken);
+
+    return account._id;
+  }
+  const active = await ctx.runQuery(api.org.getActiveAccount, {});
+  if (!active) {
+    throw new Error("No active workspace for this user.");
+  }
+
+  return active.accountId;
+}
+
+/**
  * Package all workspaceFiles for a skill node and publish them to S3.
  * @param projectId owning project
  * @param nodeId canvas skill node ID
@@ -59,7 +84,7 @@ export const publishSkill = action({
   args: {
     projectId: v.id("projects"),
     nodeId: v.string(),
-    bearerToken: v.string(),
+    bearerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { projectId, nodeId, bearerToken } = args;
@@ -70,7 +95,7 @@ export const publishSkill = action({
       throw new Error("User not found or not authenticated");
     }
 
-    const account = await requireAccountForToken(ctx, bearerToken);
+    const accountId = await resolveActingAccountId(ctx, bearerToken);
 
     // Load the file list
     const files = await ctx.runQuery(api.workspaceFiles.list, {
@@ -116,7 +141,7 @@ export const publishSkill = action({
       });
     }
 
-    const skill = await createOrReplaceSkill(account._id, skillFiles);
+    const skill = await createOrReplaceSkill(accountId, skillFiles);
 
     return {
       name: skill.name,
@@ -136,7 +161,7 @@ export const publishSkill = action({
  */
 export const createFromGithub = action({
   args: {
-    bearerToken: v.string(),
+    bearerToken: v.optional(v.string()),
     githubUrl: v.string(),
   },
   handler: async (ctx, args) => {
@@ -148,9 +173,9 @@ export const createFromGithub = action({
       throw new Error("User not found or not authenticated");
     }
 
-    const account = await requireAccountForToken(ctx, bearerToken);
+    const accountId = await resolveActingAccountId(ctx, bearerToken);
     const files = await fetchGitHubSkillFiles(githubUrl);
-    const skill = await createOrReplaceSkill(account._id, files);
+    const skill = await createOrReplaceSkill(accountId, files);
 
     return {
       name: skill.name,
@@ -171,7 +196,7 @@ export const createFromGithub = action({
  */
 export const createFromJson = action({
   args: {
-    bearerToken: v.string(),
+    bearerToken: v.optional(v.string()),
     name: v.string(),
     description: v.string(),
     content: v.string(),
@@ -185,9 +210,9 @@ export const createFromJson = action({
       throw new Error("User not found or not authenticated");
     }
 
-    const account = await requireAccountForToken(ctx, bearerToken);
+    const accountId = await resolveActingAccountId(ctx, bearerToken);
     const skill = await createOrReplaceSkill(
-      account._id,
+      accountId,
       createJsonSkillFiles(name, description, content),
     );
 
@@ -213,7 +238,7 @@ export const importSkill = action({
     projectId: v.id("projects"),
     nodeId: v.string(),
     skillName: v.string(),
-    bearerToken: v.string(),
+    bearerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const { projectId, nodeId, skillName, bearerToken } = args;
@@ -224,7 +249,7 @@ export const importSkill = action({
       throw new Error("User not found or not authenticated");
     }
 
-    const account = await requireAccountForToken(ctx, bearerToken);
+    const accountId = await resolveActingAccountId(ctx, bearerToken);
 
     const project = await ctx.runQuery(api.project.getById, {
       projectId: projectId,
@@ -233,7 +258,7 @@ export const importSkill = action({
       throw new Error("Project not found.");
     }
 
-    const skill = await getSkill(account._id, skillName);
+    const skill = await getSkill(accountId, skillName);
     if (!skill) {
       throw new Error(`Skill not found: ${skillName}`);
     }
@@ -284,5 +309,188 @@ export const importSkill = action({
       description: skill.description,
       fileCount: skill.files.length,
     };
+  },
+});
+
+/**
+ * The account's skill library, straight from the real store (S3) — the
+ * `skills` table has no writers and stays empty, so listing it would lie.
+ */
+export const listLibrary = action({
+  args: {},
+  returns: v.array(
+    v.object({
+      name: v.string(),
+      description: v.optional(v.string()),
+      path: v.string(),
+    }),
+  ),
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const accountId = await resolveActingAccountId(ctx, undefined);
+    const skills = await listAccountSkills(accountId);
+
+    return skills.map((skill) => ({
+      name: skill.name,
+      ...(skill.description !== undefined
+        ? { description: skill.description }
+        : {}),
+      path: skill.path,
+    }));
+  },
+});
+
+/** One skill's full detail: metadata, file manifest, and SKILL.md text. */
+export const getSkillDetail = action({
+  args: { name: v.string() },
+  returns: v.union(
+    v.object({
+      name: v.string(),
+      description: v.optional(v.string()),
+      path: v.string(),
+      files: v.array(
+        v.object({ path: v.string(), size: v.optional(v.number()) }),
+      ),
+      skillMd: v.string(),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const accountId = await resolveActingAccountId(ctx, undefined);
+    const skill = await getSkill(accountId, args.name);
+    if (!skill) return null;
+    const skillMdBytes = await readSkillFileBytes(skill.path, "SKILL.md");
+
+    return {
+      name: skill.name,
+      ...(skill.description !== undefined
+        ? { description: skill.description }
+        : {}),
+      path: skill.path,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        ...(file.size !== undefined ? { size: file.size } : {}),
+      })),
+      skillMd: new TextDecoder().decode(skillMdBytes),
+    };
+  },
+});
+
+/**
+ * Replace a skill's SKILL.md in place. The new markdown must keep the same
+ * frontmatter name — renames go through `renameSkill` so the old prefix is
+ * cleaned up.
+ */
+export const updateSkillMd = action({
+  args: { name: v.string(), content: v.string() },
+  returns: v.object({ name: v.string(), path: v.string() }),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const accountId = await resolveActingAccountId(ctx, undefined);
+    const existing = await getSkill(accountId, args.name);
+    if (!existing) throw new Error(`Skill not found: ${args.name}`);
+
+    const files = await Promise.all(
+      existing.files.map(async (file) => ({
+        path: file.path,
+        bytes:
+          file.path === "SKILL.md"
+            ? new TextEncoder().encode(args.content)
+            : await readSkillFileBytes(existing.path, file.path),
+      })),
+    );
+    const updated = await createOrReplaceSkill(accountId, files);
+    if (updated.name !== args.name) {
+      // The frontmatter name changed under us: the bundle landed at the new
+      // name. Remove the old prefix so no orphan skill is left behind.
+      await deleteSkill(accountId, args.name);
+    }
+
+    return { name: updated.name, path: updated.path };
+  },
+});
+
+/** Rename a skill: rewrite the SKILL.md frontmatter, move all files, delete the old prefix. */
+export const renameSkill = action({
+  args: { name: v.string(), newName: v.string() },
+  returns: v.object({ name: v.string(), path: v.string() }),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const accountId = await resolveActingAccountId(ctx, undefined);
+    if (args.newName === args.name) {
+      const unchanged = await getSkill(accountId, args.name);
+      if (!unchanged) throw new Error(`Skill not found: ${args.name}`);
+
+      return { name: unchanged.name, path: unchanged.path };
+    }
+    const existing = await getSkill(accountId, args.name);
+    if (!existing) throw new Error(`Skill not found: ${args.name}`);
+    const clash = await getSkill(accountId, args.newName);
+    if (clash) throw new Error(`A skill named ${args.newName} already exists.`);
+
+    const files = await Promise.all(
+      existing.files.map(async (file) => {
+        const bytes = await readSkillFileBytes(existing.path, file.path);
+        if (file.path !== "SKILL.md") return { path: file.path, bytes: bytes };
+        const markdown = new TextDecoder()
+          .decode(bytes)
+          .replace(/^name:\s*.*$/m, `name: ${args.newName}`);
+
+        return {
+          path: file.path,
+          bytes: new TextEncoder().encode(markdown),
+        };
+      }),
+    );
+    const renamed = await createOrReplaceSkill(accountId, files);
+    if (renamed.name !== args.newName) {
+      // Frontmatter rewrite failed to take — roll the new copy back.
+      await deleteSkill(accountId, renamed.name);
+      throw new Error(
+        "Rename failed: SKILL.md frontmatter could not be rewritten.",
+      );
+    }
+    await deleteSkill(accountId, args.name);
+
+    return { name: renamed.name, path: renamed.path };
+  },
+});
+
+/** Delete a skill from the library (S3 prefix removal). */
+export const deleteSkillByName = action({
+  args: { name: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const accountId = await resolveActingAccountId(ctx, undefined);
+    await deleteSkill(accountId, args.name);
+
+    return null;
   },
 });

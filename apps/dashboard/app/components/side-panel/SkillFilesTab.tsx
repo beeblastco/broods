@@ -10,24 +10,11 @@ import { Button } from "@/app/components/ui/button";
 import { Input } from "@/app/components/ui/input";
 import { Separator } from "@/app/components/ui/separator";
 import { Textarea } from "@/app/components/ui/textarea";
-import {
-  clearSkillsBearerToken,
-  getSkillsBearerToken,
-  setSkillsBearerToken,
-} from "@/app/lib/skillsCredentials";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
-import {
-  AlertTriangle,
-  BookOpen,
-  Eye,
-  EyeOff,
-  Loader2,
-  Send,
-  X,
-} from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, BookOpen, Loader2, Send, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 const ALLOWED_EXTENSIONS = new Set([
   "css",
@@ -62,76 +49,6 @@ function parseSkillMd(text: string): { name?: string; description?: string } {
 
 function buildSkillMdContent(name: string, description: string): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nDescribe what this skill does and when the agent should use it.\n`;
-}
-
-function TokenPrompt({
-  label,
-  onConfirm,
-  onCancel,
-}: {
-  label: string;
-  onConfirm: (token: string) => void;
-  onCancel: () => void;
-}) {
-  const [draft, setDraft] = useState("");
-  const [show, setShow] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    ref.current?.focus();
-  }, []);
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 shadow-md">
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-foreground">{label}</span>
-        <button
-          className="cursor-pointer text-muted-foreground hover:text-foreground"
-          onClick={onCancel}
-        >
-          <X className="size-3.5" />
-        </button>
-      </div>
-      <p className="text-[10px] text-muted-foreground">
-        Your broods Bearer token (starts with <code>fp_acct_</code>). Saved in
-        session only.
-      </p>
-      <div className="flex items-center gap-1.5">
-        <Input
-          ref={ref}
-          type={show ? "text" : "password"}
-          value={draft}
-          placeholder="fp_acct_…"
-          className="h-7 flex-1 font-mono text-[11px]"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim());
-            if (e.key === "Escape") onCancel();
-          }}
-        />
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          className="cursor-pointer"
-          onClick={() => setShow((v) => !v)}
-        >
-          {show ? (
-            <EyeOff className="size-3.5" />
-          ) : (
-            <Eye className="size-3.5" />
-          )}
-        </Button>
-      </div>
-      <Button
-        size="sm"
-        className="h-7 cursor-pointer self-end text-[11px] disabled:cursor-not-allowed"
-        disabled={!draft.trim()}
-        onClick={() => onConfirm(draft.trim())}
-      >
-        Confirm
-      </Button>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +155,6 @@ export function SkillFilesTab({
     type: "idle" | "publishing" | "success" | "error";
     message?: string;
   }>({ type: "idle" });
-  const [promptMode, setPromptMode] = useState<"publish" | null>(null);
   const [showCreateSkillMd, setShowCreateSkillMd] = useState(false);
 
   const [syncedSkillMdUrl, setSyncedSkillMdUrl] = useState(skillMdUrl);
@@ -291,42 +207,26 @@ export function SkillFilesTab({
     return ext && !ALLOWED_EXTENSIONS.has(ext);
   });
 
-  const runWithToken = useCallback(
-    async (token: string) => {
-      if (!projectId) return;
-      setSkillsBearerToken(token);
-      setPromptMode(null);
-      setStatus({ type: "publishing" });
+  const handlePublishClick = useCallback(async () => {
+    if (!projectId) return;
+    setStatus({ type: "publishing" });
 
-      try {
-        const result = await publishSkill({
-          projectId: projectId,
-          nodeId: nodeId,
-          bearerToken: token,
-        });
-        setStatus({
-          type: "success",
-          message: `Published "${result.name}" successfully.`,
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        if (msg.includes("Invalid Bearer token") || msg.includes("401")) {
-          clearSkillsBearerToken();
-        }
-        setStatus({ type: "error", message: msg });
-      }
-    },
-    [projectId, nodeId, publishSkill],
-  );
-
-  const handlePublishClick = useCallback(() => {
-    const token = getSkillsBearerToken();
-    if (token) {
-      void runWithToken(token);
-    } else {
-      setPromptMode("publish");
+    try {
+      // Signed-in identity authenticates the publish — no account secret in
+      // the browser or sessionStorage any more (ticket 17's auth fix).
+      const result = await publishSkill({
+        projectId: projectId,
+        nodeId: nodeId,
+      });
+      setStatus({
+        type: "success",
+        message: `Published "${result.name}" successfully.`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      setStatus({ type: "error", message: msg });
     }
-  }, [runWithToken]);
+  }, [projectId, nodeId, publishSkill]);
 
   const handleCreateSkillMd = useCallback(
     async (name: string, description: string) => {
@@ -428,17 +328,6 @@ export function SkillFilesTab({
 
       <Separator />
 
-      {/* Token prompt */}
-      {promptMode && (
-        <div className="shrink-0 p-2">
-          <TokenPrompt
-            label="Bearer token to publish"
-            onConfirm={(token) => void runWithToken(token)}
-            onCancel={() => setPromptMode(null)}
-          />
-        </div>
-      )}
-
       {/* Status message */}
       {status.type !== "idle" && status.message && (
         <div
@@ -459,7 +348,7 @@ export function SkillFilesTab({
       )}
 
       {/* Action bar */}
-      {!promptMode && (
+      {
         <div className="flex shrink-0 items-center gap-1.5 px-3 py-2">
           <Button
             size="sm"
@@ -467,7 +356,7 @@ export function SkillFilesTab({
             className="h-7 flex-1 cursor-pointer gap-1.5 text-[11px] disabled:cursor-not-allowed"
             disabled={isBusy || !hasSkillMd}
             title={!hasSkillMd ? "SKILL.md is required" : undefined}
-            onClick={handlePublishClick}
+            onClick={() => void handlePublishClick()}
           >
             {status.type === "publishing" ? (
               <Loader2 className="size-3 animate-spin" />
@@ -476,19 +365,8 @@ export function SkillFilesTab({
             )}
             Publish to account
           </Button>
-          {getSkillsBearerToken() && (
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              className="size-7 cursor-pointer text-muted-foreground"
-              title="Clear saved Bearer token"
-              onClick={() => clearSkillsBearerToken()}
-            >
-              <X className="size-3" />
-            </Button>
-          )}
         </div>
-      )}
+      }
     </div>
   );
 }

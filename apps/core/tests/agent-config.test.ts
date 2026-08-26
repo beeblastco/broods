@@ -304,4 +304,16 @@ describe("agent config validation", () => {
       normalizeAgentConfig({ tools: { googleSearch: { enabled: true } } }),
     ).toMatchObject({ tools: { googleSearch: { enabled: true } } });
   });
+
+  it("preserves provider apiKey env placeholders during normalization", () => {
+    expect(
+      normalizeAgentConfig({
+        model: { provider: "vertex", modelId: "gemini-3.7-flash" },
+        provider: { vertex: { apiKey: "${VERTEX_API_KEY}" } },
+      }),
+    ).toEqual({
+      model: { provider: "vertex", modelId: "gemini-3.7-flash" },
+      provider: { vertex: { apiKey: "${VERTEX_API_KEY}" } },
+    });
+  });
 });
