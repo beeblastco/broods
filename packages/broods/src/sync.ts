@@ -90,12 +90,13 @@ export interface CliProject {
   id: string;
   name: string;
   slug: string;
-  /** No stage, agent, variable or deployment left in it. */
+  /** No stage, agent, variable, deployment or workspace file left in it. */
   empty: boolean;
   stageCount: number;
   agentCount: number;
   variableCount: number;
   deploymentCount: number;
+  fileCount: number;
   updatedAt: number;
 }
 
@@ -360,13 +361,14 @@ export class BroodsSyncClient {
   }
 
   /**
-   * Deletes a project and everything under it: stages, agents, canvas, env vars
-   * and workspace files. Returns what the project held, or null when the name
+   * Deletes a project and everything under it: stages, agents, canvas, env
+   * vars, crons and workspace files. Takes the project id from `listProjects`
+   * (names are not unique). Returns what the project held, or null when the id
    * matches nothing.
    */
-  async deleteProject(project: string): Promise<CliProject | null> {
+  async deleteProject(projectId: string): Promise<CliProject | null> {
     const response = await this.fetchImpl(
-      `${this.baseUrl}/v1/account/projects?project=${encodeURIComponent(project)}`,
+      `${this.baseUrl}/v1/account/projects?projectId=${encodeURIComponent(projectId)}`,
       {
         method: "DELETE",
         headers: {
@@ -606,10 +608,6 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-/**
- * A 404 the router produced (rather than the handler) means the deployment
- * predates `/v1/account/stages`, which reads as "project not found" otherwise.
- */
 /**
  * A 404 that is not JSON came from the router, not the handler: the deployment
  * predates the route. Says so, rather than letting it read as "not found".

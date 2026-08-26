@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import { convexTest } from "convex-test";
+import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -7,11 +7,13 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
-const projectTest = () => convexTest(schema, modules);
-
-type T = ReturnType<typeof projectTest>;
-
 const AUTH_ID = "auth_owner";
+
+type T = TestConvex<typeof schema>;
+
+function projectTest(): T {
+  return convexTest(schema, modules);
+}
 
 async function seedOrg(t: T): Promise<{
   accountId: Id<"accounts">;
@@ -38,22 +40,46 @@ async function seedOrg(t: T): Promise<{
   });
 }
 
-/** A project with one stage, one agent config and one env var. */
+/** An org member with the given role, visible to `getProjectForRole`. */
+async function seedMember(
+  t: T,
+  orgId: Id<"orgs">,
+  authId: string,
+  role: "owner" | "admin" | "member",
+): Promise<void> {
+  await t.run(async (ctx) => {
+    const userId = await ctx.db.insert("users", {
+      authId: authId,
+      email: `${authId}@example.com`,
+      name: authId,
+      plan: "free" as const,
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: userId,
+      role: role,
+      createdAt: Date.now(),
+    });
+  });
+}
+
+/** A project with one stage, one agent config and one env var. The slug is kept distinct from the name. */
 async function seedProject(
   t: T,
   orgId: Id<"orgs">,
   name: string,
+  authId: string = AUTH_ID,
 ): Promise<Id<"projects">> {
   return await t.run(async (ctx) => {
     const projectId = await ctx.db.insert("projects", {
-      authId: AUTH_ID,
+      authId: authId,
       orgId: orgId,
       name: name,
-      slug: name,
+      slug: `${name}-slug`,
       updatedAt: Date.now(),
     });
     const stageId = await ctx.db.insert("stages", {
-      authId: AUTH_ID,
+      authId: authId,
       projectId: projectId,
       name: "Development",
       kind: "development" as const,
@@ -61,7 +87,7 @@ async function seedProject(
       updatedAt: Date.now(),
     });
     await ctx.db.insert("agentConfigs", {
-      authId: AUTH_ID,
+      authId: authId,
       name: `${name}-agent`,
       projectId: projectId,
       stageId: stageId,
@@ -92,7 +118,7 @@ async function seedEmptyProject(
       authId: AUTH_ID,
       orgId: orgId,
       name: name,
-      slug: name,
+      slug: `${name}-slug`,
       updatedAt: Date.now(),
     });
   });
@@ -119,11 +145,40 @@ describe("cliProjects.listByAccount", () => {
       agentCount: 1,
       variableCount: 1,
       deploymentCount: 0,
+      fileCount: 0,
     });
     expect(projects?.[1]).toMatchObject({
       empty: true,
       stageCount: 0,
       agentCount: 0,
+    });
+  });
+
+  test("a project holding only workspace files is not empty", async () => {
+    const t = projectTest();
+    const { accountId, orgId } = await seedOrg(t);
+    const projectId = await seedEmptyProject(t, orgId, "files-only");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("workspaceFiles", {
+        authId: AUTH_ID,
+        projectId: projectId,
+        nodeId: "node-1",
+        path: "notes.md",
+        name: "notes.md",
+        isFolder: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    const projects = await t.query(internal.cliProjects.listByAccount, {
+      accountId: accountId,
+    });
+
+    expect(projects?.[0]).toMatchObject({
+      name: "files-only",
+      empty: false,
+      fileCount: 1,
     });
   });
 
@@ -151,7 +206,8 @@ describe("cliProjects.removeByAccount", () => {
 
     const deleted = await t.mutation(internal.cliProjects.removeByAccount, {
       accountId: accountId,
-      project: "abandoned-e2e",
+      authId: AUTH_ID,
+      projectId: doomed,
     });
 
     expect(deleted).toMatchObject({
@@ -188,17 +244,37 @@ describe("cliProjects.removeByAccount", () => {
     });
   });
 
-  test("resolves by slug as well as by name", async () => {
+  test("answers forbidden for a caller without an admin role", async () => {
     const t = projectTest();
     const { accountId, orgId } = await seedOrg(t);
-    await seedEmptyProject(t, orgId, "abandoned-e2e");
+    const target = await seedProject(t, orgId, "tracy", "auth_creator");
+    await seedMember(t, orgId, "auth_demoted", "member");
+
+    expect(
+      await t.mutation(internal.cliProjects.removeByAccount, {
+        accountId: accountId,
+        authId: "auth_demoted",
+        projectId: target,
+      }),
+    ).toBe("forbidden");
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(target)).not.toBeNull();
+    });
+  });
+
+  test("lets a non-creator org admin delete", async () => {
+    const t = projectTest();
+    const { accountId, orgId } = await seedOrg(t);
+    const target = await seedProject(t, orgId, "tracy", "auth_creator");
+    await seedMember(t, orgId, "auth_admin", "admin");
 
     const deleted = await t.mutation(internal.cliProjects.removeByAccount, {
       accountId: accountId,
-      project: "abandoned-e2e",
+      authId: "auth_admin",
+      projectId: target,
     });
 
-    expect(deleted?.empty).toBe(true);
+    expect(deleted).toMatchObject({ name: "tracy" });
   });
 
   test("returns null for an unknown project instead of deleting anything", async () => {
@@ -209,7 +285,8 @@ describe("cliProjects.removeByAccount", () => {
     expect(
       await t.mutation(internal.cliProjects.removeByAccount, {
         accountId: accountId,
-        project: "never-existed",
+        authId: AUTH_ID,
+        projectId: "never-existed",
       }),
     ).toBeNull();
     await t.run(async (ctx) => {
@@ -229,12 +306,13 @@ describe("cliProjects.removeByAccount", () => {
         createdAt: Date.now(),
       });
     });
-    const foreign = await seedProject(t, otherOrg, "not-yours");
+    const foreign = await seedProject(t, otherOrg, "not-yours", "auth_other");
 
     expect(
       await t.mutation(internal.cliProjects.removeByAccount, {
         accountId: accountId,
-        project: "not-yours",
+        authId: AUTH_ID,
+        projectId: foreign,
       }),
     ).toBeNull();
     await t.run(async (ctx) => {

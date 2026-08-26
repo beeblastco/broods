@@ -7,7 +7,9 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { deleteStageContents } from "../stage";
+import { cronsInProject } from "./projectScope";
 
 const ACCOUNT_DELETE_BATCH_SIZE = 100;
 const accountScopedTables = [
@@ -167,14 +169,33 @@ export async function deleteAccountContentsBatch(
 }
 
 /**
- * Delete a project, its stages + their contents, and its workspace files
- * (including stored blobs).
+ * Delete a project, its stages + their contents, its crons, and its workspace
+ * files (including stored blobs).
  * @param projectId the project to purge
  */
 export async function purgeProject(
   ctx: MutationCtx,
   projectId: Id<"projects">,
 ): Promise<void> {
+  // Crons hang off the project's agents, so gather them before the stage
+  // cascade deletes those agents. Rows go now; the EventBridge schedule needs
+  // AWS credentials, so a scheduled action removes it after this commits.
+  const crons = await cronsForProject(ctx, projectId);
+  for (const cron of crons) {
+    const runs = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+        q.eq("accountId", cron.accountId).eq("cronId", cron._id),
+      )
+      .collect();
+    for (const run of runs) await ctx.db.delete(run._id);
+    await ctx.scheduler.runAfter(0, internal.awsCrons.removeSchedule, {
+      schedulerName: cron.schedulerName,
+      schedulerGroupName: cron.schedulerGroupName,
+    });
+    await ctx.db.delete(cron._id);
+  }
+
   const stages = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
@@ -308,4 +329,22 @@ export async function purgeUser(
   }
 
   await ctx.db.delete(user._id);
+}
+
+// Crons are account-scoped, so the project's org resolves the account that
+// owns them. Pre-org projects have no orgId and predate crons entirely.
+async function cronsForProject(
+  ctx: MutationCtx,
+  projectId: Id<"projects">,
+): Promise<Doc<"crons">[]> {
+  const project = await ctx.db.get(projectId);
+  const orgId = project?.orgId;
+  if (!orgId) return [];
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .unique();
+  if (!account) return [];
+
+  return await cronsInProject(ctx, projectId, account._id);
 }

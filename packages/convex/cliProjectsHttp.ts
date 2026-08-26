@@ -8,6 +8,7 @@
 
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { sha256Hex } from "./model/accountSecrets";
 
 export const handle = httpAction(async (ctx, req) => {
   try {
@@ -37,34 +38,45 @@ export const handle = httpAction(async (ctx, req) => {
     }
 
     if (req.method === "DELETE") {
-      const project =
-        new URL(req.url).searchParams.get("project")?.trim() ?? "";
-      if (!project) {
-        return json({ error: "A project query parameter is required" }, 400);
+      const projectId =
+        new URL(req.url).searchParams.get("projectId")?.trim() ?? "";
+      if (!projectId) {
+        return json({ error: "A projectId query parameter is required" }, 400);
       }
       const deleted = await ctx.runMutation(
         internal.cliProjects.removeByAccount,
         {
           accountId: resolved.accountId,
-          project: project,
+          authId: resolved.authId,
+          projectId: projectId,
         },
       );
+      if (deleted === "forbidden") {
+        return json(
+          { error: "Deleting a project requires an org admin role" },
+          403,
+        );
+      }
 
       return deleted
         ? json({ deleted: deleted })
-        : json({ error: `Project ${project} was not found` }, 404);
+        : json({ error: "Project was not found" }, 404);
     }
 
     return json({ error: "Method not allowed" }, 405);
   } catch (error) {
     console.error("CLI project request failed", error);
+    if (error instanceof SyntaxError || error instanceof URIError) {
+      return json({ error: "Request body or path is invalid" }, 400);
+    }
+    const detail = error instanceof Error ? error.message : "";
 
     return json(
       {
-        error:
-          error instanceof Error ? error.message : "Project request failed",
+        error: "Project request failed",
+        ...(detail ? { detail: detail } : {}),
       },
-      400,
+      500,
     );
   }
 });
@@ -88,15 +100,4 @@ function json(body: unknown, status = 200): Response {
     status: status,
     headers: { "Content-Type": "application/json" },
   });
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }

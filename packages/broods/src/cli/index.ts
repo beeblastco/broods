@@ -225,8 +225,9 @@ Subcommands:
   list                 List the org's projects and what each one still holds
   delete <name>        Delete a project and everything under it
 
-Deleting takes the project's stages, agents, canvas, environment variables and
-workspace files with it, on every stage. There is no undo.
+Deleting takes the project's stages, agents, canvas, environment variables,
+cron schedules and workspace files with it, on every stage. It requires an org
+admin role. There is no undo.
 
 Options:
   --yes                 Skip the confirmation prompt
@@ -549,7 +550,10 @@ async function orgCommand(args: string[]): Promise<void> {
     optionValue(args, "--dashboard-url") ??
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
-  const auth = await requireAuthOrLogin(dashboardUrl);
+  const auth = await requireAuthOrLogin(
+    dashboardUrl,
+    optionValue(args, "--base-url"),
+  );
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
@@ -639,7 +643,10 @@ async function projectCommand(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const scope = targetScope(args);
-  const auth = await requireAuthOrLogin(dashboardUrl);
+  const auth = await requireAuthOrLogin(
+    dashboardUrl,
+    optionValue(args, "--base-url"),
+  );
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
@@ -690,10 +697,12 @@ async function projectCommand(args: string[]): Promise<void> {
       return;
     }
   }
-  const deleted = await client.deleteProject(target.name);
+  // The id, never the name: names are not unique, and a name the server
+  // re-resolves could purge a different project than the one just confirmed.
+  const deleted = await client.deleteProject(target.id);
   if (!deleted) throw new Error(`Project ${target.name} was not found.`);
   console.log(`Deleted project ${deleted.name} (${describeContents(deleted)})`);
-  if (deleted.name === scope.project) {
+  if (deleted.name === scope.project || deleted.slug === scope.project) {
     console.log(
       "That was the project this directory points at. Update BROODS_PROJECT in .env.local.",
     );
@@ -724,7 +733,10 @@ async function stageCommand(args: string[]): Promise<void> {
     runtime.dashboardUrl ??
     DEFAULT_DASHBOARD_URL;
   const scope = targetScope(args);
-  const auth = await requireAuthOrLogin(dashboardUrl);
+  const auth = await requireAuthOrLogin(
+    dashboardUrl,
+    optionValue(args, "--base-url"),
+  );
   const client = new BroodsSyncClient({
     baseUrl: auth.baseUrl,
     token: auth.token,
@@ -1120,7 +1132,10 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
     DEFAULT_SERVICE_REGION;
 
   if (process.stdin.isTTY && needsProject) {
-    const auth = await requireAuthOrLogin(dashboardUrl);
+    const auth = await requireAuthOrLogin(
+      dashboardUrl,
+      optionValue(args, "--base-url"),
+    );
     const client = new BroodsSyncClient({
       baseUrl: auth.baseUrl,
       token: auth.token,
@@ -1156,9 +1171,9 @@ async function ensureLocalDevDefaults(args: string[]): Promise<void> {
   });
 }
 
-async function requireAuthOrLogin(dashboardUrl: string) {
+async function requireAuthOrLogin(dashboardUrl: string, baseUrl?: string) {
   try {
-    return await requireAuth();
+    return await requireAuth(baseUrl);
   } catch (error) {
     if (!process.stdin.isTTY) throw error;
     printWarning("No CLI login found. Starting browser login.");
@@ -1307,15 +1322,17 @@ function formatProjectChoice(project: CliOnboardingProject): string {
 function describeContents(project: CliProject): string {
   return project.empty
     ? "nothing (it is already empty)"
-    : `${project.stageCount} stage(s), ${project.agentCount} agent(s), ${project.variableCount} env var(s), ${project.deploymentCount} deployment(s)`;
+    : `${project.stageCount} stage(s), ${project.agentCount} agent(s), ${project.variableCount} env var(s), ${project.deploymentCount} deployment(s), ${project.fileCount} workspace file(s)`;
 }
 
+// The scope can hold either spelling: BROODS_PROJECT and the directory name
+// are matched against name and slug alike everywhere else.
 function formatProject(project: CliProject, current: string): string {
   const contents = project.empty ? "empty" : describeContents(project);
 
   return formatChoiceRow(
     `${project.name} — ${contents}`,
-    project.name === current,
+    project.name === current || project.slug === current,
   );
 }
 

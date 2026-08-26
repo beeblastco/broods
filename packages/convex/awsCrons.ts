@@ -233,6 +233,21 @@ export const remove = internalAction({
 });
 
 /**
+ * Delete just the EventBridge schedule of a cron whose rows are already gone.
+ * `purgeProject` deletes cron rows inside its mutation and schedules this to
+ * collect the AWS side after the transaction commits.
+ */
+export const removeSchedule = internalAction({
+  args: { schedulerName: v.string(), schedulerGroupName: v.string() },
+  returns: v.null(),
+  handler: async (_ctx, args) => {
+    await deleteScheduleIfExists(args.schedulerName, args.schedulerGroupName);
+
+    return null;
+  },
+});
+
+/**
  * Remove one cron job everywhere it exists: its EventBridge schedule, its run
  * history, then the row. A schedule that is already gone is not an error.
  */
@@ -240,22 +255,7 @@ async function deleteCronEverywhere(
   ctx: ActionCtx,
   cron: Doc<"crons">,
 ): Promise<void> {
-  const scheduler = await schedulerClient();
-  try {
-    await scheduler.send(
-      new DeleteScheduleCommand({
-        Name: cron.schedulerName,
-        GroupName: cron.schedulerGroupName,
-      }),
-    );
-  } catch (err) {
-    if (!(
-      err instanceof ResourceNotFoundException ||
-      (err instanceof Error && err.name === "ResourceNotFoundException")
-    )) {
-      throw err;
-    }
-  }
+  await deleteScheduleIfExists(cron.schedulerName, cron.schedulerGroupName);
   // Run rows are only reachable through their cron, so they go with it.
   let deleted = 0;
   do {
@@ -269,6 +269,29 @@ async function deleteCronEverywhere(
     accountId: cron.accountId,
     cronId: cron._id,
   });
+}
+
+/** Delete an EventBridge schedule, treating one that is already gone as done. */
+async function deleteScheduleIfExists(
+  schedulerName: string,
+  schedulerGroupName: string,
+): Promise<void> {
+  const scheduler = await schedulerClient();
+  try {
+    await scheduler.send(
+      new DeleteScheduleCommand({
+        Name: schedulerName,
+        GroupName: schedulerGroupName,
+      }),
+    );
+  } catch (err) {
+    if (!(
+      err instanceof ResourceNotFoundException ||
+      (err instanceof Error && err.name === "ResourceNotFoundException")
+    )) {
+      throw err;
+    }
+  }
 }
 
 /**

@@ -95,25 +95,26 @@ broods project delete abandoned-e2e
 `list` prints every project in the current organization with what it still
 holds, empty ones last:
 
-```
+```text
 Projects:
-  tracy — 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s)
+  tracy — 1 stage(s), 1 agent(s), 7 env var(s), 1 deployment(s), 0 workspace file(s)
   abandoned-e2e — empty
 ```
 
-A project is empty when it has no stage, agent, environment variable or
-deployment left. Those are the ones a test run or an abandoned experiment leaves
-behind, and the ones worth deleting.
+A project is empty when it has no stage, agent, environment variable,
+deployment or workspace file left. Those are the ones a test run or an
+abandoned experiment leaves behind, and the ones worth deleting.
 
 `delete` removes the project and everything under it, on every stage: agent
-configs, the canvas layout, environment variables, deploy keys and workspace
-files including their stored blobs. This is the same purge the dashboard's
-danger panel performs. There is no undo and no archive.
+configs, the canvas layout, environment variables, deploy keys, cron schedules
+and workspace files including their stored blobs. This is the same purge the
+dashboard's danger panel performs, and like the dashboard it requires an org
+admin role at the moment of deletion. There is no undo and no archive.
 
 The prompt names the counts before it asks, so a project you thought was
 abandoned gets one last chance to say otherwise. `--yes` skips the prompt for
-scripted cleanup. Without a TTY the prompt answers no, so a CI run without
-`--yes` deletes nothing.
+scripted cleanup. Without a TTY the prompt answers no and a missing project
+name fails immediately, so a CI run without `--yes` deletes nothing.
 
 Deleting the project `.env.local` points at leaves `BROODS_PROJECT` naming
 something that no longer exists. The CLI says so; update the file or the next
