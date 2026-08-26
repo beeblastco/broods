@@ -39,6 +39,7 @@ import {
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import {
   assertEnvironmentVariableUnreferenced,
+  hashEnvironmentValue,
   loadEnvironmentVariableValues,
 } from "./model/environmentValues";
 import { isPlainObject } from "./model/objects";
@@ -656,6 +657,7 @@ export const setEnvBySecretHash = internalMutation({
       );
     }
     const encrypted = await encryptAgentConfigBlob({ value: value }, secret);
+    const valueDigest = await hashEnvironmentValue(value);
     const now = Date.now();
 
     if (existing) {
@@ -663,6 +665,7 @@ export const setEnvBySecretHash = internalMutation({
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         tag: encrypted.tag,
+        valueDigest: valueDigest,
         updatedAt: now,
       });
     } else {
@@ -673,6 +676,7 @@ export const setEnvBySecretHash = internalMutation({
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
         tag: encrypted.tag,
+        valueDigest: valueDigest,
         updatedAt: now,
       });
     }
@@ -696,9 +700,11 @@ export const setEnvBySecretHash = internalMutation({
 });
 
 /**
- * Lists the names (and last-updated times) of a stage's stored variables
- * for the CLI `env list`. Values are never returned — they are encrypted at rest
- * and write-only by design, so the dashboard and CLI only ever see the names.
+ * Lists the names, last-updated times and value digests of a stage's stored
+ * variables for the CLI `env list` / `env sync`. Values are never returned —
+ * they are encrypted at rest and write-only by design. The digest is what lets
+ * `env sync` and `diff` spot a stage that drifted from `.env.local` without
+ * revealing either side; it is absent on rows written before the field existed.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {
@@ -706,7 +712,13 @@ export const listEnvBySecretHash = internalQuery({
     project: v.string(),
     stage: v.string(),
   },
-  returns: v.array(v.object({ name: v.string(), updatedAt: v.number() })),
+  returns: v.array(
+    v.object({
+      name: v.string(),
+      updatedAt: v.number(),
+      valueDigest: v.optional(v.string()),
+    }),
+  ),
   handler: async (ctx, args) => {
     const { secretHash, project, stage } = args;
     const account = await accountFromSecretHash(ctx, secretHash);
@@ -727,6 +739,7 @@ export const listEnvBySecretHash = internalQuery({
       .map((variable) => ({
         name: variable.name,
         updatedAt: variable.updatedAt,
+        ...(variable.valueDigest ? { valueDigest: variable.valueDigest } : {}),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   },

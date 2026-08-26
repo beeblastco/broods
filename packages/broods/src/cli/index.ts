@@ -5,7 +5,7 @@
 
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -15,7 +15,6 @@ import type { CliManifest } from "../contracts.ts";
 import {
   GENERATED_DIR,
   PROJECT_DIR,
-  USER_CONFIG_PATH,
   gatewayUrlForDashboard,
   stageFromEnv,
   writeStoredAuth,
@@ -109,7 +108,7 @@ Account:
   whoami               Show the login, server, org, plan, project and stage in use
   org                  List, switch or create organizations
   stage                List, switch or create stages
-  env                  Store, reveal, list or remove encrypted environment variables
+  env                  Store, reveal, list, remove or sync encrypted environment variables
 
 Runtime:
   agent                Inspect the agents declared in the current scope
@@ -161,16 +160,25 @@ Options:
 ${GLOBAL_OPTIONS}`,
   diff: `Usage: broods diff [options]
 
-Shows local desired state against the remote state of the current stage.
+Shows local desired state against the remote state of the current stage, and
+warns when the stage's value for an env("NAME") ref no longer matches .env.local.
 
 ${GLOBAL_OPTIONS}`,
-  env: `Usage: broods env <set|get|list|rm> [name]
+  env: `Usage: broods env <set|get|list|rm|sync> [name]
 
 Subcommands:
-  set <name>           Store an encrypted environment variable (value read from the prompt)
+  set <name>           Store an encrypted environment variable (value read from the prompt or stdin)
   get <name>           Reveal a variable's value (audited)
   list                 List environment variable names (values stay hidden)
   rm <name>            Remove an environment variable
+  sync                 Push every env("NAME") the project references from .env.local
+
+\`set\` reads a piped value, so a secret can come from another tool:
+  echo "$VALUE" | broods env set SOME_NAME
+
+\`sync\` only touches names the project references through env("NAME"), and only
+those the stage does not already hold the local value for. \`dev\` runs the same
+push on every sync; \`deploy\` never does, so Production stays explicit.
 
 ${GLOBAL_OPTIONS}`,
   init: `Usage: broods init [options]
@@ -828,6 +836,13 @@ async function diff(args: string[]): Promise<void> {
   });
   const remote = await client.getManifest(manifest.project, manifest.stage);
   printDiffEntries(diffManifests(manifest, remote?.manifest ?? null));
+
+  // Resource drift is only half the picture: a stage can match the manifest
+  // exactly and still hold a stale secret behind an env() ref.
+  printEnvDriftWarning(
+    await inspectEnvRefs(client, manifest),
+    `${manifest.project}/${manifest.stage}`,
+  );
 }
 
 async function deploy(args: string[]): Promise<void> {
@@ -1513,11 +1528,12 @@ async function syncDev(args: string[]): Promise<RemoteManifestResponse> {
 
   // The sync rejects unresolved env refs, so push .env.local values up first:
   // that is what lets a local `.env.local` alone carry a dev stage.
-  await syncLocalEnvVars(
+  const pushed = await pushLocalEnvVars(
     client,
     manifest,
-    envSyncScopeKey(auth.baseUrl, auth.token),
+    await inspectEnvRefs(client, manifest),
   );
+  if (pushed.length > 0) printEnvSync(pushed);
 
   // Push creates/updates (and canvas wiring) immediately, undeleted.
   let result = await client.putManifest(manifest, false);
@@ -1619,125 +1635,126 @@ function printChannelEndpoints(
 }
 
 /**
- * Auto-syncs the env vars an agent config references via `env("NAME")` from the
- * local environment (`.env.local`, already loaded into `process.env`) up to the
- * cloud stage during `dev`. This fulfills the Convex-style `env set` flow
- * automatically so the dashboard never needs a manual step for local secrets.
- *
- * Deliberately one-way and set-only: only manifest-referenced names are pushed
- * (never `BROODS_*` control vars or unrelated `.env.local` keys), values
- * are never read back (the backend stores them encrypted/write-only), and
- * removing a var locally never deletes it remotely. `deploy` is left untouched
- * so production secrets stay an explicit `broods env set`.
+ * How one `env("NAME")` reference lines up between the local environment
+ * (`.env.local`, already loaded into `process.env`) and the stage's stored
+ * value. `drifted` and `unverified` are the two worth speaking up about: the
+ * stage holds a value, it just is not provably the local one.
  */
-async function syncLocalEnvVars(
+type EnvRefState =
+  "synced" | "drifted" | "unverified" | "unset" | "stage-only" | "unresolved";
+
+interface EnvRef {
+  name: string;
+  state: EnvRefState;
+}
+
+/**
+ * Classifies every `env("NAME")` the manifest references against the stage's
+ * stored value digests. `BROODS_*` control vars are left out: they configure the
+ * CLI itself and never belong in a stage's variable store.
+ */
+async function inspectEnvRefs(
   client: BroodsSyncClient,
   manifest: CliManifest,
-  scopeKey: string,
-): Promise<void> {
-  const present = collectEnvRefNames(manifest).filter((name) => {
-    const value = process.env[name];
-
-    return !name.startsWith("BROODS_") && value !== undefined && value !== "";
-  });
-  if (present.length === 0) return;
-
-  // Churn guard: only push a var whose value changed since we last synced it,
-  // tracked by a user-local hash cache outside the project tree. Without this
-  // every watch save would re-encrypt and re-bake every agent config that
-  // references the var. The cache stores hashes (never the values), survives
-  // across watch child processes, and is scoped to the authenticated target so
-  // switching dashboard/account cannot suppress a needed push. A cleared cache
-  // just re-pushes once — safe because the set is idempotent.
-  const cache = await loadEnvSyncCache();
-  const known =
-    cache[envCacheKey(scopeKey, manifest.project, manifest.stage)] ?? {};
-  const remoteNames = new Set(
-    (await client.listEnv(manifest.project, manifest.stage)).map(
-      (entry) => entry.name,
-    ),
+): Promise<EnvRef[]> {
+  const names = collectEnvRefNames(manifest).filter(
+    (name) => !name.startsWith("BROODS_"),
   );
-  const changed = present.filter(
-    (name) =>
-      !remoteNames.has(name) ||
-      known[name] !== hashEnvValue(process.env[name]!),
+  if (names.length === 0) return [];
+  const remote = new Map(
+    (await client.listEnv(manifest.project, manifest.stage)).map((entry) => [
+      entry.name,
+      entry.valueDigest,
+    ]),
   );
-  if (changed.length === 0) return;
+
+  return names.map((name) => ({
+    name: name,
+    state: envRefState(name, remote),
+  }));
+}
+
+/**
+ * Pushes the referenced vars the stage does not provably already hold, from the
+ * local environment up to the stage. `dev` runs this on every sync so a
+ * `.env.local` alone can carry a dev stage; `broods env sync` runs it on demand
+ * for any stage, which is how a rotated secret reaches Production.
+ *
+ * Deliberately one-way and set-only: only manifest-referenced names are pushed
+ * (never `BROODS_*` control vars or unrelated `.env.local` keys), values are
+ * never read back (the backend stores them encrypted/write-only), and removing
+ * a var locally never deletes it remotely. Skipping the vars whose digest
+ * already matches is what keeps a watch save from re-encrypting and re-baking
+ * every agent config that reads them.
+ */
+async function pushLocalEnvVars(
+  client: BroodsSyncClient,
+  manifest: CliManifest,
+  refs: EnvRef[],
+): Promise<string[]> {
+  const pushable = refs
+    .filter(
+      (ref) =>
+        ref.state === "unset" ||
+        ref.state === "drifted" ||
+        ref.state === "unverified",
+    )
+    .map((ref) => ref.name);
+  if (pushable.length === 0) return [];
 
   await Promise.all(
-    changed.map((name) =>
+    pushable.map((name) =>
       client.setEnv(manifest.project, manifest.stage, name, process.env[name]!),
     ),
   );
-  for (const name of changed) known[name] = hashEnvValue(process.env[name]!);
-  cache[envCacheKey(scopeKey, manifest.project, manifest.stage)] = known;
-  await saveEnvSyncCache(cache);
-  printEnvSync(changed);
+
+  return pushable;
 }
 
-type EnvSyncCache = Record<string, Record<string, string>>;
-
-function envSyncScopeKey(baseUrl: string, token: string): string {
-  return `${baseUrl}:${createHash("sha256").update(token).digest("hex").slice(0, 16)}`;
+/**
+ * Warns when the stage's value for an `env()` ref is not the local one. Nothing
+ * else shows this: `env list` prints names, `diff` compares resources, and a
+ * stale secret only ever surfaces as a runtime 401 from the channel that reads it.
+ */
+function printEnvDriftWarning(refs: EnvRef[], target: string): void {
+  const drifted = namesInState(refs, "drifted");
+  const unverified = namesInState(refs, "unverified");
+  if (drifted.length > 0) {
+    printWarning(
+      `⚠ .env.local and ${target} disagree on ${drifted.length} variable(s): ${drifted.join(", ")} — ` +
+        "run `broods env sync` to push the local values.",
+    );
+  }
+  if (unverified.length > 0) {
+    printWarning(
+      `⚠ ${target} stored ${unverified.length} variable(s) before value digests, so nothing can compare ` +
+        `them: ${unverified.join(", ")} — run \`broods env sync\` to bring them in step.`,
+    );
+  }
 }
 
-function envCacheKey(scopeKey: string, project: string, stage: string): string {
-  return `${scopeKey}:${project}:${stage}`;
-}
+function envRefState(
+  name: string,
+  remote: Map<string, string | undefined>,
+): EnvRefState {
+  const local = process.env[name];
+  const onStage = remote.has(name);
+  if (local === undefined || local === "") {
+    return onStage ? "stage-only" : "unresolved";
+  }
+  if (!onStage) return "unset";
+  const digest = remote.get(name);
+  if (!digest) return "unverified";
 
-function envSyncCachePath(): string {
-  return resolve(dirname(USER_CONFIG_PATH), "env-sync.json");
+  return digest === hashEnvValue(local) ? "synced" : "drifted";
 }
 
 function hashEnvValue(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-/** Reads the local env-sync hash cache, returning an empty map when absent or corrupt. */
-async function loadEnvSyncCache(): Promise<EnvSyncCache> {
-  const text = await readTextIfExists(envSyncCachePath());
-  if (!text) return {};
-  try {
-    const parsed = JSON.parse(text) as unknown;
-
-    return parsed && typeof parsed === "object" ? (parsed as EnvSyncCache) : {};
-  } catch {
-    return {};
-  }
-}
-
-async function saveEnvSyncCache(cache: EnvSyncCache): Promise<void> {
-  const path = envSyncCachePath();
-  await mkdir(resolve(path, ".."), { recursive: true });
-  await writeFile(path, `${JSON.stringify(cache, null, 2)}\n`, "utf8");
-}
-
-/** Records the synced hash for a var set via `env set`, so `dev` won't re-push an unchanged value. */
-async function rememberEnvSyncValue(
-  scopeKey: string,
-  project: string,
-  stage: string,
-  name: string,
-  value: string,
-): Promise<void> {
-  const cache = await loadEnvSyncCache();
-  const key = envCacheKey(scopeKey, project, stage);
-  cache[key] = { ...cache[key], [name]: hashEnvValue(value) };
-  await saveEnvSyncCache(cache);
-}
-
-/** Drops a var's cached hash after `env rm`, so a later re-add with the same value re-pushes. */
-async function forgetEnvSyncValue(
-  scopeKey: string,
-  project: string,
-  stage: string,
-  name: string,
-): Promise<void> {
-  const cache = await loadEnvSyncCache();
-  const key = envCacheKey(scopeKey, project, stage);
-  if (!cache[key] || !(name in cache[key])) return;
-  delete cache[key][name];
-  await saveEnvSyncCache(cache);
+function namesInState(refs: EnvRef[], state: EnvRefState): string[] {
+  return refs.filter((ref) => ref.state === state).map((ref) => ref.name);
 }
 
 async function printDevTarget(args: string[]): Promise<void> {
@@ -1800,8 +1817,9 @@ async function envCommand(args: string[]): Promise<void> {
   const isList = subcommand === "list" || subcommand === "ls";
   const isRemove = subcommand === "rm" || subcommand === "remove";
   const isGet = subcommand === "get";
+  const isSync = subcommand === "sync";
   const needsName = subcommand === "set" || isRemove || isGet;
-  if (!isList && !needsName) {
+  if (!isList && !isSync && !needsName) {
     throw new Error(
       `Unknown env subcommand: ${subcommand}\n\n${commandHelp("env")}`,
     );
@@ -1824,8 +1842,13 @@ async function envCommand(args: string[]): Promise<void> {
     baseUrl: auth.baseUrl,
     token: auth.token,
   });
-  const scopeKey = envSyncScopeKey(auth.baseUrl, auth.token);
   const target = `${manifest.project}/${manifest.stage}`;
+
+  if (isSync) {
+    await syncEnvFromLocal(client, manifest, target);
+
+    return;
+  }
 
   if (isList) {
     const variables = await client.listEnv(manifest.project, manifest.stage);
@@ -1856,7 +1879,6 @@ async function envCommand(args: string[]): Promise<void> {
 
   if (isRemove) {
     await client.removeEnv(manifest.project, manifest.stage, name!);
-    await forgetEnvSyncValue(scopeKey, manifest.project, manifest.stage, name!);
     console.log(`Removed ${name} from ${target}`);
 
     return;
@@ -1864,14 +1886,55 @@ async function envCommand(args: string[]): Promise<void> {
 
   const value = await promptSecret(name!);
   await client.setEnv(manifest.project, manifest.stage, name!, value);
-  await rememberEnvSyncValue(
-    scopeKey,
-    manifest.project,
-    manifest.stage,
-    name!,
-    value,
-  );
   console.log(`Stored ${name} for ${target}`);
+}
+
+/**
+ * `broods env sync` — pushes every `env("NAME")` the project references from
+ * `.env.local` to the stage, then says what moved. A rotated secret otherwise
+ * leaves the stage on the old value indefinitely, and every surface (`env list`,
+ * `diff`, `agent get`) reads healthy while the channel returns 401.
+ */
+async function syncEnvFromLocal(
+  client: BroodsSyncClient,
+  manifest: CliManifest,
+  target: string,
+): Promise<void> {
+  const refs = await inspectEnvRefs(client, manifest);
+  if (refs.length === 0) {
+    console.log('No env("NAME") references in this project.');
+
+    return;
+  }
+
+  const pushed = await pushLocalEnvVars(client, manifest, refs);
+  if (pushed.length > 0) printEnvSync(pushed);
+  const alreadyInStep = namesInState(refs, "synced").length;
+  console.log(
+    pushed.length > 0
+      ? `${alreadyInStep} other referenced variable(s) already in step with ${target}.`
+      : `${alreadyInStep} referenced variable(s) already in step with ${target}.`,
+  );
+
+  // Naming the stage-only ones is the point of this line, not a complaint about
+  // them: they are the referenced names `.env.local` does not control, which is
+  // otherwise indistinguishable from the ones it does.
+  const stageOnly = namesInState(refs, "stage-only");
+  if (stageOnly.length > 0) {
+    console.log(
+      `${stageOnly.length} referenced variable(s) live only on ${target}: ${stageOnly.join(", ")}`,
+    );
+  }
+
+  // These are a real problem: the next manifest sync rejects the whole deploy
+  // over them, and until then the runtime sees a literal `${NAME}`.
+  const unresolved = namesInState(refs, "unresolved");
+  if (unresolved.length > 0) {
+    printWarning(
+      `⚠ ${unresolved.length} referenced variable(s) with no value here or on ${target}: ` +
+        `${unresolved.join(", ")} — put them in .env.local, or run \`broods env set <NAME>\`.`,
+    );
+  }
 }
 
 // Runtime API key (BROODS_API_KEY, written by `deploy`/`init`) + base URL

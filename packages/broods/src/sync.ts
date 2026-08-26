@@ -104,6 +104,12 @@ export interface CliProject {
 export interface CliEnvVar {
   name: string;
   updatedAt: number;
+  /**
+   * SHA-256 hex of the stored value, so a local value can be compared against
+   * the stage without revealing either. Absent on variables last written before
+   * the backend recorded digests; the next write fills it in.
+   */
+  valueDigest?: string;
 }
 
 export type DiffOperation = "create" | "update" | "delete" | "rename";

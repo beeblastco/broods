@@ -51,6 +51,22 @@ export async function assertEnvironmentVariableUnreferenced(
 }
 
 /**
+ * SHA-256 hex of a variable's plaintext value, stored beside the ciphertext as
+ * `valueDigest`. The CLI hashes its `.env.local` value the same way, so the two
+ * sides can be compared for drift without either one revealing the secret.
+ */
+export async function hashEnvironmentValue(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Reads every environment variable for a `(projectId, stageId)` and
  * returns a `name -> plaintext value` map. Non-string values decode to `""`.
  * @throws when `ACCOUNT_CONFIG_ENCRYPTION_SECRET` is not configured.

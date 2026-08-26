@@ -50,7 +50,7 @@ Set the value with the CLI:
 broods env set OPENAI_API_KEY
 ```
 
-Or let `broods dev` auto-push it from your local `.env.local`.
+Or let `broods dev` auto-push it from your local `.env.local`. `broods env sync` does the same push on demand, for any stage — that is how a secret you rotated locally reaches a stage `dev` is not watching.
 
 Every reference has to resolve. `broods dev` and `broods deploy` reject a manifest whose `env("NAME")` has no value stored for the stage, and name the variables you still owe:
 
