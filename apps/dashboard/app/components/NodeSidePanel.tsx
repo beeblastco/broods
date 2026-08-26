@@ -1055,7 +1055,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 <TestTab
                   activeDeployment={activeDeployment}
                   deploymentApiKey={resolvedDeploymentApiKey}
-                  agentId={agentConfigId ?? ""}
+                  // The runtime resolves agents by their `agents` row id, which
+                  // the config stores as `agentId` — NOT by the `agentConfigs`
+                  // document id. Passing the latter made every Test-tab send
+                  // fail with `{"error":"Agent not found"}`.
+                  agentId={agentConfig?.agentId ?? ""}
                   nodeColor={nodeData?.properties?.color}
                 />
               ) : node ? (

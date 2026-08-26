@@ -46,8 +46,43 @@ type WsServerMessage =
       toolNames?: string[];
     }
   | { type: "subagent_result"; output: string }
+  /**
+   * The runtime's resumable-stream frame: one AI-SDK stream part wrapped with
+   * replay bookkeeping. `data` carries the same payload the HTTP/SSE path
+   * emits after `data: `, and `data.type === "done"` is the terminal marker —
+   * the socket itself is left open by the server.
+   */
+  | {
+      type: "output";
+      data: { type: string } & Record<string, unknown>;
+      eventId?: string;
+      cursor?: string;
+      replay?: boolean;
+    }
   | { type: "done" }
   | { type: "error"; error: string; status?: number };
+
+/**
+ * Re-shape a runtime stream part into the AI SDK's UI-message-chunk form.
+ *
+ * The runtime emits `streamText`'s text-stream parts, which carry the payload
+ * as `text`, while `uiMessageChunkSchema` (used by `parseJsonEventStream`
+ * below) requires `delta`. The names differ only for the *-delta parts, so
+ * everything else passes through untouched. Without this the schema rejected
+ * every delta, the transform silently dropped it, and the chat sat on
+ * "Thinking …" forever while the agent was in fact answering correctly.
+ */
+function toUiMessageChunk(
+  part: { type: string } & Record<string, unknown>,
+): { type: string } & Record<string, unknown> {
+  const isDelta = part.type === "text-delta" || part.type === "reasoning-delta";
+  if (!isDelta || typeof part.text !== "string" || "delta" in part) {
+    return part;
+  }
+  const { text, ...rest } = part;
+
+  return { ...rest, type: part.type, delta: text };
+}
 
 type SubagentPanelEvent = {
   phase: "started" | "tool_call" | "tool_result";
@@ -200,6 +235,12 @@ async function startWebSocketSseStream(options: {
     null;
   let opened = false;
   let settled = false;
+  // Text part ids we have already forwarded a `text-start` for. The runtime's
+  // resumable stream does not guarantee ordering, so a `text-delta` can arrive
+  // before its `text-start`; `readUIMessageStream` then rejects the whole
+  // stream with "Received text-delta for missing text part". Synthesising the
+  // missing start keeps the reply renderable whatever order frames land in.
+  const startedTextIds = new Set<string>();
 
   const stream = new ReadableStream<Uint8Array>({
     start: function (controller) {
@@ -229,7 +270,12 @@ async function startWebSocketSseStream(options: {
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING
       ) {
-        socket.close(1011, error.message);
+        // 1011 is a SERVER-only close code: `close()` throws
+        // InvalidAccessError when a page passes anything outside 1000 or
+        // 3000-4999. Relaying the server's code here crashed the handler
+        // mid-failure, which swallowed the real error and left the UI stuck
+        // on "Thinking …". Close normally and let `error` carry the reason.
+        socket.close(1000, error.message.slice(0, 120));
       }
     };
 
@@ -323,6 +369,55 @@ async function startWebSocketSseStream(options: {
       if (payload.type === "sse") {
         if (streamController) {
           streamController.enqueue(encoder.encode(payload.chunk));
+        }
+
+        return;
+      }
+
+      // Resumable-stream frames. The runtime wraps each AI-SDK stream part in
+      // an `output` envelope instead of sending a raw `sse` chunk, so re-frame
+      // it as SSE for the shared reader. Without this branch every content
+      // frame was dropped and the UI streamed nothing at all.
+      if (payload.type === "output") {
+        if (payload.data.type === "done") {
+          finishStream();
+
+          return;
+        }
+        if (streamController) {
+          const chunk = toUiMessageChunk(payload.data);
+          const partId = typeof chunk.id === "string" ? chunk.id : null;
+          const startType =
+            chunk.type === "reasoning-delta" || chunk.type === "reasoning-end"
+              ? "reasoning-start"
+              : "text-start";
+          if (partId !== null) {
+            if (
+              chunk.type === "text-start" ||
+              chunk.type === "reasoning-start"
+            ) {
+              // A start we already synthesised below: forwarding the real one
+              // too would open a second part with the same id and orphan the
+              // text collected so far.
+              if (startedTextIds.has(partId)) {
+                return;
+              }
+              startedTextIds.add(partId);
+            } else if (
+              /^(text|reasoning)-(delta|end)$/.test(chunk.type) &&
+              !startedTextIds.has(partId)
+            ) {
+              startedTextIds.add(partId);
+              streamController.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: startType, id: partId })}\n\n`,
+                ),
+              );
+            }
+          }
+          streamController.enqueue(
+            encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+          );
         }
 
         return;
