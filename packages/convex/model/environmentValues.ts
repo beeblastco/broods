@@ -50,11 +50,7 @@ export async function assertEnvironmentVariableUnreferenced(
   );
 }
 
-/**
- * SHA-256 hex of a variable's plaintext value, stored beside the ciphertext as
- * `valueDigest`. The CLI hashes its `.env.local` value the same way, so the two
- * sides can be compared for drift without either one revealing the secret.
- */
+/** SHA-256 hex of a plaintext value; the CLI hashes `.env.local` the same way to spot drift. */
 export async function hashEnvironmentValue(value: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     "SHA-256",

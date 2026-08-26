@@ -1675,17 +1675,8 @@ async function inspectEnvRefs(
 }
 
 /**
- * Pushes the referenced vars the stage does not provably already hold, from the
- * local environment up to the stage. `dev` runs this on every sync so a
- * `.env.local` alone can carry a dev stage; `broods env sync` runs it on demand
- * for any stage, which is how a rotated secret reaches Production.
- *
- * Deliberately one-way and set-only: only manifest-referenced names are pushed
- * (never `BROODS_*` control vars or unrelated `.env.local` keys), values are
- * never read back (the backend stores them encrypted/write-only), and removing
- * a var locally never deletes it remotely. Skipping the vars whose digest
- * already matches is what keeps a watch save from re-encrypting and re-baking
- * every agent config that reads them.
+ * One-way and set-only: pushes manifest-referenced names the stage does not
+ * provably hold, never reads a value back, and never deletes one.
  */
 async function pushLocalEnvVars(
   client: BroodsSyncClient,
@@ -1891,9 +1882,7 @@ async function envCommand(args: string[]): Promise<void> {
 
 /**
  * `broods env sync` — pushes every `env("NAME")` the project references from
- * `.env.local` to the stage, then says what moved. A rotated secret otherwise
- * leaves the stage on the old value indefinitely, and every surface (`env list`,
- * `diff`, `agent get`) reads healthy while the channel returns 401.
+ * `.env.local`, then says what moved and what it left alone.
  */
 async function syncEnvFromLocal(
   client: BroodsSyncClient,

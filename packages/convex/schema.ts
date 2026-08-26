@@ -597,12 +597,7 @@ export const environmentVariablesFields = {
   ciphertext: v.string(),
   iv: v.string(),
   tag: v.string(),
-  /**
-   * SHA-256 hex of the plaintext value. Lets the CLI tell a stage whose value
-   * drifted from `.env.local` from one that is in step, without either side
-   * revealing the secret. Absent on rows last written before the field existed;
-   * the next write fills it in.
-   */
+  /** SHA-256 hex of the plaintext value; absent on rows written before this field. */
   valueDigest: v.optional(v.string()),
   updatedAt: v.number(),
 };

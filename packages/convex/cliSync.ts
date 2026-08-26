@@ -700,11 +700,8 @@ export const setEnvBySecretHash = internalMutation({
 });
 
 /**
- * Lists the names, last-updated times and value digests of a stage's stored
- * variables for the CLI `env list` / `env sync`. Values are never returned —
- * they are encrypted at rest and write-only by design. The digest is what lets
- * `env sync` and `diff` spot a stage that drifted from `.env.local` without
- * revealing either side; it is absent on rows written before the field existed.
+ * Names, update times and value digests for the CLI `env list` / `env sync`.
+ * Values are never returned — encrypted at rest and write-only by design.
  */
 export const listEnvBySecretHash = internalQuery({
   args: {
