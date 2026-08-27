@@ -1,32 +1,21 @@
 /**
- * Entry point. Polls the config plane, reconciles the socket set, and serves a
- * health endpoint so the deployment's probes have something to read.
+ * Entry point. Subscribes to the config planes, reconciles the socket set on
+ * every change, and serves a health endpoint so the deployment's probes have
+ * something to read.
  *
  * Single replica by design. See `AGENTS.md` in this folder for why this is its
  * own deployment with `strategy: Recreate` rather than a job inside the gateway.
  */
 
 import { forwarderConfigFromEnv } from "./config.ts";
-import { listDiscordConnections } from "./connections.ts";
-import { logError, logInfo } from "./log.ts";
+import { watchDiscordConnections } from "./connections.ts";
+import { logInfo } from "./log.ts";
 import { Forwarder } from "./supervisor.ts";
 
 if (import.meta.main) {
   const config = forwarderConfigFromEnv();
   const forwarder = new Forwarder(config);
   let ready = false;
-
-  const poll = async (): Promise<void> => {
-    try {
-      const connections = await listDiscordConnections(config.planes);
-      forwarder.reconcile(connections);
-      ready = true;
-    } catch (error) {
-      logError("Config plane poll failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
 
   // Liveness and readiness are separate on purpose. `/healthz` answers while the
   // process is alive; only `/readyz` waits on the config plane, so a Convex
@@ -53,18 +42,20 @@ if (import.meta.main) {
 
   logInfo("Discord forwarder listening", {
     planes: config.planes.map((plane) => plane.name).join(","),
-    pollIntervalMs: config.pollIntervalMs,
     port: server.port,
   });
 
-  // Bound after the server, not before: the first poll waits on Convex, and a
+  // Started after the server, not before: subscribing waits on Convex, and a
   // process that has not opened its port yet fails the liveness probe. Readiness
-  // stays false until this lands, which is the signal that belongs to Convex.
-  await poll();
-  const timer = setInterval(() => void poll(), config.pollIntervalMs);
+  // stays false until the first snapshot lands, which is the signal that
+  // belongs to Convex.
+  const watch = watchDiscordConnections(config.planes, (connections) => {
+    forwarder.reconcile(connections);
+    ready = true;
+  });
 
   const shutdown = (): void => {
-    clearInterval(timer);
+    void watch.close();
     forwarder.stop();
     void server.stop();
   };
