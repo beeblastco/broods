@@ -6,6 +6,7 @@
 
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import { refreshAccountChannelEndpoints } from "./model/channelEndpoints";
 import {
   internalMutation,
   internalQuery,
@@ -176,4 +177,5 @@ async function refreshSourceBackedAgents(
       updatedAt: Date.now(),
     });
   }
+  await refreshAccountChannelEndpoints(ctx, accountId);
 }

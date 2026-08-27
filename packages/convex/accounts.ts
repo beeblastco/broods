@@ -4,11 +4,9 @@
  */
 
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
-import {
-  deleteAccountContents,
-  deleteAccountContentsBatch,
-} from "./model/cascade";
+import { deleteAccountContentsBatch } from "./model/cascade";
 import { accountsFields } from "./schema";
 
 const accountDoc = v.object({
@@ -140,20 +138,21 @@ export const update = internalMutation({
 
 /**
  * Removes an account and cascade-deletes its agents, sandbox/workspace configs,
- * conversations, messages, skills, async results, and cron jobs. S3 cleanup is
+ * conversations, messages, skills, async results, and cron jobs. Deletes one
+ * bounded batch per invocation and reschedules itself until the account row is
+ * gone, so a high-volume account never exceeds one transaction. S3 cleanup is
  * the caller's responsibility.
  */
 export const remove = internalMutation({
   args: { accountId: v.id("accounts") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { accountId } = args;
-    const account = await ctx.db.get(accountId);
-    if (!account) {
-      return null;
+    const complete = await deleteAccountContentsBatch(ctx, args.accountId);
+    if (!complete) {
+      await ctx.scheduler.runAfter(0, internal.accounts.remove, {
+        accountId: args.accountId,
+      });
     }
-
-    await deleteAccountContents(ctx, accountId);
 
     return null;
   },

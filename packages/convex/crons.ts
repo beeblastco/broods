@@ -23,9 +23,29 @@ crons.interval(
   {},
 );
 crons.interval(
+  "prune cron run history",
+  { hours: 24 },
+  internal.cron.pruneExpiredRuns,
+  {},
+);
+crons.interval(
   "prune runtime persistence",
   { hours: 1 },
   internal.runtime.pruneExpired,
+  {},
+);
+crons.interval(
+  "prune task usage samples",
+  { hours: 24 },
+  internal.usage.pruneExpiredTaskUsage,
+  {},
+);
+// The write seams keep this projection live; the sweep seeds it at cutover and
+// self-heals any seam a future writer forgets.
+crons.interval(
+  "reconcile channel endpoints",
+  { hours: 1 },
+  internal.channelConnections.reconcile,
   {},
 );
 

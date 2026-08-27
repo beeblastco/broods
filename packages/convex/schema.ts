@@ -101,6 +101,29 @@ export const agentConfigsFields = {
   updatedAt: v.number(),
 };
 
+/**
+ * Projection of deployed channel connections, one row per (agent, channel,
+ * deployment) that configures a bot token. `model/channelEndpoints.ts` is the
+ * single writer; the forwarder's standing `listConnections` subscription reads
+ * this instead of every deployment and agent blob. The token is AES-GCM
+ * encrypted with the account-config secret, and `digest` is a content hash so
+ * an unchanged row is never rewritten (a fresh IV would dirty the
+ * subscription on every refresh).
+ */
+export const channelEndpointsFields = {
+  accountId: v.id("accounts"),
+  agentId: v.string(),
+  agentName: v.string(),
+  digest: v.string(),
+  endpointId: v.string(),
+  platform: v.string(),
+  tokenCiphertext: v.string(),
+  tokenIv: v.string(),
+  tokenTag: v.string(),
+  updatedAt: v.number(),
+  webhookPath: v.string(),
+};
+
 export const agentRuntimeSecretsFields = {
   agentConfigId: v.id("agentConfigs"),
   ciphertext: v.string(),
@@ -1068,17 +1091,26 @@ export const taskUsageFields = {
 };
 
 /**
- * Pre-aggregated token usage per (deployment, time bucket, model), upserted by
- * the harness so the dashboard usage panel streams live without scanning logs.
- * Stored at a fixed 5-minute base bin; queries re-group it into the requested
- * range. Buckets are sparse (only active windows exist), so row count tracks
- * real activity, not wall-clock time.
+ * Pre-aggregated token usage per (deployment, grain, time bucket, model),
+ * upserted by the harness so the dashboard usage panel streams live without
+ * scanning logs. Each sample folds into a 5-minute, an hour, and a day bucket
+ * so long ranges read coarse rows instead of every 5-minute bucket. Buckets
+ * are sparse (only active windows exist), so row count tracks real activity,
+ * not wall-clock time.
  */
 export const usageRollupsFields = {
   accountId: v.id("accounts"),
   endpointId: v.string(),
-  /** Epoch ms floored to the 5-minute base bin. */
+  /** Epoch ms floored (UTC) to the grain's bucket width. */
   bucketStart: v.number(),
+  /**
+   * Rollup grain. Optional because rows written before the field existed lack
+   * it; a missing grain means "5m" until `migrations.backfillUsageRollupGrains`
+   * stamps them. New rows always carry it.
+   */
+  grain: v.optional(
+    v.union(v.literal("5m"), v.literal("hour"), v.literal("day")),
+  ),
   modelProvider: v.string(),
   modelId: v.string(),
   inputTokens: v.number(),
@@ -1138,9 +1170,13 @@ export default defineSchema({
     .index("by_apiKeyHash", ["apiKeyHash"])
     .index("by_endpointId", ["endpointId"])
     .index("by_authId", ["authId"])
-    // The channel-connections subscription walks every active deployment; a
-    // status range keeps rotated/retired rows out of that standing read set.
-    .index("by_status", ["status"]),
+    // The channel-endpoints reconcile walks every active deployment; a status
+    // range keeps rotated/retired rows out of that read set.
+    .index("by_status", ["status"])
+    .index("by_accountId_and_status", ["accountId", "status"]),
+  channelEndpoints: defineTable(channelEndpointsFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_platform", ["platform"]),
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"]),
@@ -1346,6 +1382,11 @@ export default defineSchema({
     .index("by_accountId_and_taskId", ["accountId", "taskId"]),
   usageRollups: defineTable(usageRollupsFields)
     .index("by_endpointId_and_bucketStart", ["endpointId", "bucketStart"])
+    .index("by_endpointId_and_grain_and_bucketStart", [
+      "endpointId",
+      "grain",
+      "bucketStart",
+    ])
     .index("by_accountId_endpointId_bucketStart_modelProvider_modelId", [
       "accountId",
       "endpointId",

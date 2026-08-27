@@ -7,6 +7,7 @@
 
 import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
@@ -15,6 +16,9 @@ import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { cronsInProject } from "./model/projectScope";
 import { cronRunsFields, cronsFields } from "./schema";
+
+const CRON_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const PRUNE_BATCH_SIZE = 100;
 
 const cronDoc = v.object({
   ...cronsFields,
@@ -397,15 +401,37 @@ export const removeRuns = internalMutation({
   },
   returns: v.number(),
   handler: async (ctx, { accountId, cronId, limit }) => {
-    const runs = await ctx.db
-      .query("cronRuns")
-      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
-        q.eq("accountId", accountId).eq("cronId", cronId),
-      )
-      .take(limit);
-    for (const run of runs) await ctx.db.delete(run._id);
+    return await deleteRunsBatch(ctx, accountId, cronId, limit);
+  },
+});
 
-    return runs.length;
+/**
+ * Drains a deleted cron's run history: deletes one bounded batch per
+ * invocation and reschedules itself until none remain. Scheduled by
+ * `purgeProject`, which deletes the cron row in its own transaction; run rows
+ * stay reachable through the account+cron index prefix.
+ */
+export const removeRunsCascade = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    cronId: v.id("crons"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const deleted = await deleteRunsBatch(
+      ctx,
+      args.accountId,
+      args.cronId,
+      PRUNE_BATCH_SIZE,
+    );
+    if (deleted === PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cron.removeRunsCascade, {
+        accountId: args.accountId,
+        cronId: args.cronId,
+      });
+    }
+
+    return null;
   },
 });
 
@@ -422,3 +448,45 @@ export const remove = internalMutation({
     return null;
   },
 });
+
+/**
+ * Deletes cron run history older than the retention window, one bounded batch
+ * per invocation. Run rows carry the full model result, and `listRuns` only
+ * ever shows the newest handful, so old rows are pure storage growth. The
+ * creation-index range reads nothing when nothing is due.
+ */
+export const pruneExpiredRuns = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const cutoff = Date.now() - CRON_RUN_RETENTION_MS;
+    const rows = await ctx.db
+      .query("cronRuns")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff))
+      .take(PRUNE_BATCH_SIZE);
+    for (const row of rows) await ctx.db.delete(row._id);
+    if (rows.length === PRUNE_BATCH_SIZE) {
+      await ctx.scheduler.runAfter(0, internal.cron.pruneExpiredRuns, {});
+    }
+
+    return rows.length;
+  },
+});
+
+/** Deletes up to `limit` run rows of one cron, returning how many went. */
+async function deleteRunsBatch(
+  ctx: GenericMutationCtx<DataModel>,
+  accountId: Id<"accounts">,
+  cronId: Id<"crons">,
+  limit: number,
+): Promise<number> {
+  const runs = await ctx.db
+    .query("cronRuns")
+    .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
+      q.eq("accountId", accountId).eq("cronId", cronId),
+    )
+    .take(limit);
+  for (const run of runs) await ctx.db.delete(run._id);
+
+  return runs.length;
+}

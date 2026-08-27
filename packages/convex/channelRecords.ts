@@ -73,6 +73,11 @@ export const getByExternalId = internalQuery({
   },
 });
 
+/**
+ * Every record including soft-deleted tombstones. Account-deletion cleanup
+ * (core's `removeAllForAccount`) depends on seeing the dead rows; listing
+ * surfaces use `listActive`.
+ */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(channelRecordDoc),
@@ -80,6 +85,23 @@ export const list = internalQuery({
     return await ctx.db
       .query("channelRecords")
       .withIndex("by_accountId", (q) => q.eq("accountId", args.accountId))
+      .collect();
+  },
+});
+
+/**
+ * Active records only, so listing a long-churned account does not read its
+ * pile of tombstones. Same shape as `list`.
+ */
+export const listActive = internalQuery({
+  args: { accountId: v.id("accounts") },
+  returns: v.array(channelRecordDoc),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("channelRecords")
+      .withIndex("by_accountId_and_status", (q) =>
+        q.eq("accountId", args.accountId).eq("status", "active"),
+      )
       .collect();
   },
 });

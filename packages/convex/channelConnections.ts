@@ -11,16 +11,22 @@
  * not Discord-shaped, and Slack Socket Mode or Telegram long polling would want
  * exactly this answer.
  *
- * Resolving it here rather than shipping `ACCOUNT_CONFIG_ENCRYPTION_SECRET` to a
- * third process keeps the decryption key in the two places that already hold it,
- * convex and core.
+ * The forwarder holds this query open as a subscription, so it reads the small
+ * `channelEndpoints` projection (`model/channelEndpoints.ts` is its one writer)
+ * rather than every deployment and agent blob: the subscription then replays
+ * only when a channel connection actually changes, not on every agent write.
+ *
+ * Resolving tokens here rather than shipping `ACCOUNT_CONFIG_ENCRYPTION_SECRET`
+ * to a third process keeps the decryption key in the two places that already
+ * hold it, convex and core.
  */
 
 import { v, type Infer } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { internalQuery } from "./_generated/server";
-import { decryptAgentConfigBlob } from "./model/agentConfigCodec";
-import { agentsInStage } from "./model/projectScope";
+import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  channelEndpointBotToken,
+  refreshAccountChannelEndpoints,
+} from "./model/channelEndpoints";
 
 const channelConnectionValidator = v.object({
   agentId: v.string(),
@@ -36,22 +42,8 @@ const channelConnectionValidator = v.object({
 export type ChannelConnection = Infer<typeof channelConnectionValidator>;
 
 /**
- * The slice of a decrypted agent config this file reads. The stored blob is
- * `Record<string, unknown>`, so this is the shape we assert at the one boundary
- * where it is read; every field stays optional and unknown-typed, and the caller
- * checks the one value it uses.
- */
-interface ChannelConfigView {
-  channels?: Record<string, { botToken?: unknown } | undefined>;
-}
-
-/**
- * Every deployed agent that configures a bot token for `channel`, one row each.
- *
- * Walks active deployments rather than the whole `agents` table: a deployment
- * row is what mints an `endpointId`, and an agent with no deployed stage has no
- * webhook URL to forward to. An agent whose channel config carries no `botToken`
- * cannot authenticate a connection, so it is absent.
+ * Every deployed agent that configures a bot token for `channel`, one row each,
+ * straight off the projection.
  */
 export const listConnections = internalQuery({
   args: { channel: v.string() },
@@ -64,85 +56,50 @@ export const listConnections = internalQuery({
       );
     }
 
-    const deployments = await ctx.db
-      .query("agentDeployments")
-      .withIndex("by_status", (q) => q.eq("status", "active"))
+    const rows = await ctx.db
+      .query("channelEndpoints")
+      .withIndex("by_platform", (q) => q.eq("platform", args.channel))
       .collect();
     const connections: ChannelConnection[] = [];
-
-    for (const deployment of deployments) {
-      const stage = await ctx.db.get(deployment.stageId);
-      if (!stage) continue;
-      const agents = await agentsInStage(
-        ctx,
-        { projectId: deployment.projectId, stageId: deployment.stageId },
-        deployment.accountId,
-      );
-
-      for (const agent of agents) {
-        const botToken = await channelBotToken(agent, args.channel, secret);
-        if (!botToken) continue;
-        connections.push({
-          agentId: agent._id,
-          agentName: agent.name,
-          botToken: botToken,
-          webhookPath: webhookPath(
-            deployment.accountId,
-            deployment.endpointId,
-            args.channel,
-            stage,
-          ),
-        });
-      }
+    for (const row of rows) {
+      const botToken = await channelEndpointBotToken(row, secret);
+      if (!botToken) continue;
+      connections.push({
+        agentId: row.agentId,
+        agentName: row.agentName,
+        botToken: botToken,
+        webhookPath: row.webhookPath,
+      });
     }
 
     return connections;
   },
 });
 
-/** The agent's configured bot token for `channel`, or null when it has none. */
-async function channelBotToken(
-  agent: Doc<"agents">,
-  channel: string,
-  secret: string,
-): Promise<string | null> {
-  if (!agent.encryptedConfig || !agent.encryptionIv || !agent.encryptionTag) {
-    return null;
-  }
-
-  const config = (await decryptAgentConfigBlob(
-    {
-      ciphertext: agent.encryptedConfig,
-      iv: agent.encryptionIv,
-      tag: agent.encryptionTag,
-    },
-    secret,
-  )) as ChannelConfigView | null;
-  const botToken = config?.channels?.[channel]?.botToken;
-
-  return typeof botToken === "string" && botToken ? botToken : null;
-}
-
 /**
- * The inbound webhook URL shape, which lives in three places by necessity: built
- * here, built for the generated resource file in `packages/broods/src/codegen.ts`,
- * and parsed by `matchWebhookPath` in `apps/core/src/harness/integrations.ts`.
- * Change one, change all three.
- *
- * Production keeps the bare path; every other stage is addressed through its own
- * `endpointId` so two stages of one account never contend for a delivery.
+ * Rebuilds the projection for every account that has an active deployment or a
+ * stored row. The write seams keep the projection live; this hourly sweep is
+ * the self-healing pass that seeds it at cutover and repairs any seam a future
+ * writer forgets, so a missed seam costs an hour of staleness, not a silent
+ * drift forever.
  */
-function webhookPath(
-  accountId: string,
-  endpointId: string,
-  channel: string,
-  stage: Doc<"stages">,
-): string {
-  const account = encodeURIComponent(accountId);
-  const name = encodeURIComponent(channel);
-  if (stage.kind === undefined || stage.kind === "production") {
-    return `/webhooks/${account}/${name}`;
-  }
+export const reconcile = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx): Promise<number> => {
+    const deployments = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .collect();
+    const stored = await ctx.db.query("channelEndpoints").collect();
+    const accountIds = new Set([
+      ...deployments.map((deployment) => deployment.accountId),
+      ...stored.map((row) => row.accountId),
+    ]);
+    for (const accountId of accountIds) {
+      await refreshAccountChannelEndpoints(ctx, accountId);
+    }
 
-  return `/webhooks/${account}/dev/${encodeURIComponent(endpointId)}/${name}`;
-}
+    return accountIds.size;
+  },
+});

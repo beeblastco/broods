@@ -518,13 +518,18 @@ const channelRecords: Storage["channelRecords"] = {
     return channelRecordFromConvex(doc as ConvexChannelRecordDoc | null);
   },
   list: async function (accountId) {
-    const docs = (await getConvexClient().query(internal.channelRecords.list, {
-      accountId: accountId as any,
-    })) as ConvexChannelRecordDoc[];
+    const docs = (await getConvexClient().query(
+      internal.channelRecords.listActive,
+      {
+        accountId: accountId as any,
+      },
+    )) as ConvexChannelRecordDoc[];
 
     return docs.map((doc) => channelRecordFromConvex(doc)!).filter(Boolean);
   },
   removeAllForAccount: async function (accountId) {
+    // The full list on purpose: soft-deleted tombstones must go with the
+    // account, and listActive never returns them.
     const docs = (await getConvexClient().query(internal.channelRecords.list, {
       accountId: accountId as any,
     })) as ConvexChannelRecordDoc[];

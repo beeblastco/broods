@@ -26,6 +26,7 @@ import {
   saveAgentRuntimeSecrets,
 } from "./agentRuntimeSecrets";
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
+import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -162,6 +163,7 @@ export async function pushEncryptedConfigToAgentRow(
     encryptionTag: encrypted.tag,
     updatedAt: Date.now(),
   });
+  await refreshAccountChannelEndpoints(ctx, agent.accountId);
 }
 
 /**

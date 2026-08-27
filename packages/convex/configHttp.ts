@@ -1868,7 +1868,7 @@ async function handleChannelRecordRoute(
   if (!channelId) {
     if (req.method === "GET") {
       const records: Doc<"channelRecords">[] = await ctx.runQuery(
-        internal.channelRecords.list,
+        internal.channelRecords.listActive,
         { accountId: accountId },
       );
 

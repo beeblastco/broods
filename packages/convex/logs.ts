@@ -6,9 +6,11 @@
  */
 
 import { v } from "convex/values";
-import { action, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import { action, query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { projectEndpointIds } from "./logsHelpers";
+import { type UsageGrain } from "./usage";
 
 const usageRange = v.union(
   v.literal("1h"),
@@ -71,7 +73,149 @@ const RANGE_CONFIG: Record<
 };
 
 /**
- * Re-group 5-minute usage rollups into the requested range's bins and total them.
+ * Rollup rows for one endpoint at one grain since `startMs`. At the "5m"
+ * grain this also merges legacy rows that predate the `grain` field (they are
+ * 5-minute buckets by convention until `migrations.backfillUsageRollupGrains`
+ * stamps them). Exported for `fetchUsageStats` and its test; not a registered
+ * Convex function.
+ */
+export async function collectUsageRollups(
+  ctx: QueryCtx,
+  endpointId: string,
+  grain: UsageGrain,
+  startMs: number,
+): Promise<Doc<"usageRollups">[]> {
+  const rows = await ctx.db
+    .query("usageRollups")
+    .withIndex("by_endpointId_and_grain_and_bucketStart", (q) =>
+      q
+        .eq("endpointId", endpointId)
+        .eq("grain", grain)
+        .gte("bucketStart", startMs),
+    )
+    .collect();
+  if (grain !== "5m") {
+    return rows;
+  }
+
+  // Pre-backfill legacy rows have no grain and live only under the old index.
+  const legacy = await ctx.db
+    .query("usageRollups")
+    .withIndex("by_endpointId_and_bucketStart", (q) =>
+      q.eq("endpointId", endpointId).gte("bucketStart", startMs),
+    )
+    .collect();
+
+  return [...rows, ...legacy.filter((row) => row.grain === undefined)];
+}
+
+/**
+ * Rollup grain to read for a display bin: bins under an hour need "5m" rows,
+ * under a day "hour" rows, and a day or wider "day" rows. Keeps long ranges
+ * from collecting every 5-minute bucket.
+ */
+export function usageGrainForBinSeconds(binSeconds: number): UsageGrain {
+  if (binSeconds < 60 * 60) {
+    return "5m";
+  }
+  if (binSeconds < 24 * 60 * 60) {
+    return "hour";
+  }
+
+  return "day";
+}
+
+/**
+ * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
+ * caller's project/stage. Reads the coarsest rollup grain that fits the
+ * range's display bins and re-groups it into the requested range. Subscribed
+ * via `useQuery`, so totals update live.
+ * @returns time-bucketed usage grouped by (modelProvider, modelId) plus totals
+ */
+export const fetchUsageStats = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.optional(v.id("stages")),
+    range: usageRange,
+  },
+  returns: usageStats,
+  handler: async (ctx, args) => {
+    const { projectId, stageId, range } = args;
+
+    // Check authenticated user
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const cfg = RANGE_CONFIG[range];
+    const nowMs = Date.now();
+    const startMs = nowMs - cfg.lookbackMs;
+
+    const endpointIds = await projectEndpointIds(
+      ctx,
+      authUser.id,
+      projectId,
+      stageId,
+    );
+    const base = {
+      range: range,
+      binSeconds: cfg.binSeconds,
+      startTimeMs: startMs,
+      endTimeMs: nowMs,
+    };
+    if (endpointIds.length === 0) {
+      return {
+        ...base,
+        buckets: [],
+        totals: {
+          inputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 0,
+          invocations: 0,
+          modelCalls: 0,
+          runtimeWallMs: 0,
+          agentSandboxCpuUsec: 0,
+          toolSandboxCpuUsec: 0,
+        },
+      };
+    }
+
+    const grain = usageGrainForBinSeconds(cfg.binSeconds);
+    const batches = await Promise.all(
+      endpointIds.map((endpointId) =>
+        collectUsageRollups(ctx, endpointId, grain, startMs),
+      ),
+    );
+
+    const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
+
+    return { ...base, buckets: buckets, totals: totals };
+  },
+});
+
+/**
+ * Placeholder for deep/cold log search beyond the hot window. The realtime hot
+ * path covers ~48h; older logs are durable in Loki and queried through Grafana.
+ * Wire a Grafana datasource-proxy fetch here when product needs in-app history.
+ */
+export const searchHistory = action({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.optional(v.id("stages")),
+    query: v.optional(v.string()),
+  },
+  returns: v.array(v.any()),
+  handler: async () => {
+    return [];
+  },
+});
+
+/**
+ * Re-group usage rollup rows into the requested range's bins and total them.
  */
 function aggregateUsage(
   rows: Array<{
@@ -166,95 +310,3 @@ function aggregateUsage(
 
   return { buckets: buckets, totals: totals };
 }
-
-/**
- * Reactive token-usage aggregates for the dashboard usage panel, scoped to the
- * caller's project/stage. Re-groups the 5-minute rollups into the
- * requested range. Subscribed via `useQuery`, so totals update live.
- * @returns time-bucketed usage grouped by (modelProvider, modelId) plus totals
- */
-export const fetchUsageStats = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.optional(v.id("stages")),
-    range: usageRange,
-  },
-  returns: usageStats,
-  handler: async (ctx, args) => {
-    const { projectId, stageId, range } = args;
-
-    // Check authenticated user
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const cfg = RANGE_CONFIG[range];
-    const nowMs = Date.now();
-    const startMs = nowMs - cfg.lookbackMs;
-
-    const endpointIds = await projectEndpointIds(
-      ctx,
-      authUser.id,
-      projectId,
-      stageId,
-    );
-    const base = {
-      range: range,
-      binSeconds: cfg.binSeconds,
-      startTimeMs: startMs,
-      endTimeMs: nowMs,
-    };
-    if (endpointIds.length === 0) {
-      return {
-        ...base,
-        buckets: [],
-        totals: {
-          inputTokens: 0,
-          outputTokens: 0,
-          reasoningTokens: 0,
-          cachedInputTokens: 0,
-          cacheWriteTokens: 0,
-          totalTokens: 0,
-          invocations: 0,
-          modelCalls: 0,
-          runtimeWallMs: 0,
-          agentSandboxCpuUsec: 0,
-          toolSandboxCpuUsec: 0,
-        },
-      };
-    }
-
-    const batches = await Promise.all(
-      endpointIds.map((endpointId) =>
-        ctx.db
-          .query("usageRollups")
-          .withIndex("by_endpointId_and_bucketStart", (q) =>
-            q.eq("endpointId", endpointId).gte("bucketStart", startMs),
-          )
-          .collect(),
-      ),
-    );
-
-    const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
-
-    return { ...base, buckets: buckets, totals: totals };
-  },
-});
-
-/**
- * Placeholder for deep/cold log search beyond the hot window. The realtime hot
- * path covers ~48h; older logs are durable in Loki and queried through Grafana.
- * Wire a Grafana datasource-proxy fetch here when product needs in-app history.
- */
-export const searchHistory = action({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.optional(v.id("stages")),
-    query: v.optional(v.string()),
-  },
-  returns: v.array(v.any()),
-  handler: async () => {
-    return [];
-  },
-});

@@ -16,6 +16,7 @@ import {
   mirrorAgentRowOntoConfig,
 } from "./model/agentSync";
 import { syncApiAgentCanvasWiring } from "./model/apiCanvasSync";
+import { refreshAccountChannelEndpoints } from "./model/channelEndpoints";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { agentsInProject, agentsInStage } from "./model/projectScope";
@@ -199,6 +200,7 @@ export const create = internalMutation({
     // the org owner's default project/stage. Safe no-op when the
     // canvas surface isn't provisioned (no org owner / no projects).
     await backSyncCanvasFromAgentRow(ctx, agentRowId);
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return agentRowId;
   },
@@ -306,6 +308,7 @@ export const update = internalMutation({
     // Mirror API-side changes onto the canvas-side agentConfigs row so
     // the Details/Config/Variables tabs reflect what the API caller wrote.
     await mirrorAgentRowOntoConfig(ctx, normalized);
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return null;
   },
@@ -347,6 +350,8 @@ export const seedEncryptedConfigForTest = internalMutation({
       updatedAt: Date.now(),
     });
     await mirrorAgentRowOntoConfig(ctx, normalized);
+    const seeded = await ctx.db.get(normalized);
+    if (seeded) await refreshAccountChannelEndpoints(ctx, seeded.accountId);
 
     return null;
   },
@@ -424,6 +429,7 @@ export const remove = internalMutation({
     }
 
     await ctx.db.delete(normalized);
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return null;
   },

@@ -27,6 +27,7 @@ import {
   insertConfigAuditEvent,
   type ConfigAuditActor,
 } from "./model/auditEvents";
+import { refreshAccountChannelEndpoints } from "./model/channelEndpoints";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 
@@ -210,6 +211,7 @@ export async function ensureStageDeployment(
       stageSlug: args.stageSlug,
       updatedAt: now,
     });
+    await refreshAccountChannelEndpoints(ctx, args.accountId);
 
     return {
       deploymentId: existing._id,
@@ -235,6 +237,7 @@ export async function ensureStageDeployment(
     ...encryptedKey,
     updatedAt: now,
   });
+  await refreshAccountChannelEndpoints(ctx, args.accountId);
 
   return {
     deploymentId: deploymentId,
