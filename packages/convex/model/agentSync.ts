@@ -438,7 +438,7 @@ export async function mirrorAgentRowOntoConfig(
 
   const linkedConfig = await ctx.db
     .query("agentConfigs")
-    .filter((q) => q.eq(q.field("agentId"), agentRowId as unknown as string))
+    .withIndex("by_agentId", (q) => q.eq("agentId", agentRowId))
     .first();
   if (!linkedConfig) return;
 

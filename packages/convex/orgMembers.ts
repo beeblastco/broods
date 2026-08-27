@@ -118,7 +118,7 @@ export const add = mutation({
 
     const target = await ctx.db
       .query("users")
-      .filter((q) => q.eq(q.field("email"), normalizedEmail))
+      .withIndex("by_email", (q) => q.eq("email", normalizedEmail))
       .unique();
     if (!target) {
       throw new Error(

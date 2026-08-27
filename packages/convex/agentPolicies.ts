@@ -54,10 +54,13 @@ export const listForStage = query({
     if (!stage || stage.projectId !== args.projectId)
       throw new Error("Stage not found.");
 
+    // Status leads the range: deletes are soft, so the name-only index range
+    // accumulates tombstones this reactive query would re-read forever.
     return await ctx.db
       .query("agentPolicies")
-      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", args.stageId))
-      .filter((q) => q.eq(q.field("status"), "active"))
+      .withIndex("by_stageId_and_status_and_name", (q) =>
+        q.eq("stageId", args.stageId).eq("status", "active"),
+      )
       .collect();
   },
 });

@@ -85,12 +85,12 @@ export const pruneExpired = internalMutation({
     const auditCutoff = now - RETENTION_MS;
     const authFailureCutoff = now - AUTH_FAILURE_RETENTION_MS;
 
-    const auditRows: Doc<"configAuditEvents">[] = await ctx.db
+    // Range on the creation index so a sweep with nothing due reads nothing,
+    // instead of re-reading the oldest batchSize rows on every tick.
+    const expiredAuditRows: Doc<"configAuditEvents">[] = await ctx.db
       .query("configAuditEvents")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", auditCutoff))
       .take(batchSize);
-    const expiredAuditRows = auditRows.filter(
-      (row) => row._creationTime < auditCutoff,
-    );
     for (const row of expiredAuditRows) {
       await ctx.db.delete(row._id);
     }

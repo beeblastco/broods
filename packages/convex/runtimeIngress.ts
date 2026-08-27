@@ -4,6 +4,7 @@
  */
 
 import { v, type Infer } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -32,6 +33,10 @@ const EXPIRABLE_STATUSES = [
 ] as const;
 
 const MAX_DRAIN_ENVELOPES = 100;
+
+// Statuses whose rows only await retention deletion; scanned by their own
+// index so the sweep never touches a row it is not about to delete.
+const TERMINAL_STATUSES = ["completed", "failed", "expired"] as const;
 
 // appliedEnvelopeValidator stays ahead of admissionResultValidator, which embeds it.
 const appliedEnvelopeValidator = v.object({
@@ -608,18 +613,17 @@ export const maintain = internalMutation({
   returns: v.object({ expired: v.number(), deleted: v.number() }),
   handler: async (ctx): Promise<{ expired: number; deleted: number }> => {
     const now = Date.now();
-    const due = (
-      await Promise.all(
-        EXPIRABLE_STATUSES.map((status) =>
-          ctx.db
-            .query("runtimeIngressEnvelopes")
-            .withIndex("by_status_and_expiresAt", (q) =>
-              q.eq("status", status).lte("expiresAt", now),
-            )
-            .take(MAX_DRAIN_ENVELOPES),
-        ),
-      )
-    ).flat();
+    const dueBatches = await Promise.all(
+      EXPIRABLE_STATUSES.map((status) =>
+        ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_status_and_expiresAt", (q) =>
+            q.eq("status", status).lte("expiresAt", now),
+          )
+          .take(MAX_DRAIN_ENVELOPES),
+      ),
+    );
+    const due = dueBatches.flat();
     let expired = 0;
     for (const row of due) {
       const coordinator = await getCoordinator(ctx, row.conversationKey);
@@ -659,19 +663,18 @@ export const maintain = internalMutation({
       }
     }
 
-    const retained = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_statusExpiresAt", (q) => q.lte("statusExpiresAt", now))
-      .filter((q) =>
-        q.or(
-          q.eq(q.field("status"), "completed"),
-          q.eq(q.field("status"), "failed"),
-          q.eq(q.field("status"), "expired"),
-        ),
-      )
-      .take(MAX_DRAIN_ENVELOPES);
+    const retainedBatches = await Promise.all(
+      TERMINAL_STATUSES.map((status) =>
+        ctx.db
+          .query("runtimeIngressEnvelopes")
+          .withIndex("by_status_and_statusExpiresAt", (q) =>
+            q.eq("status", status).lte("statusExpiresAt", now),
+          )
+          .take(MAX_DRAIN_ENVELOPES),
+      ),
+    );
     let deleted = 0;
-    for (const row of retained) {
+    for (const row of retainedBatches.flat()) {
       await ctx.db.delete(row._id);
       deleted += 1;
     }
@@ -680,6 +683,16 @@ export const maintain = internalMutation({
       .withIndex("by_expiresAt", (q) => q.lte("expiresAt", now))
       .take(MAX_DRAIN_ENVELOPES);
     for (const row of applications) await ctx.db.delete(row._id);
+
+    // A full batch means a backlog the fixed cadence cannot drain; keep
+    // sweeping immediately until every range comes back short.
+    if (
+      dueBatches.some((batch) => batch.length === MAX_DRAIN_ENVELOPES) ||
+      retainedBatches.some((batch) => batch.length === MAX_DRAIN_ENVELOPES) ||
+      applications.length === MAX_DRAIN_ENVELOPES
+    ) {
+      await ctx.scheduler.runAfter(0, internal.runtimeIngress.maintain, {});
+    }
 
     return { expired: expired, deleted: deleted };
   },

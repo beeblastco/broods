@@ -1137,7 +1137,10 @@ export default defineSchema({
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
     .index("by_endpointId", ["endpointId"])
-    .index("by_authId", ["authId"]),
+    .index("by_authId", ["authId"])
+    // The channel-connections subscription walks every active deployment; a
+    // status range keeps rotated/retired rows out of that standing read set.
+    .index("by_status", ["status"]),
   deployKeys: defineTable(deployKeysFields)
     .index("by_keyHash", ["keyHash"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"]),
@@ -1178,7 +1181,8 @@ export default defineSchema({
   agentPolicies: defineTable(agentPoliciesFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_stageId_and_name", ["stageId", "name"]),
+    .index("by_stageId_and_name", ["stageId", "name"])
+    .index("by_stageId_and_status_and_name", ["stageId", "status", "name"]),
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])
@@ -1302,7 +1306,7 @@ export default defineSchema({
     // keep their stale expiresAt for the whole status retention window, and a
     // bare expiresAt index would re-read every one of them each sweep.
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
-    .index("by_statusExpiresAt", ["statusExpiresAt"]),
+    .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
     .index("by_applicationId", ["applicationId"])
     .index("by_conversationKey_and_createdAt", ["conversationKey", "createdAt"])

@@ -64,11 +64,13 @@ export const listConnections = internalQuery({
       );
     }
 
-    const deployments = await ctx.db.query("agentDeployments").collect();
+    const deployments = await ctx.db
+      .query("agentDeployments")
+      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .collect();
     const connections: ChannelConnection[] = [];
 
     for (const deployment of deployments) {
-      if (deployment.status !== "active") continue;
       const stage = await ctx.db.get(deployment.stageId);
       if (!stage) continue;
       const agents = await agentsInStage(
