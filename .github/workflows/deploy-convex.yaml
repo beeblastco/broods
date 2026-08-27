@@ -56,8 +56,8 @@ jobs:
             fi
             # Self-hosted URLs carry no prod: marker, so pin main to the
             # production backend by URL instead.
-            if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_SELF_HOSTED_URL" != "https://convex.broods.app" ]]; then
-              echo "main requires CONVEX_SELF_HOSTED_URL=https://convex.broods.app in the 'production' environment" >&2
+            if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_SELF_HOSTED_URL" != "https://convex-api.broods.app" ]]; then
+              echo "main requires CONVEX_SELF_HOSTED_URL=https://convex-api.broods.app in the 'production' environment" >&2
               exit 1
             fi
             unset CONVEX_DEPLOY_KEY
