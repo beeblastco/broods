@@ -29,6 +29,7 @@ import {
   isPlainObject,
   isStringRecord,
 } from "../object.ts";
+import { AGENT_HOOK_EVENT_NAMES } from "@broods/convex/model/accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -97,6 +98,9 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "write",
 ]);
 
+// Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
+// full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points), whose single
+// home is packages/convex/model/accountHooks.ts.
 const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
   "agent.step.finished",
@@ -109,20 +113,6 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.started",
   "subagent.task.finished",
 ] as const satisfies readonly AgentLifecycleEventName[];
-
-// Channel hook events fire from integrations.ts (not the agent loop), so they
-// live outside AgentLifecycleEventName but share the code-hook vocabulary.
-const AGENT_CHANNEL_HOOK_EVENT_NAMES = [
-  "channel.message.received",
-  "channel.message.sending",
-] as const satisfies readonly AgentChannelHookEventName[];
-
-// Every event a user code hook can subscribe to: the agent-loop lifecycle plus
-// the channel points. Webhooks use AGENT_LIFECYCLE_EVENT_NAMES only.
-export const AGENT_HOOK_EVENT_NAMES = [
-  ...AGENT_LIFECYCLE_EVENT_NAMES,
-  ...AGENT_CHANNEL_HOOK_EVENT_NAMES,
-] as const satisfies readonly AgentHookEventName[];
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;

@@ -1,15 +1,10 @@
 /**
- * Sandbox-config validation and public response mapping for the Convex config
- * plane. Ports core's former storage/sandbox-config.ts normalizer so the
- * public /v1/sandboxes contract is unchanged.
+ * Sandbox-config validation for the Convex config plane. Ports core's former
+ * storage/sandbox-config.ts normalizer so the public /v1/sandboxes contract
+ * is unchanged. The public projection lives in ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
-import {
-  mergeConfigObjects,
-  redactConfigSecrets,
-  REDACTED_SECRET_VALUE,
-} from "./configValues";
+import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 
 export const SANDBOX_PROVIDERS = [
@@ -172,107 +167,18 @@ export function normalizeSandboxConfig(value: unknown): SandboxConfig {
       "e2b cannot enforce egress restrictions; set config.network.mode to allow-all explicitly",
     );
   }
-  const lifecycle =
-    config.lifecycle !== undefined
-      ? normalizeLifecycle(config.lifecycle)
-      : undefined;
-  if (lifecycle && config.persistent !== true) {
-    throw new Error("config.lifecycle requires config.persistent to be true");
-  }
-  const onCreate =
-    config.onCreate !== undefined
-      ? normalizeHookList(config.onCreate, "config.onCreate")
-      : undefined;
-  const onResume =
-    config.onResume !== undefined
-      ? normalizeHookList(config.onResume, "config.onResume")
-      : undefined;
-  if ((onCreate || onResume) && config.persistent !== true) {
-    throw new Error(
-      "config.onCreate and config.onResume require config.persistent to be true",
-    );
-  }
-  if (provider === "e2b" && (onCreate || onResume)) {
-    throw new Error(
-      "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
-    );
-  }
+  const persistentFields = normalizePersistentFields(config, provider);
+  assertRuntimes(config.runtimes);
+  assertResourceLimits(config, provider);
+  assertEnvVarsAndOptions(config, provider);
 
-  if (config.runtimes !== undefined) {
-    if (
-      !Array.isArray(config.runtimes) ||
-      config.runtimes.length === 0 ||
-      !config.runtimes.every(
-        (entry) =>
-          typeof entry === "string" &&
-          SANDBOX_RUNTIMES.includes(entry as RuntimeName),
-      )
-    ) {
-      throw new Error(
-        `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
-      );
-    }
-  }
-
-  const limits = workspaceSandboxLimits(provider);
-  assertOptionalPositiveInteger(
-    config.timeout,
-    "config.timeout",
-    limits.maxTimeoutSeconds,
+  return buildNormalizedConfig(
+    config,
+    provider,
+    network,
+    snapshot,
+    persistentFields,
   );
-  assertOptionalPositiveInteger(
-    config.memoryLimit,
-    "config.memoryLimit",
-    limits.maxMemoryLimitMb,
-  );
-  assertOptionalPositiveInteger(
-    config.outputLimitBytes,
-    "config.outputLimitBytes",
-    limits.maxOutputLimitBytes,
-  );
-
-  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
-    throw new Error("config.envVars must be an object with string values");
-  }
-  if (config.options !== undefined && !isPlainObject(config.options)) {
-    throw new Error("config.options must be an object");
-  }
-  if (config.options !== undefined) {
-    validateProviderOptions(provider, config.options);
-  }
-
-  return {
-    provider: provider,
-    network: network,
-    permissionMode:
-      (config.permissionMode as PermissionMode | undefined) ?? "ask",
-    ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
-    ...(snapshot ? { snapshot: snapshot } : {}),
-    ...(config.persistent !== undefined
-      ? { persistent: config.persistent as boolean }
-      : {}),
-    ...(lifecycle ? { lifecycle: lifecycle } : {}),
-    ...(onCreate ? { onCreate: onCreate } : {}),
-    ...(onResume ? { onResume: onResume } : {}),
-    ...(config.runtimes !== undefined
-      ? { runtimes: [...(config.runtimes as RuntimeName[])] }
-      : {}),
-    ...(config.timeout !== undefined
-      ? { timeout: config.timeout as number }
-      : {}),
-    ...(config.memoryLimit !== undefined
-      ? { memoryLimit: config.memoryLimit as number }
-      : {}),
-    ...(config.outputLimitBytes !== undefined
-      ? { outputLimitBytes: config.outputLimitBytes as number }
-      : {}),
-    ...(config.envVars !== undefined
-      ? { envVars: { ...(config.envVars as Record<string, string>) } }
-      : {}),
-    ...(config.options !== undefined
-      ? { options: { ...(config.options as Record<string, unknown>) } }
-      : {}),
-  };
 }
 
 /**
@@ -332,50 +238,179 @@ export function normalizeUpdateSandboxConfigInput(
   };
 }
 
-/**
- * Map a sandboxConfigs document and decrypted config to the public response.
- * @param doc the sandboxConfigs document
- * @param config decrypted sandbox config
- * @returns the public sandbox record with secrets redacted
- */
-export function toPublicSandboxConfigResponse(
-  doc: Doc<"sandboxConfigs">,
-  config: SandboxConfig,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    sandboxId: doc._id,
-    ...(doc.projectId ? { projectId: doc.projectId } : {}),
-    ...(doc.stageId ? { stageId: doc.stageId } : {}),
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    config: redactSandboxConfigSecrets(config),
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-  };
-}
-
-function redactSandboxConfigSecrets(config: SandboxConfig): SandboxConfig {
-  const redacted = redactConfigSecrets(config);
-  if (redacted.envVars) {
-    redacted.envVars = Object.fromEntries(
-      Object.keys(redacted.envVars).map((key) => [key, REDACTED_SECRET_VALUE]),
-    );
-  }
-
-  return redacted;
-}
-
 function asObject(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) throw new Error("config must be an object");
 
   return value;
 }
 
+// Validates the envVars record and provider-specific options blob.
+function assertEnvVarsAndOptions(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  if (config.envVars !== undefined && !isStringRecord(config.envVars)) {
+    throw new Error("config.envVars must be an object with string values");
+  }
+  if (config.options !== undefined && !isPlainObject(config.options)) {
+    throw new Error("config.options must be an object");
+  }
+  if (config.options !== undefined) {
+    validateProviderOptions(provider, config.options);
+  }
+}
+
 function assertOptionalBoolean(value: unknown, name: string): void {
   if (value !== undefined && typeof value !== "boolean") {
     throw new Error(`${name} must be a boolean`);
   }
+}
+
+function assertOptionalEnum<T extends string>(
+  value: unknown,
+  name: string,
+  allowed: readonly T[],
+): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "string" || !allowed.includes(value as T))
+  ) {
+    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  }
+}
+
+function assertOptionalPositiveInteger(
+  value: unknown,
+  name: string,
+  max?: number,
+): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  if (max !== undefined && value > max) {
+    throw new Error(`${name} must be an integer from 1 to ${max}`);
+  }
+}
+
+// Bounds timeout/memory/output against the provider-aware workspace limits.
+function assertResourceLimits(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): void {
+  const limits = workspaceSandboxLimits(provider);
+  assertOptionalPositiveInteger(
+    config.timeout,
+    "config.timeout",
+    limits.maxTimeoutSeconds,
+  );
+  assertOptionalPositiveInteger(
+    config.memoryLimit,
+    "config.memoryLimit",
+    limits.maxMemoryLimitMb,
+  );
+  assertOptionalPositiveInteger(
+    config.outputLimitBytes,
+    "config.outputLimitBytes",
+    limits.maxOutputLimitBytes,
+  );
+}
+
+// Requires runtimes, when present, to be a non-empty list of known names.
+function assertRuntimes(value: unknown): void {
+  if (value === undefined) return;
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every(
+      (entry) =>
+        typeof entry === "string" &&
+        SANDBOX_RUNTIMES.includes(entry as RuntimeName),
+    )
+  ) {
+    throw new Error(
+      `config.runtimes must be a non-empty array of: ${SANDBOX_RUNTIMES.join(", ")}`,
+    );
+  }
+}
+
+// Assembles the normalized config from already-validated fields.
+function buildNormalizedConfig(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+  network: SandboxNetworkConfig,
+  snapshot: string | undefined,
+  persistentFields: Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume">,
+): SandboxConfig {
+  return {
+    provider: provider,
+    network: network,
+    permissionMode:
+      (config.permissionMode as PermissionMode | undefined) ?? "ask",
+    ...(config.size !== undefined ? { size: config.size as SandboxSize } : {}),
+    ...(snapshot ? { snapshot: snapshot } : {}),
+    ...(config.persistent !== undefined
+      ? { persistent: config.persistent as boolean }
+      : {}),
+    ...persistentFields,
+    ...(config.runtimes !== undefined
+      ? { runtimes: [...(config.runtimes as RuntimeName[])] }
+      : {}),
+    ...(config.timeout !== undefined
+      ? { timeout: config.timeout as number }
+      : {}),
+    ...(config.memoryLimit !== undefined
+      ? { memoryLimit: config.memoryLimit as number }
+      : {}),
+    ...(config.outputLimitBytes !== undefined
+      ? { outputLimitBytes: config.outputLimitBytes as number }
+      : {}),
+    ...(config.envVars !== undefined
+      ? { envVars: { ...(config.envVars as Record<string, string>) } }
+      : {}),
+    ...(config.options !== undefined
+      ? { options: { ...(config.options as Record<string, unknown>) } }
+      : {}),
+  };
+}
+
+function normalizeHookList(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+  }
+  const commands = value.map((entry) =>
+    typeof entry === "string" ? entry.trim() : "",
+  );
+  if (commands.some((entry) => entry.length === 0)) {
+    throw new Error(`${name} must be a non-empty array of non-empty strings`);
+  }
+
+  return commands;
+}
+
+function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
+  if (!isPlainObject(value)) {
+    throw new Error("config.lifecycle must be an object");
+  }
+  assertOptionalPositiveInteger(
+    value.idleTimeoutSeconds,
+    "config.lifecycle.idleTimeoutSeconds",
+    MAX_IDLE_TIMEOUT_SECONDS,
+  );
+  assertOptionalPositiveInteger(
+    value.maxLifetimeSeconds,
+    "config.lifecycle.maxLifetimeSeconds",
+    MAX_LIFETIME_SECONDS,
+  );
+
+  return {
+    ...(value.idleTimeoutSeconds !== undefined
+      ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }
+      : {}),
+    ...(value.maxLifetimeSeconds !== undefined
+      ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number }
+      : {}),
+  };
 }
 
 function normalizeNetwork(value: unknown): SandboxNetworkConfig {
@@ -408,20 +443,6 @@ function normalizeNetwork(value: unknown): SandboxNetworkConfig {
   };
 }
 
-function normalizeHookList(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${name} must be a non-empty array of non-empty strings`);
-  }
-  const commands = value.map((entry) =>
-    typeof entry === "string" ? entry.trim() : "",
-  );
-  if (commands.some((entry) => entry.length === 0)) {
-    throw new Error(`${name} must be a non-empty array of non-empty strings`);
-  }
-
-  return commands;
-}
-
 function normalizeOptionalStringList(
   value: unknown,
   name: string,
@@ -440,39 +461,42 @@ function normalizeOptionalStringList(
   return entries;
 }
 
-function assertOptionalEnum<T extends string>(
-  value: unknown,
-  name: string,
-  allowed: readonly T[],
-): void {
-  if (
-    value !== undefined &&
-    (typeof value !== "string" || !allowed.includes(value as T))
-  ) {
-    throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+// Normalizes lifecycle and hook fields, enforcing persistent/provider rules.
+function normalizePersistentFields(
+  config: Record<string, unknown>,
+  provider: SandboxProvider,
+): Pick<SandboxConfig, "lifecycle" | "onCreate" | "onResume"> {
+  const lifecycle =
+    config.lifecycle !== undefined
+      ? normalizeLifecycle(config.lifecycle)
+      : undefined;
+  if (lifecycle && config.persistent !== true) {
+    throw new Error("config.lifecycle requires config.persistent to be true");
   }
-}
+  const onCreate =
+    config.onCreate !== undefined
+      ? normalizeHookList(config.onCreate, "config.onCreate")
+      : undefined;
+  const onResume =
+    config.onResume !== undefined
+      ? normalizeHookList(config.onResume, "config.onResume")
+      : undefined;
+  if ((onCreate || onResume) && config.persistent !== true) {
+    throw new Error(
+      "config.onCreate and config.onResume require config.persistent to be true",
+    );
+  }
+  if (provider === "e2b" && (onCreate || onResume)) {
+    throw new Error(
+      "config.onCreate and config.onResume are not supported by the e2b provider; use an E2B template or run setup commands explicitly",
+    );
+  }
 
-function assertOptionalPositiveInteger(
-  value: unknown,
-  name: string,
-  max?: number,
-): void {
-  if (value === undefined) return;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  if (max !== undefined && value > max) {
-    throw new Error(`${name} must be an integer from 1 to ${max}`);
-  }
-}
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-
-  return value.trim();
+  return {
+    ...(lifecycle ? { lifecycle: lifecycle } : {}),
+    ...(onCreate ? { onCreate: onCreate } : {}),
+    ...(onResume ? { onResume: onResume } : {}),
+  };
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
@@ -483,29 +507,26 @@ function optionalString(value: unknown, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizeLifecycle(value: unknown): SandboxLifecycleConfig {
-  if (!isPlainObject(value)) {
-    throw new Error("config.lifecycle must be an object");
+function positiveIntegerEnv(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined || value === "") {
+    return fallback;
   }
-  assertOptionalPositiveInteger(
-    value.idleTimeoutSeconds,
-    "config.lifecycle.idleTimeoutSeconds",
-    MAX_IDLE_TIMEOUT_SECONDS,
-  );
-  assertOptionalPositiveInteger(
-    value.maxLifetimeSeconds,
-    "config.lifecycle.maxLifetimeSeconds",
-    MAX_LIFETIME_SECONDS,
-  );
 
-  return {
-    ...(value.idleTimeoutSeconds !== undefined
-      ? { idleTimeoutSeconds: value.idleTimeoutSeconds as number }
-      : {}),
-    ...(value.maxLifetimeSeconds !== undefined
-      ? { maxLifetimeSeconds: value.maxLifetimeSeconds as number }
-      : {}),
-  };
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+
+  return parsed;
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+
+  return value.trim();
 }
 
 function validateProviderOptions(
@@ -533,18 +554,4 @@ function validateProviderOptions(
       );
     }
   }
-}
-
-function positiveIntegerEnv(name: string, fallback: number): number {
-  const value = process.env[name];
-  if (value === undefined || value === "") {
-    return fallback;
-  }
-
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-
-  return parsed;
 }

@@ -16,7 +16,6 @@ import {
 import {
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
-  toPublicAgentResponse,
   type AgentConfig,
 } from "../../model/agentRules";
 import {
@@ -24,6 +23,7 @@ import {
   type ConfigAuditActor,
 } from "../../model/auditEvents";
 import { isPlainObject } from "../../model/objects";
+import { toPublicAgentResponse } from "../../model/responses";
 import { fetchSlackChannelDirectory } from "../../model/slackDirectory";
 import {
   configEncryptionSecret,

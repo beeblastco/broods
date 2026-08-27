@@ -1,10 +1,9 @@
 /**
- * Agent-policy validation and public response mapping for the Convex config
- * plane. Ports core's public CRUD normalizer so policy documents keep the
- * account-management API contract.
+ * Agent-policy validation for the Convex config plane. Ports core's public
+ * CRUD normalizer so policy documents keep the account-management API
+ * contract. The public projection lives in ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 export const POLICY_ACTIONS = [
@@ -164,26 +163,6 @@ export function normalizeUpdatePolicyInput(value: unknown): {
   }
 
   return patch;
-}
-
-/**
- * Map an agentPolicies document to the public account-management shape.
- * @param doc the agentPolicies document
- * @returns the public policy record
- */
-export function toPublicAgentPolicyResponse(
-  doc: Doc<"agentPolicies">,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    policyId: doc._id,
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    document: doc.document,
-    status: doc.status,
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-  };
 }
 
 function assertOptionalEnum<T extends readonly string[]>(

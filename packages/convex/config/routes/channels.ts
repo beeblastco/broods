@@ -14,8 +14,8 @@ import {
 import {
   normalizeCreateChannelRecordInput,
   normalizeUpdateChannelRecordInput,
-  toPublicChannelRecordResponse,
 } from "../../model/channelRules";
+import { toPublicChannelRecordResponse } from "../../model/responses";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
 // Channel records CRUD. A record binds one real chat channel to an agent; the

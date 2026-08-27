@@ -28,8 +28,8 @@ import {
   normalizeCreateCronInput,
   normalizeSchedulerGroupName,
   normalizeUpdateCronInput,
-  toCronResponse,
 } from "../model/cronRules";
+import { toCronResponse } from "../model/responses";
 
 // Run rows are deleted with their cron in batches: a long-lived job can hold
 // more history than one Convex transaction may touch.

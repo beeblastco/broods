@@ -10,12 +10,9 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
-import {
-  parseCronRunsLimit,
-  toCronResponse,
-  toCronRunResponse,
-} from "../../model/cronRules";
+import { parseCronRunsLimit } from "../../model/cronRules";
 import { isPlainObject } from "../../model/objects";
+import { toCronResponse, toCronRunResponse } from "../../model/responses";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
 /**

@@ -13,8 +13,8 @@ import {
 import {
   normalizeCreatePolicyInput,
   normalizeUpdatePolicyInput,
-  toPublicAgentPolicyResponse,
 } from "../../model/policyRules";
+import { toPublicAgentPolicyResponse } from "../../model/responses";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
 /**

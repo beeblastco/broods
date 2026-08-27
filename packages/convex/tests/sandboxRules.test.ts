@@ -1,17 +1,18 @@
 /**
- * Sandbox config validation tests.
- * Cover provider limits, unsafe option rejection, and public secret redaction.
+ * Sandbox config validation tests, ported from core's former
+ * sandbox-config.test.ts when the normalizers moved here. Cover provider
+ * limits, unsafe option rejection, and public secret redaction.
  */
 
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from "vitest";
+import type { Doc } from "../_generated/dataModel";
+import { toPublicSandboxConfigResponse } from "../model/responses";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeSandboxConfig,
   normalizeUpdateSandboxConfigInput,
-  toPublicSandboxConfig,
   type SandboxConfig,
-  type SandboxConfigRecord,
-} from "../src/shared/domain/sandbox-config.ts";
+} from "../model/sandboxRules";
 
 describe("sandbox config", () => {
   it("accepts a predefined size and rejects an unknown one", () => {
@@ -78,25 +79,26 @@ describe("sandbox config", () => {
   });
 
   it("redacts env vars and sensitive provider option names", () => {
-    const record: SandboxConfigRecord = {
+    const doc = {
+      _id: "sb_1",
+      _creationTime: 0,
       accountId: "acct_1",
-      sandboxId: "sb_1",
       name: "secure",
-      config: {
-        provider: "sandbox",
-        envVars: { API_BASE: "https://api.example.com" },
-        options: {
-          apiKey: "base64-token",
-          credentials: "secret-json",
-          private_key: "pem",
-          workspaceRoot: "/mnt/workspaces",
-        },
+      createdAt: Date.parse("2026-01-01T00:00:00.000Z"),
+      updatedAt: Date.parse("2026-01-01T00:00:00.000Z"),
+    } as unknown as Doc<"sandboxConfigs">;
+    const config: SandboxConfig = {
+      provider: "sandbox",
+      envVars: { API_BASE: "https://api.example.com" },
+      options: {
+        apiKey: "base64-token",
+        credentials: "secret-json",
+        private_key: "pem",
+        workspaceRoot: "/mnt/workspaces",
       },
-      createdAt: "2026-01-01T00:00:00.000Z",
-      updatedAt: "2026-01-01T00:00:00.000Z",
     };
 
-    expect(toPublicSandboxConfig(record).config).toEqual({
+    expect(toPublicSandboxConfigResponse(doc, config).config).toEqual({
       provider: "sandbox",
       envVars: { API_BASE: "********" },
       options: {

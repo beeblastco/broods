@@ -1,10 +1,10 @@
 /**
- * Channel record validation and the public projection for the config plane.
- * Mirrors core's `shared/domain/channel-record.ts` contract; kept free of
- * Convex imports beyond `Doc` so the rules stay unit-testable.
+ * Channel record validation for the config plane — the single home of the
+ * normalizers core's `shared/domain/channel-record.ts` re-exports. Kept free
+ * of Convex imports so the rules stay unit-testable; the public projection
+ * lives in ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 const CHANNEL_CONFIG_KEYS = [
@@ -162,24 +162,6 @@ export function normalizeUpdateChannelRecordInput(
   }
 
   return patch;
-}
-
-export function toPublicChannelRecordResponse(
-  doc: Doc<"channelRecords">,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    channelId: doc._id,
-    platform: doc.platform,
-    externalId: doc.externalId,
-    ...(doc.workspaceRef ? { workspaceRef: doc.workspaceRef } : {}),
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    config: doc.config,
-    status: doc.status,
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-  };
 }
 
 function normalizeAgentBindings(

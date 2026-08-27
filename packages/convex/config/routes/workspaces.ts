@@ -11,10 +11,10 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
+import { toPublicWorkspaceConfigResponse } from "../../model/responses";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
-  toPublicWorkspaceConfigResponse,
   workspaceNamespace,
 } from "../../model/workspaceRules";
 import {

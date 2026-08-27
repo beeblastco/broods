@@ -14,10 +14,10 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
+import { toPublicSandboxConfigResponse } from "../../model/responses";
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
-  toPublicSandboxConfigResponse,
   type SandboxConfig,
 } from "../../model/sandboxRules";
 import {

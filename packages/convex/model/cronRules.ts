@@ -1,11 +1,11 @@
 /**
- * Cron-job input normalization and public response mapping for the Convex
- * config plane. Ports core's former src/shared/domain/cron.ts normalizer so
- * the public /v1/crons contract is unchanged. Pure module — safe for the
- * default Convex runtime; EventBridge Scheduler calls live in awsCrons.ts.
+ * Cron-job input normalization for the Convex config plane. Ports core's
+ * former src/shared/domain/cron.ts normalizer so the public /v1/crons
+ * contract is unchanged. Pure module — safe for the default Convex runtime;
+ * EventBridge Scheduler calls live in awsCrons.ts and the public projections
+ * in ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
 const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
@@ -145,8 +145,8 @@ export function normalizeSchedulerGroupName(value: unknown): string {
 }
 
 /**
- * Whether a schedule fires exactly once. Mirrors `isOneTimeSchedule` in core's
- * src/shared/domain/cron.ts.
+ * Whether a schedule fires exactly once. Single home for this rule — core
+ * re-exports it from apps/core/src/shared/domain/cron.ts.
  * @param expression a normalized schedule expression
  * @returns true for an at(...) schedule
  */
@@ -168,59 +168,6 @@ export function parseCronRunsLimit(value: string | null): number | undefined {
   }
 
   return parsed;
-}
-
-/**
- * Map a crons document to the public cron shape core used to return
- * (cronId = _id, ISO timestamps, scheduler fields omitted).
- * @param doc the crons document
- * @returns the public cron record
- */
-export function toCronResponse(doc: Doc<"crons">): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    cronId: doc._id,
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    agentId: doc.agentId,
-    events: doc.events,
-    ...(doc.conversationKey ? { conversationKey: doc.conversationKey } : {}),
-    scheduleExpression: doc.scheduleExpression,
-    ...(doc.timezone ? { timezone: doc.timezone } : {}),
-    status: doc.status,
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
-    ...(doc.lastInvokedAt
-      ? { lastInvokedAt: new Date(doc.lastInvokedAt).toISOString() }
-      : {}),
-    ...(doc.lastStatus ? { lastStatus: doc.lastStatus } : {}),
-    ...(doc.lastError ? { lastError: doc.lastError } : {}),
-  };
-}
-
-/**
- * Map a cronRuns document to the public run shape core used to return
- * (runId = _id, ISO timestamps).
- * @param doc the cronRuns document
- * @returns the public run record
- */
-export function toCronRunResponse(
-  doc: Doc<"cronRuns">,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    cronId: doc.cronId,
-    runId: doc._id,
-    eventId: doc.eventId,
-    conversationKey: doc.conversationKey,
-    status: doc.status,
-    ...(doc.result !== undefined ? { result: doc.result } : {}),
-    ...(doc.error ? { error: doc.error } : {}),
-    startedAt: new Date(doc.startedAt).toISOString(),
-    ...(doc.completedAt
-      ? { completedAt: new Date(doc.completedAt).toISOString() }
-      : {}),
-  };
 }
 
 /** Collapses a one-of `input`/`events` payload into the stored events list. */

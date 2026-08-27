@@ -5,6 +5,7 @@ import { normalizePolicyDocument } from "../agent/policies";
 import {
   POLICY_ACTIONS,
   normalizeCreatePolicyInput,
+  normalizePolicyDocument as normalizeRulesPolicyDocument,
 } from "../model/policyRules";
 
 const policyWith = (operator: string, value: unknown) => ({
@@ -23,9 +24,10 @@ const policyWith = (operator: string, value: unknown) => ({
   },
 });
 
-// This file mirrors apps/core/src/shared/domain/policy.ts. A scalar value
-// satisfies no rego in/notIn branch, so the condition never fires and a deny
-// silently does nothing — both copies must refuse it at write time.
+// model/policyRules.ts is the single home of document validation (core
+// re-exports its types). A scalar value satisfies no rego in/notIn branch, so
+// the condition never fires and a deny silently does nothing — refuse it at
+// write time.
 describe("normalizeCreatePolicyInput", () => {
   it("rejects a scalar value for in and notIn", () => {
     expect(() =>
@@ -42,6 +44,53 @@ describe("normalizeCreatePolicyInput", () => {
     ).not.toThrow();
     expect(() =>
       normalizeCreatePolicyInput(policyWith("equals", "oncall")),
+    ).not.toThrow();
+  });
+
+  it("carries the mode on the policy document", () => {
+    expect(
+      normalizeRulesPolicyDocument({ version: 1, mode: "enforce", rules: [] }),
+    ).toEqual({ version: 1, mode: "enforce", rules: [] });
+    expect(normalizeRulesPolicyDocument({ version: 1, rules: [] })).toEqual({
+      version: 1,
+      rules: [],
+    });
+    expect(() =>
+      normalizeRulesPolicyDocument({ version: 1, mode: "watch", rules: [] }),
+    ).toThrow("policy document mode");
+  });
+
+  it("rejects unknown resource selector keys", () => {
+    expect(() =>
+      normalizeRulesPolicyDocument({
+        version: 1,
+        rules: [
+          {
+            effect: "deny",
+            actions: ["workspace.exec"],
+            resources: { toolName: ["bash"] },
+          },
+        ],
+      }),
+    ).toThrow("policy rules[0].resources.toolName is not supported");
+  });
+
+  it("rejects heterogeneous condition value arrays", () => {
+    const documentWithValue = (value: unknown) => ({
+      version: 1,
+      rules: [
+        {
+          effect: "deny",
+          actions: ["tool.call"],
+          conditions: [{ attribute: "stage", operator: "in", value: value }],
+        },
+      ],
+    });
+    expect(() =>
+      normalizeRulesPolicyDocument(documentWithValue(["prod", 1, true])),
+    ).toThrow("policy rules[0].conditions[0].value is invalid");
+    expect(() =>
+      normalizeRulesPolicyDocument(documentWithValue(["prod", "staging"])),
     ).not.toThrow();
   });
 });
