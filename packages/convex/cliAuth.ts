@@ -1,13 +1,16 @@
 /**
- * WorkOS-backed CLI login codes and bearer tokens.
+ * WorkOS-backed CLI login codes and bearer tokens, plus the HTTP exchange
+ * endpoint that swaps a one-time login code for a token.
  */
 
 import { v } from "convex/values";
 import {
+  httpAction,
   internalMutation,
   mutation,
   type MutationCtx,
 } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authKit } from "./auth";
 import { slugifyName } from "./lib/slug";
@@ -74,25 +77,6 @@ type OnboardingOrg = {
   accountStatus: "active" | "disabled" | "missing";
 };
 
-function randomToken(prefix: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-
-  return `${prefix}${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 /** Mint a short-lived one-time login code for the authenticated user's active org. */
 export const createLoginCode = mutation({
   args: {},
@@ -137,6 +121,96 @@ export const createLoginCode = mutation({
 
     return { code: code, expiresAt: expiresAt };
   },
+});
+
+/** Creates a new org for the CLI token user and switches the token to it. */
+export const createOnboardingOrg = internalMutation({
+  args: {
+    tokenHash: v.string(),
+    name: v.string(),
+  },
+  returns: v.union(v.null(), onboardingContextValidator),
+  handler: async (ctx, args) => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    if (!resolved) return null;
+    const { token } = resolved;
+    const user = await userForAuthId(ctx, token.authId);
+    if (!user) throw new Error("CLI token user was not found");
+    const name = args.name.trim();
+    if (!name) throw new Error("Organization name is required");
+
+    const now = Date.now();
+    const slug = await uniqueOrgSlug(ctx, name);
+    const orgId = await ctx.db.insert("orgs", {
+      name: name,
+      slug: slug,
+      ownerAuthId: token.authId,
+      plan: "free",
+      createdAt: now,
+    });
+    await ctx.db.insert("orgMembers", {
+      orgId: orgId,
+      userId: user._id,
+      role: "owner",
+      createdAt: now,
+    });
+    const accountId = await ctx.db.insert("accounts", {
+      orgId: orgId,
+      username: slug,
+      description: `Broods org ${name}`,
+      secretHash: await sha256Hex(randomToken("fp_acct_")),
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.patch(user._id, { activeOrgId: orgId });
+    await ctx.db.patch(token._id, {
+      orgId: orgId,
+      accountId: accountId,
+      lastUsedAt: now,
+    });
+
+    return await onboardingContext(ctx, token.authId, orgId);
+  },
+});
+
+/** HTTP exchange endpoint: swap a one-time WorkOS-backed login code for a CLI token. */
+export const exchange = httpAction(async (ctx, req) => {
+  if (req.method !== "POST") {
+    return json({ error: "Method not allowed" }, 405);
+  }
+
+  let body: { code?: unknown };
+  try {
+    body = (await req.json()) as { code?: unknown };
+  } catch {
+    return json({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  if (typeof body.code !== "string" || !body.code.trim()) {
+    return json({ error: "Request body must include code" }, 400);
+  }
+
+  try {
+    const result: Record<string, unknown> = await ctx.runMutation(
+      internal.cliAuth.exchangeLoginCode,
+      {
+        code: body.code,
+      },
+    );
+
+    return json(result);
+  } catch (error) {
+    console.error("CLI login exchange failed", error);
+    if (
+      error instanceof Error &&
+      error.message.includes("CLI login code is invalid or expired")
+    ) {
+      return json({ error: "Login code is invalid or expired" }, 400);
+    }
+
+    return json({ error: "Login exchange failed" }, 500);
+  }
 });
 
 /** Exchange a one-time code for a long-lived CLI bearer token. */
@@ -216,6 +290,22 @@ export const exchangeLoginCode = internalMutation({
   },
 });
 
+/** Returns selectable orgs and projects for the current CLI token context. */
+export const getOnboardingContext = internalMutation({
+  args: { tokenHash: v.string() },
+  returns: v.union(v.null(), onboardingContextValidator),
+  handler: async (ctx, args) => {
+    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
+    if (!resolved) return null;
+
+    return await onboardingContext(
+      ctx,
+      resolved.token.authId,
+      resolved.token.orgId,
+    );
+  },
+});
+
 /**
  * Resolve a CLI token to the account secret hash used by existing sync code.
  * Touches lastUsedAt at a coarse interval to avoid write contention.
@@ -246,22 +336,6 @@ export const resolveCliToken = internalMutation({
       authId: token.authId,
       orgId: token.orgId,
     };
-  },
-});
-
-/** Returns selectable orgs and projects for the current CLI token context. */
-export const getOnboardingContext = internalMutation({
-  args: { tokenHash: v.string() },
-  returns: v.union(v.null(), onboardingContextValidator),
-  handler: async (ctx, args) => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
-    if (!resolved) return null;
-
-    return await onboardingContext(
-      ctx,
-      resolved.token.authId,
-      resolved.token.orgId,
-    );
   },
 });
 
@@ -309,108 +383,11 @@ export const selectOnboardingOrg = internalMutation({
   },
 });
 
-/** Creates a new org for the CLI token user and switches the token to it. */
-export const createOnboardingOrg = internalMutation({
-  args: {
-    tokenHash: v.string(),
-    name: v.string(),
-  },
-  returns: v.union(v.null(), onboardingContextValidator),
-  handler: async (ctx, args) => {
-    const resolved = await resolveActiveCliToken(ctx, args.tokenHash);
-    if (!resolved) return null;
-    const { token } = resolved;
-    const user = await userForAuthId(ctx, token.authId);
-    if (!user) throw new Error("CLI token user was not found");
-    const name = args.name.trim();
-    if (!name) throw new Error("Organization name is required");
-
-    const now = Date.now();
-    const slug = await uniqueOrgSlug(ctx, name);
-    const orgId = await ctx.db.insert("orgs", {
-      name: name,
-      slug: slug,
-      ownerAuthId: token.authId,
-      plan: "free",
-      createdAt: now,
-    });
-    await ctx.db.insert("orgMembers", {
-      orgId: orgId,
-      userId: user._id,
-      role: "owner",
-      createdAt: now,
-    });
-    const accountId = await ctx.db.insert("accounts", {
-      orgId: orgId,
-      username: slug,
-      description: `Broods org ${name}`,
-      secretHash: await sha256Hex(randomToken("fp_acct_")),
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
-    await ctx.db.patch(user._id, { activeOrgId: orgId });
-    await ctx.db.patch(token._id, {
-      orgId: orgId,
-      accountId: accountId,
-      lastUsedAt: now,
-    });
-
-    return await onboardingContext(ctx, token.authId, orgId);
-  },
-});
-
-async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
-  const token = await ctx.db
-    .query("cliTokens")
-    .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
-    .unique();
-  const now = Date.now();
-  if (
-    !token ||
-    token.status !== "active" ||
-    (token.expiresAt !== undefined && token.expiresAt < now)
-  ) {
-    return null;
-  }
-
-  const account = await ctx.db.get(token.accountId);
-  if (!account || account.status !== "active") return null;
-
-  if (
-    token.lastUsedAt === undefined ||
-    now - token.lastUsedAt >= CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS
-  ) {
-    await ctx.db.patch(token._id, { lastUsedAt: now });
-  }
-
-  return { token: token, account: account };
-}
-
-async function uniqueOrgSlug(
-  ctx: MutationCtx,
-  baseName: string,
-): Promise<string> {
-  const baseSlug = slugifyName(baseName);
-  let suffix = 0;
-  while (true) {
-    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
-    const existing = await ctx.db
-      .query("orgs")
-      .withIndex("by_slug", (q) => q.eq("slug", candidate))
-      .first();
-    if (!existing) return candidate;
-    suffix += 1;
-  }
-}
-
-async function userForAuthId(ctx: MutationCtx, authId: string) {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-
-  return user ?? null;
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status: status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function onboardingContext(
@@ -477,4 +454,76 @@ async function onboardingContext(
       name: user.name,
     },
   };
+}
+
+function randomToken(prefix: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+
+  return `${prefix}${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
+  const token = await ctx.db
+    .query("cliTokens")
+    .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
+    .unique();
+  const now = Date.now();
+  if (
+    !token ||
+    token.status !== "active" ||
+    (token.expiresAt !== undefined && token.expiresAt < now)
+  ) {
+    return null;
+  }
+
+  const account = await ctx.db.get(token.accountId);
+  if (!account || account.status !== "active") return null;
+
+  if (
+    token.lastUsedAt === undefined ||
+    now - token.lastUsedAt >= CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS
+  ) {
+    await ctx.db.patch(token._id, { lastUsedAt: now });
+  }
+
+  return { token: token, account: account };
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+
+  return [...new Uint8Array(hash)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function uniqueOrgSlug(
+  ctx: MutationCtx,
+  baseName: string,
+): Promise<string> {
+  const baseSlug = slugifyName(baseName);
+  let suffix = 0;
+  while (true) {
+    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix}`;
+    const existing = await ctx.db
+      .query("orgs")
+      .withIndex("by_slug", (q) => q.eq("slug", candidate))
+      .first();
+    if (!existing) return candidate;
+    suffix += 1;
+  }
+}
+
+async function userForAuthId(ctx: MutationCtx, authId: string) {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+
+  return user ?? null;
 }

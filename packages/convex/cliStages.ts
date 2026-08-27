@@ -1,15 +1,26 @@
 /**
- * Stage listing and creation for the `broods stage` commands.
+ * Stage listing and creation for the `broods stage` commands, plus their HTTP
+ * endpoint.
  *
  * Creation reuses the dashboard's `duplicateStageContents`, so a cloned
  * stage carries the same agent configs, custom tools, canvas layout and
  * environment variables the dashboard duplicate button produces.
+ *
+ * Stage management spans every stage of a project, so the HTTP endpoint
+ * authenticates with a `broods login` token rather than a stage-scoped
+ * deploy key.
  */
 
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+  httpAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { sha256Hex } from "./model/accountSecrets";
 import { duplicateStageContents, stageKindForName } from "./stage";
 import { stageNameEquals, resolveProject } from "./model/projectScope";
 
@@ -37,39 +48,6 @@ const stageValidator = v.object({
   agentCount: v.number(),
   variableCount: v.number(),
   updatedAt: v.number(),
-});
-
-export const listByAccount = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    project: v.string(),
-  },
-  returns: v.union(v.null(), v.array(stageValidator)),
-  handler: async (ctx, args) => {
-    const projectDoc = await projectForAccount(
-      ctx,
-      args.accountId,
-      args.project,
-    );
-    if (!projectDoc) return null;
-
-    const stageDocs = await ctx.db
-      .query("stages")
-      .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
-      .collect();
-    const stages = [];
-    for (const stage of stageDocs) {
-      stages.push(await summarize(ctx, projectDoc._id, stage));
-    }
-
-    return stages.sort((a, b) =>
-      a.isDefault !== b.isDefault
-        ? a.isDefault
-          ? -1
-          : 1
-        : a.name.localeCompare(b.name),
-    );
-  },
 });
 
 export const createByAccount = internalMutation({
@@ -148,6 +126,139 @@ export const createByAccount = internalMutation({
     };
   },
 });
+
+/** HTTP endpoint for `broods stage list` and `broods stage create`. */
+export const httpHandle = httpAction(async (ctx, req) => {
+  try {
+    const auth = await bearerAuth(req);
+    if (!auth) {
+      return json({ error: "Authorization Bearer token is required" }, 401);
+    }
+
+    const resolved = await ctx.runMutation(internal.cliAuth.resolveCliToken, {
+      tokenHash: auth.secretHash,
+    });
+    if (!resolved) {
+      return json(
+        { error: "Stage commands require a `broods login` token" },
+        401,
+      );
+    }
+
+    if (req.method === "GET") {
+      const project = new URL(req.url).searchParams.get("project") ?? "";
+      if (!project.trim()) {
+        return json({ error: "A project query parameter is required" }, 400);
+      }
+      const stages = await ctx.runQuery(internal.cliStages.listByAccount, {
+        accountId: resolved.accountId,
+        project: project,
+      });
+
+      return stages
+        ? json({ stages: stages })
+        : json({ error: `Project ${project} was not found` }, 404);
+    }
+
+    if (req.method === "POST") {
+      const body = (await req.json()) as {
+        project?: unknown;
+        name?: unknown;
+        from?: unknown;
+      };
+      if (typeof body.project !== "string" || !body.project.trim()) {
+        return json({ error: "Request body must include a project" }, 400);
+      }
+      if (typeof body.name !== "string" || !body.name.trim()) {
+        return json({ error: "Request body must include a name" }, 400);
+      }
+      if (body.from !== undefined && typeof body.from !== "string") {
+        return json({ error: "`from` must be a stage name" }, 400);
+      }
+      const created = await ctx.runMutation(
+        internal.cliStages.createByAccount,
+        {
+          accountId: resolved.accountId,
+          project: body.project,
+          name: body.name,
+          ...(body.from ? { duplicateFrom: body.from } : {}),
+        },
+      );
+
+      return created
+        ? json(created)
+        : json({ error: `Project ${body.project} was not found` }, 404);
+    }
+
+    return json({ error: "Method not allowed" }, 405);
+  } catch (error) {
+    console.error("CLI stage request failed", error);
+    if (error instanceof SyntaxError) {
+      return json({ error: "Request body must be valid JSON" }, 400);
+    }
+
+    return json(
+      {
+        error: error instanceof Error ? error.message : "Stage request failed",
+      },
+      400,
+    );
+  }
+});
+
+export const listByAccount = internalQuery({
+  args: {
+    accountId: v.id("accounts"),
+    project: v.string(),
+  },
+  returns: v.union(v.null(), v.array(stageValidator)),
+  handler: async (ctx, args) => {
+    const projectDoc = await projectForAccount(
+      ctx,
+      args.accountId,
+      args.project,
+    );
+    if (!projectDoc) return null;
+
+    const stageDocs = await ctx.db
+      .query("stages")
+      .withIndex("by_projectId", (q) => q.eq("projectId", projectDoc._id))
+      .collect();
+    const stages = [];
+    for (const stage of stageDocs) {
+      stages.push(await summarize(ctx, projectDoc._id, stage));
+    }
+
+    return stages.sort((a, b) =>
+      a.isDefault !== b.isDefault
+        ? a.isDefault
+          ? -1
+          : 1
+        : a.name.localeCompare(b.name),
+    );
+  },
+});
+
+async function bearerAuth(
+  req: Request,
+): Promise<{ secretHash: string } | null> {
+  const header = req.headers.get("Authorization") ?? "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return {
+    secretHash: await sha256Hex(match[1]),
+  };
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status: status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 async function projectForAccount(
   ctx: MutationCtx | QueryCtx,

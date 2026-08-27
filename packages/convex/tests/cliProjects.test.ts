@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest, type TestConvex } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 const AUTH_ID = "auth_owner";
 

@@ -1,12 +1,12 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
-import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { collectUsageRollups, usageGrainForBinSeconds } from "./logs";
-import schema from "./schema";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import { collectUsageRollups, usageGrainForBinSeconds } from "../logs";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 const ENDPOINT_ID = "ep-usage-test";
 

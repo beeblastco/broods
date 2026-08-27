@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import type { DataModel, Id } from "./_generated/dataModel";
-import schema from "./schema";
-import { deleteStageContents } from "./stage";
+import type { DataModel, Id } from "../_generated/dataModel";
+import schema from "../schema";
+import { deleteStageContents } from "../stage";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 const cascadeTest = () => convexTest(schema, modules);
 

@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
-import { purgeProject } from "./model/cascade";
-import { workspaceNamespace } from "./model/workspaceRules";
-import schema from "./schema";
+import { purgeProject } from "../model/cascade";
+import { workspaceNamespace } from "../model/workspaceRules";
+import schema from "../schema";
 
 const { mockS3Client, mockSend, mockSchedulerClient, mockSchedulerSend } =
   vi.hoisted(() => {
@@ -22,13 +22,13 @@ const { mockS3Client, mockSend, mockSchedulerClient, mockSchedulerSend } =
     };
   });
 
-vi.mock("./model/aws", () => ({
+vi.mock("../model/aws", () => ({
   assumeScopedS3Credentials: vi.fn(),
   s3Client: mockS3Client,
   schedulerClient: mockSchedulerClient,
 }));
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 test("project deletion purges its managed workspace namespace", async () => {
   const originalFilesystemBucketName = process.env.FILESYSTEM_BUCKET_NAME;

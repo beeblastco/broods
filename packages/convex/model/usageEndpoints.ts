@@ -4,9 +4,9 @@
  * `logs.ts` queries can call it directly.
  */
 
-import type { Id } from "./_generated/dataModel";
-import { type QueryCtx } from "./_generated/server";
-import { getOwnedProject } from "./model/ownership/project";
+import type { Id } from "../_generated/dataModel";
+import { type QueryCtx } from "../_generated/server";
+import { getOwnedProject } from "./ownership/project";
 
 /**
  * Active deployment endpointIds for a project, optionally narrowed to a single

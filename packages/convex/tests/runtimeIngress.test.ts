@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import type { Id } from "./_generated/dataModel";
-import { internal } from "./_generated/api";
-import schema from "./schema";
+import type { Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 /** Creates an isolated Convex test runtime. */
 function runtimeTest() {

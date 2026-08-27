@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test, vi } from "vitest";
-import { purgeOrg } from "./model/cascade";
-import schema from "./schema";
+import { purgeOrg } from "../model/cascade";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 test("org deletion drains account contents in scheduled batches", async () => {
   vi.useFakeTimers();

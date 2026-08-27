@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
-import type { Id } from "./_generated/dataModel";
-import { uniqueProjectSlug, type ProjectOwner } from "./lib/slug";
-import schema from "./schema";
+import type { Id } from "../_generated/dataModel";
+import { uniqueProjectSlug, type ProjectOwner } from "../lib/slug";
+import schema from "../schema";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 const t = () => convexTest(schema, modules);
 type T = ReturnType<typeof t>;

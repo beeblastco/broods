@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   fromNestedAgentConfig,
   toNestedAgentConfig,
-} from "./model/agentConfigCodec";
+} from "../model/agentConfigCodec";
 
 describe("agent config codec", () => {
   // `scheduler` has no flat column, so it only survives a sync by riding in

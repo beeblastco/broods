@@ -1,13 +1,13 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import type { Id } from "./_generated/dataModel";
-import type { OrgRole } from "./model/ownership/org";
-import { getProjectForRole } from "./model/ownership/project";
-import schema from "./schema";
-import { listStagesForProject } from "./stage";
+import type { Id } from "../_generated/dataModel";
+import type { OrgRole } from "../model/ownership/org";
+import { getProjectForRole } from "../model/ownership/project";
+import schema from "../schema";
+import { listStagesForProject } from "../stage";
 
-const modules = import.meta.glob("./**/*.ts");
+const modules = import.meta.glob("../**/*.ts");
 
 const OWNER_AUTH_ID = "auth_owner";
 const MEMBER_AUTH_ID = "auth_member";

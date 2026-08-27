@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { projectEndpointIds } from "./logsHelpers";
+import { projectEndpointIds } from "./model/usageEndpoints";
 import { type UsageGrain } from "./usage";
 
 const usageRange = v.union(
