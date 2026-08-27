@@ -29,6 +29,14 @@ const CHANNEL_CONFIG_KEYS = [
   "sandboxImages",
   "tagRoles",
 ] as const;
+
+const CHANNEL_RECORD_UPDATE_KEYS = [
+  "name",
+  "description",
+  "workspaceRef",
+  "config",
+  "status",
+] as const;
 export type ChannelReplyIn = (typeof CHANNEL_REPLY_TARGETS)[number];
 
 export interface ChannelAgentBinding {
@@ -193,14 +201,14 @@ export function normalizeChannelRecordConfig(
   value: unknown,
 ): ChannelRecordConfig {
   if (!isPlainObject(value)) {
-    throw new Error("channel config must be an object");
+    throw new Error("config must be an object");
   }
   const config = value as Record<string, unknown>;
   for (const key of Object.keys(config)) {
     if (
       !CHANNEL_CONFIG_KEYS.includes(key as (typeof CHANNEL_CONFIG_KEYS)[number])
     ) {
-      throw new Error(`channel config.${key} is not supported`);
+      throw new Error(`config.${key} is not supported`);
     }
   }
 
@@ -256,6 +264,17 @@ export function normalizeUpdateChannelRecordInput(
 ): UpdateChannelRecordInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const input = value as Record<string, unknown>;
+  // Without this a typo like `descripton` normalizes to {} and PATCH answers
+  // 200 having changed nothing.
+  for (const key of Object.keys(input)) {
+    if (
+      !CHANNEL_RECORD_UPDATE_KEYS.includes(
+        key as (typeof CHANNEL_RECORD_UPDATE_KEYS)[number],
+      )
+    ) {
+      throw new Error(`${key} is not supported`);
+    }
+  }
   const patch: UpdateChannelRecordInput = {};
   if (input.name !== undefined) patch.name = requireString(input.name, "name");
   if (input.description !== undefined) {

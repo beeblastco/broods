@@ -239,6 +239,52 @@ describe("agent rules", () => {
     ).toThrow("config.channels.zalo.webhookSecret must be 8 to 256 characters");
   });
 
+  it("validates harness configs against core's contract", () => {
+    expect(
+      normalizeAgentConfig({
+        harness: { type: "claude-code", permissionMode: "allow-edits" },
+        sandbox: "sandbox_1",
+      }),
+    ).toEqual({
+      harness: { type: "claude-code", permissionMode: "allow-edits" },
+      sandbox: "sandbox_1",
+    });
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "claude-code", turbo: true },
+        sandbox: "sandbox_1",
+      }),
+    ).toThrow('config.harness has unknown option "turbo"');
+    expect(() =>
+      normalizeAgentConfig({ harness: { type: "claude-code" } }),
+    ).toThrow("config.sandbox is required for the claude-code harness");
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "codex", permissionMode: "allow-edits" },
+        sandbox: "sandbox_1",
+      }),
+    ).toThrow(
+      "config.harness.permissionMode must be allow-all for the codex harness",
+    );
+    expect(() =>
+      normalizeAgentConfig({
+        harness: { type: "pi", startupTimeoutMs: 1_000 },
+        sandbox: "sandbox_1",
+      }),
+    ).toThrow(
+      "config.harness.startupTimeoutMs is not supported by the pi harness",
+    );
+  });
+
+  it("validates subagent visibility and denyTools", () => {
+    expect(() =>
+      normalizeAgentConfig({ subagent: { visibility: "steps" } }),
+    ).toThrow("config.subagent.visibility must be one of: full, result, none");
+    expect(() => normalizeAgentConfig({ denyTools: "bash" })).toThrow(
+      "config.denyTools must be an array of non-empty strings",
+    );
+  });
+
   it("validates subagent event streaming across full, create, update, and patch inputs", () => {
     expect(
       normalizeAgentConfig({ subagent: { stream: true } }).subagent,

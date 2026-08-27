@@ -21,6 +21,19 @@ export type { AccountModelProviderName } from "./modelProviders";
 
 export type AgentConfig = Record<string, unknown> & {
   agent?: Record<string, unknown>;
+  harness?: {
+    activeTools?: string[];
+    debug?: {
+      enabled?: boolean;
+      level?: (typeof AGENT_HARNESS_DEBUG_LEVELS)[number];
+      subsystems?: string[];
+    };
+    inactiveTools?: string[];
+    type: (typeof AGENT_HARNESS_TYPES)[number];
+    permissionMode?: (typeof AGENT_HARNESS_PERMISSION_MODES)[number];
+    startupTimeoutMs?: number;
+    webSearch?: boolean;
+  };
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandbox?: string;
@@ -29,6 +42,7 @@ export type AgentConfig = Record<string, unknown> & {
   hooks?: Record<string, unknown>;
   channels?: Record<string, unknown>;
   tools?: Record<string, unknown>;
+  denyTools?: string[];
   skills?: { enabled?: boolean; allowed?: string[]; [key: string]: unknown };
   subagent?: {
     enabled?: boolean;
@@ -36,6 +50,7 @@ export type AgentConfig = Record<string, unknown> & {
     context?: "new" | "inherited";
     mode?: "ephemeral" | "persistent";
     stream?: boolean;
+    visibility?: "full" | "result" | "none";
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
@@ -50,7 +65,39 @@ export interface AgentWorkspaceRef {
 }
 
 const AGENT_MAX_TURN_LIMIT = 100;
+const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+// Harness vocabulary mirrors core's apps/core/src/shared/domain/agent-config.ts
+// (the runtime source of truth for these rules); change both together.
+const AGENT_HARNESS_TYPES = [
+  "claude-code",
+  "codex",
+  "deepagents",
+  "opencode",
+  "pi",
+] as const;
+const AGENT_HARNESS_DEBUG_LEVELS = [
+  "error",
+  "warn",
+  "info",
+  "debug",
+  "trace",
+] as const;
+const AGENT_HARNESS_PERMISSION_MODES = [
+  "allow-reads",
+  "allow-edits",
+  "allow-all",
+] as const;
+const AGENT_HARNESS_KEYS = new Set([
+  "activeTools",
+  "debug",
+  "inactiveTools",
+  "permissionMode",
+  "startupTimeoutMs",
+  "type",
+  "webSearch",
+]);
+const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Deprecated public account-tool id prefix. It is neither a native Convex id
 // nor a provider tool name, so it must not fall through as one.
@@ -136,14 +183,21 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
 
   const config = value as AgentConfig;
   normalizeAgentBehaviorConfig(config.agent);
+  normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
+  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
+    throw new Error(
+      `config.sandbox is required for the ${String(config.harness.type)} harness`,
+    );
+  }
   normalizeWorkspaceRefs(config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
+  assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
@@ -157,6 +211,19 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
     config.policies = policies;
   } else {
     delete config.policies;
+  }
+  if (isPlainObject(config.harness) && config.policies !== undefined) {
+    throw new Error("config.policies is not supported with config.harness");
+  }
+  if (
+    isPlainObject(config.harness) &&
+    isPlainObject(config.model) &&
+    isPlainObject(config.model.output) &&
+    config.model.output.type !== "text"
+  ) {
+    throw new Error(
+      "config.model.output structured output is not supported with config.harness",
+    );
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
@@ -306,6 +373,90 @@ function validateAgentSystemConfig(value: unknown): void {
       );
     }
   }
+}
+
+// Mirrors core's normalizeHarnessConfig in
+// apps/core/src/shared/domain/agent-config.ts; same messages on purpose.
+function normalizeHarnessConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new Error("config.harness must be an object");
+  const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!AGENT_HARNESS_KEYS.has(key))
+      throw new Error(`config.harness has unknown option "${key}"`);
+  }
+  if (
+    typeof config.type !== "string" ||
+    !AGENT_HARNESS_TYPES.includes(
+      config.type as (typeof AGENT_HARNESS_TYPES)[number],
+    )
+  ) {
+    throw new Error(
+      `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
+    );
+  }
+  assertOptionalEnum(
+    config.permissionMode,
+    "config.harness.permissionMode",
+    AGENT_HARNESS_PERMISSION_MODES,
+  );
+  assertOptionalPositiveInteger(
+    config.startupTimeoutMs,
+    "config.harness.startupTimeoutMs",
+    AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
+  );
+  assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
+  assertOptionalStringArray(config.activeTools, "config.harness.activeTools");
+  assertOptionalStringArray(
+    config.inactiveTools,
+    "config.harness.inactiveTools",
+  );
+  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
+    throw new Error(
+      "config.harness must use either activeTools or inactiveTools, not both",
+    );
+  }
+  normalizeHarnessDebugConfig(config.debug);
+  if (
+    config.type === "codex" &&
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      "config.harness.permissionMode must be allow-all for the codex harness",
+    );
+  }
+  if (config.type !== "codex" && config.webSearch !== undefined) {
+    throw new Error(
+      "config.harness.webSearch is only supported by the codex harness",
+    );
+  }
+  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
+    throw new Error(
+      "config.harness.startupTimeoutMs is not supported by the pi harness",
+    );
+  }
+}
+
+function normalizeHarnessDebugConfig(value: unknown): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value))
+    throw new Error("config.harness.debug must be an object");
+  for (const key of Object.keys(value)) {
+    if (!AGENT_HARNESS_DEBUG_KEYS.has(key))
+      throw new Error(`config.harness.debug has unknown option "${key}"`);
+  }
+  assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
+  assertOptionalEnum(
+    value.level,
+    "config.harness.debug.level",
+    AGENT_HARNESS_DEBUG_LEVELS,
+  );
+  assertOptionalStringArray(
+    value.subsystems,
+    "config.harness.debug.subsystems",
+  );
 }
 
 function normalizeModelConfig(value: unknown): void {
@@ -640,6 +791,11 @@ function normalizeSubagentConfig(value: unknown): void {
   assertOptionalEnum(config.mode, "config.subagent.mode", [
     "ephemeral",
     "persistent",
+  ]);
+  assertOptionalEnum(config.visibility, "config.subagent.visibility", [
+    "full",
+    "result",
+    "none",
   ]);
 }
 
