@@ -3,7 +3,7 @@
  * Transport parsing stays in core; this module owns atomic admission and state transitions.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -18,7 +18,6 @@ import {
   ingressStatusValidator,
 } from "./schema";
 
-const MAX_DRAIN_ENVELOPES = 100;
 const CLEAR_BATCH_SIZE = 100;
 
 // Statuses maintenance may still expire. Terminal rows (completed/failed/
@@ -32,12 +31,9 @@ const EXPIRABLE_STATUSES = [
   "processing",
 ] as const;
 
-const ownerRenewalResultValidator = v.union(
-  v.literal("renewed"),
-  v.literal("stopped"),
-  v.literal("stale"),
-);
+const MAX_DRAIN_ENVELOPES = 100;
 
+// appliedEnvelopeValidator stays ahead of admissionResultValidator, which embeds it.
 const appliedEnvelopeValidator = v.object({
   eventId: v.string(),
   events: v.array(v.any()),
@@ -69,6 +65,12 @@ const admissionResultValidator = v.object({
   recovered: v.optional(appliedEnvelopeValidator),
 });
 
+const channelTargetValidator = v.object({
+  agentConfig: v.any(),
+  channelName: v.string(),
+  source: v.record(v.string(), v.any()),
+});
+
 const ingressStatusResultValidator = v.object({
   eventId: v.string(),
   conversationKey: v.string(),
@@ -92,11 +94,11 @@ const ingressStatusResultValidator = v.object({
   ),
 });
 
-const channelTargetValidator = v.object({
-  agentConfig: v.any(),
-  channelName: v.string(),
-  source: v.record(v.string(), v.any()),
-});
+const ownerRenewalResultValidator = v.union(
+  v.literal("renewed"),
+  v.literal("stopped"),
+  v.literal("stale"),
+);
 
 type PublicDeploymentIngress = {
   accountId: string;
@@ -104,339 +106,6 @@ type PublicDeploymentIngress = {
   stageSlug: string;
   projectSlug: string;
 };
-
-/** Extracts the account ID from an account-scoped runtime key. */
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
-
-function publicDeploymentIngressFromDelivery(
-  delivery: unknown,
-): PublicDeploymentIngress | undefined {
-  if (!isPlainObject(delivery)) return undefined;
-  const record = delivery;
-  if (
-    record.kind !== "http" &&
-    record.kind !== "async" &&
-    record.kind !== "websocket"
-  ) {
-    return undefined;
-  }
-  const marker = record.publicDeploymentIngress;
-  if (!isPlainObject(marker)) return undefined;
-  const value = marker;
-  if (
-    typeof value.accountId !== "string" ||
-    typeof value.endpointId !== "string" ||
-    typeof value.stageSlug !== "string" ||
-    typeof value.projectSlug !== "string"
-  ) {
-    return undefined;
-  }
-
-  return {
-    accountId: value.accountId,
-    endpointId: value.endpointId,
-    stageSlug: value.stageSlug,
-    projectSlug: value.projectSlug,
-  };
-}
-
-/** Requires the account to exist and remain active in the write transaction. */
-async function requireActiveAccount(
-  ctx: MutationCtx,
-  accountId: string,
-): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
-}
-
-/** Verifies that server-derived account and agent scope match the conversation key. */
-function assertConversationScope(
-  accountId: string,
-  agentId: string,
-  conversationKey: string,
-): void {
-  if (accountIdFromKey(conversationKey) !== accountId) {
-    throw new Error("Runtime conversation does not belong to accountId");
-  }
-  if (!conversationKey.includes(`:agent:${agentId}:`)) {
-    throw new Error("Runtime conversation does not belong to agentId");
-  }
-}
-
-/** Hashes the one canonical tenant/agent/conversation idempotency identity. */
-async function canonicalIdentity(options: {
-  accountId: string;
-  agentId: string;
-  conversationKey: string;
-  idempotencyKey: string;
-}): Promise<string> {
-  const value = JSON.stringify([
-    options.accountId,
-    options.agentId,
-    options.conversationKey,
-    options.idempotencyKey,
-  ]);
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-/** Loads the single coordinator row for a conversation. */
-async function getCoordinator(
-  ctx: QueryCtx | MutationCtx,
-  conversationKey: string,
-): Promise<Doc<"runtimeConversationCoordinators"> | null> {
-  return await ctx.db
-    .query("runtimeConversationCoordinators")
-    .withIndex("by_conversationKey", (q) =>
-      q.eq("conversationKey", conversationKey),
-    )
-    .unique();
-}
-
-/** Inserts a new zeroed coordinator when the conversation has no state yet. */
-async function createCoordinator(
-  ctx: MutationCtx,
-  options: {
-    accountId: string;
-    agentId: string;
-    conversationKey: string;
-    now: number;
-  },
-): Promise<Doc<"runtimeConversationCoordinators">> {
-  const id = await ctx.db.insert("runtimeConversationCoordinators", {
-    accountId: options.accountId,
-    agentId: options.agentId,
-    conversationKey: options.conversationKey,
-    nextSequence: 1,
-    ownerGeneration: 0,
-    queuedCount: 0,
-    queuedBytes: 0,
-    updatedAt: options.now,
-  });
-
-  return (await ctx.db.get(id))!;
-}
-
-/** Returns whether the coordinator currently has an unexpired owner. */
-function hasActiveOwner(
-  coordinator: Doc<"runtimeConversationCoordinators">,
-  now: number,
-): boolean {
-  return Boolean(
-    coordinator.ownerEventId &&
-    coordinator.leaseExpiresAt &&
-    coordinator.leaseExpiresAt >= now,
-  );
-}
-
-/** The leading run of rows that share the first row's requestedMode. */
-function contiguousModePrefix(
-  rows: Doc<"runtimeIngressEnvelopes">[],
-): Doc<"runtimeIngressEnvelopes">[] {
-  if (rows.length === 0) return [];
-  const end = rows.findIndex(
-    (row) => row.requestedMode !== rows[0]!.requestedMode,
-  );
-
-  return end === -1 ? rows : rows.slice(0, end);
-}
-
-/** Marks expired queued work terminal and returns adjusted queue counters. */
-async function expireQueuedEnvelopes(
-  ctx: MutationCtx,
-  coordinator: Doc<"runtimeConversationCoordinators">,
-  now: number,
-): Promise<{ queuedCount: number; queuedBytes: number }> {
-  const rows = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q
-        .eq("conversationKey", coordinator.conversationKey)
-        .eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
-  let expiredCount = 0;
-  let expiredBytes = 0;
-  for (const row of rows) {
-    if (row.expiresAt > now) continue;
-    expiredCount += 1;
-    expiredBytes += row.sizeBytes;
-    await ctx.db.patch(row._id, {
-      status: "expired",
-      error: "Ingress expired before it reached a runnable boundary",
-      updatedAt: now,
-    });
-  }
-
-  return {
-    queuedCount: Math.max(0, coordinator.queuedCount - expiredCount),
-    queuedBytes: Math.max(0, coordinator.queuedBytes - expiredBytes),
-  };
-}
-
-/** Marks a crashed owner's nonterminal envelope expired before ownership recovery. */
-async function expireStaleOwner(
-  ctx: MutationCtx,
-  coordinator: Doc<"runtimeConversationCoordinators">,
-  now: number,
-): Promise<void> {
-  if (!coordinator.ownerEventId || !coordinator.leaseExpiresAt) return;
-  if (coordinator.leaseExpiresAt >= now) return;
-  const envelope = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_eventId", (q) => q.eq("eventId", coordinator.ownerEventId!))
-    .unique();
-  if (
-    envelope &&
-    envelope.conversationKey === coordinator.conversationKey &&
-    !["completed", "failed", "expired"].includes(envelope.status)
-  ) {
-    await ctx.db.patch(envelope._id, {
-      status: "expired",
-      error: "Conversation owner lease expired before completion",
-      updatedAt: now,
-    });
-  }
-}
-
-/**
- * Promotes the oldest runnable queued group (one follow-up, or a contiguous
- * collect/steer prefix) to processing under the supplied owner generation.
- */
-async function promoteQueuedGroup(
-  ctx: MutationCtx,
-  options: {
-    coordinator: Doc<"runtimeConversationCoordinators">;
-    queue: { queuedCount: number; queuedBytes: number };
-    now: number;
-    leaseTtlMs: number;
-    ownerGeneration: number;
-  },
-): Promise<{
-  eventId: string;
-  events: unknown[];
-  delivery: unknown;
-  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
-  appliedMode: "collect" | "followup";
-  appliedToEventId: string;
-  contributingEventIds: string[];
-  ownerGeneration: number;
-  agentConfig?: unknown;
-  ephemeralSystem?: unknown[];
-} | null> {
-  const { coordinator, queue, now } = options;
-  const rows = await ctx.db
-    .query("runtimeIngressEnvelopes")
-    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
-      q
-        .eq("conversationKey", coordinator.conversationKey)
-        .eq("status", "queued"),
-    )
-    .take(MAX_DRAIN_ENVELOPES);
-  const active = rows.filter((row) => row.expiresAt > now);
-  const first = active[0];
-  if (!first) return null;
-  // Collect batches by design; steer batches too — every queued steer aimed at
-  // the same dead run, so a contiguous prefix runs as one merged follow-up.
-  const batchable =
-    first.requestedMode === "collect" || first.requestedMode === "steer";
-  const selected = batchable ? contiguousModePrefix(active) : [first];
-  const appliedMode: "collect" | "followup" =
-    first.requestedMode === "collect" ? "collect" : "followup";
-  const appliedToEventId = first.eventId;
-  const eventIds = selected.map((row) => row.eventId);
-  const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
-  for (const row of selected) {
-    await ctx.db.patch(row._id, {
-      status: "processing",
-      appliedMode: appliedMode,
-      appliedToEventId: appliedToEventId,
-      applicationId: applicationId,
-      ownerGeneration: options.ownerGeneration,
-      updatedAt: now,
-    });
-  }
-  await ctx.db.insert("runtimeIngressApplications", {
-    accountId: coordinator.accountId,
-    conversationKey: coordinator.conversationKey,
-    applicationId: applicationId,
-    appliedMode: appliedMode,
-    appliedToEventId: appliedToEventId,
-    contributingEventIds: eventIds,
-    ownerGeneration: options.ownerGeneration,
-    createdAt: now,
-    expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
-  });
-  const removedBytes = selected.reduce(
-    (total, row) => total + row.sizeBytes,
-    0,
-  );
-  await ctx.db.patch(coordinator._id, {
-    ownerEventId: appliedToEventId,
-    ownerGeneration: options.ownerGeneration,
-    stopRequestedGeneration: undefined,
-    queuedCount: Math.max(0, queue.queuedCount - selected.length),
-    queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
-    leaseExpiresAt: now + options.leaseTtlMs,
-    updatedAt: now,
-  });
-
-  return {
-    eventId: appliedToEventId,
-    events: selected.flatMap((row) => row.events),
-    delivery: first.delivery,
-    requestedMode: first.requestedMode,
-    appliedMode: appliedMode,
-    appliedToEventId: appliedToEventId,
-    contributingEventIds: eventIds,
-    ownerGeneration: options.ownerGeneration,
-    ...(first.agentConfig !== undefined
-      ? { agentConfig: first.agentConfig }
-      : {}),
-    ...(first.ephemeralSystem !== undefined
-      ? { ephemeralSystem: first.ephemeralSystem }
-      : {}),
-  };
-}
-
-/** Requires the exact owner event and fencing generation for a mutation. */
-async function requireOwner(
-  ctx: QueryCtx | MutationCtx,
-  options: {
-    conversationKey: string;
-    ownerEventId: string;
-    ownerGeneration: number;
-    now?: number;
-  },
-): Promise<Doc<"runtimeConversationCoordinators">> {
-  const coordinator = await getCoordinator(ctx, options.conversationKey);
-  const now = options.now ?? Date.now();
-  if (
-    !coordinator ||
-    coordinator.ownerEventId !== options.ownerEventId ||
-    coordinator.ownerGeneration !== options.ownerGeneration ||
-    !coordinator.leaseExpiresAt ||
-    coordinator.leaseExpiresAt < now
-  ) {
-    throw new Error("Stale conversation owner generation");
-  }
-
-  return coordinator;
-}
 
 /**
  * Atomically admits an ingress candidate, binds idempotency, and either owns or queues it.
@@ -464,7 +133,10 @@ export const accept = internalMutation({
     maxQueuedBytes: v.number(),
   },
   returns: admissionResultValidator,
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof admissionResultValidator>> => {
     await requireActiveAccount(ctx, args.accountId);
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     if (args.sizeBytes < 0)
@@ -646,107 +318,42 @@ export const accept = internalMutation({
   },
 });
 
-/** Returns the durable channel destination for one existing agent session. */
-export const getConversationTarget = internalQuery({
+/** Acquires a fenced clear lease only when no run or queued ingress exists. */
+export const acquireClear = internalMutation({
   args: {
-    accountId: v.string(),
+    accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
-  },
-  returns: v.union(channelTargetValidator, v.null()),
-  handler: async (
-    ctx,
-    args,
-  ): Promise<NonNullable<
-    Doc<"runtimeConversationCoordinators">["channelTarget"]
-  > | null> => {
-    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
-    const coordinator = await getCoordinator(ctx, args.conversationKey);
-    if (
-      !coordinator ||
-      coordinator.accountId !== args.accountId ||
-      coordinator.agentId !== args.agentId
-    ) {
-      return null;
-    }
-
-    return coordinator.channelTarget ?? null;
-  },
-});
-
-/** Renews the current owner or reports its generation-scoped stop request. */
-export const renewOwner = internalMutation({
-  args: {
-    conversationKey: v.string(),
     ownerEventId: v.string(),
-    ownerGeneration: v.number(),
     leaseTtlMs: v.number(),
   },
-  returns: ownerRenewalResultValidator,
-  handler: async (ctx, args) => {
+  returns: v.union(v.number(), v.null()),
+  handler: async (ctx, args): Promise<number | null> => {
+    await requireActiveAccount(ctx, args.accountId);
+    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const now = Date.now();
-    let coordinator: Doc<"runtimeConversationCoordinators">;
-    try {
-      coordinator = await requireOwner(ctx, { ...args, now: now });
-    } catch {
-      return "stale" as const;
-    }
-    if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
-      return "stopped" as const;
-    }
+    const coordinator =
+      (await getCoordinator(ctx, args.conversationKey)) ??
+      (await createCoordinator(ctx, {
+        accountId: args.accountId,
+        agentId: args.agentId,
+        conversationKey: args.conversationKey,
+        now: now,
+      }));
+    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
+    const generation = coordinator.ownerGeneration + 1;
     await ctx.db.patch(coordinator._id, {
+      ownerGeneration: generation,
+      ownerEventId: args.ownerEventId,
+      stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
+      queuedCount: queue.queuedCount,
+      queuedBytes: queue.queuedBytes,
       updatedAt: now,
     });
 
-    return "renewed" as const;
-  },
-});
-
-/** Releases ownership only when the caller still holds the current generation. */
-export const releaseOwner = internalMutation({
-  args: {
-    conversationKey: v.string(),
-    ownerEventId: v.string(),
-    ownerGeneration: v.number(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const coordinator = await getCoordinator(ctx, args.conversationKey);
-    if (
-      !coordinator ||
-      coordinator.ownerEventId !== args.ownerEventId ||
-      coordinator.ownerGeneration !== args.ownerGeneration
-    ) {
-      return false;
-    }
-    await ctx.db.patch(coordinator._id, {
-      ownerEventId: undefined,
-      stopRequestedGeneration: undefined,
-      leaseExpiresAt: undefined,
-      updatedAt: Date.now(),
-    });
-
-    return true;
-  },
-});
-
-/** Checks whether the supplied owner generation is still current and unexpired. */
-export const isCurrentOwner = internalQuery({
-  args: {
-    conversationKey: v.string(),
-    ownerEventId: v.string(),
-    ownerGeneration: v.number(),
-  },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    try {
-      await requireOwner(ctx, args);
-
-      return true;
-    } catch {
-      return false;
-    }
+    return generation;
   },
 });
 
@@ -760,7 +367,7 @@ export const appendConversationEvent = internalMutation({
     event: v.any(),
   },
   returns: v.null(),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<null> => {
     const coordinator = await requireOwner(ctx, args);
     await requireActiveAccount(ctx, coordinator.accountId);
     await ctx.db.insert("runtimeConversationEvents", {
@@ -783,7 +390,10 @@ export const applySteering = internalMutation({
     leaseTtlMs: v.number(),
   },
   returns: v.union(appliedEnvelopeValidator, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
     const now = Date.now();
     const coordinator = await requireOwner(ctx, { ...args, now: now });
     const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
@@ -857,98 +467,68 @@ export const applySteering = internalMutation({
   },
 });
 
-/** Applies the oldest runnable follow-up or contiguous collect/steer group. */
-export const takeNext = internalMutation({
+/** Clears one bounded history batch while the caller holds the clear lease. */
+export const clearConversation = internalMutation({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
-    leaseTtlMs: v.number(),
   },
-  returns: v.union(appliedEnvelopeValidator, v.null()),
-  handler: async (ctx, args) => {
-    const now = Date.now();
-    const coordinator = await requireOwner(ctx, { ...args, now: now });
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    const promoted = await promoteQueuedGroup(ctx, {
-      coordinator: coordinator,
-      queue: queue,
-      now: now,
-      leaseTtlMs: args.leaseTtlMs,
-      ownerGeneration: args.ownerGeneration + 1,
-    });
-    if (!promoted) {
-      await ctx.db.patch(coordinator._id, {
-        ...queue,
-        leaseExpiresAt: now + args.leaseTtlMs,
-        updatedAt: now,
-      });
+  returns: v.object({ deleted: v.number(), hasMore: v.boolean() }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ deleted: number; hasMore: boolean }> => {
+    const coordinator = await requireOwner(ctx, args);
+    await requireActiveAccount(ctx, coordinator.accountId);
+    const rows = await ctx.db
+      .query("runtimeConversationEvents")
+      .withIndex("by_conversationKey_and_cursor", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .take(CLEAR_BATCH_SIZE + 1);
+    const batch = rows.slice(0, CLEAR_BATCH_SIZE);
+    for (const row of batch) await ctx.db.delete(row._id);
+    const harnessSession = await ctx.db
+      .query("runtimeHarnessSessions")
+      .withIndex("by_conversationKey", (q) =>
+        q.eq("conversationKey", args.conversationKey),
+      )
+      .unique();
+    if (harnessSession) await ctx.db.delete(harnessSession._id);
 
-      return null;
-    }
-
-    return promoted;
+    return {
+      deleted: batch.length,
+      hasMore: rows.length > CLEAR_BATCH_SIZE,
+    };
   },
 });
 
-/** Settles every envelope whose work was applied to the current owner event. */
-export const settle = internalMutation({
+/** Returns the durable channel destination for one existing agent session. */
+export const getConversationTarget = internalQuery({
   args: {
+    accountId: v.string(),
+    agentId: v.string(),
     conversationKey: v.string(),
-    ownerEventId: v.string(),
-    ownerGeneration: v.number(),
-    status: v.union(v.literal("completed"), v.literal("failed")),
-    result: v.optional(v.any()),
-    error: v.optional(v.string()),
   },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    const coordinator = await requireOwner(ctx, args);
-    const now = Date.now();
-    // A failed settle that was preceded by /stop for this generation is a
-    // deliberate stop, not a fault — mark it so pollers can tell them apart.
-    const stoppedByUser =
-      args.status === "failed" &&
-      coordinator.stopRequestedGeneration === args.ownerGeneration;
-    const ids = new Set<Id<"runtimeIngressEnvelopes">>();
-    // Page by sequence so more than one drain batch of contributors still
-    // settles; a fixed take() would leave the tail stuck in processing.
-    let afterSequence = -1;
-    while (true) {
-      const rows = await ctx.db
-        .query("runtimeIngressEnvelopes")
-        .withIndex(
-          "by_conversationKey_and_appliedToEventId_and_sequence",
-          (q) =>
-            q
-              .eq("conversationKey", args.conversationKey)
-              .eq("appliedToEventId", args.ownerEventId)
-              .gt("sequence", afterSequence),
-        )
-        .take(MAX_DRAIN_ENVELOPES);
-      for (const row of rows) ids.add(row._id);
-      if (rows.length < MAX_DRAIN_ENVELOPES) break;
-      afterSequence = rows[rows.length - 1]!.sequence;
-    }
-    const own = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
-      .unique();
-    if (own?.conversationKey === args.conversationKey) ids.add(own._id);
-    for (const id of ids) {
-      const row = await ctx.db.get(id);
-      if (!row || ["completed", "failed", "expired"].includes(row.status))
-        continue;
-      await ctx.db.patch(id, {
-        status: args.status,
-        updatedAt: now,
-        ...(stoppedByUser ? { stoppedByUser: true } : {}),
-        ...(args.result !== undefined ? { result: args.result } : {}),
-        ...(args.error !== undefined ? { error: args.error } : {}),
-      });
+  returns: v.union(channelTargetValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<NonNullable<
+    Doc<"runtimeConversationCoordinators">["channelTarget"]
+  > | null> => {
+    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
+    const coordinator = await getCoordinator(ctx, args.conversationKey);
+    if (
+      !coordinator ||
+      coordinator.accountId !== args.accountId ||
+      coordinator.agentId !== args.agentId
+    ) {
+      return null;
     }
 
-    return ids.size;
+    return coordinator.channelTarget ?? null;
   },
 });
 
@@ -960,7 +540,10 @@ export const getStatus = internalQuery({
     eventId: v.string(),
   },
   returns: v.union(ingressStatusResultValidator, v.null()),
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof ingressStatusResultValidator> | null> => {
     const row = await ctx.db
       .query("runtimeIngressEnvelopes")
       .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
@@ -1000,101 +583,22 @@ export const getStatus = internalQuery({
   },
 });
 
-/** Requests a boundary stop for the current generation; queued work is untouched. */
-export const stopOwner = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-    conversationKey: v.string(),
-  },
-  returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
-  handler: async (ctx, args) => {
-    await requireActiveAccount(ctx, args.accountId);
-    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
-    const now = Date.now();
-    const coordinator = await getCoordinator(ctx, args.conversationKey);
-    if (!coordinator || !hasActiveOwner(coordinator, now)) {
-      return { stopped: false, queuedCount: coordinator?.queuedCount ?? 0 };
-    }
-    await ctx.db.patch(coordinator._id, {
-      stopRequestedGeneration: coordinator.ownerGeneration,
-      updatedAt: now,
-    });
-
-    return { stopped: true, queuedCount: coordinator.queuedCount };
-  },
-});
-
-/** Acquires a fenced clear lease only when no run or queued ingress exists. */
-export const acquireClear = internalMutation({
-  args: {
-    accountId: v.id("accounts"),
-    agentId: v.string(),
-    conversationKey: v.string(),
-    ownerEventId: v.string(),
-    leaseTtlMs: v.number(),
-  },
-  returns: v.union(v.number(), v.null()),
-  handler: async (ctx, args) => {
-    await requireActiveAccount(ctx, args.accountId);
-    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
-    const now = Date.now();
-    const coordinator =
-      (await getCoordinator(ctx, args.conversationKey)) ??
-      (await createCoordinator(ctx, {
-        accountId: args.accountId,
-        agentId: args.agentId,
-        conversationKey: args.conversationKey,
-        now: now,
-      }));
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    if (hasActiveOwner(coordinator, now) || queue.queuedCount > 0) return null;
-    const generation = coordinator.ownerGeneration + 1;
-    await ctx.db.patch(coordinator._id, {
-      ownerGeneration: generation,
-      ownerEventId: args.ownerEventId,
-      stopRequestedGeneration: undefined,
-      leaseExpiresAt: now + args.leaseTtlMs,
-      queuedCount: queue.queuedCount,
-      queuedBytes: queue.queuedBytes,
-      updatedAt: now,
-    });
-
-    return generation;
-  },
-});
-
-/** Clears one bounded history batch while the caller holds the clear lease. */
-export const clearConversation = internalMutation({
+/** Checks whether the supplied owner generation is still current and unexpired. */
+export const isCurrentOwner = internalQuery({
   args: {
     conversationKey: v.string(),
     ownerEventId: v.string(),
     ownerGeneration: v.number(),
   },
-  returns: v.object({ deleted: v.number(), hasMore: v.boolean() }),
-  handler: async (ctx, args) => {
-    const coordinator = await requireOwner(ctx, args);
-    await requireActiveAccount(ctx, coordinator.accountId);
-    const rows = await ctx.db
-      .query("runtimeConversationEvents")
-      .withIndex("by_conversationKey_and_cursor", (q) =>
-        q.eq("conversationKey", args.conversationKey),
-      )
-      .take(CLEAR_BATCH_SIZE + 1);
-    const batch = rows.slice(0, CLEAR_BATCH_SIZE);
-    for (const row of batch) await ctx.db.delete(row._id);
-    const harnessSession = await ctx.db
-      .query("runtimeHarnessSessions")
-      .withIndex("by_conversationKey", (q) =>
-        q.eq("conversationKey", args.conversationKey),
-      )
-      .unique();
-    if (harnessSession) await ctx.db.delete(harnessSession._id);
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    try {
+      await requireOwner(ctx, args);
 
-    return {
-      deleted: batch.length,
-      hasMore: rows.length > CLEAR_BATCH_SIZE,
-    };
+      return true;
+    } catch {
+      return false;
+    }
   },
 });
 
@@ -1102,7 +606,7 @@ export const clearConversation = internalMutation({
 export const maintain = internalMutation({
   args: {},
   returns: v.object({ expired: v.number(), deleted: v.number() }),
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<{ expired: number; deleted: number }> => {
     const now = Date.now();
     const due = (
       await Promise.all(
@@ -1180,3 +684,522 @@ export const maintain = internalMutation({
     return { expired: expired, deleted: deleted };
   },
 });
+
+/** Releases ownership only when the caller still holds the current generation. */
+export const releaseOwner = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args): Promise<boolean> => {
+    const coordinator = await getCoordinator(ctx, args.conversationKey);
+    if (
+      !coordinator ||
+      coordinator.ownerEventId !== args.ownerEventId ||
+      coordinator.ownerGeneration !== args.ownerGeneration
+    ) {
+      return false;
+    }
+    await ctx.db.patch(coordinator._id, {
+      ownerEventId: undefined,
+      stopRequestedGeneration: undefined,
+      leaseExpiresAt: undefined,
+      updatedAt: Date.now(),
+    });
+
+    return true;
+  },
+});
+
+/** Renews the current owner or reports its generation-scoped stop request. */
+export const renewOwner = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    leaseTtlMs: v.number(),
+  },
+  returns: ownerRenewalResultValidator,
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof ownerRenewalResultValidator>> => {
+    const now = Date.now();
+    let coordinator: Doc<"runtimeConversationCoordinators">;
+    try {
+      coordinator = await requireOwner(ctx, { ...args, now: now });
+    } catch {
+      return "stale" as const;
+    }
+    if (coordinator.stopRequestedGeneration === args.ownerGeneration) {
+      return "stopped" as const;
+    }
+    await ctx.db.patch(coordinator._id, {
+      leaseExpiresAt: now + args.leaseTtlMs,
+      updatedAt: now,
+    });
+
+    return "renewed" as const;
+  },
+});
+
+/** Settles every envelope whose work was applied to the current owner event. */
+export const settle = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    status: v.union(v.literal("completed"), v.literal("failed")),
+    result: v.optional(v.any()),
+    error: v.optional(v.string()),
+  },
+  returns: v.number(),
+  handler: async (ctx, args): Promise<number> => {
+    const coordinator = await requireOwner(ctx, args);
+    const now = Date.now();
+    // A failed settle that was preceded by /stop for this generation is a
+    // deliberate stop, not a fault — mark it so pollers can tell them apart.
+    const stoppedByUser =
+      args.status === "failed" &&
+      coordinator.stopRequestedGeneration === args.ownerGeneration;
+    const ids = new Set<Id<"runtimeIngressEnvelopes">>();
+    // Page by sequence so more than one drain batch of contributors still
+    // settles; a fixed take() would leave the tail stuck in processing.
+    let afterSequence = -1;
+    while (true) {
+      const rows = await ctx.db
+        .query("runtimeIngressEnvelopes")
+        .withIndex(
+          "by_conversationKey_and_appliedToEventId_and_sequence",
+          (q) =>
+            q
+              .eq("conversationKey", args.conversationKey)
+              .eq("appliedToEventId", args.ownerEventId)
+              .gt("sequence", afterSequence),
+        )
+        .take(MAX_DRAIN_ENVELOPES);
+      for (const row of rows) ids.add(row._id);
+      if (rows.length < MAX_DRAIN_ENVELOPES) break;
+      afterSequence = rows[rows.length - 1]!.sequence;
+    }
+    const own = await ctx.db
+      .query("runtimeIngressEnvelopes")
+      .withIndex("by_eventId", (q) => q.eq("eventId", args.ownerEventId))
+      .unique();
+    if (own?.conversationKey === args.conversationKey) ids.add(own._id);
+    for (const id of ids) {
+      const row = await ctx.db.get(id);
+      if (!row || ["completed", "failed", "expired"].includes(row.status))
+        continue;
+      await ctx.db.patch(id, {
+        status: args.status,
+        updatedAt: now,
+        ...(stoppedByUser ? { stoppedByUser: true } : {}),
+        ...(args.result !== undefined ? { result: args.result } : {}),
+        ...(args.error !== undefined ? { error: args.error } : {}),
+      });
+    }
+
+    return ids.size;
+  },
+});
+
+/** Requests a boundary stop for the current generation; queued work is untouched. */
+export const stopOwner = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    agentId: v.string(),
+    conversationKey: v.string(),
+  },
+  returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ stopped: boolean; queuedCount: number }> => {
+    await requireActiveAccount(ctx, args.accountId);
+    assertConversationScope(args.accountId, args.agentId, args.conversationKey);
+    const now = Date.now();
+    const coordinator = await getCoordinator(ctx, args.conversationKey);
+    if (!coordinator || !hasActiveOwner(coordinator, now)) {
+      return { stopped: false, queuedCount: coordinator?.queuedCount ?? 0 };
+    }
+    await ctx.db.patch(coordinator._id, {
+      stopRequestedGeneration: coordinator.ownerGeneration,
+      updatedAt: now,
+    });
+
+    return { stopped: true, queuedCount: coordinator.queuedCount };
+  },
+});
+
+/** Applies the oldest runnable follow-up or contiguous collect/steer group. */
+export const takeNext = internalMutation({
+  args: {
+    conversationKey: v.string(),
+    ownerEventId: v.string(),
+    ownerGeneration: v.number(),
+    leaseTtlMs: v.number(),
+  },
+  returns: v.union(appliedEnvelopeValidator, v.null()),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<Infer<typeof appliedEnvelopeValidator> | null> => {
+    const now = Date.now();
+    const coordinator = await requireOwner(ctx, { ...args, now: now });
+    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+    const promoted = await promoteQueuedGroup(ctx, {
+      coordinator: coordinator,
+      queue: queue,
+      now: now,
+      leaseTtlMs: args.leaseTtlMs,
+      ownerGeneration: args.ownerGeneration + 1,
+    });
+    if (!promoted) {
+      await ctx.db.patch(coordinator._id, {
+        ...queue,
+        leaseExpiresAt: now + args.leaseTtlMs,
+        updatedAt: now,
+      });
+
+      return null;
+    }
+
+    return promoted;
+  },
+});
+
+/** Extracts the account ID from an account-scoped runtime key. */
+function accountIdFromKey(value: string): string {
+  const match = /^acct:([^:]+):/.exec(value);
+  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
+
+  return match[1];
+}
+
+/** Verifies that server-derived account and agent scope match the conversation key. */
+function assertConversationScope(
+  accountId: string,
+  agentId: string,
+  conversationKey: string,
+): void {
+  if (accountIdFromKey(conversationKey) !== accountId) {
+    throw new Error("Runtime conversation does not belong to accountId");
+  }
+  if (!conversationKey.includes(`:agent:${agentId}:`)) {
+    throw new Error("Runtime conversation does not belong to agentId");
+  }
+}
+
+/** Hashes the one canonical tenant/agent/conversation idempotency identity. */
+async function canonicalIdentity(options: {
+  accountId: string;
+  agentId: string;
+  conversationKey: string;
+  idempotencyKey: string;
+}): Promise<string> {
+  const value = JSON.stringify([
+    options.accountId,
+    options.agentId,
+    options.conversationKey,
+    options.idempotencyKey,
+  ]);
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The leading run of rows that share the first row's requestedMode. */
+function contiguousModePrefix(
+  rows: Doc<"runtimeIngressEnvelopes">[],
+): Doc<"runtimeIngressEnvelopes">[] {
+  if (rows.length === 0) return [];
+  const end = rows.findIndex(
+    (row) => row.requestedMode !== rows[0]!.requestedMode,
+  );
+
+  return end === -1 ? rows : rows.slice(0, end);
+}
+
+/** Inserts a new zeroed coordinator when the conversation has no state yet. */
+async function createCoordinator(
+  ctx: MutationCtx,
+  options: {
+    accountId: string;
+    agentId: string;
+    conversationKey: string;
+    now: number;
+  },
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  const id = await ctx.db.insert("runtimeConversationCoordinators", {
+    accountId: options.accountId,
+    agentId: options.agentId,
+    conversationKey: options.conversationKey,
+    nextSequence: 1,
+    ownerGeneration: 0,
+    queuedCount: 0,
+    queuedBytes: 0,
+    updatedAt: options.now,
+  });
+
+  return (await ctx.db.get(id))!;
+}
+
+/** Marks expired queued work terminal and returns adjusted queue counters. */
+async function expireQueuedEnvelopes(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  now: number,
+): Promise<{ queuedCount: number; queuedBytes: number }> {
+  const rows = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q
+        .eq("conversationKey", coordinator.conversationKey)
+        .eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+  let expiredCount = 0;
+  let expiredBytes = 0;
+  for (const row of rows) {
+    if (row.expiresAt > now) continue;
+    expiredCount += 1;
+    expiredBytes += row.sizeBytes;
+    await ctx.db.patch(row._id, {
+      status: "expired",
+      error: "Ingress expired before it reached a runnable boundary",
+      updatedAt: now,
+    });
+  }
+
+  return {
+    queuedCount: Math.max(0, coordinator.queuedCount - expiredCount),
+    queuedBytes: Math.max(0, coordinator.queuedBytes - expiredBytes),
+  };
+}
+
+/** Marks a crashed owner's nonterminal envelope expired before ownership recovery. */
+async function expireStaleOwner(
+  ctx: MutationCtx,
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  now: number,
+): Promise<void> {
+  if (!coordinator.ownerEventId || !coordinator.leaseExpiresAt) return;
+  if (coordinator.leaseExpiresAt >= now) return;
+  const envelope = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", coordinator.ownerEventId!))
+    .unique();
+  if (
+    envelope &&
+    envelope.conversationKey === coordinator.conversationKey &&
+    !["completed", "failed", "expired"].includes(envelope.status)
+  ) {
+    await ctx.db.patch(envelope._id, {
+      status: "expired",
+      error: "Conversation owner lease expired before completion",
+      updatedAt: now,
+    });
+  }
+}
+
+/** Loads the single coordinator row for a conversation. */
+async function getCoordinator(
+  ctx: QueryCtx | MutationCtx,
+  conversationKey: string,
+): Promise<Doc<"runtimeConversationCoordinators"> | null> {
+  return await ctx.db
+    .query("runtimeConversationCoordinators")
+    .withIndex("by_conversationKey", (q) =>
+      q.eq("conversationKey", conversationKey),
+    )
+    .unique();
+}
+
+/** Returns whether the coordinator currently has an unexpired owner. */
+function hasActiveOwner(
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  now: number,
+): boolean {
+  return Boolean(
+    coordinator.ownerEventId &&
+    coordinator.leaseExpiresAt &&
+    coordinator.leaseExpiresAt >= now,
+  );
+}
+
+/**
+ * Promotes the oldest runnable queued group (one follow-up, or a contiguous
+ * collect/steer prefix) to processing under the supplied owner generation.
+ */
+async function promoteQueuedGroup(
+  ctx: MutationCtx,
+  options: {
+    coordinator: Doc<"runtimeConversationCoordinators">;
+    queue: { queuedCount: number; queuedBytes: number };
+    now: number;
+    leaseTtlMs: number;
+    ownerGeneration: number;
+  },
+): Promise<{
+  eventId: string;
+  events: unknown[];
+  delivery: unknown;
+  requestedMode: Doc<"runtimeIngressEnvelopes">["requestedMode"];
+  appliedMode: "collect" | "followup";
+  appliedToEventId: string;
+  contributingEventIds: string[];
+  ownerGeneration: number;
+  agentConfig?: unknown;
+  ephemeralSystem?: unknown[];
+} | null> {
+  const { coordinator, queue, now } = options;
+  const rows = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_conversationKey_and_status_and_sequence", (q) =>
+      q
+        .eq("conversationKey", coordinator.conversationKey)
+        .eq("status", "queued"),
+    )
+    .take(MAX_DRAIN_ENVELOPES);
+  const active = rows.filter((row) => row.expiresAt > now);
+  const first = active[0];
+  if (!first) return null;
+  // Collect batches by design; steer batches too — every queued steer aimed at
+  // the same dead run, so a contiguous prefix runs as one merged follow-up.
+  const batchable =
+    first.requestedMode === "collect" || first.requestedMode === "steer";
+  const selected = batchable ? contiguousModePrefix(active) : [first];
+  const appliedMode: "collect" | "followup" =
+    first.requestedMode === "collect" ? "collect" : "followup";
+  const appliedToEventId = first.eventId;
+  const eventIds = selected.map((row) => row.eventId);
+  const applicationId = `${appliedToEventId}:${appliedMode}:${options.ownerGeneration}:${first.sequence}`;
+  for (const row of selected) {
+    await ctx.db.patch(row._id, {
+      status: "processing",
+      appliedMode: appliedMode,
+      appliedToEventId: appliedToEventId,
+      applicationId: applicationId,
+      ownerGeneration: options.ownerGeneration,
+      updatedAt: now,
+    });
+  }
+  await ctx.db.insert("runtimeIngressApplications", {
+    accountId: coordinator.accountId,
+    conversationKey: coordinator.conversationKey,
+    applicationId: applicationId,
+    appliedMode: appliedMode,
+    appliedToEventId: appliedToEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: options.ownerGeneration,
+    createdAt: now,
+    expiresAt: Math.max(...selected.map((row) => row.statusExpiresAt)),
+  });
+  const removedBytes = selected.reduce(
+    (total, row) => total + row.sizeBytes,
+    0,
+  );
+  await ctx.db.patch(coordinator._id, {
+    ownerEventId: appliedToEventId,
+    ownerGeneration: options.ownerGeneration,
+    stopRequestedGeneration: undefined,
+    queuedCount: Math.max(0, queue.queuedCount - selected.length),
+    queuedBytes: Math.max(0, queue.queuedBytes - removedBytes),
+    leaseExpiresAt: now + options.leaseTtlMs,
+    updatedAt: now,
+  });
+
+  return {
+    eventId: appliedToEventId,
+    events: selected.flatMap((row) => row.events),
+    delivery: first.delivery,
+    requestedMode: first.requestedMode,
+    appliedMode: appliedMode,
+    appliedToEventId: appliedToEventId,
+    contributingEventIds: eventIds,
+    ownerGeneration: options.ownerGeneration,
+    ...(first.agentConfig !== undefined
+      ? { agentConfig: first.agentConfig }
+      : {}),
+    ...(first.ephemeralSystem !== undefined
+      ? { ephemeralSystem: first.ephemeralSystem }
+      : {}),
+  };
+}
+
+function publicDeploymentIngressFromDelivery(
+  delivery: unknown,
+): PublicDeploymentIngress | undefined {
+  if (!isPlainObject(delivery)) return undefined;
+  const record = delivery;
+  if (
+    record.kind !== "http" &&
+    record.kind !== "async" &&
+    record.kind !== "websocket"
+  ) {
+    return undefined;
+  }
+  const marker = record.publicDeploymentIngress;
+  if (!isPlainObject(marker)) return undefined;
+  const value = marker;
+  if (
+    typeof value.accountId !== "string" ||
+    typeof value.endpointId !== "string" ||
+    typeof value.stageSlug !== "string" ||
+    typeof value.projectSlug !== "string"
+  ) {
+    return undefined;
+  }
+
+  return {
+    accountId: value.accountId,
+    endpointId: value.endpointId,
+    stageSlug: value.stageSlug,
+    projectSlug: value.projectSlug,
+  };
+}
+
+/** Requires the account to exist and remain active in the write transaction. */
+async function requireActiveAccount(
+  ctx: MutationCtx,
+  accountId: string,
+): Promise<void> {
+  const normalized = ctx.db.normalizeId("accounts", accountId);
+  const account = normalized ? await ctx.db.get(normalized) : null;
+  if (!account || account.status !== "active") {
+    throw new Error(`Account is not active: ${accountId}`);
+  }
+}
+
+/** Requires the exact owner event and fencing generation for a mutation. */
+async function requireOwner(
+  ctx: QueryCtx | MutationCtx,
+  options: {
+    conversationKey: string;
+    ownerEventId: string;
+    ownerGeneration: number;
+    now?: number;
+  },
+): Promise<Doc<"runtimeConversationCoordinators">> {
+  const coordinator = await getCoordinator(ctx, options.conversationKey);
+  const now = options.now ?? Date.now();
+  if (
+    !coordinator ||
+    coordinator.ownerEventId !== options.ownerEventId ||
+    coordinator.ownerGeneration !== options.ownerGeneration ||
+    !coordinator.leaseExpiresAt ||
+    coordinator.leaseExpiresAt < now
+  ) {
+    throw new Error("Stale conversation owner generation");
+  }
+
+  return coordinator;
+}

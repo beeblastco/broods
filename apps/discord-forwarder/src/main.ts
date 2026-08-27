@@ -41,7 +41,7 @@ if (import.meta.main) {
   });
 
   logInfo("Discord forwarder listening", {
-    planes: config.planes.map((plane) => plane.name).join(","),
+    planes: config.planes.map((plane): string => plane.name).join(","),
     port: server.port,
   });
 
@@ -49,7 +49,7 @@ if (import.meta.main) {
   // process that has not opened its port yet fails the liveness probe. Readiness
   // stays false until the first snapshot lands, which is the signal that
   // belongs to Convex.
-  const watch = watchDiscordConnections(config.planes, (connections) => {
+  const watch = watchDiscordConnections(config.planes, (connections): void => {
     forwarder.reconcile(connections);
     ready = true;
   });

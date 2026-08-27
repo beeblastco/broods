@@ -33,7 +33,9 @@ export async function forwardMessageCreate(
     data: thread ? { ...data, thread: thread } : data,
   });
 
-  await Promise.all(targets.map((target) => post(target, body, botToken)));
+  await Promise.all(
+    targets.map((target): Promise<void> => post(target, body, botToken)),
+  );
 }
 
 async function post(

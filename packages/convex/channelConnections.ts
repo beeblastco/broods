@@ -56,7 +56,7 @@ interface ChannelConfigView {
 export const listConnections = internalQuery({
   args: { channel: v.string() },
   returns: v.array(channelConnectionValidator),
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<ChannelConnection[]> => {
     const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
     if (!secret) {
       throw new Error(

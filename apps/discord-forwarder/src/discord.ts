@@ -10,25 +10,6 @@
 export const DISCORD_API_URL = "https://discord.com/api/v10";
 export const DISCORD_GATEWAY_URL = "wss://gateway.discord.gg";
 
-// Bun puts no deadline on `fetch`, so every outbound call here sets one. Without
-// it a peer that accepts and never answers leaves a promise pending for the life
-// of the process, and the logging on that path never runs — the message is lost
-// silently, which is the one failure mode worse than a logged failure.
-export const FETCH_TIMEOUT_MS = 10_000;
-
-// Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
-// a garbled HELLO from turning into a hot loop or a socket that never beats.
-export const HEARTBEAT_MIN_MS = 1_000;
-export const HEARTBEAT_MAX_MS = 300_000;
-
-// A message in one of these lives in a thread; `channel_id` is the thread and
-// `parent_id` is the channel it hangs under.
-export const THREAD_CHANNEL_TYPES: ReadonlySet<number> = new Set([10, 11, 12]);
-
-// One DNS label. Discord's resume hosts look like `gateway-us-east1-b`.
-const GATEWAY_HOST_LABEL = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const GATEWAY_HOST_SUFFIX = ".discord.gg";
-
 /**
  * Close codes Discord will keep rejecting no matter how often we dial. Retrying
  * any of them spends IDENTIFY budget on a request that cannot start succeeding
@@ -48,11 +29,30 @@ export const FATAL_CLOSE_CODES: ReadonlyMap<number, string> = new Map([
   ],
 ]);
 
+// Bun puts no deadline on `fetch`, so every outbound call here sets one. Without
+// it a peer that accepts and never answers leaves a promise pending for the life
+// of the process, and the logging on that path never runs — the message is lost
+// silently, which is the one failure mode worse than a logged failure.
+export const FETCH_TIMEOUT_MS = 10_000;
+
+// Discord's own heartbeat interval is 41250ms. Clamping the value it sends keeps
+// a garbled HELLO from turning into a hot loop or a socket that never beats.
+export const HEARTBEAT_MAX_MS = 300_000;
+export const HEARTBEAT_MIN_MS = 1_000;
+
 // Codes that end the session rather than the socket: reconnecting must IDENTIFY
 // afresh instead of RESUMEing a sequence Discord has already dropped.
 export const SESSION_ENDING_CLOSE_CODES: ReadonlySet<number> = new Set([
   4007, 4009,
 ]);
+
+// A message in one of these lives in a thread; `channel_id` is the thread and
+// `parent_id` is the channel it hangs under.
+export const THREAD_CHANNEL_TYPES: ReadonlySet<number> = new Set([10, 11, 12]);
+
+// One DNS label. Discord's resume hosts look like `gateway-us-east1-b`.
+const GATEWAY_HOST_LABEL = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const GATEWAY_HOST_SUFFIX = ".discord.gg";
 
 export enum GatewayOpcode {
   Dispatch = 0,
@@ -69,6 +69,12 @@ export interface DiscordChannel {
   id: string;
   parent_id?: string | null;
   type: number;
+}
+
+/** The `thread` object core keys a threaded conversation off. */
+export interface ForwardedThread {
+  id: string;
+  parent_id: string;
 }
 
 /** `heartbeat_interval` is unknown until clamped; see `heartbeatIntervalMs`. */
@@ -101,10 +107,19 @@ export interface MessageCreate {
   [key: string]: unknown;
 }
 
-/** The `thread` object core keys a threaded conversation off. */
-export interface ForwardedThread {
-  id: string;
-  parent_id: string;
+/**
+ * Milliseconds, clamped into a range a heartbeat can sanely run at. HELLO's
+ * interval drives a `setInterval`, so an unbounded value off the wire is either
+ * a hot loop or a socket that never beats.
+ */
+export function heartbeatIntervalMs(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return HEARTBEAT_MAX_MS;
+  }
+  if (value > HEARTBEAT_MAX_MS) return HEARTBEAT_MAX_MS;
+  if (value < HEARTBEAT_MIN_MS) return HEARTBEAT_MIN_MS;
+
+  return value;
 }
 
 /**
@@ -135,19 +150,4 @@ export function resumeGatewayUrl(value: string): string | null {
   if (!GATEWAY_HOST_LABEL.test(label)) return null;
 
   return `wss://${label}${GATEWAY_HOST_SUFFIX}`;
-}
-
-/**
- * Milliseconds, clamped into a range a heartbeat can sanely run at. HELLO's
- * interval drives a `setInterval`, so an unbounded value off the wire is either
- * a hot loop or a socket that never beats.
- */
-export function heartbeatIntervalMs(value: unknown): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return HEARTBEAT_MAX_MS;
-  }
-  if (value > HEARTBEAT_MAX_MS) return HEARTBEAT_MAX_MS;
-  if (value < HEARTBEAT_MIN_MS) return HEARTBEAT_MIN_MS;
-
-  return value;
 }

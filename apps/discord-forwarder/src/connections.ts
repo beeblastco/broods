@@ -50,11 +50,11 @@ export function combinePlaneAnswers(
 ): ForwarderConnection[] {
   // `every` is true for an empty list too, which is the right answer: a process
   // with no planes has nothing to watch and must not report itself ready.
-  if (answers.every((answer) => answer === null)) {
+  if (answers.every((answer): boolean => answer === null)) {
     throw new Error(`No config plane answered: ${planeNames.join(", ")}`);
   }
 
-  return answers.flatMap((answer) => answer ?? []);
+  return answers.flatMap((answer): ForwarderConnection[] => answer ?? []);
 }
 
 /**
@@ -66,7 +66,7 @@ export function planeConnections(
   plane: ConfigPlane,
   rows: readonly ChannelConnection[],
 ): ForwarderConnection[] {
-  return rows.map((row) => ({
+  return rows.map((row): ForwarderConnection => ({
     agentId: row.agentId,
     agentName: row.agentName,
     botToken: row.botToken,
@@ -91,21 +91,24 @@ export function watchDiscordConnections(
   onChange: (connections: ForwarderConnection[]) => void,
 ): ConnectionWatch {
   const latest = new Map<string, ForwarderConnection[]>();
-  const clients = planes.map((plane) => {
+  const clients = planes.map((plane): ConvexClient => {
     const client = planeClient(plane);
     client.onUpdate(
       internal.channelConnections.listConnections,
       { channel: "discord" },
-      (rows: ChannelConnection[]) => {
+      (rows: ChannelConnection[]): void => {
         latest.set(plane.name, planeConnections(plane, rows));
         onChange(
           combinePlaneAnswers(
-            planes.map((entry) => entry.name),
-            planes.map((entry) => latest.get(entry.name) ?? null),
+            planes.map((entry): string => entry.name),
+            planes.map(
+              (entry): ForwarderConnection[] | null =>
+                latest.get(entry.name) ?? null,
+            ),
           ),
         );
       },
-      (error: Error) => {
+      (error: Error): void => {
         logWarn("Config plane subscription error", {
           error: error.message,
           plane: plane.name,
@@ -119,7 +122,7 @@ export function watchDiscordConnections(
 
   return {
     close: async (): Promise<void> => {
-      await Promise.all(clients.map((client) => client.close()));
+      await Promise.all(clients.map((client): Promise<void> => client.close()));
     },
   };
 }

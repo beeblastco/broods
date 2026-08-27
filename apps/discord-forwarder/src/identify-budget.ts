@@ -18,8 +18,8 @@ const WINDOW_MS = 24 * 60 * 60 * 1_000;
 
 export class IdentifyBudget {
   private readonly limit: number;
-  private readonly windowMs: number;
   private readonly stamps = new Map<string, number[]>();
+  private readonly windowMs: number;
 
   constructor(limit: number, windowMs: number = WINDOW_MS) {
     this.limit = limit;
@@ -61,6 +61,8 @@ export class IdentifyBudget {
   private live(token: string, now: number): number[] {
     const cutoff = now - this.windowMs;
 
-    return (this.stamps.get(token) ?? []).filter((stamp) => stamp > cutoff);
+    return (this.stamps.get(token) ?? []).filter(
+      (stamp): boolean => stamp > cutoff,
+    );
   }
 }
