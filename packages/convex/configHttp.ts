@@ -70,7 +70,7 @@ import { fetchSlackChannelDirectory } from "./model/slackDirectory";
 import {
   DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS,
   MAX_DOWNLOAD_TOKEN_TTL_SECONDS,
-} from "./workspaceDownloadTokens";
+} from "./workspaceFiles";
 
 const DOWNLOAD_ROUTE_PREFIX = "/v1/downloads/";
 
@@ -543,7 +543,7 @@ async function unauthorizedResponse(
   req: Request,
 ): Promise<Response> {
   const result: { blocked: boolean; retryAfterMs?: number } =
-    await ctx.runMutation(internal.configHttpAuthFailures.recordFailure, {
+    await ctx.runMutation(internal.configAuditEvents.recordAuthFailure, {
       key: await authFailureKey(req),
       now: Date.now(),
       windowMs: 5 * 60 * 1000,
@@ -2596,7 +2596,7 @@ async function handleWorkspaceDownloadLinkRoute(
 
   const now = Date.now();
   const token = generateDownloadToken();
-  await ctx.runMutation(internal.workspaceDownloadTokens.create, {
+  await ctx.runMutation(internal.workspaceFiles.createDownloadToken, {
     accountId: accountId,
     workspaceId: workspace._id,
     path: path,
@@ -2642,10 +2642,10 @@ async function handleDownloadRedeemRoute(
     return methodNotAllowed(["GET", "HEAD"]);
 
   const now = Date.now();
-  const resolved = await ctx.runQuery(
-    internal.workspaceDownloadTokens.resolveByHash,
-    { tokenHash: await sha256Hex(token), now: now },
-  );
+  const resolved = await ctx.runQuery(internal.workspaceFiles.resolveByHash, {
+    tokenHash: await sha256Hex(token),
+    now: now,
+  });
   if (!resolved) return json({ error: "Not found" }, 404);
 
   const workspace = await ctx.runQuery(internal.workspaceConfigs.getById, {

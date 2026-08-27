@@ -1,6 +1,12 @@
 /**
  * Workspace file tree CRUD. Files are stored in Convex storage; this table
  * tracks path metadata and is scoped to a projectId + canvas nodeId.
+ *
+ * Also owns capability links for workspace files (the `workspaceDownloadTokens`
+ * table). A token is the whole credential, so it is stored only as a SHA-256
+ * hash and the plaintext lives nowhere but the URL that was handed out.
+ * Redeeming one mints a fresh presigned S3 URL server-side, which is what keeps
+ * AWS signature material out of chat clients entirely.
  */
 
 import { v } from "convex/values";
@@ -13,6 +19,12 @@ import {
 import { authKit } from "./auth";
 import { getOwnedProject } from "./model/ownership/project";
 import { normalizeWorkspaceConfig } from "./model/workspaceRules";
+
+export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
+// Expired rows are dead weight, not a security boundary — redeeming always
+// re-checks expiresAt. One bounded sweep per mint keeps the table from growing.
+const DOWNLOAD_TOKEN_PRUNE_BATCH_SIZE = 50;
 
 /**
  * A workspace's storage block, shaped as `WorkspaceStorageConfig`. Carried
@@ -37,9 +49,13 @@ export const workspaceStorageValidator = v.object({
   ),
 });
 
-function pathPrefixUpperBound(path: string): string {
-  return `${path}\uffff`;
-}
+const resolvedToken = v.object({
+  accountId: v.id("accounts"),
+  workspaceId: v.id("workspaceConfigs"),
+  path: v.string(),
+  filename: v.string(),
+  expiresAt: v.number(),
+});
 
 const workspaceFileDoc = v.object({
   _id: v.id("workspaceFiles"),
@@ -55,97 +71,6 @@ const workspaceFileDoc = v.object({
   sizeBytes: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
-});
-
-/**
- * List all file/folder entries for a workspace node.
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @returns flat array of file metadata records
- */
-export const list = query({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { projectId, nodeId } = args;
-
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    // Return empty rather than throwing so a just-deleted project doesn't crash
-    // the reactive workspace panel before it unmounts.
-    const project = await getOwnedProject(ctx, user.id, projectId);
-    if (!project) return [];
-
-    return await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
-        q.eq("projectId", projectId).eq("nodeId", nodeId),
-      )
-      .collect();
-  },
-});
-
-/**
- * Internal: resolve an S3-backed workspace for a caller-owned project.
- * @param authId WorkOS auth id of the caller
- * @param projectId owning project
- * @param workspaceId workspaceConfigs document ID stored on the canvas node
- * @returns runtime account/workspace identifiers, or null when inaccessible
- */
-export const resolveRuntimeWorkspaceInternal = internalQuery({
-  args: {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    workspaceId: v.string(),
-  },
-  returns: v.union(
-    v.object({
-      accountId: v.id("accounts"),
-      workspaceId: v.id("workspaceConfigs"),
-      storage: workspaceStorageValidator,
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    const project = await getOwnedProject(ctx, args.authId, args.projectId);
-    if (!project) return null;
-    const workspaceId = ctx.db.normalizeId(
-      "workspaceConfigs",
-      args.workspaceId,
-    );
-    if (!workspaceId) return null;
-    const workspace = await ctx.db.get(workspaceId);
-    if (!workspace || workspace.projectId !== args.projectId) return null;
-
-    return {
-      accountId: workspace.accountId,
-      workspaceId: workspace._id,
-      storage: normalizeWorkspaceConfig(workspace.config).storage,
-    };
-  },
-});
-
-/**
- * Generate a one-time upload URL for Convex file storage.
- * @returns a pre-signed upload URL
- */
-export const generateUploadUrl = mutation({
-  args: {},
-  handler: async (ctx) => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    return await ctx.storage.generateUploadUrl();
-  },
 });
 
 /**
@@ -211,6 +136,199 @@ export const create = mutation({
 });
 
 /**
+ * Store one download token and sweep a bounded batch of expired rows.
+ * @param accountId account owning the workspace
+ * @param workspaceId workspace the file lives in
+ * @param path normalized workspace-relative path
+ * @param filename name offered to whoever follows the link
+ * @param tokenHash SHA-256 hex of the minted token
+ * @param expiresAt epoch millis the token stops working
+ * @param now caller's clock in epoch millis
+ */
+export const createDownloadToken = internalMutation({
+  args: {
+    accountId: v.id("accounts"),
+    workspaceId: v.id("workspaceConfigs"),
+    path: v.string(),
+    filename: v.string(),
+    tokenHash: v.string(),
+    expiresAt: v.number(),
+    now: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.insert("workspaceDownloadTokens", {
+      accountId: args.accountId,
+      workspaceId: args.workspaceId,
+      path: args.path,
+      filename: args.filename,
+      tokenHash: args.tokenHash,
+      expiresAt: args.expiresAt,
+      createdAt: args.now,
+    });
+    const stale = await ctx.db
+      .query("workspaceDownloadTokens")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", args.now))
+      .take(DOWNLOAD_TOKEN_PRUNE_BATCH_SIZE);
+    for (const record of stale) await ctx.db.delete(record._id);
+
+    return null;
+  },
+});
+
+/**
+ * Generate a one-time upload URL for Convex file storage.
+ * @returns a pre-signed upload URL
+ */
+export const generateUploadUrl = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * Return a short-lived signed download URL for a single file entry.
+ * @param projectId owning project
+ * @param nodeId canvas node ID
+ * @param path file path (e.g. "SKILL.md")
+ * @returns signed URL, or null if the file does not exist / has no storageId
+ */
+export const getFileDownloadUrl = query({
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId, path } = args;
+
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) return null;
+
+    const file = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
+      )
+      .first();
+
+    if (!file?.storageId) return null;
+
+    return await ctx.storage.getUrl(file.storageId);
+  },
+});
+
+/**
+ * Internal: create a signed download URL for one legacy file during migration.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param projectId owning project
+ * @param nodeId canvas node ID of the workspace
+ * @param path file path inside the legacy workspace tree
+ * @returns signed URL or null when the file cannot be read
+ */
+export const getFileDownloadUrlInternal = internalQuery({
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    path: v.string(),
+  },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    if (!project) return null;
+
+    const file = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", args.projectId)
+          .eq("nodeId", args.nodeId)
+          .eq("path", args.path),
+      )
+      .first();
+
+    if (!file?.storageId) return null;
+
+    return await ctx.storage.getUrl(file.storageId);
+  },
+});
+
+/**
+ * List all file/folder entries for a workspace node.
+ * @param projectId owning project
+ * @param nodeId canvas node ID of the workspace
+ * @returns flat array of file metadata records
+ */
+export const list = query({
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId } = args;
+
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    // Return empty rather than throwing so a just-deleted project doesn't crash
+    // the reactive workspace panel before it unmounts.
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) return [];
+
+    return await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_and_nodeId", (q) =>
+        q.eq("projectId", projectId).eq("nodeId", nodeId),
+      )
+      .collect();
+  },
+});
+
+/**
+ * Internal: list legacy Convex-storage files after checking project ownership.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param projectId owning project
+ * @param nodeId canvas node ID of the workspace
+ * @returns legacy file metadata rows for migration
+ */
+export const listForMigrationInternal = internalQuery({
+  args: {
+    authId: v.string(),
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+  },
+  returns: v.array(workspaceFileDoc),
+  handler: async (ctx, args) => {
+    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    if (!project) return [];
+
+    return await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_and_nodeId", (q) =>
+        q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
+      )
+      .collect();
+  },
+});
+
+/**
  * Delete a single file entry and its storage object (if any).
  * @param fileId the workspaceFiles document to remove
  */
@@ -234,6 +352,81 @@ export const remove = mutation({
       await ctx.storage.delete(file.storageId);
     }
     await ctx.db.delete(fileId);
+
+    return null;
+  },
+});
+
+/**
+ * Delete a folder and all descendants (files + subfolders) matching a path prefix.
+ * @param projectId owning project
+ * @param nodeId canvas workspace node ID
+ * @param folderPath the folder path to remove including all children
+ */
+export const removeFolder = mutation({
+  args: {
+    projectId: v.id("projects"),
+    nodeId: v.string(),
+    folderPath: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { projectId, nodeId, folderPath } = args;
+
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const project = await getOwnedProject(ctx, user.id, projectId);
+    if (!project) throw new Error("Project not found.");
+
+    const descendants = await ctx.db
+      .query("workspaceFiles")
+      .withIndex("by_projectId_nodeId_and_path", (q) =>
+        q
+          .eq("projectId", projectId)
+          .eq("nodeId", nodeId)
+          .gte("path", folderPath)
+          .lt("path", pathPrefixUpperBound(folderPath)),
+      )
+      .collect();
+
+    for (const doc of descendants) {
+      if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/"))
+        continue;
+      if (doc.storageId) {
+        await ctx.storage.delete(doc.storageId);
+      }
+      await ctx.db.delete(doc._id);
+    }
+
+    return null;
+  },
+});
+
+/**
+ * Internal: remove one legacy file row and storage object after S3 migration.
+ * @param authId WorkOS auth id of the caller that started the migration
+ * @param fileId legacy workspaceFiles row to delete
+ */
+export const removeForMigrationInternal = internalMutation({
+  args: {
+    authId: v.string(),
+    fileId: v.id("workspaceFiles"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args.fileId);
+    if (!file) return null;
+
+    const project = await getOwnedProject(ctx, args.authId, file.projectId);
+    if (!project) return null;
+
+    if (file.storageId) {
+      await ctx.storage.delete(file.storageId);
+    }
+    await ctx.db.delete(args.fileId);
 
     return null;
   },
@@ -300,177 +493,71 @@ export const rename = mutation({
 });
 
 /**
- * Return a short-lived signed download URL for a single file entry.
- * @param projectId owning project
- * @param nodeId canvas node ID
- * @param path file path (e.g. "SKILL.md")
- * @returns signed URL, or null if the file does not exist / has no storageId
+ * Look up a download token by hash, ignoring anything already expired.
+ * @param tokenHash SHA-256 hex of the presented token
+ * @param now caller's clock in epoch millis
+ * @returns the file the token grants, or null when unknown or expired
  */
-export const getFileDownloadUrl = query({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    path: v.string(),
-  },
+export const resolveByHash = internalQuery({
+  args: { tokenHash: v.string(), now: v.number() },
+  returns: v.union(resolvedToken, v.null()),
   handler: async (ctx, args) => {
-    const { projectId, nodeId, path } = args;
+    const record = await ctx.db
+      .query("workspaceDownloadTokens")
+      .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+      .unique();
+    if (!record || record.expiresAt <= args.now) return null;
 
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const project = await getOwnedProject(ctx, user.id, projectId);
-    if (!project) return null;
-
-    const file = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q.eq("projectId", projectId).eq("nodeId", nodeId).eq("path", path),
-      )
-      .first();
-
-    if (!file?.storageId) return null;
-
-    return await ctx.storage.getUrl(file.storageId);
+    return {
+      accountId: record.accountId,
+      workspaceId: record.workspaceId,
+      path: record.path,
+      filename: record.filename,
+      expiresAt: record.expiresAt,
+    };
   },
 });
 
 /**
- * Delete a folder and all descendants (files + subfolders) matching a path prefix.
+ * Internal: resolve an S3-backed workspace for a caller-owned project.
+ * @param authId WorkOS auth id of the caller
  * @param projectId owning project
- * @param nodeId canvas workspace node ID
- * @param folderPath the folder path to remove including all children
+ * @param workspaceId workspaceConfigs document ID stored on the canvas node
+ * @returns runtime account/workspace identifiers, or null when inaccessible
  */
-export const removeFolder = mutation({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    folderPath: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { projectId, nodeId, folderPath } = args;
-
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const project = await getOwnedProject(ctx, user.id, projectId);
-    if (!project) throw new Error("Project not found.");
-
-    const descendants = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q
-          .eq("projectId", projectId)
-          .eq("nodeId", nodeId)
-          .gte("path", folderPath)
-          .lt("path", pathPrefixUpperBound(folderPath)),
-      )
-      .collect();
-
-    for (const doc of descendants) {
-      if (doc.path !== folderPath && !doc.path.startsWith(folderPath + "/"))
-        continue;
-      if (doc.storageId) {
-        await ctx.storage.delete(doc.storageId);
-      }
-      await ctx.db.delete(doc._id);
-    }
-
-    return null;
-  },
-});
-
-/**
- * Internal: list legacy Convex-storage files after checking project ownership.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @returns legacy file metadata rows for migration
- */
-export const listForMigrationInternal = internalQuery({
+export const resolveRuntimeWorkspaceInternal = internalQuery({
   args: {
     authId: v.string(),
     projectId: v.id("projects"),
-    nodeId: v.string(),
+    workspaceId: v.string(),
   },
-  returns: v.array(workspaceFileDoc),
-  handler: async (ctx, args) => {
-    const project = await getOwnedProject(ctx, args.authId, args.projectId);
-    if (!project) return [];
-
-    return await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
-        q.eq("projectId", args.projectId).eq("nodeId", args.nodeId),
-      )
-      .collect();
-  },
-});
-
-/**
- * Internal: create a signed download URL for one legacy file during migration.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param projectId owning project
- * @param nodeId canvas node ID of the workspace
- * @param path file path inside the legacy workspace tree
- * @returns signed URL or null when the file cannot be read
- */
-export const getFileDownloadUrlInternal = internalQuery({
-  args: {
-    authId: v.string(),
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    path: v.string(),
-  },
-  returns: v.union(v.string(), v.null()),
+  returns: v.union(
+    v.object({
+      accountId: v.id("accounts"),
+      workspaceId: v.id("workspaceConfigs"),
+      storage: workspaceStorageValidator,
+    }),
+    v.null(),
+  ),
   handler: async (ctx, args) => {
     const project = await getOwnedProject(ctx, args.authId, args.projectId);
     if (!project) return null;
+    const workspaceId = ctx.db.normalizeId(
+      "workspaceConfigs",
+      args.workspaceId,
+    );
+    if (!workspaceId) return null;
+    const workspace = await ctx.db.get(workspaceId);
+    if (!workspace || workspace.projectId !== args.projectId) return null;
 
-    const file = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_nodeId_and_path", (q) =>
-        q
-          .eq("projectId", args.projectId)
-          .eq("nodeId", args.nodeId)
-          .eq("path", args.path),
-      )
-      .first();
-
-    if (!file?.storageId) return null;
-
-    return await ctx.storage.getUrl(file.storageId);
+    return {
+      accountId: workspace.accountId,
+      workspaceId: workspace._id,
+      storage: normalizeWorkspaceConfig(workspace.config).storage,
+    };
   },
 });
 
-/**
- * Internal: remove one legacy file row and storage object after S3 migration.
- * @param authId WorkOS auth id of the caller that started the migration
- * @param fileId legacy workspaceFiles row to delete
- */
-export const removeForMigrationInternal = internalMutation({
-  args: {
-    authId: v.string(),
-    fileId: v.id("workspaceFiles"),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const file = await ctx.db.get(args.fileId);
-    if (!file) return null;
-
-    const project = await getOwnedProject(ctx, args.authId, file.projectId);
-    if (!project) return null;
-
-    if (file.storageId) {
-      await ctx.storage.delete(file.storageId);
-    }
-    await ctx.db.delete(args.fileId);
-
-    return null;
-  },
-});
+function pathPrefixUpperBound(path: string): string {
+  return `${path}\uffff`;
+}

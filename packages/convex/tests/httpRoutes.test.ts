@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import http from "../http";
 import { handle as cliHttp } from "../cliHttp";
-import { handle as cliProjectsHttp } from "../cliProjectsHttp";
-import { handle as cliStagesHttp } from "../cliStagesHttp";
+import { httpHandle as cliProjectsHttp } from "../cliProjects";
+import { httpHandle as cliStagesHttp } from "../cliStages";
 
 // A handler that configHttp knows how to dispatch is still a 404 until the
 // router mounts it. That gap shipped once for /v1/channels and reached dev, so
