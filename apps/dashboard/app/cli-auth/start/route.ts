@@ -80,9 +80,16 @@ function advertisedBaseUrl(): string {
   if (explicit) {
     return new URL(explicit).origin;
   }
+  // Self-hosted Convex has no derivable HTTP-actions host; it must be provided.
+  const siteUrl = process.env.CONVEX_SITE_URL;
+  if (siteUrl) {
+    return new URL(siteUrl).origin;
+  }
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!convexUrl)
-    throw new Error("BROODS_BASE_URL or NEXT_PUBLIC_CONVEX_URL is required");
+    throw new Error(
+      "BROODS_BASE_URL, CONVEX_SITE_URL, or NEXT_PUBLIC_CONVEX_URL is required",
+    );
 
   return new URL(convexUrl.replace(".convex.cloud", ".convex.site")).origin;
 }
