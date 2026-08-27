@@ -61,7 +61,7 @@ function statusBadge(status: Doc<"crons">["lastStatus"]) {
 }
 
 export function CronsTable({ crons, agents }: Props): React.JSX.Element {
-  const remove = useAction(api.cronPublic.remove);
+  const remove = useAction(api.agent.cronsPublic.remove);
 
   const [editing, setEditing] = useState<Doc<"crons"> | null>(null);
   const [deleting, setDeleting] = useState<Doc<"crons"> | null>(null);

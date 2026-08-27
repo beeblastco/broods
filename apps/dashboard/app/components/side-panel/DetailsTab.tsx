@@ -233,7 +233,7 @@ export function DetailsTab({
     (agentConfig?.extraConfig as Record<string, unknown> | undefined)
       ?.publicAccess === true;
   const policyOptions = useQuery(
-    api.agentPolicies.listForStage,
+    api.agent.policies.listForStage,
     projectId && stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
   // Attachment is only the list. Whether a policy blocks or just records is

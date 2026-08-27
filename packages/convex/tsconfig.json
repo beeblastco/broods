@@ -13,12 +13,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": false
   },
-  "include": [
-    "*.ts",
-    "lib/**/*.ts",
-    "model/**/*.ts",
-    "tests/**/*.ts",
-    "_generated/**/*.ts"
-  ],
+  "include": ["**/*.ts"],
   "exclude": ["node_modules"]
 }

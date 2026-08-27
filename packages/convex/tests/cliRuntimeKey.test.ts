@@ -77,7 +77,7 @@ describe("stage runtime key wire", () => {
     const t = runtimeKeyTest();
     const seeded = await seed(t);
 
-    const scope = await t.mutation(internal.cliSync.ensureScopeBySecretHash, {
+    const scope = await t.mutation(internal.cli.sync.ensureScopeBySecretHash, {
       secretHash: SECRET_HASH,
       project: "demo-app",
       stage: "production",
@@ -95,7 +95,7 @@ describe("stage runtime key wire", () => {
     const seeded = await seed(t);
 
     const deployment = await t.mutation(
-      internal.cliSync.ensureRuntimeKeyBySecretHash,
+      internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
         secretHash: SECRET_HASH,
         project: "demo-app",
@@ -124,14 +124,14 @@ describe("stage runtime key wire", () => {
     const seeded = await seed(t);
 
     const deployment = await t.mutation(
-      internal.cliSync.ensureRuntimeKeyBySecretHash,
+      internal.cli.sync.ensureRuntimeKeyBySecretHash,
       {
         secretHash: SECRET_HASH,
         project: "demo-app",
         stage: "production",
       },
     );
-    const scope = await t.query(internal.agentDeployments.getByApiKeyHash, {
+    const scope = await t.query(internal.agent.deployments.getByApiKeyHash, {
       apiKeyHash: await sha256Hex(deployment!.apiKey),
     });
 

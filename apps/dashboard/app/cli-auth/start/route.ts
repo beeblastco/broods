@@ -51,7 +51,7 @@ async function createLoginCodeWithRetry(
   let lastError: unknown;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
-      return await client.mutation(api.cliAuth.createLoginCode, {});
+      return await client.mutation(api.cli.auth.createLoginCode, {});
     } catch (error) {
       lastError = error;
       if (!isRetryableLoginRace(error) || attempt === 3) {

@@ -8,14 +8,14 @@ import Stripe from "stripe";
 import { components, internal } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { exchange as cliAuthExchange } from "./cliAuth";
-import { handle as cliHttp } from "./cliHttp";
+import { exchange as cliAuthExchange } from "./cli/auth";
+import { handle as cliHttp } from "./cli/http";
 import {
   httpHandle as cliProjectsHttp,
   httpOnboarding as cliOnboardingHttp,
-} from "./cliProjects";
-import { httpHandle as cliStagesHttp } from "./cliStages";
-import { handle as configHttp } from "./configHttp";
+} from "./cli/projects";
+import { httpHandle as cliStagesHttp } from "./cli/stages";
+import { handle as configHttp } from "./config/http";
 
 const http = httpRouter();
 

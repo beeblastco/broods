@@ -131,7 +131,7 @@ describe("cliProjects.listByAccount", () => {
     await seedProject(t, orgId, "tracy");
     await seedEmptyProject(t, orgId, "abandoned-e2e");
 
-    const projects = await t.query(internal.cliProjects.listByAccount, {
+    const projects = await t.query(internal.cli.projects.listByAccount, {
       accountId: accountId,
     });
 
@@ -171,7 +171,7 @@ describe("cliProjects.listByAccount", () => {
       });
     });
 
-    const projects = await t.query(internal.cliProjects.listByAccount, {
+    const projects = await t.query(internal.cli.projects.listByAccount, {
       accountId: accountId,
     });
 
@@ -190,7 +190,7 @@ describe("cliProjects.listByAccount", () => {
     });
 
     expect(
-      await t.query(internal.cliProjects.listByAccount, {
+      await t.query(internal.cli.projects.listByAccount, {
         accountId: accountId,
       }),
     ).toBeNull();
@@ -204,7 +204,7 @@ describe("cliProjects.removeByAccount", () => {
     const doomed = await seedProject(t, orgId, "abandoned-e2e");
     const keeper = await seedProject(t, orgId, "tracy");
 
-    const deleted = await t.mutation(internal.cliProjects.removeByAccount, {
+    const deleted = await t.mutation(internal.cli.projects.removeByAccount, {
       accountId: accountId,
       authId: AUTH_ID,
       projectId: doomed,
@@ -251,7 +251,7 @@ describe("cliProjects.removeByAccount", () => {
     await seedMember(t, orgId, "auth_demoted", "member");
 
     expect(
-      await t.mutation(internal.cliProjects.removeByAccount, {
+      await t.mutation(internal.cli.projects.removeByAccount, {
         accountId: accountId,
         authId: "auth_demoted",
         projectId: target,
@@ -268,7 +268,7 @@ describe("cliProjects.removeByAccount", () => {
     const target = await seedProject(t, orgId, "tracy", "auth_creator");
     await seedMember(t, orgId, "auth_admin", "admin");
 
-    const deleted = await t.mutation(internal.cliProjects.removeByAccount, {
+    const deleted = await t.mutation(internal.cli.projects.removeByAccount, {
       accountId: accountId,
       authId: "auth_admin",
       projectId: target,
@@ -283,7 +283,7 @@ describe("cliProjects.removeByAccount", () => {
     const keeper = await seedProject(t, orgId, "tracy");
 
     expect(
-      await t.mutation(internal.cliProjects.removeByAccount, {
+      await t.mutation(internal.cli.projects.removeByAccount, {
         accountId: accountId,
         authId: AUTH_ID,
         projectId: "never-existed",
@@ -309,7 +309,7 @@ describe("cliProjects.removeByAccount", () => {
     const foreign = await seedProject(t, otherOrg, "not-yours", "auth_other");
 
     expect(
-      await t.mutation(internal.cliProjects.removeByAccount, {
+      await t.mutation(internal.cli.projects.removeByAccount, {
         accountId: accountId,
         authId: AUTH_ID,
         projectId: foreign,

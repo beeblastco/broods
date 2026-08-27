@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
-import type { CliManifestResource } from "../cliTypes";
+import type { CliManifestResource } from "../cli/types";
 import type { Id } from "../_generated/dataModel";
 import { loadAgentRuntimeSecrets } from "../model/agentRuntimeSecrets";
 import schema from "../schema";
@@ -88,7 +88,7 @@ const syncResources = (
   tt: T,
   resources: CliManifestResource[],
 ): Promise<unknown> =>
-  tt.mutation(internal.cliSync.syncManifestBySecretHash, {
+  tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {
       version: 1 as const,
@@ -101,7 +101,7 @@ const syncResources = (
 const sync = (tt: T): Promise<unknown> => syncResources(tt, [agentResource]);
 
 const setEnv = (tt: T, value: string): Promise<null> =>
-  tt.mutation(internal.cliSync.setEnvBySecretHash, {
+  tt.mutation(internal.cli.sync.setEnvBySecretHash, {
     secretHash: SECRET_HASH,
     project: PROJECT,
     stage: STAGE,
@@ -110,7 +110,7 @@ const setEnv = (tt: T, value: string): Promise<null> =>
   });
 
 const removeEnv = (tt: T): Promise<{ removed: boolean }> =>
-  tt.mutation(internal.cliSync.removeEnvBySecretHash, {
+  tt.mutation(internal.cli.sync.removeEnvBySecretHash, {
     secretHash: SECRET_HASH,
     project: PROJECT,
     stage: STAGE,
@@ -252,7 +252,7 @@ describe("the value digest env list returns", () => {
 });
 
 const listedDigest = async (tt: T): Promise<string | undefined> => {
-  const variables = await tt.query(internal.cliSync.listEnvBySecretHash, {
+  const variables = await tt.query(internal.cli.sync.listEnvBySecretHash, {
     secretHash: SECRET_HASH,
     project: PROJECT,
     stage: STAGE,

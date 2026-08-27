@@ -54,7 +54,7 @@ export async function recordSandboxAuditEvent(input: {
   if (!convexEnabled()) return;
   const actor = input.actor ?? { source: "unknown" as const };
   try {
-    await getConvexClient().mutation(internal.sandboxAuditEvents.insert, {
+    await getConvexClient().mutation(internal.sandbox.auditEvents.insert, {
       accountId: input.accountId as any,
       ...(input.sandboxConfigId
         ? { sandboxConfigId: input.sandboxConfigId as any }

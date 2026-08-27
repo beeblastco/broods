@@ -52,7 +52,7 @@ test("listActive returns only active records", async () => {
   const tt = t();
   const accountId = await seed(tt);
 
-  const active = await tt.query(internal.channelRecords.listActive, {
+  const active = await tt.query(internal.channel.records.listActive, {
     accountId: accountId,
   });
   expect(active.map((record) => record.name)).toEqual(["support"]);
@@ -62,7 +62,7 @@ test("list keeps returning tombstones for account-deletion cleanup", async () =>
   const tt = t();
   const accountId = await seed(tt);
 
-  const all = await tt.query(internal.channelRecords.list, {
+  const all = await tt.query(internal.channel.records.list, {
     accountId: accountId,
   });
   expect(all.map((record) => record.name).sort()).toEqual([

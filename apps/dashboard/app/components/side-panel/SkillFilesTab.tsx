@@ -216,19 +216,19 @@ export function SkillFilesTab({
   onUpdateSkillPath: (path: string) => void;
 }): React.JSX.Element {
   const files = useQuery(
-    api.workspaceFiles.list,
+    api.workspace.files.list,
     projectId ? { projectId: projectId, nodeId: nodeId } : "skip",
   );
   const skillMdUrl = useQuery(
-    api.workspaceFiles.getFileDownloadUrl,
+    api.workspace.files.getFileDownloadUrl,
     projectId
       ? { projectId: projectId, nodeId: nodeId, path: "SKILL.md" }
       : "skip",
   );
 
   const publishSkill = useAction(api.skillsPublic.publishSkill);
-  const generateUploadUrl = useMutation(api.workspaceFiles.generateUploadUrl);
-  const createFile = useMutation(api.workspaceFiles.create);
+  const generateUploadUrl = useMutation(api.workspace.files.generateUploadUrl);
+  const createFile = useMutation(api.workspace.files.create);
 
   const [skillMeta, setSkillMeta] = useState<{
     name?: string;

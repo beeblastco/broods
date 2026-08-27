@@ -2,7 +2,7 @@
 
 /**
  * Members panel: list org members with role, invite by email, change roles,
- * and remove. Reads/writes via api.orgMembers; gated server-side.
+ * and remove. Reads/writes via api.org.members; gated server-side.
  */
 
 import { DeleteConfirmDialog } from "@/app/components/DeleteConfirmDialog";
@@ -52,18 +52,18 @@ type MemberRow = {
 };
 
 export function MembersPanel({ org }: Props): React.JSX.Element {
-  const members = useQuery(api.orgMembers.list, { orgId: org._id });
-  const add = useMutation(api.orgMembers.add);
+  const members = useQuery(api.org.members.list, { orgId: org._id });
+  const add = useMutation(api.org.members.add);
   const updateRole = useMutation(
-    api.orgMembers.updateRole,
+    api.org.members.updateRole,
   ).withOptimisticUpdate((localStore, args) => {
-    const list = localStore.getQuery(api.orgMembers.list, { orgId: org._id });
+    const list = localStore.getQuery(api.org.members.list, { orgId: org._id });
     if (!list) {
       return;
     }
 
     localStore.setQuery(
-      api.orgMembers.list,
+      api.org.members.list,
       { orgId: org._id },
       list.map((m) =>
         m.membershipId === args.membershipId
@@ -72,15 +72,17 @@ export function MembersPanel({ org }: Props): React.JSX.Element {
       ),
     );
   });
-  const remove = useMutation(api.orgMembers.remove).withOptimisticUpdate(
+  const remove = useMutation(api.org.members.remove).withOptimisticUpdate(
     (localStore, args) => {
-      const list = localStore.getQuery(api.orgMembers.list, { orgId: org._id });
+      const list = localStore.getQuery(api.org.members.list, {
+        orgId: org._id,
+      });
       if (!list) {
         return;
       }
 
       localStore.setQuery(
-        api.orgMembers.list,
+        api.org.members.list,
         { orgId: org._id },
         list.filter((m) => m.membershipId !== args.membershipId),
       );

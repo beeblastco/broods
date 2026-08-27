@@ -95,12 +95,12 @@ export function useConnectedAgentConfig(
   ) as Id<"agentConfigs"> | undefined;
 
   const agentConfig = useQuery(
-    api.agentConfig.getById,
+    api.agent.config.getById,
     agentConfigId ? { configId: agentConfigId } : "skip",
   );
-  const updateConfig = useMutation(api.agentConfig.update).withOptimisticUpdate(
-    applyAgentConfigUpdate,
-  );
+  const updateConfig = useMutation(
+    api.agent.config.update,
+  ).withOptimisticUpdate(applyAgentConfigUpdate);
 
   // Keep the freshest config and serialize writes so chained edits never build
   // on a stale reactive snapshot (each branch edit re-projects the whole config).

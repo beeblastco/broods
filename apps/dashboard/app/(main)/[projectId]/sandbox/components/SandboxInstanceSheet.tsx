@@ -100,11 +100,11 @@ export function SandboxInstanceSheet({
   now,
   onClose,
 }: Props): React.JSX.Element {
-  const createSnapshot = useAction(api.sandboxPublic.createSnapshot);
-  const refresh = useAction(api.sandboxPublic.refreshSandbox);
-  const runCommand = useAction(api.sandboxPublic.runSandboxCommand);
-  const terminate = useAction(api.sandboxPublic.terminateSandbox);
-  const auditEvents = useQuery(api.sandboxAuditEvents.listForInstance, {
+  const createSnapshot = useAction(api.sandbox.public.createSnapshot);
+  const refresh = useAction(api.sandbox.public.refreshSandbox);
+  const runCommand = useAction(api.sandbox.public.runSandboxCommand);
+  const terminate = useAction(api.sandbox.public.terminateSandbox);
+  const auditEvents = useQuery(api.sandbox.auditEvents.listForInstance, {
     reservationKey: instance.reservationKey,
     limit: 12,
   });

@@ -1,7 +1,7 @@
 /** Validation tests for the config-plane policy document rules. */
 
 import { describe, expect, it } from "vitest";
-import { normalizePolicyDocument } from "../agentPolicies";
+import { normalizePolicyDocument } from "../agent/policies";
 import {
   POLICY_ACTIONS,
   normalizeCreatePolicyInput,

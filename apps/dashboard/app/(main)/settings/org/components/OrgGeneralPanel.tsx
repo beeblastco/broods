@@ -21,12 +21,12 @@ interface Props {
 }
 
 export function OrgGeneralPanel({ org }: Props): React.JSX.Element {
-  const updateOrg = useMutation(api.org.update).withOptimisticUpdate(
+  const updateOrg = useMutation(api.org.orgs.update).withOptimisticUpdate(
     (localStore, args) => {
-      const active = localStore.getQuery(api.org.getActive, {});
+      const active = localStore.getQuery(api.org.orgs.getActive, {});
       if (active && active._id === args.orgId && args.name !== undefined) {
         localStore.setQuery(
-          api.org.getActive,
+          api.org.orgs.getActive,
           {},
           { ...active, name: args.name },
         );

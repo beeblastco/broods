@@ -54,7 +54,7 @@ export function CreateAgentConfigDialog({
   onOpenChange: (open: boolean) => void;
   initialCanvasPosition?: { x: number; y: number } | null;
 }): React.JSX.Element {
-  const createAgentConfig = useMutation(api.agentConfig.create);
+  const createAgentConfig = useMutation(api.agent.config.create);
 
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<AgentProvider>("openai");

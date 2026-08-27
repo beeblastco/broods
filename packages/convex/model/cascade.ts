@@ -130,11 +130,11 @@ export async function purgeProject(
   // scheduled action removes it too.
   const crons = await cronsForProject(ctx, projectId);
   for (const cron of crons) {
-    await ctx.scheduler.runAfter(0, internal.cron.removeRunsCascade, {
+    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
       accountId: cron.accountId,
       cronId: cron._id,
     });
-    await ctx.scheduler.runAfter(0, internal.awsCrons.removeSchedule, {
+    await ctx.scheduler.runAfter(0, internal.aws.crons.removeSchedule, {
       schedulerName: cron.schedulerName,
       schedulerGroupName: cron.schedulerGroupName,
     });
@@ -183,7 +183,7 @@ export async function purgeOrg(
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
   for (const account of accounts) {
-    await ctx.scheduler.runAfter(0, internal.accounts.remove, {
+    await ctx.scheduler.runAfter(0, internal.account.accounts.remove, {
       accountId: account._id,
     });
   }

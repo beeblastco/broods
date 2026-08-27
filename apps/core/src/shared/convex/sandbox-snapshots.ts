@@ -40,7 +40,7 @@ export async function upsertSandboxSnapshot(input: {
 }): Promise<void> {
   if (!convexEnabled()) return;
   try {
-    await getConvexClient().mutation(internal.sandboxSnapshots.upsert, {
+    await getConvexClient().mutation(internal.sandbox.snapshots.upsert, {
       accountId: input.accountId as any,
       name: input.name,
       provider: input.provider,

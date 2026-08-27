@@ -36,16 +36,16 @@ export function PoliciesPanel({
   stageId,
 }: Props): React.JSX.Element {
   const policies = useQuery(
-    api.agentPolicies.listForStage,
+    api.agent.policies.listForStage,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Doc<"agentPolicies">[] | undefined;
   const usageCounts = useQuery(
-    api.agentPolicies.usageCounts,
+    api.agent.policies.usageCounts,
     stageId ? { projectId: projectId, stageId: stageId } : "skip",
   ) as Record<string, number> | undefined;
-  const createPolicy = useMutation(api.agentPolicies.create);
-  const updatePolicy = useMutation(api.agentPolicies.update);
-  const removePolicy = useMutation(api.agentPolicies.remove);
+  const createPolicy = useMutation(api.agent.policies.create);
+  const updatePolicy = useMutation(api.agent.policies.update);
+  const removePolicy = useMutation(api.agent.policies.remove);
 
   const [editing, setEditing] = useState<Doc<"agentPolicies"> | "new" | null>(
     null,

@@ -17,14 +17,15 @@ describe("list", () => {
 
     expect(
       (
-        await tt.query(internal.cron.list, {
+        await tt.query(internal.agent.crons.list, {
           accountId: accountId,
           agentId: agentId,
         })
       ).map((cron) => cron.name),
     ).toEqual(["mine"]);
     expect(
-      (await tt.query(internal.cron.list, { accountId: accountId })).length,
+      (await tt.query(internal.agent.crons.list, { accountId: accountId }))
+        .length,
     ).toBe(2);
   });
 });

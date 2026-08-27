@@ -66,7 +66,7 @@ async function seedProject(t: T, projectName = "demo-app") {
 }
 
 const list = (t: T, accountId: Id<"accounts">, project: string) =>
-  t.query(internal.cliStages.listByAccount, {
+  t.query(internal.cli.stages.listByAccount, {
     accountId: accountId,
     project: project,
   });
@@ -76,7 +76,7 @@ const create = (
   accountId: Id<"accounts">,
   args: { project: string; name: string; duplicateFrom?: string },
 ) =>
-  t.mutation(internal.cliStages.createByAccount, {
+  t.mutation(internal.cli.stages.createByAccount, {
     accountId: accountId,
     ...args,
   });

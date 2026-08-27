@@ -67,7 +67,10 @@ async function seedOrg(
 }
 
 const createAgent = (tt: T, accountId: Id<"accounts">, name: string) =>
-  tt.mutation(internal.agents.create, { accountId: accountId, name: name });
+  tt.mutation(internal.agent.agents.create, {
+    accountId: accountId,
+    name: name,
+  });
 
 const configFor = (tt: T, agentId: Id<"agents">) =>
   tt.run(async (ctx) =>
@@ -296,7 +299,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
-    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
       agentId: agentId,
       config: {
         model: { provider: "custom", modelId: "Qwen3.6-27B" },
@@ -366,7 +369,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const agentId = await createAgent(tt, accountId, "beeblast-agent-cust1");
     /** Writes an encrypted config onto the agent the way an API PATCH does. */
     const seed = (config: Record<string, unknown>) =>
-      tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+      tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
         agentId: agentId,
         config: config,
       });
@@ -405,7 +408,7 @@ describe("syncApiAgentCanvasWiring", () => {
     const { workspaceId, sandboxId } = await seedWiringFixtures(tt, accountId);
 
     const first = await createAgent(tt, accountId, "beeblast-agent-cust1");
-    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
       agentId: first,
       config: {
         sandbox: sandboxId,
@@ -423,7 +426,7 @@ describe("syncApiAgentCanvasWiring", () => {
       });
     });
     const second = await createAgent(tt, accountId, "beeblast-agent-cust2");
-    await tt.mutation(internal.agents.seedEncryptedConfigForTest, {
+    await tt.mutation(internal.agent.agents.seedEncryptedConfigForTest, {
       agentId: second,
       config: { sandbox: sandboxId },
     });

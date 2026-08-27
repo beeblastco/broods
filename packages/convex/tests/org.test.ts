@@ -44,7 +44,7 @@ async function seedUser(t: T, email: string) {
 const adopt = (
   t: T,
   args: { accountId: any; ownerEmail: string; orgName: string },
-) => t.mutation(internal.org.adoptExternalAccount, args);
+) => t.mutation(internal.org.orgs.adoptExternalAccount, args);
 
 describe("adoptExternalAccount", () => {
   test("binds an external account to a new org owned by the target user", async () => {
@@ -91,7 +91,9 @@ describe("adoptExternalAccount", () => {
 
     // getByOrgId resolves with .unique(); this is the query that was previously
     // unreachable for this account, and that would throw on a duplicate binding.
-    const found = await t.query(internal.accounts.getByOrgId, { orgId: orgId });
+    const found = await t.query(internal.account.accounts.getByOrgId, {
+      orgId: orgId,
+    });
     expect(found?._id).toBe(accountId);
   });
 
@@ -163,7 +165,7 @@ describe("adoptExternalAccount", () => {
 
     expect(orgId).not.toBe(existingOrgId);
     // The pre-existing org still resolves to exactly its own account.
-    const existing = await t.query(internal.accounts.getByOrgId, {
+    const existing = await t.query(internal.account.accounts.getByOrgId, {
       orgId: existingOrgId,
     });
     expect(existing?._id).toBe(existingAccountId);

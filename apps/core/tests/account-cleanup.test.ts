@@ -25,7 +25,7 @@ afterEach(() => {
 it("propagates workspace listing failures before destructive cleanup", async () => {
   setStorageForTests({
     workspaceConfigs: {
-      list: async function() {
+      list: async function () {
         throw new Error("workspace list unavailable");
       },
     },
@@ -46,15 +46,15 @@ it("propagates workspace listing failures before destructive cleanup", async () 
 it("bounds runtime cleanup so disabled-account deletion can be retried", async () => {
   setStorageForTests({
     workspaceConfigs: {
-      list: async function() {
+      list: async function () {
         return [];
       },
-      removeAllForAccount: async function() {
+      removeAllForAccount: async function () {
         return 0;
       },
     },
     sandboxConfigs: {
-      removeAllForAccount: async function() {
+      removeAllForAccount: async function () {
         return 0;
       },
     },
@@ -87,22 +87,22 @@ it("bounds runtime cleanup so disabled-account deletion can be retried", async (
   expect(attempts).toBe(100);
 });
 
-// awsCrons.remove is the action that deletes the EventBridge schedule and the
+// aws/crons.remove is the action that deletes the EventBridge schedule and the
 // row together; assert it is a registered internal action at the expected path.
-it("registers awsCrons.remove as an internal action", () => {
-  const registered = require("@broods/convex/awsCrons") as Record<
+it("registers aws/crons.remove as an internal action", () => {
+  const registered = require("@broods/convex/aws/crons") as Record<
     string,
     { isInternal?: boolean; isAction?: boolean } | undefined
   >;
   const internal = require("@broods/convex/_generated/api").internal;
 
   expect(registered.remove).toMatchObject({ isInternal: true, isAction: true });
-  expect(getFunctionName(internal.awsCrons.remove)).toBe("awsCrons:remove");
+  expect(getFunctionName(internal.aws.crons.remove)).toBe("aws/crons:remove");
 });
 
 // The adapter reaches this reference through an any-typed require, so nothing but
 // this check catches a rewire that stops deleting EventBridge schedules.
-it("crons.remove delegates to internal.awsCrons.remove via action", async () => {
+it("crons.remove delegates to internal.aws.crons.remove via action", async () => {
   process.env.CONVEX_URL ||= "https://example.convex.cloud";
   process.env.CONVEX_DEPLOY_KEY ||= "test-deploy-key";
   const calls: Array<{ ref: unknown; args: unknown }> = [];
@@ -121,7 +121,7 @@ it("crons.remove delegates to internal.awsCrons.remove via action", async () => 
   expect(removed).toBe(true);
   expect(calls).toHaveLength(1);
   // The generated API is a proxy, so assert by registered name, not identity.
-  expect(getFunctionName(calls[0]?.ref as never)).toBe("awsCrons:remove");
+  expect(getFunctionName(calls[0]?.ref as never)).toBe("aws/crons:remove");
   expect(calls[0]?.args).toMatchObject({
     accountId: "acct_1",
     cronId: "cron_1",

@@ -135,7 +135,7 @@ export const publishSkill = action({
     const account = await requireAccountForToken(ctx, bearerToken);
 
     // Load the file list
-    const files = await ctx.runQuery(api.workspaceFiles.list, {
+    const files = await ctx.runQuery(api.workspace.files.list, {
       projectId: projectId,
       nodeId: nodeId,
     });
@@ -205,9 +205,12 @@ async function requireAccountForToken(
   ctx: ActionCtx,
   bearerToken: string,
 ): Promise<Doc<"accounts">> {
-  const account = await ctx.runQuery(internal.accounts.getBySecretHash, {
-    secretHash: hashToken(bearerToken),
-  });
+  const account = await ctx.runQuery(
+    internal.account.accounts.getBySecretHash,
+    {
+      secretHash: hashToken(bearerToken),
+    },
+  );
   if (!account) throw new Error("Invalid Bearer token.");
 
   return account;

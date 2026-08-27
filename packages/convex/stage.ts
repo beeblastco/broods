@@ -201,7 +201,7 @@ export async function deleteStageContents(
     // Managed workspace files live outside Convex and must be purged before the
     // workspace row disappears. Bring-your-own buckets are customer-owned.
     if (!workspace.config?.storage?.bucket) {
-      await ctx.scheduler.runAfter(0, internal.awsWorkspaceFiles.purge, {
+      await ctx.scheduler.runAfter(0, internal.aws.workspaceFiles.purge, {
         accountId: workspace.accountId,
         workspaceId: workspace._id,
       });

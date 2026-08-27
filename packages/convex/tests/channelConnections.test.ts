@@ -5,7 +5,7 @@ import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { ChannelConnection } from "../channelConnections";
+import type { ChannelConnection } from "../channel/connections";
 import { encryptAgentConfigBlob } from "../model/agentConfigCodec";
 import schema from "../schema";
 
@@ -140,9 +140,9 @@ async function listConnections(
   tt: T,
   channel: string,
 ): Promise<ChannelConnection[]> {
-  await tt.mutation(internal.channelConnections.reconcile, {});
+  await tt.mutation(internal.channel.connections.reconcile, {});
 
-  return await tt.query(internal.channelConnections.listConnections, {
+  return await tt.query(internal.channel.connections.listConnections, {
     channel: channel,
   });
 }
@@ -294,7 +294,7 @@ describe("listConnections", () => {
     // The forwarder's subscription fails on this, so it must throw rather than
     // read as "no agents configure Discord" and quietly close every socket.
     await expect(
-      tt.query(internal.channelConnections.listConnections, {
+      tt.query(internal.channel.connections.listConnections, {
         channel: "discord",
       }),
     ).rejects.toThrow("ACCOUNT_CONFIG_ENCRYPTION_SECRET");

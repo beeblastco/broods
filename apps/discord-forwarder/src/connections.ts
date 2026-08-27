@@ -6,13 +6,13 @@
  * changes, so the standing function-call load is zero while nothing changes
  * and a new bot token reconciles the moment it is written.
  *
- * `packages/convex/channelConnections.ts` does the decryption, so this process
+ * `packages/convex/channel/connections.ts` does the decryption, so this process
  * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — only one deploy key per plane,
  * the same credential core authenticates storage reads with. That query is not
  * Discord-specific; this is the caller that asks it for `discord`.
  */
 
-import type { ChannelConnection } from "@broods/convex/channelConnections";
+import type { ChannelConnection } from "@broods/convex/channel/connections";
 import { ConvexClient } from "convex/browser";
 import type { ConfigPlane } from "./config.ts";
 import { logWarn } from "./log.ts";
@@ -94,7 +94,7 @@ export function watchDiscordConnections(
   const clients = planes.map((plane): ConvexClient => {
     const client = planeClient(plane);
     client.onUpdate(
-      internal.channelConnections.listConnections,
+      internal.channel.connections.listConnections,
       { channel: "discord" },
       (rows: ChannelConnection[]): void => {
         latest.set(plane.name, planeConnections(plane, rows));

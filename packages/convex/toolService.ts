@@ -175,7 +175,7 @@ export const bundleUrlForNode = action({
     });
     if (!tool) throw new Error("Tool configuration not found.");
 
-    return await ctx.runAction(internal.awsBundles.toolBundleUrl, {
+    return await ctx.runAction(internal.aws.bundles.toolBundleUrl, {
       bundleStorageKey: tool.bundleStorageKey,
     });
   },
