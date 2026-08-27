@@ -960,3 +960,95 @@ describe("runtime ingress", () => {
     ).toMatchObject({ status: "expired" });
   });
 });
+
+describe("maintain (I/O-surgical expiry)", () => {
+  /** Inserts one envelope row directly with controlled status/expiry fields. */
+  async function seedEnvelope(
+    t: ReturnType<typeof runtimeTest>,
+    accountId: Id<"accounts">,
+    options: {
+      eventId: string;
+      status: "queued" | "processing" | "completed" | "failed" | "expired";
+      expiresAt: number;
+      statusExpiresAt: number;
+    },
+  ) {
+    const now = Date.now();
+
+    return await t.run(
+      async (ctx) =>
+        await ctx.db.insert("runtimeIngressEnvelopes", {
+          accountId: accountId,
+          agentId: "test-agent",
+          conversationKey: conversationKeyFor(accountId),
+          sequence: 0,
+          eventId: options.eventId,
+          identity: `identity:${options.eventId}`,
+          idempotencyKey: options.eventId,
+          payloadDigest: `digest:${options.eventId}`,
+          events: [{ role: "user", content: options.eventId }],
+          delivery: { kind: "async" },
+          requestedMode: "collect",
+          status: options.status,
+          sizeBytes: 32,
+          createdAt: now,
+          updatedAt: now,
+          expiresAt: options.expiresAt,
+          statusExpiresAt: options.statusExpiresAt,
+        }),
+    );
+  }
+
+  test("expires overdue queued work, deletes retained terminal rows past retention, keeps the rest", async (): Promise<void> => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const now = Date.now();
+    const past = now - 60_000;
+    const future = now + 60_000;
+
+    // Overdue non-terminal → must be expired.
+    const overdueQueued = await seedEnvelope(t, accountId, {
+      eventId: "overdue-queued",
+      status: "queued",
+      expiresAt: past,
+      statusExpiresAt: future,
+    });
+    // Terminal, envelope TTL long past but retention still running → the
+    // pre-fix scan re-read exactly these rows every minute; they must simply
+    // survive untouched.
+    const retainedCompleted = await seedEnvelope(t, accountId, {
+      eventId: "retained-completed",
+      status: "completed",
+      expiresAt: past,
+      statusExpiresAt: future,
+    });
+    // Terminal and past retention → must be deleted.
+    const doneFailed = await seedEnvelope(t, accountId, {
+      eventId: "done-failed",
+      status: "failed",
+      expiresAt: past,
+      statusExpiresAt: past,
+    });
+    // Non-terminal but not yet due → untouched.
+    const freshQueued = await seedEnvelope(t, accountId, {
+      eventId: "fresh-queued",
+      status: "queued",
+      expiresAt: future,
+      statusExpiresAt: future,
+    });
+
+    const result = await t.mutation(internal.runtimeIngress.maintain, {});
+    expect(result.expired).toBe(1);
+    expect(result.deleted).toBe(1);
+
+    await t.run(async (ctx) => {
+      const expiredRow = await ctx.db.get(overdueQueued);
+      expect(expiredRow?.status).toBe("expired");
+      expect(expiredRow?.error).toContain("expired before it reached");
+
+      expect((await ctx.db.get(retainedCompleted))?.status).toBe("completed");
+      expect(await ctx.db.get(doneFailed)).toBeNull();
+      expect((await ctx.db.get(freshQueued))?.status).toBe("queued");
+    });
+  });
+});

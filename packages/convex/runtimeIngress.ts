@@ -1094,19 +1094,23 @@ export const maintain = internalMutation({
   returns: v.object({ expired: v.number(), deleted: v.number() }),
   handler: async (ctx) => {
     const now = Date.now();
-    // Filter inside the query: retained terminal rows share this index, and a
-    // plain take() would let 100 of them pin overdue nonterminal work forever.
-    const due = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_expiresAt", (q) => q.lte("expiresAt", now))
-      .filter((q) =>
-        q.and(
-          q.neq(q.field("status"), "completed"),
-          q.neq(q.field("status"), "failed"),
-          q.neq(q.field("status"), "expired"),
+    // Surgical reads: this runs every minute, and `.filter()` reads documents
+    // BEFORE filtering, so a bare-expiresAt index scan re-read every retained
+    // terminal row every minute (~2 GB/day of I/O doing nothing). Prefixing
+    // the index with status reads only rows this pass can actually act on.
+    const due = (
+      await Promise.all(
+        (["accepted", "queued", "applied", "processing"] as const).map(
+          (status) =>
+            ctx.db
+              .query("runtimeIngressEnvelopes")
+              .withIndex("by_status_and_expiresAt", (q) =>
+                q.eq("status", status).lte("expiresAt", now),
+              )
+              .take(MAX_DRAIN_ENVELOPES),
         ),
       )
-      .take(MAX_DRAIN_ENVELOPES);
+    ).flat();
     let expired = 0;
     for (const row of due) {
       if (["completed", "failed", "expired"].includes(row.status)) continue;
@@ -1147,17 +1151,18 @@ export const maintain = internalMutation({
       }
     }
 
-    const retained = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_statusExpiresAt", (q) => q.lte("statusExpiresAt", now))
-      .filter((q) =>
-        q.or(
-          q.eq(q.field("status"), "completed"),
-          q.eq(q.field("status"), "failed"),
-          q.eq(q.field("status"), "expired"),
+    const retained = (
+      await Promise.all(
+        (["completed", "failed", "expired"] as const).map((status) =>
+          ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_status_and_statusExpiresAt", (q) =>
+              q.eq("status", status).lte("statusExpiresAt", now),
+            )
+            .take(MAX_DRAIN_ENVELOPES),
         ),
       )
-      .take(MAX_DRAIN_ENVELOPES);
+    ).flat();
     let deleted = 0;
     for (const row of retained) {
       await ctx.db.delete(row._id);

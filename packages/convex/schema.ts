@@ -1299,6 +1299,12 @@ export default defineSchema({
     ])
     .index("by_accountId", ["accountId"])
     .index("by_expiresAt", ["expiresAt"])
+    // The maintain cron's surgical indexes: expiry scans prefixed by status so
+    // each minute reads only rows it can act on, never the retained backlog.
+    // (A bare-expiresAt scan re-read every retained terminal row every minute
+    // and burned ~2 GB/day of database I/O doing nothing.)
+    .index("by_status_and_expiresAt", ["status", "expiresAt"])
+    .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"])
     .index("by_statusExpiresAt", ["statusExpiresAt"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
     .index("by_applicationId", ["applicationId"])
