@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { InboundMessage } from "../src/shared/channels.ts";
 import { createDiscordChannel } from "../src/shared/discord-channel.ts";
 
 const TEST_DISCORD_PUBLIC_KEY = "0".repeat(64);
@@ -542,7 +543,7 @@ async function parseGatewayMedia(
   content: string,
   attachments: Array<Record<string, unknown>>,
   stickerItems: Array<Record<string, unknown>> = [],
-) {
+): Promise<InboundMessage> {
   const adapter = createDiscordChannel(
     "bot-token",
     TEST_DISCORD_PUBLIC_KEY,

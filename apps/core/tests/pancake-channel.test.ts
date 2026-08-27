@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { InboundMessage } from "../src/shared/channels.ts";
 import { createPancakeChannel } from "../src/shared/pancake-channel.ts";
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -304,7 +305,9 @@ describe("pancake channel adapter", () => {
   });
 });
 
-async function parsePancakeMedia(message: Record<string, unknown>) {
+async function parsePancakeMedia(
+  message: Record<string, unknown>,
+): Promise<InboundMessage> {
   const adapter = createPancakeChannel(
     "page-1",
     "page-token",

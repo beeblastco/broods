@@ -155,7 +155,7 @@ export function createTelegramChannel(
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
-          content: parsed.text,
+          content: parsed.text || skippedStickerText(message.sticker),
           ...(attachments.length > 0 ? { attachments: attachments } : {}),
           identity: {
             channelId: String(message.chat.id),
@@ -287,6 +287,17 @@ function hasTelegramMedia(message: TelegramMessage): boolean {
   );
 }
 
+// The stand-in text for a sticker `telegramAttachments` skips: an animated or
+// video sticker carries no caption, so without its emoji the turn would arrive
+// entirely empty.
+function skippedStickerText(sticker: TelegramSticker | undefined): string {
+  if (!sticker || (!sticker.is_animated && !sticker.is_video)) {
+    return "";
+  }
+
+  return sticker.emoji ?? "[sticker]";
+}
+
 /**
  * The media on a Telegram message, as Chat SDK attachments.
  *
@@ -298,8 +309,8 @@ function hasTelegramMedia(message: TelegramMessage): boolean {
  * what a sticker needs and all it needs.
  *
  * Animated and video stickers (.tgs, .webm) are left alone. Neither is a picture
- * a model can read, and the emoji Telegram ships with every sticker already says
- * more about what was sent than a failed download would.
+ * a model can read; `skippedStickerText` carries their emoji as the message
+ * text instead, which says more than a failed download would.
  */
 function telegramAttachments(
   transport: TelegramAdapter,

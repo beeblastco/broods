@@ -44,6 +44,10 @@ const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 // still named for the agent; only the bytes are left with the provider.
 const MAX_ATTACHMENTS_PER_MESSAGE = 10;
 
+// A stalled provider download must not hold the turn open until the platform
+// kills it; past this the attachment becomes a described failure instead.
+const ATTACHMENT_FETCH_TIMEOUT_MS = 30_000;
+
 // A sniff that only proves "this is a zip" must not overrule a provider that
 // already said which zip it is — .docx and .xlsx are both zip containers.
 const UNSPECIFIC_MEDIA_TYPES: ReadonlySet<string> = new Set([
@@ -72,6 +76,18 @@ const PROVIDER_NATIVE_MEDIA: Partial<
 
 type UserContentPart = Exclude<UserContent, string>[number];
 
+/**
+ * The two halves of an ingested message, split by what may be persisted.
+ * Durable parts are sealed links and text — safe in the queue and the stored
+ * conversation. Transient parts carry raw bytes for an agent with no workspace:
+ * the live turn sees them, but they must never be written into a queued or
+ * stored record, where a 6 MB picture becomes an 8 MB JSON row.
+ */
+export interface IngestedMediaParts {
+  durable: UserContentPart[];
+  transient: UserContentPart[];
+}
+
 export interface InboundMediaContext {
   accountId?: string;
   /** Names the channel in the note the agent reads, and in the logs. */
@@ -95,9 +111,9 @@ export interface InboundMediaContext {
 export async function ingestInboundAttachments(
   attachments: Attachment[],
   context: InboundMediaContext,
-): Promise<UserContentPart[]> {
+): Promise<IngestedMediaParts> {
   if (attachments.length === 0) {
-    return [];
+    return { durable: [], transient: [] };
   }
   const accepted = attachments.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
   const overflow = attachments.length - accepted.length;
@@ -108,19 +124,20 @@ export async function ingestInboundAttachments(
     ),
   );
 
-  const parts: UserContentPart[] = [];
+  const durable: UserContentPart[] = [];
+  const transient: UserContentPart[] = [];
   for (const item of stored) {
     const part = nativePart(item, context.provider);
     if (part) {
-      parts.push(part);
+      (item.url ? durable : transient).push(part);
     }
   }
   const note = attachmentNote(stored, overflow, context.channelName);
   if (note) {
-    parts.push({ type: "text", text: note });
+    durable.push({ type: "text", text: note });
   }
 
-  return parts;
+  return { durable: durable, transient: transient };
 }
 
 /**
@@ -175,6 +192,8 @@ export function resolveMediaType(
 interface StoredAttachment {
   name: string;
   mediaType: string;
+  /** The bytes themselves, kept only when no durable link exists to hand over. */
+  data?: Buffer;
   /** Set once the bytes are in the workspace. */
   path?: string;
   /** The sealed link the model is handed. Absent when there is no workspace. */
@@ -225,7 +244,10 @@ async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`refusing to fetch an attachment over ${url.protocol}`);
   }
-  const response = await fetch(url, { redirect: "follow" });
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`provider answered ${response.status}`);
   }
@@ -292,11 +314,12 @@ function nativePart(
   item: StoredAttachment,
   provider: AccountModelProviderName | undefined,
 ): UserContentPart | null {
-  if (!item.url) {
+  const source = item.url ?? item.data;
+  if (!source) {
     return null;
   }
   if (item.mediaType.startsWith("image/")) {
-    return { type: "image", image: item.url, mediaType: item.mediaType };
+    return { type: "image", image: source, mediaType: item.mediaType };
   }
   const native = provider ? PROVIDER_NATIVE_MEDIA[provider] : undefined;
   const topLevel = item.mediaType.split("/")[0] ?? "";
@@ -306,7 +329,7 @@ function nativePart(
 
   return {
     type: "file",
-    data: item.url,
+    data: source,
     mediaType: item.mediaType,
     filename: item.name,
   };
@@ -336,8 +359,10 @@ async function storeAttachment(
     assertWithinLimit(bytes.byteLength, mediaType);
     const name = mediaFileName(attachment, mediaType, index);
     const workspace = context.workspace;
+    // Without a durable link the bytes ride along for the current turn only —
+    // persistence drops them, which is exactly the documented behaviour.
     if (!workspace || !context.accountId) {
-      return { name: name, mediaType: mediaType };
+      return { name: name, mediaType: mediaType, data: bytes };
     }
     const path = inboxPath(name, context.eventId, index);
     const url = await writeInboxObject(
@@ -352,7 +377,7 @@ async function storeAttachment(
       name: name,
       mediaType: mediaType,
       path: path,
-      ...(url ? { url: url } : {}),
+      ...(url ? { url: url } : { data: bytes }),
     };
   } catch (err) {
     const failure = err instanceof Error ? err.message : String(err);

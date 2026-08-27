@@ -98,7 +98,7 @@ describe("ingestInboundAttachments", () => {
       { accountId: ACCOUNT, channelName: "telegram", eventId: "evt-1", workspace: workspace() },
     );
 
-    const image = parts.find((part) => part.type === "image");
+    const image = parts.durable.find((part) => part.type === "image");
     expect(image).toBeDefined();
     if (image?.type !== "image") throw new Error("expected an image part");
     // A sealed media link, never a base64 payload: the conversation is stored
@@ -149,7 +149,11 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    expect(parts.filter((part) => part.type !== "text")).toEqual([]);
+    expect(
+      [...parts.durable, ...parts.transient].filter(
+        (part) => part.type !== "text",
+      ),
+    ).toEqual([]);
     expect(noteText(parts)).toContain("voice.aac");
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
   });
@@ -173,7 +177,7 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    const file = parts.find((part) => part.type === "file");
+    const file = parts.durable.find((part) => part.type === "file");
     if (file?.type !== "file") throw new Error("expected a file part");
     expect(String(file.data)).toStartWith("https://core.example/media/");
     expect(file.mediaType).toBe("audio/aac");
@@ -230,14 +234,19 @@ describe("ingestInboundAttachments", () => {
     expect(noteText(parts)).toContain("larger than");
   });
 
-  it("keeps the message legible when there is no workspace to store into", async () => {
+  it("hands the current turn the bytes when there is no workspace to store into", async () => {
     const parts = await ingestInboundAttachments([imageAttachment()], {
       accountId: ACCOUNT,
       channelName: "discord",
       eventId: "evt-6",
     });
 
-    expect(parts.filter((part) => part.type !== "text")).toEqual([]);
+    // The picture still reaches the model — as bytes, marked transient so
+    // nothing persisted or queued ever carries them.
+    const image = parts.transient.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected a transient image part");
+    expect(image.image).toEqual(PNG_BYTES);
+    expect(parts.durable.filter((part) => part.type !== "text")).toEqual([]);
     expect(noteText(parts)).toContain("no workspace is attached");
     expect(writeS3ObjectMock).not.toHaveBeenCalled();
   });
@@ -265,7 +274,7 @@ describe("ingestInboundAttachments", () => {
         eventId: "evt-8",
         workspace: workspace(),
       }),
-    ).toEqual([]);
+    ).toEqual({ durable: [], transient: [] });
   });
 });
 
@@ -279,7 +288,7 @@ function imageAttachment(): Attachment {
 }
 
 function noteText(parts: Awaited<ReturnType<typeof ingestInboundAttachments>>): string {
-  return parts
+  return parts.durable
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");

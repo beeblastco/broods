@@ -246,7 +246,10 @@ async function uploadPancakeContent(
   );
   const bodyText = await response.text();
   const body = parseJsonBody(bodyText);
-  const contentId = (body as { id?: string } | null)?.id;
+  // The upload answers with a top-level id; anything else is a failed upload
+  // whatever the status code says.
+  const contentId =
+    typeof body?.id === "string" && body.id ? body.id : undefined;
   if (!response.ok || !contentId) {
     throw new Error(
       `Pancake upload of ${name} failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
@@ -390,7 +393,7 @@ function normalizePancakeTagIds(value: unknown): string[] {
 
 function parseJsonBody(
   text: string,
-): { success?: boolean; message?: string } | null {
+): { id?: unknown; success?: boolean; message?: string } | null {
   if (!text) {
     return null;
   }
@@ -399,7 +402,7 @@ function parseJsonBody(
     const parsed = JSON.parse(text) as unknown;
 
     return parsed && typeof parsed === "object"
-      ? (parsed as { success?: boolean; message?: string })
+      ? (parsed as { id?: unknown; success?: boolean; message?: string })
       : null;
   } catch {
     return null;

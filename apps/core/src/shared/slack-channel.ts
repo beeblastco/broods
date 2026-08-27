@@ -74,6 +74,9 @@ const SLACK_FILE_HOST_SUFFIXES = [
 // a loop, not a download.
 const SLACK_FILE_MAX_REDIRECTS = 5;
 
+// Per hop, so one stalled response cannot hold the turn open indefinitely.
+const SLACK_FILE_TIMEOUT_MS = 30_000;
+
 type SlackUserNameResolver = (userId: string) => Promise<string | null>;
 
 interface SlackEventEnvelope {
@@ -1051,6 +1054,7 @@ async function fetchSlackFile(url: string, botToken: string): Promise<Buffer> {
     const response = await fetch(target, {
       headers: { authorization: `Bearer ${botToken}` },
       redirect: "manual",
+      signal: AbortSignal.timeout(SLACK_FILE_TIMEOUT_MS),
     });
     const location = response.headers.get("location");
     if (location && response.status >= 300 && response.status < 400) {

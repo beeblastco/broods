@@ -23,6 +23,10 @@ import { DISCORD_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 // conversation to the thread, with the parent channel as its channel scope.
 const DISCORD_THREAD_CHANNEL_TYPES = new Set([10, 11, 12]);
 
+// One bound for the direct REST calls and CDN downloads, so a stalled Discord
+// response cannot hold the turn open until the platform kills it.
+const DISCORD_FETCH_TIMEOUT_MS = 30_000;
+
 // Discord sticker format ids, and the CDN extension each is served under.
 // Format 3 is Lottie — a JSON animation with no raster form — so it is absent.
 const DISCORD_STICKER_EXTENSIONS: Record<number, string | undefined> = {
@@ -618,6 +622,7 @@ async function callDiscordApi(
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
     throw new Error(
@@ -627,7 +632,9 @@ async function callDiscordApi(
 }
 
 async function fetchDiscordFile(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(DISCORD_FETCH_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Discord answered ${response.status}`);
   }

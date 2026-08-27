@@ -5,6 +5,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { InboundMessage } from "../src/shared/channels.ts";
 import { createTelegramChannel } from "../src/shared/telegram-channel.ts";
 
 const GROUP_CHAT = { id: 123, type: "supergroup" };
@@ -482,6 +483,26 @@ describe("telegram channel adapter", () => {
     expect(animated.attachments).toBeUndefined();
   });
 
+  it("carries the emoji as the text of a caption-less animated sticker", async () => {
+    // With no attachment and no caption, the emoji is all the message has —
+    // without it the turn would arrive entirely empty.
+    const parsed = await parseTelegram({
+      update_id: 36,
+      message: {
+        ...createMessage({}),
+        sticker: {
+          file_id: "st-3",
+          file_unique_id: "u3",
+          emoji: "😅",
+          is_video: true,
+        },
+      },
+    });
+
+    expect(parsed.content).toBe("😅");
+    expect(parsed.attachments).toBeUndefined();
+  });
+
   it("still ignores a message carrying neither text nor media", async () => {
     const adapter = createTelegramChannel(
       "bot-token",
@@ -503,7 +524,9 @@ describe("telegram channel adapter", () => {
 
 // The normalized message a Telegram update produces, or a thrown error naming
 // why the update was refused.
-async function parseTelegram(payload: Record<string, unknown>) {
+async function parseTelegram(
+  payload: Record<string, unknown>,
+): Promise<InboundMessage> {
   const adapter = createTelegramChannel(
     "bot-token",
     "secret",

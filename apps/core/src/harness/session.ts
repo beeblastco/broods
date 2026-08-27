@@ -7,6 +7,8 @@ import type { HarnessAgentSkill } from "@ai-sdk/harness/agent";
 import {
   systemModelMessageSchema,
   type AssistantModelMessage,
+  type FilePart,
+  type ImagePart,
   type ModelMessage,
   type SystemModelMessage,
   type ToolModelMessage,
@@ -317,36 +319,8 @@ export class Session {
   }
 
   /**
-   * Stores the media a channel delivered and folds it into the newest user event.
-   *
-   * Runs here rather than in the adapter because the workspace the bytes land in
-   * is only known once the runtime resolves, and because parsing happens before
-   * the webhook is acknowledged — downloading there would hold the provider's
-   * connection open for the length of a video. The events come back unchanged
-   * when there is nothing attached, so every caller can route through it.
+   * Persists the given ingress events into the stored conversation.
    */
-  async ingestAttachments(
-    events: ConversationIngressEvent[],
-    attachments: Attachment[] | undefined,
-    channelName: string,
-  ): Promise<ConversationIngressEvent[]> {
-    if (!attachments?.length) {
-      return events;
-    }
-    const runtimeConfig = await this.ensureResolvedRuntime();
-    const parts = await ingestInboundAttachments(attachments, {
-      accountId: this.accountId,
-      channelName: channelName,
-      eventId: this.eventId,
-      provider: this.agentConfig.model?.provider,
-      // The first workspace is the agent's default, the same one the file tools
-      // write to when the model names none.
-      workspace: runtimeConfig.workspaces[0],
-    });
-
-    return parts.length > 0 ? appendToLatestUserEvent(events, parts) : events;
-  }
-
   async appendIngressEvents(
     events: ConversationIngressEvent[],
   ): Promise<SystemModelMessage[]> {
@@ -745,13 +719,9 @@ export class Session {
   }
 
   private channelPartition(): ChannelPartition | undefined {
-    if (this.delivery?.kind !== "channel") {
-      return undefined;
-    }
-    const config = this.agentConfig.channels?.[this.delivery.channelName];
-    const partition = isPlainObject(config) ? config.partition : undefined;
-
-    return isPartition(partition) ? partition : undefined;
+    return this.delivery?.kind === "channel"
+      ? channelPartitionFromConfig(this.agentConfig, this.delivery.channelName)
+      : undefined;
   }
 
   private defaultWorkspaceHasSandbox(): boolean {
@@ -977,6 +947,83 @@ export class Session {
 
     return createdAt;
   }
+}
+
+/**
+ * A channel message's events after attachment ingestion, split by durability.
+ * `events` carries only sealed links and text — safe for admission to queue or
+ * persist. `turnEvents` adds the byte-backed parts an agent with no workspace
+ * gets for the current turn; those must never reach a stored record.
+ */
+export interface IngestedChannelEvents {
+  events: ConversationIngressEvent[];
+  turnEvents: ConversationIngressEvent[];
+}
+
+/**
+ * Stores the media a channel delivered and folds it into the newest user event.
+ *
+ * Standalone rather than a Session method because the channel path must run it
+ * before admission: a turn that arrives while another owns the conversation is
+ * queued as its events alone, and the drain loop replays exactly what was
+ * queued — parts added after admission would never reach a queued turn. It runs
+ * here rather than in the adapter because the workspace the bytes land in is
+ * only known once the runtime resolves, and because parsing happens before the
+ * webhook is acknowledged — downloading there would hold the provider's
+ * connection open for the length of a video. The events come back unchanged
+ * when there is nothing attached, so every caller can route through it.
+ */
+export async function ingestChannelAttachments(
+  events: ConversationIngressEvent[],
+  attachments: Attachment[] | undefined,
+  context: {
+    accountId: string | undefined;
+    agentConfig: AgentConfig;
+    channelName: string;
+    conversationKey: string;
+    eventId: string;
+  },
+): Promise<IngestedChannelEvents> {
+  if (!attachments?.length) {
+    return { events: events, turnEvents: events };
+  }
+  const runtimeConfig = await resolveAgentRuntime(
+    context.agentConfig,
+    context.accountId,
+    {
+      channelName: context.channelName,
+      channelScopeKey: channelScopeKeyFromConversation(context.conversationKey),
+      conversationKey: channelScopeKeyFromConversation(
+        context.conversationKey,
+        "conversation",
+      ),
+      partition: channelPartitionFromConfig(
+        context.agentConfig,
+        context.channelName,
+      ),
+    },
+  );
+  const parts = await ingestInboundAttachments(attachments, {
+    accountId: context.accountId,
+    channelName: context.channelName,
+    eventId: context.eventId,
+    provider: context.agentConfig.model?.provider,
+    // The first workspace is the agent's default, the same one the file tools
+    // write to when the model names none.
+    workspace: runtimeConfig.workspaces[0],
+  });
+  const durable =
+    parts.durable.length > 0
+      ? appendToLatestUserEvent(events, parts.durable)
+      : events;
+
+  return {
+    events: durable,
+    turnEvents:
+      parts.transient.length > 0
+        ? appendToLatestUserEvent(durable, parts.transient)
+        : durable,
+  };
 }
 
 // Message persistence sanitization. Exported so tests can verify the
@@ -1343,6 +1390,18 @@ function isToolApprovalResponseMessage(
   );
 }
 
+// The partition one channel's config carries, shared by the Session and the
+// pre-admission attachment path so both resolve the same runtime scope.
+function channelPartitionFromConfig(
+  agentConfig: AgentConfig,
+  channelName: string,
+): ChannelPartition | undefined {
+  const config = agentConfig.channels?.[channelName];
+  const partition = isPlainObject(config) ? config.partition : undefined;
+
+  return isPartition(partition) ? partition : undefined;
+}
+
 function isPartition(value: unknown): value is ChannelPartition {
   if (!isPlainObject(value)) return false;
   if (value.by === "shared") return value.alias === undefined;
@@ -1489,12 +1548,14 @@ function sanitizeUserMessage(
 // clothes, so it is excluded by the scheme check rather than by the type.
 // A file part may also tag its data (`{ type: "url", url }`), which the direct
 // API accepts, so that shape unwraps to the same check.
-function isStorableMediaReference(value: unknown): boolean {
-  if (isPlainObject(value) && value.type === "url") {
-    return isStorableMediaReference(value.url);
-  }
+function isStorableMediaReference(
+  value: ImagePart["image"] | FilePart["data"],
+): boolean {
   if (value instanceof URL) {
     return value.protocol === "http:" || value.protocol === "https:";
+  }
+  if (typeof value === "object" && "type" in value && value.type === "url") {
+    return isStorableMediaReference(value.url);
   }
 
   return typeof value === "string" && /^https?:\/\//i.test(value);

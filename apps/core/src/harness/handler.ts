@@ -97,7 +97,11 @@ import {
   type SandboxJobCompletionInboundEvent,
   type StatusInboundEvent,
 } from "./integrations.ts";
-import { Session, type ConversationIngressEvent } from "./session.ts";
+import {
+  ingestChannelAttachments,
+  Session,
+  type ConversationIngressEvent,
+} from "./session.ts";
 import { SubagentCoordinator } from "./subagents.ts";
 
 type ContinuationOutcome =
@@ -1160,12 +1164,26 @@ async function handleChannelRequest(
   }
   const requestedMode =
     outcome.kind === "rewrite" ? outcome.requestedMode : "steer";
+  // Before admission, so a turn that lands in the queue still carries its
+  // media: the queued record holds only these events, and the drain loop
+  // replays exactly what was queued.
+  const ingested = await ingestChannelAttachments(
+    event.events,
+    event.attachments,
+    {
+      accountId: event.accountId,
+      agentConfig: event.agentConfig ?? {},
+      channelName: event.channelName,
+      conversationKey: event.conversationKey,
+      eventId: event.eventId,
+    },
+  );
   const admission = await acceptIngress({
     accountId: event.accountId,
     agentId: event.agentId,
     eventId: event.eventId,
     conversationKey: event.conversationKey,
-    events: event.events,
+    events: ingested.events,
     requestedMode: requestedMode,
     idempotencyKey: event.eventId,
     delivery: {
@@ -1244,13 +1262,9 @@ async function handleChannelRequest(
     ownerGeneration: admission.ownerGeneration,
     channelActions: event.channel,
   });
-  // Once, before the drain loop: the attachments belong to the message that
-  // arrived, and a follow-up taken off the queue brings its own.
-  let incoming: ConversationIngressEvent[] = await session.ingestAttachments(
-    event.events,
-    event.attachments,
-    event.channelName,
-  );
+  // The live turn gets the transient byte-backed parts on top of what
+  // admission saw; a follow-up taken off the queue brings its own.
+  let incoming: ConversationIngressEvent[] = ingested.turnEvents;
   let incomingEphemeral: SystemModelMessage[] = [];
   let activeConfig = event.agentConfig ?? {};
   let released = false;
@@ -1451,12 +1465,18 @@ async function handleChannelContext(event: ChannelContextEvent): Promise<void> {
     return;
   }
 
+  // Context is stored, never run, so only the durable parts matter here —
+  // persistence would drop byte-backed parts anyway.
   await session.appendIngressEvents(
-    await session.ingestAttachments(
-      event.events,
-      event.attachments,
-      event.channelName,
-    ),
+    (
+      await ingestChannelAttachments(event.events, event.attachments, {
+        accountId: event.accountId,
+        agentConfig: event.agentConfig ?? {},
+        channelName: event.channelName,
+        conversationKey: event.conversationKey,
+        eventId: event.eventId,
+      })
+    ).events,
   );
   logDebug("Channel context persisted", {
     channel: event.channelName,
