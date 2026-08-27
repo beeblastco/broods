@@ -20,7 +20,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
+  # Not `validate`: that is the name of the required CI check on `dev`, and two
+  # check runs sharing one name make the branch rule ambiguous about which of
+  # them it is waiting on.
+  sdk-package:
     runs-on: ubuntu-24.04
     permissions:
       contents: read

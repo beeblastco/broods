@@ -6,11 +6,10 @@
 name: CI
 
 on:
+  # No path filter on pull requests: `validate` and `app-surfaces` are required
+  # checks on `dev`, and a workflow a path filter skips never reports them, so a
+  # docs-only pull request would wait forever on a check that cannot arrive.
   pull_request:
-    paths-ignore:
-      - "apps/docs/**"
-      - ".github/workflows/deploy-docs.yaml"
-      - "**/*.md"
   push:
     branches-ignore:
       - main

@@ -1,0 +1,4 @@
+# Owners of every path. The `dev` branch rule requires a code owner review, so
+# a pull request cannot merge until one of these accounts approves it, and the
+# branch push restriction leaves them as the only ones who can land the merge.
+* @Phickies @Phicks-debug
