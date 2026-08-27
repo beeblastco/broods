@@ -19,6 +19,12 @@ import { logWarn } from "./log.ts";
 import { getStorage } from "./storage.ts";
 import { workspaceNamespace } from "./workspaces.ts";
 
+/** The pair that names one reserved machine at its provider. */
+export interface SandboxReservationRef {
+  provider: SandboxProvider;
+  reservationKey: string;
+}
+
 const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
   "daytona",
   "e2b",
@@ -34,19 +40,19 @@ const RELEASABLE_PROVIDERS: readonly SandboxProvider[] = [
  */
 export async function releaseExpiredSandboxes(
   accountId: string,
-  reservations: Array<{ provider: SandboxProvider; reservationKey: string }>,
-): Promise<number> {
+  reservations: SandboxReservationRef[],
+): Promise<SandboxReservationRef[]> {
   if (reservations.length === 0) {
-    return 0;
+    return [];
   }
   const configs = await persistentSandboxConfigs(accountId);
 
-  let released = 0;
+  const released: SandboxReservationRef[] = [];
   for (const reservation of reservations) {
     const key = reservation.reservationKey;
     if (!(await releaseFromConfigs(reservation.provider, configs, key)))
       continue;
-    released++;
+    released.push(reservation);
     await removeSandboxInstance(accountId, key);
   }
 

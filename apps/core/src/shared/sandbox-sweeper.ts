@@ -6,24 +6,27 @@
  */
 
 import { runtime } from "./convex/runtime.ts";
-import type { SandboxProvider } from "./domain/sandbox-config.ts";
 import { positiveIntegerEnv } from "./env.ts";
-import { logInfo, logWarn } from "./log.ts";
-import { releaseExpiredSandboxes } from "./sandbox-cleanup.ts";
+import { logDebug, logInfo, logWarn } from "./log.ts";
+import {
+  releaseExpiredSandboxes,
+  type SandboxReservationRef,
+} from "./sandbox-cleanup.ts";
 
 const DEFAULT_SWEEP_INTERVAL_SECONDS = 60 * 60;
+const FIRST_SWEEP_JITTER_MS = 30_000;
 const SWEEP_LEASE_KEY = "sandbox-sweep";
 const SWEEP_LEASE_SECONDS = 5 * 60;
 const SWEEP_PAGE_SIZE = 100;
 
-interface SandboxReservationSummary {
+interface SandboxReservationSummary extends SandboxReservationRef {
   accountId: string;
-  provider: SandboxProvider;
-  reservationKey: string;
   externalId: string;
 }
 
 let sweeper: ReturnType<typeof setInterval> | undefined;
+let firstSweep: ReturnType<typeof setTimeout> | undefined;
+let sweeping = false;
 
 /** Starts the periodic sweep. No-op when it is already running. */
 export function startSandboxSweeper(): void {
@@ -32,17 +35,25 @@ export function startSandboxSweeper(): void {
     "SANDBOX_SWEEP_INTERVAL_SECONDS",
     DEFAULT_SWEEP_INTERVAL_SECONDS,
   );
-  sweeper = setInterval(() => {
-    void sweepExpiredSandboxes().catch((error: unknown) => {
-      logWarn("Sandbox sweep failed", { error: errorMessage(error) });
-    });
-  }, intervalSeconds * 1000);
+  // A pod that restarts more often than the interval would otherwise never sweep
+  // once, and rollouts are more frequent than an hour. Jittered so replicas coming
+  // up together do not all reach for the same account lease.
+  firstSweep = setTimeout(
+    runSweep,
+    Math.floor(Math.random() * FIRST_SWEEP_JITTER_MS),
+  );
+  firstSweep.unref();
+  sweeper = setInterval(runSweep, intervalSeconds * 1000);
   // A pending sweep must not hold the process open past SIGTERM.
   sweeper.unref();
 }
 
-/** Stops the periodic sweep. The timer outlives requests, so shutdown clears it. */
+/** Stops the periodic sweep. The timers outlive requests, so shutdown clears them. */
 export function stopSandboxSweeper(): void {
+  if (firstSweep) {
+    clearTimeout(firstSweep);
+    firstSweep = undefined;
+  }
   if (!sweeper) return;
   clearInterval(sweeper);
   sweeper = undefined;
@@ -115,10 +126,32 @@ async function adoptOrphanedInstances(): Promise<SandboxReservationSummary[]> {
   return adopted;
 }
 
+/**
+ * One pass, guarded so a slow one cannot stack. The lease already stops two
+ * replicas duplicating an account; this stops one replica racing itself when a
+ * pass outlives the interval.
+ */
+function runSweep(): void {
+  if (sweeping) return;
+  sweeping = true;
+  void sweepExpiredSandboxes()
+    .catch((error: unknown) => {
+      logWarn("Sandbox sweep failed", { error: errorMessage(error) });
+    })
+    .finally(() => {
+      sweeping = false;
+    });
+}
+
 async function deferAttempted(
   accountId: string,
   reservations: SandboxReservationSummary[],
 ): Promise<void> {
+  // A pass that released everything has nothing left to hold off, and the mutation
+  // would be one round-trip per account per hour saying so.
+  if (reservations.length === 0) {
+    return;
+  }
   await runtime
     .mutate("deferSandboxReservations", {
       accountId: accountId,
@@ -156,7 +189,8 @@ async function sweepAccount(
     });
   } catch (error) {
     // The lease requires an active account, so this one is suspended or deleted.
-    logWarn("Sandbox sweep lease failed", {
+    // Expected, and it would otherwise warn once an hour forever.
+    logDebug("Sandbox sweep skipped an inactive account", {
       accountId: accountId,
       error: errorMessage(error),
     });
@@ -167,9 +201,20 @@ async function sweepAccount(
   // Another replica owns this account's sweep; it defers whatever it misses.
   if (!leased) return 0;
 
+  // Deferring what was just released would push its expiry forward and hide it
+  // from the next pass, so only what survived the pass is deferred.
+  let pending = reservations;
   try {
-    return await releaseExpiredSandboxes(accountId, reservations);
+    const released = await releaseExpiredSandboxes(accountId, reservations);
+    const done = new Set(
+      released.map((one): string => `${one.provider}:${one.reservationKey}`),
+    );
+    pending = reservations.filter(
+      (one): boolean => !done.has(`${one.provider}:${one.reservationKey}`),
+    );
+
+    return released.length;
   } finally {
-    await deferAttempted(accountId, reservations);
+    await deferAttempted(accountId, pending);
   }
 }
