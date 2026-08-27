@@ -235,3 +235,196 @@ tickets; all parked validations re-run before ticket 24 if it clears.
 - Live validation steps 1–5 (incl. the real Telegram end-to-end proof): **PARKED —
   Convex plan limit; steps 3–4 additionally need the GitHub PAT / Telegram bot
   token, both blank in the dispatch credentials.**
+
+## Ticket 21 — self-config toolset
+
+- Status: **built + fully unit-tested; Convex half DEPLOYED (run 33018935886,
+  success); core deploy checkpoint #2 merged to dev as bc6d2115 (carries stacked
+  tickets 20+21 — checkpoint #1 had merged only through feat/connectors-substrate);
+  CI watch running; live validation PARKED (Convex plan limit)**
+- Branch: `feat/self-config-tools` (base `feat/connectors-tab`), commit 03087734, pushed
+- Security boundary implemented exactly as specced:
+  - `X-Broods-Owner-Session: 1` stamped by `packages/convex/agentTestHttp.ts` on its
+    upstream service-auth call.
+  - ONE seam in core decides it: `directOwnerSession(authKind, headers)`
+    (`apps/core/src/harness/owner-session.ts`) — true only for auth kind `account`.
+    BOTH direct call sites in `integrations.ts` route through it (the deployment-key
+    site passes its own auth kind, so the spoof case is refused by construction).
+  - Threading: `DirectInboundEvent.ownerSession` → `SessionOptions` →
+    `Session.ownerSession` → `createTools` gate. `prepareDirectTurn` clears the flag
+    on cron triggers. Channel paths never set it. Background/async continuations do
+    NOT inherit it (fails closed — deliberate).
+- Tools (`harness/tools/self-config.tool.ts`), all read or propose, zero writes:
+  read_own_config (via `sanitizeConfigForSelfInspection`), list_skill_library
+  (real S3 store), list_connectors (no encrypted fields), read_recent_failures
+  (REAL source: failed `runtimeIngressEnvelopes` rows via new internal query
+  `listRecentAgentFailures` + new index `by_agentId_and_status_and_updatedAt` —
+  account-checked), run_health_check (key-resolution check, per-skill SKILL.md
+  existence, live MCP initialize→tools/list per enabled connector, working-folder
+  S3 write/read/delete round-trip with cleanup), propose_skill,
+  propose_config_change (allowlist: agent.system, model, skills.allowed,
+  connectors.allowed, workspaces — everything else is a tool error),
+  propose_connector, request_credential, propose_context_folder. Proposals return
+  versioned `{version: 1, proposal: {kind, payload}, status: "pending_user_review"}`
+  (`shared/domain/self-config.ts`).
+- Owner system-prompt part added in `Session.buildSystemPromptParts` (inspect before
+  answering; propose, never apply; credentials only via request_credential; never
+  ask for secrets in chat).
+- Deviation (documented): run_health_check's model check is config-level (key
+  present + `${VAR}` reference resolved — the observed live failure mode) rather
+  than a paid live provider ping; detail string says when a provider is "not
+  checked". Token-connector checks quote the stored validation row rather than
+  re-spending the token on every health check (Check button in ticket 20 does the
+  live re-validation).
+- Tests (apps/core/tests/self-config.test.ts, 16 pass): the spoof test
+  (deployment+marker → false), gating present/absent at createTools, Session
+  defaults + cron clearing, sanitizer leak check over every secret-bearing branch
+  (provider key, telegram/slack tokens, signing secret, connector token, env),
+  proposal round-trips, allowlist rejections (publicAccess, agent.name),
+  health check naming the broken part (`config.provider.google.apiKey` +
+  `${NO_SUCH_KEY}` named specifically; missing provider; vanished connector row).
+- Full core suite: 1059 pass / 1 fail = the KNOWN pre-existing
+  isolate-executor.test.ts timeout. Convex vitest: 212/212 pass. check + format +
+  root lint: clean (exit 0).
+- Live validation steps 1–4 (owner chat walks + live spoof): **PARKED — Convex
+  plan limit (re-probed at this checkpoint: still the free-plan 500).**
+
+## Core deploy checkpoint #1 — CLOSED
+
+- Second dev CI wave on 661a8eb8: ALL GREEN (Deploy 33017446929, CI 33017446952,
+  Build Core Image 33017447126, CodeQL 33017446966).
+- Runtime probe: `GET https://gateway.dev.broods.app/healthz` →
+  `{"status":"ok","activeWebSockets":0,"maxWebSockets":10000}`. Deeper probe
+  through an agent run remains impossible while the Convex function plane is
+  disabled (plan limit) — noted as degraded probe, not skipped.
+
+## Core deploy checkpoint #2 (after ticket 21) — IN PROGRESS
+
+- Convex deploy: workflow run **33018935886** (`deploy-convex.yaml` @
+  feat/self-config-tools) → success. Carries: agentTestHttp owner-session marker,
+  `listRecentAgentFailures` + envelope index, channelsPublic.validateChannel,
+  connectorsPublic/connectors (already live from checkpoint #1's convex deploy of
+  the substrate; this one re-deploys the superset).
+- Core: dev fetched first — no colleague commits (origin/dev == 661a8eb8). Merged
+  `feat/self-config-tools` with a merge commit → **bc6d2115**, pushed. CI watch
+  running in background; healthz probe after green.
+
+## Core deploy checkpoint #2 — CLOSED (one parked item)
+
+- dev CI wave on bc6d2115: Deploy Convex, Deploy, CI, Build Core Image, Build
+  Dashboard Image, CodeQL all SUCCESS. Runtime probe:
+  `GET https://gateway.dev.broods.app/healthz` → `{"status":"ok",...}`.
+- **Build Discord Forwarder Image: FAILURE — caused by the Convex plan limit,
+  not by code.** Evidence: my merges touched zero files under
+  apps/discord-forwarder (`git log 18c35c7a..bc6d2115 -- apps/discord-forwarder`
+  is empty); the downstream infra run (beeblastco/infra 33019180833) failed at
+  "Roll the Helm release" with `Deployment/beeblast/discord-forwarder not ready
+  ... Available: 0/1` — the forwarder's `/readyz` stays false until its first
+  successful config-plane poll BY DESIGN (apps/discord-forwarder/AGENTS.md), and
+  the dev Convex plane rejects every function call while the free-plan limit
+  stands. PARKED: after the Convex Pro upgrade, re-run "Build Discord Forwarder
+  Image" (or the infra deploy workflow) and it should roll clean. Same failure
+  already occurred on checkpoint #1's merge (run 33017014774), confirming it
+  predates ticket 21's changes.
+
+## Ticket 22 — agent tab cards
+
+- Status: **built + contract-tested; live walks 1–8 PARKED (Convex plan limit;
+  walk 2 additionally needs the blank GitHub PAT)**
+- Branch: `feat/agent-tab-cards` (base `feat/self-config-tools`), commit 1ae653d6, pushed
+- ProposalCard.tsx renders each ticket-21 proposal kind with Approve/Decline;
+  approvals run the SAME public actions the manual tabs use (createFromJson,
+  createCustomMcpConnector, createTokenConnector, createWorkingFolder,
+  agentConfig.update merge-safe). agent.system applies to the flat systemPrompt
+  column so DetailsTab keeps showing the truth (deliberate — extraConfig.agent.system
+  would shadow that editor per the codec's precedence).
+- Credential card: password inputs; github → token connector (+enable); channel
+  kinds (telegram/slack/discord/zalo/pancake) → merge into config.channels.<kind>
+  (the exact write ChannelsSection does); other providers → honest error pointing
+  at the Connectors tab. Values never enter transcript/notes/model context.
+- Decision notes posted as "[Approved — …]"/"[Declined — …]"/"[Failed — …]" via the
+  normal send path; isOutcomeNote() renders them as small system notes. Failure
+  keeps the card actionable (retry) and shows the real error.
+- Contract mirrored in app/lib/selfConfigProposals.ts; validated against frames
+  CAPTURED from core's actual tool implementations (executed directly — live
+  stream capture impossible while Convex is down; the fixtures are byte-identical
+  to what the stream will carry since the tool result IS the payload).
+  tests/selfConfigProposals.test.ts: 5 pass. Dashboard suite: 85 pass. check/format/
+  root lint clean.
+- Hint chips on empty owner chats ("Build me a skill for…", "Connect this agent to
+  GitHub", "Give yourself a working folder", "What can you currently do?").
+
+## Ticket 23 — health & diagnostics
+
+- Status: **built + typechecked + unit-covered where pure; live steps 1–5 PARKED
+  (Convex plan limit)**
+- Branch: `feat/health-diagnostics` (base `feat/agent-tab-cards`), commit 67e364a5, pushed
+- `agentHealthPublic.check` (WorkOS auth + ownership via
+  resolveAgentConversationScope): model ping (FREE countTokens for google/vertex,
+  GET /models for anthropic + the OpenAI-compatible family, honest "not pinged"
+  otherwise; unresolved `${VAR}` named specifically), per-enabled-skill S3 read,
+  per-enabled-connector via the SAME connectorsPublic.checkConnector the tab's
+  Check button uses (row status refreshes → tab shows identical truth),
+  per-configured-channel via channelsPublic.validateChannel on the env-RESOLVED
+  config, per-working-folder write/read/delete round-trip through
+  workspaceFilesPublic with cleanup in `finally`. Secret values never appear in
+  messages (variable NAMES only). Internal half: agentHealth.getHealthContext.
+- UI: AgentHealthCheck section on Details ("Check everything" → plain pass/fail
+  list, fix-links via ticket-12 pattern: env-vars route push, tab switches via
+  new DetailsTab onOpenTab). Per-card refresh in Connectors = ticket 20's Check
+  button (same action, deliberately not duplicated).
+- Error-resolver wiring: latest results lift to NodeSidePanel →
+  TestTab error cards quote the known failing model check
+  ("Health check found it: <target> — <message>") via withKnownHealthCause
+  (chatErrors.ts, 2 new tests; dashboard suite 87 pass).
+- Convex deploy dispatched for the new action: run id recorded below.
+- Convex deploy for agentHealthPublic/agentHealth: run **33026138173** → success.
+  (Function EXECUTION remains disabled by the plan limit; the deploy itself is
+  accepted, same as every deploy this run.)
+
+## Ticket 24 — the full journey (acceptance run)
+
+- Status: **PARKED WHOLESALE — blocked by the Convex free-plan limit.**
+- Branch: `feat/full-journey-fixes` (base `feat/health-diagnostics`), created and
+  pushed (no commits — no seam fixes could be exercised).
+- Every one of the 13 steps is UI-driven through the dashboard, and the dashboard
+  cannot execute a single Convex function while the plan limit stands (re-probed
+  immediately before this ticket: the internal test endpoint still returns the
+  free-plan 500). Even step 1 (create an agent) is impossible.
+- Additionally blocked even after the plan upgrade: step 6 (GitHub PAT blank in
+  dispatch credentials), step 9 (Telegram/Slack tokens blank), part of step 13
+  (needs the GitHub connector from step 6).
+- What ticket 24 needs from a human, in order:
+  1. Upgrade cheerful-orca-414 to Convex Pro (or resolve the limit).
+  2. Re-run "Build Discord Forwarder Image" on dev (parked rollout self-heals).
+  3. Provide a GitHub PAT (+ optionally Telegram/Slack bot tokens) for steps 6/9/13.
+  4. Re-dispatch the acceptance run (all code is built, deployed to dev where
+     authorized, and every branch pushed).
+
+## Final re-check of parked items (pre-24 sweep, per dispatch)
+
+- Convex plan limit: STILL BLOCKED (probe output in ticket 24 section).
+- ALL live browser validations for tickets 16, 17, 18, 13, 19, 20, 21, 22, 23:
+  still parked behind the same limit; each ticket's section lists its steps.
+- GitHub PAT / Telegram / Slack credential steps: still blank, still parked.
+- dev-local-unpushed-20260825 (two user commits from Aug 25 preserved on that
+  branch): still needs a human decision.
+- Discord forwarder dev rollout: parked on the plan limit (see checkpoint #2).
+
+## Final branch stack (all pushed)
+
+  origin/dev @ bc6d2115 (carries everything through ticket 21)
+  feat/tool-visibility        8fc84006  (base of this run, previously merged)
+  feat/agent-panel-v2         (16)
+  feat/skills-library         (17)
+  feat/context-tab            (18)
+  feat/chat-attachments       (13)
+  feat/connectors-substrate   (19)  → merged to dev, checkpoint #1
+  feat/connectors-tab         (20)
+  feat/self-config-tools      (21) 03087734  → merged to dev, checkpoint #2
+  feat/agent-tab-cards        (22) 1ae653d6
+  feat/health-diagnostics     (23) 67e364a5
+  feat/full-journey-fixes     (24) branch only, no commits
+
+Convex dev deployment additionally carries tickets 22–23's functions
+(deploy runs 33018935886 and 33026138173).
