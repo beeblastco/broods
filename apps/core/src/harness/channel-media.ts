@@ -18,8 +18,13 @@ import { detectMediaType, mediaTypeToExtension } from "@ai-sdk/provider-utils";
 import type { UserContent } from "ai";
 import type { Attachment } from "chat";
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
 import { getHarnessPublicUrl, requireEnv } from "../shared/env.ts";
+import {
+  isDeniedAddress,
+  REDIRECT_LIMIT,
+} from "./isolate/runner/pinned-fetch.mjs";
 import { logWarn } from "../shared/log.ts";
 import { MEDIA_PATH_PREFIX, sealMediaTicket } from "../shared/media-ticket.ts";
 import { writeS3Object } from "../shared/s3.ts";
@@ -118,9 +123,8 @@ export async function ingestInboundAttachments(
   const accepted = attachments.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
   const overflow = attachments.length - accepted.length;
   const stored = await Promise.all(
-    accepted.map(
-      (attachment, index): Promise<StoredAttachment> =>
-        storeAttachment(attachment, index, context),
+    accepted.map((attachment, index): Promise<StoredAttachment> =>
+      storeAttachment(attachment, index, context),
     ),
   );
 
@@ -236,29 +240,78 @@ function attachmentNote(
   ].join("\n");
 }
 
-// The provider's own fetch, for an attachment named only by URL. Kept to http(s)
-// so a crafted webhook cannot turn this into a file:// read, and bounded so a
-// lying Content-Length cannot be used to exhaust the pod.
-async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
+/**
+ * The host to fetch an attachment from, once it is known to resolve somewhere
+ * public. The URL is not trusted input: `zalo-channel` and `pancake-channel`
+ * both take it straight out of the inbound webhook body, so whoever posts to the
+ * webhook picks the host. Protocol alone is not the boundary, because a public
+ * name can resolve to a private address.
+ *
+ * `fetch` resolves the name again when it opens the socket, so this narrows the
+ * attack to a DNS rebind between the two lookups rather than closing it. Pinning
+ * the socket the way `guardedFetch` does would close it, at the cost of the
+ * binary body this path exists to carry: that helper reads every response as
+ * text.
+ */
+async function allowedAttachmentUrl(raw: string): Promise<URL> {
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`refusing to fetch an attachment over ${url.protocol}`);
   }
-  const response = await fetch(url, {
-    redirect: "follow",
-    signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
+  const addresses = await lookup(url.hostname, {
+    all: true,
+    verbatim: false,
   });
-  if (!response.ok) {
-    throw new Error(`provider answered ${response.status}`);
+  if (addresses.length === 0) {
+    throw new Error(`attachment host ${url.hostname} did not resolve`);
   }
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`);
+  for (const address of addresses) {
+    if (isDeniedAddress(address.address)) {
+      throw new Error(
+        `refusing to fetch an attachment from ${url.hostname}: private or metadata address`,
+      );
+    }
   }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  assertWithinLimit(bytes.byteLength, response.headers.get("content-type"));
 
-  return bytes;
+  return url;
+}
+
+// The provider's own fetch, for an attachment named only by URL. Redirects are
+// followed by hand so every hop is checked, not just the first: `redirect:
+// "follow"` would let one 302 carry this to the metadata endpoint past a guard
+// that only ever saw the original host. Bounded so a lying Content-Length cannot
+// be used to exhaust the pod.
+async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
+  let url = await allowedAttachmentUrl(raw);
+  for (let hop = 0; hop <= REDIRECT_LIMIT; hop += 1) {
+    const response = await fetch(url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(ATTACHMENT_FETCH_TIMEOUT_MS),
+    });
+    const location =
+      response.status >= 300 && response.status < 400
+        ? response.headers.get("location")
+        : null;
+    if (location) {
+      url = await allowedAttachmentUrl(new URL(location, url).toString());
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`provider answered ${response.status}`);
+    }
+    const declared = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_ATTACHMENT_BYTES) {
+      throw new Error(
+        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
+      );
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assertWithinLimit(bytes.byteLength, response.headers.get("content-type"));
+
+    return bytes;
+  }
+
+  throw new Error(`attachment redirected more than ${REDIRECT_LIMIT} times`);
 }
 
 function assertWithinLimit(size: number, mediaType: string | null): void {
@@ -276,7 +329,10 @@ function formatBytes(bytes: number): string {
 // The hash keeps two messages that both carry `image.jpg` apart without making
 // the name unreadable.
 function inboxPath(name: string, eventId: string, index: number): string {
-  const folder = createHash("sha256").update(eventId).digest("hex").slice(0, 12);
+  const folder = createHash("sha256")
+    .update(eventId)
+    .digest("hex")
+    .slice(0, 12);
   const safeName = name
     .replace(/[^\p{L}\p{N}._-]+/gu, "-")
     .replace(/^-+|-+$/g, "")

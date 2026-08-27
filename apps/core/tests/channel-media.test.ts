@@ -35,9 +35,8 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: () => false,
 }));
 
-const { ingestInboundAttachments, resolveMediaType } = await import(
-  "../src/harness/channel-media.ts"
-);
+const { ingestInboundAttachments, readAttachmentBytes, resolveMediaType } =
+  await import("../src/harness/channel-media.ts");
 
 const ORIGINAL_ENV = { ...process.env };
 const ACCOUNT = "acct_1";
@@ -93,10 +92,12 @@ describe("resolveMediaType", () => {
 
 describe("ingestInboundAttachments", () => {
   it("stores a picture and hands the model a durable link, not the bytes", async () => {
-    const parts = await ingestInboundAttachments(
-      [imageAttachment()],
-      { accountId: ACCOUNT, channelName: "telegram", eventId: "evt-1", workspace: workspace() },
-    );
+    const parts = await ingestInboundAttachments([imageAttachment()], {
+      accountId: ACCOUNT,
+      channelName: "telegram",
+      eventId: "evt-1",
+      workspace: workspace(),
+    });
 
     const image = parts.durable.find((part) => part.type === "image");
     expect(image).toBeDefined();
@@ -244,7 +245,8 @@ describe("ingestInboundAttachments", () => {
     // The picture still reaches the model — as bytes, marked transient so
     // nothing persisted or queued ever carries them.
     const image = parts.transient.find((part) => part.type === "image");
-    if (image?.type !== "image") throw new Error("expected a transient image part");
+    if (image?.type !== "image")
+      throw new Error("expected a transient image part");
     expect(image.image).toEqual(PNG_BYTES);
     expect(parts.durable.filter((part) => part.type !== "text")).toEqual([]);
     expect(noteText(parts)).toContain("no workspace is attached");
@@ -287,7 +289,9 @@ function imageAttachment(): Attachment {
   };
 }
 
-function noteText(parts: Awaited<ReturnType<typeof ingestInboundAttachments>>): string {
+function noteText(
+  parts: Awaited<ReturnType<typeof ingestInboundAttachments>>,
+): string {
   return parts.durable
     .filter((part) => part.type === "text")
     .map((part) => part.text)
@@ -302,3 +306,38 @@ function workspace(): ResolvedWorkspace {
     config: {} as WorkspaceConfig,
   };
 }
+
+describe("readAttachmentBytes URL guard", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("refuses a host that resolves to a private address", async (): Promise<void> => {
+    // The URL comes out of the webhook body, so the sender picks the host. A
+    // literal here, but a public name pointed at 127.0.0.1 fails the same check.
+    await expect(
+      readAttachmentBytes({ type: "file", url: "http://127.0.0.1/secret" }),
+    ).rejects.toThrow(/private or metadata address/);
+  });
+
+  it("refuses a redirect into the metadata endpoint", async (): Promise<void> => {
+    // The whole point of following redirects by hand: the first hop is public
+    // and passes, and `redirect: "follow"` would have fetched the second.
+    const calls: string[] = [];
+    globalThis.fetch = mock(async (input: unknown): Promise<Response> => {
+      calls.push(String(input));
+
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest/meta-data/" },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      readAttachmentBytes({ type: "file", url: "http://93.184.216.34/a.png" }),
+    ).rejects.toThrow(/169\.254\.169\.254/);
+    expect(calls).toEqual(["http://93.184.216.34/a.png"]);
+  });
+});
