@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { normalizeFilesystemNamespace } from "../src/shared/runtime-keys.ts";
 import {
+  agentSandboxReservation,
   agentSandboxReservationKey,
   isolatedWorkspaceNamespace,
   resolveAgentRuntime,
@@ -108,6 +109,45 @@ describe("agentSandboxReservationKey", () => {
     expect(key).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_2"));
     // Nothing else in the system may collide with a workspace's reservation key.
     expect(key).not.toBe(workspaceNamespace("acct_1", "sb_1"));
+  });
+});
+
+describe("agentSandboxReservation", () => {
+  // Account deletion asks this same question to know what to release, so a rule
+  // that disagreed with the runtime would leave the machine running at the provider.
+  const persistent = { provider: "sandbox", persistent: true } as const;
+
+  it("derives a key for a persistent sandbox", () => {
+    expect(agentSandboxReservation(persistent, "acct_1", "ag_1", "sb_1")).toBe(
+      agentSandboxReservationKey("acct_1", "ag_1", "sb_1"),
+    );
+  });
+
+  it("returns the pinned key rather than a derived one", () => {
+    const pinned = {
+      ...persistent,
+      options: { reservationKey: "team-shared" },
+    };
+    expect(agentSandboxReservation(pinned, "acct_1", "ag_1", "sb_1")).toBe(
+      "team-shared",
+    );
+  });
+
+  it("reserves nothing without persistence or an identity to derive from", () => {
+    expect(
+      agentSandboxReservation(
+        { provider: "sandbox" },
+        "acct_1",
+        "ag_1",
+        "sb_1",
+      ),
+    ).toBeUndefined();
+    expect(
+      agentSandboxReservation(persistent, undefined, "ag_1", "sb_1"),
+    ).toBeUndefined();
+    expect(
+      agentSandboxReservation(persistent, "acct_1", undefined, "sb_1"),
+    ).toBeUndefined();
   });
 });
 

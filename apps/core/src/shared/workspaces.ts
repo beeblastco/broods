@@ -96,6 +96,34 @@ export function agentSandboxReservationKey(
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
 }
 
+/**
+ * The key an agent's own sandbox actually reserves on, or undefined when it reserves
+ * nothing. Both callers ask this one question: `resolveAgentRuntime` to stamp the key
+ * onto the sandbox a workspace-less run reaches, and account deletion to know which
+ * machines to release. An explicit key wins, so pinning one to share a machine
+ * deliberately still gets released; deriving the rule twice instead would have
+ * cleanup releasing a key that was never reserved and leaving the real one running.
+ */
+export function agentSandboxReservation(
+  sandbox: WorkspaceSandboxConfig,
+  accountId: string | undefined,
+  agentId: string | undefined,
+  sandboxId: string,
+): string | undefined {
+  if (sandbox.persistent !== true) {
+    return undefined;
+  }
+  const pinned = sandbox.options?.reservationKey;
+  if (typeof pinned === "string" && pinned.trim().length > 0) {
+    return pinned;
+  }
+  if (!accountId || !agentId) {
+    return undefined;
+  }
+
+  return agentSandboxReservationKey(accountId, agentId, sandboxId);
+}
+
 /** Derive the shared filesystem namespace for a workspace record. */
 export function workspaceNamespace(
   accountId: string | undefined,
@@ -261,9 +289,8 @@ export async function resolveAgentRuntime(
 /**
  * Give a persistent agent-level sandbox the reservation key its workspace-less runs
  * key persistence on, so `persistent: true` means "my files survive" without the
- * author also supplying `options.reservationKey`. An explicit key always wins (pin
- * one to share a machine deliberately), and a sandbox that is not persistent, or an
- * identity too thin to derive from, is returned untouched.
+ * author also supplying `options.reservationKey`. A sandbox that reserves nothing is
+ * returned untouched, and so is one already carrying the key it reserves on.
  */
 function reservedAgentSandbox(
   sandbox: WorkspaceSandboxConfig,
@@ -271,22 +298,21 @@ function reservedAgentSandbox(
   agentId: string | undefined,
   sandboxId: string,
 ): WorkspaceSandboxConfig {
-  const options = sandbox.options ?? {};
-  const pinned = options.reservationKey;
-  if (
-    sandbox.persistent !== true ||
-    !accountId ||
-    !agentId ||
-    (typeof pinned === "string" && pinned.trim().length > 0)
-  ) {
+  const reservationKey = agentSandboxReservation(
+    sandbox,
+    accountId,
+    agentId,
+    sandboxId,
+  );
+  if (!reservationKey || reservationKey === sandbox.options?.reservationKey) {
     return sandbox;
   }
 
   return {
     ...sandbox,
     options: {
-      ...options,
-      reservationKey: agentSandboxReservationKey(accountId, agentId, sandboxId),
+      ...sandbox.options,
+      reservationKey: reservationKey,
     },
   };
 }
