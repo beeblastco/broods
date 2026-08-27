@@ -36,6 +36,15 @@ import {
   parseSkillSlash,
   skillSlashMessage,
 } from "@/app/lib/skillSlash";
+import {
+  isOutcomeNote,
+  parseProposalResult,
+  PROPOSAL_TOOL_NAMES,
+} from "@/app/lib/selfConfigProposals";
+import {
+  ProposalCard,
+  type ProposalDecision,
+} from "@/app/components/side-panel/ProposalCard";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
@@ -804,6 +813,33 @@ function ChatWindow({
       ? { configId: chatAgentConfigId, conversationKey: sessionId }
       : "skip",
   );
+  // Ticket 22: per-tool-call proposal decisions. The outcome note is posted
+  // into the conversation so the agent learns the result and continues.
+  const [proposalDecisions, setProposalDecisions] = useState<
+    Record<string, ProposalDecision>
+  >({});
+  const onProposalDecided = useCallback(
+    (toolCallId: string, decision: ProposalDecision, note: string) => {
+      setProposalDecisions((previous) => ({
+        ...previous,
+        [toolCallId]: decision,
+      }));
+      void sendMessage(note);
+    },
+    [sendMessage],
+  );
+  const proposalContext = useMemo<ProposalContext | undefined>(
+    () =>
+      chatAgentConfigId
+        ? {
+            agentConfigId: chatAgentConfigId,
+            decisions: proposalDecisions,
+            onDecided: onProposalDecided,
+          }
+        : undefined,
+    [chatAgentConfigId, onProposalDecided, proposalDecisions],
+  );
+
   const [attachments, setAttachments] = useState<
     Array<{ path: string; name: string; sizeBytes?: number }>
   >([]);
@@ -964,15 +1000,37 @@ function ChatWindow({
       {/* Message list */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && (
-          <p className="text-center text-xs text-muted-foreground pt-8">
-            Send a message to test the agent.
-          </p>
+          <div className="flex flex-col items-center gap-2 pt-8">
+            <p className="text-center text-xs text-muted-foreground">
+              Send a message to test the agent.
+            </p>
+            {internalTransport && (
+              <div className="flex max-w-full flex-wrap justify-center gap-1.5 px-4">
+                {[
+                  "Build me a skill for…",
+                  "Connect this agent to GitHub",
+                  "Give yourself a working folder",
+                  "What can you currently do?",
+                ].map((hint) => (
+                  <button
+                    key={hint}
+                    type="button"
+                    className="cursor-pointer rounded-full border border-border bg-muted/40 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => setInput(hint)}
+                  >
+                    {hint}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {messages.map((msg, i) => (
           <MessageBubble
             key={msg.id || i}
             message={msg}
             nodeColor={nodeColor}
+            proposalContext={proposalContext}
           />
         ))}
         {status === "streaming" && !hasAssistantMessage && (
@@ -1291,12 +1349,26 @@ function isToolOutputState(state: string): boolean {
 }
 
 /** Renders a single chat message with reasoning, tool, and text parts in order. */
+/** Everything a proposal card needs from the owning chat. */
+interface ProposalContext {
+  agentConfigId: Id<"agentConfigs">;
+  decisions: Record<string, ProposalDecision>;
+  onDecided: (
+    toolCallId: string,
+    decision: ProposalDecision,
+    note: string,
+  ) => void;
+}
+
 const MessageBubble = memo(function MessageBubble({
   message,
   nodeColor,
+  proposalContext,
 }: {
   message: UIMessage;
   nodeColor?: string;
+  /** Present in owner test chats: renders propose_* outputs as cards. */
+  proposalContext?: ProposalContext;
 }) {
   const isUser = message.role === "user";
   const userText = isUser
@@ -1307,6 +1379,18 @@ const MessageBubble = memo(function MessageBubble({
     : "";
 
   if (isUser) {
+    // Automatic decision notes ("[Approved — …]") are posted by the card
+    // actions, not typed by the person — render them as small system notes.
+    if (isOutcomeNote(userText)) {
+      return (
+        <div className="flex justify-center">
+          <p className="max-w-[85%] rounded-md bg-muted/50 px-2.5 py-1 text-center text-[11px] text-muted-foreground">
+            {userText.trim().slice(1, -1)}
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground whitespace-pre-wrap">
@@ -1372,6 +1456,29 @@ const MessageBubble = memo(function MessageBubble({
             const hasOutput = isToolOutputState(state);
             const errorText =
               typeof p.errorText === "string" ? p.errorText : null;
+
+            // Ticket 22: a finished propose_* tool renders as a review card.
+            if (
+              proposalContext &&
+              state === "output-available" &&
+              PROPOSAL_TOOL_NAMES.has(toolName)
+            ) {
+              const proposalResult = parseProposalResult(p.output ?? p.result);
+              const toolCallId =
+                typeof p.toolCallId === "string" ? p.toolCallId : `${index}`;
+              if (proposalResult) {
+                return (
+                  <ProposalCard
+                    key={`proposal-${toolCallId}`}
+                    result={proposalResult}
+                    toolCallId={toolCallId}
+                    agentConfigId={proposalContext.agentConfigId}
+                    decision={proposalContext.decisions[toolCallId]}
+                    onDecided={proposalContext.onDecided}
+                  />
+                );
+              }
+            }
 
             return (
               <ToolInvocationBlock
