@@ -47,6 +47,20 @@ export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
   data: Record<string, unknown>;
 };
 
+/** Shared inputs for materializing one workspace/sandbox canvas node. */
+type MaterializeNodeOptions = {
+  account: Doc<"accounts">;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+  node: CanvasNode;
+  data: Record<string, unknown>;
+  name: string;
+  description: string | undefined;
+  resourceId: string;
+  changed: boolean;
+  now: number;
+};
+
 /**
  * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
  * kind. The side panel uses this to warn when a dashboard-created agent /
@@ -377,145 +391,189 @@ async function materializeRuntimeNodes(
     const previousData = asRecord(previousById.get(node.id)?.data);
     const changed = resourceFieldsChanged(data, previousData);
 
-    if (node.type === "workspace") {
-      const config = asRecord(data.config).storage
-        ? data.config
-        : { storage: { provider: "s3" } };
-      const normalized = resourceId
-        ? ctx.db.normalizeId("workspaceConfigs", resourceId)
-        : null;
-      const byId = normalized ? await ctx.db.get(normalized) : null;
-      if (
-        byId &&
-        byId.accountId === account._id &&
-        !rowBelongsToStage(byId, projectId, stageId)
-      ) {
-        throw new Error(
-          "Workspace resource belongs to a different project or stage.",
-        );
-      }
-      // Fall back to (stage, name) so a node named like an existing row
-      // binds to it instead of inserting a duplicate — duplicates would later
-      // break the CLI's by-name `.unique()` lookup on deploy.
-      const existing =
-        byId && byId.accountId === account._id
-          ? byId
-          : await ctx.db
-              .query("workspaceConfigs")
-              .withIndex("by_stageId_and_name", (q) =>
-                q.eq("stageId", stageId).eq("name", name),
-              )
-              .first();
-      if (existing && existing.accountId === account._id) {
-        // Code owns CLI/API-managed rows; dashboard edits are not written back.
-        if (
-          existing.managedBy !== "cli" &&
-          existing.managedBy !== "api" &&
-          changed
-        ) {
-          await ctx.db.patch(existing._id, {
-            projectId: projectId,
-            stageId: stageId,
-            name: name,
-            description: description,
-            config: config,
-            managedBy: "dashboard",
-            updatedAt: now,
-          });
-        }
-        result.push({ ...node, data: { ...data, resourceId: existing._id } });
-        continue;
-      }
-
-      await assertNoAccountScopedResourceConflict(ctx, {
-        table: "workspaceConfigs",
-        accountId: account._id,
+    const materialize =
+      node.type === "workspace"
+        ? materializeWorkspaceNode
+        : materializeSandboxNode;
+    result.push(
+      await materialize(ctx, {
+        account: account,
+        projectId: projectId,
+        stageId: stageId,
+        node: node,
+        data: data,
         name: name,
+        description: description,
+        resourceId: resourceId,
+        changed: changed,
+        now: now,
+      }),
+    );
+  }
+
+  return result;
+}
+
+/**
+ * Sandbox arm of `materializeRuntimeNodes`: binds the node to its
+ * `sandboxConfigs` row (creating or patching a dashboard-owned one) and
+ * returns the node to persist. The config blob is encrypted at rest (may
+ * carry provider secrets).
+ */
+async function materializeSandboxNode(
+  ctx: MutationCtx,
+  options: MaterializeNodeOptions,
+): Promise<CanvasNode> {
+  const { account, projectId, stageId, node, data, name, description } =
+    options;
+  const { resourceId, changed, now } = options;
+  const sandboxConfig = asRecord(data.config);
+  const hasConfig = Object.keys(sandboxConfig).length > 0;
+  const encrypted =
+    changed && hasConfig
+      ? await encryptSandboxConfigFields(sandboxConfig)
+      : null;
+  const normalized = resourceId
+    ? ctx.db.normalizeId("sandboxConfigs", resourceId)
+    : null;
+  const byId = normalized ? await ctx.db.get(normalized) : null;
+  if (
+    byId &&
+    byId.accountId === account._id &&
+    !rowBelongsToStage(byId, projectId, stageId)
+  ) {
+    throw new Error(
+      "Sandbox resource belongs to a different project or stage.",
+    );
+  }
+  const existing =
+    byId && byId.accountId === account._id
+      ? byId
+      : await ctx.db
+          .query("sandboxConfigs")
+          .withIndex("by_stageId_and_name", (q) =>
+            q.eq("stageId", stageId).eq("name", name),
+          )
+          .first();
+  if (existing && existing.accountId === account._id) {
+    if (
+      existing.managedBy !== "cli" &&
+      existing.managedBy !== "api" &&
+      changed
+    ) {
+      await ctx.db.patch(existing._id, {
+        projectId: projectId,
+        stageId: stageId,
+        name: name,
+        description: description,
+        managedBy: "dashboard",
+        updatedAt: now,
+        ...encrypted,
       });
-      const createdId = await ctx.db.insert("workspaceConfigs", {
-        accountId: account._id,
+    }
+
+    return sandboxLayoutNode(node, data, existing._id);
+  }
+
+  await assertNoAccountScopedResourceConflict(ctx, {
+    table: "sandboxConfigs",
+    accountId: account._id,
+    name: name,
+  });
+  const createdId = await ctx.db.insert("sandboxConfigs", {
+    accountId: account._id,
+    projectId: projectId,
+    stageId: stageId,
+    name: name,
+    description: description,
+    managedBy: "dashboard",
+    createdAt: now,
+    updatedAt: now,
+    ...encrypted,
+  });
+
+  return sandboxLayoutNode(node, data, createdId);
+}
+
+/**
+ * Workspace arm of `materializeRuntimeNodes`: binds the node to its
+ * `workspaceConfigs` row (creating or patching a dashboard-owned one) and
+ * returns the node to persist.
+ */
+async function materializeWorkspaceNode(
+  ctx: MutationCtx,
+  options: MaterializeNodeOptions,
+): Promise<CanvasNode> {
+  const { account, projectId, stageId, node, data, name, description } =
+    options;
+  const { resourceId, changed, now } = options;
+  const config = asRecord(data.config).storage
+    ? data.config
+    : { storage: { provider: "s3" } };
+  const normalized = resourceId
+    ? ctx.db.normalizeId("workspaceConfigs", resourceId)
+    : null;
+  const byId = normalized ? await ctx.db.get(normalized) : null;
+  if (
+    byId &&
+    byId.accountId === account._id &&
+    !rowBelongsToStage(byId, projectId, stageId)
+  ) {
+    throw new Error(
+      "Workspace resource belongs to a different project or stage.",
+    );
+  }
+  // Fall back to (stage, name) so a node named like an existing row
+  // binds to it instead of inserting a duplicate — duplicates would later
+  // break the CLI's by-name `.unique()` lookup on deploy.
+  const existing =
+    byId && byId.accountId === account._id
+      ? byId
+      : await ctx.db
+          .query("workspaceConfigs")
+          .withIndex("by_stageId_and_name", (q) =>
+            q.eq("stageId", stageId).eq("name", name),
+          )
+          .first();
+  if (existing && existing.accountId === account._id) {
+    // Code owns CLI/API-managed rows; dashboard edits are not written back.
+    if (
+      existing.managedBy !== "cli" &&
+      existing.managedBy !== "api" &&
+      changed
+    ) {
+      await ctx.db.patch(existing._id, {
         projectId: projectId,
         stageId: stageId,
         name: name,
         description: description,
         config: config,
         managedBy: "dashboard",
-        createdAt: now,
         updatedAt: now,
       });
-      result.push({ ...node, data: { ...data, resourceId: createdId } });
-      continue;
     }
 
-    // Sandbox: the config blob is encrypted at rest (may carry provider secrets).
-    const sandboxConfig = asRecord(data.config);
-    const hasConfig = Object.keys(sandboxConfig).length > 0;
-    const encrypted =
-      changed && hasConfig
-        ? await encryptSandboxConfigFields(sandboxConfig)
-        : null;
-    const normalized = resourceId
-      ? ctx.db.normalizeId("sandboxConfigs", resourceId)
-      : null;
-    const byId = normalized ? await ctx.db.get(normalized) : null;
-    if (
-      byId &&
-      byId.accountId === account._id &&
-      !rowBelongsToStage(byId, projectId, stageId)
-    ) {
-      throw new Error(
-        "Sandbox resource belongs to a different project or stage.",
-      );
-    }
-    const existing =
-      byId && byId.accountId === account._id
-        ? byId
-        : await ctx.db
-            .query("sandboxConfigs")
-            .withIndex("by_stageId_and_name", (q) =>
-              q.eq("stageId", stageId).eq("name", name),
-            )
-            .first();
-    if (existing && existing.accountId === account._id) {
-      if (
-        existing.managedBy !== "cli" &&
-        existing.managedBy !== "api" &&
-        changed
-      ) {
-        await ctx.db.patch(existing._id, {
-          projectId: projectId,
-          stageId: stageId,
-          name: name,
-          description: description,
-          managedBy: "dashboard",
-          updatedAt: now,
-          ...encrypted,
-        });
-      }
-      result.push(sandboxLayoutNode(node, data, existing._id));
-      continue;
-    }
-
-    await assertNoAccountScopedResourceConflict(ctx, {
-      table: "sandboxConfigs",
-      accountId: account._id,
-      name: name,
-    });
-    const createdId = await ctx.db.insert("sandboxConfigs", {
-      accountId: account._id,
-      projectId: projectId,
-      stageId: stageId,
-      name: name,
-      description: description,
-      managedBy: "dashboard",
-      createdAt: now,
-      updatedAt: now,
-      ...encrypted,
-    });
-    result.push(sandboxLayoutNode(node, data, createdId));
+    return { ...node, data: { ...data, resourceId: existing._id } };
   }
 
-  return result;
+  await assertNoAccountScopedResourceConflict(ctx, {
+    table: "workspaceConfigs",
+    accountId: account._id,
+    name: name,
+  });
+  const createdId = await ctx.db.insert("workspaceConfigs", {
+    accountId: account._id,
+    projectId: projectId,
+    stageId: stageId,
+    name: name,
+    description: description,
+    config: config,
+    managedBy: "dashboard",
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  return { ...node, data: { ...data, resourceId: createdId } };
 }
 
 /**

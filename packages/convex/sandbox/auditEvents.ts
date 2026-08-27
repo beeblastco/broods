@@ -5,6 +5,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import { internalMutation, query } from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxAuditEventsFields } from "../schema";
@@ -69,34 +70,97 @@ export const insert = internalMutation({
       )
       .unique();
     if (instance && instance.accountId !== args.accountId) return null;
-    const sandboxConfigId = args.sandboxConfigId ?? instance?.sandboxConfigId;
-    const status = args.status ?? instance?.status;
-    const traceId = args.traceId ?? instance?.lastUsedTraceId;
-    const taskId = args.taskId ?? instance?.lastUsedTaskId;
 
     await ctx.db.insert("sandboxAuditEvents", {
-      accountId: args.accountId,
-      ...(instance?.projectId ? { projectId: instance.projectId } : {}),
-      ...(instance?.stageId ? { stageId: instance.stageId } : {}),
-      ...(sandboxConfigId ? { sandboxConfigId: sandboxConfigId } : {}),
-      reservationKey: args.reservationKey,
-      provider: args.provider,
-      action: args.action,
-      result: args.result,
-      ...(status ? { status: status } : {}),
-      actorSource: args.actorSource,
-      ...(args.actorId ? { actorId: args.actorId } : {}),
-      ...(args.actorEmail ? { actorEmail: args.actorEmail } : {}),
-      ...(args.actorName ? { actorName: args.actorName } : {}),
-      ...(traceId ? { traceId: traceId } : {}),
-      ...(taskId ? { taskId: taskId } : {}),
-      ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
-      ...(args.exitCode !== undefined ? { exitCode: args.exitCode } : {}),
-      ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}),
-      ...(args.truncated !== undefined ? { truncated: args.truncated } : {}),
+      ...auditEventHeadFields(args, instance),
+      ...auditEventTailFields(args, instance),
       createdAt: Date.now(),
     });
 
     return null;
   },
 });
+
+/** Audit-row identity/outcome columns, enriched from the instance row when the caller omitted them. */
+function auditEventHeadFields(
+  args: Pick<
+    Doc<"sandboxAuditEvents">,
+    "accountId" | "reservationKey" | "provider" | "action" | "result"
+  > &
+    Partial<Pick<Doc<"sandboxAuditEvents">, "sandboxConfigId" | "status">>,
+  instance: Doc<"sandboxInstances"> | null,
+): Partial<
+  Pick<
+    Doc<"sandboxAuditEvents">,
+    "projectId" | "stageId" | "sandboxConfigId" | "status"
+  >
+> &
+  Pick<
+    Doc<"sandboxAuditEvents">,
+    "accountId" | "reservationKey" | "provider" | "action" | "result"
+  > {
+  const sandboxConfigId = args.sandboxConfigId ?? instance?.sandboxConfigId;
+  const status = args.status ?? instance?.status;
+
+  return {
+    accountId: args.accountId,
+    ...(instance?.projectId ? { projectId: instance.projectId } : {}),
+    ...(instance?.stageId ? { stageId: instance.stageId } : {}),
+    ...(sandboxConfigId ? { sandboxConfigId: sandboxConfigId } : {}),
+    reservationKey: args.reservationKey,
+    provider: args.provider,
+    action: args.action,
+    result: args.result,
+    ...(status ? { status: status } : {}),
+  };
+}
+
+/** Actor/trace/metric columns; trace and task ids fall back to the instance's last-used ones. */
+function auditEventTailFields(
+  args: Pick<Doc<"sandboxAuditEvents">, "actorSource"> &
+    Partial<
+      Pick<
+        Doc<"sandboxAuditEvents">,
+        | "actorId"
+        | "actorEmail"
+        | "actorName"
+        | "traceId"
+        | "taskId"
+        | "errorMessage"
+        | "exitCode"
+        | "durationMs"
+        | "truncated"
+      >
+    >,
+  instance: Doc<"sandboxInstances"> | null,
+): Pick<Doc<"sandboxAuditEvents">, "actorSource"> &
+  Partial<
+    Pick<
+      Doc<"sandboxAuditEvents">,
+      | "actorId"
+      | "actorEmail"
+      | "actorName"
+      | "traceId"
+      | "taskId"
+      | "errorMessage"
+      | "exitCode"
+      | "durationMs"
+      | "truncated"
+    >
+  > {
+  const traceId = args.traceId ?? instance?.lastUsedTraceId;
+  const taskId = args.taskId ?? instance?.lastUsedTaskId;
+
+  return {
+    actorSource: args.actorSource,
+    ...(args.actorId ? { actorId: args.actorId } : {}),
+    ...(args.actorEmail ? { actorEmail: args.actorEmail } : {}),
+    ...(args.actorName ? { actorName: args.actorName } : {}),
+    ...(traceId ? { traceId: traceId } : {}),
+    ...(taskId ? { taskId: taskId } : {}),
+    ...(args.errorMessage ? { errorMessage: args.errorMessage } : {}),
+    ...(args.exitCode !== undefined ? { exitCode: args.exitCode } : {}),
+    ...(args.durationMs !== undefined ? { durationMs: args.durationMs } : {}),
+    ...(args.truncated !== undefined ? { truncated: args.truncated } : {}),
+  };
+}

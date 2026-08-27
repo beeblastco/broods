@@ -12,6 +12,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery, query } from "../_generated/server";
 import { getActiveAccountForUser } from "../org/orgs";
 import { sandboxInstancesFields } from "../schema";
@@ -99,32 +100,7 @@ export const upsert = internalMutation({
     if (existing && existing.accountId !== args.accountId) return null;
 
     const now = Date.now();
-    const fields = {
-      externalId: args.externalId,
-      name: args.name,
-      specs: args.specs,
-      status: "running" as const,
-      lastUsedAt: now,
-      ...(args.projectId ? { projectId: args.projectId } : {}),
-      ...(args.stageId ? { stageId: args.stageId } : {}),
-      ...(args.sandboxConfigId
-        ? { sandboxConfigId: args.sandboxConfigId }
-        : {}),
-      ...(args.snapshotId ? { snapshotId: args.snapshotId } : {}),
-      ...(args.egress ? { egress: args.egress } : {}),
-      ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
-      ...(args.lastUsedTraceId
-        ? { lastUsedTraceId: args.lastUsedTraceId }
-        : {}),
-      ...(args.lastUsedTaskId ? { lastUsedTaskId: args.lastUsedTaskId } : {}),
-      ...(args.agentId ? { agentId: args.agentId } : {}),
-      ...(args.conversationKey
-        ? { conversationKey: args.conversationKey }
-        : {}),
-      ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
-      ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
-      ...(args.ephemeral ? { ephemeral: true } : {}),
-    };
+    const fields = upsertRefreshFields(args, now);
     if (existing) {
       await ctx.db.patch(existing._id, {
         ...fields,
@@ -274,3 +250,72 @@ export const remove = internalMutation({
     return null;
   },
 });
+
+/**
+ * The refreshed registry columns `upsert` writes on both the patch and the
+ * insert path: identity/size plus every optional column the caller supplied.
+ */
+function upsertRefreshFields(
+  args: Pick<Doc<"sandboxInstances">, "externalId" | "name" | "specs"> &
+    Partial<
+      Pick<
+        Doc<"sandboxInstances">,
+        | "projectId"
+        | "stageId"
+        | "sandboxConfigId"
+        | "snapshotId"
+        | "egress"
+        | "permissionMode"
+        | "lastUsedTraceId"
+        | "lastUsedTaskId"
+        | "agentId"
+        | "conversationKey"
+        | "workspaceName"
+        | "workspaceId"
+        | "ephemeral"
+      >
+    >,
+  now: number,
+): Pick<
+  Doc<"sandboxInstances">,
+  "externalId" | "name" | "specs" | "status" | "lastUsedAt"
+> &
+  Partial<
+    Pick<
+      Doc<"sandboxInstances">,
+      | "projectId"
+      | "stageId"
+      | "sandboxConfigId"
+      | "snapshotId"
+      | "egress"
+      | "permissionMode"
+      | "lastUsedTraceId"
+      | "lastUsedTaskId"
+      | "agentId"
+      | "conversationKey"
+      | "workspaceName"
+      | "workspaceId"
+      | "ephemeral"
+    >
+  > {
+  return {
+    externalId: args.externalId,
+    name: args.name,
+    specs: args.specs,
+    status: "running" as const,
+    lastUsedAt: now,
+    ...(args.projectId ? { projectId: args.projectId } : {}),
+    ...(args.stageId ? { stageId: args.stageId } : {}),
+    ...(args.sandboxConfigId ? { sandboxConfigId: args.sandboxConfigId } : {}),
+    ...(args.snapshotId ? { snapshotId: args.snapshotId } : {}),
+    ...(args.egress ? { egress: args.egress } : {}),
+    ...(args.permissionMode ? { permissionMode: args.permissionMode } : {}),
+    ...(args.lastUsedTraceId ? { lastUsedTraceId: args.lastUsedTraceId } : {}),
+    ...(args.lastUsedTaskId ? { lastUsedTaskId: args.lastUsedTaskId } : {}),
+    ...(args.agentId ? { agentId: args.agentId } : {}),
+    ...(args.conversationKey ? { conversationKey: args.conversationKey } : {}),
+    ...(args.workspaceName ? { workspaceName: args.workspaceName } : {}),
+    ...(args.workspaceId ? { workspaceId: args.workspaceId } : {}),
+    ...(args.ephemeral ? { ephemeral: true } : {}),
+  };
+}

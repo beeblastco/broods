@@ -1,10 +1,9 @@
 /**
- * Agent config validation and public projections for Convex config HTTP.
- * Pure module: safe for the default Convex runtime.
+ * Agent config validation for Convex config HTTP. Pure module: safe for the
+ * default Convex runtime. The public projection lives in ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
-import { mergeConfigObjects, redactConfigSecrets } from "./configValues";
+import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
   AGENT_HOOK_EVENT_NAMES,
@@ -322,28 +321,6 @@ export function normalizeUpdateAgentInput(
       ? { status: requireAgentStatus(value.status) }
       : {}),
     config: config,
-  };
-}
-
-/**
- * Project an agent document and decrypted config to the public API shape.
- * @param doc agent row
- * @param config decrypted config
- * @returns public agent response
- */
-export function toPublicAgentResponse(
-  doc: Doc<"agents">,
-  config: AgentConfig,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    agentId: doc._id,
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    status: "active",
-    config: redactConfigSecrets(config),
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
   };
 }
 
@@ -1046,28 +1023,35 @@ function isPrivateHostname(hostname: string): boolean {
     return true;
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
+    return isPrivateIpv4(Number(ipv4[1]), Number(ipv4[2]));
   }
-  if (host.includes(":"))
-    return (
-      host === "::" ||
-      host === "::1" ||
-      host.startsWith("::ffff:") ||
-      /^f[cd]/.test(host) ||
-      /^fe[89ab]/.test(host)
-    );
+  if (host.includes(":")) return isPrivateIpv6(host);
 
   return false;
+}
+
+/** Loopback/private/link-local/CGNAT IPv4, judged from the first two octets. */
+function isPrivateIpv4(a: number, b: number): boolean {
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+/** Unspecified/loopback/v4-mapped/ULA/link-local IPv6 (host already lowercased, unbracketed). */
+function isPrivateIpv6(host: string): boolean {
+  return (
+    host === "::" ||
+    host === "::1" ||
+    host.startsWith("::ffff:") ||
+    /^f[cd]/.test(host) ||
+    /^fe[89ab]/.test(host)
+  );
 }
 
 function assertOptionalString(value: unknown, name: string): void {

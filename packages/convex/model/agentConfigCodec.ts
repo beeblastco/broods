@@ -219,73 +219,12 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
 
   const patch: FlatPatch = {};
 
-  if (agent) {
-    if (typeof agent.maxTurn === "number") {
-      patch.maxTurns = agent.maxTurn;
-      delete agent.maxTurn;
-    }
-    if (typeof agent.system === "string") {
-      patch.systemPrompt = agent.system;
-      delete agent.system;
-    }
-  }
-  if (model) {
-    if (typeof model.provider === "string") {
-      patch.provider = model.provider;
-      delete model.provider;
-    }
-    if (typeof model.modelId === "string") {
-      patch.modelId = model.modelId;
-      delete model.modelId;
-    }
-    if (model.output !== undefined) {
-      patch.outputFormat = model.output as Record<string, unknown>;
-      delete model.output;
-    }
-    if (modelOptions) {
-      if (typeof modelOptions.temperature === "number") {
-        patch.temperature = modelOptions.temperature;
-        delete modelOptions.temperature;
-      }
-      if (typeof modelOptions.maxTokens === "number") {
-        patch.maxTokens = modelOptions.maxTokens;
-        delete modelOptions.maxTokens;
-      }
-      if (Object.keys(modelOptions).length > 0)
-        patch.providerOptions = modelOptions;
-      delete model.providerOptions;
-    }
-  }
+  if (agent) extractAgentFields(agent, patch);
+  if (model) extractModelFields(model, modelOptions, patch);
   if (tools?.googleSearch && isPlainObject(tools.googleSearch)) {
-    const search = { ...tools.googleSearch } as Record<string, unknown>;
-    if (typeof search.enabled === "boolean") {
-      patch.searchToolEnabled = search.enabled;
-      delete search.enabled;
-    }
-    if (Object.keys(search).length > 0) patch.searchToolConfig = search;
+    extractSearchToolFields(tools.googleSearch, patch);
   }
-
-  const extra: Record<string, unknown> = {};
-  if (agent && Object.keys(agent).length > 0) extra.agent = agent;
-  if (model && Object.keys(model).length > 0) extra.model = model;
-  if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
-  if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
-  if (tools && Object.keys(tools).length > 0) extra.tools = tools;
-  for (const branch of NESTED_BRANCHES) {
-    if (
-      branch === "agent" ||
-      branch === "model" ||
-      branch === "sandbox" ||
-      branch === "workspaces" ||
-      branch === "tools"
-    )
-      continue;
-    if (nested[branch] !== undefined) extra[branch] = nested[branch];
-  }
-  // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
-  if (typeof nested.publicAccess === "boolean")
-    extra.publicAccess = nested.publicAccess;
-  patch.extraConfig = extra;
+  patch.extraConfig = collectExtraConfig(nested, agent, model, tools);
 
   return patch;
 }
@@ -323,49 +262,25 @@ export function substituteEnvPlaceholders<T>(
 export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
   const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
 
-  const agent: Record<string, unknown> = {
-    ...(extra.agent as Record<string, unknown> | undefined),
-  };
-  if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
-  if (flat.systemPrompt && agent.system === undefined)
-    agent.system = flat.systemPrompt;
-
-  const modelOptions = mergeProviderOptions(
-    (extra.model as Record<string, unknown> | undefined)?.providerOptions,
-    flat.providerOptions,
-  );
-  if (flat.temperature !== undefined)
-    modelOptions.temperature = flat.temperature;
-  if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
-
-  const model: Record<string, unknown> = {
-    ...(extra.model as Record<string, unknown> | undefined),
-  };
-  if (flat.provider) model.provider = flat.provider;
-  if (flat.modelId) model.modelId = flat.modelId;
-  assertNoUnsupportedKeys(model, ["options"], "config.model");
-  if (Object.keys(modelOptions).length > 0)
-    model.providerOptions = modelOptions;
-  if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
-
-  const provider = extra.provider;
-
-  const tools: Record<string, unknown> = {
-    ...(extra.tools as Record<string, unknown> | undefined),
-  };
-  if (
-    flat.searchToolEnabled !== undefined &&
-    tools.googleSearch === undefined
-  ) {
-    tools.googleSearch = {
-      enabled: flat.searchToolEnabled,
-      ...flat.searchToolConfig,
-    };
-  }
+  const agent = buildNestedAgentBranch(flat, extra);
+  const model = buildNestedModelBranch(flat, extra);
+  const tools = buildNestedToolsBranch(flat, extra);
 
   // Read drops a removed branch rather than throwing: rows written before it was
   // removed still carry the blob, and reading one must not fail. Writing it back
   // is what clears it, so an agent cleans itself on its next save.
+  return assembleNestedConfig(extra, agent, model, tools);
+}
+
+/** Final nested-object assembly for {@link toNestedAgentConfig}: only non-empty branches survive. */
+function assembleNestedConfig(
+  extra: Record<string, unknown>,
+  agent: Record<string, unknown>,
+  model: Record<string, unknown>,
+  tools: Record<string, unknown>,
+): NestedAgentConfig {
+  const provider = extra.provider;
+
   return {
     ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
     ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
@@ -411,12 +326,170 @@ function base64UrlToBytes(s: string): Uint8Array {
   return out;
 }
 
+/** Nested `agent` branch for {@link toNestedAgentConfig}: extraConfig carry-over plus flat overrides. */
+function buildNestedAgentBranch(
+  flat: FlatAgentConfig,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const agent: Record<string, unknown> = {
+    ...(extra.agent as Record<string, unknown> | undefined),
+  };
+  if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
+  if (flat.systemPrompt && agent.system === undefined)
+    agent.system = flat.systemPrompt;
+
+  return agent;
+}
+
+/** Nested `model` branch for {@link toNestedAgentConfig}: merges providerOptions from both stores. */
+function buildNestedModelBranch(
+  flat: FlatAgentConfig,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const modelOptions = mergeProviderOptions(
+    (extra.model as Record<string, unknown> | undefined)?.providerOptions,
+    flat.providerOptions,
+  );
+  if (flat.temperature !== undefined)
+    modelOptions.temperature = flat.temperature;
+  if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
+
+  const model: Record<string, unknown> = {
+    ...(extra.model as Record<string, unknown> | undefined),
+  };
+  if (flat.provider) model.provider = flat.provider;
+  if (flat.modelId) model.modelId = flat.modelId;
+  assertNoUnsupportedKeys(model, ["options"], "config.model");
+  if (Object.keys(modelOptions).length > 0)
+    model.providerOptions = modelOptions;
+  if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
+
+  return model;
+}
+
+/** Nested `tools` branch for {@link toNestedAgentConfig}: flat search flags fill an absent googleSearch. */
+function buildNestedToolsBranch(
+  flat: FlatAgentConfig,
+  extra: Record<string, unknown>,
+): Record<string, unknown> {
+  const tools: Record<string, unknown> = {
+    ...(extra.tools as Record<string, unknown> | undefined),
+  };
+  if (
+    flat.searchToolEnabled !== undefined &&
+    tools.googleSearch === undefined
+  ) {
+    tools.googleSearch = {
+      enabled: flat.searchToolEnabled,
+      ...flat.searchToolConfig,
+    };
+  }
+
+  return tools;
+}
+
 function bytesToBase64Url(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.byteLength; i++)
     bin += String.fromCharCode(bytes[i]);
 
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/**
+ * Everything {@link fromNestedAgentConfig} has no flat column for, preserved
+ * as the `extraConfig` blob. The branch copies arrive already stripped of the
+ * fields the patch absorbed.
+ */
+function collectExtraConfig(
+  nested: NestedAgentConfig,
+  agent: Record<string, unknown> | undefined,
+  model: Record<string, unknown> | undefined,
+  tools: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (agent && Object.keys(agent).length > 0) extra.agent = agent;
+  if (model && Object.keys(model).length > 0) extra.model = model;
+  if (nested.sandbox !== undefined) extra.sandbox = nested.sandbox;
+  if (nested.workspaces !== undefined) extra.workspaces = nested.workspaces;
+  if (tools && Object.keys(tools).length > 0) extra.tools = tools;
+  for (const branch of NESTED_BRANCHES) {
+    if (
+      branch === "agent" ||
+      branch === "model" ||
+      branch === "sandbox" ||
+      branch === "workspaces" ||
+      branch === "tools"
+    )
+      continue;
+    if (nested[branch] !== undefined) extra[branch] = nested[branch];
+  }
+  // Preserve the top-level public-endpoint opt-in inside extraConfig (issue #65).
+  if (typeof nested.publicAccess === "boolean")
+    extra.publicAccess = nested.publicAccess;
+
+  return extra;
+}
+
+/** Move flat-column `agent` fields out of the branch copy onto the patch. */
+function extractAgentFields(
+  agent: Record<string, unknown>,
+  patch: FlatPatch,
+): void {
+  if (typeof agent.maxTurn === "number") {
+    patch.maxTurns = agent.maxTurn;
+    delete agent.maxTurn;
+  }
+  if (typeof agent.system === "string") {
+    patch.systemPrompt = agent.system;
+    delete agent.system;
+  }
+}
+
+/** Move flat-column `model` fields (and providerOptions scalars) onto the patch. */
+function extractModelFields(
+  model: Record<string, unknown>,
+  modelOptions: Record<string, unknown> | undefined,
+  patch: FlatPatch,
+): void {
+  if (typeof model.provider === "string") {
+    patch.provider = model.provider;
+    delete model.provider;
+  }
+  if (typeof model.modelId === "string") {
+    patch.modelId = model.modelId;
+    delete model.modelId;
+  }
+  if (model.output !== undefined) {
+    patch.outputFormat = model.output as Record<string, unknown>;
+    delete model.output;
+  }
+  if (modelOptions) {
+    if (typeof modelOptions.temperature === "number") {
+      patch.temperature = modelOptions.temperature;
+      delete modelOptions.temperature;
+    }
+    if (typeof modelOptions.maxTokens === "number") {
+      patch.maxTokens = modelOptions.maxTokens;
+      delete modelOptions.maxTokens;
+    }
+    if (Object.keys(modelOptions).length > 0)
+      patch.providerOptions = modelOptions;
+    delete model.providerOptions;
+  }
+}
+
+/** Split `tools.googleSearch` into the flat enabled flag + remaining config. */
+function extractSearchToolFields(
+  googleSearch: Record<string, unknown>,
+  patch: FlatPatch,
+): void {
+  const search = { ...googleSearch };
+  if (typeof search.enabled === "boolean") {
+    patch.searchToolEnabled = search.enabled;
+    delete search.enabled;
+  }
+  if (Object.keys(search).length > 0) patch.searchToolConfig = search;
 }
 
 /**

@@ -148,71 +148,14 @@ export const accept = internalMutation({
       throw new Error("Ingress size must not be negative");
     const now = Date.now();
     const identity = await canonicalIdentity(args);
-    const existing = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_identity", (q) => q.eq("identity", identity))
-      .unique();
-    if (existing) {
-      if (existing.payloadDigest !== args.payloadDigest) {
-        return { outcome: "conflict" as const, eventId: existing.eventId };
-      }
-
-      return {
-        outcome: "duplicate" as const,
-        eventId: existing.eventId,
-        status: existing.status,
-        ...(existing.ownerGeneration !== undefined
-          ? { ownerGeneration: existing.ownerGeneration }
-          : {}),
-        sequence: existing.sequence,
-      };
-    }
-    const existingEvent = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
-      .unique();
-    if (existingEvent) {
-      return { outcome: "conflict" as const, eventId: existingEvent.eventId };
+    const priorAdmission = await checkDuplicateAdmission(ctx, args, identity);
+    if (priorAdmission) {
+      return priorAdmission;
     }
 
-    let coordinator =
-      (await getCoordinator(ctx, args.conversationKey)) ??
-      (await createCoordinator(ctx, {
-        accountId: args.accountId,
-        agentId: args.agentId,
-        conversationKey: args.conversationKey,
-        now: now,
-      }));
-    if (
-      coordinator.accountId !== args.accountId ||
-      coordinator.agentId !== args.agentId
-    ) {
-      throw new Error("Conversation coordinator scope mismatch");
-    }
-    if (args.channelTarget !== undefined) {
-      await ctx.db.patch(coordinator._id, {
-        channelTarget: args.channelTarget,
-        updatedAt: now,
-      });
-      coordinator = {
-        ...coordinator,
-        channelTarget: args.channelTarget,
-        updatedAt: now,
-      };
-    }
-    const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
-    await expireStaleOwner(ctx, coordinator, now);
-    if (
-      queue.queuedCount !== coordinator.queuedCount ||
-      queue.queuedBytes !== coordinator.queuedBytes
-    ) {
-      await ctx.db.patch(coordinator._id, {
-        queuedCount: queue.queuedCount,
-        queuedBytes: queue.queuedBytes,
-        updatedAt: now,
-      });
-      coordinator = { ...coordinator, ...queue, updatedAt: now };
-    }
+    const prepared = await prepareAdmissionCoordinator(ctx, args, now);
+    let coordinator = prepared.coordinator;
+    const queue = prepared.queue;
 
     // Durable FIFO recovery: when the owner lease expired with work still
     // queued, the oldest queued group must run before this new arrival.
@@ -249,30 +192,7 @@ export const accept = internalMutation({
     }
 
     const sequence = coordinator.nextSequence;
-    const baseEnvelope = {
-      accountId: args.accountId,
-      agentId: args.agentId,
-      conversationKey: args.conversationKey,
-      sequence: sequence,
-      eventId: args.eventId,
-      identity: identity,
-      idempotencyKey: args.idempotencyKey,
-      payloadDigest: args.payloadDigest,
-      events: args.events,
-      delivery: args.delivery,
-      requestedMode: args.requestedMode,
-      ...(args.agentConfig !== undefined
-        ? { agentConfig: args.agentConfig }
-        : {}),
-      ...(args.ephemeralSystem !== undefined
-        ? { ephemeralSystem: args.ephemeralSystem }
-        : {}),
-      sizeBytes: args.sizeBytes,
-      createdAt: now,
-      updatedAt: now,
-      expiresAt: now + args.envelopeTtlMs,
-      statusExpiresAt: now + args.statusTtlMs,
-    };
+    const baseEnvelope = buildAdmissionEnvelope(args, identity, sequence, now);
     if (busy) {
       await ctx.db.insert("runtimeIngressEnvelopes", {
         ...baseEnvelope,
@@ -906,6 +826,54 @@ function assertConversationScope(
   }
 }
 
+/** The envelope fields shared by the queued and owner insert paths of `accept`. */
+function buildAdmissionEnvelope(
+  args: {
+    accountId: Id<"accounts">;
+    agentId: string;
+    conversationKey: string;
+    eventId: string;
+    idempotencyKey: string;
+    payloadDigest: string;
+    events: unknown[];
+    delivery: unknown;
+    requestedMode: Infer<typeof ingressModeValidator>;
+    agentConfig?: unknown;
+    ephemeralSystem?: unknown[];
+    sizeBytes: number;
+    envelopeTtlMs: number;
+    statusTtlMs: number;
+  },
+  identity: string,
+  sequence: number,
+  now: number,
+): Omit<Doc<"runtimeIngressEnvelopes">, "_id" | "_creationTime" | "status"> {
+  return {
+    accountId: args.accountId,
+    agentId: args.agentId,
+    conversationKey: args.conversationKey,
+    sequence: sequence,
+    eventId: args.eventId,
+    identity: identity,
+    idempotencyKey: args.idempotencyKey,
+    payloadDigest: args.payloadDigest,
+    events: args.events,
+    delivery: args.delivery,
+    requestedMode: args.requestedMode,
+    ...(args.agentConfig !== undefined
+      ? { agentConfig: args.agentConfig }
+      : {}),
+    ...(args.ephemeralSystem !== undefined
+      ? { ephemeralSystem: args.ephemeralSystem }
+      : {}),
+    sizeBytes: args.sizeBytes,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: now + args.envelopeTtlMs,
+    statusExpiresAt: now + args.statusTtlMs,
+  };
+}
+
 /** Hashes the one canonical tenant/agent/conversation idempotency identity. */
 async function canonicalIdentity(options: {
   accountId: string;
@@ -927,6 +895,48 @@ async function canonicalIdentity(options: {
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
+}
+
+/**
+ * Idempotency check for `accept`: an identity match replays its prior
+ * admission (or conflicts on a different payload digest), and an eventId
+ * reused under a different identity is always a conflict. Null means the
+ * candidate is new. Rejected busy candidates create neither an envelope nor
+ * an identity tombstone, so this is read-only.
+ */
+async function checkDuplicateAdmission(
+  ctx: MutationCtx,
+  args: { eventId: string; payloadDigest: string },
+  identity: string,
+): Promise<Infer<typeof admissionResultValidator> | null> {
+  const existing = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_identity", (q) => q.eq("identity", identity))
+    .unique();
+  if (existing) {
+    if (existing.payloadDigest !== args.payloadDigest) {
+      return { outcome: "conflict" as const, eventId: existing.eventId };
+    }
+
+    return {
+      outcome: "duplicate" as const,
+      eventId: existing.eventId,
+      status: existing.status,
+      ...(existing.ownerGeneration !== undefined
+        ? { ownerGeneration: existing.ownerGeneration }
+        : {}),
+      sequence: existing.sequence,
+    };
+  }
+  const existingEvent = await ctx.db
+    .query("runtimeIngressEnvelopes")
+    .withIndex("by_eventId", (q) => q.eq("eventId", args.eventId))
+    .unique();
+  if (existingEvent) {
+    return { outcome: "conflict" as const, eventId: existingEvent.eventId };
+  }
+
+  return null;
 }
 
 /** The leading run of rows that share the first row's requestedMode. */
@@ -1046,6 +1056,67 @@ function hasActiveOwner(
     coordinator.leaseExpiresAt &&
     coordinator.leaseExpiresAt >= now,
   );
+}
+
+/**
+ * Coordinator stage of `accept`: loads or creates the conversation
+ * coordinator, verifies its scope, pins the latest channel target, and
+ * reconciles queue counters after expiring stale queued work and a stale
+ * owner's envelope. The returned coordinator reflects every patch applied.
+ */
+async function prepareAdmissionCoordinator(
+  ctx: MutationCtx,
+  args: {
+    accountId: Id<"accounts">;
+    agentId: string;
+    conversationKey: string;
+    channelTarget?: Infer<typeof channelTargetValidator>;
+  },
+  now: number,
+): Promise<{
+  coordinator: Doc<"runtimeConversationCoordinators">;
+  queue: { queuedCount: number; queuedBytes: number };
+}> {
+  let coordinator =
+    (await getCoordinator(ctx, args.conversationKey)) ??
+    (await createCoordinator(ctx, {
+      accountId: args.accountId,
+      agentId: args.agentId,
+      conversationKey: args.conversationKey,
+      now: now,
+    }));
+  if (
+    coordinator.accountId !== args.accountId ||
+    coordinator.agentId !== args.agentId
+  ) {
+    throw new Error("Conversation coordinator scope mismatch");
+  }
+  if (args.channelTarget !== undefined) {
+    await ctx.db.patch(coordinator._id, {
+      channelTarget: args.channelTarget,
+      updatedAt: now,
+    });
+    coordinator = {
+      ...coordinator,
+      channelTarget: args.channelTarget,
+      updatedAt: now,
+    };
+  }
+  const queue = await expireQueuedEnvelopes(ctx, coordinator, now);
+  await expireStaleOwner(ctx, coordinator, now);
+  if (
+    queue.queuedCount !== coordinator.queuedCount ||
+    queue.queuedBytes !== coordinator.queuedBytes
+  ) {
+    await ctx.db.patch(coordinator._id, {
+      queuedCount: queue.queuedCount,
+      queuedBytes: queue.queuedBytes,
+      updatedAt: now,
+    });
+    coordinator = { ...coordinator, ...queue, updatedAt: now };
+  }
+
+  return { coordinator: coordinator, queue: queue };
 }
 
 /**
