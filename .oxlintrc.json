@@ -5,6 +5,7 @@
     "correctness": "error"
   },
   "rules": {
+    "complexity": ["warn", 20],
     "object-shorthand": ["error", "never"],
     "typescript/explicit-module-boundary-types": "error"
   },

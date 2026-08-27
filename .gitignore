@@ -14,6 +14,7 @@ build/
 .docusaurus.d
 .next/
 
-.claude
+.claude/*
+!.claude/settings.json
 .agents
 resource.enc
