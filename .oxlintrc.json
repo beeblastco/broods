@@ -40,7 +40,6 @@
     {
       "files": ["apps/dashboard/app/components/ui/**"],
       "rules": {
-        "complexity": "off",
         "typescript/explicit-module-boundary-types": "off"
       }
     },
