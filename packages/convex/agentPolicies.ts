@@ -12,7 +12,7 @@ import {
 } from "./_generated/server";
 import { authKit } from "./auth";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { resolveActiveAccountForAuthId } from "./model/agentSync";
 import { isPlainObject } from "./model/objects";
 import { POLICY_ACTIONS } from "./model/policyRules";
@@ -48,7 +48,7 @@ export const listForStage = query({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getOwnedProject(ctx, user.id, args.projectId);
+    const project = await getProjectForRole(ctx, user.id, args.projectId);
     if (!project) throw new Error("Project not found.");
     const stage = await getOwnedStage(ctx, user.id, args.stageId);
     if (!stage || stage.projectId !== args.projectId)
@@ -82,7 +82,7 @@ export const usageCounts = query({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getOwnedProject(ctx, user.id, args.projectId);
+    const project = await getProjectForRole(ctx, user.id, args.projectId);
     if (!project) throw new Error("Project not found.");
     const stage = await getOwnedStage(ctx, user.id, args.stageId);
     if (!stage || stage.projectId !== args.projectId)
@@ -390,7 +390,7 @@ export const removeInternal = internalMutation({
 });
 
 async function requireEditablePolicy(
-  ctx: Parameters<typeof getOwnedProject>[0],
+  ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,
   policyId: Id<"agentPolicies">,
 ): Promise<Doc<"agentPolicies">> {

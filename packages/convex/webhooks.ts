@@ -24,7 +24,7 @@ import {
 } from "./model/auditEvents";
 import { isPlainObject } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 
 /** One outbound webhook configured on an agent (URL/secret usually resolve from env vars). */
 const webhookRow = v.object({
@@ -111,7 +111,7 @@ async function mutateAgentWebhooks(
   mutate: (webhooks: Record<string, unknown>[]) => Record<string, unknown>[],
 ): Promise<void> {
   const config = await ctx.db.get(agentConfigId);
-  if (!config || !(await getOwnedProject(ctx, authId, config.projectId))) {
+  if (!config || !(await getProjectForRole(ctx, authId, config.projectId))) {
     throw new Error("Agent config not found.");
   }
 

@@ -7,8 +7,8 @@ import {
   normalizeAgentConfigPatch,
   normalizeCreateAgentInput,
   normalizeUpdateAgentInput,
-  redactAgentConfig,
 } from "../model/agentRules";
+import { redactConfigSecrets } from "../model/configValues";
 import {
   collectEnvPlaceholderNames,
   substituteAccountEnvPlaceholders,
@@ -313,14 +313,16 @@ describe("agent rules", () => {
       skills: { allowed: ["acct/new"] },
     });
     expect(
-      redactAgentConfig({ provider: { openai: { apiKey: "secret" } } }),
+      redactConfigSecrets({ provider: { openai: { apiKey: "secret" } } }),
     ).toEqual({ provider: { openai: { apiKey: "********" } } });
     expect(
-      redactAgentConfig({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } }),
+      redactConfigSecrets({
+        provider: { openai: { apiKey: "${OVH_API_KEY}" } },
+      }),
     ).toEqual({ provider: { openai: { apiKey: "${OVH_API_KEY}" } } });
     // A secret mixing literal material with a placeholder is still a secret.
     expect(
-      redactAgentConfig({
+      redactConfigSecrets({
         provider: { openai: { apiKey: "sk_live_abc${OVH_API_KEY}" } },
       }),
     ).toEqual({ provider: { openai: { apiKey: "********" } } });

@@ -10,6 +10,7 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { sha256Hex } from "./model/accountSecrets";
 import {
   runtimeAsyncAgentResultsFields,
   runtimeAsyncToolResultsFields,
@@ -94,18 +95,6 @@ function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
   const { completionTokenHash: _hidden, ...publicRow } = row;
 
   return publicRow;
-}
-
-/** Hashes a high-entropy callback token before persistence or comparison. */
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 /** Compares fixed-length hexadecimal digests without content-dependent exits. */

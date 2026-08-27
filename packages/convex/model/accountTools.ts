@@ -3,6 +3,7 @@
  * Mirrors core's account tool upload contract without requiring the Node runtime.
  */
 
+import { sha256Hex } from "./accountSecrets";
 import { isPlainObject } from "./objects";
 
 export interface AccountToolUploadInput {
@@ -247,15 +248,4 @@ function normalizeRuntime(value: unknown): AccountToolRuntime {
   if (value === "isolate" || value === "sandbox") return value;
 
   throw new Error('tool.runtime must be "isolate" or "sandbox"');
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }

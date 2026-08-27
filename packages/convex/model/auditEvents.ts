@@ -4,6 +4,7 @@
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stripUndefined } from "./objects";
 
 const DETAILS_JSON_LIMIT_BYTES = 8 * 1024;
 const TRUNCATED_MARKER = "…[truncated]";
@@ -118,9 +119,10 @@ export function dashboardAuditActor(user: {
 }
 
 /**
- * Serialize small non-secret metadata for the detailsJson field.
+ * Serialize small non-secret metadata for the detailsJson field. Plain
+ * JSON.stringify; `insertConfigAuditEvent` caps oversized payloads.
  * @param details ids, names, counts, or other non-secret metadata.
- * @returns JSON string capped at insert time.
+ * @returns JSON string.
  */
 export function auditDetailsJson(details: Record<string, unknown>): string {
   return JSON.stringify(details);
@@ -138,10 +140,4 @@ function capDetailsJson(value: string): string {
     originalBytes: byteLength,
     prefix: `${value.slice(0, 1024)}${TRUNCATED_MARKER}`,
   });
-}
-
-function stripUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
 }

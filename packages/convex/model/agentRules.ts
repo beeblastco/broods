@@ -3,6 +3,7 @@
  * Pure module: safe for the default Convex runtime.
  */
 
+import type { Doc } from "../_generated/dataModel";
 import { mergeConfigObjects, redactConfigSecrets } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
@@ -46,15 +47,6 @@ export interface AgentWorkspaceRef {
   name: string;
   workspaceId: string;
   sandbox?: string | null;
-}
-
-interface AgentDocLike {
-  _id: string;
-  accountId: string;
-  name: string;
-  description?: string;
-  createdAt: number;
-  updatedAt: number;
 }
 
 const AGENT_MAX_TURN_LIMIT = 100;
@@ -201,15 +193,6 @@ export function mergeAgentConfig(
 }
 
 /**
- * Redact secret-shaped config values for public responses.
- * @param config normalized config
- * @returns redacted config
- */
-export function redactAgentConfig(config: AgentConfig): AgentConfig {
-  return redactConfigSecrets(config);
-}
-
-/**
  * Normalize input for POST /v1/agents.
  * @param value request body
  * @returns normalized create input
@@ -220,7 +203,7 @@ export function normalizeCreateAgentInput(value: unknown): {
   config: AgentConfig;
 } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  const name = requireString(value.name, "name");
+  const name = normalizeRequiredString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeAgentConfig(value.config);
 
@@ -258,7 +241,7 @@ export function normalizeUpdateAgentInput(
 
   return {
     ...(value.name !== undefined
-      ? { name: requireString(value.name, "name") }
+      ? { name: normalizeRequiredString(value.name, "name") }
       : {}),
     ...(value.description !== undefined
       ? {
@@ -282,7 +265,7 @@ export function normalizeUpdateAgentInput(
  * @returns public agent response
  */
 export function toPublicAgentResponse(
-  doc: AgentDocLike,
+  doc: Doc<"agents">,
   config: AgentConfig,
 ): Record<string, unknown> {
   return {
@@ -291,7 +274,7 @@ export function toPublicAgentResponse(
     name: doc.name,
     ...(doc.description ? { description: doc.description } : {}),
     status: "active",
-    config: redactAgentConfig(config),
+    config: redactConfigSecrets(config),
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
   };
@@ -620,7 +603,7 @@ function normalizeToolsConfig(value: unknown): void {
 function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value))
     throw new Error(`config.tools.${toolName} must be an object`);
-  if (!isAccountToolId(toolName) && !isProviderToolName(toolName)) {
+  if (!isNativeConvexDocumentId(toolName) && !isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
   const config = value as Record<string, unknown>;
@@ -970,10 +953,6 @@ function normalizeRequiredString(value: unknown, name: string): string {
   return value.trim();
 }
 
-function requireString(value: unknown, name: string): string {
-  return normalizeRequiredString(value, name);
-}
-
 function optionalString(value: unknown, name: string): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") throw new Error(`${name} must be a string`);
@@ -1039,10 +1018,6 @@ function isProviderToolName(toolName: string): boolean {
     !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
     !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
   );
-}
-
-function isAccountToolId(toolName: string): boolean {
-  return isNativeConvexDocumentId(toolName);
 }
 
 function isNativeConvexDocumentId(value: string): boolean {

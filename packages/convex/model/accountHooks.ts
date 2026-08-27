@@ -3,6 +3,7 @@
  * Mirrors core's account hook upload contract without requiring the Node runtime.
  */
 
+import { sha256Hex } from "./accountSecrets";
 import { inferAccountToolRuntime } from "./accountTools";
 import { isPlainObject } from "./objects";
 
@@ -173,15 +174,4 @@ function normalizeBundle(value: unknown): string {
   }
 
   return value;
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }

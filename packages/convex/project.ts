@@ -2,18 +2,21 @@
  * Public project queries and mutations scoped to the authenticated user.
  */
 
-import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
-import type { DataModel } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { authKit } from "./auth";
 import { uniqueProjectSlug } from "./lib/slug";
 import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
-import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { projectsFields } from "./schema";
 
-type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
+type Ctx = QueryCtx | MutationCtx;
 
 const RANDOM_ADJECTIVES = [
   "amber",
@@ -284,7 +287,7 @@ export const getById = query({
   handler: async (ctx, { projectId }) => {
     const authUser = await requireAuth(ctx);
 
-    return getOwnedProject(ctx, authUser.id, projectId);
+    return getProjectForRole(ctx, authUser.id, projectId);
   },
 });
 

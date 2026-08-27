@@ -9,11 +9,7 @@
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  createAccountSecret,
-  hashAccountSecret,
-  sha256Hex,
-} from "./model/accountSecrets";
+import { createAccountSecret, sha256Hex } from "./model/accountSecrets";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
@@ -457,22 +453,16 @@ async function resolveBearerAuth(
 ): Promise<ConfigAuth | null> {
   const token = bearerToken(req);
   if (!token) return null;
-  const tokenHash = await hashAccountSecret(token);
+  const tokenHash = await sha256Hex(token);
 
   const adminSecret = process.env.ADMIN_ACCOUNT_SECRET;
-  if (
-    adminSecret &&
-    digestEqual(tokenHash, await hashAccountSecret(adminSecret))
-  ) {
+  if (adminSecret && digestEqual(tokenHash, await sha256Hex(adminSecret))) {
     return { kind: "admin" };
   }
 
   const serviceSecret =
     process.env.BROODS_SERVICE_AUTH_SECRET ?? process.env.SERVICE_AUTH_SECRET;
-  if (
-    serviceSecret &&
-    digestEqual(tokenHash, await hashAccountSecret(serviceSecret))
-  ) {
+  if (serviceSecret && digestEqual(tokenHash, await sha256Hex(serviceSecret))) {
     const accountId =
       req.headers.get("X-Account-Id") ?? req.headers.get("x-account-id") ?? "";
     const account: Doc<"accounts"> | null = accountId
@@ -583,7 +573,7 @@ async function authFailureKey(req: Request): Promise<string> {
       .pop() ?? "unknown";
   const token = bearerToken(req);
   const tokenHashPrefix = token
-    ? (await hashAccountSecret(token)).slice(0, 8)
+    ? (await sha256Hex(token)).slice(0, 8)
     : "missing";
 
   return `${ip}:${tokenHashPrefix}`;
@@ -804,7 +794,7 @@ async function rotateAccountSecretResponse(
   const secret = createAccountSecret();
   await ctx.runMutation(internal.accounts.update, {
     accountId: existing._id,
-    secretHash: await hashAccountSecret(secret),
+    secretHash: await sha256Hex(secret),
   });
   const updated: Doc<"accounts"> | null = await ctx.runQuery(
     internal.accounts.getById,

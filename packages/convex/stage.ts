@@ -13,7 +13,7 @@ import {
   pushEncryptedConfigToAgentRow,
 } from "./model/agentSync";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject, getProjectForRole } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { stagesFields } from "./schema";
 
 const deploymentRegion = v.union(
@@ -415,7 +415,7 @@ export async function listStagesForProject(
 ): Promise<Doc<"stages">[]> {
   // Return empty rather than throwing so a just-deleted project doesn't crash
   // reactive subscribers (header selector, settings) before they navigate away.
-  const project = await getOwnedProject(ctx, authId, projectId);
+  const project = await getProjectForRole(ctx, authId, projectId);
   if (!project) return [];
 
   const stages = await ctx.db
@@ -453,7 +453,7 @@ export const ensureDefault = mutation({
     // No-op when the project is gone: a just-deleted project briefly keeps the
     // header's "no stages → ensureDefault" effect firing, so return null
     // instead of throwing rather than resurrecting a stage.
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) return null;
 
     const existing = await ctx.db
@@ -534,7 +534,7 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     if (duplicateFromId) {
@@ -586,7 +586,7 @@ export const initializeProduction = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const source = await getOwnedStage(ctx, authUser.id, sourceStageId);

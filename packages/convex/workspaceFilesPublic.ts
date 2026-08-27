@@ -6,7 +6,7 @@
  */
 
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { action, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
@@ -31,12 +31,10 @@ type RuntimeWorkspace = WorkspaceFsRef & {
   accountId: Id<"accounts">;
   workspaceId: Id<"workspaceConfigs">;
 };
-type LegacyFile = {
-  _id: Id<"workspaceFiles">;
-  path: string;
-  isFolder: boolean;
-  storageId?: Id<"_storage">;
-};
+type LegacyFile = Pick<
+  Doc<"workspaceFiles">,
+  "_id" | "path" | "isFolder" | "storageId"
+>;
 
 async function requireActionUser(ctx: ActionCtx) {
   const user = await authKit.getAuthUser(ctx);

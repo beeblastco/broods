@@ -4,7 +4,7 @@
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
-import { getOwnedProject } from "./project";
+import { getProjectForRole } from "./project";
 
 export async function getOwnedStage(
   ctx: QueryCtx | MutationCtx,
@@ -14,7 +14,7 @@ export async function getOwnedStage(
   const stage = await ctx.db.get(stageId);
   if (!stage) return null;
 
-  const project = await getOwnedProject(ctx, authId, stage.projectId);
+  const project = await getProjectForRole(ctx, authId, stage.projectId);
   if (!project) return null;
 
   return stage;

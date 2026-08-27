@@ -10,8 +10,10 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { CliManifest, GeneratedIds } from "./cliTypes";
 import { normalizeAccountHookUpload } from "./model/accountHooks";
+import { sha256Hex } from "./model/accountSecrets";
 import { normalizeAccountToolUpload } from "./model/accountTools";
 import { putHookBundle, putToolBundle } from "./model/bundles";
+import { stripUndefined } from "./model/objects";
 import type { ProjectStageScope } from "./model/projectScope";
 
 type RouteParts =
@@ -525,17 +527,6 @@ async function bearerAuth(
   };
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status: status,
@@ -1026,10 +1017,4 @@ function cronStatus(value: unknown): "active" | "paused" {
   if (value === undefined) return "active";
   if (value === "active" || value === "paused") return value;
   throw new Error("Cron job status must be active or paused");
-}
-
-function stripUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
 }

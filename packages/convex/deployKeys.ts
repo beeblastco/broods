@@ -8,6 +8,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
+import { sha256Hex } from "./model/accountSecrets";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 import { deployKeysFields } from "./schema";
@@ -19,23 +20,6 @@ const deployKeyDoc = v.object({
   _id: v.id("deployKeys"),
   _creationTime: v.number(),
 });
-
-/**
- * SHA-256 hex digest matching the org-secret hashing in cliHttp/orgLifecycle, so
- * the same `by_keyHash`/`by_secretHash` lookups work in `resolveCliAuth`.
- * @param value plaintext token
- * @returns lowercase hex digest
- */
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** Generate a random `fp_deploy_<base64url>` token. */
 function generateDeployToken(): string {

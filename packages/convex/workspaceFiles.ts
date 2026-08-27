@@ -17,7 +17,7 @@ import {
   query,
 } from "./_generated/server";
 import { authKit } from "./auth";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { normalizeWorkspaceConfig } from "./model/workspaceRules";
 
 export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -114,7 +114,7 @@ export const create = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getOwnedProject(ctx, user.id, projectId);
+    const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const now = Date.now();
@@ -215,7 +215,7 @@ export const getFileDownloadUrl = query({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getOwnedProject(ctx, user.id, projectId);
+    const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) return null;
 
     const file = await ctx.db
@@ -248,7 +248,7 @@ export const getFileDownloadUrlInternal = internalQuery({
   },
   returns: v.union(v.string(), v.null()),
   handler: async (ctx, args) => {
-    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    const project = await getProjectForRole(ctx, args.authId, args.projectId);
     if (!project) return null;
 
     const file = await ctx.db
@@ -289,7 +289,7 @@ export const list = query({
 
     // Return empty rather than throwing so a just-deleted project doesn't crash
     // the reactive workspace panel before it unmounts.
-    const project = await getOwnedProject(ctx, user.id, projectId);
+    const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) return [];
 
     return await ctx.db
@@ -316,7 +316,7 @@ export const listForMigrationInternal = internalQuery({
   },
   returns: v.array(workspaceFileDoc),
   handler: async (ctx, args) => {
-    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    const project = await getProjectForRole(ctx, args.authId, args.projectId);
     if (!project) return [];
 
     return await ctx.db
@@ -345,7 +345,7 @@ export const remove = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getOwnedProject(ctx, user.id, file.projectId);
+    const project = await getProjectForRole(ctx, user.id, file.projectId);
     if (!project) throw new Error("File not found.");
 
     if (file.storageId) {
@@ -378,7 +378,7 @@ export const removeFolder = mutation({
       throw new Error("User not found or not authenticated");
     }
 
-    const project = await getOwnedProject(ctx, user.id, projectId);
+    const project = await getProjectForRole(ctx, user.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const descendants = await ctx.db
@@ -420,7 +420,7 @@ export const removeForMigrationInternal = internalMutation({
     const file = await ctx.db.get(args.fileId);
     if (!file) return null;
 
-    const project = await getOwnedProject(ctx, args.authId, file.projectId);
+    const project = await getProjectForRole(ctx, args.authId, file.projectId);
     if (!project) return null;
 
     if (file.storageId) {
@@ -453,7 +453,7 @@ export const rename = mutation({
 
     const file = await ctx.db.get(fileId);
     if (!file) throw new Error("File not found.");
-    const project = await getOwnedProject(ctx, user.id, file.projectId);
+    const project = await getProjectForRole(ctx, user.id, file.projectId);
     if (!project) throw new Error("File not found.");
 
     const trimmed = newName.trim();
@@ -540,7 +540,7 @@ export const resolveRuntimeWorkspaceInternal = internalQuery({
     v.null(),
   ),
   handler: async (ctx, args) => {
-    const project = await getOwnedProject(ctx, args.authId, args.projectId);
+    const project = await getProjectForRole(ctx, args.authId, args.projectId);
     if (!project) return null;
     const workspaceId = ctx.db.normalizeId(
       "workspaceConfigs",

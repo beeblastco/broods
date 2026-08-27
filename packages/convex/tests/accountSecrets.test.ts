@@ -3,8 +3,8 @@
 import { describe, expect, it } from "vitest";
 import {
   createAccountSecret,
-  hashAccountSecret,
   hexFromBytes,
+  sha256Hex,
 } from "../model/accountSecrets";
 
 describe("account secrets", () => {
@@ -24,6 +24,6 @@ describe("account secrets", () => {
     );
     const expected = hexFromBytes(new Uint8Array(digest));
 
-    expect(await hashAccountSecret(secret)).toBe(expected);
+    expect(await sha256Hex(secret)).toBe(expected);
   });
 });

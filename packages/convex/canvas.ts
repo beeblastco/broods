@@ -2,16 +2,17 @@
  * Canvas layout persistence keyed by (project, stage).
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { encryptAgentConfigBlob } from "./model/agentConfigCodec";
+import { stableJson } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 
-const canvasNodeValidator = v.object({
+export const canvasNodeValidator = v.object({
   id: v.string(),
   type: v.union(
     v.literal("agent"),
@@ -25,7 +26,7 @@ const canvasNodeValidator = v.object({
   data: v.any(),
 });
 
-const canvasEdgeValidator = v.object({
+export const canvasEdgeValidator = v.object({
   id: v.string(),
   source: v.string(),
   target: v.string(),
@@ -38,12 +39,13 @@ const saveLayoutResult = v.object({
   edges: v.array(canvasEdgeValidator),
 });
 
-type CanvasNode = {
-  id: string;
-  type: "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill";
-  position: { x: number; y: number };
-  data: unknown;
+// `data` is `v.any()` (which infers `any`); every consumer treats it as an
+// unknown-valued record, so the override keeps type checking without casts.
+export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
+  data: Record<string, unknown>;
 };
+
+export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
 
 /** Coerce an unknown canvas node data payload into a mutable record. */
 function asRecord(value: unknown): Record<string, unknown> {
@@ -123,24 +125,6 @@ function resourceFieldsChanged(
       stableJson(previous.description ?? null) ||
     stableJson(next.config ?? null) !== stableJson(previous.config ?? null)
   );
-}
-
-/** Deterministic JSON for small config payload comparisons. */
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortJson(value));
-}
-
-function sortJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortJson);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, sortJson(entry)]),
-    );
-  }
-
-  return value;
 }
 
 /** Stable signature of runtime resource references in a canvas node list. */
@@ -412,7 +396,7 @@ export const getByProject = query({
 
     // Reactive subscribers may briefly hold a just-deleted project/stage;
     // return null instead of throwing so the canvas unmounts without crashing.
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) return null;
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
@@ -441,7 +425,7 @@ export const saveLayout = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
@@ -514,7 +498,7 @@ export const resourceOwnership = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project || !project.orgId) return {};
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
@@ -572,7 +556,7 @@ export const cliManagedResourceNames = query({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project || !project.orgId) return empty;
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);

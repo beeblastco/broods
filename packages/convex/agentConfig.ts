@@ -20,7 +20,7 @@ import {
   type ConfigAuditActor,
 } from "./model/auditEvents";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
@@ -65,11 +65,11 @@ function maskRuntimeVariables<
 
 /** Returns true when the caller may edit a project-scoped agent config. */
 async function canAccessAgentConfig(
-  ctx: Parameters<typeof getOwnedProject>[0],
+  ctx: Parameters<typeof getProjectForRole>[0],
   authId: string,
   config: { projectId: Id<"projects"> },
 ): Promise<boolean> {
-  return Boolean(await getOwnedProject(ctx, authId, config.projectId));
+  return Boolean(await getProjectForRole(ctx, authId, config.projectId));
 }
 
 /**
@@ -152,7 +152,7 @@ export const create = mutation({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
 
     const stage = await getOwnedStage(ctx, authUser.id, stageId);

@@ -27,6 +27,7 @@ import {
   insertConfigAuditEvent,
   type ConfigAuditActor,
 } from "./model/auditEvents";
+import { sha256Hex } from "./model/accountSecrets";
 import { refreshAccountChannelEndpoints } from "./model/channelEndpoints";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
@@ -40,18 +41,6 @@ const agentDeploymentScopeValidator = v.object({
   projectSlug: v.string(),
   stageSlug: v.string(),
 });
-
-/** SHA-256 hex digest for one-time deployment API keys. */
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** Generate a random raw deployment key. */
 function generateDeploymentKey(): string {

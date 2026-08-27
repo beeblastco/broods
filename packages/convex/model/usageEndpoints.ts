@@ -6,7 +6,7 @@
 
 import type { Id } from "../_generated/dataModel";
 import { type QueryCtx } from "../_generated/server";
-import { getOwnedProject } from "./ownership/project";
+import { getProjectForRole } from "./ownership/project";
 
 /**
  * Active deployment endpointIds for a project, optionally narrowed to a single
@@ -23,7 +23,7 @@ export async function projectEndpointIds(
   projectId: Id<"projects">,
   stageId?: Id<"stages">,
 ): Promise<string[]> {
-  const project = await getOwnedProject(ctx, authId, projectId);
+  const project = await getProjectForRole(ctx, authId, projectId);
   if (!project) return [];
 
   const deployments = stageId

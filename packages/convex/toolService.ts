@@ -20,7 +20,7 @@ import {
 } from "./model/accountTools";
 import { putToolBundle } from "./model/bundles";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { accountToolsFields } from "./schema";
 
 const MAX_TOOL_TIMEOUT_MS = 30_000;
@@ -47,7 +47,7 @@ export const getByNode = query({
 
     // Resolve ownership without throwing: a deleted project/stage should
     // yield null for this reactive query rather than crashing the canvas.
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) return null;
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
@@ -290,7 +290,7 @@ export const nodeContext = internalQuery({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) {

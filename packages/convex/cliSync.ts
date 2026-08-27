@@ -15,6 +15,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import { ensureStageDeployment } from "./agentDeployments";
+import type { CanvasEdge, CanvasNode } from "./canvas";
 import { normalizePolicyDocument } from "./agentPolicies";
 import { normalizeChannelRecordConfig } from "./model/channelRules";
 import {
@@ -42,7 +43,7 @@ import {
   hashEnvironmentValue,
   loadEnvironmentVariableValues,
 } from "./model/environmentValues";
-import { isPlainObject } from "./model/objects";
+import { isPlainObject, stableJson } from "./model/objects";
 import { stageNameEquals, resolveProjectStage } from "./model/projectScope";
 import { uniqueProjectSlug } from "./lib/slug";
 import { stageKindForName } from "./stage";
@@ -1841,20 +1842,6 @@ async function resolveSubagentReferences(
   }
 }
 
-type CanvasNode = {
-  id: string;
-  type: "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill";
-  position: { x: number; y: number };
-  data: Record<string, unknown>;
-};
-
-type CanvasEdge = {
-  id: string;
-  source: string;
-  target: string;
-  animated?: boolean;
-};
-
 type CanvasCliResource = CliResource & {
   kind: "agent" | "workspace" | "sandbox" | "skill" | "tool";
 };
@@ -2972,23 +2959,6 @@ function renameComparableResource(
     description: description,
     config: config,
   };
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, entry]) => [key, sortValue(entry)]),
-    );
-  }
-
-  return value;
 }
 
 async function authIdForAccount(

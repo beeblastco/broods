@@ -5,11 +5,16 @@
  * names are stored here for visibility; the Lambda invokes EBS.
  */
 
-import type { GenericMutationCtx, GenericQueryCtx } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { DataModel, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import {
+  internalMutation,
+  internalQuery,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { authKit } from "./auth";
 import { accountIdForProject } from "./model/auditEvents";
 import { getProjectForRole } from "./model/ownership/project";
@@ -41,7 +46,7 @@ const cronLastStatusValidator = v.union(
   v.literal("failed"),
 );
 
-type Ctx = GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>;
+type Ctx = QueryCtx | MutationCtx;
 
 async function getOwned(
   ctx: Ctx,
@@ -409,7 +414,7 @@ export const pruneExpiredRuns = internalMutation({
 
 /** Deletes up to `limit` run rows of one cron, returning how many went. */
 async function deleteRunsBatch(
-  ctx: GenericMutationCtx<DataModel>,
+  ctx: MutationCtx,
   accountId: Id<"accounts">,
   cronId: Id<"crons">,
   limit: number,

@@ -14,6 +14,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { authKit } from "./auth";
 import { slugifyName } from "./lib/slug";
+import { sha256Hex } from "./model/accountSecrets";
 import { getActiveOrgForUser, requireOrgMember } from "./model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
@@ -489,17 +490,6 @@ async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
   }
 
   return { token: token, account: account };
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-
-  return [...new Uint8Array(hash)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 async function uniqueOrgSlug(

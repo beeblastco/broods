@@ -20,24 +20,9 @@
 
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import type { CanvasEdge, CanvasNode } from "../canvas";
 import { decryptAgentConfigBlob } from "./agentConfigCodec";
 import { isPlainObject } from "./objects";
-
-/** Persisted canvas node shape (mirrors `canvasNodeValidator`). */
-type CanvasNode = {
-  id: string;
-  type: "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill";
-  position: { x: number; y: number };
-  data: Record<string, unknown>;
-};
-
-/** Persisted canvas edge shape (mirrors `canvasEdgeValidator`). */
-type CanvasEdge = {
-  id: string;
-  source: string;
-  target: string;
-  animated?: boolean;
-};
 
 /**
  * Recomputes the desired API-managed wiring for one stage's canvas and
