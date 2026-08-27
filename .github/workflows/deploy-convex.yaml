@@ -43,9 +43,29 @@ jobs:
         working-directory: packages/convex
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
+          CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
         run: |
+          # Self-hosted backends authenticate with an admin key against an
+          # explicit URL; there is no deploy key. The environment provides one
+          # scheme or the other.
+          if [[ -n "$CONVEX_SELF_HOSTED_URL" ]]; then
+            if [[ -z "$CONVEX_SELF_HOSTED_ADMIN_KEY" ]]; then
+              echo "CONVEX_SELF_HOSTED_URL is set without CONVEX_SELF_HOSTED_ADMIN_KEY" >&2
+              exit 1
+            fi
+            # Self-hosted URLs carry no prod: marker, so pin main to the
+            # production backend by URL instead.
+            if [[ "${{ github.ref_name }}" == "main" && "$CONVEX_SELF_HOSTED_URL" != "https://convex.broods.app" ]]; then
+              echo "main requires CONVEX_SELF_HOSTED_URL=https://convex.broods.app in the 'production' environment" >&2
+              exit 1
+            fi
+            unset CONVEX_DEPLOY_KEY
+            bun run deploy
+            exit 0
+          fi
           if [[ -z "$CONVEX_DEPLOY_KEY" ]]; then
-            echo "Missing environment secret: CONVEX_DEPLOY_KEY" >&2
+            echo "Missing environment secret: CONVEX_DEPLOY_KEY (or CONVEX_SELF_HOSTED_URL)" >&2
             exit 1
           fi
           # Convex deploy keys encode their target deployment. Refuse to ship a
