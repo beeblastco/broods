@@ -29,7 +29,10 @@ import {
   isPlainObject,
   isStringRecord,
 } from "../object.ts";
-import { AGENT_HOOK_EVENT_NAMES } from "@broods/convex/model/accountHooks";
+import {
+  AGENT_HOOK_EVENT_NAMES,
+  type AgentHookEventName,
+} from "@broods/convex/model/accountHooks";
 import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
@@ -365,12 +368,10 @@ export type AgentLifecycleEventName =
   | "subagent.task.finished";
 
 // Channel points a code hook can intercept (inbound message / before-send).
-export type AgentChannelHookEventName =
-  "channel.message.received" | "channel.message.sending";
-
-// The full set of events a user code hook can subscribe to.
-export type AgentHookEventName =
-  AgentLifecycleEventName | AgentChannelHookEventName;
+// The full set of events a user code hook can subscribe to. Re-exported from
+// its single home in convex so an event added there reaches this union without
+// a second edit here.
+export type { AgentHookEventName };
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
