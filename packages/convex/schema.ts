@@ -1298,7 +1298,10 @@ export default defineSchema({
       "sequence",
     ])
     .index("by_accountId", ["accountId"])
-    .index("by_expiresAt", ["expiresAt"])
+    // Status leads so maintenance scans only nonterminal rows: terminal rows
+    // keep their stale expiresAt for the whole status retention window, and a
+    // bare expiresAt index would re-read every one of them each sweep.
+    .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_statusExpiresAt", ["statusExpiresAt"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
     .index("by_applicationId", ["applicationId"])

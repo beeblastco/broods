@@ -20,9 +20,11 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+// Expiry is advisory cleanup: admission and drain already check expiresAt
+// inline, so a lower cadence only delays how fast abandoned rows are pruned.
 crons.interval(
   "maintain runtime ingress",
-  { minutes: 1 },
+  { minutes: 5 },
   internal.runtimeIngress.maintain,
   {},
 );

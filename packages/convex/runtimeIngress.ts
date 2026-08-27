@@ -21,6 +21,17 @@ import {
 const MAX_DRAIN_ENVELOPES = 100;
 const CLEAR_BATCH_SIZE = 100;
 
+// Statuses maintenance may still expire. Terminal rows (completed/failed/
+// expired) are excluded at the index, not filtered after the read: they retain
+// their stale expiresAt for the whole status retention window, and scanning
+// them every sweep re-reads every retained payload.
+const EXPIRABLE_STATUSES = [
+  "accepted",
+  "queued",
+  "applied",
+  "processing",
+] as const;
+
 const ownerRenewalResultValidator = v.union(
   v.literal("renewed"),
   v.literal("stopped"),
@@ -656,7 +667,6 @@ export const getConversationTarget = internalQuery({
       coordinator.accountId !== args.accountId ||
       coordinator.agentId !== args.agentId
     ) {
-
       return null;
     }
 
@@ -1094,22 +1104,20 @@ export const maintain = internalMutation({
   returns: v.object({ expired: v.number(), deleted: v.number() }),
   handler: async (ctx) => {
     const now = Date.now();
-    // Filter inside the query: retained terminal rows share this index, and a
-    // plain take() would let 100 of them pin overdue nonterminal work forever.
-    const due = await ctx.db
-      .query("runtimeIngressEnvelopes")
-      .withIndex("by_expiresAt", (q) => q.lte("expiresAt", now))
-      .filter((q) =>
-        q.and(
-          q.neq(q.field("status"), "completed"),
-          q.neq(q.field("status"), "failed"),
-          q.neq(q.field("status"), "expired"),
+    const due = (
+      await Promise.all(
+        EXPIRABLE_STATUSES.map((status) =>
+          ctx.db
+            .query("runtimeIngressEnvelopes")
+            .withIndex("by_status_and_expiresAt", (q) =>
+              q.eq("status", status).lte("expiresAt", now),
+            )
+            .take(MAX_DRAIN_ENVELOPES),
         ),
       )
-      .take(MAX_DRAIN_ENVELOPES);
+    ).flat();
     let expired = 0;
     for (const row of due) {
-      if (["completed", "failed", "expired"].includes(row.status)) continue;
       const coordinator = await getCoordinator(ctx, row.conversationKey);
       if (
         row.status === "processing" &&

@@ -55,7 +55,9 @@ export function forwarderConfigFromEnv(): ForwarderConfig {
     // Half of Discord's 1000, which leaves room for a restart to forget the count.
     identifyLimit: positiveIntegerEnv("DISCORD_IDENTIFY_LIMIT", 500),
     planes: configPlanesEnv(),
-    pollIntervalMs: positiveIntegerEnv("DISCORD_POLL_INTERVAL_MS", 30_000),
+    // Poll latency only delays when a new/removed bot token reconciles; 60s
+    // halves the standing Convex call load a shorter interval burns per plane.
+    pollIntervalMs: positiveIntegerEnv("DISCORD_POLL_INTERVAL_MS", 60_000),
     port: positiveIntegerEnv("PORT", 3000),
   };
 }

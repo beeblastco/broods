@@ -2346,13 +2346,17 @@ async function handleHookRoute(
     const upload = await normalizeAccountHookUpload(await req.json(), {
       requireBundle: false,
     });
+    // Skip the S3 round-trip when the uploaded bundle matches what the hook
+    // already stores; the key is content-addressed by sha so nothing changes.
     const bundleStorageKey =
       upload.bundle !== undefined && upload.sha256 !== undefined
-        ? await putHookBundle(ctx, {
-            accountId: accountId,
-            sha256: upload.sha256,
-            bundle: upload.bundle,
-          })
+        ? upload.sha256 === existing.sha256
+          ? existing.bundleStorageKey
+          : await putHookBundle(ctx, {
+              accountId: accountId,
+              sha256: upload.sha256,
+              bundle: upload.bundle,
+            })
         : undefined;
     await ctx.runMutation(internal.accountHooks.update, {
       accountId: accountId,

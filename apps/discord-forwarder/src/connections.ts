@@ -19,7 +19,7 @@ import { logWarn } from "./log.ts";
 const internal: any = require("@broods/convex/_generated/api").internal;
 
 // One client per plane for the life of the process. Rebuilding them every poll
-// would re-run admin auth twice a minute forever for no gain.
+// would re-run admin auth on every tick forever for no gain.
 const clients = new Map<string, ConvexHttpClient>();
 
 // The last answer each plane gave, by plane name. A plane that fails a poll
