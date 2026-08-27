@@ -157,7 +157,7 @@ export async function listAccountSkills(
  * @param skillName the skill name (without account prefix)
  * @returns metadata, or null when SKILL.md is missing or malformed
  */
-async function getSkillMetadata(
+export async function getSkillMetadata(
   accountId: string,
   skillName: string,
 ): Promise<SkillMetadata | null> {

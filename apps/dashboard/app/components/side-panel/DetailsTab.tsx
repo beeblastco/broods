@@ -34,6 +34,10 @@ import {
   readModelReasoning,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
+import {
+  AgentHealthCheck,
+  type HealthCheckEntry,
+} from "@/app/components/side-panel/AgentHealthCheck";
 import { resolveCoreEndpoint } from "@/app/lib/coreEndpoint";
 import { toErrorMessage } from "@/app/lib/errors";
 import { isPlainObject } from "@/app/lib/utils";
@@ -107,6 +111,8 @@ export function DetailsTab({
   onUpdateModelReasoning,
   onUpdatePublicAccess,
   onUpdateIdentity,
+  onOpenTab,
+  onHealthResults,
 }: {
   agentConfig: Doc<"agentConfigs"> | null | undefined;
   projectId: Id<"projects"> | undefined;
@@ -137,6 +143,10 @@ export function DetailsTab({
     description?: string;
     systemPrompt?: string;
   }) => Promise<void>;
+  /** Switches the side panel to another tab (health-check fix-links). */
+  onOpenTab?: (tab: string) => void;
+  /** Lifts the latest health results for the chat's error cards. */
+  onHealthResults?: (checks: HealthCheckEntry[]) => void;
 }): React.JSX.Element {
   const [showApiKey, setShowApiKey] = useState(false);
   const [rotateOpen, setRotateOpen] = useState(false);
@@ -639,6 +649,14 @@ export function DetailsTab({
               : "Private — only you can talk to it here, and any channels you connect. Turn on public access to call it from your own apps."}
           </p>
         </div>
+
+        {agentConfig && (
+          <AgentHealthCheck
+            agentConfigId={agentConfig._id}
+            onOpenTab={onOpenTab}
+            onResults={onHealthResults}
+          />
+        )}
 
         {!activeDeployment ? (
           <div className="flex flex-col gap-2 rounded-md border border-dashed border-border/70 bg-muted/40 p-3">

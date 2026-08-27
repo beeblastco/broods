@@ -181,3 +181,35 @@ export function resolveChatError(raw: string): ChatErrorPresentation {
     raw: raw,
   };
 }
+
+/** One failing result from the last "Check everything" run (ticket 23). */
+export interface KnownHealthFailure {
+  name: string;
+  target: string;
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * When the last health check already knows the cause of a chat failure,
+ * say so: a provider-key error card quotes the failing model check instead
+ * of the generic hint. Anything unmatched passes through untouched.
+ */
+export function withKnownHealthCause(
+  presentation: ChatErrorPresentation,
+  checks: KnownHealthFailure[] | null | undefined,
+): ChatErrorPresentation {
+  if (!checks || presentation.action?.kind !== "open-env-vars") {
+    return presentation;
+  }
+  const modelFailure = checks.find(
+    (check) => !check.ok && check.name === "model",
+  );
+
+  return modelFailure
+    ? {
+        ...presentation,
+        detail: `Health check found it: ${modelFailure.target} — ${modelFailure.message}`,
+      }
+    : presentation;
+}

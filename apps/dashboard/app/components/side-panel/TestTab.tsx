@@ -25,6 +25,7 @@ import {
   resolveChatError,
   type ChatErrorActionKind,
   type ChatErrorPresentation,
+  withKnownHealthCause,
 } from "@/app/lib/chatErrors";
 import {
   relativeTime,
@@ -45,6 +46,7 @@ import {
   ProposalCard,
   type ProposalDecision,
 } from "@/app/components/side-panel/ProposalCard";
+import type { HealthCheckEntry } from "@/app/components/side-panel/AgentHealthCheck";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
 import type { UIMessage } from "ai";
@@ -214,6 +216,7 @@ export function TestTab({
   workspaceRef,
   onOpenContext,
   projectId,
+  healthChecks,
 }: {
   activeDeployment: StageDeployment | undefined;
   deploymentApiKey?: string;
@@ -232,6 +235,8 @@ export function TestTab({
   /** Switches the side panel to the Context tab. */
   onOpenContext?: () => void;
   projectId?: Id<"projects">;
+  /** Latest "Check everything" results — error cards quote a known cause. */
+  healthChecks?: HealthCheckEntry[] | null;
 }): React.JSX.Element {
   const { getAccessToken } = useAccessToken();
   // Private agents test through the owner-authenticated internal endpoint —
@@ -292,6 +297,7 @@ export function TestTab({
     onOpenContext: onOpenContext,
     dashboardProjectId: projectId,
     chatAgentConfigId: agentConfigId,
+    healthChecks: healthChecks,
   };
 
   return agentConfigId ? (
@@ -332,6 +338,7 @@ function ConversationChat({
   onOpenContext?: () => void;
   dashboardProjectId?: Id<"projects">;
   chatAgentConfigId?: Id<"agentConfigs">;
+  healthChecks?: HealthCheckEntry[] | null;
   agentConfigId: Id<"agentConfigs">;
 }) {
   const convex = useConvex();
@@ -712,6 +719,7 @@ function ChatWindow({
   onOpenContext,
   dashboardProjectId,
   chatAgentConfigId,
+  healthChecks,
 }: {
   endpointId: string;
   agentId: string;
@@ -735,6 +743,7 @@ function ChatWindow({
   onOpenContext?: () => void;
   dashboardProjectId?: Id<"projects">;
   chatAgentConfigId?: Id<"agentConfigs">;
+  healthChecks?: HealthCheckEntry[] | null;
 }) {
   const {
     messages,
@@ -1084,7 +1093,10 @@ function ChatWindow({
         )}
         {error && (
           <ChatErrorCard
-            presentation={resolveChatError(error.message)}
+            presentation={withKnownHealthCause(
+              resolveChatError(error.message),
+              healthChecks,
+            )}
             onAction={handleErrorAction}
           />
         )}

@@ -3,6 +3,7 @@ import {
   isStreamProtocolError,
   resolveChatError,
   runtimeStreamErrorText,
+  withKnownHealthCause,
 } from "../app/lib/chatErrors";
 
 describe("resolveChatError", () => {
@@ -104,5 +105,43 @@ describe("runtimeStreamErrorText", () => {
     );
     expect(runtimeStreamErrorText("nope")).toBe(null);
     expect(runtimeStreamErrorText(null)).toBe(null);
+  });
+});
+
+describe("withKnownHealthCause", () => {
+  const keyError = resolveChatError(
+    "config.provider.vertex.apiKey is required",
+  );
+
+  test("quotes the failing model check on a provider-key error", () => {
+    const enriched = withKnownHealthCause(keyError, [
+      {
+        name: "model",
+        target: "vertex · gemini-2.5-pro",
+        ok: false,
+        message:
+          "The API key points at ${NO_SUCH_KEY}, but that variable is not set on this stage.",
+      },
+    ]);
+    expect(enriched.detail).toContain("Health check found it");
+    expect(enriched.detail).toContain("vertex · gemini-2.5-pro");
+    expect(enriched.action?.kind).toBe("open-env-vars");
+  });
+
+  test("passes through when no health data or no matching failure", () => {
+    expect(withKnownHealthCause(keyError, null)).toBe(keyError);
+    expect(withKnownHealthCause(keyError, [])).toEqual(keyError);
+    expect(
+      withKnownHealthCause(keyError, [
+        { name: "model", target: "google", ok: true, message: "fine" },
+        { name: "skill", target: "s", ok: false, message: "gone" },
+      ]),
+    ).toEqual(keyError);
+    const network = resolveChatError("Failed to fetch");
+    expect(
+      withKnownHealthCause(network, [
+        { name: "model", target: "google", ok: false, message: "bad key" },
+      ]),
+    ).toBe(network);
   });
 });

@@ -48,6 +48,7 @@ import {
   toNestedAgentConfig,
   type FlatAgentConfig,
 } from "@/app/lib/agentConfigCodec";
+import type { HealthCheckEntry } from "@/app/components/side-panel/AgentHealthCheck";
 import { mergeNestedAgentConfig } from "@/app/lib/agentConfigMerge";
 import { applyAgentConfigUpdate } from "@/app/lib/agentConfigOptimistic";
 import {
@@ -280,6 +281,11 @@ export const NodeSidePanel = memo(function NodeSidePanel({
     undefined,
   );
   const [activeTab, setActiveTab] = useState("details");
+  // Latest "Check everything" results (ticket 23) — the Test tab's error
+  // cards quote a known failing check instead of a generic hint.
+  const [lastHealthChecks, setLastHealthChecks] = useState<
+    HealthCheckEntry[] | null
+  >(null);
 
   // Sync the editable name and reset panel state when the selected node, its
   // config, or its deployment changes. Handled during render (each guarded by
@@ -982,6 +988,8 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 onUpdateModelReasoning={handleUpdateModelReasoning}
                 onUpdatePublicAccess={handleUpdatePublicAccess}
                 onUpdateIdentity={handleUpdateIdentity}
+                onOpenTab={setActiveTab}
+                onHealthResults={setLastHealthChecks}
               />
             ) : isTool && node ? (
               <ToolDetailsTab
@@ -1142,6 +1150,7 @@ export const NodeSidePanel = memo(function NodeSidePanel({
                 enabledSkillNames={agentEnabledSkillNames}
                 workspaceRef={agentWorkspaceRef}
                 onOpenContext={openContextTab}
+                healthChecks={lastHealthChecks}
                 projectId={projectId}
               />
             </TabsContent>
