@@ -403,34 +403,39 @@ describe("sendFilesTool", () => {
     const { sendFilesTool } =
       await import("../src/harness/tools/channel.tool.ts");
     const context = channelContext(async function (): Promise<void> {});
-    const lines: string[] = [];
+    const chunks: string[] = [];
     const write = spyOn(process.stdout, "write").mockImplementation(function (
       chunk: string | Uint8Array,
     ): boolean {
-      lines.push(chunk.toString());
+      chunks.push(
+        typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
+      );
 
       return true;
     });
 
-    const tools = sendFilesTool({ ...context, workspaces: [] });
-    write.mockRestore();
+    let tools: ToolSet;
+    try {
+      tools = sendFilesTool({ ...context, workspaces: [] });
+    } finally {
+      // Restore before asserting: a throw here would otherwise leave stdout
+      // captured for every test after this one.
+      write.mockRestore();
+    }
 
     expect(tools).toEqual({});
     // The absence is otherwise invisible: the model loses its only file
     // delivery mid-run and the trace carries no WARN and no ERROR at all, so
     // the run reads as the model ignoring instructions.
-    const warned = lines
-      .map((line): Record<string, unknown> => JSON.parse(line))
-      .filter((entry): boolean => entry.level === "WARN");
-
-    expect(warned).toHaveLength(1);
-    expect(warned[0]).toMatchObject({
-      message:
-        "send-files not registered: sending files needs an attached workspace",
-      channel: "zalo",
-      attachedWorkspaces: 0,
-      sendImagesUrlOnly: true,
-    });
+    expect(warnLines(chunks)).toEqual([
+      {
+        message:
+          "send-files not registered: sending files needs an attached workspace",
+        channel: "zalo",
+        attachedWorkspaces: 0,
+        sendImages: "url-only",
+      },
+    ]);
   });
 });
 
@@ -468,4 +473,36 @@ async function execute(
     messages: [],
     context: {},
   })) as string;
+}
+// What every structured log line carries, dropped so an assertion names only the
+// fields the warning is actually about.
+const LOG_ENVELOPE_KEYS: ReadonlySet<string> = new Set([
+  "level",
+  "service",
+  "service.name",
+  "time",
+]);
+
+// One `process.stdout.write` is not one log line: a chunk can carry several
+// newline-delimited records, and anything that is not a log record at all would
+// otherwise fail the parse instead of the assertion.
+function warnLines(chunks: string[]): Record<string, unknown>[] {
+  return chunks
+    .flatMap((chunk): string[] => chunk.split("\n"))
+    .flatMap((line): Record<string, unknown>[] => {
+      if (!line.trim()) return [];
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    })
+    .filter((entry): boolean => entry.level === "WARN")
+    .map((entry): Record<string, unknown> =>
+      Object.fromEntries(
+        Object.entries(entry).filter(
+          ([key]): boolean => !LOG_ENVELOPE_KEYS.has(key),
+        ),
+      ),
+    );
 }

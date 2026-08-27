@@ -77,19 +77,19 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
   if (workspaces.length === 0) {
-    // Nothing else marks the absence. The model is handed a toolset with no way
-    // to deliver the file it was just asked to produce, and improvises with
-    // whatever is left, so the run reads as disobedience rather than a missing
-    // tool. This is the only line that names the cause, and it covers
-    // `send-images` too: with no workspace it registers URL-only, which is the
-    // half that makes the improvising look deliberate.
+    // The absence is otherwise invisible: the model loses its only file delivery
+    // mid-run and improvises, so the run reads as disobedience rather than a
+    // missing tool. `sendImages` says what the same missing workspace did to the
+    // other half of the pair.
     logWarn(
       "send-files not registered: sending files needs an attached workspace",
       {
         channel: channelName,
         attachedWorkspaces: context.workspaces?.length ?? 0,
-        sendImagesUrlOnly:
-          actions.sendImages !== undefined || actions.sendFiles !== undefined,
+        sendImages:
+          actions.sendImages || actions.sendFiles
+            ? "url-only"
+            : "not-registered",
       },
     );
 
@@ -143,8 +143,8 @@ export function sendImagesTool(context: ChannelToolContext): ToolSet {
   }
   // A workspace file can only be handed over as a media link, which has to name
   // its account; without one the tool stays URL-only rather than half-working.
-  // That degradation is warned about once in `sendFilesTool`, which loses its
-  // whole tool to the same cause — a second line here would only say it twice.
+  // Warned about once in `sendFilesTool`, which loses its whole tool to the same
+  // cause; a second line here would only say it twice.
   const accountId = context.accountId;
   const workspaces = accountId ? (context.workspaces ?? []) : [];
 
