@@ -1,8 +1,8 @@
 /**
  * One-off data migrations. Run each on every deployment (dev + production),
- * e.g. `bunx convex run migrations:clearDeprecatedAgentConfigToggles` — the
- * runtime-key rework ones BEFORE deploying the narrowed schema that drops
- * the corresponding fields/indexes. Each is idempotent and safe to re-run.
+ * e.g. `bunx convex run migrations:deleteOrphanedTools`. Each is idempotent
+ * and safe to re-run; completed migrations are deleted once every deployment
+ * has run them.
  */
 
 import { internal } from "./_generated/api";
@@ -67,63 +67,6 @@ export const backfillUsageRollupGrains = internalMutation({
     }
 
     return { patched: patched, isDone: page.isDone };
-  },
-});
-
-/**
- * Strip the deprecated per-agent `publicAccessEnabled` / `webSocketEnabled`
- * fields. Public access is now a stage-wide runtime key, so these are
- * unused; clearing them lets the schema drop the fields.
- * @returns count of agent configs patched
- */
-export const clearDeprecatedAgentConfigToggles = internalMutation({
-  args: {},
-  returns: v.object({ patched: v.number() }),
-  handler: async (ctx) => {
-    const configs = await ctx.db.query("agentConfigs").collect();
-    let patched = 0;
-    for (const config of configs) {
-      const record = config as Record<string, unknown>;
-      if (
-        record.publicAccessEnabled === undefined &&
-        record.webSocketEnabled === undefined
-      )
-        continue;
-      // Cast: these fields were dropped from the schema, so the typed patch
-      // signature no longer accepts them; setting undefined unsets them.
-      await ctx.db.patch(config._id, {
-        publicAccessEnabled: undefined,
-        webSocketEnabled: undefined,
-      } as never);
-      patched += 1;
-    }
-
-    return { patched: patched };
-  },
-});
-
-/**
- * Delete legacy per-agent `agentDeployments` rows (those keyed by `agentConfigId`
- * instead of project/stage). They predate the stage-scoped key model and are
- * never resolved by `getByApiKeyHash` (it requires `accountId`); removing them
- * lets the schema drop the `agentConfigId` field and `by_agentConfigId` index.
- * @returns count of legacy rows deleted
- */
-export const deleteLegacyAgentDeployments = internalMutation({
-  args: {},
-  returns: v.object({ deleted: v.number() }),
-  handler: async (ctx) => {
-    const rows = await ctx.db.query("agentDeployments").collect();
-    let deleted = 0;
-    for (const row of rows) {
-      const record = row as Record<string, unknown>;
-      // Stage-scoped rows set projectId; legacy rows only have agentConfigId.
-      if (record.projectId !== undefined) continue;
-      await ctx.db.delete(row._id);
-      deleted += 1;
-    }
-
-    return { deleted: deleted };
   },
 });
 

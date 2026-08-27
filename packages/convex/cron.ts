@@ -12,7 +12,6 @@ import type { DataModel, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { authKit } from "./auth";
 import { accountIdForProject } from "./model/auditEvents";
-import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { cronsInProject } from "./model/projectScope";
 import { cronRunsFields, cronsFields } from "./schema";
@@ -53,41 +52,6 @@ async function getOwned(
 
   return cron && cron.accountId === accountId ? cron : null;
 }
-
-/**
- * Public query: lists cron jobs for the caller's active org. Used by the
- * crons dashboard page for live updates.
- */
-export const listForActiveOrg = query({
-  args: {},
-  returns: v.array(cronDoc),
-  handler: async (ctx) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_authId", (q) => q.eq("authId", authUser.id))
-      .unique();
-    if (!user) return [];
-
-    const org = await getActiveOrgForUser(ctx, user._id);
-    if (!org) return [];
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", org._id))
-      .unique();
-    if (!account) return [];
-
-    return await ctx.db
-      .query("crons")
-      .withIndex("by_accountId", (q) => q.eq("accountId", account._id))
-      .collect();
-  },
-});
 
 /**
  * Lists the cron jobs whose agent belongs to `projectId`, for that project's
@@ -148,36 +112,6 @@ export const list = internalQuery({
           .query("crons")
           .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
           .collect(),
-});
-
-export const listByStatus = internalQuery({
-  args: {
-    accountId: v.id("accounts"),
-    status: cronStatusValidator,
-  },
-  returns: v.array(cronDoc),
-  handler: (ctx, { accountId, status }) =>
-    ctx.db
-      .query("crons")
-      .withIndex("by_accountId_and_status", (q) =>
-        q.eq("accountId", accountId).eq("status", status),
-      )
-      .collect(),
-});
-
-export const getBySchedulerName = internalQuery({
-  args: { schedulerName: v.string() },
-  returns: v.union(cronDoc, v.null()),
-  handler: async (ctx, { schedulerName }) => {
-    const cron = await ctx.db
-      .query("crons")
-      .withIndex("by_schedulerName", (q) =>
-        q.eq("schedulerName", schedulerName),
-      )
-      .unique();
-
-    return cron ?? null;
-  },
 });
 
 export const create = internalMutation({

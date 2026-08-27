@@ -63,31 +63,6 @@ export const getByNode = query({
   },
 });
 
-/** Every tool in a stage, CLI-synced and dashboard-authored alike. */
-export const listForStage = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-  },
-  returns: v.array(toolDoc),
-  handler: async (ctx, { projectId, stageId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
-    if (!project) return [];
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return [];
-
-    return await ctx.db
-      .query("accountTools")
-      .withIndex("by_stageId_and_status", (q) =>
-        q.eq("stageId", stageId).eq("status", "active"),
-      )
-      .collect();
-  },
-});
-
 /**
  * Save a canvas-authored tool. An action, not a mutation: the source has to
  * reach S3 as a bundle before the row can point at it, otherwise the tool would
@@ -411,26 +386,6 @@ export const upsertForNode = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-  },
-});
-
-/** Remove a canvas-authored tool when its node is deleted. */
-export const removeForNode = internalMutation({
-  args: {
-    stageId: v.id("stages"),
-    nodeId: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, { stageId, nodeId }) => {
-    const existing = await ctx.db
-      .query("accountTools")
-      .withIndex("by_stageId_and_nodeId", (q) =>
-        q.eq("stageId", stageId).eq("nodeId", nodeId),
-      )
-      .first();
-    if (existing) await ctx.db.delete(existing._id);
-
-    return null;
   },
 });
 

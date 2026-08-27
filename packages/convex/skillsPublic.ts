@@ -17,8 +17,6 @@ import {
   createJsonSkillFiles,
   createOrReplaceSkill,
   fetchGitHubSkillFiles,
-  getSkill,
-  readSkillFileBytes,
 } from "./model/skills";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -195,94 +193,6 @@ export const createFromJson = action({
       name: skill.name,
       path: skill.path,
       description: skill.description,
-    };
-  },
-});
-
-/**
- * Import an existing skill from S3 and store its files in workspaceFiles.
- * Existing files for this nodeId are cleared before import.
- * @param projectId owning project
- * @param nodeId canvas skill node ID
- * @param skillName the broods skill name (without accountId prefix)
- * @param bearerToken the caller's broods account Bearer token
- * @returns imported skill metadata
- */
-export const importSkill = action({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    skillName: v.string(),
-    bearerToken: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { projectId, nodeId, skillName, bearerToken } = args;
-
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const account = await requireAccountForToken(ctx, bearerToken);
-
-    const project = await ctx.runQuery(api.project.getById, {
-      projectId: projectId,
-    });
-    if (!project) {
-      throw new Error("Project not found.");
-    }
-
-    const skill = await getSkill(account._id, skillName);
-    if (!skill) {
-      throw new Error(`Skill not found: ${skillName}`);
-    }
-
-    // Clear existing files for this node before importing
-    await ctx.runMutation(internal.workspaceFiles.clearNodeInternal, {
-      projectId: projectId,
-      nodeId: nodeId,
-    });
-
-    // Upload each file to Convex storage and create workspaceFiles entries
-    for (const file of skill.files) {
-      const uploadUrl = await ctx.runMutation(
-        api.workspaceFiles.generateUploadUrl,
-        {},
-      );
-      const content = Buffer.from(
-        await readSkillFileBytes(skill.path, file.path),
-      );
-
-      const uploadRes = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: content,
-      });
-      if (!uploadRes.ok) {
-        throw new Error(`Failed to store file: ${file.path}`);
-      }
-
-      const { storageId } = (await uploadRes.json()) as { storageId: string };
-      const parts = file.path.split("/");
-      const name = parts[parts.length - 1];
-
-      await ctx.runMutation(api.workspaceFiles.create, {
-        projectId: projectId,
-        nodeId: nodeId,
-        path: file.path,
-        name: name,
-        isFolder: false,
-        storageId: storageId as never,
-        mimeType: "text/plain",
-        sizeBytes: content.byteLength,
-      });
-    }
-
-    return {
-      name: skill.name,
-      description: skill.description,
-      fileCount: skill.files.length,
     };
   },
 });

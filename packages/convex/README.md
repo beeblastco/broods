@@ -20,7 +20,7 @@ Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `stages`,
 
 Agent-platform domain (shared with core): `accounts`, `agents`,
 `sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
-`conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
+`skills`, `workspaceFiles`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
 `runtimeAsyncToolGroups`, `runtimeHarnessSessions`, and

@@ -92,50 +92,6 @@ export const list = query({
 });
 
 /**
- * Resolve an S3-backed workspace to its owning account after project ownership checks.
- * @param projectId owning project
- * @param workspaceId workspaceConfigs document ID stored on the canvas node
- * @returns runtime account/workspace identifiers, or null when inaccessible
- */
-export const resolveRuntimeWorkspace = query({
-  args: {
-    projectId: v.id("projects"),
-    workspaceId: v.string(),
-  },
-  returns: v.union(
-    v.object({
-      accountId: v.id("accounts"),
-      workspaceId: v.id("workspaceConfigs"),
-      storage: workspaceStorageValidator,
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const project = await getOwnedProject(ctx, user.id, args.projectId);
-    if (!project) return null;
-    const workspaceId = ctx.db.normalizeId(
-      "workspaceConfigs",
-      args.workspaceId,
-    );
-    if (!workspaceId) return null;
-    const workspace = await ctx.db.get(workspaceId);
-    if (!workspace || workspace.projectId !== args.projectId) return null;
-
-    return {
-      accountId: workspace.accountId,
-      workspaceId: workspace._id,
-      storage: normalizeWorkspaceConfig(workspace.config).storage,
-    };
-  },
-});
-
-/**
  * Internal: resolve an S3-backed workspace for a caller-owned project.
  * @param authId WorkOS auth id of the caller
  * @param projectId owning project
@@ -514,37 +470,6 @@ export const removeForMigrationInternal = internalMutation({
       await ctx.storage.delete(file.storageId);
     }
     await ctx.db.delete(args.fileId);
-
-    return null;
-  },
-});
-
-/**
- * Internal: delete all files for a node (used by skillsPublic.importSkill before re-import).
- * @param projectId owning project
- * @param nodeId canvas node whose files should be wiped
- */
-export const clearNodeInternal = internalMutation({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { projectId, nodeId } = args;
-
-    const all = await ctx.db
-      .query("workspaceFiles")
-      .withIndex("by_projectId_and_nodeId", (q) =>
-        q.eq("projectId", projectId).eq("nodeId", nodeId),
-      )
-      .collect();
-
-    for (const doc of all) {
-      if (doc.storageId) {
-        await ctx.storage.delete(doc.storageId);
-      }
-      await ctx.db.delete(doc._id);
-    }
 
     return null;
   },

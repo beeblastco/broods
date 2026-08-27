@@ -5,7 +5,7 @@ import {
   canonicalModelProvider,
   estimateModelTokenCost,
   resolveModelTokenRates,
-} from "../modelPricing.ts";
+} from "../modelPricing";
 
 describe("model pricing", () => {
   it("normalizes SDK providers and resolves vercel model identifiers", () => {

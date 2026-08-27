@@ -7,7 +7,7 @@
 
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { action, query, type QueryCtx } from "./_generated/server";
+import { query, type QueryCtx } from "./_generated/server";
 import { authKit } from "./auth";
 import { projectEndpointIds } from "./logsHelpers";
 import { type UsageGrain } from "./usage";
@@ -194,23 +194,6 @@ export const fetchUsageStats = query({
     const { buckets, totals } = aggregateUsage(batches.flat(), cfg.binSeconds);
 
     return { ...base, buckets: buckets, totals: totals };
-  },
-});
-
-/**
- * Placeholder for deep/cold log search beyond the hot window. The realtime hot
- * path covers ~48h; older logs are durable in Loki and queried through Grafana.
- * Wire a Grafana datasource-proxy fetch here when product needs in-app history.
- */
-export const searchHistory = action({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.optional(v.id("stages")),
-    query: v.optional(v.string()),
-  },
-  returns: v.array(v.any()),
-  handler: async () => {
-    return [];
   },
 });
 

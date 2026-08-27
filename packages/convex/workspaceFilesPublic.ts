@@ -16,7 +16,6 @@ import {
   listWorkspaceFiles,
   renameWorkspacePath,
   uploadWorkspaceFile,
-  workspaceFileDownloadUrl,
   type WorkspaceFsRef,
 } from "./model/workspaceFs";
 
@@ -168,21 +167,6 @@ export const rename = action({
     await renameWorkspacePath(workspace, args.path, args.newPath);
 
     return null;
-  },
-});
-
-/** Returns a short-lived S3 download URL for a mounted workspace file. */
-export const getDownloadUrl = action({
-  args: {
-    projectId: v.id("projects"),
-    workspaceId: v.string(),
-    path: v.string(),
-  },
-  returns: v.string(),
-  handler: async (ctx, args) => {
-    const workspace = await resolveWorkspace(ctx, args);
-
-    return await workspaceFileDownloadUrl(workspace, args.path);
   },
 });
 

@@ -88,23 +88,3 @@ export const create = internalMutation({
     return null;
   },
 });
-
-/**
- * Revoke every token for one workspace. Deleting a workspace's files must not
- * leave links that still resolve.
- * @param workspaceId workspace whose tokens die
- * @returns the number of tokens revoked
- */
-export const revokeForWorkspace = internalMutation({
-  args: { workspaceId: v.id("workspaceConfigs") },
-  returns: v.number(),
-  handler: async (ctx, args) => {
-    const records = await ctx.db
-      .query("workspaceDownloadTokens")
-      .withIndex("by_workspaceId", (q) => q.eq("workspaceId", args.workspaceId))
-      .collect();
-    for (const record of records) await ctx.db.delete(record._id);
-
-    return records.length;
-  },
-});

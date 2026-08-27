@@ -722,30 +722,6 @@ export const configHttpAuthFailuresFields = {
   updatedAt: v.number(),
 };
 
-/** Conversation thread between an account's caller and one of its agents. */
-export const conversationsFields = {
-  accountId: v.id("accounts"),
-  agentId: v.id("agents"),
-  title: v.optional(v.string()),
-  createdAt: v.number(),
-  lastMessageAt: v.number(),
-};
-
-/** Message in a conversation. Role + content + arbitrary metadata. */
-export const messagesFields = {
-  conversationId: v.id("conversations"),
-  accountId: v.id("accounts"),
-  role: v.union(
-    v.literal("system"),
-    v.literal("user"),
-    v.literal("assistant"),
-    v.literal("tool"),
-  ),
-  content: v.string(),
-  metadata: v.optional(v.any()),
-  createdAt: v.number(),
-};
-
 /** Skill metadata; binary content lives in S3 under accountId-prefixed keys. */
 export const skillsFields = {
   accountId: v.id("accounts"),
@@ -793,22 +769,6 @@ export const workspaceDownloadTokensFields = {
   tokenHash: v.string(),
   expiresAt: v.number(),
   createdAt: v.number(),
-};
-
-/** Async job tracking for the harness-processing /async endpoint. */
-export const asyncResultsFields = {
-  accountId: v.id("accounts"),
-  eventId: v.string(),
-  status: v.union(
-    v.literal("pending"),
-    v.literal("running"),
-    v.literal("completed"),
-    v.literal("failed"),
-  ),
-  result: v.optional(v.any()),
-  error: v.optional(v.string()),
-  createdAt: v.number(),
-  updatedAt: v.number(),
 };
 
 /** Ordered AI SDK events for one runtime conversation. */
@@ -1145,9 +1105,7 @@ export default defineSchema({
     // read in creation order, which prefixing the slug would silently reorder.
     .index("by_orgId", ["orgId"])
     .index("by_orgId_and_slug", ["orgId", "slug"]),
-  stages: defineTable(stagesFields)
-    .index("by_projectId", ["projectId"])
-    .index("by_authId_and_projectId", ["authId", "projectId"]),
+  stages: defineTable(stagesFields).index("by_projectId", ["projectId"]),
   agentConfigs: defineTable(agentConfigsFields)
     .index("by_authId", ["authId"])
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
@@ -1169,7 +1127,6 @@ export default defineSchema({
     ])
     .index("by_apiKeyHash", ["apiKeyHash"])
     .index("by_endpointId", ["endpointId"])
-    .index("by_authId", ["authId"])
     // The channel-endpoints reconcile walks every active deployment; a status
     // range keeps rotated/retired rows out of that read set.
     .index("by_status", ["status"])
@@ -1190,7 +1147,6 @@ export default defineSchema({
     .index("by_authId", ["authId"]),
   cliExternalResources: defineTable(cliExternalResourcesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
-    .index("by_stageId_kind_and_name", ["stageId", "kind", "name"])
     .index("by_accountId", ["accountId"]),
   orgs: defineTable(orgsFields)
     .index("by_slug", ["slug"])
@@ -1257,12 +1213,6 @@ export default defineSchema({
       "accountId",
       "reservationKey",
       "createdAt",
-    ])
-    .index("by_accountId_projectId_stageId_and_createdAt", [
-      "accountId",
-      "projectId",
-      "stageId",
-      "createdAt",
     ]),
   environmentVariables: defineTable(environmentVariablesFields)
     .index("by_projectId_and_stageId", ["projectId", "stageId"])
@@ -1273,34 +1223,23 @@ export default defineSchema({
   ),
   environmentVariableReveals: defineTable(environmentVariableRevealsFields)
     .index("by_stageId", ["stageId"])
-    .index("by_environmentVariableId", ["environmentVariableId"])
     .index("by_revealedByAuthId", ["revealedByAuthId"])
     .index("by_revealedByCliAuthId", ["revealedByCliAuthId"]),
-  configAuditEvents: defineTable(configAuditEventsFields)
-    .index("by_account", ["accountId"])
-    .index("by_account_project_stage", ["accountId", "projectId", "stageId"]),
+  configAuditEvents: defineTable(configAuditEventsFields).index("by_account", [
+    "accountId",
+  ]),
   configHttpAuthFailures: defineTable(configHttpAuthFailuresFields)
     .index("by_key", ["key"])
     .index("by_updatedAt", ["updatedAt"]),
-  conversations: defineTable(conversationsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
-  messages: defineTable(messagesFields)
-    .index("by_conversationId", ["conversationId"])
-    .index("by_accountId", ["accountId"]),
   skills: defineTable(skillsFields).index("by_accountId", ["accountId"]),
   workspaceFiles: defineTable(workspaceFilesFields)
     .index("by_projectId_and_nodeId", ["projectId", "nodeId"])
-    .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"])
-    .index("by_authId", ["authId"]),
+    .index("by_projectId_nodeId_and_path", ["projectId", "nodeId", "path"]),
   workspaceDownloadTokens: defineTable(workspaceDownloadTokensFields)
     .index("by_tokenHash", ["tokenHash"])
     .index("by_accountId", ["accountId"])
     .index("by_workspaceId", ["workspaceId"])
     .index("by_expiresAt", ["expiresAt"]),
-  asyncResults: defineTable(asyncResultsFields)
-    .index("by_accountId", ["accountId"])
-    .index("by_eventId", ["eventId"]),
   runtimeConversationEvents: defineTable(runtimeConversationEventsFields)
     .index("by_conversationKey_and_cursor", ["conversationKey", "cursor"])
     .index("by_accountId", ["accountId"]),
@@ -1315,8 +1254,7 @@ export default defineSchema({
     runtimeConversationCoordinatorsFields,
   )
     .index("by_conversationKey", ["conversationKey"])
-    .index("by_accountId", ["accountId"])
-    .index("by_leaseExpiresAt", ["leaseExpiresAt"]),
+    .index("by_accountId", ["accountId"]),
   runtimeIngressEnvelopes: defineTable(runtimeIngressEnvelopesFields)
     .index("by_identity", ["identity"])
     .index("by_eventId", ["eventId"])
@@ -1324,12 +1262,6 @@ export default defineSchema({
     .index("by_conversationKey_and_status_and_sequence", [
       "conversationKey",
       "status",
-      "sequence",
-    ])
-    .index("by_conversationKey_and_status_and_requestedMode_and_sequence", [
-      "conversationKey",
-      "status",
-      "requestedMode",
       "sequence",
     ])
     .index("by_conversationKey_and_appliedToEventId_and_sequence", [
@@ -1344,7 +1276,6 @@ export default defineSchema({
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_status_and_statusExpiresAt", ["status", "statusExpiresAt"]),
   runtimeIngressApplications: defineTable(runtimeIngressApplicationsFields)
-    .index("by_applicationId", ["applicationId"])
     .index("by_conversationKey_and_createdAt", ["conversationKey", "createdAt"])
     .index("by_accountId", ["accountId"])
     .index("by_expiresAt", ["expiresAt"]),
@@ -1369,15 +1300,12 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"]),
   crons: defineTable(cronsFields)
     .index("by_accountId", ["accountId"])
-    .index("by_accountId_and_agentId", ["accountId", "agentId"])
-    .index("by_accountId_and_status", ["accountId", "status"])
-    .index("by_schedulerName", ["schedulerName"]),
+    .index("by_accountId_and_agentId", ["accountId", "agentId"]),
   cronRuns: defineTable(cronRunsFields).index(
     "by_accountId_and_cronId_and_startedAt",
     ["accountId", "cronId", "startedAt"],
   ),
   taskUsage: defineTable(taskUsageFields)
-    .index("by_endpointId_and_finishedAt", ["endpointId", "finishedAt"])
     .index("by_accountId_and_finishedAt", ["accountId", "finishedAt"])
     .index("by_accountId_and_taskId", ["accountId", "taskId"]),
   usageRollups: defineTable(usageRollupsFields)
