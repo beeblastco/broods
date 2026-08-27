@@ -95,7 +95,7 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface (epic #85 phase 9): account metadata/rotation,
+// Public config-plane surface: account metadata/rotation,
 // agents, skills, tools, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });

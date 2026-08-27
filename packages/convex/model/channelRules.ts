@@ -7,18 +7,6 @@
 import type { Doc } from "../_generated/dataModel";
 import { isPlainObject } from "./objects";
 
-/** Where a reply lands: its own thread, or wherever the message came from. */
-export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
-export type ChannelReplyIn = (typeof CHANNEL_REPLY_TARGETS)[number];
-
-const CHANNEL_RECORD_UPDATE_KEYS = [
-  "name",
-  "description",
-  "workspaceRef",
-  "config",
-  "status",
-] as const;
-
 const CHANNEL_CONFIG_KEYS = [
   "instructions",
   "agentBindings",
@@ -31,6 +19,17 @@ const CHANNEL_CONFIG_KEYS = [
   "tagRoles",
 ] as const;
 
+const CHANNEL_RECORD_UPDATE_KEYS = [
+  "name",
+  "description",
+  "workspaceRef",
+  "config",
+  "status",
+] as const;
+
+/** Where a reply lands: its own thread, or wherever the message came from. */
+export const CHANNEL_REPLY_TARGETS = ["thread", "source"] as const;
+
 export type ChannelRecordConfig = {
   instructions?: string;
   agentBindings: Array<{ agentId: string; isDefault?: boolean }>;
@@ -42,6 +41,8 @@ export type ChannelRecordConfig = {
   sandboxImages?: string[];
   tagRoles?: Array<{ roleId: string; userIds: string[] }>;
 };
+
+export type ChannelReplyIn = (typeof CHANNEL_REPLY_TARGETS)[number];
 
 export type CreateChannelRecordInput = {
   platform: string;
@@ -218,29 +219,6 @@ function normalizeAgentBindings(
   return bindings;
 }
 
-function normalizeWorkspaces(
-  value: unknown,
-): ChannelRecordConfig["workspaces"] {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value))
-    throw new Error("config.workspaces must be an array");
-
-  return value.map((entry, index) => {
-    if (!isPlainObject(entry)) {
-      throw new Error(`config.workspaces[${index}] must be an object`);
-    }
-    const ref = entry as Record<string, unknown>;
-
-    return {
-      name: requireString(ref.name, `config.workspaces[${index}].name`),
-      workspaceId: requireString(
-        ref.workspaceId,
-        `config.workspaces[${index}].workspaceId`,
-      ),
-    };
-  });
-}
-
 function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
@@ -266,6 +244,17 @@ function normalizePartition(value: unknown): ChannelRecordConfig["partition"] {
   };
 }
 
+function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
+  if (value === undefined) return undefined;
+  if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
+    throw new Error(
+      `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
+    );
+  }
+
+  return value as ChannelReplyIn;
+}
+
 function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
   if (value === undefined) return undefined;
   if (!Array.isArray(value))
@@ -288,15 +277,27 @@ function normalizeTagRoles(value: unknown): ChannelRecordConfig["tagRoles"] {
   });
 }
 
-function normalizeReplyIn(value: unknown): ChannelReplyIn | undefined {
+function normalizeWorkspaces(
+  value: unknown,
+): ChannelRecordConfig["workspaces"] {
   if (value === undefined) return undefined;
-  if (!CHANNEL_REPLY_TARGETS.includes(value as ChannelReplyIn)) {
-    throw new Error(
-      `config.replyIn must be one of: ${CHANNEL_REPLY_TARGETS.join(", ")}`,
-    );
-  }
+  if (!Array.isArray(value))
+    throw new Error("config.workspaces must be an array");
 
-  return value as ChannelReplyIn;
+  return value.map((entry, index) => {
+    if (!isPlainObject(entry)) {
+      throw new Error(`config.workspaces[${index}] must be an object`);
+    }
+    const ref = entry as Record<string, unknown>;
+
+    return {
+      name: requireString(ref.name, `config.workspaces[${index}].name`),
+      workspaceId: requireString(
+        ref.workspaceId,
+        `config.workspaces[${index}].workspaceId`,
+      ),
+    };
+  });
 }
 
 function optionalString(value: unknown, name: string): string | undefined {

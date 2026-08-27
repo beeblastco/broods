@@ -1,6 +1,6 @@
 /**
- * Shared config-object helpers for the Convex config plane (epic #85 phase 9,
- * stage 4): deep patch-merge and secret redaction, ported from core's former
+ * Shared config-object helpers for the Convex config plane: deep patch-merge
+ * and secret redaction, ported from core's former
  * storage/agent-config.ts so PATCH semantics and public projections stay
  * byte-identical. Pure module — safe for the default Convex runtime.
  */

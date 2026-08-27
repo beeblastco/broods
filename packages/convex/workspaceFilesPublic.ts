@@ -36,7 +36,9 @@ type LegacyFile = Pick<
   "_id" | "path" | "isFolder" | "storageId"
 >;
 
-async function requireActionUser(ctx: ActionCtx) {
+async function requireActionUser(
+  ctx: ActionCtx,
+): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
   const user = await authKit.getAuthUser(ctx);
   if (!user) throw new Error("User not found or not authenticated");
 

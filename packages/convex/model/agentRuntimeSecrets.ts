@@ -10,27 +10,9 @@ import {
   type EncryptedAgentConfig,
 } from "./agentConfigCodec";
 
-export type RuntimeVariable = { key: string; value: string };
-
 const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
-function publicRuntimeVariables(entries: RuntimeVariable[]): RuntimeVariable[] {
-  return entries.map((entry) => ({
-    key: entry.key,
-    value: MASKED_RUNTIME_VARIABLE_VALUE,
-  }));
-}
-
-function runtimeSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime variables",
-    );
-  }
-
-  return secret;
-}
+export type RuntimeVariable = { key: string; value: string };
 
 export async function loadAgentRuntimeSecrets(
   ctx: QueryCtx | MutationCtx,
@@ -110,4 +92,22 @@ export async function saveAgentRuntimeSecrets(
   }
 
   return publicRuntimeVariables(next);
+}
+
+function publicRuntimeVariables(entries: RuntimeVariable[]): RuntimeVariable[] {
+  return entries.map((entry) => ({
+    key: entry.key,
+    value: MASKED_RUNTIME_VARIABLE_VALUE,
+  }));
+}
+
+function runtimeSecret(): string {
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store runtime variables",
+    );
+  }
+
+  return secret;
 }

@@ -12,8 +12,6 @@
 
 import { isPlainObject } from "./objects";
 
-/** Account config-plane environment variable names accepted in `${NAME}` references. */
-export const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 // Non-global so `.test()` carries no lastIndex state; global clones are built
 // where iteration/replacement needs them.
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
@@ -21,7 +19,39 @@ const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",
 );
+/** Account config-plane environment variable names accepted in `${NAME}` references. */
+export const ACCOUNT_ENV_VAR_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 const ENV_PLACEHOLDER_PATTERN_G = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+const NESTED_BRANCHES = [
+  "agent",
+  "model",
+  "provider",
+  "sandbox",
+  "workspaces",
+  "session",
+  "hooks",
+  "channels",
+  "tools",
+  "skills",
+  "subagent",
+  "policy",
+  "scheduler",
+] as const;
+
+// Removed branches, kept only so a write answers with a pointer instead of dropping
+// the value silently. `workspace` (singular) is the pre-records shape.
+const REMOVED_BRANCH_HINTS: Record<string, string> = {
+  workspace:
+    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',
+};
+
+/** Encrypted blob shape persisted on the `agents` row. base64url-encoded. */
+export interface EncryptedAgentConfig {
+  ciphertext: string;
+  iv: string;
+  tag: string;
+}
 
 export interface FlatAgentConfig {
   name?: string;
@@ -42,191 +72,28 @@ export interface FlatAgentConfig {
   extraConfig?: Record<string, unknown>;
 }
 
-export type NestedAgentConfig = Record<string, unknown>;
-
-// Removed branches, kept only so a write answers with a pointer instead of dropping
-// the value silently. `workspace` (singular) is the pre-records shape.
-const REMOVED_BRANCH_HINTS: Record<string, string> = {
-  workspace:
-    'config.workspace is no longer supported; reference workspace records instead with config.workspaces: [{ name, workspaceId }] and set the agent machine with config.sandbox: "sb_…"',
-};
-
 /**
- * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
- * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
- * so options kept in separate stores — reasoning in `extraConfig.model` vs other
- * provider options in the flat column — don't clobber each other. `overlay` wins
- * on direct key conflicts.
+ * Inverse of {@link toNestedAgentConfig}. Pulls known fields back out of a
+ * nested broods AgentConfig so the canvas's flat `agentConfigs` row
+ * can mirror what the API caller wrote. Anything we don't have a flat
+ * column for is preserved in `extraConfig`.
  */
-function mergeProviderOptions(
-  base: unknown,
-  overlay: unknown,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = isPlainObject(base)
-    ? { ...base }
-    : {};
-  if (isPlainObject(overlay)) {
-    for (const [key, value] of Object.entries(overlay)) {
-      const existing = result[key];
-      result[key] =
-        isPlainObject(existing) && isPlainObject(value)
-          ? { ...existing, ...value }
-          : value;
-    }
-  }
-
-  return result;
+export interface FlatPatch {
+  provider?: string;
+  modelId?: string;
+  systemPrompt?: string;
+  maxTurns?: number;
+  temperature?: number;
+  maxTokens?: number;
+  providerOptions?: Record<string, unknown>;
+  outputFormat?: Record<string, unknown>;
+  memoryToolEnabled?: boolean;
+  searchToolEnabled?: boolean;
+  searchToolConfig?: Record<string, unknown>;
+  extraConfig?: Record<string, unknown>;
 }
 
-function pruneEmpty(
-  value: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  const cleaned: Record<string, unknown> = {};
-  for (const [key, raw] of Object.entries(value)) {
-    if (raw === undefined) continue;
-    if (isPlainObject(raw)) {
-      const child = pruneEmpty(raw);
-      if (child) cleaned[key] = child;
-      continue;
-    }
-    cleaned[key] = raw;
-  }
-
-  return Object.keys(cleaned).length === 0 ? undefined : cleaned;
-}
-
-function assertNoUnsupportedKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  path: string,
-): void {
-  for (const key of keys) {
-    if (value[key] !== undefined) {
-      throw new Error(`${path}.${key} is not supported`);
-    }
-  }
-}
-
-/** Project a flat dashboard row into the nested broods shape. */
-export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
-  const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
-
-  const agent: Record<string, unknown> = {
-    ...(extra.agent as Record<string, unknown> | undefined),
-  };
-  if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
-  if (flat.systemPrompt && agent.system === undefined)
-    agent.system = flat.systemPrompt;
-
-  const modelOptions = mergeProviderOptions(
-    (extra.model as Record<string, unknown> | undefined)?.providerOptions,
-    flat.providerOptions,
-  );
-  if (flat.temperature !== undefined)
-    modelOptions.temperature = flat.temperature;
-  if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
-
-  const model: Record<string, unknown> = {
-    ...(extra.model as Record<string, unknown> | undefined),
-  };
-  if (flat.provider) model.provider = flat.provider;
-  if (flat.modelId) model.modelId = flat.modelId;
-  assertNoUnsupportedKeys(model, ["options"], "config.model");
-  if (Object.keys(modelOptions).length > 0)
-    model.providerOptions = modelOptions;
-  if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
-
-  const provider = extra.provider;
-
-  const tools: Record<string, unknown> = {
-    ...(extra.tools as Record<string, unknown> | undefined),
-  };
-  if (
-    flat.searchToolEnabled !== undefined &&
-    tools.googleSearch === undefined
-  ) {
-    tools.googleSearch = {
-      enabled: flat.searchToolEnabled,
-      ...flat.searchToolConfig,
-    };
-  }
-
-  // Read drops a removed branch rather than throwing: rows written before it was
-  // removed still carry the blob, and reading one must not fail. Writing it back
-  // is what clears it, so an agent cleans itself on its next save.
-  return {
-    ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
-    ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
-    ...(provider ? { provider: provider } : {}),
-    ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
-    ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
-    ...(extra.session ? { session: extra.session } : {}),
-    ...(extra.hooks ? { hooks: extra.hooks } : {}),
-    ...(extra.channels ? { channels: extra.channels } : {}),
-    ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
-    ...(extra.skills ? { skills: extra.skills } : {}),
-    ...(extra.subagent ? { subagent: extra.subagent } : {}),
-    ...(extra.policy ? { policy: extra.policy } : {}),
-    ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
-    // Top-level scalar carried in extraConfig so it flows through every
-    // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
-    ...(typeof extra.publicAccess === "boolean"
-      ? { publicAccess: extra.publicAccess }
-      : {}),
-  };
-}
-
-/** Replace `${KEY}` placeholders recursively using values from `variables`. */
-export function substituteEnvPlaceholders<T>(
-  config: T,
-  variables: Record<string, string>,
-): T {
-  return substitutePlaceholders(config, variables, ENV_PLACEHOLDER_PATTERN_G);
-}
-
-/** Replace valid uppercase account env-var `${NAME}` placeholders recursively. */
-export function substituteAccountEnvPlaceholders<T>(
-  config: T,
-  variables: Record<string, string>,
-): T {
-  return substitutePlaceholders(
-    config,
-    variables,
-    ACCOUNT_ENV_PLACEHOLDER_PATTERN_G,
-  );
-}
-
-function substitutePlaceholders<T>(
-  config: T,
-  variables: Record<string, string>,
-  pattern: RegExp,
-): T {
-  if (typeof config === "string") {
-    return config.replace(pattern, (match, key: string) => {
-      return Object.prototype.hasOwnProperty.call(variables, key)
-        ? variables[key]
-        : match;
-    }) as unknown as T;
-  }
-  if (Array.isArray(config)) {
-    return config.map((item) =>
-      substitutePlaceholders(item, variables, pattern),
-    ) as unknown as T;
-  }
-  if (isPlainObject(config)) {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(config)) {
-      // Same prototype-pollution guard as the config merge helpers.
-      if (key === "__proto__" || key === "constructor" || key === "prototype")
-        continue;
-      result[key] = substitutePlaceholders(value, variables, pattern);
-    }
-
-    return result as unknown as T;
-  }
-
-  return config;
-}
+export type NestedAgentConfig = Record<string, unknown>;
 
 /** Collect valid `${NAME}` references from strings nested anywhere in a config. */
 export function collectEnvPlaceholderNames(
@@ -254,50 +121,84 @@ export function collectEnvPlaceholderNames(
 }
 
 /**
- * True when a string consists ONLY of `${NAME}` placeholder tokens. Anchored
- * on purpose: a value mixing literal content with a placeholder (e.g.
- * `sk_live_abc${FOO}`) still carries secret material and must stay redacted.
+ * Inverse of {@link encryptAgentConfigBlob}. Used to read back what an
+ * API-side caller wrote so the canvas can mirror provider/model/extras.
+ * Returns null on any decode failure (wrong secret, tampered blob, etc.).
  */
-export function isEntirelyEnvPlaceholders(value: string): boolean {
-  return /^(\$\{[A-Z][A-Z0-9_]*\})+$/.test(value);
+export async function decryptAgentConfigBlob(
+  blob: EncryptedAgentConfig,
+  secret: string,
+): Promise<NestedAgentConfig | null> {
+  try {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.digest(
+      "SHA-256",
+      enc.encode(secret),
+    );
+    const key = await crypto.subtle.importKey(
+      "raw",
+      keyMaterial,
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"],
+    );
+    const iv = base64UrlToBytes(blob.iv);
+    const ct = base64UrlToBytes(blob.ciphertext);
+    const tag = base64UrlToBytes(blob.tag);
+    // Web Crypto expects ciphertext || tag concatenated
+    const combined = new Uint8Array(ct.length + tag.length);
+    combined.set(ct, 0);
+    combined.set(tag, ct.length);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
+      key,
+      combined.buffer as ArrayBuffer,
+    );
+    const decoded = new TextDecoder().decode(plaintext);
+    const parsed = JSON.parse(decoded);
+
+    return isPlainObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
- * Inverse of {@link toNestedAgentConfig}. Pulls known fields back out of a
- * nested broods AgentConfig so the canvas's flat `agentConfigs` row
- * can mirror what the API caller wrote. Anything we don't have a flat
- * column for is preserved in `extraConfig`.
+ * AES-256-GCM encrypt the JSON-serialised config with a key derived from
+ * SHA-256(secret). Matches broods's `encryptAgentConfig` so the harness
+ * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
  */
-export interface FlatPatch {
-  provider?: string;
-  modelId?: string;
-  systemPrompt?: string;
-  maxTurns?: number;
-  temperature?: number;
-  maxTokens?: number;
-  providerOptions?: Record<string, unknown>;
-  outputFormat?: Record<string, unknown>;
-  memoryToolEnabled?: boolean;
-  searchToolEnabled?: boolean;
-  searchToolConfig?: Record<string, unknown>;
-  extraConfig?: Record<string, unknown>;
-}
+export async function encryptAgentConfigBlob(
+  config: NestedAgentConfig,
+  secret: string,
+): Promise<EncryptedAgentConfig> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.digest("SHA-256", enc.encode(secret));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyMaterial,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt"],
+  );
 
-const NESTED_BRANCHES = [
-  "agent",
-  "model",
-  "provider",
-  "sandbox",
-  "workspaces",
-  "session",
-  "hooks",
-  "channels",
-  "tools",
-  "skills",
-  "subagent",
-  "policy",
-  "scheduler",
-] as const;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = enc.encode(JSON.stringify(config));
+
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, plaintext),
+  );
+
+  // Web Crypto returns ciphertext || tag (last 16 bytes are the auth tag).
+  const tagBytes = encrypted.slice(encrypted.length - 16);
+  const ciphertextBytes = encrypted.slice(0, encrypted.length - 16);
+
+  return {
+    ciphertext: bytesToBase64Url(ciphertextBytes),
+    iv: bytesToBase64Url(iv),
+    tag: bytesToBase64Url(tagBytes),
+  };
+}
 
 export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   if (!isPlainObject(nested)) return { extraConfig: {} };
@@ -389,19 +290,114 @@ export function fromNestedAgentConfig(nested: NestedAgentConfig): FlatPatch {
   return patch;
 }
 
-/** Encrypted blob shape persisted on the `agents` row. base64url-encoded. */
-export interface EncryptedAgentConfig {
-  ciphertext: string;
-  iv: string;
-  tag: string;
+/**
+ * True when a string consists ONLY of `${NAME}` placeholder tokens. Anchored
+ * on purpose: a value mixing literal content with a placeholder (e.g.
+ * `sk_live_abc${FOO}`) still carries secret material and must stay redacted.
+ */
+export function isEntirelyEnvPlaceholders(value: string): boolean {
+  return /^(\$\{[A-Z][A-Z0-9_]*\})+$/.test(value);
 }
 
-function bytesToBase64Url(bytes: Uint8Array): string {
-  let bin = "";
-  for (let i = 0; i < bytes.byteLength; i++)
-    bin += String.fromCharCode(bytes[i]);
+/** Replace valid uppercase account env-var `${NAME}` placeholders recursively. */
+export function substituteAccountEnvPlaceholders<T>(
+  config: T,
+  variables: Record<string, string>,
+): T {
+  return substitutePlaceholders(
+    config,
+    variables,
+    ACCOUNT_ENV_PLACEHOLDER_PATTERN_G,
+  );
+}
 
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+/** Replace `${KEY}` placeholders recursively using values from `variables`. */
+export function substituteEnvPlaceholders<T>(
+  config: T,
+  variables: Record<string, string>,
+): T {
+  return substitutePlaceholders(config, variables, ENV_PLACEHOLDER_PATTERN_G);
+}
+
+/** Project a flat dashboard row into the nested broods shape. */
+export function toNestedAgentConfig(flat: FlatAgentConfig): NestedAgentConfig {
+  const extra = isPlainObject(flat.extraConfig) ? flat.extraConfig : {};
+
+  const agent: Record<string, unknown> = {
+    ...(extra.agent as Record<string, unknown> | undefined),
+  };
+  if (flat.maxTurns !== undefined) agent.maxTurn = flat.maxTurns;
+  if (flat.systemPrompt && agent.system === undefined)
+    agent.system = flat.systemPrompt;
+
+  const modelOptions = mergeProviderOptions(
+    (extra.model as Record<string, unknown> | undefined)?.providerOptions,
+    flat.providerOptions,
+  );
+  if (flat.temperature !== undefined)
+    modelOptions.temperature = flat.temperature;
+  if (flat.maxTokens !== undefined) modelOptions.maxTokens = flat.maxTokens;
+
+  const model: Record<string, unknown> = {
+    ...(extra.model as Record<string, unknown> | undefined),
+  };
+  if (flat.provider) model.provider = flat.provider;
+  if (flat.modelId) model.modelId = flat.modelId;
+  assertNoUnsupportedKeys(model, ["options"], "config.model");
+  if (Object.keys(modelOptions).length > 0)
+    model.providerOptions = modelOptions;
+  if (flat.outputFormat !== undefined) model.output = flat.outputFormat;
+
+  const provider = extra.provider;
+
+  const tools: Record<string, unknown> = {
+    ...(extra.tools as Record<string, unknown> | undefined),
+  };
+  if (
+    flat.searchToolEnabled !== undefined &&
+    tools.googleSearch === undefined
+  ) {
+    tools.googleSearch = {
+      enabled: flat.searchToolEnabled,
+      ...flat.searchToolConfig,
+    };
+  }
+
+  // Read drops a removed branch rather than throwing: rows written before it was
+  // removed still carry the blob, and reading one must not fail. Writing it back
+  // is what clears it, so an agent cleans itself on its next save.
+  return {
+    ...(pruneEmpty(agent) ? { agent: pruneEmpty(agent) } : {}),
+    ...(pruneEmpty(model) ? { model: pruneEmpty(model) } : {}),
+    ...(provider ? { provider: provider } : {}),
+    ...(extra.sandbox ? { sandbox: extra.sandbox } : {}),
+    ...(extra.workspaces ? { workspaces: extra.workspaces } : {}),
+    ...(extra.session ? { session: extra.session } : {}),
+    ...(extra.hooks ? { hooks: extra.hooks } : {}),
+    ...(extra.channels ? { channels: extra.channels } : {}),
+    ...(pruneEmpty(tools) ? { tools: pruneEmpty(tools) } : {}),
+    ...(extra.skills ? { skills: extra.skills } : {}),
+    ...(extra.subagent ? { subagent: extra.subagent } : {}),
+    ...(extra.policy ? { policy: extra.policy } : {}),
+    ...(extra.scheduler ? { scheduler: extra.scheduler } : {}),
+    // Top-level scalar carried in extraConfig so it flows through every
+    // flat-row builder unchanged; surfaced as nested `publicAccess` (issue #65).
+    ...(typeof extra.publicAccess === "boolean"
+      ? { publicAccess: extra.publicAccess }
+      : {}),
+  };
+}
+
+function assertNoUnsupportedKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  path: string,
+): void {
+  for (const key of keys) {
+    if (value[key] !== undefined) {
+      throw new Error(`${path}.${key} is not supported`);
+    }
+  }
 }
 
 function base64UrlToBytes(s: string): Uint8Array {
@@ -415,82 +411,86 @@ function base64UrlToBytes(s: string): Uint8Array {
   return out;
 }
 
-/**
- * Inverse of {@link encryptAgentConfigBlob}. Used to read back what an
- * API-side caller wrote so the canvas can mirror provider/model/extras.
- * Returns null on any decode failure (wrong secret, tampered blob, etc.).
- */
-export async function decryptAgentConfigBlob(
-  blob: EncryptedAgentConfig,
-  secret: string,
-): Promise<NestedAgentConfig | null> {
-  try {
-    const enc = new TextEncoder();
-    const keyMaterial = await crypto.subtle.digest(
-      "SHA-256",
-      enc.encode(secret),
-    );
-    const key = await crypto.subtle.importKey(
-      "raw",
-      keyMaterial,
-      { name: "AES-GCM" },
-      false,
-      ["decrypt"],
-    );
-    const iv = base64UrlToBytes(blob.iv);
-    const ct = base64UrlToBytes(blob.ciphertext);
-    const tag = base64UrlToBytes(blob.tag);
-    // Web Crypto expects ciphertext || tag concatenated
-    const combined = new Uint8Array(ct.length + tag.length);
-    combined.set(ct, 0);
-    combined.set(tag, ct.length);
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: iv.buffer as ArrayBuffer },
-      key,
-      combined.buffer as ArrayBuffer,
-    );
-    const decoded = new TextDecoder().decode(plaintext);
-    const parsed = JSON.parse(decoded);
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.byteLength; i++)
+    bin += String.fromCharCode(bytes[i]);
 
-    return isPlainObject(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 /**
- * AES-256-GCM encrypt the JSON-serialised config with a key derived from
- * SHA-256(secret). Matches broods's `encryptAgentConfig` so the harness
- * can decrypt with `decodeStoredAgentConfig` from the convex storage adapter.
+ * One-level-deep merge of two `providerOptions` maps. Provider sub-objects
+ * (e.g. `anthropic`, `openai`) merge key-by-key rather than replacing wholesale,
+ * so options kept in separate stores — reasoning in `extraConfig.model` vs other
+ * provider options in the flat column — don't clobber each other. `overlay` wins
+ * on direct key conflicts.
  */
-export async function encryptAgentConfigBlob(
-  config: NestedAgentConfig,
-  secret: string,
-): Promise<EncryptedAgentConfig> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.digest("SHA-256", enc.encode(secret));
-  const key = await crypto.subtle.importKey(
-    "raw",
-    keyMaterial,
-    { name: "AES-GCM" },
-    false,
-    ["encrypt"],
-  );
+function mergeProviderOptions(
+  base: unknown,
+  overlay: unknown,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = isPlainObject(base)
+    ? { ...base }
+    : {};
+  if (isPlainObject(overlay)) {
+    for (const [key, value] of Object.entries(overlay)) {
+      const existing = result[key];
+      result[key] =
+        isPlainObject(existing) && isPlainObject(value)
+          ? { ...existing, ...value }
+          : value;
+    }
+  }
 
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = enc.encode(JSON.stringify(config));
+  return result;
+}
 
-  const encrypted = new Uint8Array(
-    await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, plaintext),
-  );
+function pruneEmpty(
+  value: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === undefined) continue;
+    if (isPlainObject(raw)) {
+      const child = pruneEmpty(raw);
+      if (child) cleaned[key] = child;
+      continue;
+    }
+    cleaned[key] = raw;
+  }
 
-  // Web Crypto returns ciphertext || tag (last 16 bytes are the auth tag).
-  const tagBytes = encrypted.slice(encrypted.length - 16);
-  const ciphertextBytes = encrypted.slice(0, encrypted.length - 16);
+  return Object.keys(cleaned).length === 0 ? undefined : cleaned;
+}
 
-  return {
-    ciphertext: bytesToBase64Url(ciphertextBytes),
-    iv: bytesToBase64Url(iv),
-    tag: bytesToBase64Url(tagBytes),
-  };
+function substitutePlaceholders<T>(
+  config: T,
+  variables: Record<string, string>,
+  pattern: RegExp,
+): T {
+  if (typeof config === "string") {
+    return config.replace(pattern, (match, key: string) => {
+      return Object.prototype.hasOwnProperty.call(variables, key)
+        ? variables[key]
+        : match;
+    }) as unknown as T;
+  }
+  if (Array.isArray(config)) {
+    return config.map((item) =>
+      substitutePlaceholders(item, variables, pattern),
+    ) as unknown as T;
+  }
+  if (isPlainObject(config)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(config)) {
+      // Same prototype-pollution guard as the config merge helpers.
+      if (key === "__proto__" || key === "constructor" || key === "prototype")
+        continue;
+      result[key] = substitutePlaceholders(value, variables, pattern);
+    }
+
+    return result as unknown as T;
+  }
+
+  return config;
 }

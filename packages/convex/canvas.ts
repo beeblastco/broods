@@ -12,6 +12,13 @@ import { stableJson } from "./model/objects";
 import { getOwnedStage } from "./model/ownership/stage";
 import { getProjectForRole } from "./model/ownership/project";
 
+export const canvasEdgeValidator = v.object({
+  id: v.string(),
+  source: v.string(),
+  target: v.string(),
+  animated: v.optional(v.boolean()),
+});
+
 export const canvasNodeValidator = v.object({
   id: v.string(),
   type: v.union(
@@ -26,18 +33,13 @@ export const canvasNodeValidator = v.object({
   data: v.any(),
 });
 
-export const canvasEdgeValidator = v.object({
-  id: v.string(),
-  source: v.string(),
-  target: v.string(),
-  animated: v.optional(v.boolean()),
-});
-
 const saveLayoutResult = v.object({
   layoutId: v.id("canvasLayouts"),
   nodes: v.array(canvasNodeValidator),
   edges: v.array(canvasEdgeValidator),
 });
+
+export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
 
 // `data` is `v.any()` (which infers `any`); every consumer treats it as an
 // unknown-valued record, so the override keeps type checking without casts.
@@ -45,28 +47,228 @@ export type CanvasNode = Omit<Infer<typeof canvasNodeValidator>, "data"> & {
   data: Record<string, unknown>;
 };
 
-export type CanvasEdge = Infer<typeof canvasEdgeValidator>;
+/**
+ * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
+ * kind. The side panel uses this to warn when a dashboard-created agent /
+ * workspace / sandbox is named the same as a code-managed one — the next
+ * `broods deploy` would adopt and overwrite that resource with the code
+ * definition (the CLI resolves by `(stageId, name)`).
+ */
+export const cliManagedResourceNames = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.object({
+    agent: v.array(v.string()),
+    workspace: v.array(v.string()),
+    sandbox: v.array(v.string()),
+  }),
+  handler: async (ctx, { projectId, stageId }) => {
+    const empty = { agent: [], workspace: [], sandbox: [] };
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-/** Coerce an unknown canvas node data payload into a mutable record. */
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project || !project.orgId) return empty;
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return empty;
+
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+      .unique();
+    if (!account) return empty;
+
+    const agents = await ctx.db
+      .query("agentConfigs")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
+      )
+      .collect();
+    const workspaces = await ctx.db
+      .query("workspaceConfigs")
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+      .collect();
+    const sandboxes = await ctx.db
+      .query("sandboxConfigs")
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+      .collect();
+
+    return {
+      agent: agents
+        .filter((row) => row.managedBy === "cli")
+        .map((row) => row.name),
+      workspace: workspaces
+        .filter(
+          (row) => row.accountId === account._id && row.managedBy === "cli",
+        )
+        .map((row) => row.name),
+      sandbox: sandboxes
+        .filter(
+          (row) => row.accountId === account._id && row.managedBy === "cli",
+        )
+        .map((row) => row.name),
+    };
+  },
+});
+
+export const getByProject = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      nodes: v.array(canvasNodeValidator),
+      edges: v.array(canvasEdgeValidator),
+    }),
+  ),
+  handler: async (ctx, { projectId, stageId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    // Reactive subscribers may briefly hold a just-deleted project/stage;
+    // return null instead of throwing so the canvas unmounts without crashing.
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project) return null;
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return null;
+
+    const layout = await ctx.db
+      .query("canvasLayouts")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
+      )
+      .unique();
+
+    return layout ? { nodes: layout.nodes, edges: layout.edges } : null;
+  },
+});
 
 /**
- * Canvas layouts are UI state, not a secret store. Sandbox config may include
- * provider credentials/env vars, so persist only display metadata + resource id.
+ * Authoritative ownership for a stage's workspace/sandbox resources,
+ * keyed by row `_id` (the canvas node's `resourceId`). The side panel reads this
+ * — not the cached `managedBy` on canvas node data — so the "managed by code"
+ * lock/warning reflects the real row even if the node JSON is stale or missing it.
  */
-function sandboxLayoutNode(
-  node: CanvasNode,
-  data: Record<string, unknown>,
-  resourceId: Id<"sandboxConfigs">,
-): CanvasNode {
-  const { config: _config, ...safeData } = data;
+export const resourceOwnership = query({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+  },
+  returns: v.record(
+    v.string(),
+    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
+  ),
+  handler: async (ctx, { projectId, stageId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
 
-  return { ...node, data: { ...safeData, resourceId: resourceId } };
-}
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project || !project.orgId) return {};
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) return {};
+
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+      .unique();
+    if (!account) return {};
+
+    const workspaces = await ctx.db
+      .query("workspaceConfigs")
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+      .collect();
+    const sandboxes = await ctx.db
+      .query("sandboxConfigs")
+      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
+      .collect();
+
+    const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
+    for (const row of [...workspaces, ...sandboxes]) {
+      if (row.accountId !== account._id) continue;
+      // Preserve both code-owner markers — collapsing "api" into "dashboard"
+      // would unlock API-managed resources in the side panel.
+      ownership[row._id] =
+        row.managedBy === "cli" || row.managedBy === "api"
+          ? row.managedBy
+          : "dashboard";
+    }
+
+    return ownership;
+  },
+});
+
+export const saveLayout = mutation({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    nodes: v.array(canvasNodeValidator),
+    edges: v.array(canvasEdgeValidator),
+  },
+  returns: saveLayoutResult,
+  handler: async (ctx, { projectId, stageId, nodes, edges }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
+    if (!project) throw new Error("Project not found.");
+
+    const stage = await getOwnedStage(ctx, authUser.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
+    }
+
+    const now = Date.now();
+    const account = await accountForProject(ctx, project);
+    const existing = await ctx.db
+      .query("canvasLayouts")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
+      )
+      .unique();
+    const persistedNodes = await materializeRuntimeNodes(
+      ctx,
+      account,
+      projectId,
+      stageId,
+      nodes,
+      (existing?.nodes ?? []) as CanvasNode[],
+    );
+    if (
+      resourceReferenceSignature(persistedNodes) !==
+      resourceReferenceSignature((existing?.nodes ?? []) as CanvasNode[])
+    ) {
+      await pruneOrphanedDashboardRows(ctx, account, stageId, persistedNodes);
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        nodes: persistedNodes,
+        edges: edges,
+        updatedAt: now,
+      });
+
+      return { layoutId: existing._id, nodes: persistedNodes, edges: edges };
+    }
+
+    const layoutId = await ctx.db.insert("canvasLayouts", {
+      authId: authUser.id,
+      projectId: projectId,
+      stageId: stageId,
+      nodes: persistedNodes,
+      edges: edges,
+      updatedAt: now,
+    });
+
+    return { layoutId: layoutId, nodes: persistedNodes, edges: edges };
+  },
+});
 
 /** Return the org account backing a project, if it has been provisioned. */
 async function accountForProject(
@@ -81,59 +283,11 @@ async function accountForProject(
     .unique();
 }
 
-/**
- * Encrypt a plaintext sandbox config object into the at-rest blob fields, or
- * `null` when the encryption secret is unavailable (then the row is stored
- * config-less rather than failing the whole canvas save).
- */
-async function encryptSandboxConfigFields(
-  config: Record<string, unknown>,
-): Promise<{
-  encryptedConfig: string;
-  encryptionIv: string;
-  encryptionTag: string;
-} | null> {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) return null;
-  const encrypted = await encryptAgentConfigBlob(config, secret);
-
-  return {
-    encryptedConfig: encrypted.ciphertext,
-    encryptionIv: encrypted.iv,
-    encryptionTag: encrypted.tag,
-  };
-}
-
-/** True when a runtime resource row belongs to the canvas stage being saved. */
-function rowBelongsToStage(
-  row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
-  projectId: Id<"projects">,
-  stageId: Id<"stages">,
-): boolean {
-  return row.projectId === projectId && row.stageId === stageId;
-}
-
-/** Compare only the node fields that materialize into runtime resource rows. */
-function resourceFieldsChanged(
-  next: Record<string, unknown>,
-  previous: Record<string, unknown>,
-): boolean {
-  return (
-    String(next.mountName ?? next.label ?? "").trim() !==
-      String(previous.mountName ?? previous.label ?? "").trim() ||
-    stableJson(next.description ?? null) !==
-      stableJson(previous.description ?? null) ||
-    stableJson(next.config ?? null) !== stableJson(previous.config ?? null)
-  );
-}
-
-/** Stable signature of runtime resource references in a canvas node list. */
-function resourceReferenceSignature(nodes: CanvasNode[]): string {
-  return nodes
-    .map((node) => asRecord(node.data).resourceId)
-    .filter((id): id is string => typeof id === "string" && id.length > 0)
-    .sort()
-    .join("\n");
+/** Coerce an unknown canvas node data payload into a mutable record. */
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -161,6 +315,29 @@ async function assertNoAccountScopedResourceConflict(
     `${options.table} "${options.name}" is account-scoped legacy data. ` +
       "Migrate it to a project/stage or delete it before saving the canvas.",
   );
+}
+
+/**
+ * Encrypt a plaintext sandbox config object into the at-rest blob fields, or
+ * `null` when the encryption secret is unavailable (then the row is stored
+ * config-less rather than failing the whole canvas save).
+ */
+async function encryptSandboxConfigFields(
+  config: Record<string, unknown>,
+): Promise<{
+  encryptedConfig: string;
+  encryptionIv: string;
+  encryptionTag: string;
+} | null> {
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) return null;
+  const encrypted = await encryptAgentConfigBlob(config, secret);
+
+  return {
+    encryptedConfig: encrypted.ciphertext,
+    encryptionIv: encrypted.iv,
+    encryptionTag: encrypted.tag,
+  };
 }
 
 /**
@@ -378,225 +555,48 @@ async function pruneOrphanedDashboardRows(
   }
 }
 
-export const getByProject = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-  },
-  returns: v.union(
-    v.null(),
-    v.object({
-      nodes: v.array(canvasNodeValidator),
-      edges: v.array(canvasEdgeValidator),
-    }),
-  ),
-  handler: async (ctx, { projectId, stageId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
+/** Compare only the node fields that materialize into runtime resource rows. */
+function resourceFieldsChanged(
+  next: Record<string, unknown>,
+  previous: Record<string, unknown>,
+): boolean {
+  return (
+    String(next.mountName ?? next.label ?? "").trim() !==
+      String(previous.mountName ?? previous.label ?? "").trim() ||
+    stableJson(next.description ?? null) !==
+      stableJson(previous.description ?? null) ||
+    stableJson(next.config ?? null) !== stableJson(previous.config ?? null)
+  );
+}
 
-    // Reactive subscribers may briefly hold a just-deleted project/stage;
-    // return null instead of throwing so the canvas unmounts without crashing.
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) return null;
+/** Stable signature of runtime resource references in a canvas node list. */
+function resourceReferenceSignature(nodes: CanvasNode[]): string {
+  return nodes
+    .map((node) => asRecord(node.data).resourceId)
+    .filter((id): id is string => typeof id === "string" && id.length > 0)
+    .sort()
+    .join("\n");
+}
 
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return null;
-
-    const layout = await ctx.db
-      .query("canvasLayouts")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .unique();
-
-    return layout ? { nodes: layout.nodes, edges: layout.edges } : null;
-  },
-});
-
-export const saveLayout = mutation({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-    nodes: v.array(canvasNodeValidator),
-    edges: v.array(canvasEdgeValidator),
-  },
-  returns: saveLayoutResult,
-  handler: async (ctx, { projectId, stageId, nodes, edges }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project) throw new Error("Project not found.");
-
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) {
-      throw new Error("Stage not found.");
-    }
-
-    const now = Date.now();
-    const account = await accountForProject(ctx, project);
-    const existing = await ctx.db
-      .query("canvasLayouts")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .unique();
-    const persistedNodes = await materializeRuntimeNodes(
-      ctx,
-      account,
-      projectId,
-      stageId,
-      nodes,
-      (existing?.nodes ?? []) as CanvasNode[],
-    );
-    if (
-      resourceReferenceSignature(persistedNodes) !==
-      resourceReferenceSignature((existing?.nodes ?? []) as CanvasNode[])
-    ) {
-      await pruneOrphanedDashboardRows(ctx, account, stageId, persistedNodes);
-    }
-
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        nodes: persistedNodes,
-        edges: edges,
-        updatedAt: now,
-      });
-
-      return { layoutId: existing._id, nodes: persistedNodes, edges: edges };
-    }
-
-    const layoutId = await ctx.db.insert("canvasLayouts", {
-      authId: authUser.id,
-      projectId: projectId,
-      stageId: stageId,
-      nodes: persistedNodes,
-      edges: edges,
-      updatedAt: now,
-    });
-
-    return { layoutId: layoutId, nodes: persistedNodes, edges: edges };
-  },
-});
+/** True when a runtime resource row belongs to the canvas stage being saved. */
+function rowBelongsToStage(
+  row: Doc<"workspaceConfigs"> | Doc<"sandboxConfigs">,
+  projectId: Id<"projects">,
+  stageId: Id<"stages">,
+): boolean {
+  return row.projectId === projectId && row.stageId === stageId;
+}
 
 /**
- * Authoritative ownership for a stage's workspace/sandbox resources,
- * keyed by row `_id` (the canvas node's `resourceId`). The side panel reads this
- * — not the cached `managedBy` on canvas node data — so the "managed by code"
- * lock/warning reflects the real row even if the node JSON is stale or missing it.
+ * Canvas layouts are UI state, not a secret store. Sandbox config may include
+ * provider credentials/env vars, so persist only display metadata + resource id.
  */
-export const resourceOwnership = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-  },
-  returns: v.record(
-    v.string(),
-    v.union(v.literal("cli"), v.literal("dashboard"), v.literal("api")),
-  ),
-  handler: async (ctx, { projectId, stageId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
+function sandboxLayoutNode(
+  node: CanvasNode,
+  data: Record<string, unknown>,
+  resourceId: Id<"sandboxConfigs">,
+): CanvasNode {
+  const { config: _config, ...safeData } = data;
 
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project || !project.orgId) return {};
-
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return {};
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
-      .unique();
-    if (!account) return {};
-
-    const workspaces = await ctx.db
-      .query("workspaceConfigs")
-      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
-      .collect();
-    const sandboxes = await ctx.db
-      .query("sandboxConfigs")
-      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
-      .collect();
-
-    const ownership: Record<string, "cli" | "dashboard" | "api"> = {};
-    for (const row of [...workspaces, ...sandboxes]) {
-      if (row.accountId !== account._id) continue;
-      // Preserve both code-owner markers — collapsing "api" into "dashboard"
-      // would unlock API-managed resources in the side panel.
-      ownership[row._id] =
-        row.managedBy === "cli" || row.managedBy === "api"
-          ? row.managedBy
-          : "dashboard";
-    }
-
-    return ownership;
-  },
-});
-
-/**
- * Names of code-managed (`managedBy: "cli"`) resources in this stage, by
- * kind. The side panel uses this to warn when a dashboard-created agent /
- * workspace / sandbox is named the same as a code-managed one — the next
- * `broods deploy` would adopt and overwrite that resource with the code
- * definition (the CLI resolves by `(stageId, name)`).
- */
-export const cliManagedResourceNames = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-  },
-  returns: v.object({
-    agent: v.array(v.string()),
-    workspace: v.array(v.string()),
-    sandbox: v.array(v.string()),
-  }),
-  handler: async (ctx, { projectId, stageId }) => {
-    const empty = { agent: [], workspace: [], sandbox: [] };
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const project = await getProjectForRole(ctx, authUser.id, projectId);
-    if (!project || !project.orgId) return empty;
-
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return empty;
-
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
-      .unique();
-    if (!account) return empty;
-
-    const agents = await ctx.db
-      .query("agentConfigs")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .collect();
-    const workspaces = await ctx.db
-      .query("workspaceConfigs")
-      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
-      .collect();
-    const sandboxes = await ctx.db
-      .query("sandboxConfigs")
-      .withIndex("by_stageId_and_name", (q) => q.eq("stageId", stageId))
-      .collect();
-
-    return {
-      agent: agents
-        .filter((row) => row.managedBy === "cli")
-        .map((row) => row.name),
-      workspace: workspaces
-        .filter(
-          (row) => row.accountId === account._id && row.managedBy === "cli",
-        )
-        .map((row) => row.name),
-      sandbox: sandboxes
-        .filter(
-          (row) => row.accountId === account._id && row.managedBy === "cli",
-        )
-        .map((row) => row.name),
-    };
-  },
-});
+  return { ...node, data: { ...safeData, resourceId: resourceId } };
+}

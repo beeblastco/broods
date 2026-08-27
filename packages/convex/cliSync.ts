@@ -864,7 +864,7 @@ export const removeEnvBySecretHash = internalMutation({
 async function accountFromSecretHash(
   ctx: QueryCtx | MutationCtx,
   secretHash: string,
-) {
+): Promise<Doc<"accounts"> | null> {
   const account = await ctx.db
     .query("accounts")
     .withIndex("by_secretHash", (q) => q.eq("secretHash", secretHash))
@@ -878,7 +878,7 @@ async function ensureProject(
   ctx: MutationCtx,
   account: Doc<"accounts">,
   project: string,
-) {
+): Promise<Doc<"projects">> {
   const orgId = ctx.db.normalizeId("orgs", account.orgId);
   if (!orgId) throw new Error("Account is not linked to a valid org");
   const org = await ctx.db.get(orgId);
@@ -927,7 +927,7 @@ async function ensureStage(
   ctx: MutationCtx,
   project: Doc<"projects">,
   stage: string,
-) {
+): Promise<Doc<"stages">> {
   const stages = await ctx.db
     .query("stages")
     .withIndex("by_projectId", (q) => q.eq("projectId", project._id))

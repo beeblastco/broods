@@ -19,10 +19,17 @@ export const POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
+const RESOURCE_SELECTOR_KEYS = [
+  "toolNames",
+  "toolIds",
+  "workspaceIds",
+  "workspaceNames",
+  "filePaths",
+  "subagentIds",
+  "skillPaths",
+] as const;
+
 export type PolicyAction = (typeof POLICY_ACTIONS)[number];
-export type PolicyEffect = "allow" | "deny";
-export type PolicyConditionOperator =
-  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
 
 /**
  * One optional predicate on a policy rule.
@@ -32,6 +39,21 @@ export interface PolicyCondition {
   operator: PolicyConditionOperator;
   value: string | number | boolean | string[] | number[] | boolean[];
 }
+
+export type PolicyConditionOperator =
+  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
+
+/**
+ * Versioned policy document accepted by account-management CRUD.
+ */
+export interface PolicyDocument {
+  version: 1;
+  /** How hard this policy bites where it is attached. Omitted reads as `audit`. */
+  mode?: "enforce" | "audit";
+  rules: PolicyRule[];
+}
+
+export type PolicyEffect = "allow" | "deny";
 
 /**
  * Resource selector fields supported by policy rules.
@@ -58,16 +80,6 @@ export interface PolicyRule {
 }
 
 /**
- * Versioned policy document accepted by account-management CRUD.
- */
-export interface PolicyDocument {
-  version: 1;
-  /** How hard this policy bites where it is attached. Omitted reads as `audit`. */
-  mode?: "enforce" | "audit";
-  rules: PolicyRule[];
-}
-
-/**
  * Validate a create-policy request body.
  * @param value the raw request body
  * @returns normalized create fields
@@ -86,6 +98,35 @@ export function normalizeCreatePolicyInput(value: unknown): {
     name: name,
     ...(description ? { description: description } : {}),
     document: document,
+  };
+}
+
+/**
+ * Validate and normalize a versioned policy document.
+ * @param value candidate policy document
+ * @returns normalized policy document
+ */
+export function normalizePolicyDocument(value: unknown): PolicyDocument {
+  if (!isPlainObject(value))
+    throw new Error("policy document must be an object");
+  const document = value;
+  if (document.version !== 1)
+    throw new Error("policy document version must be 1");
+  if (!Array.isArray(document.rules))
+    throw new Error("policy document rules must be an array");
+  assertOptionalEnum(document.mode, "policy document mode", [
+    "enforce",
+    "audit",
+  ]);
+
+  return {
+    version: 1,
+    ...(document.mode !== undefined
+      ? { mode: document.mode as "enforce" | "audit" }
+      : {}),
+    rules: document.rules.map((rule, index) =>
+      normalizePolicyRule(rule, index),
+    ),
   };
 }
 
@@ -126,35 +167,6 @@ export function normalizeUpdatePolicyInput(value: unknown): {
 }
 
 /**
- * Validate and normalize a versioned policy document.
- * @param value candidate policy document
- * @returns normalized policy document
- */
-export function normalizePolicyDocument(value: unknown): PolicyDocument {
-  if (!isPlainObject(value))
-    throw new Error("policy document must be an object");
-  const document = value;
-  if (document.version !== 1)
-    throw new Error("policy document version must be 1");
-  if (!Array.isArray(document.rules))
-    throw new Error("policy document rules must be an array");
-  assertOptionalEnum(document.mode, "policy document mode", [
-    "enforce",
-    "audit",
-  ]);
-
-  return {
-    version: 1,
-    ...(document.mode !== undefined
-      ? { mode: document.mode as "enforce" | "audit" }
-      : {}),
-    rules: document.rules.map((rule, index) =>
-      normalizePolicyRule(rule, index),
-    ),
-  };
-}
-
-/**
  * Map an agentPolicies document to the public account-management shape.
  * @param doc the agentPolicies document
  * @returns the public policy record
@@ -174,78 +186,46 @@ export function toPublicAgentPolicyResponse(
   };
 }
 
-function normalizePolicyRule(value: unknown, index: number): PolicyRule {
-  if (!isPlainObject(value))
-    throw new Error(`policy rules[${index}] must be an object`);
-  const rule = value;
-  const id =
-    optionalString(rule.id, `policy rules[${index}].id`) ?? `rule-${index + 1}`;
-  assertOptionalEnum(rule.effect, `policy rules[${index}].effect`, [
-    "allow",
-    "deny",
-  ]);
-  if (rule.effect === undefined)
-    throw new Error(`policy rules[${index}].effect is required`);
-  if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
-    throw new Error(`policy rules[${index}].actions must be a non-empty array`);
+function assertOptionalEnum<T extends readonly string[]>(
+  value: unknown,
+  name: string,
+  values: T,
+): void {
+  if (value !== undefined && !values.includes(value as T[number])) {
+    throw new Error(`${name} must be one of: ${values.join(", ")}`);
   }
-  for (const action of rule.actions) {
-    assertOptionalEnum(
-      action,
-      `policy rules[${index}].actions[]`,
-      POLICY_ACTIONS,
-    );
-  }
-
-  return {
-    id: id,
-    effect: rule.effect as PolicyEffect,
-    actions: rule.actions as PolicyAction[],
-    ...(rule.resources !== undefined
-      ? { resources: normalizeResourceSelector(rule.resources, index) }
-      : {}),
-    ...(rule.conditions !== undefined
-      ? { conditions: normalizeConditions(rule.conditions, index) }
-      : {}),
-  };
 }
 
-const RESOURCE_SELECTOR_KEYS = [
-  "toolNames",
-  "toolIds",
-  "workspaceIds",
-  "workspaceNames",
-  "filePaths",
-  "subagentIds",
-  "skillPaths",
-] as const;
-
-function normalizeResourceSelector(
-  value: unknown,
-  index: number,
-): PolicyResourceSelector {
-  if (!isPlainObject(value))
-    throw new Error(`policy rules[${index}].resources must be an object`);
-  const selector = value;
-  for (const key of Object.keys(selector)) {
-    if (
-      !RESOURCE_SELECTOR_KEYS.includes(
-        key as (typeof RESOURCE_SELECTOR_KEYS)[number],
-      )
-    ) {
-      throw new Error(
-        `policy rules[${index}].resources.${key} is not supported`,
-      );
-    }
+function assertOptionalStringArray(value: unknown, name: string): void {
+  if (
+    value !== undefined &&
+    (!Array.isArray(value) ||
+      !value.every(
+        (entry) => typeof entry === "string" && entry.trim().length > 0,
+      ))
+  ) {
+    throw new Error(`${name} must be an array of non-empty strings`);
   }
-  for (const key of RESOURCE_SELECTOR_KEYS) {
-    assertOptionalStringArray(
-      selector[key],
-      `policy rules[${index}].resources.${key}`,
-    );
-  }
+}
 
-  return selector as PolicyResourceSelector;
+function isConditionValue(value: unknown): value is PolicyCondition["value"] {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  )
+    return true;
+  if (!Array.isArray(value)) return false;
+  if (value.length === 0) return true;
+  const elementType = typeof value[0];
+  if (
+    elementType !== "string" &&
+    elementType !== "number" &&
+    elementType !== "boolean"
+  )
+    return false;
+
+  return value.every((entry) => typeof entry === elementType);
 }
 
 function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
@@ -297,53 +277,68 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   });
 }
 
-function isConditionValue(value: unknown): value is PolicyCondition["value"] {
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  )
-    return true;
-  if (!Array.isArray(value)) return false;
-  if (value.length === 0) return true;
-  const elementType = typeof value[0];
-  if (
-    elementType !== "string" &&
-    elementType !== "number" &&
-    elementType !== "boolean"
-  )
-    return false;
-
-  return value.every((entry) => typeof entry === elementType);
-}
-
-function assertOptionalStringArray(value: unknown, name: string): void {
-  if (
-    value !== undefined &&
-    (!Array.isArray(value) ||
-      !value.every(
-        (entry) => typeof entry === "string" && entry.trim().length > 0,
-      ))
-  ) {
-    throw new Error(`${name} must be an array of non-empty strings`);
+function normalizePolicyRule(value: unknown, index: number): PolicyRule {
+  if (!isPlainObject(value))
+    throw new Error(`policy rules[${index}] must be an object`);
+  const rule = value;
+  const id =
+    optionalString(rule.id, `policy rules[${index}].id`) ?? `rule-${index + 1}`;
+  assertOptionalEnum(rule.effect, `policy rules[${index}].effect`, [
+    "allow",
+    "deny",
+  ]);
+  if (rule.effect === undefined)
+    throw new Error(`policy rules[${index}].effect is required`);
+  if (!Array.isArray(rule.actions) || rule.actions.length === 0) {
+    throw new Error(`policy rules[${index}].actions must be a non-empty array`);
   }
+  for (const action of rule.actions) {
+    assertOptionalEnum(
+      action,
+      `policy rules[${index}].actions[]`,
+      POLICY_ACTIONS,
+    );
+  }
+
+  return {
+    id: id,
+    effect: rule.effect as PolicyEffect,
+    actions: rule.actions as PolicyAction[],
+    ...(rule.resources !== undefined
+      ? { resources: normalizeResourceSelector(rule.resources, index) }
+      : {}),
+    ...(rule.conditions !== undefined
+      ? { conditions: normalizeConditions(rule.conditions, index) }
+      : {}),
+  };
 }
 
-function assertOptionalEnum<T extends readonly string[]>(
+function normalizeResourceSelector(
   value: unknown,
-  name: string,
-  values: T,
-): void {
-  if (value !== undefined && !values.includes(value as T[number])) {
-    throw new Error(`${name} must be one of: ${values.join(", ")}`);
+  index: number,
+): PolicyResourceSelector {
+  if (!isPlainObject(value))
+    throw new Error(`policy rules[${index}].resources must be an object`);
+  const selector = value;
+  for (const key of Object.keys(selector)) {
+    if (
+      !RESOURCE_SELECTOR_KEYS.includes(
+        key as (typeof RESOURCE_SELECTOR_KEYS)[number],
+      )
+    ) {
+      throw new Error(
+        `policy rules[${index}].resources.${key} is not supported`,
+      );
+    }
   }
-}
+  for (const key of RESOURCE_SELECTOR_KEYS) {
+    assertOptionalStringArray(
+      selector[key],
+      `policy rules[${index}].resources.${key}`,
+    );
+  }
 
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim().length === 0)
-    throw new Error(`${name} must be a non-empty string`);
-
-  return value.trim();
+  return selector as PolicyResourceSelector;
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
@@ -352,4 +347,11 @@ function optionalString(value: unknown, name: string): string | undefined {
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim().length === 0)
+    throw new Error(`${name} must be a non-empty string`);
+
+  return value.trim();
 }

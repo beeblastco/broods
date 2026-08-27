@@ -3,6 +3,7 @@
  */
 
 import { v } from "convex/values";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   mutation,
   query,
@@ -15,8 +16,6 @@ import { purgeProject } from "./model/cascade";
 import { getActiveOrgForUser } from "./model/ownership/org";
 import { getProjectForRole } from "./model/ownership/project";
 import { projectsFields } from "./schema";
-
-type Ctx = QueryCtx | MutationCtx;
 
 const RANDOM_ADJECTIVES = [
   "amber",
@@ -127,73 +126,63 @@ const RANDOM_NOUNS = [
   "zone",
 ];
 
-/** Generate a random adjective-noun project name, e.g. "amber-cove". */
-function randomProjectName(): string {
-  const adj =
-    RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
-  const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
-
-  return `${adj}-${noun}`;
-}
-
 const projectDoc = v.object({
   ...projectsFields,
   _id: v.id("projects"),
   _creationTime: v.number(),
 });
 
-async function requireAuth(ctx: Ctx) {
-  const authUser = await authKit.getAuthUser(ctx);
-  if (!authUser) throw new Error("User not found or not authenticated");
+type Ctx = QueryCtx | MutationCtx;
 
-  return authUser;
-}
+export const create = mutation({
+  args: {
+    name: v.string(),
+    description: v.optional(v.string()),
+  },
+  returns: v.id("projects"),
+  handler: async (ctx, { name, description }) => {
+    const authUser = await requireAuth(ctx);
 
-/**
- * Resolve the caller's active org id, used to scope new and listed projects.
- * Returns null when the user has no membership yet (legacy / first-load flow).
- */
-async function getCallerActiveOrgId(ctx: Ctx, authId: string) {
-  const user = await ctx.db
-    .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authId))
-    .unique();
-  if (!user) return null;
+    const trimmedName = name.trim();
+    if (!trimmedName) throw new Error("Project name is required.");
 
-  const org = await getActiveOrgForUser(ctx, user._id);
+    const now = Date.now();
+    const orgId = await getCallerActiveOrgId(ctx, authUser.id);
+    const projectId = await ctx.db.insert("projects", {
+      authId: authUser.id,
+      orgId: orgId ?? undefined,
+      name: trimmedName,
+      description: description?.trim() || undefined,
+      slug: await uniqueProjectSlug(
+        ctx,
+        { authId: authUser.id, orgId: orgId ?? undefined },
+        trimmedName,
+      ),
+      updatedAt: now,
+    });
 
-  return org?._id ?? null;
-}
+    await ctx.db.insert("stages", {
+      authId: authUser.id,
+      projectId: projectId,
+      name: "Development",
+      kind: "development",
+      isDefault: true,
+      updatedAt: now,
+    });
 
-/**
- * Lists the projects visible to the caller, scoped to their active org. When
- * the caller has no active org (legacy / first-load), falls back to their
- * orgId-less projects owned by authId so older accounts keep working.
- */
-async function listProjects(ctx: Ctx, authId: string) {
-  const orgId = await getCallerActiveOrgId(ctx, authId);
+    return projectId;
+  },
+});
 
-  // No active org: surface only the caller's legacy, orgId-less projects.
-  if (orgId === null) {
-    const ownedByAuth = await ctx.db
-      .query("projects")
-      .withIndex("by_authId", (q) => q.eq("authId", authId))
-      .collect();
+export const getById = query({
+  args: { projectId: v.id("projects") },
+  returns: v.union(v.null(), projectDoc),
+  handler: async (ctx, { projectId }) => {
+    const authUser = await requireAuth(ctx);
 
-    return ownedByAuth
-      .filter((p) => !p.orgId)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  // Active org set: return only that org's projects, never another org's
-  // or another caller's orgId-less projects.
-  const orgProjects = await ctx.db
-    .query("projects")
-    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-    .collect();
-
-  return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
-}
+    return getProjectForRole(ctx, authUser.id, projectId);
+  },
+});
 
 /**
  * Returns the caller's most recent project. On the very first call for an
@@ -281,13 +270,23 @@ export const list = query({
   },
 });
 
-export const getById = query({
+export const remove = mutation({
   args: { projectId: v.id("projects") },
-  returns: v.union(v.null(), projectDoc),
+  returns: v.id("projects"),
   handler: async (ctx, { projectId }) => {
     const authUser = await requireAuth(ctx);
 
-    return getProjectForRole(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(
+      ctx,
+      authUser.id,
+      projectId,
+      "admin",
+    );
+    if (!project) throw new Error("Project not found.");
+
+    await purgeProject(ctx, projectId);
+
+    return projectId;
   },
 });
 
@@ -334,46 +333,6 @@ export const resolveTarget = query({
   },
 });
 
-export const create = mutation({
-  args: {
-    name: v.string(),
-    description: v.optional(v.string()),
-  },
-  returns: v.id("projects"),
-  handler: async (ctx, { name, description }) => {
-    const authUser = await requireAuth(ctx);
-
-    const trimmedName = name.trim();
-    if (!trimmedName) throw new Error("Project name is required.");
-
-    const now = Date.now();
-    const orgId = await getCallerActiveOrgId(ctx, authUser.id);
-    const projectId = await ctx.db.insert("projects", {
-      authId: authUser.id,
-      orgId: orgId ?? undefined,
-      name: trimmedName,
-      description: description?.trim() || undefined,
-      slug: await uniqueProjectSlug(
-        ctx,
-        { authId: authUser.id, orgId: orgId ?? undefined },
-        trimmedName,
-      ),
-      updatedAt: now,
-    });
-
-    await ctx.db.insert("stages", {
-      authId: authUser.id,
-      projectId: projectId,
-      name: "Development",
-      kind: "development",
-      isDefault: true,
-      updatedAt: now,
-    });
-
-    return projectId;
-  },
-});
-
 export const update = mutation({
   args: {
     projectId: v.id("projects"),
@@ -417,22 +376,72 @@ export const update = mutation({
   },
 });
 
-export const remove = mutation({
-  args: { projectId: v.id("projects") },
-  returns: v.id("projects"),
-  handler: async (ctx, { projectId }) => {
-    const authUser = await requireAuth(ctx);
+/**
+ * Resolve the caller's active org id, used to scope new and listed projects.
+ * Returns null when the user has no membership yet (legacy / first-load flow).
+ */
+async function getCallerActiveOrgId(
+  ctx: Ctx,
+  authId: string,
+): Promise<Id<"orgs"> | null> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_authId", (q) => q.eq("authId", authId))
+    .unique();
+  if (!user) return null;
 
-    const project = await getProjectForRole(
-      ctx,
-      authUser.id,
-      projectId,
-      "admin",
-    );
-    if (!project) throw new Error("Project not found.");
+  const org = await getActiveOrgForUser(ctx, user._id);
 
-    await purgeProject(ctx, projectId);
+  return org?._id ?? null;
+}
 
-    return projectId;
-  },
-});
+/**
+ * Lists the projects visible to the caller, scoped to their active org. When
+ * the caller has no active org (legacy / first-load), falls back to their
+ * orgId-less projects owned by authId so older accounts keep working.
+ */
+async function listProjects(
+  ctx: Ctx,
+  authId: string,
+): Promise<Doc<"projects">[]> {
+  const orgId = await getCallerActiveOrgId(ctx, authId);
+
+  // No active org: surface only the caller's legacy, orgId-less projects.
+  if (orgId === null) {
+    const ownedByAuth = await ctx.db
+      .query("projects")
+      .withIndex("by_authId", (q) => q.eq("authId", authId))
+      .collect();
+
+    return ownedByAuth
+      .filter((p) => !p.orgId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  // Active org set: return only that org's projects, never another org's
+  // or another caller's orgId-less projects.
+  const orgProjects = await ctx.db
+    .query("projects")
+    .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+    .collect();
+
+  return orgProjects.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Generate a random adjective-noun project name, e.g. "amber-cove". */
+function randomProjectName(): string {
+  const adj =
+    RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
+  const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
+
+  return `${adj}-${noun}`;
+}
+
+async function requireAuth(
+  ctx: Ctx,
+): Promise<NonNullable<Awaited<ReturnType<typeof authKit.getAuthUser>>>> {
+  const authUser = await authKit.getAuthUser(ctx);
+  if (!authUser) throw new Error("User not found or not authenticated");
+
+  return authUser;
+}

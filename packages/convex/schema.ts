@@ -949,8 +949,8 @@ export const sandboxReservationsFields = {
 };
 
 /**
- * Per-account scheduled agent runs. Mirrors broods's CronRecord
- * (src/shared/cron.ts) so the SaaS dashboard can manage them
+ * Per-account scheduled agent runs. Mirrors core's CronRecord
+ * (apps/core/src/shared/domain/cron.ts) so the SaaS dashboard can manage them
  * directly via Convex live queries. The schedulerName / schedulerGroupName
  * are still the AWS EventBridge Scheduler identifiers — Convex stores them
  * for visibility but broods Lambda is what actually invokes EBS.

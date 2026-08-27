@@ -1,6 +1,6 @@
 /**
  * Workspace-config validation and public response mapping for the Convex
- * config plane (epic #85 phase 9, stage 4). Ports core's former
+ * config plane. Ports core's former
  * storage/workspace-config.ts normalizer so the public /v1/workspaces
  * contract is unchanged. Workspace config holds no secrets (a roleArn is not
  * a secret), so it is stored and returned in plaintext. Pure module — safe

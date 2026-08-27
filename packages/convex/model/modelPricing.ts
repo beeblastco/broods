@@ -3,38 +3,39 @@
  * Rates are standard USD prices per million text tokens, reviewed 2026-06-20.
  */
 
-/** Standard token rates in USD per million tokens. */
-export interface ModelTokenRates {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
+const ANTHROPIC_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
+  [
+    /claude-(?:sonnet-4(?:-|$)|sonnet-4-[56])/,
+    { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
+  ],
+  [
+    /claude-haiku-4-5/,
+    { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
+  ],
+  [
+    /claude-opus-4-[56]/,
+    { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 25 },
+  ],
+];
 
-/** Raw token counts used to estimate one model's cost. */
-export interface ModelTokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  cacheWriteTokens: number;
-}
+const BEDROCK_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
+  ...ANTHROPIC_RATES,
+  [
+    /amazon\.nova-lite-v1(?::0)?$/,
+    { input: 0.06, cacheRead: 0.015, cacheWrite: 0.075, output: 0.24 },
+  ],
+];
 
-/** Cost components for a model whose rates are known. */
-export interface ModelCostEstimate {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  total: number;
-}
-
-/** Provider metadata fields that report cache creation tokens. */
-export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
-  anthropic: "cacheCreationInputTokens",
-  bedrock: "cacheCreationInputTokens",
-  google: "cachedContentTokenCount",
-  openai: "",
-};
+const GOOGLE_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
+  [
+    /^gemini-2\.5-flash-lite(?:-|$)/,
+    { input: 0.1, cacheRead: 0.01, cacheWrite: 0.1, output: 0.4 },
+  ],
+  [
+    /^gemini-2\.5-flash(?:-|$)/,
+    { input: 0.3, cacheRead: 0.03, cacheWrite: 0.3, output: 2.5 },
+  ],
+];
 
 const OPENAI_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
   [/^gpt-5\.5(?:-|$)/, { input: 5, cacheRead: 0.5, cacheWrite: 5, output: 30 }],
@@ -56,39 +57,38 @@ const OPENAI_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
   ],
 ];
 
-const ANTHROPIC_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /claude-(?:sonnet-4(?:-|$)|sonnet-4-[56])/,
-    { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
-  ],
-  [
-    /claude-haiku-4-5/,
-    { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
-  ],
-  [
-    /claude-opus-4-[56]/,
-    { input: 5, cacheRead: 0.5, cacheWrite: 6.25, output: 25 },
-  ],
-];
+/** Provider metadata fields that report cache creation tokens. */
+export const PROVIDER_CACHE_WRITE_FIELDS: Readonly<Record<string, string>> = {
+  anthropic: "cacheCreationInputTokens",
+  bedrock: "cacheCreationInputTokens",
+  google: "cachedContentTokenCount",
+  openai: "",
+};
 
-const GOOGLE_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  [
-    /^gemini-2\.5-flash-lite(?:-|$)/,
-    { input: 0.1, cacheRead: 0.01, cacheWrite: 0.1, output: 0.4 },
-  ],
-  [
-    /^gemini-2\.5-flash(?:-|$)/,
-    { input: 0.3, cacheRead: 0.03, cacheWrite: 0.3, output: 2.5 },
-  ],
-];
+/** Cost components for a model whose rates are known. */
+export interface ModelCostEstimate {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  total: number;
+}
 
-const BEDROCK_RATES: ReadonlyArray<[RegExp, ModelTokenRates]> = [
-  ...ANTHROPIC_RATES,
-  [
-    /amazon\.nova-lite-v1(?::0)?$/,
-    { input: 0.06, cacheRead: 0.015, cacheWrite: 0.075, output: 0.24 },
-  ],
-];
+/** Standard token rates in USD per million tokens. */
+export interface ModelTokenRates {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Raw token counts used to estimate one model's cost. */
+export interface ModelTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+}
 
 /** Normalize SDK provider names to the pricing and metadata namespaces. */
 export function canonicalModelProvider(provider: string): string {
@@ -105,6 +105,29 @@ export function canonicalModelProvider(provider: string): string {
     return "openai";
 
   return normalized;
+}
+
+/** Estimate standard token cost; returns null when the configured model is unpriced. */
+export function estimateModelTokenCost(
+  provider: string,
+  modelId: string,
+  usage: ModelTokenUsage,
+): ModelCostEstimate | null {
+  const rates = resolveModelTokenRates(provider, modelId);
+  if (!rates) return null;
+
+  const input = (usage.inputTokens * rates.input) / 1_000_000;
+  const output = (usage.outputTokens * rates.output) / 1_000_000;
+  const cacheRead = (usage.cachedInputTokens * rates.cacheRead) / 1_000_000;
+  const cacheWrite = (usage.cacheWriteTokens * rates.cacheWrite) / 1_000_000;
+
+  return {
+    input: input,
+    output: output,
+    cacheRead: cacheRead,
+    cacheWrite: cacheWrite,
+    total: input + output + cacheRead + cacheWrite,
+  };
 }
 
 /** Resolve standard token rates for a configured provider/model pair. */
@@ -135,27 +158,4 @@ export function resolveModelTokenRates(
   );
 
   return match?.[1] ?? null;
-}
-
-/** Estimate standard token cost; returns null when the configured model is unpriced. */
-export function estimateModelTokenCost(
-  provider: string,
-  modelId: string,
-  usage: ModelTokenUsage,
-): ModelCostEstimate | null {
-  const rates = resolveModelTokenRates(provider, modelId);
-  if (!rates) return null;
-
-  const input = (usage.inputTokens * rates.input) / 1_000_000;
-  const output = (usage.outputTokens * rates.output) / 1_000_000;
-  const cacheRead = (usage.cachedInputTokens * rates.cacheRead) / 1_000_000;
-  const cacheWrite = (usage.cacheWriteTokens * rates.cacheWrite) / 1_000_000;
-
-  return {
-    input: input,
-    output: output,
-    cacheRead: cacheRead,
-    cacheWrite: cacheWrite,
-    total: input + output + cacheRead + cacheWrite,
-  };
 }

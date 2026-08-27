@@ -60,6 +60,30 @@ const usageStats = v.object({
   }),
 });
 
+/** One aggregated usage point: bin start, model identity, and the 11 metric counters. */
+type UsageBucketRow = {
+  bucketStart: number;
+  modelProvider: string;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cachedInputTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  invocations: number;
+  modelCalls: number;
+  runtimeWallMs: number;
+  agentSandboxCpuUsec: number;
+  toolSandboxCpuUsec: number;
+};
+
+/** The metric counters summed across every bucket in range. */
+type UsageTotals = Omit<
+  UsageBucketRow,
+  "bucketStart" | "modelProvider" | "modelId"
+>;
+
 const RANGE_CONFIG: Record<
   "1h" | "3h" | "1d" | "7d" | "30d" | "1y",
   { lookbackMs: number; binSeconds: number }
@@ -201,26 +225,11 @@ export const fetchUsageStats = query({
  * Re-group usage rollup rows into the requested range's bins and total them.
  */
 function aggregateUsage(
-  rows: Array<{
-    bucketStart: number;
-    modelProvider: string;
-    modelId: string;
-    inputTokens: number;
-    outputTokens: number;
-    reasoningTokens: number;
-    cachedInputTokens: number;
-    cacheWriteTokens: number;
-    totalTokens: number;
-    invocations: number;
-    modelCalls: number;
-    runtimeWallMs: number;
-    agentSandboxCpuUsec: number;
-    toolSandboxCpuUsec: number;
-  }>,
+  rows: UsageBucketRow[],
   binSeconds: number,
-) {
+): { buckets: UsageBucketRow[]; totals: UsageTotals } {
   const binMs = binSeconds * 1000;
-  const byKey = new Map<string, (typeof rows)[number]>();
+  const byKey = new Map<string, UsageBucketRow>();
   for (const row of rows) {
     const bucketStart = Math.floor(row.bucketStart / binMs) * binMs;
     const key = `${bucketStart}|${row.modelProvider}|${row.modelId}`;

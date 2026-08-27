@@ -12,36 +12,163 @@ import { action, type ActionCtx } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { authKit } from "./auth";
 
+/** Captures a reusable snapshot/image from a running sandbox instance. */
+export const createSnapshot = action({
+  args: {
+    sandboxId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+    name: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", {
+      name: args.name,
+    });
+
+    return null;
+  },
+});
+
 /**
- * Reads the broods account-manage base URL + service-auth secret from the env.
- * @returns the service URL and bearer secret.
- * @throws when either variable is unset.
+ * Mints a short-lived sealed ticket for a live PTY terminal on a reserved
+ * sandbox instance. The browser passes the opaque token to the public gateway's
+ * terminal WebSocket; broods resumes a suspended instance first when needed.
  */
-function getServiceEnv(): { url: string; secret: string } {
-  const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
-  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
-  if (!url || !secret) {
-    throw new Error(
-      "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
+export const openTerminal = action({
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.object({
+    token: v.string(),
+    expiresAt: v.number(),
+    websocketPath: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const result = await callLifecycle(
+      ctx,
+      args.sandboxId,
+      args.reservationKey,
+      "terminal",
     );
-  }
+    if (!result || typeof result !== "object") {
+      throw new Error("Broods sandbox terminal returned an empty response");
+    }
+    const record = result as Record<string, unknown>;
+    if (
+      typeof record.token !== "string" ||
+      typeof record.expiresAt !== "number" ||
+      typeof record.websocketPath !== "string"
+    ) {
+      throw new Error("Broods sandbox terminal returned an invalid ticket");
+    }
 
-  return { url: url.replace(/\/+$/, ""), secret: secret };
-}
+    return {
+      token: record.token,
+      expiresAt: record.expiresAt,
+      websocketPath: record.websocketPath,
+    };
+  },
+});
+
+/** Refreshes the mirrored instance state from the provider control plane. */
+export const refreshSandbox = action({
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
+
+    return null;
+  },
+});
+
+/** Resumes a suspended sandbox instance. */
+export const resumeSandbox = action({
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "resume");
+
+    return null;
+  },
+});
+
+/** Runs one bounded shell command against a reserved sandbox instance. */
+export const runSandboxCommand = action({
+  args: {
+    sandboxId: v.id("sandboxConfigs"),
+    reservationKey: v.string(),
+    code: v.string(),
+  },
+  returns: v.object({
+    ok: v.boolean(),
+    runtime: v.string(),
+    exitCode: v.union(v.number(), v.null()),
+    stdout: v.string(),
+    stderr: v.string(),
+    durationMs: v.number(),
+    truncated: v.boolean(),
+    provider: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const result = await callLifecycle(
+      ctx,
+      args.sandboxId,
+      args.reservationKey,
+      "exec",
+      {
+        code: args.code,
+        timeoutSeconds: 30,
+        outputLimitBytes: 64 * 1024,
+      },
+    );
+    if (!result || typeof result !== "object") {
+      throw new Error("Broods sandbox exec returned an empty response");
+    }
+    const record = result as Record<string, unknown>;
+
+    return {
+      ok: record.ok === true,
+      runtime: typeof record.runtime === "string" ? record.runtime : "bash",
+      exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
+      stdout: typeof record.stdout === "string" ? record.stdout : "",
+      stderr: typeof record.stderr === "string" ? record.stderr : "",
+      durationMs: typeof record.durationMs === "number" ? record.durationMs : 0,
+      truncated: record.truncated === true,
+      provider:
+        typeof record.provider === "string" ? record.provider : "sandbox",
+    };
+  },
+});
 
 /**
- * Builds the service-auth headers broods expects on internal requests.
- * @param accountId the active account id (sent as X-Account-Id).
- * @param secret the shared service-auth bearer secret.
- * @returns the request headers.
+ * Suspends a reserved sandbox instance, preserving disk+memory while freeing
+ * compute. The row parks in `suspending` for the duration so the dashboard can lock
+ * the toggle; broods writes `suspended`, and a failed suspend rolls back to running.
  */
-function headers(accountId: string, secret: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${secret}`,
-    "X-Account-Id": accountId,
-    "Content-Type": "application/json",
-  };
-}
+export const suspendSandbox = action({
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await markInstance(ctx, args.reservationKey, "suspending");
+    try {
+      await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
+    } catch (error) {
+      await markInstance(ctx, args.reservationKey, "running");
+      throw error;
+    }
+
+    return null;
+  },
+});
+
+/** Terminates a sandbox instance and drops its reservation + registry row. */
+export const terminateSandbox = action({
+  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminate");
+
+    return null;
+  },
+});
 
 /**
  * Actor metadata carried through the service-auth hop for lifecycle audit rows.
@@ -60,28 +187,6 @@ async function actor(ctx: ActionCtx): Promise<Record<string, string>> {
     ...(user.email ? { email: user.email } : {}),
     ...(user.name ? { name: user.name } : {}),
   };
-}
-
-// Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
-// Never throws: `callLifecycle` is what enforces access and reports failures, so a
-// marker write must not fail a request nor mask the error it is rolling back from.
-async function markInstance(
-  ctx: ActionCtx,
-  reservationKey: string,
-  status: "running" | "suspending",
-): Promise<void> {
-  try {
-    const account = await ctx.runQuery(api.org.getActiveAccount, {});
-    if (!account) return;
-
-    await ctx.runMutation(internal.sandboxInstances.setStatus, {
-      accountId: account.accountId as never,
-      reservationKey: reservationKey,
-      status: status,
-    });
-  } catch (err) {
-    console.warn("sandbox instance status marker failed", err);
-  }
 }
 
 /**
@@ -158,159 +263,54 @@ async function callLifecycle(
 }
 
 /**
- * Suspends a reserved sandbox instance, preserving disk+memory while freeing
- * compute. The row parks in `suspending` for the duration so the dashboard can lock
- * the toggle; broods writes `suspended`, and a failed suspend rolls back to running.
+ * Reads the broods account-manage base URL + service-auth secret from the env.
+ * @returns the service URL and bearer secret.
+ * @throws when either variable is unset.
  */
-export const suspendSandbox = action({
-  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await markInstance(ctx, args.reservationKey, "suspending");
-    try {
-      await callLifecycle(ctx, args.sandboxId, args.reservationKey, "suspend");
-    } catch (error) {
-      await markInstance(ctx, args.reservationKey, "running");
-      throw error;
-    }
+function getServiceEnv(): { url: string; secret: string } {
+  const url = process.env.BROODS_ACCOUNT_MANAGE_URL;
+  const secret = process.env.BROODS_SERVICE_AUTH_SECRET;
+  if (!url || !secret) {
+    throw new Error(
+      "BROODS_ACCOUNT_MANAGE_URL or BROODS_SERVICE_AUTH_SECRET missing",
+    );
+  }
 
-    return null;
-  },
-});
-
-/** Resumes a suspended sandbox instance. */
-export const resumeSandbox = action({
-  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "resume");
-
-    return null;
-  },
-});
-
-/** Terminates a sandbox instance and drops its reservation + registry row. */
-export const terminateSandbox = action({
-  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "terminate");
-
-    return null;
-  },
-});
-
-/** Captures a reusable snapshot/image from a running sandbox instance. */
-export const createSnapshot = action({
-  args: {
-    sandboxId: v.id("sandboxConfigs"),
-    reservationKey: v.string(),
-    name: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "snapshot", {
-      name: args.name,
-    });
-
-    return null;
-  },
-});
-
-/** Refreshes the mirrored instance state from the provider control plane. */
-export const refreshSandbox = action({
-  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    await callLifecycle(ctx, args.sandboxId, args.reservationKey, "refresh");
-
-    return null;
-  },
-});
+  return { url: url.replace(/\/+$/, ""), secret: secret };
+}
 
 /**
- * Mints a short-lived sealed ticket for a live PTY terminal on a reserved
- * sandbox instance. The browser passes the opaque token to the public gateway's
- * terminal WebSocket; broods resumes a suspended instance first when needed.
+ * Builds the service-auth headers broods expects on internal requests.
+ * @param accountId the active account id (sent as X-Account-Id).
+ * @param secret the shared service-auth bearer secret.
+ * @returns the request headers.
  */
-export const openTerminal = action({
-  args: { sandboxId: v.id("sandboxConfigs"), reservationKey: v.string() },
-  returns: v.object({
-    token: v.string(),
-    expiresAt: v.number(),
-    websocketPath: v.string(),
-  }),
-  handler: async (ctx, args) => {
-    const result = await callLifecycle(
-      ctx,
-      args.sandboxId,
-      args.reservationKey,
-      "terminal",
-    );
-    if (!result || typeof result !== "object") {
-      throw new Error("Broods sandbox terminal returned an empty response");
-    }
-    const record = result as Record<string, unknown>;
-    if (
-      typeof record.token !== "string" ||
-      typeof record.expiresAt !== "number" ||
-      typeof record.websocketPath !== "string"
-    ) {
-      throw new Error("Broods sandbox terminal returned an invalid ticket");
-    }
+function headers(accountId: string, secret: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${secret}`,
+    "X-Account-Id": accountId,
+    "Content-Type": "application/json",
+  };
+}
 
-    return {
-      token: record.token,
-      expiresAt: record.expiresAt,
-      websocketPath: record.websocketPath,
-    };
-  },
-});
+// Mirrors a transition the dashboard owns rather than broods (today: `suspending`).
+// Never throws: `callLifecycle` is what enforces access and reports failures, so a
+// marker write must not fail a request nor mask the error it is rolling back from.
+async function markInstance(
+  ctx: ActionCtx,
+  reservationKey: string,
+  status: "running" | "suspending",
+): Promise<void> {
+  try {
+    const account = await ctx.runQuery(api.org.getActiveAccount, {});
+    if (!account) return;
 
-/** Runs one bounded shell command against a reserved sandbox instance. */
-export const runSandboxCommand = action({
-  args: {
-    sandboxId: v.id("sandboxConfigs"),
-    reservationKey: v.string(),
-    code: v.string(),
-  },
-  returns: v.object({
-    ok: v.boolean(),
-    runtime: v.string(),
-    exitCode: v.union(v.number(), v.null()),
-    stdout: v.string(),
-    stderr: v.string(),
-    durationMs: v.number(),
-    truncated: v.boolean(),
-    provider: v.string(),
-  }),
-  handler: async (ctx, args) => {
-    const result = await callLifecycle(
-      ctx,
-      args.sandboxId,
-      args.reservationKey,
-      "exec",
-      {
-        code: args.code,
-        timeoutSeconds: 30,
-        outputLimitBytes: 64 * 1024,
-      },
-    );
-    if (!result || typeof result !== "object") {
-      throw new Error("Broods sandbox exec returned an empty response");
-    }
-    const record = result as Record<string, unknown>;
-
-    return {
-      ok: record.ok === true,
-      runtime: typeof record.runtime === "string" ? record.runtime : "bash",
-      exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
-      stdout: typeof record.stdout === "string" ? record.stdout : "",
-      stderr: typeof record.stderr === "string" ? record.stderr : "",
-      durationMs: typeof record.durationMs === "number" ? record.durationMs : 0,
-      truncated: record.truncated === true,
-      provider:
-        typeof record.provider === "string" ? record.provider : "sandbox",
-    };
-  },
-});
+    await ctx.runMutation(internal.sandboxInstances.setStatus, {
+      accountId: account.accountId as never,
+      reservationKey: reservationKey,
+      status: status,
+    });
+  } catch (err) {
+    console.warn("sandbox instance status marker failed", err);
+  }
+}

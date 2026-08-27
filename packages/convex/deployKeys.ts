@@ -21,50 +21,6 @@ const deployKeyDoc = v.object({
   _creationTime: v.number(),
 });
 
-/** Generate a random `fp_deploy_<base64url>` token. */
-function generateDeployToken(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64url = btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-
-  return `${DEPLOY_KEY_PREFIX}${base64url}`;
-}
-
-/** Masked label for listing a key without revealing it: prefix + last four chars. */
-function deployKeyHint(token: string): string {
-  return `${DEPLOY_KEY_PREFIX}…${token.slice(-4)}`;
-}
-
-export const list = query({
-  args: { projectId: v.id("projects"), stageId: v.id("stages") },
-  returns: v.array(deployKeyDoc),
-  handler: async (ctx, { projectId, stageId }) => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    // Return empty rather than throwing so a just-deleted stage doesn't
-    // crash reactive subscribers before they unmount.
-    const stage = await getOwnedStage(ctx, user.id, stageId);
-    if (!stage || stage.projectId !== projectId) {
-      return [];
-    }
-
-    return ctx.db
-      .query("deployKeys")
-      .withIndex("by_projectId_and_stageId", (q) =>
-        q.eq("projectId", projectId).eq("stageId", stageId),
-      )
-      .collect();
-  },
-});
-
 export const create = mutation({
   args: {
     projectId: v.id("projects"),
@@ -125,6 +81,32 @@ export const create = mutation({
   },
 });
 
+export const list = query({
+  args: { projectId: v.id("projects"), stageId: v.id("stages") },
+  returns: v.array(deployKeyDoc),
+  handler: async (ctx, { projectId, stageId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    // Return empty rather than throwing so a just-deleted stage doesn't
+    // crash reactive subscribers before they unmount.
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      return [];
+    }
+
+    return ctx.db
+      .query("deployKeys")
+      .withIndex("by_projectId_and_stageId", (q) =>
+        q.eq("projectId", projectId).eq("stageId", stageId),
+      )
+      .collect();
+  },
+});
+
 export const remove = mutation({
   args: { deployKeyId: v.id("deployKeys") },
   returns: v.id("deployKeys"),
@@ -154,3 +136,21 @@ export const remove = mutation({
     return deployKeyId;
   },
 });
+
+/** Masked label for listing a key without revealing it: prefix + last four chars. */
+function deployKeyHint(token: string): string {
+  return `${DEPLOY_KEY_PREFIX}…${token.slice(-4)}`;
+}
+
+/** Generate a random `fp_deploy_<base64url>` token. */
+function generateDeployToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const base64url = btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+
+  return `${DEPLOY_KEY_PREFIX}${base64url}`;
+}

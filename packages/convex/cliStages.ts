@@ -275,7 +275,16 @@ async function summarize(
   ctx: MutationCtx | QueryCtx,
   projectId: Id<"projects">,
   stage: Doc<"stages">,
-) {
+): Promise<{
+  id: Id<"stages">;
+  name: string;
+  kind: ReturnType<typeof stageKindForName>;
+  isDefault: boolean;
+  deploymentRegion?: Doc<"stages">["deploymentRegion"];
+  agentCount: number;
+  variableCount: number;
+  updatedAt: number;
+}> {
   const agents = await ctx.db
     .query("agentConfigs")
     .withIndex("by_projectId_and_stageId", (q) =>

@@ -3,7 +3,7 @@
  * endpoint that swaps a one-time login code for a token.
  */
 
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import {
   httpAction,
   internalMutation,
@@ -11,23 +11,32 @@ import {
   type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { authKit } from "./auth";
 import { slugifyName } from "./lib/slug";
 import { sha256Hex } from "./model/accountSecrets";
 import { getActiveOrgForUser, requireOrgMember } from "./model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
+const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 const CLI_TOKEN_PREFIX = "fp_cli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
+// planValidator stays ahead of onboardingOrgValidator, which embeds it;
+// onboardingContextValidator embeds the rest and comes last.
 const planValidator = v.union(
   v.literal("free"),
   v.literal("pro"),
   v.literal("enterprise"),
 );
+
+/** The API account backing the token's current org; `broods whoami` reports it. */
+const onboardingAccountValidator = v.object({
+  id: v.id("accounts"),
+  username: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+});
 
 const onboardingOrgValidator = v.object({
   id: v.id("orgs"),
@@ -46,13 +55,6 @@ const onboardingProjectValidator = v.object({
   id: v.id("projects"),
   name: v.string(),
   slug: v.string(),
-});
-
-/** The API account backing the token's current org; `broods whoami` reports it. */
-const onboardingAccountValidator = v.object({
-  id: v.id("accounts"),
-  username: v.string(),
-  status: v.union(v.literal("active"), v.literal("disabled")),
 });
 
 const onboardingUserValidator = v.object({
@@ -395,7 +397,7 @@ async function onboardingContext(
   ctx: MutationCtx,
   authId: string,
   currentOrgId: Id<"orgs">,
-) {
+): Promise<Infer<typeof onboardingContextValidator>> {
   const user = await userForAuthId(ctx, authId);
   if (!user) throw new Error("CLI token user was not found");
   const memberships = await ctx.db
@@ -465,7 +467,10 @@ function randomToken(prefix: string): string {
   return `${prefix}${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
 }
 
-async function resolveActiveCliToken(ctx: MutationCtx, tokenHash: string) {
+async function resolveActiveCliToken(
+  ctx: MutationCtx,
+  tokenHash: string,
+): Promise<{ token: Doc<"cliTokens">; account: Doc<"accounts"> } | null> {
   const token = await ctx.db
     .query("cliTokens")
     .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
@@ -509,7 +514,10 @@ async function uniqueOrgSlug(
   }
 }
 
-async function userForAuthId(ctx: MutationCtx, authId: string) {
+async function userForAuthId(
+  ctx: MutationCtx,
+  authId: string,
+): Promise<Doc<"users"> | null> {
   const user = await ctx.db
     .query("users")
     .withIndex("by_authId", (q) => q.eq("authId", authId))

@@ -20,34 +20,11 @@ import { authKit } from "./auth";
 import { getProjectForRole } from "./model/ownership/project";
 import { normalizeWorkspaceConfig } from "./model/workspaceRules";
 
-export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 export const DEFAULT_DOWNLOAD_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 // Expired rows are dead weight, not a security boundary — redeeming always
 // re-checks expiresAt. One bounded sweep per mint keeps the table from growing.
 const DOWNLOAD_TOKEN_PRUNE_BATCH_SIZE = 50;
-
-/**
- * A workspace's storage block, shaped as `WorkspaceStorageConfig`. Carried
- * alongside the workspace ids so file operations reach the bucket the sandbox
- * actually mounts instead of always assuming the managed one.
- */
-export const workspaceStorageValidator = v.object({
-  provider: v.literal("s3"),
-  bucket: v.optional(v.string()),
-  region: v.optional(v.string()),
-  endpoint: v.optional(v.string()),
-  prefix: v.optional(v.string()),
-  auth: v.optional(
-    v.union(
-      v.object({ type: v.literal("managed") }),
-      v.object({
-        type: v.literal("assumeRole"),
-        roleArn: v.string(),
-        externalId: v.optional(v.string()),
-      }),
-    ),
-  ),
-});
+export const MAX_DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const resolvedToken = v.object({
   accountId: v.id("accounts"),
@@ -74,6 +51,29 @@ const workspaceFileDoc = v.object({
 });
 
 /**
+ * A workspace's storage block, shaped as `WorkspaceStorageConfig`. Carried
+ * alongside the workspace ids so file operations reach the bucket the sandbox
+ * actually mounts instead of always assuming the managed one.
+ */
+export const workspaceStorageValidator = v.object({
+  provider: v.literal("s3"),
+  bucket: v.optional(v.string()),
+  region: v.optional(v.string()),
+  endpoint: v.optional(v.string()),
+  prefix: v.optional(v.string()),
+  auth: v.optional(
+    v.union(
+      v.object({ type: v.literal("managed") }),
+      v.object({
+        type: v.literal("assumeRole"),
+        roleArn: v.string(),
+        externalId: v.optional(v.string()),
+      }),
+    ),
+  ),
+});
+
+/**
  * Create a file or folder entry after the binary has been uploaded to storage.
  * @param projectId owning project
  * @param nodeId canvas workspace node ID
@@ -96,6 +96,7 @@ export const create = mutation({
     mimeType: v.optional(v.string()),
     sizeBytes: v.optional(v.number()),
   },
+  returns: v.id("workspaceFiles"),
   handler: async (ctx, args) => {
     const {
       projectId,
@@ -182,6 +183,7 @@ export const createDownloadToken = internalMutation({
  */
 export const generateUploadUrl = mutation({
   args: {},
+  returns: v.string(),
   handler: async (ctx) => {
     // Check authenticated user
     const user = await authKit.getAuthUser(ctx);
@@ -206,6 +208,7 @@ export const getFileDownloadUrl = query({
     nodeId: v.string(),
     path: v.string(),
   },
+  returns: v.union(v.string(), v.null()),
   handler: async (ctx, args) => {
     const { projectId, nodeId, path } = args;
 
@@ -278,6 +281,7 @@ export const list = query({
     projectId: v.id("projects"),
     nodeId: v.string(),
   },
+  returns: v.array(workspaceFileDoc),
   handler: async (ctx, args) => {
     const { projectId, nodeId } = args;
 
@@ -334,6 +338,7 @@ export const listForMigrationInternal = internalQuery({
  */
 export const remove = mutation({
   args: { fileId: v.id("workspaceFiles") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { fileId } = args;
 
@@ -369,6 +374,7 @@ export const removeFolder = mutation({
     nodeId: v.string(),
     folderPath: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { projectId, nodeId, folderPath } = args;
 
@@ -442,6 +448,7 @@ export const rename = mutation({
     fileId: v.id("workspaceFiles"),
     newName: v.string(),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const { fileId, newName } = args;
 

@@ -17,61 +17,13 @@ import {
   sandboxProviderValidator,
 } from "./schema";
 
-const DAY_SECONDS = 24 * 60 * 60;
-const CONVERSATION_EVENT_PAGE_SIZE = 512;
 const CONVERSATION_CLEAR_BATCH_SIZE = 100;
-const RUNTIME_DELETE_BATCH_SIZE = 100;
+const CONVERSATION_EVENT_PAGE_SIZE = 512;
+const DAY_SECONDS = 24 * 60 * 60;
 // AI SDK Harness lifecycle checkpoints contain session identifiers and bridge
 // coordinates, never chat history. Keep adapter regressions out of Convex rows.
 const MAX_HARNESS_RESUME_STATE_BYTES = 64 * 1_024;
-
-/**
- * Extracts the account ID from an account-scoped runtime key.
- * @param value account-scoped runtime key
- * @returns embedded account ID
- * @throws when the key has no valid account prefix
- */
-function accountIdFromKey(value: string): string {
-  const match = /^acct:([^:]+):/.exec(value);
-  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
-
-  return match[1];
-}
-
-/**
- * Normalizes a claim key into its owning account namespace.
- * @param accountId owning account ID
- * @param key scoped or integration-provided claim key
- * @returns account-scoped claim key
- * @throws when an already-scoped key belongs to another account
- */
-function claimKeyForAccount(accountId: string, key: string): string {
-  if (!key.startsWith("acct:")) {
-    return `acct:${accountId}:claim:${key}`;
-  }
-  if (accountIdFromKey(key) !== accountId) {
-    throw new Error("Runtime claim key does not belong to accountId");
-  }
-
-  return key;
-}
-
-/**
- * Requires an account to exist and remain active in the runtime-write transaction.
- * @param ctx Convex mutation context
- * @param accountId account ID embedded in the runtime row or key
- * @throws when the account is missing, disabled, or malformed
- */
-async function requireActiveAccount(
-  ctx: MutationCtx,
-  accountId: string,
-): Promise<void> {
-  const normalized = ctx.db.normalizeId("accounts", accountId);
-  const account = normalized ? await ctx.db.get(normalized) : null;
-  if (!account || account.status !== "active") {
-    throw new Error(`Account is not active: ${accountId}`);
-  }
-}
+const RUNTIME_DELETE_BATCH_SIZE = 100;
 
 const asyncAgentDoc = v.object({
   ...runtimeAsyncAgentResultsFields,
@@ -87,25 +39,6 @@ const asyncToolDoc = v.object({
   _id: v.id("runtimeAsyncToolResults"),
   _creationTime: v.number(),
 });
-
-/** Removes callback authorization from general async-tool result reads. */
-function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
-  row: T,
-): Omit<T, "completionTokenHash"> {
-  const { completionTokenHash: _hidden, ...publicRow } = row;
-
-  return publicRow;
-}
-
-/** Compares fixed-length hexadecimal digests without content-dependent exits. */
-function constantTimeDigestEqual(actual: string, expected: string): boolean {
-  let difference = actual.length ^ expected.length;
-  for (let index = 0; index < expected.length; index += 1) {
-    difference |= (actual.charCodeAt(index) || 0) ^ expected.charCodeAt(index);
-  }
-
-  return difference === 0;
-}
 const toolGroupDoc = v.object({
   accountId: v.string(),
   parentEventId: v.string(),
@@ -1076,3 +1009,70 @@ export const pruneExpired = internalMutation({
     return rows.length;
   },
 });
+
+/**
+ * Extracts the account ID from an account-scoped runtime key.
+ * @param value account-scoped runtime key
+ * @returns embedded account ID
+ * @throws when the key has no valid account prefix
+ */
+function accountIdFromKey(value: string): string {
+  const match = /^acct:([^:]+):/.exec(value);
+  if (!match?.[1]) throw new Error("Runtime key is not account scoped");
+
+  return match[1];
+}
+
+/**
+ * Normalizes a claim key into its owning account namespace.
+ * @param accountId owning account ID
+ * @param key scoped or integration-provided claim key
+ * @returns account-scoped claim key
+ * @throws when an already-scoped key belongs to another account
+ */
+function claimKeyForAccount(accountId: string, key: string): string {
+  if (!key.startsWith("acct:")) {
+    return `acct:${accountId}:claim:${key}`;
+  }
+  if (accountIdFromKey(key) !== accountId) {
+    throw new Error("Runtime claim key does not belong to accountId");
+  }
+
+  return key;
+}
+
+/** Compares fixed-length hexadecimal digests without content-dependent exits. */
+function constantTimeDigestEqual(actual: string, expected: string): boolean {
+  let difference = actual.length ^ expected.length;
+  for (let index = 0; index < expected.length; index += 1) {
+    difference |= (actual.charCodeAt(index) || 0) ^ expected.charCodeAt(index);
+  }
+
+  return difference === 0;
+}
+
+/** Removes callback authorization from general async-tool result reads. */
+function hideCompletionTokenHash<T extends { completionTokenHash?: string }>(
+  row: T,
+): Omit<T, "completionTokenHash"> {
+  const { completionTokenHash: _hidden, ...publicRow } = row;
+
+  return publicRow;
+}
+
+/**
+ * Requires an account to exist and remain active in the runtime-write transaction.
+ * @param ctx Convex mutation context
+ * @param accountId account ID embedded in the runtime row or key
+ * @throws when the account is missing, disabled, or malformed
+ */
+async function requireActiveAccount(
+  ctx: MutationCtx,
+  accountId: string,
+): Promise<void> {
+  const normalized = ctx.db.normalizeId("accounts", accountId);
+  const account = normalized ? await ctx.db.get(normalized) : null;
+  if (!account || account.status !== "active") {
+    throw new Error(`Account is not active: ${accountId}`);
+  }
+}

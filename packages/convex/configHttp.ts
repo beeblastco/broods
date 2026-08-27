@@ -1,6 +1,6 @@
 /**
- * Public config-plane HTTP surface (epic #85 phase 9): agents, skills, tools,
- * hooks, workspace files, crons, workspaces, sandboxes, and policies served straight
+ * Public config-plane HTTP surface: agents, skills, tools, hooks, workspace
+ * files, crons, workspaces, sandboxes, and policies served straight
  * from Convex. The gateway forwards these paths here; response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
  * the account Bearer secret.

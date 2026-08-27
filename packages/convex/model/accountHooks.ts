@@ -22,7 +22,10 @@ export const AGENT_HOOK_EVENT_NAMES = [
   "channel.message.sending",
 ] as const;
 
-export type AgentHookEventName = (typeof AGENT_HOOK_EVENT_NAMES)[number];
+const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
+// Hooks only ever run in the isolate, inlined into core's own process, so they
+// keep the tighter of the two tool bounds (see accountTools.ts).
+const MAX_BUNDLE_BYTES = 1_000_000;
 
 export interface AccountHookUploadInput {
   name?: unknown;
@@ -30,6 +33,8 @@ export interface AccountHookUploadInput {
   events?: unknown;
   bundle?: unknown;
 }
+
+export type AgentHookEventName = (typeof AGENT_HOOK_EVENT_NAMES)[number];
 
 export interface NormalizedAccountHookUpload {
   name?: string;
@@ -47,10 +52,18 @@ export interface RequiredAccountHookUpload {
   sha256: string;
 }
 
-const HOOK_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// Hooks only ever run in the isolate, inlined into core's own process, so they
-// keep the tighter of the two tool bounds (see accountTools.ts).
-const MAX_BUNDLE_BYTES = 1_000_000;
+/**
+ * Build the S3 object key used for an account hook bundle.
+ * @param accountId account id owning the hook
+ * @param sha256 hex sha256 of the bundle contents
+ * @returns stable S3 key for the bundle object
+ */
+export function accountHookBundleStorageKey(
+  accountId: string,
+  sha256: string,
+): string {
+  return `account-hooks/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
+}
 
 /**
  * Normalize and validate a CLI/API-supplied code hook upload.
@@ -103,31 +116,20 @@ export async function normalizeAccountHookUpload(
   return result as NormalizedAccountHookUpload;
 }
 
-/**
- * Build the S3 object key used for an account hook bundle.
- * @param accountId account id owning the hook
- * @param sha256 hex sha256 of the bundle contents
- * @returns stable S3 key for the bundle object
- */
-export function accountHookBundleStorageKey(
-  accountId: string,
-  sha256: string,
-): string {
-  return `account-hooks/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
-}
-
-function normalizeHookName(value: unknown): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error("hook.name must be a non-empty string");
+function normalizeBundle(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("hook.bundle must be a non-empty string");
   }
-  const name = value.trim();
-  if (!HOOK_NAME_PATTERN.test(name)) {
+  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
+    throw new Error(`hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
+  }
+  if (inferAccountToolRuntime(value) === "sandbox") {
     throw new Error(
-      "hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
+      "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
     );
   }
 
-  return name;
+  return value;
 }
 
 function normalizeDescription(value: unknown): string {
@@ -160,18 +162,16 @@ function normalizeEvents(value: unknown): AgentHookEventName[] {
   return events;
 }
 
-function normalizeBundle(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error("hook.bundle must be a non-empty string");
+function normalizeHookName(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("hook.name must be a non-empty string");
   }
-  if (new TextEncoder().encode(value).byteLength > MAX_BUNDLE_BYTES) {
-    throw new Error(`hook.bundle must be ${MAX_BUNDLE_BYTES} bytes or smaller`);
-  }
-  if (inferAccountToolRuntime(value) === "sandbox") {
+  const name = value.trim();
+  if (!HOOK_NAME_PATTERN.test(name)) {
     throw new Error(
-      "hook.bundle must be isolate-safe: node: imports, bare package imports, require(), process, and __dirname are not allowed",
+      "hook.name must start with a letter or underscore and contain only letters, numbers, underscores, or hyphens",
     );
   }
 
-  return value;
+  return name;
 }

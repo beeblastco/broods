@@ -1,9 +1,9 @@
 "use node";
 
 /**
- * Node-runtime internal actions for account cron jobs (epic #85 phase 9,
- * stage 3): Convex owns the crons table writes and the matching EventBridge
- * Scheduler schedules directly, replacing core's former /v1/crons plane.
+ * Node-runtime internal actions for account cron jobs: Convex owns the crons
+ * table writes and the matching EventBridge Scheduler schedules directly,
+ * replacing core's former /v1/crons plane.
  * Schedules publish the {kind: "cron", accountId, cronId} payload onto the
  * cron-runs event bus (CRON_SCHEDULER_TARGET_ARN); the bus rule provisioned in
  * apps/core/sst.config.ts forwards it to the API destination that POSTs the
@@ -16,6 +16,7 @@ import {
   DeleteScheduleCommand,
   ResourceNotFoundException,
   UpdateScheduleCommand,
+  type Target,
 } from "@aws-sdk/client-scheduler";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -43,23 +44,6 @@ interface SchedulerTarget {
   targetArn: string;
   roleArn: string;
   groupName: string;
-}
-
-function schedulerTargetEnv(): SchedulerTarget {
-  const targetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
-  const roleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
-  const groupName = process.env.CRON_SCHEDULER_GROUP_NAME;
-  if (!targetArn || !roleArn || !groupName) {
-    throw new Error(
-      "Cron schedules require CRON_SCHEDULER_TARGET_ARN, CRON_SCHEDULER_ROLE_ARN, and CRON_SCHEDULER_GROUP_NAME",
-    );
-  }
-
-  return {
-    targetArn: targetArn,
-    roleArn: roleArn,
-    groupName: normalizeSchedulerGroupName(groupName),
-  };
 }
 
 /**
@@ -141,6 +125,40 @@ export const create = internalAction({
 });
 
 /**
+ * Delete a cron job and its EventBridge schedule. A schedule that is already
+ * gone is not an error.
+ * @param accountId account id owning the cron job
+ * @param cronId the cron job id
+ * @returns true when the job existed and was removed
+ */
+export const remove = internalAction({
+  args: { accountId: v.id("accounts"), cronId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const existing = await getOwnedCron(ctx, args.accountId, args.cronId);
+    if (!existing) return false;
+    await deleteCronEverywhere(ctx, existing);
+
+    return true;
+  },
+});
+
+/**
+ * Delete just the EventBridge schedule of a cron whose rows are already gone.
+ * `purgeProject` deletes cron rows inside its mutation and schedules this to
+ * collect the AWS side after the transaction commits.
+ */
+export const removeSchedule = internalAction({
+  args: { schedulerName: v.string(), schedulerGroupName: v.string() },
+  returns: v.null(),
+  handler: async (_ctx, args) => {
+    await deleteScheduleIfExists(args.schedulerName, args.schedulerGroupName);
+
+    return null;
+  },
+});
+
+/**
  * Update a cron job: update the EventBridge schedule first, then patch the
  * crons row, mirroring core's former ordering so a schedule failure leaves the
  * stored job unchanged.
@@ -210,40 +228,6 @@ export const update = internalAction({
     );
 
     return updated ? toCronResponse(updated) : null;
-  },
-});
-
-/**
- * Delete a cron job and its EventBridge schedule. A schedule that is already
- * gone is not an error.
- * @param accountId account id owning the cron job
- * @param cronId the cron job id
- * @returns true when the job existed and was removed
- */
-export const remove = internalAction({
-  args: { accountId: v.id("accounts"), cronId: v.string() },
-  returns: v.boolean(),
-  handler: async (ctx, args) => {
-    const existing = await getOwnedCron(ctx, args.accountId, args.cronId);
-    if (!existing) return false;
-    await deleteCronEverywhere(ctx, existing);
-
-    return true;
-  },
-});
-
-/**
- * Delete just the EventBridge schedule of a cron whose rows are already gone.
- * `purgeProject` deletes cron rows inside its mutation and schedules this to
- * collect the AWS side after the transaction commits.
- */
-export const removeSchedule = internalAction({
-  args: { schedulerName: v.string(), schedulerGroupName: v.string() },
-  returns: v.null(),
-  handler: async (_ctx, args) => {
-    await deleteScheduleIfExists(args.schedulerName, args.schedulerGroupName);
-
-    return null;
   },
 });
 
@@ -336,7 +320,38 @@ async function requireAccountAgent(
   return agent._id;
 }
 
-function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">) {
+/**
+ * EventBridge reclaims a one-time schedule itself once it has fired; core then
+ * drops the row when the run settles, so a fired job leaves nothing behind.
+ */
+function scheduleActionAfterCompletion(expression: string): "DELETE" | "NONE" {
+  return isOneTimeSchedule(expression) ? "DELETE" : "NONE";
+}
+
+function scheduleDescription(job: Doc<"crons">): string {
+  return `Cron job ${job._id} for account ${job.accountId}`;
+}
+
+/** Reads the scheduler target configuration from the deployment environment. */
+function schedulerTargetEnv(): SchedulerTarget {
+  const targetArn = process.env.CRON_SCHEDULER_TARGET_ARN;
+  const roleArn = process.env.CRON_SCHEDULER_ROLE_ARN;
+  const groupName = process.env.CRON_SCHEDULER_GROUP_NAME;
+  if (!targetArn || !roleArn || !groupName) {
+    throw new Error(
+      "Cron schedules require CRON_SCHEDULER_TARGET_ARN, CRON_SCHEDULER_ROLE_ARN, and CRON_SCHEDULER_GROUP_NAME",
+    );
+  }
+
+  return {
+    targetArn: targetArn,
+    roleArn: roleArn,
+    groupName: normalizeSchedulerGroupName(groupName),
+  };
+}
+
+/** Builds the EventBridge PutEvents target that carries the cron-run payload. */
+function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">): Target {
   return {
     Arn: target.targetArn,
     RoleArn: target.roleArn,
@@ -352,16 +367,4 @@ function scheduleTarget(target: SchedulerTarget, job: Doc<"crons">) {
       scheduledTime: "<aws.scheduler.scheduled-time>",
     }),
   };
-}
-
-/**
- * EventBridge reclaims a one-time schedule itself once it has fired; core then
- * drops the row when the run settles, so a fired job leaves nothing behind.
- */
-function scheduleActionAfterCompletion(expression: string): "DELETE" | "NONE" {
-  return isOneTimeSchedule(expression) ? "DELETE" : "NONE";
-}
-
-function scheduleDescription(job: Doc<"crons">): string {
-  return `Cron job ${job._id} for account ${job.accountId}`;
 }

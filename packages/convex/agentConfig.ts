@@ -25,9 +25,7 @@ import { saveAgentRuntimeSecrets } from "./model/agentRuntimeSecrets";
 import { ACCOUNT_MODEL_PROVIDER_NAMES } from "./model/modelProviders";
 import { agentConfigsFields } from "./schema";
 
-const agentProviderValidator = v.union(
-  ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
-);
+const MASKED_RUNTIME_VARIABLE_VALUE = "";
 
 const agentConfigDoc = v.object({
   ...agentConfigsFields,
@@ -35,92 +33,14 @@ const agentConfigDoc = v.object({
   _creationTime: v.number(),
 });
 
+const agentProviderValidator = v.union(
+  ...ACCOUNT_MODEL_PROVIDER_NAMES.map((name) => v.literal(name)),
+);
+
 const workspaceRefValidator = v.object({
   name: v.string(),
   workspaceId: v.string(),
   sandbox: v.optional(v.union(v.string(), v.null())),
-});
-
-const MASKED_RUNTIME_VARIABLE_VALUE = "";
-
-/** Coerces unknown JSON-ish values into a mutable record for patching. */
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-/** Hide secret values from browser reads while preserving variable names. */
-function maskRuntimeVariables<
-  T extends { runtimeVariables?: Array<{ key: string; value: string }> },
->(config: T): T {
-  return {
-    ...config,
-    runtimeVariables: config.runtimeVariables?.map((entry) => ({
-      key: entry.key,
-      value: MASKED_RUNTIME_VARIABLE_VALUE,
-    })),
-  };
-}
-
-/** Returns true when the caller may edit a project-scoped agent config. */
-async function canAccessAgentConfig(
-  ctx: Parameters<typeof getProjectForRole>[0],
-  authId: string,
-  config: { projectId: Id<"projects"> },
-): Promise<boolean> {
-  return Boolean(await getProjectForRole(ctx, authId, config.projectId));
-}
-
-/**
- * Record a dashboard agent config mutation when the project has a provisioned account.
- */
-async function recordAgentConfigAudit(
-  ctx: MutationCtx,
-  actor: ConfigAuditActor,
-  input: {
-    projectId: Id<"projects">;
-    stageId: Id<"stages">;
-    action: string;
-    agentId?: string;
-    configId: Id<"agentConfigs">;
-    name?: string;
-    summary: string;
-    details?: Record<string, unknown>;
-  },
-): Promise<void> {
-  const accountId = await accountIdForProject(ctx, input.projectId);
-  if (!accountId) return;
-
-  await insertConfigAuditEvent(ctx.db, {
-    accountId: accountId,
-    projectId: input.projectId,
-    stageId: input.stageId,
-    actor: actor,
-    action: input.action,
-    resource: {
-      kind: "agent",
-      id: input.agentId ?? input.configId,
-      name: input.name,
-    },
-    summary: input.summary,
-    detailsJson: input.details ? auditDetailsJson(input.details) : undefined,
-  });
-}
-
-export const getById = query({
-  args: { configId: v.id("agentConfigs") },
-  returns: v.union(v.null(), agentConfigDoc),
-  handler: async (ctx, { configId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const config = await ctx.db.get(configId);
-    if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config)))
-      return null;
-
-    return maskRuntimeVariables(config);
-  },
 });
 
 export const create = mutation({
@@ -246,6 +166,89 @@ export const create = mutation({
       summary: "Agent configuration created",
       details: { configId: configId },
     });
+
+    return configId;
+  },
+});
+
+export const getById = query({
+  args: { configId: v.id("agentConfigs") },
+  returns: v.union(v.null(), agentConfigDoc),
+  handler: async (ctx, { configId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const config = await ctx.db.get(configId);
+    if (!config || !(await canAccessAgentConfig(ctx, authUser.id, config)))
+      return null;
+
+    return maskRuntimeVariables(config);
+  },
+});
+
+export const remove = mutation({
+  args: { configId: v.id("agentConfigs") },
+  returns: v.id("agentConfigs"),
+  handler: async (ctx, { configId }) => {
+    const authUser = await authKit.getAuthUser(ctx);
+    if (!authUser) throw new Error("User not found or not authenticated");
+
+    const existing = await ctx.db.get(configId);
+    if (
+      !existing ||
+      !(await canAccessAgentConfig(ctx, authUser.id, existing))
+    ) {
+      throw new Error("Agent config not found.");
+    }
+
+    // Code is the source of truth for CLI-managed agents: the dashboard may
+    // edit them (changes are overwritten on the next sync) but must not delete
+    // them. Removal happens by deleting them from `broods/` and running
+    // `broods deploy --prune`.
+    if (existing.managedBy === "cli") {
+      throw new Error(
+        "This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.",
+      );
+    }
+
+    // Note: the stage's runtime API key is shared across all its agents
+    // (stage-scoped), so deleting one agent config must NOT delete it. The key
+    // is only removed when the whole stage is deleted (see stage.ts).
+
+    // Clean up the linked broods `agents` row if present so the
+    // harness side stays consistent with the dashboard's canvas.
+    if (existing.agentId) {
+      const normalized = ctx.db.normalizeId("agents", existing.agentId);
+      if (normalized) {
+        const agent = await ctx.db.get(normalized);
+        if (agent) {
+          await ctx.db.delete(normalized);
+          // Its conversations, queued work and status rows are keyed by agent
+          // and nothing else would ever collect them. Batches continue on their
+          // own, so this is scheduled rather than awaited to completion.
+          await ctx.scheduler.runAfter(
+            0,
+            internal.runtime.deleteAgentRuntimeData,
+            {
+              accountId: agent.accountId,
+              agentId: normalized,
+            },
+          );
+        }
+      }
+    }
+
+    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
+      projectId: existing.projectId,
+      stageId: existing.stageId,
+      action: "deleted",
+      agentId: existing.agentId,
+      configId: configId,
+      name: existing.name,
+      summary: "Agent configuration deleted",
+      details: { configId: configId },
+    });
+    await ctx.db.delete(configId);
 
     return configId;
   },
@@ -483,70 +486,67 @@ export const updateSubagentRefs = mutation({
   },
 });
 
-export const remove = mutation({
-  args: { configId: v.id("agentConfigs") },
-  returns: v.id("agentConfigs"),
-  handler: async (ctx, { configId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
+/** Coerces unknown JSON-ish values into a mutable record for patching. */
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
-    const existing = await ctx.db.get(configId);
-    if (
-      !existing ||
-      !(await canAccessAgentConfig(ctx, authUser.id, existing))
-    ) {
-      throw new Error("Agent config not found.");
-    }
+/** Returns true when the caller may edit a project-scoped agent config. */
+async function canAccessAgentConfig(
+  ctx: Parameters<typeof getProjectForRole>[0],
+  authId: string,
+  config: { projectId: Id<"projects"> },
+): Promise<boolean> {
+  return Boolean(await getProjectForRole(ctx, authId, config.projectId));
+}
 
-    // Code is the source of truth for CLI-managed agents: the dashboard may
-    // edit them (changes are overwritten on the next sync) but must not delete
-    // them. Removal happens by deleting them from `broods/` and running
-    // `broods deploy --prune`.
-    if (existing.managedBy === "cli") {
-      throw new Error(
-        "This agent is managed by code. Remove it from your project and run `broods deploy --prune` to delete it.",
-      );
-    }
+/** Hide secret values from browser reads while preserving variable names. */
+function maskRuntimeVariables<
+  T extends { runtimeVariables?: Array<{ key: string; value: string }> },
+>(config: T): T {
+  return {
+    ...config,
+    runtimeVariables: config.runtimeVariables?.map((entry) => ({
+      key: entry.key,
+      value: MASKED_RUNTIME_VARIABLE_VALUE,
+    })),
+  };
+}
 
-    // Note: the stage's runtime API key is shared across all its agents
-    // (stage-scoped), so deleting one agent config must NOT delete it. The key
-    // is only removed when the whole stage is deleted (see stage.ts).
-
-    // Clean up the linked broods `agents` row if present so the
-    // harness side stays consistent with the dashboard's canvas.
-    if (existing.agentId) {
-      const normalized = ctx.db.normalizeId("agents", existing.agentId);
-      if (normalized) {
-        const agent = await ctx.db.get(normalized);
-        if (agent) {
-          await ctx.db.delete(normalized);
-          // Its conversations, queued work and status rows are keyed by agent
-          // and nothing else would ever collect them. Batches continue on their
-          // own, so this is scheduled rather than awaited to completion.
-          await ctx.scheduler.runAfter(
-            0,
-            internal.runtime.deleteAgentRuntimeData,
-            {
-              accountId: agent.accountId,
-              agentId: normalized,
-            },
-          );
-        }
-      }
-    }
-
-    await recordAgentConfigAudit(ctx, dashboardAuditActor(authUser), {
-      projectId: existing.projectId,
-      stageId: existing.stageId,
-      action: "deleted",
-      agentId: existing.agentId,
-      configId: configId,
-      name: existing.name,
-      summary: "Agent configuration deleted",
-      details: { configId: configId },
-    });
-    await ctx.db.delete(configId);
-
-    return configId;
+/**
+ * Record a dashboard agent config mutation when the project has a provisioned account.
+ */
+async function recordAgentConfigAudit(
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  input: {
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    action: string;
+    agentId?: string;
+    configId: Id<"agentConfigs">;
+    name?: string;
+    summary: string;
+    details?: Record<string, unknown>;
   },
-});
+): Promise<void> {
+  const accountId = await accountIdForProject(ctx, input.projectId);
+  if (!accountId) return;
+
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: input.projectId,
+    stageId: input.stageId,
+    actor: actor,
+    action: input.action,
+    resource: {
+      kind: "agent",
+      id: input.agentId ?? input.configId,
+      name: input.name,
+    },
+    summary: input.summary,
+    detailsJson: input.details ? auditDetailsJson(input.details) : undefined,
+  });
+}
