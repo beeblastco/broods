@@ -74,7 +74,6 @@ interface InstanceState {
   pids: { core?: number; gateway?: number };
   ports: InstancePorts;
   secrets: InstanceSecrets;
-  worktreeRoot: string;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -83,10 +82,10 @@ const flags = new Set(process.argv.slice(3));
 
 switch (command) {
   case "up":
-    await up({ fresh: flags.has("--fresh") });
+    await up(flags.has("--fresh"));
     break;
   case "down":
-    await down({ purge: flags.has("--purge") });
+    await down(flags.has("--purge"));
     break;
   case "status":
     await status();
@@ -101,11 +100,11 @@ switch (command) {
     process.exit(2);
 }
 
-async function up(options: { fresh: boolean }): Promise<void> {
+async function up(fresh: boolean): Promise<void> {
   const startedAt = Date.now();
   const perf: PerfStep[] = [];
-  if (options.fresh) {
-    await down({ purge: true });
+  if (fresh) {
+    await down(true);
   }
   const state = loadOrCreateState();
   console.log(
@@ -157,14 +156,18 @@ async function up(options: { fresh: boolean }): Promise<void> {
 
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
   await measureStep(perf, "health checks", async () => {
-    await waitForHttp(`${gatewayUrl}/healthz`, "gateway");
-    await waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core");
+    await Promise.all([
+      waitForHttp(`${gatewayUrl}/healthz`, "gateway"),
+      waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
+    ]);
     // The gateway answers /healthz itself, so prove the proxied chain too: any
     // HTTP status from /v1/agents means gateway -> convex round-tripped (401 is
     // the expected unauthenticated answer); only a network error is a failure.
-    await waitForHttp(`${gatewayUrl}/v1/agents`, "config plane via gateway", {
-      acceptAnyStatus: true,
-    });
+    await waitForHttp(
+      `${gatewayUrl}/v1/agents`,
+      "config plane via gateway",
+      true,
+    );
   });
 
   const totalMs = Date.now() - startedAt;
@@ -180,7 +183,7 @@ async function up(options: { fresh: boolean }): Promise<void> {
   console.log(`\nnext: bun scripts/local-stack.ts verify`);
 }
 
-async function down(options: { purge: boolean }): Promise<void> {
+async function down(purge: boolean): Promise<void> {
   const instanceId = currentInstanceId();
   const state = loadState(instanceId);
   if (!state) {
@@ -189,13 +192,15 @@ async function down(options: { purge: boolean }): Promise<void> {
     return;
   }
 
-  await stopProcess(state.pids.gateway, "gateway");
-  await stopProcess(state.pids.core, "core");
+  await Promise.all([
+    stopProcess(state.pids.gateway, "gateway"),
+    stopProcess(state.pids.core, "core"),
+  ]);
   state.pids = {};
   saveState(state);
 
   const container = containerName(instanceId);
-  if (options.purge) {
+  if (purge) {
     docker(["rm", "-f", "-v", container], { allowFailure: true });
     docker(["volume", "rm", dataVolumeName(instanceId)], {
       allowFailure: true,
@@ -234,9 +239,12 @@ async function status(): Promise<void> {
   );
   console.log(`healthz   ${health ?? "unreachable"}`);
 
-  const coreRss = processRssMb(state.pids.core);
-  const gatewayRss = processRssMb(state.pids.gateway);
-  if (coreRss || gatewayRss) {
+  const rss = processRssMb([state.pids.core, state.pids.gateway]);
+  if (rss.size > 0) {
+    const coreRss = state.pids.core ? rss.get(state.pids.core) : undefined;
+    const gatewayRss = state.pids.gateway
+      ? rss.get(state.pids.gateway)
+      : undefined;
     console.log(
       `memory    core ${coreRss ?? "?"} MB, gateway ${gatewayRss ?? "?"} MB, convex ${containerMemory(containerName(instanceId)) ?? "?"}`,
     );
@@ -284,7 +292,7 @@ async function verify(): Promise<void> {
       `status ${response.status}: ${JSON.stringify(response.body)}`,
     );
 
-    return secret as string;
+    return secret;
   });
 
   const agentId = await measureStep(perf, "create agent", async () => {
@@ -312,7 +320,7 @@ async function verify(): Promise<void> {
       `status ${response.status}: ${JSON.stringify(response.body)}`,
     );
 
-    return created as string;
+    return created;
   });
 
   const eventId = `smoke-${runId}`;
@@ -367,20 +375,32 @@ function configureDeploymentEnv(state: InstanceState): void {
   // The config plane reads these from the deployment env; AuthKit validates
   // the WORKOS_* values at import time, so dummies must exist before the first
   // deploy. BROODS_ACCOUNT_MANAGE_URL points back at core on the host — the
-  // backend runs inside docker, hence host.docker.internal.
+  // backend runs inside docker, hence host.docker.internal. The config plane
+  // reads only the BROODS_-prefixed service secret; the bare name is core's.
   const entries: Record<string, string> = {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
     BROODS_ACCOUNT_MANAGE_URL: `http://host.docker.internal:${state.ports.core}`,
     BROODS_SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
-    SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
     WORKOS_API_KEY: "sk_local_dummy",
     WORKOS_CLIENT_ID: "client_local_dummy",
     WORKOS_WEBHOOK_SECRET: "whsec_local_dummy",
   };
   console.log("configuring convex deployment env...");
-  for (const [name, value] of Object.entries(entries)) {
-    runConvexCli(state, ["env", "set", name, value]);
+  // One batched `env set --from-file` instead of one ~0.4s CLI boot per
+  // variable. --force keeps a retry after a partially applied first run going.
+  const envFile = join(instanceDir(state.instanceId), "deployment.env");
+  writeFileSync(
+    envFile,
+    Object.entries(entries)
+      .map(([name, value]) => `${name}=${value}`)
+      .join("\n"),
+    { mode: 0o600 },
+  );
+  try {
+    runConvexCli(state, ["env", "set", "--from-file", envFile, "--force"]);
+  } finally {
+    rmSync(envFile, { force: true });
   }
 }
 
@@ -440,11 +460,11 @@ function ensureConvexContainer(state: InstanceState): void {
 }
 
 function generateConvexAdminKey(state: InstanceState): string {
-  const output = execFileSync(
-    "docker",
-    ["exec", containerName(state.instanceId), "./generate_admin_key.sh"],
-    { encoding: "utf8" },
-  );
+  const output = docker([
+    "exec",
+    containerName(state.instanceId),
+    "./generate_admin_key.sh",
+  ]);
   const key = output
     .split("\n")
     .map((line) => line.trim())
@@ -478,8 +498,9 @@ function startCore(state: InstanceState): void {
   }
 
   const coreDir = join(repoRoot, "apps", "core");
-  // The serve script runs this before the server; watch mode restarts only
-  // server.ts, so generate the compaction prompt once here.
+  // Mirrors apps/core "serve" (compaction prompt, then server), with --watch
+  // added; keep in sync with that package script. The prompt is generated once
+  // here because watch mode restarts only server.ts.
   execFileSync("bun", ["run", "scripts/compaction-prompt.ts"], {
     cwd: coreDir,
     stdio: "inherit",
@@ -509,6 +530,8 @@ function startGateway(state: InstanceState): void {
     return;
   }
 
+  // Mirrors apps/gateway "dev"; keep in sync with that package script. Spawned
+  // directly (not via `bun run`) so the recorded pid is the server itself.
   state.pids.gateway = spawnDetached({
     args: ["--watch", "src/main.ts"],
     cwd: join(repoRoot, "apps", "gateway"),
@@ -522,7 +545,7 @@ function startGateway(state: InstanceState): void {
   });
 }
 
-function isProcessAlive(pid: number | undefined): boolean {
+function isProcessAlive(pid: number | undefined): pid is number {
   if (!pid) return false;
   try {
     process.kill(pid, 0);
@@ -570,28 +593,31 @@ async function stopProcess(
 ): Promise<void> {
   if (!isProcessAlive(pid)) return;
   try {
-    process.kill(pid as number, "SIGTERM");
+    process.kill(pid, "SIGTERM");
   } catch {
     // Already gone between the liveness check and the signal.
 
     return;
   }
-  const graceDeadline = Date.now() + 5_000;
-  while (Date.now() < graceDeadline) {
-    if (!isProcessAlive(pid)) {
-      console.log(`stopped ${name} (pid ${pid})`);
+  const exited = await pollUntil(
+    { initialIntervalMs: 50, maxIntervalMs: 100, timeoutMs: 5_000 },
+    async () => (isProcessAlive(pid) ? null : true),
+  );
+  if (exited) {
+    console.log(`stopped ${name} (pid ${pid})`);
 
-      return;
-    }
-    await sleep(100);
+    return;
   }
   try {
-    process.kill(pid as number, "SIGKILL");
+    process.kill(pid, "SIGKILL");
   } catch {
     // Exited between the last check and the kill.
   }
-  await sleep(200);
-  if (isProcessAlive(pid)) {
+  const reaped = await pollUntil(
+    { initialIntervalMs: 20, maxIntervalMs: 50, timeoutMs: 300 },
+    async () => (isProcessAlive(pid) ? null : true),
+  );
+  if (!reaped) {
     throw new Error(`${name} (pid ${pid}) survived SIGKILL`);
   }
   console.log(`stopped ${name} (pid ${pid}, forced)`);
@@ -604,7 +630,7 @@ function containerName(instanceId: string): string {
 }
 
 function dataVolumeName(instanceId: string): string {
-  return `broods-convex-${instanceId}-data`;
+  return `${containerName(instanceId)}-data`;
 }
 
 function docker(
@@ -629,7 +655,7 @@ function dockerContainerState(name: string): string | null {
 
 // --- http helpers -------------------------------------------------------
 
-function assertStep(step: string, ok: boolean, detail: string): void {
+function assertStep(step: string, ok: boolean, detail: string): asserts ok {
   if (ok) {
     console.log(`  ok  ${step}`);
 
@@ -650,9 +676,7 @@ async function httpJson(
       Authorization: `Bearer ${options.token}`,
       "Content-Type": "application/json",
     },
-    ...(options.body === undefined
-      ? {}
-      : { body: JSON.stringify(options.body) }),
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   const text = await response.text();
   let body: unknown = text;
@@ -669,22 +693,56 @@ async function pollRunStatus(
   statusUrl: string,
   token: string,
 ): Promise<{ status?: string }> {
-  const deadline = Date.now() + RUN_POLL_TIMEOUT_MS;
+  const doc = await pollUntil(
+    {
+      initialIntervalMs: 200,
+      maxIntervalMs: 1_500,
+      timeoutMs: RUN_POLL_TIMEOUT_MS,
+    },
+    async () => {
+      try {
+        const response = await httpJson(statusUrl, {
+          method: "GET",
+          token: token,
+        });
+        const body = response.body as { status?: string };
+
+        return body.status === "completed" || body.status === "failed"
+          ? body
+          : null;
+      } catch {
+        // Transient poll failure (timeout, refused): retry until the deadline.
+
+        return null;
+      }
+    },
+  );
+
+  return doc ?? { status: "poll-timeout" };
+}
+
+/**
+ * Repeats attempt() until it returns non-null or timeoutMs passes, sleeping
+ * with doubling backoff between tries. Returns null on timeout.
+ */
+async function pollUntil<T>(
+  options: {
+    initialIntervalMs: number;
+    maxIntervalMs: number;
+    timeoutMs: number;
+  },
+  attempt: () => Promise<T | null>,
+): Promise<T | null> {
+  const deadline = Date.now() + options.timeoutMs;
+  let interval = options.initialIntervalMs;
   while (Date.now() < deadline) {
-    try {
-      const response = await httpJson(statusUrl, {
-        method: "GET",
-        token: token,
-      });
-      const doc = response.body as { status?: string };
-      if (doc.status === "completed" || doc.status === "failed") return doc;
-    } catch {
-      // Transient poll failure (timeout, refused): retry until the deadline.
-    }
-    await sleep(1500);
+    const result = await attempt();
+    if (result !== null) return result;
+    await sleep(Math.min(interval, Math.max(deadline - Date.now(), 0)));
+    interval = Math.min(interval * 2, options.maxIntervalMs);
   }
 
-  return { status: "poll-timeout" };
+  return null;
 }
 
 async function probeHttp(url: string): Promise<number | null> {
@@ -706,24 +764,28 @@ async function sleep(ms: number): Promise<void> {
 async function waitForHttp(
   url: string,
   what: string,
-  options: { acceptAnyStatus?: boolean } = {},
+  acceptAnyStatus = false,
 ): Promise<void> {
-  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const statusCode = await probeHttp(url);
-    if (
-      statusCode !== null &&
-      (options.acceptAnyStatus === true || statusCode < 400)
-    ) {
-      console.log(`${what} ready`);
+  const ready = await pollUntil(
+    {
+      initialIntervalMs: 100,
+      maxIntervalMs: 500,
+      timeoutMs: HEALTH_TIMEOUT_MS,
+    },
+    async () => {
+      const statusCode = await probeHttp(url);
 
-      return;
-    }
-    await sleep(500);
-  }
-  throw new Error(
-    `${what} did not become ready within ${HEALTH_TIMEOUT_MS}ms (${url})`,
+      return statusCode !== null && (acceptAnyStatus || statusCode < 400)
+        ? statusCode
+        : null;
+    },
   );
+  if (ready === null) {
+    throw new Error(
+      `${what} did not become ready within ${HEALTH_TIMEOUT_MS}ms (${url})`,
+    );
+  }
+  console.log(`${what} ready`);
 }
 
 // --- perf recording -----------------------------------------------------
@@ -741,21 +803,29 @@ function lastPerfSummaries(instanceId: string): string[] {
   const path = perfLogPath(instanceId);
   if (!existsSync(path)) return [];
 
-  const records = readFileSync(path, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as PerfRecord);
-  const summaries: string[] = [];
-  for (const command of ["up", "verify"]) {
-    const last = records.findLast((record) => record.command === command);
-    if (last) {
-      summaries.push(
-        `last ${command} ${(last.totalMs / 1000).toFixed(1)}s (${last.at})`,
-      );
+  // The log is append-only and unbounded, so walk from the end and stop at the
+  // first record of each command instead of parsing the whole file.
+  const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+  const commands = ["up", "verify"];
+  const latest = new Map<string, PerfRecord>();
+  for (
+    let index = lines.length - 1;
+    index >= 0 && latest.size < commands.length;
+    index -= 1
+  ) {
+    const record = JSON.parse(lines[index] as string) as PerfRecord;
+    if (commands.includes(record.command) && !latest.has(record.command)) {
+      latest.set(record.command, record);
     }
   }
 
-  return summaries;
+  return commands.flatMap((command) => {
+    const last = latest.get(command);
+
+    return last
+      ? [`last ${command} ${(last.totalMs / 1000).toFixed(1)}s (${last.at})`]
+      : [];
+  });
 }
 
 async function measureStep<T>(
@@ -784,17 +854,25 @@ function printPerfBreakdown(perf: PerfStep[], totalMs: number): void {
   console.log(`  ${(totalMs / 1000).toFixed(2).padStart(7)}s  total`);
 }
 
-function processRssMb(pid: number | undefined): number | null {
-  if (!isProcessAlive(pid)) return null;
+function processRssMb(pids: (number | undefined)[]): Map<number, number> {
+  const alive = pids.filter((pid) => isProcessAlive(pid));
+  const rss = new Map<number, number>();
+  if (alive.length === 0) return rss;
   try {
-    const output = execFileSync("ps", ["-o", "rss=", "-p", String(pid)], {
-      encoding: "utf8",
-    }).trim();
-
-    return Math.round(Number(output) / 1024);
+    const output = execFileSync(
+      "ps",
+      ["-o", "pid=,rss=", "-p", alive.join(",")],
+      { encoding: "utf8" },
+    );
+    for (const line of output.trim().split("\n")) {
+      const [pid, kb] = line.trim().split(/\s+/);
+      if (pid && kb) rss.set(Number(pid), Math.round(Number(kb) / 1024));
+    }
   } catch {
-    return null;
+    // A pid that died mid-call just drops out of the map.
   }
+
+  return rss;
 }
 
 function recordPerf(
@@ -865,7 +943,6 @@ function loadOrCreateState(): InstanceState {
       adminAccount: `local_admin_${randomBytes(18).toString("hex")}`,
       serviceAuth: randomBytes(24).toString("hex"),
     },
-    worktreeRoot: repoRoot,
   };
   saveState(state);
 
