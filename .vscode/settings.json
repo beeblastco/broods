@@ -10,7 +10,8 @@
   "chatgpt.openOnStartup": false,
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": {
-    "source.organizeImports": "always"
+    "source.organizeImports": "always",
+    "source.fixAll.oxc": "always"
   },
   "[typescript][typescriptreact][javascript][javascriptreact][json][jsonc]": {
     "editor.defaultFormatter": "oxc.oxc-vscode"
