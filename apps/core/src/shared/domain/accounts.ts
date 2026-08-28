@@ -72,7 +72,10 @@ export function normalizeCreateAccountInput(
   const username = requireString(value.username, "username");
   const description = optionalString(value.description, "description");
 
-  return { username: username, ...(description ? { description: description } : {}) };
+  return {
+    username: username,
+    ...(description ? { description: description } : {}),
+  };
 }
 
 export function normalizeUpdateAccountInput(

@@ -65,11 +65,11 @@ export function createTelegramChannel(
   return {
     name: "telegram",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return "x-telegram-bot-api-secret-token" in req.headers;
     },
 
-    authenticate: function(req) {
+    authenticate: function (req) {
       const secret = req.headers["x-telegram-bot-api-secret-token"];
       if (!verifyWebhookSecret(secret, webhookSecret)) {
         logWarn("Webhook secret verification failed");
@@ -80,16 +80,14 @@ export function createTelegramChannel(
       return true;
     },
 
-    parse: function(req): ChannelParseResult {
+    parse: function (req): ChannelParseResult {
       const update: TelegramUpdate = JSON.parse(req.body);
       const message = extractInboundMessage(update);
       if (!message?.text) {
         return { kind: "ignore" };
       }
 
-      if (
-        !isAllowedId(allowedChannelIds, String(message.chat.id))
-      ) {
+      if (!isAllowedId(allowedChannelIds, String(message.chat.id))) {
         logWarn("Chat not in allow list", { chatId: message.chat.id });
 
         return { kind: "ignore" };
@@ -143,7 +141,7 @@ export function createTelegramChannel(
       };
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       const source = toTelegramSource(msg.source);
 
       const sendAttachments = async function (
@@ -164,7 +162,7 @@ export function createTelegramChannel(
         // advertise one without the other.
         sendFiles: sendAttachments,
         sendImages: sendAttachments,
-        sendSticker: async function(sticker): Promise<void> {
+        sendSticker: async function (sticker): Promise<void> {
           const value = sticker.trim();
           if (!value) {
             throw new Error(
@@ -182,7 +180,7 @@ export function createTelegramChannel(
               : {}),
           });
         },
-        sendText: async function(text) {
+        sendText: async function (text) {
           for (const chunk of splitTelegramRawText(text)) {
             await transport.postMessage(source.threadId, { markdown: chunk });
           }

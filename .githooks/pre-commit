@@ -1,0 +1,21 @@
+#!/bin/sh
+# Lint + format gate on staged files. Wired by the root `prepare` script
+# (`git config core.hooksPath .githooks`). Typecheck stays in CI — too slow here.
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+lintable=$(echo "$staged" | grep -E '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' || true)
+if [ -n "$lintable" ]; then
+  echo "$lintable" | xargs bunx oxlint
+fi
+
+formattable=$(echo "$staged" | grep -E '\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|jsonc|md|yml|yaml)$' || true)
+if [ -n "$formattable" ]; then
+  echo "$formattable" | xargs bunx oxfmt --check --no-error-on-unmatched-pattern || {
+    echo ""
+    echo "Unformatted files. Run: bun run format"
+    exit 1
+  }
+fi

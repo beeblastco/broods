@@ -6,7 +6,12 @@ import { Button } from "@/app/components/ui/button";
 import { useState } from "react";
 
 type NodeType =
-  "agent" | "database" | "tool" | "workspace" | "sandbox" | "skill";
+  | "agent"
+  | "database"
+  | "tool"
+  | "workspace"
+  | "sandbox"
+  | "skill";
 
 /** Delete warning copy per node type. */
 const DELETE_DESCRIPTIONS: Record<

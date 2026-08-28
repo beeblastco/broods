@@ -165,9 +165,7 @@ function isStale(entry: WatchedPackage): boolean {
 
 function isWatched(name: string): boolean {
   return (
-    name === "ai" ||
-    name.startsWith("@ai-sdk/") ||
-    EXTRA_WATCHED.includes(name)
+    name === "ai" || name.startsWith("@ai-sdk/") || EXTRA_WATCHED.includes(name)
   );
 }
 

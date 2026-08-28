@@ -460,7 +460,12 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
         nodes: currentNodes.map((n) => ({
           id: n.id,
           type: n.type as
-            "agent" | "database" | "sandbox" | "workspace" | "tool" | "skill",
+            | "agent"
+            | "database"
+            | "sandbox"
+            | "workspace"
+            | "tool"
+            | "skill",
           position: n.position,
           data: n.data as {
             label: string;

@@ -53,7 +53,9 @@ test("compileProject keeps a tool path with regex replacement syntax literal", a
 async function toolFixture(toolFile = "echo.ts"): Promise<string> {
   // realpath so /var and /private/var agree: the bundler resolves the symlinked
   // macOS tempdir differently from the path mkdtemp hands back.
-  const cwd = await realpath(await mkdtemp(join(tmpdir(), "broods-tool-fixture-")));
+  const cwd = await realpath(
+    await mkdtemp(join(tmpdir(), "broods-tool-fixture-")),
+  );
   tempDirs.push(cwd);
   const projectDir = join(cwd, "broods");
   await mkdir(join(projectDir, "tools"), { recursive: true });

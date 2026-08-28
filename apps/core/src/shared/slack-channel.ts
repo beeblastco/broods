@@ -378,13 +378,15 @@ export function createSlackChannel(
   return {
     name: "slack",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return "x-slack-signature" in req.headers;
     },
 
-    authenticate: async function(req) {
+    authenticate: async function (req) {
       try {
-        await verifySlackSignature(req.body, req.headers, { signingSecret: signingSecret });
+        await verifySlackSignature(req.body, req.headers, {
+          signingSecret: signingSecret,
+        });
 
         return true;
       } catch (err) {
@@ -396,7 +398,7 @@ export function createSlackChannel(
       }
     },
 
-    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       const payload = parseSlackWebhookBody(req.body, { headers: req.headers });
 
       if (payload.kind === "url_verification") {
@@ -434,7 +436,7 @@ export function createSlackChannel(
       );
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       return createSlackActions(
         botToken,
         apiUrl,
@@ -447,7 +449,7 @@ export function createSlackChannel(
     // Slack is the one provider where the reply has two places it can land, so
     // it is the one that can honour the record. A slash command still answers
     // through its response URL, which carries no thread either way.
-    applyReplyIn: function(source, replyIn) {
+    applyReplyIn: function (source, replyIn) {
       const slackSource = toSlackSource(source);
       const threadTs =
         replyIn === "thread"
@@ -721,7 +723,7 @@ function createSlackActions(
   const formatter = new SlackFormatConverter();
 
   return {
-    sendFiles: async function(files, caption): Promise<void> {
+    sendFiles: async function (files, caption): Promise<void> {
       // Slack ignores an outbound URL attachment entirely; files.uploadV2 is the
       // only way in, and it takes the whole batch in one call so the files land
       // as a single upload rather than one message each.
@@ -747,7 +749,7 @@ function createSlackActions(
       );
     },
 
-    sendImages: async function(images, caption): Promise<void> {
+    sendImages: async function (images, caption): Promise<void> {
       // Block Kit stacks image blocks inside one message, so a batch stays a
       // single post rather than a run of them. Pictures keep the URL path even
       // though sendFiles uploads: an image block renders inline, while an
@@ -759,19 +761,18 @@ function createSlackActions(
         Card({
           children: [
             ...(caption ? [CardText(caption)] : []),
-            ...images.map(
-              (image): ImageElement =>
-                Image({
-                  url: image.url,
-                  alt: image.name ?? caption ?? "Image",
-                }),
+            ...images.map((image): ImageElement =>
+              Image({
+                url: image.url,
+                alt: image.name ?? caption ?? "Image",
+              }),
             ),
           ],
         }),
       );
     },
 
-    sendSticker: async function(sticker): Promise<void> {
+    sendSticker: async function (sticker): Promise<void> {
       const value = sticker.trim();
       if (!value) {
         throw new Error(
@@ -806,7 +807,7 @@ function createSlackActions(
       });
     },
 
-    sendText: async function(text) {
+    sendText: async function (text) {
       if (source.responseUrl) {
         await sendSlackWebhookResponse(
           source.responseUrl,
@@ -827,12 +828,12 @@ function createSlackActions(
       });
     },
 
-    sendTyping: async function() {
+    sendTyping: async function () {
       return;
     },
 
     supportsReactions: Boolean(source.messageTs),
-    reactToMessage: async function(emoji): Promise<void> {
+    reactToMessage: async function (emoji): Promise<void> {
       if (!source.messageTs) {
         return;
       }
@@ -1052,7 +1053,9 @@ function parseSlashCommand(
   }
 
   if (!isAllowedId(allowedChannelIds, channelId)) {
-    logWarn("Slack slash command channel not in allow list", { channelId: channelId });
+    logWarn("Slack slash command channel not in allow list", {
+      channelId: channelId,
+    });
 
     return { kind: "ignore", reason: "slash_command_channel_not_allowed" };
   }

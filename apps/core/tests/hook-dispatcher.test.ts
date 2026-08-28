@@ -26,7 +26,7 @@ function dispatcherReturning(
 ): HookDispatcher {
   return {
     hasHooksFor: (event) => events.includes(event),
-    runMutation: async function(event, payload) {
+    runMutation: async function (event, payload) {
       return responder(event, payload as Record<string, unknown>);
     },
   };

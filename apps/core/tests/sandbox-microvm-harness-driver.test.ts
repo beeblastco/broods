@@ -159,7 +159,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
     authRequests: authRequests,
     launchEnvs: launchEnvs,
     value: {
-      acquireHarnessReservation: async function(request: unknown) {
+      acquireHarnessReservation: async function (request: unknown) {
         acquisitions.push(request);
         afterAcquire?.();
 
@@ -169,7 +169,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
           isFirstCreate: isFirstCreate,
         };
       },
-      resumeHarnessReservation: async function(request: unknown) {
+      resumeHarnessReservation: async function (request: unknown) {
         resumptions.push(request);
 
         return {
@@ -177,7 +177,7 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
           endpoint: "microvm-1.lambda-microvm.us-east-1.on.aws",
         };
       },
-      runHarnessCommand: async function(request: {
+      runHarnessCommand: async function (request: {
         code: string;
         env?: Record<string, string>;
       }) {
@@ -236,15 +236,15 @@ function fakeExecutor(isFirstCreate: boolean, afterAcquire?: () => void) {
 
         return result();
       },
-      createHarnessAuthToken: async function(microvmId: string, port: number) {
+      createHarnessAuthToken: async function (microvmId: string, port: number) {
         authRequests.push({ microvmId: microvmId, port: port });
 
         return "secret-token";
       },
-      suspend: async function(request: unknown) {
+      suspend: async function (request: unknown) {
         suspensions.push(request);
       },
-      release: async function(request: unknown) {
+      release: async function (request: unknown) {
         releases.push(request);
       },
     },

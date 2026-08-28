@@ -156,10 +156,10 @@ test("websocket client subscribes to the core service and forwards server messag
       },
     },
     {
-      onMessage: function(message) {
+      onMessage: function (message) {
         messages.push(message);
       },
-      onDone: function() {
+      onDone: function () {
         done = true;
       },
     },
@@ -217,13 +217,13 @@ test("websocket client unwraps output envelopes for handlers and stream consumer
       input: "start",
     },
     {
-      onMessage: function(message) {
+      onMessage: function (message) {
         messages.push(message);
       },
-      onOutput: function(output) {
+      onOutput: function (output) {
         outputs.push(output);
       },
-      onDone: function() {
+      onDone: function () {
         done = true;
       },
     },

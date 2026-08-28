@@ -96,18 +96,18 @@ beforeEach(() => {
       },
     },
   } as unknown as Storage);
-  runtime.query = (async function (name: string) {
+  runtime.query = async function (name: string) {
     return name === "getConversationTarget" ? channelTarget : null;
-  }) as never;
+  } as never;
   // Admitting as "queued" stops before the async worker: the envelope the cron
   // hands to the coordinator is what these tests assert.
-  runtime.mutate = (async function (name: string, args: unknown) {
+  runtime.mutate = async function (name: string, args: unknown) {
     if (name === "acceptIngress") {
       admitted.push(args as Record<string, unknown>);
     }
 
     return { outcome: "queued" };
-  }) as never;
+  } as never;
 });
 
 afterEach(() => {

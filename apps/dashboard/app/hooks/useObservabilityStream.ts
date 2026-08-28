@@ -22,7 +22,10 @@ export { isRootSpanKind };
 export type { LogLevel, ObservabilityLogEntry, ObservabilitySpanRow };
 
 export type ObservabilityStreamStatus =
-  "idle" | "connecting" | "live" | "error";
+  | "idle"
+  | "connecting"
+  | "live"
+  | "error";
 
 interface UseObservabilityStreamOptions {
   /** Which realtime stream to subscribe to. */
@@ -203,7 +206,8 @@ export function useObservabilityStream(
       if (msg.type === "backfill") {
         setEntries((prev) => {
           const incoming = msg.entries as (
-            ObservabilityLogEntry | ObservabilitySpanRow
+            | ObservabilityLogEntry
+            | ObservabilitySpanRow
           )[];
           const merged = new Map(prev.map((entry) => [entryKey(entry), entry]));
           for (const entry of incoming) {

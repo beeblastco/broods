@@ -402,7 +402,8 @@ const CHANNEL_PARTITION_MODES = ["shared", "conversation"] as const;
  * a private child folder per thread, issue or chat under `alias`.
  */
 export type ChannelPartition =
-  { by: "shared"; alias?: never } | { by: "conversation"; alias: string };
+  | { by: "shared"; alias?: never }
+  | { by: "conversation"; alias: string };
 
 // Both spellings this field used to carry, kept so a stale key throws instead
 // of sitting in config doing nothing.
@@ -628,7 +629,8 @@ export function isChannelTraceEnabled(
 ): boolean {
   if (!channelName) return false;
   const channelConfig = config.channels?.[channelName] as
-    { trace?: "enabled" | "disabled" } | undefined;
+    | { trace?: "enabled" | "disabled" }
+    | undefined;
 
   return channelConfig?.trace === "enabled";
 }

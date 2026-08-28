@@ -20,7 +20,9 @@ const MAX_ATTRIBUTE_CHARS = 128;
 const UNITS: PerfUnit[] = ["ms", "score", "count"];
 
 type OtlpValue =
-  { stringValue: string } | { doubleValue: number } | { boolValue: boolean };
+  | { stringValue: string }
+  | { doubleValue: number }
+  | { boolValue: boolean };
 type OtlpAttribute = { key: string; value: OtlpValue };
 
 /** Parses core's `OTEL_EXPORTER_OTLP_HEADERS` form: `K=V,K2=V2`. */

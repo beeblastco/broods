@@ -1,7 +1,7 @@
 {
   "name": "@broods/demo-channel-zalo",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "register": "bun register.ts",

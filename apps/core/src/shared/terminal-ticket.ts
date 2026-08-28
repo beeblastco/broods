@@ -110,7 +110,9 @@ export function openTerminalTicket(
       authorization: authorization,
       accountId: accountId,
       expiresAt: expiresAt,
-      ...(authorizationHeader ? { authorizationHeader: authorizationHeader } : {}),
+      ...(authorizationHeader
+        ? { authorizationHeader: authorizationHeader }
+        : {}),
     };
   } catch {
     return null;

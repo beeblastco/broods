@@ -72,7 +72,7 @@ async function runStream(parts: StreamPart[]): Promise<StreamPart[]> {
   const { stream } = (await normalizeStreamDeltasMiddleware.wrapStream!({
     doStream: async () => ({
       stream: new ReadableStream<StreamPart>({
-        start: function(controller) {
+        start: function (controller) {
           for (const part of parts) controller.enqueue(part);
           controller.close();
         },

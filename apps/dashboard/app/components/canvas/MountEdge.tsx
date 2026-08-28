@@ -41,9 +41,11 @@ export function MountEdge({
   const [hovered, setHovered] = useState(false);
   const endpointOwnership = useStore((s) => {
     const sourceData = s.nodeLookup.get(source)?.data as
-      { managedBy?: string } | undefined;
+      | { managedBy?: string }
+      | undefined;
     const targetData = s.nodeLookup.get(target)?.data as
-      { managedBy?: string } | undefined;
+      | { managedBy?: string }
+      | undefined;
 
     return `${sourceData?.managedBy ?? ""}>${targetData?.managedBy ?? ""}`;
   });

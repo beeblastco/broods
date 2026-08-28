@@ -127,7 +127,8 @@ const storedTools = (tt: T) =>
   tt.run(async (ctx) => {
     const config = await ctx.db.query("agentConfigs").first();
     const extra = config?.extraConfig as
-      { tools?: Record<string, unknown> } | undefined;
+      | { tools?: Record<string, unknown> }
+      | undefined;
 
     return extra?.tools ?? {};
   });

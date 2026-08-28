@@ -1,7 +1,7 @@
 {
   "name": "@broods/demo-sandbox-persistent",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "start": "bun index.ts",

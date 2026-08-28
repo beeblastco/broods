@@ -210,7 +210,8 @@ export function deriveAgentRuntimeRefs(
 
   return agents.flatMap((agent) => {
     const agentConfigId = agent.data.agentConfigId as
-      Id<"agentConfigs"> | undefined;
+      | Id<"agentConfigs">
+      | undefined;
     if (!agentConfigId) {
       return [];
     }
@@ -316,7 +317,8 @@ export function deriveSubagentRefs(
     if (edge.type !== "subagent") continue;
     const callee = byId.get(edge.target);
     const calleeConfigId = callee?.data.agentConfigId as
-      Id<"agentConfigs"> | undefined;
+      | Id<"agentConfigs">
+      | undefined;
     if (callee?.type !== "agent" || !calleeConfigId) continue;
     if (!calleesByCaller.has(edge.source))
       calleesByCaller.set(edge.source, new Set());

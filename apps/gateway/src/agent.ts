@@ -482,7 +482,10 @@ async function followQueuedExecution(
     conversationKey: active.publicConversationKey,
   };
   const connection = await getNatsConnection();
-  const snapshot = await conversationReplaySnapshot({ connection: connection, ...scope });
+  const snapshot = await conversationReplaySnapshot({
+    connection: connection,
+    ...scope,
+  });
 
   await followExecution(socket, active.abort.signal, {
     connection: connection,

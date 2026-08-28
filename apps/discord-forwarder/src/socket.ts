@@ -39,7 +39,12 @@ const CONNECT_DEADLINE_MS = 30_000;
 const RESUMABLE_CLOSE_CODE = 4000;
 
 export type SocketState =
-  "backoff" | "connecting" | "exhausted" | "fatal" | "ready" | "stopped";
+  | "backoff"
+  | "connecting"
+  | "exhausted"
+  | "fatal"
+  | "ready"
+  | "stopped";
 
 export interface GatewaySocketOptions {
   botToken: string;

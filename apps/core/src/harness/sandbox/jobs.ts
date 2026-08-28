@@ -149,7 +149,11 @@ export function parseJobStatus(
     const code = Number(text.split(/\s+/)[1]);
     const exitCode = Number.isFinite(code) ? code : null;
 
-    return { jobId: jobId, state: exitCode === 0 ? "completed" : "failed", exitCode: exitCode };
+    return {
+      jobId: jobId,
+      state: exitCode === 0 ? "completed" : "failed",
+      exitCode: exitCode,
+    };
   }
 
   return { jobId: jobId, state: text === "running" ? "running" : "unknown" };

@@ -6,7 +6,10 @@ export function getSandboxExternalId(
   provider: SandboxProvider,
   reservationKey: string,
 ): Promise<string | null> {
-  return runtime.query("getSandboxReservation", { provider: provider, reservationKey: reservationKey });
+  return runtime.query("getSandboxReservation", {
+    provider: provider,
+    reservationKey: reservationKey,
+  });
 }
 // The reserved sandbox and when it was claimed, in one read, for the executors
 // that enforce `lifecycle.maxLifetimeSeconds` themselves. Null when unreserved.
@@ -14,7 +17,10 @@ export function getSandboxReservationRecord(
   provider: SandboxProvider,
   reservationKey: string,
 ): Promise<{ externalId: string; claimedAt: number } | null> {
-  return runtime.query("getSandboxReservationRecord", { provider: provider, reservationKey: reservationKey });
+  return runtime.query("getSandboxReservationRecord", {
+    provider: provider,
+    reservationKey: reservationKey,
+  });
 }
 // The reservation key is a hashed namespace, so the owning account can't be
 // derived from it — callers pass accountId from the sandbox control plane. When

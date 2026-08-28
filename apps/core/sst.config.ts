@@ -177,7 +177,7 @@ function denyUnlessProjectPrincipal(stage: string, region: string) {
 }
 
 export default $config({
-  app: function(input) {
+  app: function (input) {
     const stage = input?.stage ?? "dev";
     const region = awsRegion();
 
@@ -205,7 +205,7 @@ export default $config({
     };
   },
 
-  run: async function() {
+  run: async function () {
     const aws = await import("@pulumi/aws");
     const command = await import("@pulumi/command");
     const stage = $app.stage;

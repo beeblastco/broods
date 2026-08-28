@@ -8,13 +8,13 @@ import { DEFAULT_COMPACTION_PROMPT } from "../shared/.generated/compaction-promp
 import type { AgentConfig } from "../shared/domain/agent-config.ts";
 import { logInfo } from "../shared/log.ts";
 import {
-    modelSettingsFromModelConfig,
-    providerOptionsFromModelConfig,
-    resolveConfiguredModel,
+  modelSettingsFromModelConfig,
+  providerOptionsFromModelConfig,
+  resolveConfiguredModel,
 } from "./provider.ts";
 import {
-    hasPendingToolApprovalResponse,
-    stripReasoningFromMessages,
+  hasPendingToolApprovalResponse,
+  stripReasoningFromMessages,
 } from "./pruning.ts";
 
 const DEFAULT_COMPACTION_MAX_CONTEXT_LENGTH = 100_000; // Runtime default when compaction is enabled without a max.

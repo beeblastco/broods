@@ -8,7 +8,11 @@ import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import ivm from "isolated-vm";
-import { guardedFetch, BODY_LIMIT_BYTES, FETCH_TIMEOUT_MS } from "./pinned-fetch.mjs";
+import {
+  guardedFetch,
+  BODY_LIMIT_BYTES,
+  FETCH_TIMEOUT_MS,
+} from "./pinned-fetch.mjs";
 import { WEB_GLOBALS_SOURCE } from "./web-globals.mjs";
 
 // Wall-clock deadline for the whole run; ctx.fetch caps each bridge call at the
@@ -63,7 +67,10 @@ async function runToolRequest() {
     try {
       isolate?.dispose();
     } catch {}
-    writeFrame({ t: "error", error: "custom tool isolate execution timed out" });
+    writeFrame({
+      t: "error",
+      error: "custom tool isolate execution timed out",
+    });
   }, timeoutMs);
 
   try {
@@ -101,7 +108,10 @@ async function runPoolWorker() {
   // Deliberately small: acquireWorker prefers a worker that already holds the
   // tenant, so most workers only ever need one, and every cached isolate is
   // resident memory in a pod that has 1 GiB for everything.
-  const cacheCap = Number.isFinite(cacheCapRaw) && cacheCapRaw > 0 ? Math.max(1, cacheCapRaw) : 2;
+  const cacheCap =
+    Number.isFinite(cacheCapRaw) && cacheCapRaw > 0
+      ? Math.max(1, cacheCapRaw)
+      : 2;
   const cache = new Map(); // tenantId -> { isolate, lastCpu: bigint }
   writeFrame({ t: "ready" });
   for await (const line of readLines(process.stdin)) {
@@ -126,7 +136,10 @@ async function handlePoolRun(request, cache, cacheCap) {
   let watchdog;
   try {
     if (!entry) {
-      entry = { isolate: new ivm.Isolate({ memoryLimit: memoryLimitMb() }), lastCpu: 0n };
+      entry = {
+        isolate: new ivm.Isolate({ memoryLimit: memoryLimitMb() }),
+        lastCpu: 0n,
+      };
     }
     // LRU touch + bound the per-worker isolate cache.
     cache.delete(tenantId);
@@ -153,7 +166,8 @@ async function handlePoolRun(request, cache, cacheCap) {
 
     const result = await runIsolateJob(isolate, payload, {
       timeoutMs: timeoutMs,
-      emitChunk: (output) => writeFrame({ t: "chunk", callId: callId, output: output }),
+      emitChunk: (output) =>
+        writeFrame({ t: "chunk", callId: callId, output: output }),
       emitLog: makeLogEmitter(callId),
       registerAbort: (fire) => {
         activeAbort = fire;
@@ -167,7 +181,13 @@ async function handlePoolRun(request, cache, cacheCap) {
     const cpuNow = readCpuTimeNs(isolate);
     const cpuMs = Number(cpuNow - entry.lastCpu) / 1e6;
     entry.lastCpu = cpuNow;
-    writeFrame({ t: "meter", callId: callId, tenantId: tenantId, toolName: payload.toolName, cpuMs: cpuMs });
+    writeFrame({
+      t: "meter",
+      callId: callId,
+      tenantId: tenantId,
+      toolName: payload.toolName,
+      cpuMs: cpuMs,
+    });
     writeFrame({ t: "final", callId: callId, result: result });
   } catch (error) {
     poisoned = true;
@@ -187,7 +207,11 @@ async function handlePoolRun(request, cache, cacheCap) {
 // Runs one tool bundle on the given isolate in a FRESH context and returns its
 // result; the caller owns isolate lifetime and terminal frames. Shared by the
 // one-shot and pooled paths so the security-critical setup lives in one place.
-async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, registerAbort }) {
+async function runIsolateJob(
+  isolate,
+  payload,
+  { timeoutMs, emitChunk, emitLog, registerAbort },
+) {
   const bundleSource = decodeBundle(payload);
   const actualSha = createHash("sha256").update(bundleSource).digest("hex");
   if (actualSha !== payload.expectedSha256) {
@@ -330,16 +354,23 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, 
       globalThis.__abortSignal = __abortController.signal;
       globalThis.__abort = (reason) => __abortController.abort(reason);`,
       [
-        new ivm.ExternalCopy(asPlainRecord(payload.config, "config")).copyInto(),
+        new ivm.ExternalCopy(
+          asPlainRecord(payload.config, "config"),
+        ).copyInto(),
         new ivm.ExternalCopy(payload.input).copyInto(),
-        new ivm.Callback((url, init) => bridgeFetchSync(url, init), { sync: true }),
+        new ivm.Callback((url, init) => bridgeFetchSync(url, init), {
+          sync: true,
+        }),
         // unref: stray timers must not keep the runner alive after the final
         // frame; a fire on a disposed/released context rejects and is swallowed.
         new ivm.Callback(
           (id, ms) => {
-            const timer = setTimeout(() => {
-              fireTimer?.apply(undefined, [id]).catch(() => {});
-            }, Math.min(ms, 60_000));
+            const timer = setTimeout(
+              () => {
+                fireTimer?.apply(undefined, [id]).catch(() => {});
+              },
+              Math.min(ms, 60_000),
+            );
             timer.unref?.();
           },
           { ignored: true },
@@ -368,8 +399,15 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, 
     await context.evalClosure(
       WEB_GLOBALS_SOURCE,
       [
-        new ivm.Callback((input, base, key, value) => parseUrl(input, base, key, value), { sync: true }),
-        new ivm.Callback((length) => Array.from(randomBytes(Math.min(Number(length) || 0, 65_536))), { sync: true }),
+        new ivm.Callback(
+          (input, base, key, value) => parseUrl(input, base, key, value),
+          { sync: true },
+        ),
+        new ivm.Callback(
+          (length) =>
+            Array.from(randomBytes(Math.min(Number(length) || 0, 65_536))),
+          { sync: true },
+        ),
       ],
       { timeout: 1_000 },
     );
@@ -381,7 +419,9 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, 
       void abortRun.apply(undefined, [], { timeout: 1_000 }).catch(() => {});
     });
 
-    const module = await isolate.compileModule(bundleSource.toString("utf8"), { filename: "tool.mjs" });
+    const module = await isolate.compileModule(bundleSource.toString("utf8"), {
+      filename: "tool.mjs",
+    });
     await module.instantiate(context, (specifier) => {
       throw new Error(`custom tool isolate bundles cannot import ${specifier}`);
     });
@@ -407,16 +447,23 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, 
     } else {
       entry = await definition.get("execute", { reference: true });
       if (!entry || entry.typeof !== "function") {
-        throw new Error("custom tool bundle default export must expose execute(input, options)");
+        throw new Error(
+          "custom tool bundle default export must expose execute(input, options)",
+        );
       }
       const definitionName = await definition.get("name", { copy: true });
       if (definitionName && definitionName !== payload.toolName) {
-        throw new Error("custom tool bundle name does not match uploaded manifest");
+        throw new Error(
+          "custom tool bundle name does not match uploaded manifest",
+        );
       }
     }
 
     await context.global.set("__execute", entry.derefInto());
-    await context.global.set("__emitChunk", new ivm.Callback((output) => emitChunk(output), { sync: true }));
+    await context.global.set(
+      "__emitChunk",
+      new ivm.Callback((output) => emitChunk(output), { sync: true }),
+    );
     if (typeof payload.hookEvent === "string") {
       // A hook returns a single value; also read back ctx.state so the host can
       // persist any run-scoped state the hook mutated for the next fire-point.
@@ -472,7 +519,8 @@ async function runIsolateJob(isolate, payload, { timeoutMs, emitChunk, emitLog, 
 function readCpuTimeNs(isolate) {
   const value = isolate.cpuTime;
   if (typeof value === "bigint") return value;
-  if (Array.isArray(value)) return BigInt(value[0]) * 1_000_000_000n + BigInt(value[1]);
+  if (Array.isArray(value))
+    return BigInt(value[0]) * 1_000_000_000n + BigInt(value[1]);
 
   return 0n;
 }
@@ -495,26 +543,35 @@ function bridgeFetchSync(url, init) {
   // spawnSync blocks the event loop, so the runner's own timeout timer cannot
   // fire mid-fetch. Cap each fetch at the remaining run deadline so ctx.fetch
   // cannot stretch the run past ISOLATE_RUNNER_TIMEOUT_SECONDS.
-  const remainingMs = runDeadlineAt > 0 ? runDeadlineAt - Date.now() : FETCH_TIMEOUT_MS;
+  const remainingMs =
+    runDeadlineAt > 0 ? runDeadlineAt - Date.now() : FETCH_TIMEOUT_MS;
   if (remainingMs <= 0) {
     throw new Error("custom tool isolate execution timed out");
   }
-  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--fetch-bridge"], {
-    input: JSON.stringify({ url: url, init: init }),
-    encoding: "utf8",
-    timeout: Math.min(FETCH_TIMEOUT_MS, remainingMs),
-    maxBuffer: BODY_LIMIT_BYTES + 64 * 1024,
-    env: process.env,
-  });
+  const child = spawnSync(
+    process.execPath,
+    [fileURLToPath(import.meta.url), "--fetch-bridge"],
+    {
+      input: JSON.stringify({ url: url, init: init }),
+      encoding: "utf8",
+      timeout: Math.min(FETCH_TIMEOUT_MS, remainingMs),
+      maxBuffer: BODY_LIMIT_BYTES + 64 * 1024,
+      env: process.env,
+    },
+  );
   if (child.error) {
     throw child.error;
   }
   if (child.status !== 0) {
-    throw new Error((child.stderr || child.stdout || "fetch bridge failed").trim());
+    throw new Error(
+      (child.stderr || child.stdout || "fetch bridge failed").trim(),
+    );
   }
   const parsed = JSON.parse(child.stdout);
   if (!parsed.ok) {
-    throw new Error(typeof parsed.error === "string" ? parsed.error : "fetch bridge failed");
+    throw new Error(
+      typeof parsed.error === "string" ? parsed.error : "fetch bridge failed",
+    );
   }
 
   return parsed.result;
@@ -526,7 +583,9 @@ async function runFetchBridgeHelper() {
     const result = await guardedFetch(url, init);
     process.stdout.write(JSON.stringify({ ok: true, result: result }));
   } catch (error) {
-    process.stdout.write(JSON.stringify({ ok: false, error: errorMessage(error) }));
+    process.stdout.write(
+      JSON.stringify({ ok: false, error: errorMessage(error) }),
+    );
     process.exitCode = 1;
   }
 }
@@ -612,7 +671,8 @@ function makeLogEmitter(callId) {
         t: "log",
         ...tag,
         level: "warn",
-        message: "console output budget for this call is spent; later lines are dropped",
+        message:
+          "console output budget for this call is spent; later lines are dropped",
       });
 
       return;

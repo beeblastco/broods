@@ -55,6 +55,9 @@ jobs:
         # failure is not read as a type error.
         run: bun run lint
 
+      - name: Format check
+        run: bun run format:check
+
       - name: Typecheck
         run: bun run check
 

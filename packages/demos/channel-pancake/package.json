@@ -1,7 +1,7 @@
 {
   "name": "@broods/demo-channel-pancake",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "dev": "broods dev --project channel-pancake",

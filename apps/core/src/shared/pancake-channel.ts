@@ -80,10 +80,10 @@ export function createPancakeActions(
   return {
     sendText: (text) =>
       sendPancakeMessage(pageAccessToken, source, text, senderId),
-    sendTyping: async function() {
+    sendTyping: async function () {
       return;
     },
-    reactToMessage: async function() {
+    reactToMessage: async function () {
       return;
     },
   };
@@ -100,13 +100,13 @@ export function createPancakeChannel(
   return {
     name: "pancake",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return req.method === "POST";
     },
 
     // Pancake sends no signature header; the webhook URL carries the secret as
     // a ?secret= query parameter instead.
-    authenticate: function(req) {
+    authenticate: function (req) {
       const provided = new URLSearchParams(req.rawQueryString).get("secret");
 
       return (
@@ -114,7 +114,7 @@ export function createPancakeChannel(
       );
     },
 
-    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       return parsePancakeWebhook(
         req,
         pageId,
@@ -123,7 +123,7 @@ export function createPancakeChannel(
       );
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       return createPancakeActions(
         pageAccessToken,
         toPancakeSource(msg.source),

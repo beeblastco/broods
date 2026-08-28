@@ -64,7 +64,7 @@ const config: Config = {
     function generatedModulesWebpackMode() {
       return {
         name: "generated-modules-webpack-mode",
-        configureWebpack: function() {
+        configureWebpack: function () {
           return {
             module: {
               rules: [

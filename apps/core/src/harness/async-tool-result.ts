@@ -55,7 +55,10 @@ export function verifyAsyncToolCompletionToken(
   resultId: string,
   completionToken: string,
 ): Promise<boolean> {
-  return runtime.query("getAsyncToolToken", { resultId: resultId, completionToken: completionToken });
+  return runtime.query("getAsyncToolToken", {
+    resultId: resultId,
+    completionToken: completionToken,
+  });
 }
 export async function getDetachedAsyncToolGroup(
   parentEventId: string,
@@ -92,7 +95,9 @@ export async function sealDetachedAsyncToolGroup(
 export function listAsyncToolResultsByParentEvent(
   parentEventId: string,
 ): Promise<AsyncToolResultRecord[]> {
-  return runtime.query("listAsyncToolResults", { parentEventId: parentEventId });
+  return runtime.query("listAsyncToolResults", {
+    parentEventId: parentEventId,
+  });
 }
 export function getAsyncToolResult(
   resultId: string,

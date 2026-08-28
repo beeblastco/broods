@@ -35,37 +35,34 @@ function candidate(): IngressCandidate {
 }
 
 describe("ingress admission payloads", () => {
-  it(
-    "remembers channel delivery as a session target",
-    async (): Promise<void> => {
-      let call: Record<string, unknown> | undefined;
-      runtime.mutate = (async (
-        _name: string,
-        args: Record<string, unknown>,
-      ): Promise<{ outcome: "owner"; ownerGeneration: number }> => {
-        call = args;
+  it("remembers channel delivery as a session target", async (): Promise<void> => {
+    let call: Record<string, unknown> | undefined;
+    runtime.mutate = (async (
+      _name: string,
+      args: Record<string, unknown>,
+    ): Promise<{ outcome: "owner"; ownerGeneration: number }> => {
+      call = args;
 
-        return { outcome: "owner", ownerGeneration: 1 };
-      }) as never;
-      const agentConfig = { channels: { telegram: { botToken: "secret" } } };
+      return { outcome: "owner", ownerGeneration: 1 };
+    }) as never;
+    const agentConfig = { channels: { telegram: { botToken: "secret" } } };
 
-      await acceptIngress({
-        ...candidate(),
-        agentConfig: agentConfig,
-        delivery: {
-          kind: "channel",
-          channel: "telegram",
-          source: { chatId: "chat-1" },
-        },
-      });
-
-      expect(call?.channelTarget).toEqual({
-        agentConfig: agentConfig,
-        channelName: "telegram",
+    await acceptIngress({
+      ...candidate(),
+      agentConfig: agentConfig,
+      delivery: {
+        kind: "channel",
+        channel: "telegram",
         source: { chatId: "chat-1" },
-      });
-    },
-  );
+      },
+    });
+
+    expect(call?.channelTarget).toEqual({
+      agentConfig: agentConfig,
+      channelName: "telegram",
+      source: { chatId: "chat-1" },
+    });
+  });
 
   it("persists per-request execution context and covers it in the digest", async () => {
     const calls: Array<Record<string, unknown>> = [];
@@ -135,8 +132,7 @@ describe("session messages", (): void => {
     const prepared = await prepareSessionMessage({
       accountId: "acct_test",
       agentId: "agent_test",
-      sourceConversationKey:
-        "acct:acct_test:agent:agent_test:tg:source-chat",
+      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
       input: {
         conversationKey: "tg:target-chat",
         message: "Please follow up",
@@ -168,56 +164,49 @@ describe("session messages", (): void => {
     expect(prepared.publicConversationKey).toBe("tg:target-chat");
   });
 
-  it(
-    "rejects the current conversation and another agent's conversation",
-    async (): Promise<void> => {
-      const options = {
+  it("rejects the current conversation and another agent's conversation", async (): Promise<void> => {
+    const options = {
+      accountId: "acct_test",
+      agentId: "agent_test",
+      sourceConversationKey: "acct:acct_test:agent:agent_test:tg:source-chat",
+    };
+
+    await expect(
+      prepareSessionMessage({
+        ...options,
+        input: { conversationKey: "tg:source-chat", message: "loop" },
+      }),
+    ).rejects.toThrow("cannot target the current conversation");
+    await expect(
+      prepareSessionMessage({
+        ...options,
+        input: {
+          conversationKey:
+            "acct:acct_test:agent:agent_other:tg:another-conversation",
+          message: "cross-agent",
+        },
+      }),
+    ).rejects.toThrow("must belong to the current agent");
+  });
+
+  it("refuses a chat that has never messaged the bot", async (): Promise<void> => {
+    // No coordinator row means no stored channel target, which is every group
+    // the bot was added to but that has not spoken yet.
+    runtime.query = async function <T>(): Promise<T> {
+      return null as T;
+    };
+
+    await expect(
+      prepareSessionMessage({
         accountId: "acct_test",
         agentId: "agent_test",
         sourceConversationKey:
-          "acct:acct_test:agent:agent_test:tg:source-chat",
-      };
-
-      await expect(
-        prepareSessionMessage({
-          ...options,
-          input: { conversationKey: "tg:source-chat", message: "loop" },
-        }),
-      ).rejects.toThrow("cannot target the current conversation");
-      await expect(
-        prepareSessionMessage({
-          ...options,
-          input: {
-            conversationKey:
-              "acct:acct_test:agent:agent_other:tg:another-conversation",
-            message: "cross-agent",
-          },
-        }),
-      ).rejects.toThrow("must belong to the current agent");
-    },
-  );
-
-  it(
-    "refuses a chat that has never messaged the bot",
-    async (): Promise<void> => {
-      // No coordinator row means no stored channel target, which is every group
-      // the bot was added to but that has not spoken yet.
-      runtime.query = async function <T>(): Promise<T> {
-        return null as T;
-      };
-
-      await expect(
-        prepareSessionMessage({
-          accountId: "acct_test",
-          agentId: "agent_test",
-          sourceConversationKey:
-            "acct:acct_test:agent:agent_test:zalo:zgr-internal",
-          input: {
-            conversationKey: "zalo:zgr-silent-group",
-            message: "Chương trình Trung Thu",
-          },
-        }),
-      ).rejects.toThrow("not an existing channel session");
-    },
-  );
+          "acct:acct_test:agent:agent_test:zalo:zgr-internal",
+        input: {
+          conversationKey: "zalo:zgr-silent-group",
+          message: "Chương trình Trung Thu",
+        },
+      }),
+    ).rejects.toThrow("not an existing channel session");
+  });
 });

@@ -23,7 +23,7 @@ try {
     { name: snapshotName, image: image },
     {
       timeout: 0,
-      onLogs: function(chunk) {
+      onLogs: function (chunk) {
         process.stdout.write(chunk);
       },
     },

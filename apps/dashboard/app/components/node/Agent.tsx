@@ -42,7 +42,8 @@ function isStructuredOutputEnabled(outputFormat: unknown): boolean {
 export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
   const nodeData = data as BaseNodeData;
   const agentConfigId = nodeData.agentConfigId as
-    Id<"agentConfigs"> | undefined;
+    | Id<"agentConfigs">
+    | undefined;
   const healthStatus = useAgentHealth(agentConfigId);
   const agentConfig = useQuery(
     api.agent.config.getById,

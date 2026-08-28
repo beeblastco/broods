@@ -45,9 +45,9 @@ function observability(accountId: string): ObservabilityContext {
 
 // emit() writes every level to stdout as one JSON line, so stdout is where a
 // host log line can be read back with the context it was emitted under.
-async function captureEmitted(fn: () => Promise<void>): Promise<
-  Array<Record<string, unknown>>
-> {
+async function captureEmitted(
+  fn: () => Promise<void>,
+): Promise<Array<Record<string, unknown>>> {
   const lines: Array<Record<string, unknown>> = [];
   const original = process.stdout.write.bind(process.stdout);
   process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => {
@@ -199,9 +199,8 @@ describe("user logs through the isolate paths", () => {
     if (savedPool === undefined) delete process.env.ISOLATE_POOL;
     else process.env.ISOLATE_POOL = savedPool;
     setObservabilityContext(null);
-    const { shutdownIsolatePool } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { shutdownIsolatePool } =
+      await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
     for (const dir of created.splice(0))
       await rm(dir, { recursive: true, force: true });
@@ -229,9 +228,8 @@ describe("user logs through the isolate paths", () => {
     process.env.ISOLATE_POOL = "0";
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
-    const { streamIsolatePayload } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
     const outputs: unknown[] = [];
     const emitted = await captureEmitted(async () => {
       await runWithObservabilityScope(async () => {
@@ -280,9 +278,8 @@ describe("user logs through the isolate paths", () => {
     delete process.env.ISOLATE_POOL;
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
-    const { shutdownIsolatePool, streamIsolatePayload } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { shutdownIsolatePool, streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
 
     const outputs: unknown[] = [];
@@ -305,9 +302,9 @@ describe("user logs through the isolate paths", () => {
     expect(line?.traceId).toBe("trace_1");
     // A frame stamped with a different call must never be emitted here: this
     // run's context would publish it to this tenant's subject.
-    expect(
-      emitted.some((e) => e.message === "LEAKED FROM ANOTHER RUN"),
-    ).toBe(false);
+    expect(emitted.some((e) => e.message === "LEAKED FROM ANOTHER RUN")).toBe(
+      false,
+    );
   });
 
   // A runner that logs and then dies used to look like it had answered, because
@@ -323,9 +320,8 @@ describe("user logs through the isolate paths", () => {
     process.env.ISOLATE_POOL = "0";
     process.env.ISOLATE_RUNNER_PATH = stubPath;
 
-    const { streamIsolatePayload } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { streamIsolatePayload } =
+      await import("../src/harness/isolate/executor.ts");
 
     await captureEmitted(async () => {
       const drain = async (): Promise<void> => {

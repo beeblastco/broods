@@ -9,7 +9,12 @@ Broods uses [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapt
 Define a Telegram connection with `defineTelegramConnection`, name the chats it answers in with `defineTelegramChannel`, and attach the connection to an agent:
 
 ```ts title="broods/index.ts"
-import { defineAgent, defineTelegramChannel, defineTelegramConnection, env } from "broods";
+import {
+  defineAgent,
+  defineTelegramChannel,
+  defineTelegramConnection,
+  env,
+} from "broods";
 
 export const telegram = defineTelegramConnection({
   botToken: env("TELEGRAM_BOT_TOKEN"),
