@@ -457,13 +457,16 @@ function SpanDetails({
     ([key]) => !DETAIL_KEYS.has(key),
   );
 
+  // minmax(0,1fr) lets the grid track shrink below its content's min-content
+  // width; without it a long unbroken run in a payload widens the track past
+  // the table and the text spills off the tinted background.
   return (
     <div
-      className="grid gap-3 border-l-2 border-border/50 bg-background/50 py-3 pr-4"
+      className="grid grid-cols-[minmax(0,1fr)] gap-3 border-l-2 border-border/50 bg-background/50 py-3 pr-4"
       style={{ paddingLeft: depth * 18 + 28 }}
     >
       {(span.kind === "task" || span.kind === "cron") && (
-        <div className="text-[11px] font-mono text-muted-foreground">
+        <div className="break-all text-[11px] font-mono text-muted-foreground">
           trace: {span.traceId} · agent: {span.agentId ?? "unknown"} ·{" "}
           {span.conversationKey ?? "no conversation"}
         </div>
@@ -516,19 +519,21 @@ function SpanDetails({
       {/* Flat sections: a clickable header row over a soft-tinted payload surface.
           No bordered card around each one — that nested box-in-box otherwise. */}
       {details.length > 0 && (
-        <div className="divide-y divide-border/40 rounded-md bg-card/30">
+        <div className="min-w-0 divide-y divide-border/40 rounded-md bg-card/30">
           {details.map(({ key, label, value }) => (
             <details key={key} className="group/detail">
               <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground">
                 <ChevronRight className="size-3 shrink-0 transition-transform group-open/detail:rotate-90" />
-                <span className="flex-1 normal-case tracking-normal">
+                <span className="min-w-0 flex-1 truncate normal-case tracking-normal">
                   {label}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">
                   {value.length.toLocaleString()} chars
                 </span>
               </summary>
-              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-break-word px-3 pb-3 text-xs leading-relaxed text-foreground/90">
+              {/* wrap-anywhere, unlike wrap-break-word, also lowers the min-content
+                  width, so an unbroken token cannot push this box past the panel. */}
+              <pre className="max-h-[50vh] overflow-auto whitespace-pre-wrap wrap-anywhere px-3 pb-3 text-xs leading-relaxed text-foreground/90">
                 {value}
               </pre>
             </details>
