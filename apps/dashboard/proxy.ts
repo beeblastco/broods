@@ -1,10 +1,7 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
 import type { NextMiddlewareResult } from "next/dist/server/web/types";
 import type { NextFetchEvent, NextRequest } from "next/server";
-
-const redirectUri =
-  process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ??
-  "http://localhost:3000/auth/callback";
+import { redirectUri } from "@/app/lib/authConfig";
 const authProxy = authkitProxy({
   redirectUri: redirectUri,
   middlewareAuth: {
