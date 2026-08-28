@@ -117,11 +117,11 @@ union across its workspaces:
 
 Plus the agent-level cases:
 
-| Agent references                                         | Tools exposed                                                                  |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Agent references                                         | Tools exposed                                                                 |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | sandbox, **no** workspace                                | `bash` only — a fresh container each call, unless the sandbox is `persistent` |
-| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)            |
-| neither sandbox nor workspace                            | none                                                                           |
+| sandbox + workspaces that all borrow a **different** one | the workspace tools, plus a `bash` `sandbox: true` flag (see below)           |
+| neither sandbox nor workspace                            | none                                                                          |
 
 For mounted workspaces, every provider should expose the same model-facing filesystem:
 `bash` starts in the selected workspace directory and the file tools take paths relative to
