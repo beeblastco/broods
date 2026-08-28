@@ -76,7 +76,7 @@ async function seedServer(
     stageId: scope.stageId,
     name: name,
     url: SERVER_URL,
-    headers: { Authorization: 'Bearer env("SEARCH_TOKEN")' },
+    headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
   });
 }
 
@@ -188,7 +188,7 @@ describe("normalizeMcpInput", () => {
         name: "search",
         description: "Company search backend.",
         url: SERVER_URL,
-        headers: { Authorization: 'Bearer env("SEARCH_TOKEN")' },
+        headers: { Authorization: "Bearer ${SEARCH_TOKEN}" },
         allowedTools: ["query", "fetch_doc"],
       },
       { requireConnection: true },
@@ -215,6 +215,38 @@ describe("normalizeMcpInput", () => {
         ),
       ).toThrow("name must be");
     }
+  });
+
+  test("rejects inline secrets in credential headers", () => {
+    expect(() =>
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { Authorization: "Bearer sk-live-1234" },
+        },
+        { requireConnection: true },
+      ),
+    ).toThrow("headers values for Authorization must reference");
+    expect(() =>
+      normalizeMcpInput(
+        {
+          name: "search",
+          url: SERVER_URL,
+          headers: { "X-Api-Key": "raw-secret" },
+        },
+        { requireConnection: true },
+      ),
+    ).toThrow("headers values for X-Api-Key must reference");
+  });
+
+  test("rejects urls embedding credentials", () => {
+    expect(() =>
+      normalizeMcpInput(
+        { name: "search", url: "https://user:pass@mcp.example.com/mcp" },
+        { requireConnection: true },
+      ),
+    ).toThrow("url must not embed credentials");
   });
 
   test("rejects non-http urls and header injection", () => {

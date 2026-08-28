@@ -3,9 +3,13 @@
  * normalizer serves both write paths (CLI sync and dashboard) the way
  * `normalizeAccountToolUpload` does for tools. Rows describe an external MCP
  * server that core connects to over the stateless HTTP transport, spec
- * 2026-07-28 only. Auth header values may be env("NAME") refs; they resolve
- * into the encrypted agent config at sync time, never on this row.
+ * 2026-07-28 only. Auth header values may carry ${NAME} account env refs;
+ * they resolve into the encrypted agent config at sync time, never on this
+ * row, and credential-bearing headers must use one instead of an inline
+ * secret.
  */
+
+import { ACCOUNT_ENV_PLACEHOLDER_PATTERN } from "./agentConfigCodec";
 
 const MAX_ALLOWED_TOOLS = 256;
 const MAX_DESCRIPTION_LENGTH = 2000;
@@ -15,6 +19,16 @@ const MAX_URL_LENGTH = 2048;
 
 /** RFC 9110 field-name token characters. */
 const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
+
+/** Headers whose values carry credentials and so must use a ${NAME} ref. */
+const SENSITIVE_HEADER_NAMES = new Set([
+  "api-key",
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "x-api-key",
+  "x-auth-token",
+]);
 
 /**
  * Server names become the `server__tool` namespace prefix inside provider
@@ -131,6 +145,14 @@ function normalizeHeaders(value: unknown): Record<string, string> {
         `headers values must be single-line strings of at most ${MAX_HEADER_VALUE_LENGTH} characters`,
       );
     }
+    if (
+      SENSITIVE_HEADER_NAMES.has(name.toLowerCase()) &&
+      !ACCOUNT_ENV_PLACEHOLDER_PATTERN.test(headerValue)
+    ) {
+      throw new Error(
+        `headers values for ${name} must reference an account env var like \${NAME}, not an inline secret`,
+      );
+    }
     headers[name] = headerValue;
   }
 
@@ -161,6 +183,11 @@ function normalizeUrl(value: unknown): string {
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("url must use http or https");
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    throw new Error(
+      "url must not embed credentials; put them in headers as ${NAME} refs",
+    );
   }
 
   return value;

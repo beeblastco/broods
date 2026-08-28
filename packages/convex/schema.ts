@@ -256,7 +256,7 @@ export const accountToolsFields = {
 /**
  * Registered external MCP server (issue #331 phase 1). Core connects over the
  * stateless HTTP transport, spec 2026-07-28 only. Rows are stage-scoped from
- * day one; header values may be env("NAME") refs resolved into the encrypted
+ * day one; header values may be ${NAME} env refs resolved into the encrypted
  * agent config at sync time, so secrets never sit on this row.
  */
 export const mcpFields = {

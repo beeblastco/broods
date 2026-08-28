@@ -14,7 +14,7 @@ import { isPlainObject } from "./objects";
 
 // Non-global so `.test()` carries no lastIndex state; global clones are built
 // where iteration/replacement needs them.
-const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
+export const ACCOUNT_ENV_PLACEHOLDER_PATTERN = /\$\{([A-Z][A-Z0-9_]*)\}/;
 const ACCOUNT_ENV_PLACEHOLDER_PATTERN_G = new RegExp(
   ACCOUNT_ENV_PLACEHOLDER_PATTERN.source,
   "g",

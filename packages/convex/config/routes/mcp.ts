@@ -2,7 +2,7 @@
  * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
  * collection, get/patch/delete by id. No bundle path — phase 1 rows describe
  * an external server core connects to; secrets stay in account env vars as
- * env("NAME") refs on the header values.
+ * ${NAME} refs on the header values.
  */
 
 import { type ActionCtx } from "../../_generated/server";
@@ -56,6 +56,8 @@ export async function handleMcpRoute(
     });
     await writeAudit(ctx, {
       accountId: accountId,
+      projectId: existing.projectId,
+      stageId: existing.stageId,
       actor: actor,
       action: "deleted",
       resource: { kind: "mcp", id: existing._id, name: existing.name },
@@ -114,6 +116,8 @@ async function handleMcpCollectionRoute(
     if (created) {
       await writeAudit(ctx, {
         accountId: accountId,
+        projectId: created.projectId,
+        stageId: created.stageId,
         actor: actor,
         action: "created",
         resource: { kind: "mcp", id: created._id, name: created.name },
@@ -168,6 +172,8 @@ async function patchMcpRoute(
   if (updated) {
     await writeAudit(ctx, {
       accountId: accountId,
+      projectId: updated.projectId,
+      stageId: updated.stageId,
       actor: actor,
       action: "updated",
       resource: { kind: "mcp", id: updated._id, name: updated.name },
