@@ -52,6 +52,18 @@ interface InstanceSecrets {
   serviceAuth: string;
 }
 
+interface PerfRecord {
+  at: string;
+  command: string;
+  steps: PerfStep[];
+  totalMs: number;
+}
+
+interface PerfStep {
+  ms: number;
+  step: string;
+}
+
 interface InstanceState {
   adminKey?: string;
   convexSourceHash?: string;
@@ -90,6 +102,7 @@ switch (command) {
 
 async function up(options: { fresh: boolean }): Promise<void> {
   const startedAt = Date.now();
+  const perf: PerfStep[] = [];
   if (options.fresh) {
     await down({ purge: true });
   }
@@ -98,52 +111,71 @@ async function up(options: { fresh: boolean }): Promise<void> {
     `[${state.instanceId}] gateway :${state.ports.gateway} core :${state.ports.core} convex :${state.ports.convexApi}/${state.ports.convexSite}`,
   );
 
-  ensureConvexContainer(state);
-  await waitForHttp(
-    `http://127.0.0.1:${state.ports.convexApi}/version`,
-    "convex backend",
-  );
+  await measureStep(perf, "convex container", async () => {
+    ensureConvexContainer(state);
+    await waitForHttp(
+      `http://127.0.0.1:${state.ports.convexApi}/version`,
+      "convex backend",
+    );
+  });
 
   if (!state.adminKey) {
-    state.adminKey = generateConvexAdminKey(state);
-    saveState(state);
+    await measureStep(perf, "admin key", async () => {
+      state.adminKey = generateConvexAdminKey(state);
+      saveState(state);
+    });
   }
 
   if (!state.deploymentEnvConfigured) {
-    configureDeploymentEnv(state);
-    state.deploymentEnvConfigured = true;
-    saveState(state);
+    await measureStep(perf, "deployment env", async () => {
+      configureDeploymentEnv(state);
+      state.deploymentEnvConfigured = true;
+      saveState(state);
+    });
   }
 
-  const sourceHash = convexSourceHash();
+  const sourceHash = await measureStep(perf, "convex source hash", async () =>
+    convexSourceHash(),
+  );
   if (state.convexSourceHash !== sourceHash) {
     console.log("deploying convex functions (packages/convex changed)...");
-    runConvexCli(state, ["deploy", "-y"]);
-    state.convexSourceHash = sourceHash;
-    saveState(state);
+    await measureStep(perf, "convex deploy", async () => {
+      runConvexCli(state, ["deploy", "-y"]);
+      state.convexSourceHash = sourceHash;
+      saveState(state);
+    });
   } else {
     console.log("convex functions unchanged, skipping deploy");
   }
 
-  startCore(state);
-  startGateway(state);
-  saveState(state);
-
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
-  await waitForHttp(`${gatewayUrl}/healthz`, "gateway");
-  await waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core");
-  // The gateway answers /healthz itself, so prove the proxied chain too: any
-  // HTTP status from /v1/agents means gateway -> convex round-tripped (401 is
-  // the expected unauthenticated answer); only a network error is a failure.
-  await waitForHttp(`${gatewayUrl}/v1/agents`, "config plane via gateway", {
-    acceptAnyStatus: true,
+  await measureStep(perf, "start core + gateway", async () => {
+    startCore(state);
+    startGateway(state);
+    saveState(state);
   });
 
-  const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-  console.log(`\nstack up in ${elapsed}s`);
+  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  await measureStep(perf, "health checks", async () => {
+    await waitForHttp(`${gatewayUrl}/healthz`, "gateway");
+    await waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core");
+    // The gateway answers /healthz itself, so prove the proxied chain too: any
+    // HTTP status from /v1/agents means gateway -> convex round-tripped (401 is
+    // the expected unauthenticated answer); only a network error is a failure.
+    await waitForHttp(`${gatewayUrl}/v1/agents`, "config plane via gateway", {
+      acceptAnyStatus: true,
+    });
+  });
+
+  const totalMs = Date.now() - startedAt;
+  recordPerf(state.instanceId, "up", perf, totalMs);
+  printPerfBreakdown(perf, totalMs);
+  console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
   console.log(`  gateway   ${gatewayUrl}`);
   console.log(`  admin     Bearer ${state.secrets.adminAccount}`);
   console.log(`  logs      ${join(instanceDir(state.instanceId), "logs")}`);
+  console.log(
+    `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
+  );
   console.log(`\nnext: bun scripts/local-stack.ts verify`);
 }
 
@@ -200,6 +232,18 @@ async function status(): Promise<void> {
     `http://127.0.0.1:${state.ports.gateway}/healthz`,
   );
   console.log(`healthz   ${health ?? "unreachable"}`);
+
+  const coreRss = processRssMb(state.pids.core);
+  const gatewayRss = processRssMb(state.pids.gateway);
+  if (coreRss || gatewayRss) {
+    console.log(
+      `memory    core ${coreRss ?? "?"} MB, gateway ${gatewayRss ?? "?"} MB, convex ${containerMemory(containerName(instanceId)) ?? "?"}`,
+    );
+  }
+
+  for (const line of lastPerfSummaries(instanceId)) {
+    console.log(`perf      ${line}`);
+  }
 }
 
 /**
@@ -215,83 +259,105 @@ async function verify(): Promise<void> {
     process.exit(1);
   }
 
+  const startedAt = Date.now();
+  const perf: PerfStep[] = [];
   const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
   const runId = Date.now().toString(36);
   const modelKey = process.env.ANTHROPIC_API_KEY;
 
-  const health = await probeHttp(`${gatewayUrl}/healthz`);
-  assertStep("gateway healthz", health === 200, `status ${health}`);
-
-  const accountResponse = await httpJson(`${gatewayUrl}/accounts`, {
-    method: "POST",
-    token: state.secrets.adminAccount,
-    body: { username: `smoke-${runId}` },
+  await measureStep(perf, "gateway healthz", async () => {
+    const health = await probeHttp(`${gatewayUrl}/healthz`);
+    assertStep("gateway healthz", health === 200, `status ${health}`);
   });
-  const accountSecret = (accountResponse.body as { secret?: string }).secret;
-  assertStep(
-    "create account (core, admin bearer)",
-    accountResponse.status === 201 && typeof accountSecret === "string",
-    `status ${accountResponse.status}: ${JSON.stringify(accountResponse.body)}`,
-  );
 
-  const agentResponse = await httpJson(`${gatewayUrl}/v1/agents`, {
-    method: "POST",
-    token: accountSecret as string,
-    body: {
-      name: `smoke-${runId}`,
-      config: {
-        model: {
-          provider: "anthropic",
-          modelId: "claude-haiku-4-5-20251001",
+  const accountSecret = await measureStep(perf, "create account", async () => {
+    const response = await httpJson(`${gatewayUrl}/accounts`, {
+      method: "POST",
+      token: state.secrets.adminAccount,
+      body: { username: `smoke-${runId}` },
+    });
+    const secret = (response.body as { secret?: string }).secret;
+    assertStep(
+      "create account (core, admin bearer)",
+      response.status === 201 && typeof secret === "string",
+      `status ${response.status}: ${JSON.stringify(response.body)}`,
+    );
+
+    return secret as string;
+  });
+
+  const agentId = await measureStep(perf, "create agent", async () => {
+    const response = await httpJson(`${gatewayUrl}/v1/agents`, {
+      method: "POST",
+      token: accountSecret,
+      body: {
+        name: `smoke-${runId}`,
+        config: {
+          model: {
+            provider: "anthropic",
+            modelId: "claude-haiku-4-5-20251001",
+          },
+          provider: {
+            anthropic: { apiKey: modelKey ?? "sk-ant-local-smoke-no-key" },
+          },
+          instructions: "Reply with the single word OK.",
         },
-        provider: {
-          anthropic: { apiKey: modelKey ?? "sk-ant-local-smoke-no-key" },
-        },
-        instructions: "Reply with the single word OK.",
       },
-    },
+    });
+    const created = (response.body as { agentId?: string }).agentId;
+    assertStep(
+      "create agent (config plane via gateway)",
+      response.status === 201 && typeof created === "string",
+      `status ${response.status}: ${JSON.stringify(response.body)}`,
+    );
+
+    return created as string;
   });
-  const agentId = (agentResponse.body as { agentId?: string }).agentId;
-  assertStep(
-    "create agent (config plane via gateway)",
-    agentResponse.status === 201 && typeof agentId === "string",
-    `status ${agentResponse.status}: ${JSON.stringify(agentResponse.body)}`,
-  );
 
   const eventId = `smoke-${runId}`;
-  const asyncResponse = await httpJson(`${gatewayUrl}/async`, {
-    method: "POST",
-    token: accountSecret as string,
-    body: {
-      agentId: agentId,
-      eventId: eventId,
-      conversationKey: `smoke-${runId}`,
-      events: [{ role: "user", content: [{ type: "text", text: "Say OK." }] }],
-    },
-  });
-  assertStep(
-    "start async run (core via gateway)",
-    asyncResponse.status === 202,
-    `status ${asyncResponse.status}: ${JSON.stringify(asyncResponse.body)}`,
-  );
-
-  const statusUrl = `${gatewayUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId as string)}`;
-  const finalStatus = await pollRunStatus(statusUrl, accountSecret as string);
-  if (modelKey) {
+  await measureStep(perf, "start async run", async () => {
+    const response = await httpJson(`${gatewayUrl}/async`, {
+      method: "POST",
+      token: accountSecret,
+      body: {
+        agentId: agentId,
+        eventId: eventId,
+        conversationKey: `smoke-${runId}`,
+        events: [
+          { role: "user", content: [{ type: "text", text: "Say OK." }] },
+        ],
+      },
+    });
     assertStep(
-      "run completed with a real model key",
-      finalStatus.status === "completed",
-      JSON.stringify(finalStatus),
+      "start async run (core via gateway)",
+      response.status === 202,
+      `status ${response.status}: ${JSON.stringify(response.body)}`,
     );
-  } else {
+  });
+
+  await measureStep(perf, "run to terminal state", async () => {
+    const statusUrl = `${gatewayUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
+    const finalStatus = await pollRunStatus(statusUrl, accountSecret);
+    if (modelKey) {
+      assertStep(
+        "run completed with a real model key",
+        finalStatus.status === "completed",
+        JSON.stringify(finalStatus),
+      );
+
+      return;
+    }
     assertStep(
       "run reached a terminal state without a model key (chain proven; set ANTHROPIC_API_KEY for a full green run)",
       finalStatus.status === "completed" || finalStatus.status === "failed",
       JSON.stringify(finalStatus),
     );
-  }
+  });
 
-  console.log("\nverify passed");
+  const totalMs = Date.now() - startedAt;
+  recordPerf(state.instanceId, "verify", perf, totalMs);
+  printPerfBreakdown(perf, totalMs);
+  console.log(`\nverify passed in ${(totalMs / 1000).toFixed(1)}s`);
 }
 
 // --- convex backend -----------------------------------------------------
@@ -625,6 +691,95 @@ async function waitForHttp(
   throw new Error(
     `${what} did not become ready within ${HEALTH_TIMEOUT_MS}ms (${url})`,
   );
+}
+
+// --- perf recording -----------------------------------------------------
+
+function containerMemory(name: string): string | null {
+  const output = docker(
+    ["stats", "--no-stream", "--format", "{{.MemUsage}}", name],
+    { allowFailure: true },
+  ).trim();
+
+  return output || null;
+}
+
+function lastPerfSummaries(instanceId: string): string[] {
+  const path = perfLogPath(instanceId);
+  if (!existsSync(path)) return [];
+
+  const records = readFileSync(path, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as PerfRecord);
+  const summaries: string[] = [];
+  for (const command of ["up", "verify"]) {
+    const last = records.findLast((record) => record.command === command);
+    if (last) {
+      summaries.push(
+        `last ${command} ${(last.totalMs / 1000).toFixed(1)}s (${last.at})`,
+      );
+    }
+  }
+
+  return summaries;
+}
+
+async function measureStep<T>(
+  perf: PerfStep[],
+  step: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  const result = await fn();
+  perf.push({ ms: Date.now() - start, step: step });
+
+  return result;
+}
+
+function perfLogPath(instanceId: string): string {
+  return join(instanceDir(instanceId), "perf.jsonl");
+}
+
+function printPerfBreakdown(perf: PerfStep[], totalMs: number): void {
+  console.log("\ntiming:");
+  for (const entry of perf) {
+    console.log(
+      `  ${(entry.ms / 1000).toFixed(2).padStart(7)}s  ${entry.step}`,
+    );
+  }
+  console.log(`  ${(totalMs / 1000).toFixed(2).padStart(7)}s  total`);
+}
+
+function processRssMb(pid: number | undefined): number | null {
+  if (!isProcessAlive(pid)) return null;
+  try {
+    const output = execFileSync("ps", ["-o", "rss=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim();
+
+    return Math.round(Number(output) / 1024);
+  } catch {
+    return null;
+  }
+}
+
+function recordPerf(
+  instanceId: string,
+  command: string,
+  steps: PerfStep[],
+  totalMs: number,
+): void {
+  const record: PerfRecord = {
+    at: new Date().toISOString(),
+    command: command,
+    steps: steps,
+    totalMs: totalMs,
+  };
+  mkdirSync(instanceDir(instanceId), { recursive: true });
+  writeFileSync(perfLogPath(instanceId), `${JSON.stringify(record)}\n`, {
+    flag: "a",
+  });
 }
 
 // --- instance state -----------------------------------------------------
