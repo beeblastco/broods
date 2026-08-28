@@ -1,19 +1,18 @@
 {
   "name": "@broods/dashboard",
-  "description": "Broods dashboard frontend.",
   "version": "0.1.0",
   "private": true,
+  "description": "Broods dashboard frontend.",
+  "homepage": "https://github.com/beeblastco/broods",
   "repository": {
     "type": "git",
     "url": "https://github.com/beeblastco/broods.git"
   },
-  "homepage": "https://github.com/beeblastco/broods",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "check": "tsc --noEmit",
-    "format": "prettier --write \"**/*.{css,js,json,md,mjs,ts,tsx}\"",
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
@@ -38,7 +37,6 @@
     "lucide-react": "^1.32.0",
     "next": "16.3.1",
     "next-themes": "^0.4.6",
-    "prettier": "^3.9.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-file-icon": "^1.6.0",

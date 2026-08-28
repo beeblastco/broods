@@ -1,27 +1,21 @@
 {
   "name": "broods",
-  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind Broods.",
-  "type": "module",
   "private": true,
-  "engines": {
-    "bun": ">=1.4.0-canary.1"
-  },
+  "description": "Serverless, multi-account AI agent harness built on AWS Lambda and Bun. The open-source engine behind Broods.",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
-  "overrides": {
-    "@types/node": "26.2.0",
-    "stripe": "22.5.0",
-    "tar": "7.5.22",
-    "webpack": "5.109.2"
-  },
+  "type": "module",
   "scripts": {
     "build": "bun run --filter @broods/core build",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "lint:types": "oxlint --type-aware",
-    "check": "bun run lint && bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter @broods/discord-forwarder check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run scripts:check",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "bun run lint && bun run format:check && bun run --filter @broods/core check && bun run --filter @broods/convex check && bun run --filter @broods/gateway check && bun run --filter @broods/dashboard check && bun run --filter @broods/discord-forwarder check && bun run --filter broods check && bun run --filter @broods/ai-sdk-sandbox check && bun run scripts:check",
+    "prepare": "git config core.hooksPath .githooks",
     "deps:check": "bun scripts/dependency-watch.ts",
     "scripts:check": "tsc -p scripts/tsconfig.json",
     "test": "bun run --filter @broods/core test && bun run --filter @broods/convex test",
@@ -33,8 +27,18 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "oxfmt": "^0.65.0",
     "oxlint": "^1.79.0",
     "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "@types/node": "26.2.0",
+    "stripe": "22.5.0",
+    "tar": "7.5.22",
+    "webpack": "5.109.2"
+  },
+  "engines": {
+    "bun": ">=1.4.0-canary.1"
   }
 }

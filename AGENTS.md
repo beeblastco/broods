@@ -36,6 +36,8 @@ outside repo, sibling of checkout:
 ## Code Style
 
 - no new function unless behavior really different from code that already exist. less code that stay maintainable is win. big complex code base = big technical debt.
-- before say done: run package own `bun run check` (lint + types) and `bun run format` (prettier). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
+- before say done: run package own `bun run check` (lint + types) and root `bun run format` (oxfmt). never run raw `tsc` or `bunx tsc --noEmit`, wrong config.
 - lint = oxlint, one `.oxlintrc.json` at root for the whole repo. no eslint, it does not support TS 7. workspace `check` is types only; `bun run lint` at root covers every workspace.
+- format = oxfmt, one `.oxfmtrc.json` at root. no prettier. `bun run format` writes, `bun run format:check` gates CI and pre-commit. `**/_generated/**` is ignored so convex codegen output stays byte-identical to what codegen writes.
+- pre-commit hook in `.githooks/` runs oxlint + oxfmt --check on staged files. root `prepare` script wires it (`git config core.hooksPath .githooks`); it is skipped when install runs with `--ignore-scripts`, CI catches those.
 - `bun run lint:types` is the type-aware pass (oxlint-tsgolint). not in `check` yet, it still has a backlog. do not add new findings.

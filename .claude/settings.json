@@ -6,9 +6,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.ts|*.tsx|*.mts|*.mjs|*.jsx|*.js) out=$(bunx oxlint --format=unix \"$f\" 2>/dev/null); if [ -n \"$out\" ]; then echo \"$out\" >&2; exit 2; fi;; esac",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.ts|*.tsx|*.mts|*.mjs|*.jsx|*.js|*.json|*.jsonc|*.md|*.yml|*.yaml) bunx oxfmt \"$f\" >/dev/null 2>&1;; esac; case \"$f\" in *.ts|*.tsx|*.mts|*.mjs|*.jsx|*.js) out=$(bunx oxlint --format=unix \"$f\" 2>/dev/null); if [ -n \"$out\" ]; then echo \"$out\" >&2; exit 2; fi;; esac",
             "timeout": 30,
-            "statusMessage": "oxlint on edited file"
+            "statusMessage": "oxfmt + oxlint on edited file"
           }
         ]
       }
