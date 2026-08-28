@@ -1,6 +1,6 @@
 {
   "name": "broods",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
   "keywords": [
     "agents",
