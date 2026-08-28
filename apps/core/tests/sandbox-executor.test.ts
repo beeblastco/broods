@@ -209,7 +209,8 @@ const execBodies = (): string[] =>
     .map(
       (call) =>
         JSON.parse((call[1] as { body: string }).body).code as
-          string | undefined,
+          | string
+          | undefined,
     )
     .filter((code): code is string => typeof code === "string");
 const microvmRunInput = (): Record<string, unknown> => {

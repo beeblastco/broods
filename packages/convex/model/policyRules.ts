@@ -40,7 +40,12 @@ export interface PolicyCondition {
 }
 
 export type PolicyConditionOperator =
-  "equals" | "notEquals" | "in" | "notIn" | "prefix" | "contains";
+  | "equals"
+  | "notEquals"
+  | "in"
+  | "notIn"
+  | "prefix"
+  | "contains";
 
 /**
  * Versioned policy document accepted by account-management CRUD.

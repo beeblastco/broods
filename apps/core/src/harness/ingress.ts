@@ -281,7 +281,6 @@ export function applySteering(options: {
   ownerEventId: string;
   ownerGeneration: number;
 }): Promise<AppliedIngress | null> {
-
   return runtime.mutate("applyIngressSteering", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,
@@ -294,7 +293,6 @@ export function getConversationDispatchTarget(options: {
   agentId: string;
   conversationKey: string;
 }): Promise<ConversationDispatchTarget | null> {
-
   return runtime.query("getConversationTarget", options);
 }
 
@@ -304,7 +302,6 @@ export function getIngressStatus(options: {
   agentId: string;
   eventId: string;
 }): Promise<IngressStatusRecord | null> {
-
   return runtime.query("getIngressStatus", options);
 }
 
@@ -317,7 +314,6 @@ export function settleIngress(options: {
   result?: unknown;
   error?: string;
 }): Promise<number> {
-
   return runtime.mutate("settleIngress", options);
 }
 
@@ -327,7 +323,6 @@ export function takeNextIngress(options: {
   ownerEventId: string;
   ownerGeneration: number;
 }): Promise<AppliedIngress | null> {
-
   return runtime.mutate("takeNextIngress", {
     ...options,
     leaseTtlMs: DEFAULT_CONVERSATION_LEASE_TTL_MS,

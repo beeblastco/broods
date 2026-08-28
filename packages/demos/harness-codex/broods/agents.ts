@@ -30,7 +30,8 @@ export const codingAgent = defineAgent({
     reasoning: "medium",
   },
   agent: {
-    system: "You are a coding agent. Inspect and edit files in your sandbox when useful.",
+    system:
+      "You are a coding agent. Inspect and edit files in your sandbox when useful.",
   },
   publicAccess: true,
 });

@@ -1645,7 +1645,8 @@ export async function runAgentLoop(
     },
   };
   let harnessRuntime:
-    ReturnType<typeof createConfiguredHarnessAgent> | undefined;
+    | ReturnType<typeof createConfiguredHarnessAgent>
+    | undefined;
   let harnessLeaseAbort: AbortController | undefined;
   let stream: ReturnType<typeof streamText>;
   const usesAiSdkHarness = agentConfig.harness !== undefined;

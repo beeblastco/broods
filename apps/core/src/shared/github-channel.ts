@@ -69,7 +69,10 @@ export interface GitHubSource {
   pullNumber?: number;
   commentId?: number;
   target:
-    "issue" | "issue_comment" | "pull_request" | "pull_request_review_comment";
+    | "issue"
+    | "issue_comment"
+    | "pull_request"
+    | "pull_request_review_comment";
 }
 
 interface GitHubWebhookPayload {
@@ -119,18 +122,18 @@ export function createGitHubChannel(
   return {
     name: "github",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return "x-github-event" in req.headers;
     },
 
-    authenticate: function(req) {
+    authenticate: function (req) {
       return github.verifyWebhookSignature(
         req.body,
         req.headers["x-hub-signature-256"],
       );
     },
 
-    parse: function(req): ChannelParseResult | Promise<ChannelParseResult> {
+    parse: function (req): ChannelParseResult | Promise<ChannelParseResult> {
       const event = req.headers["x-github-event"];
       const deliveryId = req.headers["x-github-delivery"];
       const payload = JSON.parse(req.body) as GitHubWebhookPayload;
@@ -227,7 +230,7 @@ export function createGitHubChannel(
       }
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       return createGitHubActions(
         appId,
         privateKey,
@@ -405,7 +408,7 @@ async function createGitHubRestClient(options: {
   }
 
   return {
-    get: async function<T>(path: string): Promise<T> {
+    get: async function <T>(path: string): Promise<T> {
       const response = await fetch(`${baseApiUrl}${path}`, {
         method: "GET",
         headers: {
@@ -467,7 +470,9 @@ async function hydrateGitHubThreadContext(options: {
       currentCommentCreatedAt: options.currentCommentCreatedAt,
     });
 
-    return content ? { role: "system", content: content, persist: false } : null;
+    return content
+      ? { role: "system", content: content, persist: false }
+      : null;
   } catch (error) {
     logWarn(
       "GitHub thread context hydration failed; continuing with current comment only",
@@ -508,11 +513,11 @@ function createGitHubActions(
   });
 
   return {
-    sendText: async function(text) {
+    sendText: async function (text) {
       await github.postMessage(source.threadId, { markdown: text });
     },
 
-    sendTyping: async function() {
+    sendTyping: async function () {
       await github.startTyping(source.threadId);
     },
 
@@ -675,9 +680,7 @@ function githubIdentity(
     ...(owner ? { workspaceRef: owner } : {}),
     channelId: repoFullName,
     threadId: String(resourceNumber),
-    ...(sender?.login
-      ? { userId: sender.login, userName: sender.login }
-      : {}),
+    ...(sender?.login ? { userId: sender.login, userName: sender.login } : {}),
   };
 }
 

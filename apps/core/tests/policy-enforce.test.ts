@@ -54,7 +54,7 @@ const seenAuthHeaders: Array<string | null> = [];
 const seenPolicyInputs: unknown[] = [];
 const server = Bun.serve({
   port: 0,
-  fetch: async function(request) {
+  fetch: async function (request) {
     seenAuthHeaders.push(request.headers.get("authorization"));
     const body = await request.json().catch(() => undefined);
     seenPolicyInputs.push(

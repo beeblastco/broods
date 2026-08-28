@@ -110,7 +110,10 @@ describe.skipIf(!ENABLED)(
         });
 
         const path = `${session.defaultWorkingDirectory}/broods-harness-live.txt`;
-        await session.writeTextFile({ path: path, content: "live-file-content" });
+        await session.writeTextFile({
+          path: path,
+          content: "live-file-content",
+        });
         await expect(session.readTextFile({ path: path })).resolves.toBe(
           "live-file-content",
         );
@@ -123,7 +126,9 @@ describe.skipIf(!ENABLED)(
       } finally {
         if (session) await session.destroy!();
         else {
-          await createSandboxExecutor(compute).release?.({ reservationKey: reservationKey });
+          await createSandboxExecutor(compute).release?.({
+            reservationKey: reservationKey,
+          });
         }
       }
 

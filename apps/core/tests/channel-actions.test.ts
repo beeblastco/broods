@@ -848,7 +848,12 @@ describe("slack channel actions", () => {
 
   it("skips Slack reactions without a message timestamp and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createSlackChannel("bot-token", "signing-secret", null, null);
+    const adapter = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      null,
+    );
     const actions = adapter.actions(
       createMessage({
         teamId: "T1",
@@ -871,7 +876,12 @@ describe("slack channel actions", () => {
 
   it("throws on Slack response_url and Web API failures", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createSlackChannel("bot-token", "signing-secret", null, null);
+    const adapter = createSlackChannel(
+      "bot-token",
+      "signing-secret",
+      null,
+      null,
+    );
 
     const responseUrlActions = adapter.actions(
       createMessage({
@@ -979,7 +989,13 @@ describe("pancake channel actions", () => {
 
   it("throws on Pancake API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createPancakeChannel("page-1", "page-token", "hook-secret", null, null);
+    const adapter = createPancakeChannel(
+      "page-1",
+      "page-token",
+      "hook-secret",
+      null,
+      null,
+    );
     const actions = adapter.actions(
       createMessage({
         pageId: "page-1",
@@ -1018,11 +1034,9 @@ describe("zalo channel actions", () => {
       jsonResponse({ ok: true, result: true }),
     );
 
-    const actions = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedChannelIds: null },
-    ).actions(
+    const actions = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: null,
+    }).actions(
       createMessage({
         chatId: "chat-1",
         chatType: "PRIVATE",
@@ -1093,11 +1107,9 @@ describe("zalo channel actions", () => {
 
   it("throws on Zalo API failures and rejects invalid source payloads", async () => {
     const fetchMock = installFetchMock();
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedChannelIds: null },
-    );
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: null,
+    });
     const actions = adapter.actions(
       createMessage({
         chatId: "chat-1",

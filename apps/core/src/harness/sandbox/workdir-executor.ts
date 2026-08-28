@@ -564,14 +564,16 @@ export class WorkdirSandboxExecutor implements SandboxExecutor {
 
   async #acquire(
     request:
-      SandboxRunRequest | { namespace?: string; reservationKey?: string },
+      | SandboxRunRequest
+      | { namespace?: string; reservationKey?: string },
   ): Promise<Sandbox> {
     return (await this.#acquireWithState(request)).sandbox;
   }
 
   async #acquireWithState(
     request:
-      SandboxRunRequest | { namespace?: string; reservationKey?: string },
+      | SandboxRunRequest
+      | { namespace?: string; reservationKey?: string },
   ): Promise<WorkdirHarnessReservation> {
     if (!this.#persistent(request)) {
       return {

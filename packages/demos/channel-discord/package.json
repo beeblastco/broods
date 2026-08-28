@@ -1,7 +1,7 @@
 {
   "name": "@broods/demo-channel-discord",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "register": "bun register.ts",

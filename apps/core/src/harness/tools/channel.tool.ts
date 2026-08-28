@@ -96,9 +96,8 @@ export function sendFilesTool(context: ChannelToolContext): ToolSet {
           return toolError("Error: no workspace attached");
         }
         const files = await Promise.all(
-          file_paths.map(
-            (path): Promise<ChannelFile> =>
-              workspaceAttachment("file", ws, path, accountId),
+          file_paths.map((path): Promise<ChannelFile> =>
+            workspaceAttachment("file", ws, path, accountId),
           ),
         );
         const transformed = await context.transformText(caption ?? "");
@@ -340,9 +339,8 @@ async function resolveImages(
     }
 
     return await Promise.all(
-      filePaths.map(
-        (path): Promise<ChannelImage> =>
-          workspaceAttachment("image", ws, path, accountId),
+      filePaths.map((path): Promise<ChannelImage> =>
+        workspaceAttachment("image", ws, path, accountId),
       ),
     );
   }

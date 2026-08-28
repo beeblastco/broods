@@ -84,12 +84,12 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
       ...(workspaceProp ? { workspace: workspaceProp as JSONSchema7 } : {}),
       ...(standaloneSandbox
         ? {
-          sandbox: {
-            type: "boolean",
-            description:
-              "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
-          } as JSONSchema7,
-        }
+            sandbox: {
+              type: "boolean",
+              description:
+                "Run on your own sandbox with no workspace mounted, instead of in a workspace. Nothing written there reaches durable storage, so use it for throwaway work. Mutually exclusive with `workspace`.",
+            } as JSONSchema7,
+          }
         : {}),
       pty: {
         type: "boolean",
@@ -98,12 +98,12 @@ function inputSchema(context: SandboxToolContext): JSONSchema7 {
       },
       ...(backgroundAvailable(context)
         ? {
-          background: {
-            type: "boolean",
-            description:
-              "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
-          } as JSONSchema7,
-        }
+            background: {
+              type: "boolean",
+              description:
+                "Run the command as a detached background job in the reserved sandbox and return immediately with a statusId. Use for long-running tasks in the background. The result is delivered back into the conversation automatically when the job finishes; you can also check progress meanwhile with async_status.",
+            } as JSONSchema7,
+          }
         : {}),
     },
     required: ["command"],
@@ -264,9 +264,9 @@ async function dispatchBackground(
   const baseUrl = getHarnessPublicUrl();
   const callback: SandboxJobCallback | undefined = baseUrl
     ? {
-      url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`,
-      token: completionToken,
-    }
+        url: `${baseUrl}/sandbox-jobs/${encodeURIComponent(resultId)}/complete`,
+        token: completionToken,
+      }
     : undefined;
   if (!callback && !sandboxSupportsJobControls(ws.sandbox)) {
     return toolError(
@@ -309,7 +309,7 @@ async function dispatchBackground(
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause);
     await markAsyncToolResultFailed({ resultId: resultId, error: error }).catch(
-      () => { },
+      () => {},
     );
 
     return toolError(`Error: failed to start background job: ${error}`);
@@ -331,7 +331,7 @@ async function dispatchBackground(
   return toolText(
     // We use statusId for model facing, but the database saved record as resultId for consistency with async tool results in general (not just status updates).
     `Started background job ${jobId} (statusId: ${resultId}). ${delivery} ` +
-    controls,
+      controls,
   );
 }
 
@@ -373,11 +373,11 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
           }
           const outsideWorkspace = ws
             ? outsideWorkspaceCommand(trimmed, {
-              persistentOwnSandbox: writesOutsideAllowed(
-                ws,
-                context.agentSandbox,
-              ),
-            })
+                persistentOwnSandbox: writesOutsideAllowed(
+                  ws,
+                  context.agentSandbox,
+                ),
+              })
             : undefined;
           if (outsideWorkspace) {
             return toolError(outsideWorkspace);
@@ -413,7 +413,9 @@ export default function bashTool(context: SandboxToolContext): ToolSet {
             ),
           );
         } catch (cause) {
-          return toolError(cause instanceof Error ? cause.message : String(cause));
+          return toolError(
+            cause instanceof Error ? cause.message : String(cause),
+          );
         }
       },
     }),

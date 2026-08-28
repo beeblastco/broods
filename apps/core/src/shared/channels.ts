@@ -11,7 +11,8 @@ import type { ChannelReplyIn } from "./domain/channel-record.ts";
 export const CHANNEL_REACH_WILDCARD = "*";
 
 export type ChannelIngressEvent =
-  UserModelMessage | (SystemModelMessage & { persist?: false });
+  | UserModelMessage
+  | (SystemModelMessage & { persist?: false });
 
 /**
  * A document or picture handed to a channel for delivery. This is the Chat

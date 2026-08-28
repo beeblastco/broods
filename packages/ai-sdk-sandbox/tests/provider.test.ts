@@ -23,38 +23,38 @@ describe("BroodsSandboxProvider", () => {
       get ports() {
         return ports;
       },
-      runCommand: async function(options) {
+      runCommand: async function (options) {
         calls.push({ operation: "runCommand", input: options });
 
         return { exitCode: 0, stdout: "/workspace\n", stderr: "" };
       },
-      writeFile: async function(options) {
+      writeFile: async function (options) {
         calls.push({ operation: "writeFile", input: options });
       },
-      getPortUrl: async function(options) {
+      getPortUrl: async function (options) {
         calls.push({ operation: "getPortUrl", input: options });
 
         return `wss://sandbox.example.test:${options.port}`;
       },
-      setNetworkPolicy: async function(policy) {
+      setNetworkPolicy: async function (policy) {
         calls.push({ operation: "setNetworkPolicy", input: policy });
       },
-      setPorts: async function(nextPorts, options) {
+      setPorts: async function (nextPorts, options) {
         calls.push({
           operation: "setPorts",
           input: { ports: nextPorts, options: options },
         });
         ports = [...nextPorts];
       },
-      stop: async function() {
+      stop: async function () {
         calls.push({ operation: "stop" });
       },
-      destroy: async function() {
+      destroy: async function () {
         calls.push({ operation: "destroy" });
       },
     });
     const driver: BroodsSandboxDriver = {
-      createSession: async function(options) {
+      createSession: async function (options) {
         calls.push({ operation: "createSession", input: options });
 
         return { session: session, isFirstCreate: true };
@@ -153,26 +153,28 @@ describe("BroodsSandboxProvider", () => {
     const process = fakeProcess();
     const runFailure = new Error("command failed in driver");
     const session = fakeSession({
-      runCommand: async function(options) {
+      runCommand: async function (options) {
         commandCalls.push(options);
         if (options.command === "fail") throw runFailure;
 
         return { exitCode: 7, stdout: "out", stderr: "err" };
       },
-      spawnCommand: async function(options) {
+      spawnCommand: async function (options) {
         commandCalls.push(options);
 
         return process;
       },
-      readFile: async function({ path }) {
+      readFile: async function ({ path }) {
         return path === "/missing" ? null : encoder.encode("one\ntwo\nthree\n");
       },
-      writeFile: async function(options) {
+      writeFile: async function (options) {
         writes.push(options);
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
     });
     const sandbox = await provider.createSession();
 
@@ -217,17 +219,19 @@ describe("BroodsSandboxProvider", () => {
     let cancelReason: unknown;
     let writes = 0;
     const session = fakeSession({
-      writeFile: async function() {
+      writeFile: async function () {
         writes += 1;
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
     });
     const sandbox = await provider.createSession();
     const controller = new AbortController();
     const content = new ReadableStream<Uint8Array>({
-      cancel: function(reason) {
+      cancel: function (reason) {
         cancelReason = reason;
 
         return new Promise<void>(() => {});
@@ -257,16 +261,18 @@ describe("BroodsSandboxProvider", () => {
       releaseStop = resolve;
     });
     const session = fakeSession({
-      stop: async function() {
+      stop: async function () {
         stops += 1;
         await stopGate;
       },
-      destroy: async function() {
+      destroy: async function () {
         destroys += 1;
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
     });
     const sandbox = await provider.createSession();
 
@@ -291,7 +297,7 @@ describe("BroodsSandboxProvider", () => {
           session: fakeSession(),
           isFirstCreate: true,
         }),
-        resumeSession: async function(options) {
+        resumeSession: async function (options) {
           resumeCalls.push(options);
 
           return resumed;
@@ -340,12 +346,14 @@ describe("BroodsSandboxProvider", () => {
     const setupFailure = new Error("bootstrap failed");
     let destroys = 0;
     const session = fakeSession({
-      destroy: async function() {
+      destroy: async function () {
         destroys += 1;
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
     });
 
     await expect(
@@ -362,12 +370,14 @@ describe("BroodsSandboxProvider", () => {
     const setupFailure = new Error("bootstrap failed");
     const cleanupFailure = new Error("cleanup failed");
     const session = fakeSession({
-      destroy: async function() {
+      destroy: async function () {
         throw cleanupFailure;
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
     });
 
     const error = await provider
@@ -394,12 +404,14 @@ describe("BroodsSandboxProvider", () => {
     const session = fakeSession({
       getPortUrl: undefined,
       destroy: undefined,
-      stop: async function() {
+      stop: async function () {
         stops += 1;
       },
     });
     const provider = createBroodsSandbox({
-      driver: { createSession: async () => ({ session: session, isFirstCreate: true }) },
+      driver: {
+        createSession: async () => ({ session: session, isFirstCreate: true }),
+      },
       providerId: "broods-no-network",
     });
     const sandbox = await provider.createSession();
@@ -427,18 +439,18 @@ function fakeSession(
     description: "Fake Broods sandbox",
     defaultWorkingDirectory: "/workspace",
     ports: [],
-    runCommand: async function() {
+    runCommand: async function () {
       return { exitCode: 0, stdout: "", stderr: "" };
     },
-    spawnCommand: async function() {
+    spawnCommand: async function () {
       return fakeProcess();
     },
-    readFile: async function() {
+    readFile: async function () {
       return null;
     },
-    writeFile: async function() {},
-    stop: async function() {},
-    destroy: async function() {},
+    writeFile: async function () {},
+    stop: async function () {},
+    destroy: async function () {},
   };
   Object.defineProperties(session, Object.getOwnPropertyDescriptors(overrides));
 
@@ -450,16 +462,16 @@ function fakeProcess(): Experimental_SandboxProcess {
     pid: 123,
     stdout: byteStream("stdout"),
     stderr: byteStream("stderr"),
-    wait: async function() {
+    wait: async function () {
       return { exitCode: 0 };
     },
-    kill: async function() {},
+    kill: async function () {},
   };
 }
 
 function byteStream(...chunks: string[]): ReadableStream<Uint8Array> {
   return new ReadableStream({
-    start: function(controller) {
+    start: function (controller) {
       for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
       controller.close();
     },

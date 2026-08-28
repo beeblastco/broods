@@ -18,11 +18,9 @@ import {
 
 describe("zalo channel adapter", () => {
   it("authenticates matching webhook secrets and rejects mismatches", () => {
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedChannelIds: null },
-    );
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: null,
+    });
 
     expect(
       adapter.authenticate(
@@ -44,11 +42,9 @@ describe("zalo channel adapter", () => {
   });
 
   it("normalizes text webhook events into direct conversations", async () => {
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedChannelIds: null },
-    );
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: null,
+    });
     const parsed = await adapter.parse(
       createZaloRequest(
         validUpdate({
@@ -86,11 +82,9 @@ describe("zalo channel adapter", () => {
   });
 
   it("accepts wrapped Zalo API webhook envelopes", async () => {
-    const adapter = createZaloChannel(
-      "bot-token",
-      "zalo-secret",
-      { allowedChannelIds: null },
-    );
+    const adapter = createZaloChannel("bot-token", "zalo-secret", {
+      allowedChannelIds: null,
+    });
     const parsed = await adapter.parse(
       createZaloRequest({
         ok: true,
@@ -229,7 +223,9 @@ describe("zalo channel adapter", () => {
     ).toBe("message");
     expectIgnoreReason(
       await adapter.parse(
-        createZaloRequest(validUpdate({ chatType: "GROUP", chatId: "group-9" })),
+        createZaloRequest(
+          validUpdate({ chatType: "GROUP", chatId: "group-9" }),
+        ),
       ),
       "chat_not_allowed:group-9",
     );
@@ -483,10 +479,7 @@ function createZaloRequest(
   };
 }
 
-function expectIgnoreReason(
-  parsed: ChannelParseResult,
-  reason: string,
-): void {
+function expectIgnoreReason(parsed: ChannelParseResult, reason: string): void {
   expect(parsed.kind).toBe("ignore");
   if (parsed.kind !== "ignore") {
     throw new Error("Expected Zalo webhook to be ignored");

@@ -275,7 +275,8 @@ test("keeps a zero-buffer processing attach open for future live frames", async 
   const encoder = new TextEncoder();
   let consumerClosed = false;
   let consumerOptions:
-    { deliver_policy?: DeliverPolicy; opt_start_seq?: number } | undefined;
+    | { deliver_policy?: DeliverPolicy; opt_start_seq?: number }
+    | undefined;
   const streamEvent = (sequence: number, data: Record<string, unknown>) => ({
     seq: sequence,
     data: encoder.encode(

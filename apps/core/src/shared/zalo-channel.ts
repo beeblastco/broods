@@ -92,7 +92,7 @@ export function createZaloActions(
   source: ZaloSource,
 ): ChannelActions {
   return {
-    sendText: async function(text) {
+    sendText: async function (text) {
       for (const chunk of chunkZaloText(text)) {
         await callZaloApi(botToken, "sendMessage", {
           chat_id: source.chatId,
@@ -103,7 +103,7 @@ export function createZaloActions(
     // No sendFiles: the Zalo Bot API is sendMessage, sendPhoto, sendSticker and
     // sendChatAction, with no document endpoint to attach anything to. Leaving
     // it off is what routes `send-files` to its download-link fallback.
-    sendImages: async function(images, caption): Promise<void> {
+    sendImages: async function (images, caption): Promise<void> {
       // Zalo has no album, so a batch goes out as consecutive photos with the
       // caption on the first: repeating it would read as the same message sent
       // once per picture.
@@ -124,7 +124,7 @@ export function createZaloActions(
         });
       }
     },
-    sendSticker: async function(sticker): Promise<void> {
+    sendSticker: async function (sticker): Promise<void> {
       const value = sticker.trim();
       if (!value) {
         throw new Error("Zalo sendSticker needs a sticker id or name");
@@ -134,7 +134,7 @@ export function createZaloActions(
         sticker: value,
       });
     },
-    sendTyping: async function() {
+    sendTyping: async function () {
       await callZaloApi(botToken, "sendChatAction", {
         chat_id: source.chatId,
         action: "typing",
@@ -156,18 +156,18 @@ export function createZaloChannel(
   return {
     name: "zalo",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return req.method === "POST";
     },
 
-    authenticate: function(req) {
+    authenticate: function (req) {
       return verifyWebhookSecret(
         req.headers["x-bot-api-secret-token"],
         webhookSecret,
       );
     },
 
-    parse: function(req): ChannelParseResult {
+    parse: function (req): ChannelParseResult {
       const update = unwrapZaloUpdate(JSON.parse(req.body) as unknown);
       const eventName =
         typeof update.event_name === "string"
@@ -175,7 +175,6 @@ export function createZaloChannel(
           : "missing";
       const missingContentReason = ZALO_MESSAGE_EVENTS[eventName];
       if (!missingContentReason) {
-
         return ignoreZaloUpdate(update, `unsupported_event:${eventName}`);
       }
 
@@ -186,30 +185,24 @@ export function createZaloChannel(
       const messageId = message?.message_id;
       const chatType = message?.chat?.chat_type;
       if (!messageId) {
-
         return ignoreZaloUpdate(update, "missing_message_id");
       }
       if (!chatId) {
-
         return ignoreZaloUpdate(update, "missing_chat_id");
       }
       if (!senderId) {
-
         return ignoreZaloUpdate(update, "missing_sender_id");
       }
       if (!content) {
-
         return ignoreZaloUpdate(update, missingContentReason);
       }
       if (!isZaloChatType(chatType)) {
-
         return ignoreZaloUpdate(
           update,
           `unsupported_chat_type:${chatType ?? "missing"}`,
         );
       }
       if (message?.from?.is_bot) {
-
         return ignoreZaloUpdate(update, "bot_message");
       }
       if (!isAllowedId(allowedChannelIds, chatId)) {
@@ -253,7 +246,7 @@ export function createZaloChannel(
       };
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       return createZaloActions(botToken, toZaloSource(msg.source));
     },
   };
@@ -293,12 +286,11 @@ async function callZaloApi(
 
 function chunkZaloText(text: string): string[] {
   if (text.length === 0) {
-
     return [""];
   }
 
   const chunks: string[] = [];
-  for (let offset = 0; offset < text.length; ) {
+  for (let offset = 0; offset < text.length;) {
     let end = Math.min(offset + ZALO_TEXT_LIMIT, text.length);
     const previousCodeUnit = text.charCodeAt(end - 1);
     const nextCodeUnit = text.charCodeAt(end);
@@ -399,7 +391,6 @@ function isZaloChatType(value: unknown): value is ZaloChatType {
 
 function parseJsonBody(text: string): ZaloApiResponse | null {
   if (!text) {
-
     return null;
   }
 
@@ -457,7 +448,6 @@ function verifyWebhookSecret(
   secret: string,
 ): boolean {
   if (!header) {
-
     return false;
   }
   const actual = Buffer.from(header);
@@ -468,7 +458,6 @@ function verifyWebhookSecret(
 
 function zaloHttpUrl(raw: unknown): string | null {
   if (typeof raw !== "string" || !URL.canParse(raw)) {
-
     return null;
   }
   const url = new URL(raw);
@@ -488,15 +477,13 @@ function zaloMessageContent(
     typeof message?.caption === "string" ? message.caption.trim() : "";
   switch (eventName) {
     case "message.text.received": {
-      const text =
-        typeof message?.text === "string" ? message.text.trim() : "";
+      const text = typeof message?.text === "string" ? message.text.trim() : "";
 
       return text || null;
     }
     case "message.image.received": {
       const photo = zaloHttpUrl(message?.photo);
       if (!photo) {
-
         return null;
       }
 
@@ -515,13 +502,12 @@ function zaloMessageContent(
     case "message.voice.received": {
       const voice = zaloHttpUrl(message?.voice_url);
       if (!voice) {
-
         return null;
       }
       // An audio type Zalo never sends goes over as a link, so the turn survives
       // instead of failing at the provider.
-      const isVoiceNote = new URL(voice)
-        .pathname.toLowerCase()
+      const isVoiceNote = new URL(voice).pathname
+        .toLowerCase()
         .endsWith(ZALO_VOICE_EXTENSION);
 
       return isVoiceNote
@@ -535,7 +521,6 @@ function zaloMessageContent(
         : [{ type: "text", text: `Voice message: ${voice}` }];
     }
     default:
-
       return null;
   }
 }

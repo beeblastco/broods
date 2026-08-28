@@ -232,7 +232,7 @@ function processFileStream(
   let cancelled = false;
   const completed = Promise.withResolvers<void>();
   const stream = new ReadableStream<Uint8Array>({
-    start: function(controller) {
+    start: function (controller) {
       void (async () => {
         let offset = 0;
         try {
@@ -267,7 +267,7 @@ function processFileStream(
         }
       })();
     },
-    cancel: function() {
+    cancel: function () {
       cancelled = true;
       completed.resolve();
     },

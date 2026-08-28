@@ -232,7 +232,7 @@ export class BroodsWebSocketClient {
 
     return {
       url: url,
-      sendControl: function(message) {
+      sendControl: function (message) {
         if (socket.readyState !== WS_OPEN)
           throw new Error("WebSocket is not open");
         socket.send(JSON.stringify({ type: "control", ...message }));
@@ -286,7 +286,7 @@ export class BroodsWebSocketClient {
 
     return {
       url: url,
-      sendControl: function(message) {
+      sendControl: function (message) {
         if (socket.readyState !== WS_OPEN)
           throw new Error("WebSocket is not open");
         socket.send(JSON.stringify({ type: "control", ...message }));
@@ -309,15 +309,15 @@ export class BroodsWebSocketClient {
     };
 
     const subscription = this.subscribe(input, {
-      onMessage: function(message) {
+      onMessage: function (message) {
         queue.push(message);
         wakeReader();
       },
-      onDone: function() {
+      onDone: function () {
         done = true;
         wakeReader();
       },
-      onError: function(nextError) {
+      onError: function (nextError) {
         error = nextError;
         wakeReader();
       },

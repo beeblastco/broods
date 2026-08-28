@@ -1641,7 +1641,12 @@ function printChannelEndpoints(
  * stage holds a value, it just is not provably the local one.
  */
 type EnvRefState =
-  "synced" | "drifted" | "unverified" | "unset" | "stage-only" | "unresolved";
+  | "synced"
+  | "drifted"
+  | "unverified"
+  | "unset"
+  | "stage-only"
+  | "unresolved";
 
 interface EnvRef {
   name: string;

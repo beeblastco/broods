@@ -17,7 +17,8 @@ import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
 type ToolScope =
-  ({ ok: true } & ProjectStageScope) | { ok: false; response: Response };
+  | ({ ok: true } & ProjectStageScope)
+  | { ok: false; response: Response };
 
 /**
  * Tools CRUD: list/create on the collection, get/patch/delete by id. Bundle

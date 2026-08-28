@@ -128,7 +128,7 @@ describe("SubagentCoordinator", () => {
     ];
     const stream = {
       stream: new ReadableStream({
-        start: function(controller) {
+        start: function (controller) {
           for (const part of parts) {
             controller.enqueue(part);
           }
@@ -370,9 +370,9 @@ describe("SubagentCoordinator", () => {
       conversationKey: "subagent-subagent_2",
     });
 
-    await expect(coordinator.waitForIdle({ onHeartbeat: onHeartbeat })).resolves.toBe(
-      "timeout",
-    );
+    await expect(
+      coordinator.waitForIdle({ onHeartbeat: onHeartbeat }),
+    ).resolves.toBe("timeout");
     expect(onHeartbeat).toHaveBeenCalledWith(1);
 
     await expect(
@@ -837,7 +837,10 @@ describe("SubagentCoordinator", () => {
     const internals = coordinator as unknown as CoordinatorInternals;
 
     await internals.drainChildConversation(
-      { releaseConversationLease: releaseConversationLease, takeNextIngress: takeNextIngress } as never,
+      {
+        releaseConversationLease: releaseConversationLease,
+        takeNextIngress: takeNextIngress,
+      } as never,
       persistentChildTask(),
     );
 

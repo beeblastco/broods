@@ -183,7 +183,12 @@ export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
 };
 
 export type ChannelType =
-  "telegram" | "github" | "slack" | "discord" | "pancake" | "zalo";
+  | "telegram"
+  | "github"
+  | "slack"
+  | "discord"
+  | "pancake"
+  | "zalo";
 
 /**
  * A connection is one app install: the credentials an agent needs before a
@@ -205,7 +210,8 @@ export interface ConnectionDefinition<Type extends ChannelType, Config> {
  * speaking in the room.
  */
 export type ChannelAgentInput =
-  AgentResource | { agent: AgentResource; reply?: boolean };
+  | AgentResource
+  | { agent: AgentResource; reply?: boolean };
 
 type RequiredChannelKeys<Config, Keys extends keyof Config> = Required<
   Pick<Config, Keys>

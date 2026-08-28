@@ -46,7 +46,7 @@ export function createAgentLifecycleEmitter(
   );
 
   return {
-    emit: async function(type, payload = {}) {
+    emit: async function (type, payload = {}) {
       // A webhook with no events allow-list receives every event; otherwise only
       // the events it subscribed to.
       const targets = webhooks.filter(

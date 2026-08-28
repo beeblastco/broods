@@ -146,13 +146,15 @@ export async function pushEncryptedConfigToAgentRow(
     maxTurns: config.maxTurns,
     outputFormat: config.outputFormat as Record<string, unknown> | undefined,
     providerOptions: config.providerOptions as
-      Record<string, unknown> | undefined,
+      | Record<string, unknown>
+      | undefined,
     temperature: config.temperature,
     maxTokens: config.maxTokens,
     memoryToolEnabled: config.memoryToolEnabled,
     searchToolEnabled: config.searchToolEnabled,
     searchToolConfig: config.searchToolConfig as
-      Record<string, unknown> | undefined,
+      | Record<string, unknown>
+      | undefined,
     extraConfig: config.extraConfig as Record<string, unknown> | undefined,
   });
   const resolved = substituteEnvPlaceholders(nested, variables);

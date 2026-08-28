@@ -77,7 +77,7 @@ export const commands: CommandHandler[] = [
       names: ["new", "clear"],
       description: "Clear conversation context and start fresh",
     },
-    execute: async function(ctx) {
+    execute: async function (ctx) {
       if (!ctx.accountId || !ctx.agentId || !ctx.eventId) {
         throw new Error("Clear requires account, agent, and event scope");
       }
@@ -137,7 +137,7 @@ export const commands: CommandHandler[] = [
         },
       ],
     },
-    execute: async function() {
+    execute: async function () {
       return "Usage: /steer <message>";
     },
   },
@@ -148,7 +148,7 @@ export const commands: CommandHandler[] = [
       names: ["stop"],
       description: "Stop the active run",
     },
-    execute: async function(ctx) {
+    execute: async function (ctx) {
       if (!ctx.accountId || !ctx.agentId) {
         throw new Error("Stop requires account and agent scope");
       }
@@ -183,7 +183,7 @@ export const commands: CommandHandler[] = [
         },
       ],
     },
-    execute: async function() {
+    execute: async function () {
       return "Usage: /queue <message>";
     },
   },
@@ -194,7 +194,7 @@ export const commands: CommandHandler[] = [
       names: ["help"],
       description: "Show available commands",
     },
-    execute: async function() {
+    execute: async function () {
       const lines = ["Available commands:"];
       for (const cmd of getExecutableCommands()) {
         if (cmd.showInHelp === false) {

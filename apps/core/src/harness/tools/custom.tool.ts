@@ -18,7 +18,8 @@ export default function accountTool(
     [record.name]: tool({
       description: record.description,
       inputSchema: jsonSchema(record.inputSchema),
-      toModelOutput: ({ output }): ToolResultOutput => normalizeToolResultOutput(output),
+      toModelOutput: ({ output }): ToolResultOutput =>
+        normalizeToolResultOutput(output),
       // Declared `async function*` so tool-execute.ts can see this streams. Each
       // yield is a preliminary tool result; the last one is the tool's result.
       execute: async function* (input, options) {

@@ -17,7 +17,12 @@ import { ProjectGeneralPanel } from "./components/ProjectGeneralPanel";
 import { WebhooksPanel } from "./components/WebhooksPanel";
 
 type SettingsTab =
-  "general" | "variables" | "deploy" | "webhooks" | "policies" | "danger";
+  | "general"
+  | "variables"
+  | "deploy"
+  | "webhooks"
+  | "policies"
+  | "danger";
 
 const TABS: Array<{ id: SettingsTab; label: string; danger?: boolean }> = [
   { id: "general", label: "General" },

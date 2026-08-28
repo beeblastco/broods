@@ -1,7 +1,7 @@
 {
   "name": "@broods/demo-agent-hooks",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
     "start": "bun index.ts",

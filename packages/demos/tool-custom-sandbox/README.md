@@ -8,12 +8,12 @@ An uploaded custom tool that needs the **Node runtime**, so it runs in the platf
 
 ## What the tool returns
 
-| field | why it is here |
-| --- | --- |
-| `sha256`, `gzipBytes`, `requestId` | native `node:crypto` / `node:zlib` work |
-| `nodeVersion` | proves a real Node process, not an isolate |
-| `visibleAwsCredentials` | must be `[]` — the runner scrubs every AWS credential from the child env |
-| `tmpModuleFiles` | must be `[]` — the bundle is imported from memory, so it never lands on disk |
+| field                              | why it is here                                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `sha256`, `gzipBytes`, `requestId` | native `node:crypto` / `node:zlib` work                                      |
+| `nodeVersion`                      | proves a real Node process, not an isolate                                   |
+| `visibleAwsCredentials`            | must be `[]` — the runner scrubs every AWS credential from the child env     |
+| `tmpModuleFiles`                   | must be `[]` — the bundle is imported from memory, so it never lands on disk |
 
 The last two are the containment properties from #174, observable from inside a tenant tool. They are also asserted in `apps/core/tests/tool-runner-security.test.ts`.
 

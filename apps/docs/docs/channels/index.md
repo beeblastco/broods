@@ -21,13 +21,13 @@ Customers interact with the provider bot, app, or webhook. They do not receive a
 
 Channel tools are automatic; do not add them to `config.tools`.
 
-| Tool | Use |
-| --- | --- |
-| `send-message` | Message another session |
-| `send-images` | Send images, from workspace files or public URLs |
-| `send-files` | Send workspace documents |
-| `send-sticker` | Send a sticker |
-| `send-reactions` | React to a message |
+| Tool             | Use                                              |
+| ---------------- | ------------------------------------------------ |
+| `send-message`   | Message another session                          |
+| `send-images`    | Send images, from workspace files or public URLs |
+| `send-files`     | Send workspace documents                         |
+| `send-sticker`   | Send a sticker                                   |
+| `send-reactions` | React to a message                               |
 
 `send-message` targets an existing conversation key and runs that session as a follow-up. The other tools appear only when the current channel supports them. `denyTools` can hide any of them.
 
@@ -39,13 +39,13 @@ The two split at the channel boundary, not in the prompt. A provider declares wh
 
 Providers disagree on more than grouping: some fetch a URL you hand them, others accept only an upload. The adapter hides that, and a workspace attachment carries both a sealed link and a reader, so each provider takes whichever it needs and the bytes are read only when one actually uploads.
 
-| Channel | Pictures | Documents | Batch |
-| --- | --- | --- | --- |
-| Telegram | fetches the URL | fetches the URL | album of 2-10, then another |
-| Slack | Block Kit image blocks | uploads bytes (`files.uploadV2`) | one message, one upload |
-| Discord | uploads bytes | uploads bytes | one multipart message |
-| Zalo | fetches the URL | none | one per message |
-| GitHub, Pancake | none | none | text links only |
+| Channel         | Pictures               | Documents                        | Batch                       |
+| --------------- | ---------------------- | -------------------------------- | --------------------------- |
+| Telegram        | fetches the URL        | fetches the URL                  | album of 2-10, then another |
+| Slack           | Block Kit image blocks | uploads bytes (`files.uploadV2`) | one message, one upload     |
+| Discord         | uploads bytes          | uploads bytes                    | one multipart message       |
+| Zalo            | fetches the URL        | none                             | one per message             |
+| GitHub, Pancake | none                   | none                             | text links only             |
 
 Where a provider has no document endpoint at all — Zalo is `sendMessage`, `sendPhoto`, `sendSticker`, `sendChatAction` and nothing else — `send-files` posts the same sealed links as text for the recipient to open, and says so in its tool result so the model does not send them twice.
 
@@ -96,14 +96,14 @@ Webhook handling is split deliberately:
 
 ## Supported Channels
 
-| Channel    | Runtime adapter                                                                                                            | Chat SDK package                                                                 | Required config                                                                     | Documentation                   |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------- |
-| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret` (+ optional `botUsername` for @-mention gating)          | [Telegram Details](telegram.md) |
+| Channel    | Runtime adapter                                                                                                            | Chat SDK package                                                                 | Required config                                                                        | Documentation                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------- |
+| `telegram` | [`src/shared/telegram-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/telegram-channel.ts) | [`@chat-adapter/telegram`](https://www.npmjs.com/package/@chat-adapter/telegram) | `botToken`, `webhookSecret` (+ optional `botUsername` for @-mention gating)            | [Telegram Details](telegram.md) |
 | `github`   | [`src/shared/github-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/github-channel.ts)     | [`@chat-adapter/github`](https://www.npmjs.com/package/@chat-adapter/github)     | `webhookSecret`, `appId`, `privateKey` (+ optional `botUserName` for @-mention gating) | [GitHub Details](github.md)     |
-| `slack`    | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts)       | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)       | `botToken`, `signingSecret`                                                         | [Slack Details](slack.md)       |
-| `discord`  | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts)   | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)   | `botToken`, `publicKey`                                                             | [Discord Details](discord.md)   |
-| `pancake`  | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts)   | Broods-native                                                                    | `pageId`, `pageAccessToken`, `webhookSecret`                                        | [Pancake Details](pancake.md)   |
-| `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret`                                                          | [Zalo Details](zalo.md)         |
+| `slack`    | [`src/shared/slack-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/slack-channel.ts)       | [`@chat-adapter/slack`](https://www.npmjs.com/package/@chat-adapter/slack)       | `botToken`, `signingSecret`                                                            | [Slack Details](slack.md)       |
+| `discord`  | [`src/shared/discord-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/discord-channel.ts)   | [`@chat-adapter/discord`](https://www.npmjs.com/package/@chat-adapter/discord)   | `botToken`, `publicKey`                                                                | [Discord Details](discord.md)   |
+| `pancake`  | [`src/shared/pancake-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/pancake-channel.ts)   | Broods-native                                                                    | `pageId`, `pageAccessToken`, `webhookSecret`                                           | [Pancake Details](pancake.md)   |
+| `zalo`     | [`src/shared/zalo-channel.ts`](https://github.com/beeblastco/broods/blob/dev/apps/core/src/shared/zalo-channel.ts)         | Broods-native                                                                    | `botToken`, `webhookSecret`                                                            | [Zalo Details](zalo.md)         |
 
 ---
 

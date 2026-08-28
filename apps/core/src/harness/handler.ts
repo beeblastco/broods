@@ -170,7 +170,10 @@ let activeInProcessWorkers = 0;
 
 export async function handler(
   event:
-    CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
+    | CoreRequest
+    | AsyncWorkerInvocation
+    | NatsWorkerInvocation
+    | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // Each HTTP request or in-process worker gets a request-private observability
@@ -195,7 +198,10 @@ export async function settleFailedIngressAndDrain(
 
 async function handleRequest(
   event:
-    CoreRequest | AsyncWorkerInvocation | NatsWorkerInvocation | CronInvocation,
+    | CoreRequest
+    | AsyncWorkerInvocation
+    | NatsWorkerInvocation
+    | CronInvocation,
   context?: RequestContext,
 ): Promise<Response> {
   // First entry in this execution environment marks the end of the cold-start

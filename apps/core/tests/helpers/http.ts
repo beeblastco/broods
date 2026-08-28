@@ -42,7 +42,7 @@ export function testContext(): RequestContext {
   return {
     requestId: "request-id",
     deadlineMs: Date.now() + 60_000,
-    waitUntil: function() {},
+    waitUntil: function () {},
   };
 }
 

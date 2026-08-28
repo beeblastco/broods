@@ -171,14 +171,14 @@ export function createDiscordChannel(
   return {
     name: "discord",
 
-    canHandle: function(req) {
+    canHandle: function (req) {
       return (
         "x-signature-ed25519" in req.headers ||
         "x-discord-gateway-token" in req.headers
       );
     },
 
-    authenticate: function(req) {
+    authenticate: function (req) {
       if ("x-discord-gateway-token" in req.headers) {
         return req.headers["x-discord-gateway-token"] === botToken;
       }
@@ -190,7 +190,7 @@ export function createDiscordChannel(
       );
     },
 
-    parse: function(req): ChannelParseResult {
+    parse: function (req): ChannelParseResult {
       const payload = JSON.parse(req.body) as DiscordInteractionPayload;
       const gatewayEvent = parseForwardedGatewayEvent(
         discord,
@@ -254,9 +254,7 @@ export function createDiscordChannel(
       }
 
       const interactionUser = payload.member?.user?.id ?? payload.user?.id;
-      if (
-        !isAllowedId(allowedUserIds, interactionUser)
-      ) {
+      if (!isAllowedId(allowedUserIds, interactionUser)) {
         logWarn("Discord sender not in allow list", {
           userId: interactionUser,
         });
@@ -351,7 +349,7 @@ export function createDiscordChannel(
       };
     },
 
-    actions: function(msg): ChannelActions {
+    actions: function (msg): ChannelActions {
       return createDiscordActions(
         botToken,
         publicKey,
@@ -402,7 +400,7 @@ function createDiscordActions(
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
 
-    sendText: async function(text) {
+    sendText: async function (text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
 
@@ -428,7 +426,7 @@ function createDiscordActions(
       }
     },
 
-    sendTyping: async function() {
+    sendTyping: async function () {
       if (!source.channelId) {
         return;
       }
@@ -454,13 +452,11 @@ async function discordUploads(
   attachments: ChannelFile[] | ChannelImage[],
 ): Promise<FileUpload[]> {
   return await Promise.all(
-    attachments.map(
-      async (attachment): Promise<FileUpload> => ({
-        data: await channelAttachmentBytes(attachment),
-        filename: channelAttachmentName(attachment),
-        ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
-      }),
-    ),
+    attachments.map(async (attachment): Promise<FileUpload> => ({
+      data: await channelAttachmentBytes(attachment),
+      filename: channelAttachmentName(attachment),
+      ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+    })),
   );
 }
 
@@ -610,7 +606,9 @@ function parseForwardedGatewayEvent(
   // Gate the parent channel, not the thread: a thread id cannot be declared.
   const thread = toDiscordGatewayThread(data);
   if (!isAllowedId(allowedChannelIds, thread.channelId)) {
-    logWarn("Discord channel not in allow list", { channelId: thread.channelId });
+    logWarn("Discord channel not in allow list", {
+      channelId: thread.channelId,
+    });
 
     return {
       kind: "ignore",

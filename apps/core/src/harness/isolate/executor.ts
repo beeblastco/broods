@@ -157,7 +157,9 @@ async function* streamViaOneShot(
       signal: NodeJS.Signals | null;
     }>((resolve, reject) => {
       child!.once("error", reject);
-      child!.once("exit", (code, signal) => resolve({ code: code, signal: signal }));
+      child!.once("exit", (code, signal) =>
+        resolve({ code: code, signal: signal }),
+      );
     });
 
     child.stdout.setEncoding("utf8");
@@ -274,9 +276,7 @@ export function isolateLogRecord(
   data: Record<string, unknown>;
 } {
   const level =
-    frame.level === "error" ||
-    frame.level === "warn" ||
-    frame.level === "debug"
+    frame.level === "error" || frame.level === "warn" || frame.level === "debug"
       ? frame.level
       : "info";
 
@@ -557,7 +557,12 @@ async function* streamViaPool(
   const tenantId = accountId ?? "anonymous";
   const worker = await acquireWorker(tenantId);
   const callId = String((callCounter += 1));
-  const request = { t: "run", callId: callId, tenantId: tenantId, payload: runPayload };
+  const request = {
+    t: "run",
+    callId: callId,
+    tenantId: tenantId,
+    payload: runPayload,
+  };
   const detachAbort = forwardAbortSignal(worker.child, abortSignal);
 
   // Guard against a wedged worker: if no terminal frame lands within the run

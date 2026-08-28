@@ -2,26 +2,40 @@
   "name": "broods",
   "version": "0.25.0",
   "description": "CLI + TypeScript SDK for the broods agent platform.",
-  "type": "module",
-  "license": "MIT",
+  "keywords": [
+    "agents",
+    "ai",
+    "broods",
+    "cli",
+    "sdk"
+  ],
   "homepage": "https://github.com/beeblastco/broods#readme",
+  "bugs": {
+    "url": "https://github.com/beeblastco/broods/issues"
+  },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/beeblastco/broods.git",
     "directory": "packages/broods"
   },
-  "bugs": {
-    "url": "https://github.com/beeblastco/broods/issues"
-  },
-  "keywords": [
-    "agents",
-    "ai",
-    "sdk",
-    "cli",
-    "broods"
-  ],
   "bin": {
     "broods": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "account": [
+        "./dist/account.d.ts"
+      ]
+    }
   },
   "exports": {
     ".": {
@@ -33,34 +47,14 @@
       "import": "./dist/account.js"
     }
   },
-  "typesVersions": {
-    "*": {
-      "account": [
-        "./dist/account.d.ts"
-      ]
-    }
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE.md"
-  ],
   "scripts": {
     "build": "bun scripts/build.ts && rollup -c rollup.dts.config.mjs && rm -rf .dts-temp",
     "check": "tsc --noEmit",
     "pack:check": "bun run build && publint && attw --pack .",
     "test": "bun test"
   },
-  "engines": {
-    "node": ">=22.15"
-  },
   "dependencies": {
     "esbuild": "^0.28.2"
-  },
-  "peerDependencies": {
-    "ai": "^7.0.77"
   },
   "devDependencies": {
     "@ai-sdk/tui": "1.0.78",
@@ -76,5 +70,11 @@
     "rollup": "^4.62.4",
     "rollup-plugin-dts": "^6.5.1",
     "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "ai": "^7.0.77"
+  },
+  "engines": {
+    "node": ">=22.15"
   }
 }

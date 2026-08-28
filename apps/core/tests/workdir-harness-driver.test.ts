@@ -269,21 +269,21 @@ function fakeExecutor(
     suspensions: suspensions,
     releases: releases,
     value: {
-      acquireHarnessReservation: async function(request: unknown) {
+      acquireHarnessReservation: async function (request: unknown) {
         acquisitions.push(request);
         afterAcquire?.();
 
         return { sandbox: sandbox, isFirstCreate: isFirstCreate };
       },
-      resumeHarnessReservation: async function(request: unknown) {
+      resumeHarnessReservation: async function (request: unknown) {
         resumptions.push(request);
 
         return sandbox;
       },
-      suspend: async function(request: unknown) {
+      suspend: async function (request: unknown) {
         suspensions.push(request);
       },
-      release: async function(request: unknown) {
+      release: async function (request: unknown) {
         releases.push(request);
       },
     },
@@ -314,7 +314,7 @@ function fakeWorkdir(
 
   const sandbox = {
     id: "workdir-1",
-    exec: async function(
+    exec: async function (
       command: string,
       execOptions?: { env?: Record<string, string> },
     ) {
@@ -390,10 +390,10 @@ function fakeWorkdir(
 
       return result();
     },
-    writeFile: async function(path: string, content: string) {
+    writeFile: async function (path: string, content: string) {
       temporaryFiles.set(`/workspace/${path.replace(/^\/+/, "")}`, content);
     },
-    exposePort: async function(port: number) {
+    exposePort: async function (port: number) {
       return `https://workdir.example.test/ports/${port}`;
     },
   } as unknown as Sandbox;

@@ -23,7 +23,10 @@ function convexEnabled(): boolean {
 }
 
 export type SandboxInstanceStatus =
-  "running" | "suspended" | "terminating" | "error";
+  | "running"
+  | "suspended"
+  | "terminating"
+  | "error";
 
 /**
  * Mirrors a freshly reserved persistent sandbox into Convex so the dashboard sees
