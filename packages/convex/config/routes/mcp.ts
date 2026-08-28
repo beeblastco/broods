@@ -1,5 +1,5 @@
 /**
- * MCP server CRUD (`/v1/mcp-servers*`): list/create on the stage-scoped
+ * MCP server CRUD (`/v1/mcp*`): list/create on the stage-scoped
  * collection, get/patch/delete by id. No bundle path — phase 1 rows describe
  * an external server core connects to; secrets stay in account env vars as
  * env("NAME") refs on the header values.
@@ -12,16 +12,16 @@ import {
   auditDetailsJson,
   type ConfigAuditActor,
 } from "../../model/auditEvents";
-import { normalizeMcpServerInput } from "../../model/mcpServers";
+import { normalizeMcpInput } from "../../model/mcp";
 import type { ProjectStageScope } from "../../model/projectScope";
 import { json, methodNotAllowed, writeAudit } from "./shared";
 
-type McpServerScope =
+type McpScope =
   | ({ ok: true } & ProjectStageScope)
   | { ok: false; response: Response };
 
 /** MCP server CRUD: list/create on the collection, get/patch/delete by id. */
-export async function handleMcpServerRoute(
+export async function handleMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
@@ -29,28 +29,28 @@ export async function handleMcpServerRoute(
   serverId?: string,
 ): Promise<Response> {
   if (!serverId)
-    return await handleMcpServerCollectionRoute(ctx, req, accountId, actor);
+    return await handleMcpCollectionRoute(ctx, req, accountId, actor);
 
   if (req.method === "GET") {
-    const record = await ctx.runQuery(internal.account.mcpServers.getById, {
+    const record = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,
       serverId: serverId,
     });
 
     return record
-      ? json(toPublicMcpServer(record))
+      ? json(toPublicMcp(record))
       : json({ error: "MCP server not found" }, 404);
   }
   if (req.method === "PATCH") {
-    return await patchMcpServerRoute(ctx, req, accountId, actor, serverId);
+    return await patchMcpRoute(ctx, req, accountId, actor, serverId);
   }
   if (req.method === "DELETE") {
-    const existing = await ctx.runQuery(internal.account.mcpServers.getById, {
+    const existing = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,
       serverId: serverId,
     });
     if (!existing) return json({ error: "MCP server not found" }, 404);
-    await ctx.runMutation(internal.account.mcpServers.remove, {
+    await ctx.runMutation(internal.account.mcp.remove, {
       accountId: accountId,
       serverId: serverId,
     });
@@ -58,7 +58,7 @@ export async function handleMcpServerRoute(
       accountId: accountId,
       actor: actor,
       action: "deleted",
-      resource: { kind: "mcpServer", id: existing._id, name: existing.name },
+      resource: { kind: "mcp", id: existing._id, name: existing.name },
       summary: "MCP server deleted",
       detailsJson: auditDetailsJson({ serverId: existing._id }),
     });
@@ -70,48 +70,44 @@ export async function handleMcpServerRoute(
 }
 
 /** Collection verbs: list the stage's servers on GET, register on POST. */
-async function handleMcpServerCollectionRoute(
+async function handleMcpCollectionRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
   actor: ConfigAuditActor,
 ): Promise<Response> {
   // Servers belong to one stage, so the collection routes need a scope.
-  const scope = await resolveMcpServerScope(ctx, req, accountId);
+  const scope = await resolveMcpScope(ctx, req, accountId);
   if (!scope.ok) return scope.response;
 
   if (req.method === "GET") {
-    const records = await ctx.runQuery(
-      internal.account.mcpServers.listForStage,
-      { stageId: scope.stageId },
-    );
+    const records = await ctx.runQuery(internal.account.mcp.listForStage, {
+      stageId: scope.stageId,
+    });
 
     return json({
-      mcpServers: records.map((record) => toPublicMcpServer(record)),
+      servers: records.map((record) => toPublicMcp(record)),
     });
   }
   if (req.method === "POST") {
-    const input = normalizeMcpServerInput(await req.json(), {
+    const input = normalizeMcpInput(await req.json(), {
       requireConnection: true,
     });
-    const createdId = await ctx.runMutation(
-      internal.account.mcpServers.create,
-      {
-        accountId: accountId,
-        projectId: scope.projectId,
-        stageId: scope.stageId,
-        name: input.name!,
-        url: input.url!,
-        ...(input.description !== undefined
-          ? { description: input.description }
-          : {}),
-        ...(input.headers !== undefined ? { headers: input.headers } : {}),
-        ...(input.allowedTools !== undefined
-          ? { allowedTools: input.allowedTools }
-          : {}),
-      },
-    );
-    const created = await ctx.runQuery(internal.account.mcpServers.getById, {
+    const createdId = await ctx.runMutation(internal.account.mcp.create, {
+      accountId: accountId,
+      projectId: scope.projectId,
+      stageId: scope.stageId,
+      name: input.name!,
+      url: input.url!,
+      ...(input.description !== undefined
+        ? { description: input.description }
+        : {}),
+      ...(input.headers !== undefined ? { headers: input.headers } : {}),
+      ...(input.allowedTools !== undefined
+        ? { allowedTools: input.allowedTools }
+        : {}),
+    });
+    const created = await ctx.runQuery(internal.account.mcp.getById, {
       accountId: accountId,
       serverId: createdId,
     });
@@ -120,7 +116,7 @@ async function handleMcpServerCollectionRoute(
         accountId: accountId,
         actor: actor,
         action: "created",
-        resource: { kind: "mcpServer", id: created._id, name: created.name },
+        resource: { kind: "mcp", id: created._id, name: created.name },
         summary: "MCP server registered",
         detailsJson: auditDetailsJson({
           serverId: created._id,
@@ -129,29 +125,29 @@ async function handleMcpServerCollectionRoute(
       });
     }
 
-    return json(toPublicMcpServer(created!), 201);
+    return json(toPublicMcp(created!), 201);
   }
 
   return methodNotAllowed(["GET", "POST"]);
 }
 
 /** PATCH one server: any subset of the registration fields. */
-async function patchMcpServerRoute(
+async function patchMcpRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
   actor: ConfigAuditActor,
   serverId: string,
 ): Promise<Response> {
-  const existing = await ctx.runQuery(internal.account.mcpServers.getById, {
+  const existing = await ctx.runQuery(internal.account.mcp.getById, {
     accountId: accountId,
     serverId: serverId,
   });
   if (!existing) return json({ error: "MCP server not found" }, 404);
-  const input = normalizeMcpServerInput(await req.json(), {
+  const input = normalizeMcpInput(await req.json(), {
     requireConnection: false,
   });
-  await ctx.runMutation(internal.account.mcpServers.update, {
+  await ctx.runMutation(internal.account.mcp.update, {
     accountId: accountId,
     serverId: serverId,
     ...(input.name !== undefined ? { name: input.name } : {}),
@@ -165,7 +161,7 @@ async function patchMcpServerRoute(
       : {}),
     ...(input.disabled !== undefined ? { disabled: input.disabled } : {}),
   });
-  const updated = await ctx.runQuery(internal.account.mcpServers.getById, {
+  const updated = await ctx.runQuery(internal.account.mcp.getById, {
     accountId: accountId,
     serverId: serverId,
   });
@@ -174,7 +170,7 @@ async function patchMcpServerRoute(
       accountId: accountId,
       actor: actor,
       action: "updated",
-      resource: { kind: "mcpServer", id: updated._id, name: updated.name },
+      resource: { kind: "mcp", id: updated._id, name: updated.name },
       summary: "MCP server updated",
       detailsJson: auditDetailsJson({
         serverId: updated._id,
@@ -184,16 +180,16 @@ async function patchMcpServerRoute(
   }
 
   return updated
-    ? json(toPublicMcpServer(updated))
+    ? json(toPublicMcp(updated))
     : json({ error: "MCP server not found" }, 404);
 }
 
 /** Resolve the `?project=&stage=` collection scope to project/stage ids. */
-async function resolveMcpServerScope(
+async function resolveMcpScope(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
-): Promise<McpServerScope> {
+): Promise<McpScope> {
   const params = new URL(req.url).searchParams;
   const project = params.get("project")?.trim();
   const stage = params.get("stage")?.trim();
@@ -210,7 +206,7 @@ async function resolveMcpServerScope(
     };
   }
 
-  const scope = await ctx.runQuery(internal.account.mcpServers.resolveScope, {
+  const scope = await ctx.runQuery(internal.account.mcp.resolveScope, {
     accountId: accountId,
     project: project,
     stage: stage,
@@ -229,8 +225,8 @@ async function resolveMcpServerScope(
   };
 }
 
-/** Map an mcpServers document to its public API shape. */
-function toPublicMcpServer(record: Doc<"mcpServers">): Record<string, unknown> {
+/** Map an mcp document to its public API shape. */
+function toPublicMcp(record: Doc<"mcp">): Record<string, unknown> {
   return {
     accountId: record.accountId,
     serverId: record._id,

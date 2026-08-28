@@ -259,7 +259,7 @@ export const accountToolsFields = {
  * day one; header values may be env("NAME") refs resolved into the encrypted
  * agent config at sync time, so secrets never sit on this row.
  */
-export const mcpServersFields = {
+export const mcpFields = {
   accountId: v.id("accounts"),
   projectId: v.id("projects"),
   stageId: v.id("stages"),
@@ -737,7 +737,7 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("skill"),
   v.literal("tool"),
   v.literal("hook"),
-  v.literal("mcpServer"),
+  v.literal("mcp"),
   v.literal("workspace"),
   v.literal("workspaceFile"),
   v.literal("cron"),
@@ -1233,7 +1233,7 @@ export default defineSchema({
   accountHooks: defineTable(accountHooksFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"]),
-  mcpServers: defineTable(mcpServersFields)
+  mcp: defineTable(mcpFields)
     .index("by_accountId", ["accountId"])
     .index("by_stageId_and_status", ["stageId", "status"])
     .index("by_stageId_and_name", ["stageId", "name"]),

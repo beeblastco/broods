@@ -21,12 +21,12 @@ const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
  * tool names, which allow only [A-Za-z0-9_-]. Underscores are excluded here
  * so the `__` separator stays unambiguous.
  */
-const MCP_SERVER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+const MCP_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 
 /** Remote tool names, as constrained by the MCP spec's SHOULD plus our cap. */
 const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-export interface McpServerInput {
+export interface McpInput {
   name?: string;
   description?: string;
   url?: string;
@@ -41,15 +41,15 @@ export interface McpServerInput {
  * may carry any subset. Unknown keys are ignored, matching the tolerance of
  * the other config-plane normalizers.
  */
-export function normalizeMcpServerInput(
+export function normalizeMcpInput(
   body: unknown,
   options: { requireConnection: boolean },
-): McpServerInput {
+): McpInput {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     throw new Error("Request body must be a JSON object");
   }
   const record = body as Record<string, unknown>;
-  const input: McpServerInput = {};
+  const input: McpInput = {};
   if (record.name !== undefined) input.name = normalizeName(record.name);
   if (record.description !== undefined && record.description !== null) {
     input.description = normalizeDescription(record.description);
@@ -138,7 +138,7 @@ function normalizeHeaders(value: unknown): Record<string, string> {
 }
 
 function normalizeName(value: unknown): string {
-  if (typeof value !== "string" || !MCP_SERVER_NAME_PATTERN.test(value)) {
+  if (typeof value !== "string" || !MCP_NAME_PATTERN.test(value)) {
     throw new Error(
       "name must be 1-32 lowercase letters, digits or hyphens, starting with a letter",
     );

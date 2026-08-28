@@ -10,11 +10,11 @@ import { internalMutation, internalQuery } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { resolveProjectStage } from "../model/projectScope";
-import { mcpServersFields } from "../schema";
+import { mcpFields } from "../schema";
 
-const mcpServerDoc = v.object({
-  ...mcpServersFields,
-  _id: v.id("mcpServers"),
+const mcpDoc = v.object({
+  ...mcpFields,
+  _id: v.id("mcp"),
   _creationTime: v.number(),
 });
 
@@ -23,9 +23,9 @@ export const getById = internalQuery({
     accountId: v.id("accounts"),
     serverId: v.string(),
   },
-  returns: v.union(mcpServerDoc, v.null()),
+  returns: v.union(mcpDoc, v.null()),
   handler: async (ctx, args) => {
-    const normalized = ctx.db.normalizeId("mcpServers", args.serverId);
+    const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) return null;
     const doc = await ctx.db.get(normalized);
     if (!doc || doc.accountId !== args.accountId || doc.status !== "active")
@@ -37,10 +37,10 @@ export const getById = internalQuery({
 
 export const listForStage = internalQuery({
   args: { stageId: v.id("stages") },
-  returns: v.array(mcpServerDoc),
+  returns: v.array(mcpDoc),
   handler: async (ctx, args) => {
     return await ctx.db
-      .query("mcpServers")
+      .query("mcp")
       .withIndex("by_stageId_and_status", (q) =>
         q.eq("stageId", args.stageId).eq("status", "active"),
       )
@@ -92,7 +92,7 @@ export const create = internalMutation({
     headers: v.optional(v.record(v.string(), v.string())),
     allowedTools: v.optional(v.array(v.string())),
   },
-  returns: v.id("mcpServers"),
+  returns: v.id("mcp"),
   handler: async (ctx, args) => {
     const account = await ctx.db.get(args.accountId);
     if (!account) {
@@ -115,7 +115,7 @@ export const create = internalMutation({
 
     const now = Date.now();
 
-    return await ctx.db.insert("mcpServers", {
+    return await ctx.db.insert("mcp", {
       accountId: args.accountId,
       projectId: args.projectId,
       stageId: args.stageId,
@@ -139,7 +139,7 @@ export const remove = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const normalized = ctx.db.normalizeId("mcpServers", args.serverId);
+    const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
       throw new Error("MCP server does not belong to the supplied accountId");
     }
@@ -171,7 +171,7 @@ export const update = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const normalized = ctx.db.normalizeId("mcpServers", args.serverId);
+    const normalized = ctx.db.normalizeId("mcp", args.serverId);
     if (!normalized) {
       throw new Error("MCP server does not belong to the supplied accountId");
     }
@@ -208,7 +208,7 @@ async function requireNameFree(
   name: string,
 ): Promise<void> {
   const existing = await ctx.db
-    .query("mcpServers")
+    .query("mcp")
     .withIndex("by_stageId_and_name", (q) =>
       q.eq("stageId", stageId).eq("name", name),
     )

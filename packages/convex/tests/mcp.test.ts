@@ -5,7 +5,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { normalizeMcpServerInput } from "../model/mcpServers";
+import { normalizeMcpInput } from "../model/mcp";
 import schema from "../schema";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -69,8 +69,8 @@ async function seedServer(
   tt: T,
   scope: Scope,
   name = SERVER_NAME,
-): Promise<Id<"mcpServers">> {
-  return await tt.mutation(internal.account.mcpServers.create, {
+): Promise<Id<"mcp">> {
+  return await tt.mutation(internal.account.mcp.create, {
     accountId: scope.accountId,
     projectId: scope.projectId,
     stageId: scope.stageId,
@@ -86,7 +86,7 @@ describe("MCP servers are scoped to a stage", () => {
     const scope = await seedScope(tt);
     const serverId = await seedServer(tt, scope);
 
-    const listed = await tt.query(internal.account.mcpServers.listForStage, {
+    const listed = await tt.query(internal.account.mcp.listForStage, {
       stageId: scope.stageId,
     });
     expect(listed).toHaveLength(1);
@@ -121,14 +121,12 @@ describe("MCP servers are scoped to a stage", () => {
     await seedServer(tt, first);
     await seedServer(tt, { ...first, stageId: secondStageId });
 
-    const firstListed = await tt.query(
-      internal.account.mcpServers.listForStage,
-      { stageId: first.stageId },
-    );
-    const secondListed = await tt.query(
-      internal.account.mcpServers.listForStage,
-      { stageId: secondStageId },
-    );
+    const firstListed = await tt.query(internal.account.mcp.listForStage, {
+      stageId: first.stageId,
+    });
+    const secondListed = await tt.query(internal.account.mcp.listForStage, {
+      stageId: secondStageId,
+    });
     expect(firstListed).toHaveLength(1);
     expect(secondListed).toHaveLength(1);
     expect(firstListed[0]?._id).not.toBe(secondListed[0]?._id);
@@ -138,16 +136,16 @@ describe("MCP servers are scoped to a stage", () => {
     const tt = t();
     const scope = await seedScope(tt);
     const serverId = await seedServer(tt, scope);
-    await tt.mutation(internal.account.mcpServers.remove, {
+    await tt.mutation(internal.account.mcp.remove, {
       accountId: scope.accountId,
       serverId: serverId,
     });
 
-    const listed = await tt.query(internal.account.mcpServers.listForStage, {
+    const listed = await tt.query(internal.account.mcp.listForStage, {
       stageId: scope.stageId,
     });
     expect(listed).toHaveLength(0);
-    const fetched = await tt.query(internal.account.mcpServers.getById, {
+    const fetched = await tt.query(internal.account.mcp.getById, {
       accountId: scope.accountId,
       serverId: serverId,
     });
@@ -162,19 +160,19 @@ describe("MCP servers are scoped to a stage", () => {
     await seedServer(tt, scope, "docs");
 
     await expect(
-      tt.mutation(internal.account.mcpServers.update, {
+      tt.mutation(internal.account.mcp.update, {
         accountId: scope.accountId,
         serverId: serverId,
         name: "docs",
       }),
     ).rejects.toThrow("name must be unique per stage");
-    await tt.mutation(internal.account.mcpServers.update, {
+    await tt.mutation(internal.account.mcp.update, {
       accountId: scope.accountId,
       serverId: serverId,
       name: "search-v2",
       disabled: true,
     });
-    const updated = await tt.query(internal.account.mcpServers.getById, {
+    const updated = await tt.query(internal.account.mcp.getById, {
       accountId: scope.accountId,
       serverId: serverId,
     });
@@ -183,9 +181,9 @@ describe("MCP servers are scoped to a stage", () => {
   });
 });
 
-describe("normalizeMcpServerInput", () => {
+describe("normalizeMcpInput", () => {
   test("accepts a full registration", () => {
-    const input = normalizeMcpServerInput(
+    const input = normalizeMcpInput(
       {
         name: "search",
         description: "Company search backend.",
@@ -201,17 +199,17 @@ describe("normalizeMcpServerInput", () => {
 
   test("requires name and url on create", () => {
     expect(() =>
-      normalizeMcpServerInput({ url: SERVER_URL }, { requireConnection: true }),
+      normalizeMcpInput({ url: SERVER_URL }, { requireConnection: true }),
     ).toThrow("name must be provided");
     expect(() =>
-      normalizeMcpServerInput({ name: "search" }, { requireConnection: true }),
+      normalizeMcpInput({ name: "search" }, { requireConnection: true }),
     ).toThrow("url must be provided");
   });
 
   test("rejects names that break the server__tool namespace", () => {
     for (const name of ["Search", "se_arch", "1search", "a".repeat(33), ""]) {
       expect(() =>
-        normalizeMcpServerInput(
+        normalizeMcpInput(
           { name: name, url: SERVER_URL },
           { requireConnection: true },
         ),
@@ -221,19 +219,19 @@ describe("normalizeMcpServerInput", () => {
 
   test("rejects non-http urls and header injection", () => {
     expect(() =>
-      normalizeMcpServerInput(
+      normalizeMcpInput(
         { name: "search", url: "ftp://mcp.example.com" },
         { requireConnection: true },
       ),
     ).toThrow("url must use http or https");
     expect(() =>
-      normalizeMcpServerInput(
+      normalizeMcpInput(
         { name: "search", url: "not a url" },
         { requireConnection: true },
       ),
     ).toThrow("url must be a valid absolute URL");
     expect(() =>
-      normalizeMcpServerInput(
+      normalizeMcpInput(
         {
           name: "search",
           url: SERVER_URL,
@@ -245,7 +243,7 @@ describe("normalizeMcpServerInput", () => {
   });
 
   test("a patch may carry any subset", () => {
-    const input = normalizeMcpServerInput(
+    const input = normalizeMcpInput(
       { disabled: true },
       { requireConnection: false },
     );

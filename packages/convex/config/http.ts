@@ -25,7 +25,7 @@ import { handleChannelRecordRoute } from "./routes/channels";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
-import { handleMcpServerRoute } from "./routes/mcpServers";
+import { handleMcpRoute } from "./routes/mcp";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
@@ -44,7 +44,7 @@ type ConfigRoute =
   | { kind: "skills"; name?: string }
   | { kind: "tools"; toolId?: string }
   | { kind: "hooks"; hookId?: string }
-  | { kind: "mcpServers"; serverId?: string }
+  | { kind: "mcp"; serverId?: string }
   | { kind: "workspaceFiles"; workspaceId: string }
   | { kind: "workspaceDownloadLinks"; workspaceId: string }
   | { kind: "crons"; cronId?: string; runs: boolean }
@@ -139,8 +139,8 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("tools", route.toolId);
     case "hooks":
       return apiResource("hooks", route.hookId);
-    case "mcpServers":
-      return apiResource("mcp-servers", route.serverId);
+    case "mcp":
+      return apiResource("mcp", route.serverId);
     case "workspaceFiles":
     case "workspaceDownloadLinks":
     case "workspaces":
@@ -176,14 +176,8 @@ async function dispatchResourceRoute(
       return await handleToolRoute(ctx, req, accountId, actor, route.toolId);
     case "hooks":
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
-    case "mcpServers":
-      return await handleMcpServerRoute(
-        ctx,
-        req,
-        accountId,
-        actor,
-        route.serverId,
-      );
+    case "mcp":
+      return await handleMcpRoute(ctx, req, accountId, actor, route.serverId);
     case "workspaceFiles":
       return await handleWorkspaceFilesRoute(
         ctx,
@@ -410,11 +404,11 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
       ...(tools[1] ? { toolId: decodeURIComponent(tools[1]) } : {}),
     };
 
-  const mcpServers = pathname.match(/^\/v1\/mcp-servers(?:\/([^/]+))?$/);
-  if (mcpServers)
+  const mcp = pathname.match(/^\/v1\/mcp(?:\/([^/]+))?$/);
+  if (mcp)
     return {
-      kind: "mcpServers",
-      ...(mcpServers[1] ? { serverId: decodeURIComponent(mcpServers[1]) } : {}),
+      kind: "mcp",
+      ...(mcp[1] ? { serverId: decodeURIComponent(mcp[1]) } : {}),
     };
 
   const hooks = pathname.match(/^\/v1\/hooks(?:\/([^/]+))?$/);
