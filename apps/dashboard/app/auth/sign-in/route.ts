@@ -1,10 +1,7 @@
 import { getSignInUrl } from "@workos-inc/authkit-nextjs";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-
-const redirectUri =
-  process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI ??
-  "http://localhost:3000/auth/callback";
+import { redirectUri } from "@/app/lib/authConfig";
 
 function parseReturnTo(value: string | null): string | null {
   if (!value?.startsWith("/")) {
