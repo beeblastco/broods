@@ -72,6 +72,25 @@ mock.module("@aws-sdk/client-lambda-microvms", () => ({
   ResumeMicrovmCommand: microvmCommand("ResumeMicrovm"),
 }));
 
+// The reservation registry, stubbed to "nothing reserved" so a persistent run
+// takes the create path. Three other test files replace this module wholesale
+// with a stub that answers a real externalId, and `mock.module` is process-wide
+// and never restored, so relying on the real one here means the answer depends
+// on which file bun happened to load first. Owning the mock makes it ours.
+const getSandboxExternalIdMock = mock(
+  async (_provider: string, _key: string): Promise<string | null> => null,
+);
+
+mock.module("../src/harness/sandbox/instance-store.ts", () => ({
+  getSandboxExternalId: getSandboxExternalIdMock,
+  getSandboxReservationRecord: mock(
+    async (): Promise<{ externalId: string; claimedAt: number } | null> => null,
+  ),
+  claimSandboxInstance: mock(async (): Promise<boolean> => true),
+  saveSandboxInstance: mock(async (): Promise<void> => {}),
+  deleteSandboxInstance: mock(async (): Promise<void> => {}),
+}));
+
 // Read-only (S3-direct) path stubs for sandbox-less workspaces.
 const readS3TextMock = mock(async (_bucket: string, _key: string) => "");
 const listS3PrefixMock = mock(
