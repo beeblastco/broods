@@ -44,7 +44,7 @@ export async function upsertSandboxInstance(
 ): Promise<void> {
   if (!controlPlane || !convexEnabled()) return;
   try {
-    await getConvexClient().mutation(internal.sandboxInstances.upsert, {
+    await getConvexClient().mutation(internal.sandbox.instances.upsert, {
       accountId: controlPlane.accountId as any,
       ...(controlPlane.projectId
         ? { projectId: controlPlane.projectId as any }
@@ -123,7 +123,7 @@ export async function setSandboxInstanceStatus(
 ): Promise<void> {
   if (!convexEnabled()) return;
   try {
-    await getConvexClient().mutation(internal.sandboxInstances.setStatus, {
+    await getConvexClient().mutation(internal.sandbox.instances.setStatus, {
       accountId: accountId as any,
       reservationKey: reservationKey,
       status: status,
@@ -146,7 +146,7 @@ export async function sandboxInstanceIsControllable(
   reservationKey: string,
 ): Promise<boolean> {
   const controllable = await getConvexClient().query(
-    internal.sandboxInstances.isControllable,
+    internal.sandbox.instances.isControllable,
     {
       accountId: accountId as any,
       sandboxConfigId: sandboxConfigId as any,
@@ -167,7 +167,7 @@ export async function removeSandboxInstance(
 ): Promise<void> {
   if (!convexEnabled()) return;
   try {
-    await getConvexClient().mutation(internal.sandboxInstances.remove, {
+    await getConvexClient().mutation(internal.sandbox.instances.remove, {
       accountId: accountId as any,
       reservationKey: reservationKey,
     });

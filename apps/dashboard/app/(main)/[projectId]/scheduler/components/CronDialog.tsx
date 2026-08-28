@@ -82,8 +82,8 @@ export function CronDialog({
   agents,
   onClose,
 }: Props): React.JSX.Element {
-  const create = useAction(api.cronPublic.create);
-  const update = useAction(api.cronPublic.update);
+  const create = useAction(api.agent.cronsPublic.create);
+  const update = useAction(api.agent.cronsPublic.update);
 
   const [name, setName] = useState(cron?.name ?? "");
   const [description, setDescription] = useState(cron?.description ?? "");

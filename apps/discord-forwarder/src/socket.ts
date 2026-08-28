@@ -4,7 +4,7 @@
  * One socket per token is the only configuration that delivers each event once:
  * Discord permits several connections with identical shard tuples and sends
  * every event to all of them. So this class owns the token for the life of the
- * process, and `main.ts` guarantees exactly one instance per token.
+ * process, and `supervisor.ts` guarantees exactly one instance per token.
  *
  * It reconnects itself, RESUMEs from the last sequence number when Discord still
  * accepts the session, and refuses to dial at all on a close code that cannot
@@ -29,14 +29,14 @@ import {
 import type { IdentifyBudget } from "./identify-budget.ts";
 import { logError, logInfo, logWarn, tokenHint } from "./log.ts";
 
-// Sent when we close a socket ourselves and mean to RESUME. 1000 and 1001 tell
-// Discord the session is finished, which makes the next connect a fresh IDENTIFY.
-const RESUMABLE_CLOSE_CODE = 4000;
-
 // Discord sends HELLO within about a second of the socket opening. Well past
 // that and the connection is not going to start working on its own — see the
 // watchdog in `dial`.
 const CONNECT_DEADLINE_MS = 30_000;
+
+// Sent when we close a socket ourselves and mean to RESUME. 1000 and 1001 tell
+// Discord the session is finished, which makes the next connect a fresh IDENTIFY.
+const RESUMABLE_CLOSE_CODE = 4000;
 
 export type SocketState =
   "backoff" | "connecting" | "exhausted" | "fatal" | "ready" | "stopped";
@@ -145,7 +145,7 @@ export class GatewaySocket {
     // holds no timer at all and stays half-open for the life of the process,
     // with that bot quietly answering nothing. This is the one timer that does
     // not wait to be invited.
-    this.connectTimer = setTimeout(() => {
+    this.connectTimer = setTimeout((): void => {
       if (this.socket !== socket) return;
       logWarn("Discord gateway never became ready, reconnecting", {
         tokenHint: this.hint,
@@ -158,24 +158,6 @@ export class GatewaySocket {
     this.resumeUrl = null;
     this.sequence = null;
     this.sessionId = null;
-  }
-
-  /**
-   * An interval tick that finds the previous beat still unacknowledged means the
-   * socket is a zombie: open, but nothing is coming back. Close it and let the
-   * close handler re-dial with a RESUME.
-   */
-  private heartbeat(socket: WebSocket): void {
-    if (this.awaitingAck) {
-      logWarn("Discord gateway heartbeat unacknowledged, reconnecting", {
-        tokenHint: this.hint,
-      });
-      socket.close(RESUMABLE_CLOSE_CODE, "heartbeat not acknowledged");
-
-      return;
-    }
-    this.awaitingAck = true;
-    this.send(socket, { op: GatewayOpcode.Heartbeat, d: this.sequence });
   }
 
   private handleClose(socket: WebSocket, code: number, reason: string): void {
@@ -219,7 +201,7 @@ export class GatewaySocket {
       // first interval past `clearTimers`, leaving it beating on a dead socket.
       if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = setInterval(
-        () => this.heartbeat(socket),
+        (): void => this.heartbeat(socket),
         heartbeatIntervalMs(hello.heartbeat_interval),
       );
       this.send(
@@ -285,6 +267,24 @@ export class GatewaySocket {
     }
   }
 
+  /**
+   * An interval tick that finds the previous beat still unacknowledged means the
+   * socket is a zombie: open, but nothing is coming back. Close it and let the
+   * close handler re-dial with a RESUME.
+   */
+  private heartbeat(socket: WebSocket): void {
+    if (this.awaitingAck) {
+      logWarn("Discord gateway heartbeat unacknowledged, reconnecting", {
+        tokenHint: this.hint,
+      });
+      socket.close(RESUMABLE_CLOSE_CODE, "heartbeat not acknowledged");
+
+      return;
+    }
+    this.awaitingAck = true;
+    this.send(socket, { op: GatewayOpcode.Heartbeat, d: this.sequence });
+  }
+
   private identifyPayload(): GatewayPayload {
     return {
       op: GatewayOpcode.Identify,
@@ -328,7 +328,7 @@ export class GatewaySocket {
       tokenHint: this.hint,
       waitSeconds: Math.round(waitMs / 1_000),
     });
-    this.reconnectTimer = setTimeout(() => this.dial(), waitMs);
+    this.reconnectTimer = setTimeout((): void => this.dial(), waitMs);
 
     return false;
   }
@@ -356,7 +356,7 @@ export class GatewaySocket {
       retryInSeconds: Math.round(delayMs / 1_000),
       tokenHint: this.hint,
     });
-    this.reconnectTimer = setTimeout(() => this.dial(), delayMs);
+    this.reconnectTimer = setTimeout((): void => this.dial(), delayMs);
   }
 
   private send(socket: WebSocket, payload: GatewayPayload): void {

@@ -24,72 +24,18 @@ const accountScopedTables = [
   "sandboxSnapshots",
   "sandboxAuditEvents",
   "skills",
-  "asyncResults",
+  "channelEndpoints",
   "runtimeConversationEvents",
   "runtimeClaims",
   "runtimeAsyncAgentResults",
   "runtimeAsyncToolResults",
   "runtimeAsyncToolGroups",
   "sandboxReservations",
-  "conversations",
-  "messages",
   "crons",
   "cliAuthCodes",
   "cliTokens",
   "cliExternalResources",
 ] as const;
-
-/**
- * Delete an account and every account-scoped row (agents, conversations, CLI
- * tokens, crons, runs, tool/sandbox/workspace configs, skills, async results).
- * @param accountId the account to purge
- */
-export async function deleteAccountContents(
-  ctx: MutationCtx,
-  accountId: Id<"accounts">,
-): Promise<void> {
-  for (const table of accountScopedTables) {
-    const rows = await ctx.db
-      .query(table)
-      .withIndex("by_accountId", (q) => q.eq("accountId", accountId))
-      .collect();
-    for (const row of rows) await ctx.db.delete(row._id);
-  }
-
-  // cronRuns is account-scoped via a composite index (accountId is the prefix).
-  const cronRuns = await ctx.db
-    .query("cronRuns")
-    .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
-      q.eq("accountId", accountId),
-    )
-    .collect();
-  for (const run of cronRuns) await ctx.db.delete(run._id);
-
-  const auditEvents = await ctx.db
-    .query("configAuditEvents")
-    .withIndex("by_account", (q) => q.eq("accountId", accountId))
-    .collect();
-  for (const event of auditEvents) await ctx.db.delete(event._id);
-
-  const taskUsage = await ctx.db
-    .query("taskUsage")
-    .withIndex("by_accountId_and_finishedAt", (q) =>
-      q.eq("accountId", accountId),
-    )
-    .collect();
-  for (const task of taskUsage) await ctx.db.delete(task._id);
-
-  const usageRollups = await ctx.db
-    .query("usageRollups")
-    .withIndex(
-      "by_accountId_endpointId_bucketStart_modelProvider_modelId",
-      (q) => q.eq("accountId", accountId),
-    )
-    .collect();
-  for (const rollup of usageRollups) await ctx.db.delete(rollup._id);
-
-  await ctx.db.delete(accountId);
-}
 
 /**
  * Deletes one bounded batch of account data. Call repeatedly until it returns
@@ -178,18 +124,17 @@ export async function purgeProject(
   projectId: Id<"projects">,
 ): Promise<void> {
   // Crons hang off the project's agents, so gather them before the stage
-  // cascade deletes those agents. Rows go now; the EventBridge schedule needs
-  // AWS credentials, so a scheduled action removes it after this commits.
+  // cascade deletes those agents. Rows go now; run history can exceed one
+  // transaction, so a scheduled mutation drains it in bounded batches after
+  // this commits, and the EventBridge schedule needs AWS credentials, so a
+  // scheduled action removes it too.
   const crons = await cronsForProject(ctx, projectId);
   for (const cron of crons) {
-    const runs = await ctx.db
-      .query("cronRuns")
-      .withIndex("by_accountId_and_cronId_and_startedAt", (q) =>
-        q.eq("accountId", cron.accountId).eq("cronId", cron._id),
-      )
-      .collect();
-    for (const run of runs) await ctx.db.delete(run._id);
-    await ctx.scheduler.runAfter(0, internal.awsCrons.removeSchedule, {
+    await ctx.scheduler.runAfter(0, internal.agent.crons.removeRunsCascade, {
+      accountId: cron.accountId,
+      cronId: cron._id,
+    });
+    await ctx.scheduler.runAfter(0, internal.aws.crons.removeSchedule, {
       schedulerName: cron.schedulerName,
       schedulerGroupName: cron.schedulerGroupName,
     });
@@ -219,7 +164,8 @@ export async function purgeProject(
 
 /**
  * Delete an org and everything beneath it: its projects, its account, and its
- * memberships.
+ * memberships. Account contents can exceed one transaction, so each account is
+ * drained in bounded batches by `accounts.remove` after this commits.
  * @param orgId the org to purge
  */
 export async function purgeOrg(
@@ -236,7 +182,11 @@ export async function purgeOrg(
     .query("accounts")
     .withIndex("by_orgId", (q) => q.eq("orgId", orgId))
     .collect();
-  for (const account of accounts) await deleteAccountContents(ctx, account._id);
+  for (const account of accounts) {
+    await ctx.scheduler.runAfter(0, internal.account.accounts.remove, {
+      accountId: account._id,
+    });
+  }
 
   const members = await ctx.db
     .query("orgMembers")

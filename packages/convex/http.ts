@@ -8,12 +8,14 @@ import Stripe from "stripe";
 import { components, internal } from "./_generated/api";
 import { httpAction, type ActionCtx } from "./_generated/server";
 import { authKit } from "./auth";
-import { exchange as cliAuthExchange } from "./cliAuthHttp";
-import { handle as cliHttp } from "./cliHttp";
-import { handle as cliOnboardingHttp } from "./cliOnboardingHttp";
-import { handle as cliProjectsHttp } from "./cliProjectsHttp";
-import { handle as cliStagesHttp } from "./cliStagesHttp";
-import { handle as configHttp } from "./configHttp";
+import { exchange as cliAuthExchange } from "./cli/auth";
+import { handle as cliHttp } from "./cli/http";
+import {
+  httpHandle as cliProjectsHttp,
+  httpOnboarding as cliOnboardingHttp,
+} from "./cli/projects";
+import { httpHandle as cliStagesHttp } from "./cli/stages";
+import { handle as configHttp } from "./config/http";
 
 const http = httpRouter();
 
@@ -93,7 +95,7 @@ http.route({
   handler: cliHttp,
 });
 
-// Public config-plane surface (epic #85 phase 9): account metadata/rotation,
+// Public config-plane surface: account metadata/rotation,
 // agents, skills, tools, hooks, workspace files, crons, workspaces, sandbox configs,
 // and policies, forwarded here by the gateway.
 http.route({ path: "/v1/account", method: "GET", handler: configHttp });

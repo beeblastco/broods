@@ -13,7 +13,7 @@ export function applyAgentConfigUpdate(
   args: { configId: Id<"agentConfigs"> } & Record<string, unknown>,
 ): void {
   const { configId, ...rest } = args;
-  const existing = localStore.getQuery(api.agentConfig.getById, {
+  const existing = localStore.getQuery(api.agent.config.getById, {
     configId: configId,
   });
   if (!existing) {
@@ -30,5 +30,5 @@ export function applyAgentConfigUpdate(
     delete (next as Record<string, unknown>).outputFormat;
   }
 
-  localStore.setQuery(api.agentConfig.getById, { configId: configId }, next);
+  localStore.setQuery(api.agent.config.getById, { configId: configId }, next);
 }

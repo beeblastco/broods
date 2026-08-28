@@ -24,10 +24,10 @@ import { logWarn, tokenHint } from "./log.ts";
 
 export class ThreadDirectory {
   private readonly botToken: string;
-  private readonly hint: string;
   // Channel types never change, so one resolved answer holds for the life of
   // the process. Failed lookups are not cached, so a rate limit self-heals.
   private readonly cache = new Map<string, ForwardedThread | null>();
+  private readonly hint: string;
   // Lookups already in the air, so a burst of messages in one uncached thread
   // shares a single request instead of racing to make the same one. The cache
   // alone cannot do this: it is only written once the response has landed, which
@@ -49,9 +49,9 @@ export class ThreadDirectory {
     const pending = this.inFlight.get(channelId);
     if (pending) return pending;
 
-    const lookup = this.lookup(channelId).finally(() =>
-      this.inFlight.delete(channelId),
-    );
+    const lookup = this.lookup(channelId).finally((): void => {
+      this.inFlight.delete(channelId);
+    });
     this.inFlight.set(channelId, lookup);
 
     return lookup;

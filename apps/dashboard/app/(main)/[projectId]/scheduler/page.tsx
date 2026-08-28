@@ -28,13 +28,13 @@ export default function CronsPage({
   const { projectId } = use(params);
   const typedProjectId = projectId as Id<"projects">;
 
-  const crons = useQuery(api.cron.listForProject, {
+  const crons = useQuery(api.agent.crons.listForProject, {
     projectId: typedProjectId,
   });
-  const agents = useQuery(api.agents.listForProject, {
+  const agents = useQuery(api.agent.agents.listForProject, {
     projectId: typedProjectId,
   });
-  const account = useQuery(api.org.getActiveAccount, {});
+  const account = useQuery(api.org.orgs.getActiveAccount, {});
   const project = useQuery(api.project.getById, { projectId: typedProjectId });
 
   const [createOpen, setCreateOpen] = useState(false);

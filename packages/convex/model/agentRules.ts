@@ -1,9 +1,9 @@
 /**
- * Agent config validation and public projections for Convex config HTTP.
- * Pure module: safe for the default Convex runtime.
+ * Agent config validation for Convex config HTTP. Pure module: safe for the
+ * default Convex runtime. The public projection lives in ./responses.ts.
  */
 
-import { mergeConfigObjects, redactConfigSecrets } from "./configValues";
+import { mergeConfigObjects } from "./configValues";
 import { isPlainObject, isStringRecord } from "./objects";
 import {
   AGENT_HOOK_EVENT_NAMES,
@@ -20,6 +20,19 @@ export type { AccountModelProviderName } from "./modelProviders";
 
 export type AgentConfig = Record<string, unknown> & {
   agent?: Record<string, unknown>;
+  harness?: {
+    activeTools?: string[];
+    debug?: {
+      enabled?: boolean;
+      level?: (typeof AGENT_HARNESS_DEBUG_LEVELS)[number];
+      subsystems?: string[];
+    };
+    inactiveTools?: string[];
+    type: (typeof AGENT_HARNESS_TYPES)[number];
+    permissionMode?: (typeof AGENT_HARNESS_PERMISSION_MODES)[number];
+    startupTimeoutMs?: number;
+    webSearch?: boolean;
+  };
   model?: Record<string, unknown>;
   provider?: Partial<Record<AccountModelProviderName, Record<string, unknown>>>;
   sandbox?: string;
@@ -28,6 +41,7 @@ export type AgentConfig = Record<string, unknown> & {
   hooks?: Record<string, unknown>;
   channels?: Record<string, unknown>;
   tools?: Record<string, unknown>;
+  denyTools?: string[];
   skills?: { enabled?: boolean; allowed?: string[]; [key: string]: unknown };
   subagent?: {
     enabled?: boolean;
@@ -35,6 +49,7 @@ export type AgentConfig = Record<string, unknown> & {
     context?: "new" | "inherited";
     mode?: "ephemeral" | "persistent";
     stream?: boolean;
+    visibility?: "full" | "result" | "none";
     [key: string]: unknown;
   };
   scheduler?: { enabled?: boolean; [key: string]: unknown };
@@ -48,17 +63,40 @@ export interface AgentWorkspaceRef {
   sandbox?: string | null;
 }
 
-interface AgentDocLike {
-  _id: string;
-  accountId: string;
-  name: string;
-  description?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
 const AGENT_MAX_TURN_LIMIT = 100;
+const AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT = 10 * 60 * 1_000;
 const SESSION_MAX_CONTEXT_LENGTH_LIMIT = 500_000;
+// Harness vocabulary mirrors core's apps/core/src/shared/domain/agent-config.ts
+// (the runtime source of truth for these rules); change both together.
+const AGENT_HARNESS_TYPES = [
+  "claude-code",
+  "codex",
+  "deepagents",
+  "opencode",
+  "pi",
+] as const;
+const AGENT_HARNESS_DEBUG_LEVELS = [
+  "error",
+  "warn",
+  "info",
+  "debug",
+  "trace",
+] as const;
+const AGENT_HARNESS_PERMISSION_MODES = [
+  "allow-reads",
+  "allow-edits",
+  "allow-all",
+] as const;
+const AGENT_HARNESS_KEYS = new Set([
+  "activeTools",
+  "debug",
+  "inactiveTools",
+  "permissionMode",
+  "startupTimeoutMs",
+  "type",
+  "webSearch",
+]);
+const AGENT_HARNESS_DEBUG_KEYS = new Set(["enabled", "level", "subsystems"]);
 const PROVIDER_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 // Deprecated public account-tool id prefix. It is neither a native Convex id
 // nor a provider tool name, so it must not fall through as one.
@@ -144,14 +182,21 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
 
   const config = value as AgentConfig;
   normalizeAgentBehaviorConfig(config.agent);
+  normalizeHarnessConfig(config.harness);
   normalizeModelConfig(config.model);
   normalizeProviderConfig(config.provider);
   normalizeSandboxRef(config.sandbox);
+  if (isPlainObject(config.harness) && typeof config.sandbox !== "string") {
+    throw new Error(
+      `config.sandbox is required for the ${String(config.harness.type)} harness`,
+    );
+  }
   normalizeWorkspaceRefs(config.workspaces);
   normalizeSessionConfig(config.session);
   normalizeHooksConfig(config.hooks);
   normalizeChannelsConfig(config.channels);
   normalizeToolsConfig(config.tools);
+  assertOptionalStringArray(config.denyTools, "config.denyTools");
   normalizeSkillsConfig(config.skills);
   normalizeSubagentConfig(config.subagent);
   normalizeSchedulerConfig(config.scheduler);
@@ -165,6 +210,19 @@ export function normalizeAgentConfig(value: unknown): AgentConfig {
     config.policies = policies;
   } else {
     delete config.policies;
+  }
+  if (isPlainObject(config.harness) && config.policies !== undefined) {
+    throw new Error("config.policies is not supported with config.harness");
+  }
+  if (
+    isPlainObject(config.harness) &&
+    isPlainObject(config.model) &&
+    isPlainObject(config.model.output) &&
+    config.model.output.type !== "text"
+  ) {
+    throw new Error(
+      "config.model.output structured output is not supported with config.harness",
+    );
   }
   assertOptionalBoolean(config.publicAccess, "config.publicAccess");
 
@@ -201,15 +259,6 @@ export function mergeAgentConfig(
 }
 
 /**
- * Redact secret-shaped config values for public responses.
- * @param config normalized config
- * @returns redacted config
- */
-export function redactAgentConfig(config: AgentConfig): AgentConfig {
-  return redactConfigSecrets(config);
-}
-
-/**
  * Normalize input for POST /v1/agents.
  * @param value request body
  * @returns normalized create input
@@ -220,7 +269,7 @@ export function normalizeCreateAgentInput(value: unknown): {
   config: AgentConfig;
 } {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
-  const name = requireString(value.name, "name");
+  const name = normalizeRequiredString(value.name, "name");
   const description = optionalString(value.description, "description");
   const config = normalizeAgentConfig(value.config);
 
@@ -258,7 +307,7 @@ export function normalizeUpdateAgentInput(
 
   return {
     ...(value.name !== undefined
-      ? { name: requireString(value.name, "name") }
+      ? { name: normalizeRequiredString(value.name, "name") }
       : {}),
     ...(value.description !== undefined
       ? {
@@ -272,28 +321,6 @@ export function normalizeUpdateAgentInput(
       ? { status: requireAgentStatus(value.status) }
       : {}),
     config: config,
-  };
-}
-
-/**
- * Project an agent document and decrypted config to the public API shape.
- * @param doc agent row
- * @param config decrypted config
- * @returns public agent response
- */
-export function toPublicAgentResponse(
-  doc: AgentDocLike,
-  config: AgentConfig,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    agentId: doc._id,
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    status: "active",
-    config: redactAgentConfig(config),
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
   };
 }
 
@@ -323,6 +350,90 @@ function validateAgentSystemConfig(value: unknown): void {
       );
     }
   }
+}
+
+// Mirrors core's normalizeHarnessConfig in
+// apps/core/src/shared/domain/agent-config.ts; same messages on purpose.
+function normalizeHarnessConfig(value: unknown): void {
+  if (value == null) return;
+  if (!isPlainObject(value))
+    throw new Error("config.harness must be an object");
+  const config = value as Record<string, unknown>;
+  for (const key of Object.keys(config)) {
+    if (!AGENT_HARNESS_KEYS.has(key))
+      throw new Error(`config.harness has unknown option "${key}"`);
+  }
+  if (
+    typeof config.type !== "string" ||
+    !AGENT_HARNESS_TYPES.includes(
+      config.type as (typeof AGENT_HARNESS_TYPES)[number],
+    )
+  ) {
+    throw new Error(
+      `config.harness.type must be one of: ${AGENT_HARNESS_TYPES.join(", ")}`,
+    );
+  }
+  assertOptionalEnum(
+    config.permissionMode,
+    "config.harness.permissionMode",
+    AGENT_HARNESS_PERMISSION_MODES,
+  );
+  assertOptionalPositiveInteger(
+    config.startupTimeoutMs,
+    "config.harness.startupTimeoutMs",
+    AGENT_HARNESS_STARTUP_TIMEOUT_LIMIT,
+  );
+  assertOptionalBoolean(config.webSearch, "config.harness.webSearch");
+  assertOptionalStringArray(config.activeTools, "config.harness.activeTools");
+  assertOptionalStringArray(
+    config.inactiveTools,
+    "config.harness.inactiveTools",
+  );
+  if (config.activeTools !== undefined && config.inactiveTools !== undefined) {
+    throw new Error(
+      "config.harness must use either activeTools or inactiveTools, not both",
+    );
+  }
+  normalizeHarnessDebugConfig(config.debug);
+  if (
+    config.type === "codex" &&
+    config.permissionMode !== undefined &&
+    config.permissionMode !== "allow-all"
+  ) {
+    throw new Error(
+      "config.harness.permissionMode must be allow-all for the codex harness",
+    );
+  }
+  if (config.type !== "codex" && config.webSearch !== undefined) {
+    throw new Error(
+      "config.harness.webSearch is only supported by the codex harness",
+    );
+  }
+  if (config.type === "pi" && config.startupTimeoutMs !== undefined) {
+    throw new Error(
+      "config.harness.startupTimeoutMs is not supported by the pi harness",
+    );
+  }
+}
+
+function normalizeHarnessDebugConfig(value: unknown): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value))
+    throw new Error("config.harness.debug must be an object");
+  for (const key of Object.keys(value)) {
+    if (!AGENT_HARNESS_DEBUG_KEYS.has(key))
+      throw new Error(`config.harness.debug has unknown option "${key}"`);
+  }
+  assertOptionalBoolean(value.enabled, "config.harness.debug.enabled");
+  assertOptionalEnum(
+    value.level,
+    "config.harness.debug.level",
+    AGENT_HARNESS_DEBUG_LEVELS,
+  );
+  assertOptionalStringArray(
+    value.subsystems,
+    "config.harness.debug.subsystems",
+  );
 }
 
 function normalizeModelConfig(value: unknown): void {
@@ -620,7 +731,7 @@ function normalizeToolsConfig(value: unknown): void {
 function normalizeToolConfig(toolName: string, value: unknown): void {
   if (!isPlainObject(value))
     throw new Error(`config.tools.${toolName} must be an object`);
-  if (!isAccountToolId(toolName) && !isProviderToolName(toolName)) {
+  if (!isNativeConvexDocumentId(toolName) && !isProviderToolName(toolName)) {
     throw new Error(`config.tools.${toolName} is not a supported tool`);
   }
   const config = value as Record<string, unknown>;
@@ -657,6 +768,11 @@ function normalizeSubagentConfig(value: unknown): void {
   assertOptionalEnum(config.mode, "config.subagent.mode", [
     "ephemeral",
     "persistent",
+  ]);
+  assertOptionalEnum(config.visibility, "config.subagent.visibility", [
+    "full",
+    "result",
+    "none",
   ]);
 }
 
@@ -907,28 +1023,35 @@ function isPrivateHostname(hostname: string): boolean {
     return true;
   const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
   if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
+    return isPrivateIpv4(Number(ipv4[1]), Number(ipv4[2]));
   }
-  if (host.includes(":"))
-    return (
-      host === "::" ||
-      host === "::1" ||
-      host.startsWith("::ffff:") ||
-      /^f[cd]/.test(host) ||
-      /^fe[89ab]/.test(host)
-    );
+  if (host.includes(":")) return isPrivateIpv6(host);
 
   return false;
+}
+
+/** Loopback/private/link-local/CGNAT IPv4, judged from the first two octets. */
+function isPrivateIpv4(a: number, b: number): boolean {
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+/** Unspecified/loopback/v4-mapped/ULA/link-local IPv6 (host already lowercased, unbracketed). */
+function isPrivateIpv6(host: string): boolean {
+  return (
+    host === "::" ||
+    host === "::1" ||
+    host.startsWith("::ffff:") ||
+    /^f[cd]/.test(host) ||
+    /^fe[89ab]/.test(host)
+  );
 }
 
 function assertOptionalString(value: unknown, name: string): void {
@@ -968,10 +1091,6 @@ function normalizeRequiredString(value: unknown, name: string): string {
     throw new Error(`${name} must be a non-empty string`);
 
   return value.trim();
-}
-
-function requireString(value: unknown, name: string): string {
-  return normalizeRequiredString(value, name);
 }
 
 function optionalString(value: unknown, name: string): string | undefined {
@@ -1039,10 +1158,6 @@ function isProviderToolName(toolName: string): boolean {
     !toolName.startsWith(DEPRECATED_TOOL_ID_PREFIX) &&
     !RESERVED_HARNESS_TOOL_NAMES.has(toolName)
   );
-}
-
-function isAccountToolId(toolName: string): boolean {
-  return isNativeConvexDocumentId(toolName);
 }
 
 function isNativeConvexDocumentId(value: string): boolean {

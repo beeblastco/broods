@@ -6,14 +6,6 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { getOrgMembership, orgRoleMeets, type OrgRole } from "./org";
 
-export async function getOwnedProject(
-  ctx: QueryCtx | MutationCtx,
-  authId: string,
-  projectId: Id<"projects">,
-): Promise<Doc<"projects"> | null> {
-  return getProjectForRole(ctx, authId, projectId);
-}
-
 export async function getProjectForRole(
   ctx: QueryCtx | MutationCtx,
   authId: string,

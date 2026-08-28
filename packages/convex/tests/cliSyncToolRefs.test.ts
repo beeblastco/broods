@@ -87,7 +87,7 @@ async function seedUploadedTool(
         updatedAt: now,
       }),
   );
-  await tt.mutation(internal.cliSync.recordExternalResourcesBySecretHash, {
+  await tt.mutation(internal.cli.sync.recordExternalResourcesBySecretHash, {
     secretHash: SECRET_HASH,
     project: PROJECT,
     stage: STAGE,
@@ -133,7 +133,7 @@ const storedTools = (tt: T) =>
   });
 
 const syncTools = (tt: T, tools: Record<string, unknown>) =>
-  tt.mutation(internal.cliSync.syncManifestBySecretHash, {
+  tt.mutation(internal.cli.sync.syncManifestBySecretHash, {
     secretHash: SECRET_HASH,
     manifest: {
       version: 1 as const,
@@ -163,7 +163,7 @@ describe("cli sync rewrites config.tools names to account tool ids", () => {
     // fails the whole run with "is not a provider-defined tool".
     expect(await storedTools(tt)).toEqual({ [toolId]: { enabled: true } });
 
-    const read = await tt.query(internal.cliSync.getManifestBySecretHash, {
+    const read = await tt.query(internal.cli.sync.getManifestBySecretHash, {
       secretHash: SECRET_HASH,
       project: PROJECT,
       stage: STAGE,

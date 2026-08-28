@@ -1,13 +1,20 @@
 /**
- * Cron-job records, input normalization, and patch-merge helpers.
+ * Cron-job records and patch-merge helpers for the runtime. Input
+ * normalization lives in the config plane (packages/convex/model/cronRules.ts,
+ * the single home of those rules).
  */
 
+import {
+  isOneTimeSchedule,
+  normalizeUpdateCronInput as normalizeUpdateCronInputRule,
+} from "@broods/convex/model/cronRules";
 import type { JSONValue, ModelMessage } from "ai";
 import { optionalEnv } from "../env.ts";
-import { isPlainObject } from "../object.ts";
 
-const SCHEDULE_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
-const TIMEZONE_PATTERN = /^[A-Za-z0-9_./+-]{1,64}$/;
+// Whether a schedule fires exactly once (an at(...) expression). EventBridge
+// deletes such a schedule itself once it has run, so the stored job is dropped
+// with it.
+export { isOneTimeSchedule };
 
 export type CronStatus = "active" | "paused";
 export type CronLastStatus = "started" | "completed" | "failed";
@@ -84,18 +91,6 @@ export type UpdateCronInput = {
   | { events?: ModelMessage[]; input?: never }
 );
 
-/** Normalized create payload: `input`/`events` collapsed to a stored events list. */
-export interface NormalizedCronCreate {
-  name: string;
-  description?: string;
-  agentId: string;
-  events: ModelMessage[];
-  conversationKey?: string;
-  scheduleExpression: string;
-  timezone?: string;
-  status?: CronStatus;
-}
-
 /** Normalized update patch: clearable fields use null, run payload uses events. */
 export interface NormalizedCronUpdate {
   name?: string;
@@ -108,110 +103,20 @@ export interface NormalizedCronUpdate {
   status?: CronStatus;
 }
 
-/**
- * Whether a schedule fires exactly once. EventBridge deletes such a schedule
- * itself once it has run, so the stored job is dropped with it. Mirrored in
- * packages/convex/model/cronRules.ts.
- */
-export function isOneTimeSchedule(expression: string): boolean {
-  return expression.startsWith("at(");
-}
-
 export function isCronsConfigured(): boolean {
   return Boolean(optionalEnv("CONVEX_URL") && optionalEnv("CONVEX_DEPLOY_KEY"));
 }
 
-export function normalizeCreateCronInput(
-  input: CreateCronInput,
-): NormalizedCronCreate {
-  if (!isPlainObject(input)) throw new Error("Request body must be an object");
-
-  return {
-    name: requireString(input.name, "name", 120),
-    agentId: requireString(input.agentId, "agentId", 120),
-    events: runPayloadToEvents(input),
-    scheduleExpression: normalizeScheduleExpression(input.scheduleExpression),
-    ...(input.description !== undefined
-      ? {
-          description:
-            optionalString(input.description, "description", 500) ?? "",
-        }
-      : {}),
-    ...(input.conversationKey !== undefined
-      ? {
-          conversationKey:
-            optionalString(input.conversationKey, "conversationKey", 256) ?? "",
-        }
-      : {}),
-    ...(input.timezone !== undefined
-      ? { timezone: normalizeTimezone(input.timezone) }
-      : {}),
-    ...(input.status !== undefined
-      ? { status: normalizeCronStatus(input.status) }
-      : {}),
-  };
-}
-
+/**
+ * Validates an update patch with the config plane's normalizer, then re-types
+ * the events list to the ModelMessage[] core stores. The rule checks the
+ * payload shape only (non-empty array), exactly as core's former copy did, so
+ * the assertion adds no trust the caller did not already have.
+ */
 export function normalizeUpdateCronInput(
   input: UpdateCronInput,
 ): NormalizedCronUpdate {
-  if (!isPlainObject(input)) throw new Error("Request body must be an object");
-  const events = optionalRunPayloadToEvents(input);
-  const normalized: NormalizedCronUpdate = {
-    ...(input.name !== undefined
-      ? { name: requireString(input.name, "name", 120) }
-      : {}),
-    ...(input.description !== undefined
-      ? {
-          description:
-            input.description === null
-              ? null
-              : optionalString(input.description, "description", 500),
-        }
-      : {}),
-    ...(input.agentId !== undefined
-      ? { agentId: requireString(input.agentId, "agentId", 120) }
-      : {}),
-    ...(events !== undefined ? { events: events } : {}),
-    ...(input.conversationKey !== undefined
-      ? {
-          conversationKey:
-            input.conversationKey === null
-              ? null
-              : optionalString(input.conversationKey, "conversationKey", 256),
-        }
-      : {}),
-    ...(input.scheduleExpression !== undefined
-      ? {
-          scheduleExpression: normalizeScheduleExpression(
-            input.scheduleExpression,
-          ),
-        }
-      : {}),
-    ...(input.timezone !== undefined
-      ? {
-          timezone:
-            input.timezone === null ? null : normalizeTimezone(input.timezone),
-        }
-      : {}),
-    ...(input.status !== undefined
-      ? { status: normalizeCronStatus(input.status) }
-      : {}),
-  };
-  if (Object.keys(normalized).length === 0) {
-    throw new Error("Request body must include at least one cron job field");
-  }
-
-  return normalized;
-}
-
-export function normalizeSchedulerGroupName(value: unknown): string {
-  const groupName = requireString(value, "schedulerGroupName", 64);
-  if (!SCHEDULE_NAME_PATTERN.test(groupName)) {
-    throw new Error("schedulerGroupName contains unsupported characters");
-  }
-
-  return groupName;
+  return normalizeUpdateCronInputRule(input) as NormalizedCronUpdate;
 }
 
 export function applyCronPatch(
@@ -273,72 +178,6 @@ export function withScheduledRunContext(
   return framed ? events : [{ role: "user", content: header }, ...events];
 }
 
-/** Collapses a one-of `input`/`events` payload into the stored events list. */
-function runPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): ModelMessage[] {
-  const hasInput = payload.input !== undefined;
-  const hasEvents = payload.events !== undefined;
-  if (hasInput === hasEvents) {
-    throw new Error("Provide exactly one of input or events");
-  }
-  if (hasInput) {
-    return [
-      {
-        role: "user",
-        content: [{ type: "text", text: String(payload.input) }],
-      },
-    ];
-  }
-
-  return normalizeEvents(payload.events);
-}
-
-/** Like runPayloadToEvents, but returns undefined when neither field is supplied (updates). */
-function optionalRunPayloadToEvents(payload: {
-  input?: unknown;
-  events?: unknown;
-}): ModelMessage[] | undefined {
-  if (payload.input === undefined && payload.events === undefined)
-    return undefined;
-
-  return runPayloadToEvents(payload);
-}
-
-function normalizeEvents(value: unknown): ModelMessage[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error("events must be a non-empty array of model messages");
-  }
-
-  return value as ModelMessage[];
-}
-
-function normalizeScheduleExpression(value: unknown): string {
-  const expression = requireString(value, "scheduleExpression", 256);
-  if (!/^(cron|rate|at)\(.+\)$/.test(expression)) {
-    throw new Error(
-      "scheduleExpression must use cron(...), rate(...), or at(...)",
-    );
-  }
-
-  return expression;
-}
-
-function normalizeTimezone(value: unknown): string {
-  const timezone = requireString(value, "timezone", 64);
-  if (!TIMEZONE_PATTERN.test(timezone)) {
-    throw new Error("timezone contains unsupported characters");
-  }
-
-  return timezone;
-}
-
-function normalizeCronStatus(value: unknown): CronStatus {
-  if (value === "active" || value === "paused") return value;
-  throw new Error("status must be active or paused");
-}
-
 function scheduledRunHeader(job: CronRecord, firedAt: Date): string {
   const attributes = [
     `name="${job.name}"`,
@@ -354,33 +193,4 @@ The scheduler started this run at ${firedAt.toISOString()}. The instructions bel
 ${job.description ? `Why it exists: ${job.description}\n` : ""}${cadence}
 A scheduled run has no scheduling tools at all: it cannot list, create, change, or cancel a schedule. Say what needs changing and leave it to the next person who asks.
 </scheduled-task>`;
-}
-
-function requireString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string {
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length === 0)
-    throw new Error(`${name} must be a non-empty string`);
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed;
-}
-
-function optionalString(
-  value: unknown,
-  name: string,
-  maxLength: number,
-): string | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string") throw new Error(`${name} must be a string`);
-  const trimmed = value.trim();
-  if (trimmed.length > maxLength)
-    throw new Error(`${name} must be at most ${maxLength} characters`);
-
-  return trimmed.length > 0 ? trimmed : undefined;
 }

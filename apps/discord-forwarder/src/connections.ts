@@ -1,31 +1,31 @@
 /**
- * Reads Discord connections from every config plane the process serves.
+ * Watches Discord connections in every config plane the process serves.
  *
- * `packages/convex/channelConnections.ts` does the decryption, so this process
+ * A Convex websocket subscription replaces the old fixed-interval poll: the
+ * query re-runs only when a plane's `channelConnections` table actually
+ * changes, so the standing function-call load is zero while nothing changes
+ * and a new bot token reconciles the moment it is written.
+ *
+ * `packages/convex/channel/connections.ts` does the decryption, so this process
  * never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — only one deploy key per plane,
  * the same credential core authenticates storage reads with. That query is not
  * Discord-specific; this is the caller that asks it for `discord`.
  */
 
-import type { ChannelConnection } from "@broods/convex/channelConnections";
-import type { ConvexHttpClient } from "convex/browser";
-import { createConvexClient } from "../../core/src/shared/convex/client.ts";
+import type { ChannelConnection } from "@broods/convex/channel/connections";
+import { ConvexClient } from "convex/browser";
 import type { ConfigPlane } from "./config.ts";
 import { logWarn } from "./log.ts";
 
-// ConvexHttpClient's typed `query` only accepts public function refs and the
+// ConvexClient's typed `onUpdate` only accepts public function refs and the
 // backend exposes this as an internalQuery, so the ref is cast at the boundary
 // exactly as apps/core does. Deploy-key auth permits the call.
 const internal: any = require("@broods/convex/_generated/api").internal;
 
-// One client per plane for the life of the process. Rebuilding them every poll
-// would re-run admin auth twice a minute forever for no gain.
-const clients = new Map<string, ConvexHttpClient>();
-
-// The last answer each plane gave, by plane name. A plane that fails a poll
-// reuses this instead of reporting nothing, so a blip cannot look like "every
-// token here was deleted" and close its sockets.
-const lastGood = new Map<string, ForwarderConnection[]>();
+/** Handle over every plane subscription; close it on shutdown. */
+export interface ConnectionWatch {
+  close(): Promise<void>;
+}
 
 /** A config-plane row with its own plane's gateway front door joined on. */
 export interface ForwarderConnection {
@@ -40,43 +40,21 @@ export interface ForwarderConnection {
  * nothing rather than as an outage. Throws only when every plane was silent,
  * which is the one case the caller must not reconcile on.
  *
- * Separate from the read so the rule is pinned by a test: getting it wrong once
- * meant a backend that was not live yet stopped every other plane from ever
- * opening a socket.
+ * Separate from the transport so the rule is pinned by a test: getting it wrong
+ * once meant a backend that was not live yet stopped every other plane from
+ * ever opening a socket.
  */
 export function combinePlaneAnswers(
   planeNames: readonly string[],
   answers: readonly (ForwarderConnection[] | null)[],
 ): ForwarderConnection[] {
   // `every` is true for an empty list too, which is the right answer: a process
-  // with no planes has nothing to poll and must not report itself ready.
-  if (answers.every((answer) => answer === null)) {
+  // with no planes has nothing to watch and must not report itself ready.
+  if (answers.every((answer): boolean => answer === null)) {
     throw new Error(`No config plane answered: ${planeNames.join(", ")}`);
   }
 
-  return answers.flatMap((answer) => answer ?? []);
-}
-
-/**
- * One entry per deployed agent that configures a Discord bot token, across every
- * plane.
- *
- * A plane is isolated from its neighbours: one that fails contributes whatever
- * it last answered, so its sockets survive the blip while every healthy plane
- * still reconciles. A plane that has never answered contributes nothing, which
- * is what lets this process serve a deployment whose backend is not live yet.
- *
- * Rejects only when no plane answered at all. The caller leaves readiness false
- * and skips the reconcile entirely on a rejection, so total failure never reads
- * as "every token was deleted" either.
- */
-export async function listDiscordConnections(
-  planes: readonly ConfigPlane[],
-): Promise<ForwarderConnection[]> {
-  return combinePlaneAnswers(
-    planes.map((plane) => plane.name),
-    await Promise.all(planes.map(planeConnectionsOrLastGood)),
-  );
+  return answers.flatMap((answer): ForwarderConnection[] => answer ?? []);
 }
 
 /**
@@ -88,7 +66,7 @@ export function planeConnections(
   plane: ConfigPlane,
   rows: readonly ChannelConnection[],
 ): ForwarderConnection[] {
-  return rows.map((row) => ({
+  return rows.map((row): ForwarderConnection => ({
     agentId: row.agentId,
     agentName: row.agentName,
     botToken: row.botToken,
@@ -96,35 +74,67 @@ export function planeConnections(
   }));
 }
 
-function planeClient(plane: ConfigPlane): ConvexHttpClient {
-  const cached = clients.get(plane.convexUrl);
-  if (cached) return cached;
-  const client = createConvexClient(plane.convexUrl, plane.deployKey);
-  clients.set(plane.convexUrl, client);
+/**
+ * One entry per deployed agent that configures a Discord bot token, across every
+ * plane, delivered whenever any plane's answer changes.
+ *
+ * A plane is isolated from its neighbours: the websocket client reconnects on
+ * its own, and until a plane answers again its last snapshot keeps contributing,
+ * so a blip cannot look like "every token here was deleted" and close its
+ * sockets. A plane that has never answered contributes nothing, which is what
+ * lets this process serve a deployment whose backend is not live yet — and
+ * `onChange` never fires before at least one plane has answered, so total
+ * silence never reconciles at all.
+ */
+export function watchDiscordConnections(
+  planes: readonly ConfigPlane[],
+  onChange: (connections: ForwarderConnection[]) => void,
+): ConnectionWatch {
+  const latest = new Map<string, ForwarderConnection[]>();
+  const clients = planes.map((plane): ConvexClient => {
+    const client = planeClient(plane);
+    client.onUpdate(
+      internal.channel.connections.listConnections,
+      { channel: "discord" },
+      (rows: ChannelConnection[]): void => {
+        latest.set(plane.name, planeConnections(plane, rows));
+        onChange(
+          combinePlaneAnswers(
+            planes.map((entry): string => entry.name),
+            planes.map(
+              (entry): ForwarderConnection[] | null =>
+                latest.get(entry.name) ?? null,
+            ),
+          ),
+        );
+      },
+      (error: Error): void => {
+        logWarn("Config plane subscription error", {
+          error: error.message,
+          plane: plane.name,
+          reusing: latest.get(plane.name)?.length ?? 0,
+        });
+      },
+    );
 
-  return client;
+    return client;
+  });
+
+  return {
+    close: async (): Promise<void> => {
+      await Promise.all(clients.map((client): Promise<void> => client.close()));
+    },
+  };
 }
 
-/** This plane's connections, or null when it has never answered. */
-async function planeConnectionsOrLastGood(
-  plane: ConfigPlane,
-): Promise<ForwarderConnection[] | null> {
-  try {
-    const rows = (await planeClient(plane).query(
-      internal.channelConnections.listConnections,
-      { channel: "discord" },
-    )) as ChannelConnection[];
-    const resolved = planeConnections(plane, rows);
-    lastGood.set(plane.name, resolved);
+/** A websocket client for one plane, authenticated with its deploy key. */
+function planeClient(plane: ConfigPlane): ConvexClient {
+  const client = new ConvexClient(plane.convexUrl);
+  // setAdminAuth is marked @internal and stripped from the public typings,
+  // the same as on ConvexHttpClient in apps/core.
+  (client as unknown as { setAdminAuth(key: string): void }).setAdminAuth(
+    plane.deployKey,
+  );
 
-    return resolved;
-  } catch (error) {
-    logWarn("Config plane poll failed", {
-      error: error instanceof Error ? error.message : String(error),
-      plane: plane.name,
-      reusing: lastGood.get(plane.name)?.length ?? 0,
-    });
-
-    return lastGood.get(plane.name) ?? null;
-  }
+  return client;
 }

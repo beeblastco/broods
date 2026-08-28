@@ -208,7 +208,7 @@ each plane's admin credential comes from `CONVEX_DEPLOY_KEY_<NAME>` — plane `d
 reads `CONVEX_DEPLOY_KEY_DEV`. Adding a deployment is one array entry and one
 secret key. It never holds `ACCOUNT_CONFIG_ENCRYPTION_SECRET`; Convex decrypts and
 returns only the bot token and webhook path, through
-`channelConnections.listConnections`.
+`channel/connections.listConnections`.
 
 A plane is isolated from its neighbours. One that fails a poll keeps serving
 whatever it last answered, so a Convex blip cannot read as "every token here was

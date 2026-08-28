@@ -91,9 +91,13 @@ export const { authKitEvent } = authKit.events({
     }
 
     await ctx.db.patch(user._id, { workosDeletionRequestedAt: Date.now() });
-    await ctx.scheduler.runAfter(0, internal.workosUserDeletionCleanup.run, {
-      authId: user.authId,
-    });
+    await ctx.scheduler.runAfter(
+      0,
+      internal.org.workosUserDeletionCleanup.run,
+      {
+        authId: user.authId,
+      },
+    );
   },
   "session.created": async () => {},
   "session.revoked": async () => {},

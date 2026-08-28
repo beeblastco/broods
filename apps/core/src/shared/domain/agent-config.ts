@@ -30,6 +30,10 @@ import {
   isStringRecord,
 } from "../object.ts";
 import {
+  AGENT_HOOK_EVENT_NAMES,
+  type AgentHookEventName,
+} from "@broods/convex/model/accountHooks";
+import {
   ACCOUNT_MODEL_PROVIDER_NAMES,
   isAccountModelProviderName,
   type AccountModelProviderName,
@@ -97,6 +101,9 @@ const RESERVED_HARNESS_TOOL_NAMES = new Set([
   "write",
 ]);
 
+// Webhooks subscribe to agent-loop lifecycle events only. Code hooks use the
+// full AGENT_HOOK_EVENT_NAMES list (lifecycle + channel points), whose single
+// home is packages/convex/model/accountHooks.ts.
 const AGENT_LIFECYCLE_EVENT_NAMES = [
   "agent.started",
   "agent.step.finished",
@@ -109,20 +116,6 @@ const AGENT_LIFECYCLE_EVENT_NAMES = [
   "subagent.task.started",
   "subagent.task.finished",
 ] as const satisfies readonly AgentLifecycleEventName[];
-
-// Channel hook events fire from integrations.ts (not the agent loop), so they
-// live outside AgentLifecycleEventName but share the code-hook vocabulary.
-const AGENT_CHANNEL_HOOK_EVENT_NAMES = [
-  "channel.message.received",
-  "channel.message.sending",
-] as const satisfies readonly AgentChannelHookEventName[];
-
-// Every event a user code hook can subscribe to: the agent-loop lifecycle plus
-// the channel points. Webhooks use AGENT_LIFECYCLE_EVENT_NAMES only.
-export const AGENT_HOOK_EVENT_NAMES = [
-  ...AGENT_LIFECYCLE_EVENT_NAMES,
-  ...AGENT_CHANNEL_HOOK_EVENT_NAMES,
-] as const satisfies readonly AgentHookEventName[];
 
 export interface AgentConfig {
   agent?: AgentBehaviorConfig;
@@ -375,12 +368,10 @@ export type AgentLifecycleEventName =
   | "subagent.task.finished";
 
 // Channel points a code hook can intercept (inbound message / before-send).
-export type AgentChannelHookEventName =
-  "channel.message.received" | "channel.message.sending";
-
-// The full set of events a user code hook can subscribe to.
-export type AgentHookEventName =
-  AgentLifecycleEventName | AgentChannelHookEventName;
+// The full set of events a user code hook can subscribe to. Re-exported from
+// its single home in convex so an event added there reaches this union without
+// a second edit here.
+export type { AgentHookEventName };
 
 export type AgentToolsConfig = Record<string, AgentToolConfig>;
 
@@ -1014,7 +1005,11 @@ function normalizeProviderSettings(
   if (baseURL) {
     const label = typeof config.base_url === "string" ? "base_url" : "baseURL";
     assertPublicHttpsUrl(baseURL, `config.provider.${providerName}.${label}`);
+    // Canonicalize on `baseURL`: accepting both spellings but storing one
+    // prevents a stale `base_url` (which providerBaseURL prefers) from
+    // shadowing later `baseURL` updates.
     config.baseURL = baseURL;
+    delete config.base_url;
   }
   if (config.headers !== undefined && !isStringRecord(config.headers)) {
     throw new Error(

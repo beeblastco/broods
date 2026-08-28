@@ -180,7 +180,7 @@ Use [`packages/demos/skill-loads.ts`](https://github.com/beeblastco/broods/blob/
 
 ## Design Rules
 
-- Keep skill CRUD in the Convex config plane (`packages/convex/configHttp.ts` and `packages/convex/model/skills.ts`).
+- Keep skill CRUD in the Convex config plane (`packages/convex/config/http.ts` and `packages/convex/model/skills.ts`).
 - Keep shared runtime validation and S3 path rules in `apps/core/src/shared/skills.ts`.
 - Keep the model-facing `load_skill` schema in `apps/core/src/harness/tools/load-skill.tool.ts`.
 - Do not put tool credentials or channel secrets inside skill bundles.

@@ -4,6 +4,7 @@
 
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stripUndefined } from "./objects";
 
 const DETAILS_JSON_LIMIT_BYTES = 8 * 1024;
 const TRUNCATED_MARKER = "…[truncated]";
@@ -19,6 +20,17 @@ export type ConfigAuditActor = {
   id?: string;
   email?: string;
   name?: string;
+};
+
+export type ConfigAuditEventInput = {
+  accountId: Id<"accounts">;
+  projectId?: Id<"projects">;
+  stageId?: Id<"stages">;
+  actor: ConfigAuditActor;
+  action: string;
+  resource: ConfigAuditResource;
+  summary: string;
+  detailsJson?: string;
 };
 
 export type ConfigAuditResource = {
@@ -43,16 +55,53 @@ export type ConfigAuditResource = {
   name?: string;
 };
 
-export type ConfigAuditEventInput = {
-  accountId: Id<"accounts">;
-  projectId?: Id<"projects">;
-  stageId?: Id<"stages">;
-  actor: ConfigAuditActor;
-  action: string;
-  resource: ConfigAuditResource;
-  summary: string;
-  detailsJson?: string;
-};
+/**
+ * Resolve the provisioned account for a project, if one exists.
+ * @param ctx Convex query or mutation context.
+ * @param projectId project whose org owns the account.
+ * @returns the account id, or null before account provisioning.
+ */
+export async function accountIdForProject(
+  ctx: QueryCtx | MutationCtx,
+  projectId: Id<"projects">,
+): Promise<Id<"accounts"> | null> {
+  const project = await ctx.db.get(projectId);
+  if (!project?.orgId) return null;
+  const account = await ctx.db
+    .query("accounts")
+    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
+    .unique();
+
+  return account?._id ?? null;
+}
+
+/**
+ * Serialize small non-secret metadata for the detailsJson field. Plain
+ * JSON.stringify; `insertConfigAuditEvent` caps oversized payloads.
+ * @param details ids, names, counts, or other non-secret metadata.
+ * @returns JSON string.
+ */
+export function auditDetailsJson(details: Record<string, unknown>): string {
+  return JSON.stringify(details);
+}
+
+/**
+ * Build dashboard actor metadata from an AuthKit user.
+ * @param user AuthKit user metadata.
+ * @returns audit actor fields for a dashboard mutation.
+ */
+export function dashboardAuditActor(user: {
+  id: string;
+  email?: string | null;
+  name?: string | null;
+}): ConfigAuditActor {
+  return {
+    kind: "dashboardUser",
+    id: user.id,
+    ...(user.email ? { email: user.email } : {}),
+    ...(user.name ? { name: user.name } : {}),
+  };
+}
 
 /**
  * Insert a capped config audit event into Convex.
@@ -79,53 +128,6 @@ export async function insertConfigAuditEvent(
   });
 }
 
-/**
- * Resolve the provisioned account for a project, if one exists.
- * @param ctx Convex query or mutation context.
- * @param projectId project whose org owns the account.
- * @returns the account id, or null before account provisioning.
- */
-export async function accountIdForProject(
-  ctx: QueryCtx | MutationCtx,
-  projectId: Id<"projects">,
-): Promise<Id<"accounts"> | null> {
-  const project = await ctx.db.get(projectId);
-  if (!project?.orgId) return null;
-  const account = await ctx.db
-    .query("accounts")
-    .withIndex("by_orgId", (q) => q.eq("orgId", project.orgId!))
-    .unique();
-
-  return account?._id ?? null;
-}
-
-/**
- * Build dashboard actor metadata from an AuthKit user.
- * @param user AuthKit user metadata.
- * @returns audit actor fields for a dashboard mutation.
- */
-export function dashboardAuditActor(user: {
-  id: string;
-  email?: string | null;
-  name?: string | null;
-}): ConfigAuditActor {
-  return {
-    kind: "dashboardUser",
-    id: user.id,
-    ...(user.email ? { email: user.email } : {}),
-    ...(user.name ? { name: user.name } : {}),
-  };
-}
-
-/**
- * Serialize small non-secret metadata for the detailsJson field.
- * @param details ids, names, counts, or other non-secret metadata.
- * @returns JSON string capped at insert time.
- */
-export function auditDetailsJson(details: Record<string, unknown>): string {
-  return JSON.stringify(details);
-}
-
 function capDetailsJson(value: string): string {
   const encoder = new TextEncoder();
   const byteLength = encoder.encode(value).byteLength;
@@ -138,10 +140,4 @@ function capDetailsJson(value: string): string {
     originalBytes: byteLength,
     prefix: `${value.slice(0, 1024)}${TRUNCATED_MARKER}`,
   });
-}
-
-function stripUndefined<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => entry !== undefined),
-  ) as T;
 }

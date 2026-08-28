@@ -426,8 +426,8 @@ function CanvasInner({ projectId }: { projectId: Id<"projects"> }) {
       { nodes: args.nodes, edges: args.edges },
     );
   });
-  const updateRuntimeRefs = useMutation(api.agentConfig.updateRuntimeRefs);
-  const updateSubagentRefs = useMutation(api.agentConfig.updateSubagentRefs);
+  const updateRuntimeRefs = useMutation(api.agent.config.updateRuntimeRefs);
+  const updateSubagentRefs = useMutation(api.agent.config.updateSubagentRefs);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLocalChanges = useRef(false);
   // Bumped on every edit. A save that resolves against an older generation must

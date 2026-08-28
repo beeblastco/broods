@@ -466,22 +466,22 @@ export function WorkspaceFilesTab({
   workspaceId?: string;
 }): React.JSX.Element {
   const convexFiles = useQuery(
-    api.workspaceFiles.list,
+    api.workspace.files.list,
     projectId && !workspaceId
       ? { projectId: projectId, nodeId: nodeId }
       : "skip",
   );
 
-  const generateUploadUrl = useMutation(api.workspaceFiles.generateUploadUrl);
-  const createFile = useMutation(api.workspaceFiles.create);
-  const removeFile = useMutation(api.workspaceFiles.remove);
-  const removeFolderMut = useMutation(api.workspaceFiles.removeFolder);
-  const renameMut = useMutation(api.workspaceFiles.rename);
-  const listRuntimeFiles = useAction(api.workspaceFilesPublic.list);
-  const migrateLegacyFiles = useAction(api.workspaceFilesPublic.migrateLegacy);
-  const uploadRuntimeFile = useAction(api.workspaceFilesPublic.upload);
-  const removeRuntimePath = useAction(api.workspaceFilesPublic.remove);
-  const renameRuntimePath = useAction(api.workspaceFilesPublic.rename);
+  const generateUploadUrl = useMutation(api.workspace.files.generateUploadUrl);
+  const createFile = useMutation(api.workspace.files.create);
+  const removeFile = useMutation(api.workspace.files.remove);
+  const removeFolderMut = useMutation(api.workspace.files.removeFolder);
+  const renameMut = useMutation(api.workspace.files.rename);
+  const listRuntimeFiles = useAction(api.workspace.filesPublic.list);
+  const migrateLegacyFiles = useAction(api.workspace.filesPublic.migrateLegacy);
+  const uploadRuntimeFile = useAction(api.workspace.filesPublic.upload);
+  const removeRuntimePath = useAction(api.workspace.filesPublic.remove);
+  const renameRuntimePath = useAction(api.workspace.filesPublic.rename);
 
   const cacheKey = runtimeFileCacheKey(projectId, workspaceId);
   const [runtimeFiles, setRuntimeFiles] = useState<FileRecord[] | undefined>(

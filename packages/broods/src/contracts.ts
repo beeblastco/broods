@@ -96,4 +96,4 @@ export type {
   CliManifest,
   CliManifestResource,
   GeneratedIds,
-} from "../../convex/cliTypes.ts";
+} from "../../convex/cli/types.ts";

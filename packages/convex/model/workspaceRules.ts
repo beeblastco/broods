@@ -1,13 +1,12 @@
 /**
- * Workspace-config validation and public response mapping for the Convex
- * config plane (epic #85 phase 9, stage 4). Ports core's former
- * storage/workspace-config.ts normalizer so the public /v1/workspaces
+ * Workspace-config validation for the Convex config plane. Ports core's
+ * former storage/workspace-config.ts normalizer so the public /v1/workspaces
  * contract is unchanged. Workspace config holds no secrets (a roleArn is not
  * a secret), so it is stored and returned in plaintext. Pure module — safe
- * for the default Convex runtime.
+ * for the default Convex runtime. The public projection lives in
+ * ./responses.ts.
  */
 
-import type { Doc } from "../_generated/dataModel";
 import { mergeConfigObjects } from "./configValues";
 import { isPlainObject } from "./objects";
 
@@ -147,26 +146,6 @@ export function normalizeUpdateWorkspaceConfigInput(
         }
       : {}),
     config: config,
-  };
-}
-
-/**
- * Map a workspaceConfigs document to the public record shape core used to
- * return (workspaceId = _id, ISO timestamps, plaintext config).
- * @param doc the workspaceConfigs document
- * @returns the public workspace record
- */
-export function toPublicWorkspaceConfigResponse(
-  doc: Doc<"workspaceConfigs">,
-): Record<string, unknown> {
-  return {
-    accountId: doc.accountId,
-    workspaceId: doc._id,
-    name: doc.name,
-    ...(doc.description ? { description: doc.description } : {}),
-    config: doc.config ?? { storage: { provider: "s3" } },
-    createdAt: new Date(doc.createdAt).toISOString(),
-    updatedAt: new Date(doc.updatedAt).toISOString(),
   };
 }
 

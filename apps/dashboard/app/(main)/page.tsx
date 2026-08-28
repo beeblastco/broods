@@ -11,9 +11,9 @@ import { useEffect, useRef, useState } from "react";
 export default function HomePage(): React.JSX.Element {
   const router = useRouter();
   const convex = useConvex();
-  const getOrCreateOrg = useMutation(api.org.getOrCreate);
+  const getOrCreateOrg = useMutation(api.org.orgs.getOrCreate);
   const getOrCreateDefault = useMutation(api.project.getOrCreateDefault);
-  const provision = useAction(api.orgLifecycle.provision);
+  const provision = useAction(api.org.lifecycle.provision);
   const currentUser = useQuery(api.user.getCurrent);
   const bootstrapped = useRef(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function HomePage(): React.JSX.Element {
         // (empty) projects page — onboarding ends with `broods dev`, which
         // creates the first project. `provision` throws if an account already
         // exists, which we treat as already-provisioned.
-        const account = await convex.query(api.org.getActiveAccount, {});
+        const account = await convex.query(api.org.orgs.getActiveAccount, {});
         if (account === null) {
           try {
             const result = await provision({ orgId: orgId });

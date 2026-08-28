@@ -43,11 +43,11 @@ export default function SandboxPage(): React.JSX.Element {
     null;
   const activeStageId = activeStage?._id ?? null;
   const instances = useQuery(
-    api.sandboxInstances.listForActiveOrg,
+    api.sandbox.instances.listForActiveOrg,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
-  const snapshots = useQuery(api.sandboxSnapshots.listForActiveOrg, {});
-  const account = useQuery(api.org.getActiveAccount, {});
+  const snapshots = useQuery(api.sandbox.snapshots.listForActiveOrg, {});
+  const account = useQuery(api.org.orgs.getActiveAccount, {});
 
   const [view, setView] = useState<SandboxView>("instances");
   const activeLabel =

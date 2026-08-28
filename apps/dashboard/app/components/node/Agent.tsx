@@ -45,7 +45,7 @@ export function AgentNode({ id, data }: NodeProps): React.JSX.Element {
     Id<"agentConfigs"> | undefined;
   const healthStatus = useAgentHealth(agentConfigId);
   const agentConfig = useQuery(
-    api.agentConfig.getById,
+    api.agent.config.getById,
     agentConfigId ? { configId: agentConfigId } : "skip",
   );
   const featureRows = useMemo(() => {

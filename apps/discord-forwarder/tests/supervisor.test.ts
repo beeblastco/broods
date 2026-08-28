@@ -13,7 +13,6 @@ const CONFIG: ForwarderConfig = {
   backoffCeilingMs: 300_000,
   identifyLimit: 10,
   planes: [],
-  pollIntervalMs: 30_000,
   port: 3000,
 };
 

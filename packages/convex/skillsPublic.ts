@@ -1,7 +1,7 @@
 "use node";
 /**
  * Public skill actions for the Convex config plane: publish, create, and
- * import skill bundles directly against S3 (epic #85 phase 9 — no core proxy).
+ * import skill bundles directly against S3.
  * Runs in Node.js runtime for Buffer / crypto / S3 access.
  * The caller supplies their account Bearer token; each action hashes it to
  * resolve and verify the owning account before touching that account's skills.
@@ -17,36 +17,92 @@ import {
   createJsonSkillFiles,
   createOrReplaceSkill,
   fetchGitHubSkillFiles,
-  getSkill,
-  readSkillFileBytes,
 } from "./model/skills";
 
-const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 30 * 1024 * 1024;
-
-/** SHA-256 hex of the raw token — matches what the accounts table stores. */
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 /**
- * Resolve the account a Bearer token belongs to.
- * @param ctx action context for the lookup query
+ * Create a skill directly from a GitHub repository URL: download and extract
+ * the tarball, then store the bundle in S3.
  * @param bearerToken the caller's broods account Bearer token
- * @returns the matching account document
- * @throws when the token matches no account
+ * @param githubUrl GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
+ * @returns created skill metadata including the path to use as skill reference
  */
-async function requireAccountForToken(
-  ctx: ActionCtx,
-  bearerToken: string,
-): Promise<Doc<"accounts">> {
-  const account = await ctx.runQuery(internal.accounts.getBySecretHash, {
-    secretHash: hashToken(bearerToken),
-  });
-  if (!account) throw new Error("Invalid Bearer token.");
+export const createFromGithub = action({
+  args: {
+    bearerToken: v.string(),
+    githubUrl: v.string(),
+  },
+  returns: v.object({
+    name: v.string(),
+    path: v.string(),
+    description: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const { bearerToken, githubUrl } = args;
 
-  return account;
-}
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const account = await requireAccountForToken(ctx, bearerToken);
+    const files = await fetchGitHubSkillFiles(githubUrl);
+    const skill = await createOrReplaceSkill(account._id, files);
+
+    return {
+      name: skill.name,
+      path: skill.path,
+      description: skill.description,
+    };
+  },
+});
+
+/**
+ * Create a simple skill from name, description, and markdown content by
+ * generating its SKILL.md and storing it in S3.
+ * @param bearerToken the caller's broods account Bearer token
+ * @param name skill name (lowercase letters, numbers, hyphens, max 64 chars)
+ * @param description short description (max 1024 chars)
+ * @param content markdown skill instructions
+ * @returns created skill metadata including the path to use as skill reference
+ */
+export const createFromJson = action({
+  args: {
+    bearerToken: v.string(),
+    name: v.string(),
+    description: v.string(),
+    content: v.string(),
+  },
+  returns: v.object({
+    name: v.string(),
+    path: v.string(),
+    description: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const { bearerToken, name, description, content } = args;
+
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const account = await requireAccountForToken(ctx, bearerToken);
+    const skill = await createOrReplaceSkill(
+      account._id,
+      createJsonSkillFiles(name, description, content),
+    );
+
+    return {
+      name: skill.name,
+      path: skill.path,
+      description: skill.description,
+    };
+  },
+});
 
 /**
  * Package all workspaceFiles for a skill node and publish them to S3.
@@ -61,6 +117,12 @@ export const publishSkill = action({
     nodeId: v.string(),
     bearerToken: v.string(),
   },
+  returns: v.object({
+    name: v.string(),
+    description: v.string(),
+    path: v.string(),
+    sizeBytes: v.number(),
+  }),
   handler: async (ctx, args) => {
     const { projectId, nodeId, bearerToken } = args;
 
@@ -73,7 +135,7 @@ export const publishSkill = action({
     const account = await requireAccountForToken(ctx, bearerToken);
 
     // Load the file list
-    const files = await ctx.runQuery(api.workspaceFiles.list, {
+    const files = await ctx.runQuery(api.workspace.files.list, {
       projectId: projectId,
       nodeId: nodeId,
     });
@@ -127,162 +189,29 @@ export const publishSkill = action({
   },
 });
 
-/**
- * Create a skill directly from a GitHub repository URL: download and extract
- * the tarball, then store the bundle in S3.
- * @param bearerToken the caller's broods account Bearer token
- * @param githubUrl GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
- * @returns created skill metadata including the path to use as skill reference
- */
-export const createFromGithub = action({
-  args: {
-    bearerToken: v.string(),
-    githubUrl: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { bearerToken, githubUrl } = args;
-
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const account = await requireAccountForToken(ctx, bearerToken);
-    const files = await fetchGitHubSkillFiles(githubUrl);
-    const skill = await createOrReplaceSkill(account._id, files);
-
-    return {
-      name: skill.name,
-      path: skill.path,
-      description: skill.description,
-    };
-  },
-});
+/** SHA-256 hex of the raw token — matches what the accounts table stores. */
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 /**
- * Create a simple skill from name, description, and markdown content by
- * generating its SKILL.md and storing it in S3.
+ * Resolve the account a Bearer token belongs to.
+ * @param ctx action context for the lookup query
  * @param bearerToken the caller's broods account Bearer token
- * @param name skill name (lowercase letters, numbers, hyphens, max 64 chars)
- * @param description short description (max 1024 chars)
- * @param content markdown skill instructions
- * @returns created skill metadata including the path to use as skill reference
+ * @returns the matching account document
+ * @throws when the token matches no account
  */
-export const createFromJson = action({
-  args: {
-    bearerToken: v.string(),
-    name: v.string(),
-    description: v.string(),
-    content: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { bearerToken, name, description, content } = args;
+async function requireAccountForToken(
+  ctx: ActionCtx,
+  bearerToken: string,
+): Promise<Doc<"accounts">> {
+  const account = await ctx.runQuery(
+    internal.account.accounts.getBySecretHash,
+    {
+      secretHash: hashToken(bearerToken),
+    },
+  );
+  if (!account) throw new Error("Invalid Bearer token.");
 
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const account = await requireAccountForToken(ctx, bearerToken);
-    const skill = await createOrReplaceSkill(
-      account._id,
-      createJsonSkillFiles(name, description, content),
-    );
-
-    return {
-      name: skill.name,
-      path: skill.path,
-      description: skill.description,
-    };
-  },
-});
-
-/**
- * Import an existing skill from S3 and store its files in workspaceFiles.
- * Existing files for this nodeId are cleared before import.
- * @param projectId owning project
- * @param nodeId canvas skill node ID
- * @param skillName the broods skill name (without accountId prefix)
- * @param bearerToken the caller's broods account Bearer token
- * @returns imported skill metadata
- */
-export const importSkill = action({
-  args: {
-    projectId: v.id("projects"),
-    nodeId: v.string(),
-    skillName: v.string(),
-    bearerToken: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const { projectId, nodeId, skillName, bearerToken } = args;
-
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const account = await requireAccountForToken(ctx, bearerToken);
-
-    const project = await ctx.runQuery(api.project.getById, {
-      projectId: projectId,
-    });
-    if (!project) {
-      throw new Error("Project not found.");
-    }
-
-    const skill = await getSkill(account._id, skillName);
-    if (!skill) {
-      throw new Error(`Skill not found: ${skillName}`);
-    }
-
-    // Clear existing files for this node before importing
-    await ctx.runMutation(internal.workspaceFiles.clearNodeInternal, {
-      projectId: projectId,
-      nodeId: nodeId,
-    });
-
-    // Upload each file to Convex storage and create workspaceFiles entries
-    for (const file of skill.files) {
-      const uploadUrl = await ctx.runMutation(
-        api.workspaceFiles.generateUploadUrl,
-        {},
-      );
-      const content = Buffer.from(
-        await readSkillFileBytes(skill.path, file.path),
-      );
-
-      const uploadRes = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: content,
-      });
-      if (!uploadRes.ok) {
-        throw new Error(`Failed to store file: ${file.path}`);
-      }
-
-      const { storageId } = (await uploadRes.json()) as { storageId: string };
-      const parts = file.path.split("/");
-      const name = parts[parts.length - 1];
-
-      await ctx.runMutation(api.workspaceFiles.create, {
-        projectId: projectId,
-        nodeId: nodeId,
-        path: file.path,
-        name: name,
-        isFolder: false,
-        storageId: storageId as never,
-        mimeType: "text/plain",
-        sizeBytes: content.byteLength,
-      });
-    }
-
-    return {
-      name: skill.name,
-      description: skill.description,
-      fileCount: skill.files.length,
-    };
-  },
-});
+  return account;
+}

@@ -12,14 +12,16 @@ import {
 import {
   normalizeCreateSandboxConfigInput,
   normalizeUpdateSandboxConfigInput,
-  type SandboxConfig,
-  type SandboxConfigRecord,
-} from "../src/shared/domain/sandbox-config.ts";
+} from "@broods/convex/model/sandboxRules";
 import {
   normalizeCreateWorkspaceConfigInput,
   normalizeUpdateWorkspaceConfigInput,
-  type WorkspaceConfigRecord,
-} from "../src/shared/domain/workspace-config.ts";
+} from "@broods/convex/model/workspaceRules";
+import {
+  type SandboxConfig,
+  type SandboxConfigRecord,
+} from "../src/shared/domain/sandbox-config.ts";
+import { type WorkspaceConfigRecord } from "../src/shared/domain/workspace-config.ts";
 import {
   openTerminalTicket,
   TERMINAL_WEBSOCKET_PATH,
@@ -529,43 +531,43 @@ function createFakeStorage() {
 
   return {
     accounts: {
-      getById: async function() {
+      getById: async function () {
         return fakeAccount();
       },
-      getBySecretHash: async function() {
+      getBySecretHash: async function () {
         return fakeAccount();
       },
-      list: async function() {
+      list: async function () {
         return [fakeAccount()];
       },
-      create: async function() {
+      create: async function () {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      update: async function() {
+      update: async function () {
         return fakeAccount();
       },
-      rotateSecret: async function() {
+      rotateSecret: async function () {
         return { account: fakeAccount(), secret: "fp_acct_fake" };
       },
-      remove: async function() {
+      remove: async function () {
         return true;
       },
     },
     agents: {} as never,
     agentDeployments: {
-      getByApiKeyHash: async function() {
+      getByApiKeyHash: async function () {
         return null;
       },
     },
     crons: {} as never,
     sandboxConfigs: {
-      getById: async function(_accountId: string, id: string) {
+      getById: async function (_accountId: string, id: string) {
         return sandboxes.get(id) ?? null;
       },
-      list: async function() {
+      list: async function () {
         return [...sandboxes.values()];
       },
-      create: async function(accountId: string, input: unknown) {
+      create: async function (accountId: string, input: unknown) {
         const n = normalizeCreateSandboxConfigInput(input as never);
         const sandboxId = `sb_${++counter}`;
         const record: SandboxConfigRecord = {
@@ -581,7 +583,7 @@ function createFakeStorage() {
 
         return record;
       },
-      update: async function(_accountId: string, id: string, patch: unknown) {
+      update: async function (_accountId: string, id: string, patch: unknown) {
         const existing = sandboxes.get(id);
         if (!existing) return null;
         const n = normalizeUpdateSandboxConfigInput(
@@ -601,10 +603,10 @@ function createFakeStorage() {
 
         return record;
       },
-      remove: async function(_accountId: string, id: string) {
+      remove: async function (_accountId: string, id: string) {
         return sandboxes.delete(id);
       },
-      removeAllForAccount: async function() {
+      removeAllForAccount: async function () {
         const n = sandboxes.size;
         sandboxes.clear();
 
@@ -612,13 +614,13 @@ function createFakeStorage() {
       },
     },
     workspaceConfigs: {
-      getById: async function(_accountId: string, id: string) {
+      getById: async function (_accountId: string, id: string) {
         return workspaces.get(id) ?? null;
       },
-      list: async function() {
+      list: async function () {
         return [...workspaces.values()];
       },
-      create: async function(accountId: string, input: unknown) {
+      create: async function (accountId: string, input: unknown) {
         const n = normalizeCreateWorkspaceConfigInput(input as never);
         const workspaceId = `ws_${++counter}`;
         const record: WorkspaceConfigRecord = {
@@ -634,7 +636,7 @@ function createFakeStorage() {
 
         return record;
       },
-      update: async function(_accountId: string, id: string, patch: unknown) {
+      update: async function (_accountId: string, id: string, patch: unknown) {
         const existing = workspaces.get(id);
         if (!existing) return null;
         const n = normalizeUpdateWorkspaceConfigInput(
@@ -654,10 +656,10 @@ function createFakeStorage() {
 
         return record;
       },
-      remove: async function(_accountId: string, id: string) {
+      remove: async function (_accountId: string, id: string) {
         return workspaces.delete(id);
       },
-      removeAllForAccount: async function() {
+      removeAllForAccount: async function () {
         const n = workspaces.size;
         workspaces.clear();
 

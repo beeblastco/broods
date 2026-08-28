@@ -1194,7 +1194,7 @@ describe("createTools", () => {
     const { createTools } = await import("../src/harness/tools/index.ts");
     const update = mock(async function (): Promise<CronSummary> {
       throw new Error(
-        "[CONVEX A(awsCrons:update)] Uncaught ResourceNotFoundException: Schedule not found",
+        "[CONVEX A(aws/crons:update)] Uncaught ResourceNotFoundException: Schedule not found",
       );
     });
     setStorageForTests(

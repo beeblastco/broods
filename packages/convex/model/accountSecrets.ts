@@ -23,15 +23,6 @@ export function createAccountSecret(): string {
 }
 
 /**
- * Hash an account secret using SHA-256 hex, matching core's storage scheme.
- * @param secret plaintext account secret
- * @returns lowercase SHA-256 hex digest
- */
-export async function hashAccountSecret(secret: string): Promise<string> {
-  return await sha256Hex(secret);
-}
-
-/**
  * SHA-256 hex digest of a UTF-8 string.
  * @param value string to digest
  * @returns lowercase SHA-256 hex digest

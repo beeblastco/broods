@@ -1,14 +1,23 @@
 /**
- * Account-owned custom tool metadata and upload validation.
- * Bundle bytes live in S3; this file owns the persisted record contract.
+ * Account-owned custom tool metadata and record validation.
+ * Bundle bytes live in S3; this file owns the persisted record contract. The
+ * upload normalizer, tier classifier, and bundle storage key live in the
+ * config plane (packages/convex/model/accountTools.ts) and are re-exported
+ * here.
  */
 
+import type { AccountToolRuntime } from "@broods/convex/model/accountTools";
 import type { JSONSchema7 } from "ai";
-import { createHash } from "node:crypto";
 import { isPlainObject } from "../object.ts";
 
+export type { AccountToolRuntime } from "@broods/convex/model/accountTools";
+export {
+  accountToolBundleStorageKey,
+  inferAccountToolRuntime,
+  normalizeAccountToolUpload,
+} from "@broods/convex/model/accountTools";
+
 export type AccountToolStatus = "active" | "deleted";
-export type AccountToolRuntime = "isolate" | "sandbox";
 
 export interface AccountToolRecord {
   accountId: string;
@@ -46,25 +55,6 @@ export interface UpdateAccountToolInput {
   defaultConfig?: Record<string, unknown> | null;
 }
 
-export interface AccountToolUploadInput {
-  name?: unknown;
-  description?: unknown;
-  inputSchema?: unknown;
-  bundle?: unknown;
-  runtime?: unknown;
-  defaultConfig?: unknown;
-}
-
-export interface NormalizedAccountToolUpload {
-  name?: string;
-  description?: string;
-  inputSchema?: JSONSchema7;
-  bundle?: string;
-  sha256?: string;
-  runtime?: AccountToolRuntime;
-  defaultConfig?: Record<string, unknown>;
-}
-
 export interface PublicAccountToolRecord {
   accountId: string;
   toolId: string;
@@ -81,91 +71,11 @@ export interface PublicAccountToolRecord {
 }
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
-// A sandbox bundle streams from S3 into the runner; an isolate bundle is inlined
-// into core's own process, where every concurrent call holds a copy.
-const MAX_BUNDLE_BYTES: Record<AccountToolRuntime, number> = {
-  isolate: 1_000_000,
-  sandbox: 10_000_000,
-};
-const NODE_BUILTIN_IMPORT_PATTERN =
-  /(?:import\s+(?:[\s\S]*?\s+from\s*)?["']node:|import\s*\(\s*["']node:)/;
-const BARE_IMPORT_PATTERN =
-  /(?:^|[\n;])\s*import\s+(?:[\s\S]*?\s+from\s*)?["'](?!\.{1,2}\/|\/|node:)[^"']+["']|import\s*\(\s*["'](?!\.{1,2}\/|\/|node:)[^"']+["']\s*\)/;
-// Member reads only: a locally declared `process` method or export key is not
-// the global (bundled zod ships one), and `typeof process` is a guarded probe.
-const NODE_GLOBAL_MEMBER_PATTERN =
-  /(?<![.\w$])(?:process|Buffer)\s*(?:\?\.|\.|\[)/;
-// Web Streams are outside what isolate/runner/web-globals.mjs installs, so a
-// bundle touching one — every bundle importing `ai` does — runs on sandbox.
-const WEB_STREAMS_PATTERN =
-  /(?<![.\w$])(?:Readable|Writable|Transform)Stream\b/;
 const CONVEX_DOCUMENT_ID_PATTERN = /^[a-z0-9]{20,}$/;
 
 /** Returns whether a value has the documented native Convex document-id shape. */
 export function isAccountToolId(value: string): boolean {
   return CONVEX_DOCUMENT_ID_PATTERN.test(value);
-}
-
-export function normalizeAccountToolUpload(
-  input: unknown,
-  options: { requireBundle: boolean; currentRuntime?: AccountToolRuntime },
-): NormalizedAccountToolUpload {
-  if (!isPlainObject(input)) {
-    throw new Error("tool upload body must be an object");
-  }
-
-  const value = input as AccountToolUploadInput;
-  const result: Partial<NormalizedAccountToolUpload> = {};
-
-  if (value.name !== undefined) {
-    result.name = normalizeToolName(value.name);
-  } else if (options.requireBundle) {
-    throw new Error("tool.name is required");
-  }
-
-  if (value.description !== undefined) {
-    result.description = normalizeDescription(value.description);
-  } else if (options.requireBundle) {
-    throw new Error("tool.description is required");
-  }
-
-  if (value.inputSchema !== undefined) {
-    result.inputSchema = normalizeInputSchema(value.inputSchema);
-  } else if (options.requireBundle) {
-    throw new Error("tool.inputSchema is required");
-  }
-
-  if (value.bundle !== undefined) {
-    result.bundle = normalizeBundle(value.bundle);
-  } else if (options.requireBundle) {
-    throw new Error("tool.bundle is required");
-  }
-
-  if (value.runtime !== undefined) {
-    result.runtime = normalizeRuntime(value.runtime);
-  } else if (options.requireBundle && result.bundle !== undefined) {
-    // Infer the tier only on create/full sync. A bundle-only PATCH keeps the
-    // stored runtime so it cannot silently flip an explicitly chosen tier.
-    result.runtime = inferAccountToolRuntime(result.bundle);
-  }
-
-  // Bound by the tier it will run on — the stored one on a bundle-only PATCH,
-  // which deliberately does not restate runtime. Checked before hashing.
-  if (result.bundle !== undefined) {
-    assertBundleSize(
-      result.bundle,
-      result.runtime ??
-        options.currentRuntime ??
-        inferAccountToolRuntime(result.bundle),
-    );
-    result.sha256 = sha256Hex(result.bundle);
-  }
-
-  if (value.defaultConfig !== undefined) {
-    result.defaultConfig = normalizeDefaultConfig(value.defaultConfig);
-  }
-
-  return result as NormalizedAccountToolUpload;
 }
 
 export function normalizeCreateAccountToolInput(
@@ -208,13 +118,6 @@ export function normalizeUpdateAccountToolInput(
   return patch;
 }
 
-export function accountToolBundleStorageKey(
-  accountId: string,
-  sha256: string,
-): string {
-  return `account-tools/${encodeURIComponent(accountId)}/bundles/${sha256}.mjs`;
-}
-
 export function toPublicAccountTool(
   record: AccountToolRecord,
 ): PublicAccountToolRecord {
@@ -234,29 +137,6 @@ export function toPublicAccountTool(
     updatedAt: record.updatedAt,
     ...(record.deletedAt ? { deletedAt: record.deletedAt } : {}),
   };
-}
-
-/**
- * Cheap upload-time heuristic for choosing the default execution tier. Bundles
- * that mention Node-only globals, node: imports, require(), bare package
- * imports, or Web Streams need the sandbox tier; everything the isolate's global
- * set covers stays on the faster isolate tier.
- */
-export function inferAccountToolRuntime(
-  bundleSource: string,
-): AccountToolRuntime {
-  if (
-    /\brequire\s*\(/.test(bundleSource) ||
-    NODE_BUILTIN_IMPORT_PATTERN.test(bundleSource) ||
-    NODE_GLOBAL_MEMBER_PATTERN.test(bundleSource) ||
-    WEB_STREAMS_PATTERN.test(bundleSource) ||
-    /\b__dirname\b/.test(bundleSource) ||
-    BARE_IMPORT_PATTERN.test(bundleSource)
-  ) {
-    return "sandbox";
-  }
-
-  return "isolate";
 }
 
 function normalizeToolName(value: unknown): string {
@@ -297,23 +177,6 @@ function normalizeInputSchema(value: unknown): JSONSchema7 {
   return schema;
 }
 
-function assertBundleSize(bundle: string, runtime: AccountToolRuntime): void {
-  const limit = MAX_BUNDLE_BYTES[runtime];
-  if (Buffer.byteLength(bundle, "utf8") > limit) {
-    throw new Error(
-      `tool.bundle must be ${limit} bytes or smaller on the ${runtime} runtime`,
-    );
-  }
-}
-
-function normalizeBundle(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error("tool.bundle must be a non-empty string");
-  }
-
-  return value;
-}
-
 function normalizeDefaultConfig(value: unknown): Record<string, unknown> {
   if (!isPlainObject(value)) {
     throw new Error("tool.defaultConfig must be an object");
@@ -341,8 +204,4 @@ function normalizeSha256(value: unknown): string {
   }
 
   return value;
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
 }

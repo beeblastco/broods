@@ -10,7 +10,7 @@ import {
 import { cn } from "@/app/lib/utils";
 import { api } from "@broods/convex/_generated/api";
 import type { Id } from "@broods/convex/_generated/dataModel";
-import { estimateModelTokenCost } from "@broods/convex/modelPricing";
+import { estimateModelTokenCost } from "@broods/convex/model/modelPricing";
 import { useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { RefreshCw } from "lucide-react";

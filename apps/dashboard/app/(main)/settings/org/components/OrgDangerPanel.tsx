@@ -21,7 +21,7 @@ interface Props {
 
 export function OrgDangerPanel({ org }: Props): React.JSX.Element {
   const router = useRouter();
-  const removeOrg = useMutation(api.org.remove);
+  const removeOrg = useMutation(api.org.orgs.remove);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);

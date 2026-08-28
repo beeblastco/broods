@@ -21,40 +21,46 @@ describe("custom tool runtime defaulting", () => {
       await import("../src/shared/domain/account-tools.ts");
 
     expect(
-      normalizeAccountToolUpload(
-        {
-          name: "pure",
-          description: "Pure.",
-          inputSchema: { type: "object" },
-          bundle: "export default { execute() { return 1; } };",
-        },
-        { requireBundle: true },
+      (
+        await normalizeAccountToolUpload(
+          {
+            name: "pure",
+            description: "Pure.",
+            inputSchema: { type: "object" },
+            bundle: "export default { execute() { return 1; } };",
+          },
+          { requireBundle: true },
+        )
       ).runtime,
     ).toBe("isolate");
 
     expect(
-      normalizeAccountToolUpload(
-        {
-          name: "nodey",
-          description: "Node.",
-          inputSchema: { type: "object" },
-          bundle:
-            "import fs from 'node:fs'; export default { execute() { return fs; } };",
-        },
-        { requireBundle: true },
+      (
+        await normalizeAccountToolUpload(
+          {
+            name: "nodey",
+            description: "Node.",
+            inputSchema: { type: "object" },
+            bundle:
+              "import fs from 'node:fs'; export default { execute() { return fs; } };",
+          },
+          { requireBundle: true },
+        )
       ).runtime,
     ).toBe("sandbox");
 
     expect(
-      normalizeAccountToolUpload(
-        {
-          name: "dep",
-          description: "Dep.",
-          inputSchema: { type: "object" },
-          bundle:
-            "import leftPad from 'left-pad'; export default { execute() { return leftPad; } };",
-        },
-        { requireBundle: true },
+      (
+        await normalizeAccountToolUpload(
+          {
+            name: "dep",
+            description: "Dep.",
+            inputSchema: { type: "object" },
+            bundle:
+              "import leftPad from 'left-pad'; export default { execute() { return leftPad; } };",
+          },
+          { requireBundle: true },
+        )
       ).runtime,
     ).toBe("sandbox");
   });
@@ -64,16 +70,18 @@ describe("custom tool runtime defaulting", () => {
       await import("../src/shared/domain/account-tools.ts");
 
     expect(
-      normalizeAccountToolUpload(
-        {
-          name: "explicit",
-          description: "Explicit.",
-          inputSchema: { type: "object" },
-          runtime: "isolate",
-          bundle:
-            "const fs = require('node:fs'); export default { execute() { return fs; } };",
-        },
-        { requireBundle: true },
+      (
+        await normalizeAccountToolUpload(
+          {
+            name: "explicit",
+            description: "Explicit.",
+            inputSchema: { type: "object" },
+            runtime: "isolate",
+            bundle:
+              "const fs = require('node:fs'); export default { execute() { return fs; } };",
+          },
+          { requireBundle: true },
+        )
       ).runtime,
     ).toBe("isolate");
   });
@@ -601,8 +609,18 @@ describe("isolate pooled worker (--pool)", () => {
       const source =
         "export default { name: 'counter', execute() { globalThis.__n = (globalThis.__n || 0) + 1; return { n: globalThis.__n }; } };";
       const { byCall } = await runPoolRunner([
-        { callId: "1", tenantId: "acct_a", toolName: "counter", source: source },
-        { callId: "2", tenantId: "acct_a", toolName: "counter", source: source },
+        {
+          callId: "1",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
+        {
+          callId: "2",
+          tenantId: "acct_a",
+          toolName: "counter",
+          source: source,
+        },
       ]);
 
       // Same tenant reuses the isolate, but the fresh context resets globals, so
@@ -686,9 +704,8 @@ describe("streamIsolatePayload cross-process abort", () => {
     else process.env.ISOLATE_POOL = savedPool;
     // Never hand a worker spawned against this file's stub runner to whatever
     // runs next: the pool outlives the file that filled it.
-    const { shutdownIsolatePool } = await import(
-      "../src/harness/isolate/executor.ts"
-    );
+    const { shutdownIsolatePool } =
+      await import("../src/harness/isolate/executor.ts");
     shutdownIsolatePool();
     for (const dir of created.splice(0))
       await rm(dir, { recursive: true, force: true });

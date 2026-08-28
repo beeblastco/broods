@@ -5,6 +5,7 @@ import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { ChannelConnection } from "../channel/connections";
 import { encryptAgentConfigBlob } from "../model/agentConfigCodec";
 import schema from "../schema";
 
@@ -130,6 +131,22 @@ async function seedDeployment(
   });
 }
 
+/**
+ * Rebuilds the `channelEndpoints` projection from the raw-seeded rows, then
+ * reads it. Seeding bypasses the mutation seams that keep the projection live,
+ * which is exactly what the reconcile sweep repairs in production too.
+ */
+async function listConnections(
+  tt: T,
+  channel: string,
+): Promise<ChannelConnection[]> {
+  await tt.mutation(internal.channel.connections.reconcile, {});
+
+  return await tt.query(internal.channel.connections.listConnections, {
+    channel: channel,
+  });
+}
+
 const discordConfig = (botToken: string): Record<string, unknown> => ({
   channels: { discord: { botToken: botToken, publicKey: "pk" } },
 });
@@ -153,11 +170,7 @@ describe("listConnections", () => {
     );
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([
+    expect(await listConnections(tt, "discord")).toEqual([
       {
         agentId: agentId,
         agentName: "tracy",
@@ -173,10 +186,7 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
-    const connections = await tt.query(
-      internal.channelConnections.listConnections,
-      { channel: "discord" },
-    );
+    const connections = await listConnections(tt, "discord");
 
     expect(connections[0]?.webhookPath).toBe(
       `/webhooks/${scope.accountId}/discord`,
@@ -189,10 +199,7 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
-    const connections = await tt.query(
-      internal.channelConnections.listConnections,
-      { channel: "discord" },
-    );
+    const connections = await listConnections(tt, "discord");
 
     expect(connections[0]?.webhookPath).toBe(
       `/webhooks/${scope.accountId}/discord`,
@@ -207,11 +214,7 @@ describe("listConnections", () => {
     });
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([]);
+    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
   test("skips an agent with no Discord channel at all", async () => {
@@ -222,11 +225,7 @@ describe("listConnections", () => {
     });
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([]);
+    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
   test("skips a revoked deployment, which has no live webhook", async () => {
@@ -235,11 +234,7 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
     await seedDeployment(tt, scope, "endpoint-1", "revoked");
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([]);
+    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
   test("skips an undeployed stage, which has no endpointId to address", async () => {
@@ -247,11 +242,27 @@ describe("listConnections", () => {
     const scope = await seedScope(tt);
     await seedAgent(tt, scope, "tracy", discordConfig("bot-token-1"));
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([]);
+    expect(await listConnections(tt, "discord")).toEqual([]);
+  });
+
+  test("a deleted connection leaves the projection on reconcile", async () => {
+    const tt = t();
+    const scope = await seedScope(tt);
+    const agentId = await seedAgent(
+      tt,
+      scope,
+      "tracy",
+      discordConfig("bot-token-1"),
+    );
+    await seedDeployment(tt, scope, "endpoint-1");
+    expect(await listConnections(tt, "discord")).toHaveLength(1);
+
+    await tt.run(async (ctx) => {
+      const normalized = ctx.db.normalizeId("agents", agentId);
+      await ctx.db.delete(normalized!);
+    });
+
+    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 
   test("returns one row per agent when two share a bot token", async () => {
@@ -261,10 +272,7 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "triage", discordConfig("shared-token"));
     await seedDeployment(tt, scope, "endpoint-1");
 
-    const connections = await tt.query(
-      internal.channelConnections.listConnections,
-      { channel: "discord" },
-    );
+    const connections = await listConnections(tt, "discord");
 
     expect(connections).toHaveLength(2);
     expect(new Set(connections.map((entry) => entry.botToken))).toEqual(
@@ -283,10 +291,10 @@ describe("listConnections", () => {
     await seedDeployment(tt, scope, "endpoint-1");
     delete process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
 
-    // Every poll fails on this, so it must throw rather than read as "no agents
-    // configure Discord" and quietly close every socket.
+    // The forwarder's subscription fails on this, so it must throw rather than
+    // read as "no agents configure Discord" and quietly close every socket.
     await expect(
-      tt.query(internal.channelConnections.listConnections, {
+      tt.query(internal.channel.connections.listConnections, {
         channel: "discord",
       }),
     ).rejects.toThrow("ACCOUNT_CONFIG_ENCRYPTION_SECRET");
@@ -300,11 +308,7 @@ describe("listConnections", () => {
       await seedAgent(tt, scope, "tracy", channelConfig(channel, "token-1"));
       await seedDeployment(tt, scope, "endpoint-1");
 
-      expect(
-        await tt.query(internal.channelConnections.listConnections, {
-          channel: channel,
-        }),
-      ).toEqual([
+      expect(await listConnections(tt, channel)).toEqual([
         {
           agentId: expect.any(String),
           agentName: "tracy",
@@ -321,10 +325,6 @@ describe("listConnections", () => {
     await seedAgent(tt, scope, "tracy", channelConfig("slack", "xoxb-1"));
     await seedDeployment(tt, scope, "endpoint-1");
 
-    expect(
-      await tt.query(internal.channelConnections.listConnections, {
-        channel: "discord",
-      }),
-    ).toEqual([]);
+    expect(await listConnections(tt, "discord")).toEqual([]);
   });
 });

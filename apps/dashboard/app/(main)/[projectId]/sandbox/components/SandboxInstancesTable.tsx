@@ -71,9 +71,9 @@ export function SandboxInstancesTable({
   instances,
   projectId,
 }: Props): React.JSX.Element {
-  const suspend = useAction(api.sandboxPublic.suspendSandbox);
-  const resume = useAction(api.sandboxPublic.resumeSandbox);
-  const refresh = useAction(api.sandboxPublic.refreshSandbox);
+  const suspend = useAction(api.sandbox.public.suspendSandbox);
+  const resume = useAction(api.sandbox.public.resumeSandbox);
+  const refresh = useAction(api.sandbox.public.refreshSandbox);
   const searchParams = useSearchParams();
   const now = useNow();
 

@@ -229,28 +229,28 @@ export const NodeSidePanel = memo(function NodeSidePanel({
 
   // Agent config for editable name (agent nodes only)
   const agentConfig = useQuery(
-    api.agentConfig.getById,
+    api.agent.config.getById,
     isAgent && agentConfigId ? { configId: agentConfigId } : "skip",
   );
-  const updateConfig = useMutation(api.agentConfig.update).withOptimisticUpdate(
-    applyAgentConfigUpdate,
-  );
-  const removeConfig = useMutation(api.agentConfig.remove);
-  const ensureDeployment = useMutation(api.agentDeployments.ensureForStage);
-  const rotateDeployment = useMutation(api.agentDeployments.rotate);
+  const updateConfig = useMutation(
+    api.agent.config.update,
+  ).withOptimisticUpdate(applyAgentConfigUpdate);
+  const removeConfig = useMutation(api.agent.config.remove);
+  const ensureDeployment = useMutation(api.agent.deployments.ensureForStage);
+  const rotateDeployment = useMutation(api.agent.deployments.rotate);
 
   // The stage's runtime API key (shared by every agent in it). The agent
   // itself is selected per request by its Agent ID. Created on demand here or on
   // the first `broods deploy`.
   const activeDeployment =
     useQuery(
-      api.agentDeployments.getForStage,
+      api.agent.deployments.getForStage,
       isAgent && projectId && stageId
         ? { projectId: projectId, stageId: stageId }
         : "skip",
     ) ?? undefined;
   const revealedDeploymentApiKey = useQuery(
-    api.agentDeployments.revealKeyForStage,
+    api.agent.deployments.revealKeyForStage,
     isAgent && projectId && stageId
       ? { projectId: projectId, stageId: stageId }
       : "skip",

@@ -68,7 +68,7 @@ async function seedTool(
   scope: Scope,
   name = TOOL_NAME,
 ): Promise<Id<"accountTools">> {
-  return await tt.mutation(internal.accountTools.create, {
+  return await tt.mutation(internal.account.tools.create, {
     accountId: scope.accountId,
     projectId: scope.projectId,
     stageId: scope.stageId,
@@ -103,7 +103,7 @@ describe("custom tools are scoped to a stage", () => {
 
     // Account-scoped matching used to make the second sync overwrite the first.
     expect(firstId).not.toEqual(secondId);
-    const listed = await tt.query(internal.accountTools.listForStage, {
+    const listed = await tt.query(internal.account.tools.listForStage, {
       stageId: first.stageId,
     });
     expect(listed.map((row) => row._id)).toEqual([firstId]);
@@ -123,7 +123,7 @@ describe("custom tools are scoped to a stage", () => {
     );
 
     await expect(
-      tt.mutation(internal.accountTools.create, {
+      tt.mutation(internal.account.tools.create, {
         accountId: scope.accountId,
         projectId: foreignProjectId,
         stageId: scope.stageId,
@@ -153,7 +153,7 @@ describe("custom tools are scoped to a stage", () => {
     });
 
     await expect(
-      tt.mutation(internal.accountTools.create, {
+      tt.mutation(internal.account.tools.create, {
         accountId: scope.accountId,
         projectId: sibling,
         stageId: scope.stageId,
@@ -171,7 +171,7 @@ describe("custom tools are scoped to a stage", () => {
     const scope = await seedScope(tt);
 
     expect(
-      await tt.query(internal.accountTools.resolveScope, {
+      await tt.query(internal.account.tools.resolveScope, {
         accountId: scope.accountId,
         project: "tool-custom-stream",
         stage: "development",
@@ -181,7 +181,7 @@ describe("custom tools are scoped to a stage", () => {
       stageId: scope.stageId,
     });
     expect(
-      await tt.query(internal.accountTools.resolveScope, {
+      await tt.query(internal.account.tools.resolveScope, {
         accountId: scope.accountId,
         project: "tool-custom-stream",
         stage: "staging",

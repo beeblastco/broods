@@ -20,7 +20,7 @@ Dashboard domain: `users`, `orgs`, `orgMembers`, `projects`, `stages`,
 
 Agent-platform domain (shared with core): `accounts`, `agents`,
 `sandboxConfigs`, `workspaceConfigs`, `environmentVariables`, `webhooks`,
-`conversations`, `messages`, `skills`, `workspaceFiles`, `asyncResults`,
+`skills`, `workspaceFiles`,
 `crons`. Core runtime coordination uses `runtimeConversationEvents`,
 `runtimeClaims`, `runtimeAsyncAgentResults`, `runtimeAsyncToolResults`,
 `runtimeAsyncToolGroups`, `runtimeHarnessSessions`, and
@@ -63,11 +63,11 @@ skill bundles, tool bundles, and workspace files in S3, plus account cron
 schedules in EventBridge Scheduler. `model/aws.ts` assumes `ConvexAwsRole`
 (created by `apps/core/sst.config.ts`) from a minimal bootstrap IAM user whose
 only permission is `sts:AssumeRole`. Node-only AWS code lives in `model/` and
-the `"use node"` action files (`awsBundles.ts`, `awsSkills.ts`,
-`awsWorkspaceFiles.ts`, `awsCrons.ts`, `skillsPublic.ts`,
-`workspaceFilesPublic.ts`).
+the `"use node"` action files (`aws/bundles.ts`, `aws/skills.ts`,
+`aws/workspaceFiles.ts`, `aws/crons.ts`, `skillsPublic.ts`,
+`workspace/filesPublic.ts`).
 
-`configHttp.ts` serves the public config API on this deployment's
+`config/http.ts` serves the public config API on this deployment's
 `.convex.site` host — account metadata and rotation (`GET/PATCH /v1/account`,
 `POST /v1/account/rotate-secret`, `GET /accounts`,
 `GET/PATCH /accounts/{accountId}`, and
@@ -105,7 +105,7 @@ Deployment environment variables:
   `cronScheduleGroupName`).
 - `ACCOUNT_CONFIG_ENCRYPTION_SECRET` — AES-GCM secret for agent and sandbox config CRUD.
 - `ADMIN_ACCOUNT_SECRET` — admin bearer secret accepted by account admin HTTP
-  routes in `configHttp.ts`.
+  routes in `config/http.ts`.
 - `BROODS_ACCOUNT_MANAGE_URL` / `BROODS_SERVICE_AUTH_SECRET` — core
   account-manage URL and shared bearer secret used for sandbox delete cleanup.
 

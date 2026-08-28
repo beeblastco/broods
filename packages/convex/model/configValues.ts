@@ -1,12 +1,11 @@
 /**
- * Shared config-object helpers for the Convex config plane (epic #85 phase 9,
- * stage 4): deep patch-merge and secret redaction, ported from core's former
+ * Shared config-object helpers for the Convex config plane: deep patch-merge
+ * and secret redaction, ported from core's former
  * storage/agent-config.ts so PATCH semantics and public projections stay
  * byte-identical. Pure module — safe for the default Convex runtime.
  */
 
 import { isPlainObject } from "./objects";
-import { isEntirelyEnvPlaceholders } from "./agentConfigCodec";
 
 export const REDACTED_SECRET_VALUE = "********";
 
@@ -88,6 +87,18 @@ function redactSecrets(value: unknown): unknown {
         : redactSecrets(entry),
     ]),
   );
+}
+
+/**
+ * True when a string consists ONLY of `${NAME}` placeholder tokens. Anchored
+ * on purpose: a value mixing literal content with a placeholder (e.g.
+ * `sk_live_abc${FOO}`) still carries secret material and must stay redacted.
+ * Same predicate as agentConfigCodec's isEntirelyEnvPlaceholders, kept local
+ * so this module (which core imports through model/*Rules) does not pull the
+ * codec into core's typecheck graph.
+ */
+function isEntirelyEnvPlaceholders(value: string): boolean {
+  return /^(\$\{[A-Z][A-Z0-9_]*\})+$/.test(value);
 }
 
 function isSecretConfigKey(key: string): boolean {

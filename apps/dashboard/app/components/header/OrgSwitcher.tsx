@@ -46,11 +46,11 @@ export function OrgSwitcher(): React.JSX.Element {
   const params = useParams<{ projectId?: string }>();
   const { isLoading, isAuthenticated } = useConvexAuth();
   const orgQueryArgs = !isLoading && isAuthenticated ? {} : "skip";
-  const orgs = useQuery(api.org.list, orgQueryArgs);
-  const active = useQuery(api.org.getActive, orgQueryArgs);
-  const setActive = useMutation(api.org.setActive);
-  const createOrg = useMutation(api.org.create);
-  const provision = useAction(api.orgLifecycle.provision);
+  const orgs = useQuery(api.org.orgs.list, orgQueryArgs);
+  const active = useQuery(api.org.orgs.getActive, orgQueryArgs);
+  const setActive = useMutation(api.org.orgs.setActive);
+  const createOrg = useMutation(api.org.orgs.create);
+  const provision = useAction(api.org.lifecycle.provision);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");

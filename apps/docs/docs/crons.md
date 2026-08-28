@@ -4,7 +4,7 @@ Cron jobs start account agents on a schedule. Cron CRUD lives in the Convex conf
 
 ```mermaid
 flowchart TD
-  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(configHttp + awsCrons)"]
+  Owner["Account owner / SDK"] -->|"create / update / delete cron job"| Config["Convex config plane<br/>(config/http + aws/crons)"]
   Config --> Jobs["crons table (Convex)"]
   Config --> Scheduler["EventBridge Scheduler<br/>schedule lifecycle"]
   Scheduler --> Bus["cron-runs event bus"]

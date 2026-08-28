@@ -36,68 +36,6 @@ const environmentVariableDoc = v.object({
   updatedAt: v.number(),
 });
 
-function encryptionSecret(): string {
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  if (!secret) {
-    throw new Error(
-      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
-    );
-  }
-
-  return secret;
-}
-
-function maskEnvironmentVariable(variable: {
-  _id: Id<"environmentVariables">;
-  _creationTime: number;
-  projectId: Id<"projects">;
-  stageId: Id<"stages">;
-  name: string;
-  updatedAt: number;
-}) {
-  return {
-    _id: variable._id,
-    _creationTime: variable._creationTime,
-    projectId: variable.projectId,
-    stageId: variable.stageId,
-    name: variable.name,
-    value: "********",
-    updatedAt: variable.updatedAt,
-  };
-}
-
-/** Record an environment-variable mutation without storing plaintext values. */
-async function recordEnvironmentVariableAudit(
-  ctx: MutationCtx,
-  actor: ConfigAuditActor,
-  input: {
-    projectId: Id<"projects">;
-    stageId: Id<"stages">;
-    variableId?: Id<"environmentVariables">;
-    action: string;
-    name: string;
-    summary: string;
-  },
-): Promise<void> {
-  const accountId = await accountIdForProject(ctx, input.projectId);
-  if (!accountId) return;
-
-  await insertConfigAuditEvent(ctx.db, {
-    accountId: accountId,
-    projectId: input.projectId,
-    stageId: input.stageId,
-    actor: actor,
-    action: input.action,
-    resource: {
-      kind: "environmentVariable",
-      id: input.variableId,
-      name: input.name,
-    },
-    summary: input.summary,
-    detailsJson: auditDetailsJson({ name: input.name }),
-  });
-}
-
 export const list = query({
   args: { projectId: v.id("projects"), stageId: v.id("stages") },
   returns: v.array(environmentVariableDoc),
@@ -123,6 +61,107 @@ export const list = query({
       .collect();
 
     return variables.map(maskEnvironmentVariable);
+  },
+});
+
+export const remove = mutation({
+  args: { variableId: v.id("environmentVariables") },
+  returns: v.id("environmentVariables"),
+  handler: async (ctx, { variableId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const variable = await ctx.db.get(variableId);
+    if (!variable) throw new Error("Variable not found.");
+
+    const stage = await getOwnedStage(ctx, user.id, variable.stageId);
+    if (!stage) throw new Error("Variable not found.");
+    await assertEnvironmentVariableUnreferenced(
+      ctx,
+      variable.projectId,
+      variable.stageId,
+      variable.name,
+    );
+
+    await ctx.db.delete(variableId);
+    await refreshAgentConfigsForEnvironmentVariable(
+      ctx,
+      variable.projectId,
+      variable.stageId,
+      variable.name,
+      undefined,
+    );
+    await refreshSandboxConfigsForEnvironmentVariable(
+      ctx,
+      variable.projectId,
+      variable.stageId,
+      variable.name,
+      undefined,
+    );
+    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
+      projectId: variable.projectId,
+      stageId: variable.stageId,
+      variableId: variableId,
+      action: "deleted",
+      name: variable.name,
+      summary: "Environment variable deleted",
+    });
+
+    return variableId;
+  },
+});
+
+/**
+ * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
+ * reveal, writing an audit record of the reveal. A mutation (not a query) so the
+ * audit insert and decryption happen atomically for the owning user.
+ * @throws when the caller does not own the stage or the variable is gone
+ */
+export const reveal = mutation({
+  args: {
+    projectId: v.id("projects"),
+    stageId: v.id("stages"),
+    variableId: v.id("environmentVariables"),
+  },
+  returns: v.object({ value: v.string() }),
+  handler: async (ctx, { projectId, stageId, variableId }) => {
+    // Check authenticated user
+    const user = await authKit.getAuthUser(ctx);
+    if (!user) {
+      throw new Error("User not found or not authenticated");
+    }
+
+    const stage = await getOwnedStage(ctx, user.id, stageId);
+    if (!stage || stage.projectId !== projectId) {
+      throw new Error("Stage not found.");
+    }
+
+    const variable = await ctx.db.get(variableId);
+    if (!variable || variable.stageId !== stageId) {
+      throw new Error("Variable not found.");
+    }
+
+    const decrypted = await decryptAgentConfigBlob(
+      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
+      encryptionSecret(),
+    );
+    const revealed = decrypted as { value?: unknown } | null;
+    const value = typeof revealed?.value === "string" ? revealed.value : "";
+
+    await ctx.db.insert("environmentVariableReveals", {
+      projectId: projectId,
+      stageId: stageId,
+      environmentVariableId: variableId,
+      name: variable.name,
+      source: "dashboard",
+      revealedByAuthId: user.id,
+      revealedAt: Date.now(),
+    });
+
+    return { value: value };
   },
 });
 
@@ -239,103 +278,72 @@ export const set = mutation({
   },
 });
 
-/**
- * Decrypts and returns one variable's plaintext value for the dashboard eye-icon
- * reveal, writing an audit record of the reveal. A mutation (not a query) so the
- * audit insert and decryption happen atomically for the owning user.
- * @throws when the caller does not own the stage or the variable is gone
- */
-export const reveal = mutation({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-    variableId: v.id("environmentVariables"),
+function encryptionSecret(): string {
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "ACCOUNT_CONFIG_ENCRYPTION_SECRET is required to store environment variables",
+    );
+  }
+
+  return secret;
+}
+
+function maskEnvironmentVariable(variable: {
+  _id: Id<"environmentVariables">;
+  _creationTime: number;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+  name: string;
+  updatedAt: number;
+}): {
+  _id: Id<"environmentVariables">;
+  _creationTime: number;
+  projectId: Id<"projects">;
+  stageId: Id<"stages">;
+  name: string;
+  value: string;
+  updatedAt: number;
+} {
+  return {
+    _id: variable._id,
+    _creationTime: variable._creationTime,
+    projectId: variable.projectId,
+    stageId: variable.stageId,
+    name: variable.name,
+    value: "********",
+    updatedAt: variable.updatedAt,
+  };
+}
+
+/** Record an environment-variable mutation without storing plaintext values. */
+async function recordEnvironmentVariableAudit(
+  ctx: MutationCtx,
+  actor: ConfigAuditActor,
+  input: {
+    projectId: Id<"projects">;
+    stageId: Id<"stages">;
+    variableId?: Id<"environmentVariables">;
+    action: string;
+    name: string;
+    summary: string;
   },
-  returns: v.object({ value: v.string() }),
-  handler: async (ctx, { projectId, stageId, variableId }) => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
+): Promise<void> {
+  const accountId = await accountIdForProject(ctx, input.projectId);
+  if (!accountId) return;
 
-    const stage = await getOwnedStage(ctx, user.id, stageId);
-    if (!stage || stage.projectId !== projectId) {
-      throw new Error("Stage not found.");
-    }
-
-    const variable = await ctx.db.get(variableId);
-    if (!variable || variable.stageId !== stageId) {
-      throw new Error("Variable not found.");
-    }
-
-    const decrypted = await decryptAgentConfigBlob(
-      { ciphertext: variable.ciphertext, iv: variable.iv, tag: variable.tag },
-      encryptionSecret(),
-    );
-    const revealed = decrypted as { value?: unknown } | null;
-    const value = typeof revealed?.value === "string" ? revealed.value : "";
-
-    await ctx.db.insert("environmentVariableReveals", {
-      projectId: projectId,
-      stageId: stageId,
-      environmentVariableId: variableId,
-      name: variable.name,
-      source: "dashboard",
-      revealedByAuthId: user.id,
-      revealedAt: Date.now(),
-    });
-
-    return { value: value };
-  },
-});
-
-export const remove = mutation({
-  args: { variableId: v.id("environmentVariables") },
-  returns: v.id("environmentVariables"),
-  handler: async (ctx, { variableId }) => {
-    // Check authenticated user
-    const user = await authKit.getAuthUser(ctx);
-    if (!user) {
-      throw new Error("User not found or not authenticated");
-    }
-
-    const variable = await ctx.db.get(variableId);
-    if (!variable) throw new Error("Variable not found.");
-
-    const stage = await getOwnedStage(ctx, user.id, variable.stageId);
-    if (!stage) throw new Error("Variable not found.");
-    await assertEnvironmentVariableUnreferenced(
-      ctx,
-      variable.projectId,
-      variable.stageId,
-      variable.name,
-    );
-
-    await ctx.db.delete(variableId);
-    await refreshAgentConfigsForEnvironmentVariable(
-      ctx,
-      variable.projectId,
-      variable.stageId,
-      variable.name,
-      undefined,
-    );
-    await refreshSandboxConfigsForEnvironmentVariable(
-      ctx,
-      variable.projectId,
-      variable.stageId,
-      variable.name,
-      undefined,
-    );
-    await recordEnvironmentVariableAudit(ctx, dashboardAuditActor(user), {
-      projectId: variable.projectId,
-      stageId: variable.stageId,
-      variableId: variableId,
-      action: "deleted",
-      name: variable.name,
-      summary: "Environment variable deleted",
-    });
-
-    return variableId;
-  },
-});
+  await insertConfigAuditEvent(ctx.db, {
+    accountId: accountId,
+    projectId: input.projectId,
+    stageId: input.stageId,
+    actor: actor,
+    action: input.action,
+    resource: {
+      kind: "environmentVariable",
+      id: input.variableId,
+      name: input.name,
+    },
+    summary: input.summary,
+    detailsJson: auditDetailsJson({ name: input.name }),
+  });
+}

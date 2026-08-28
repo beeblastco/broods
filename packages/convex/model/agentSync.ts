@@ -19,6 +19,7 @@ import {
   fromNestedAgentConfig,
   substituteEnvPlaceholders,
   toNestedAgentConfig,
+  type FlatPatch,
 } from "./agentConfigCodec";
 import { uniqueProjectSlug } from "../lib/slug";
 import {
@@ -26,6 +27,7 @@ import {
   saveAgentRuntimeSecrets,
 } from "./agentRuntimeSecrets";
 import { syncApiAgentCanvasWiring } from "./apiCanvasSync";
+import { refreshAccountChannelEndpoints } from "./channelEndpoints";
 import { getActiveOrgForUser } from "./ownership/org";
 
 /**
@@ -162,6 +164,7 @@ export async function pushEncryptedConfigToAgentRow(
     encryptionTag: encrypted.tag,
     updatedAt: Date.now(),
   });
+  await refreshAccountChannelEndpoints(ctx, agent.accountId);
 }
 
 /**
@@ -341,19 +344,7 @@ export async function backSyncCanvasFromAgentRow(
   // tab surfaces but Variables does not (we'd need the original ${KEY}
   // placeholders + variables to populate runtimeVariables, and those are
   // not transmitted on the API path).
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  const decrypted =
-    secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          secret,
-        )
-      : null;
-  const flat = decrypted ? fromNestedAgentConfig(decrypted) : null;
+  const flat = await decryptAgentFlatPatch(agent);
 
   const now = Date.now();
   const configId = await ctx.db.insert("agentConfigs", {
@@ -363,18 +354,7 @@ export async function backSyncCanvasFromAgentRow(
     agentId: agentRowId,
     projectId: project._id,
     stageId: stage._id,
-    provider: flat?.provider,
-    modelId: flat?.modelId ?? "gpt-4.1-mini",
-    systemPrompt: flat?.systemPrompt,
-    maxTurns: flat?.maxTurns,
-    temperature: flat?.temperature,
-    maxTokens: flat?.maxTokens,
-    providerOptions: flat?.providerOptions,
-    outputFormat: flat?.outputFormat,
-    memoryToolEnabled: flat?.memoryToolEnabled ?? true,
-    searchToolEnabled: flat?.searchToolEnabled ?? false,
-    searchToolConfig: flat?.searchToolConfig,
-    extraConfig: flat?.extraConfig,
+    ...flatAgentConfigFields(flat),
     managedBy: "api",
     updatedAt: now,
   });
@@ -438,23 +418,11 @@ export async function mirrorAgentRowOntoConfig(
 
   const linkedConfig = await ctx.db
     .query("agentConfigs")
-    .filter((q) => q.eq(q.field("agentId"), agentRowId as unknown as string))
+    .withIndex("by_agentId", (q) => q.eq("agentId", agentRowId))
     .first();
   if (!linkedConfig) return;
 
-  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
-  const decrypted =
-    secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
-      ? await decryptAgentConfigBlob(
-          {
-            ciphertext: agent.encryptedConfig,
-            iv: agent.encryptionIv,
-            tag: agent.encryptionTag,
-          },
-          secret,
-        )
-      : null;
-  const flat = decrypted ? fromNestedAgentConfig(decrypted) : null;
+  const flat = await decryptAgentFlatPatch(agent);
   // The public API just wrote this agent, so the API owns it from here on —
   // except CLI-managed configs, whose ownership the next `broods deploy`
   // re-asserts anyway.
@@ -530,4 +498,65 @@ export async function syncAgentRowFields(
       : {}),
     updatedAt: Date.now(),
   });
+}
+
+/**
+ * Decrypt an agent row's config blob and flatten it for the `agentConfigs`
+ * mirror. Null when the secret or blob is missing, or the blob cannot be
+ * decrypted.
+ */
+async function decryptAgentFlatPatch(
+  agent: Doc<"agents">,
+): Promise<FlatPatch | null> {
+  const secret = process.env.ACCOUNT_CONFIG_ENCRYPTION_SECRET;
+  const decrypted =
+    secret && agent.encryptedConfig && agent.encryptionIv && agent.encryptionTag
+      ? await decryptAgentConfigBlob(
+          {
+            ciphertext: agent.encryptedConfig,
+            iv: agent.encryptionIv,
+            tag: agent.encryptionTag,
+          },
+          secret,
+        )
+      : null;
+
+  return decrypted ? fromNestedAgentConfig(decrypted) : null;
+}
+
+/**
+ * The flat `agentConfigs` columns mirrored from a decrypted patch, with the
+ * back-sync defaults applied when the blob was absent or undecryptable.
+ */
+function flatAgentConfigFields(
+  flat: FlatPatch | null,
+): Pick<
+  Doc<"agentConfigs">,
+  | "provider"
+  | "modelId"
+  | "systemPrompt"
+  | "maxTurns"
+  | "temperature"
+  | "maxTokens"
+  | "providerOptions"
+  | "outputFormat"
+  | "memoryToolEnabled"
+  | "searchToolEnabled"
+  | "searchToolConfig"
+  | "extraConfig"
+> {
+  return {
+    provider: flat?.provider,
+    modelId: flat?.modelId ?? "gpt-4.1-mini",
+    systemPrompt: flat?.systemPrompt,
+    maxTurns: flat?.maxTurns,
+    temperature: flat?.temperature,
+    maxTokens: flat?.maxTokens,
+    providerOptions: flat?.providerOptions,
+    outputFormat: flat?.outputFormat,
+    memoryToolEnabled: flat?.memoryToolEnabled ?? true,
+    searchToolEnabled: flat?.searchToolEnabled ?? false,
+    searchToolConfig: flat?.searchToolConfig,
+    extraConfig: flat?.extraConfig,
+  };
 }

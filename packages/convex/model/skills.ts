@@ -1,9 +1,8 @@
 /**
- * Skill bundle validation and S3 storage for the Convex config plane (epic #85
- * phase 9). A faithful port of core's `src/shared/skills.ts` rules and
- * `src/accounts/skills.ts` storage ops so bundles written here are readable by
- * core's harness skill loader. Node-runtime only — import exclusively from
- * `"use node"` actions.
+ * Skill bundle validation and S3 storage for the Convex config plane. The
+ * validation rules mirror core's `src/shared/skills.ts` so bundles written
+ * here are readable by core's harness skill loader. Node-runtime only —
+ * import exclusively from `"use node"` actions.
  */
 
 import {
@@ -25,6 +24,27 @@ import {
 
 const MAX_SKILL_BUNDLE_BYTES = 30 * 1024 * 1024;
 const MAX_SKILL_FILE_BYTES = 5 * 1024 * 1024;
+
+const TEXT_EXTENSIONS = new Set([
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".md",
+  ".mjs",
+  ".py",
+  ".sh",
+  ".sql",
+  ".svg",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
 
 /**
  * One file inside a skill bundle upload.
@@ -52,22 +72,41 @@ export interface StoredSkill extends SkillMetadata {
 }
 
 /**
- * Read the skills bucket name from the Convex deployment environment.
- * @returns the bucket name
- * @throws when SKILLS_BUCKET_NAME is not configured
+ * A validated skill bundle: parsed SKILL.md metadata plus normalized files.
  */
-export function skillsBucketName(): string {
-  const bucket = process.env.SKILLS_BUCKET_NAME;
-  if (!bucket) {
-    throw new Error("SKILLS_BUCKET_NAME is required to store skills");
-  }
+export interface ValidatedSkillBundle {
+  metadata: Omit<SkillMetadata, "path">;
+  files: SkillBundleFile[];
+}
 
-  return bucket;
+/**
+ * Build a JSON-source skill bundle: a single generated SKILL.md.
+ * @param name skill name
+ * @param description skill description
+ * @param content markdown skill instructions
+ * @returns the single-file bundle
+ */
+export function createJsonSkillFiles(
+  name: string,
+  description: string,
+  content: string,
+): SkillBundleFile[] {
+  validateSkillName(name);
+  validateSkillDescription(description);
+  const markdown = `---\nname: ${name}\ndescription: ${description}\n---\n\n${content.trim()}\n`;
+
+  return [
+    {
+      path: SKILL_FILE,
+      bytes: new TextEncoder().encode(markdown),
+      contentType: "text/markdown; charset=utf-8",
+    },
+  ];
 }
 
 /**
  * Validate a skill bundle and write it to S3, replacing any existing skill of
- * the same name. Mirrors core's `createOrReplaceSkill`.
+ * the same name.
  * @param accountId account id owning the skill (the S3 key prefix)
  * @param input bundle files to validate and store
  * @returns the stored skill's metadata and manifest
@@ -103,77 +142,6 @@ export async function createOrReplaceSkill(
 }
 
 /**
- * Load a stored skill's metadata and file manifest. Mirrors core's `getSkill`.
- * @param accountId account id owning the skill
- * @param skillName the skill name (without the account prefix)
- * @returns the stored skill, or null when it does not exist
- */
-export async function getSkill(
-  accountId: string,
-  skillName: string,
-): Promise<StoredSkill | null> {
-  const metadata = await getSkillMetadata(accountId, skillName);
-  if (!metadata) return null;
-  const objects = await listS3Prefix(skillsBucketName(), `${metadata.path}/`);
-
-  return {
-    ...metadata,
-    files: objects.map((object) => ({
-      path: object.key.slice(`${metadata.path}/`.length),
-      ...(object.size !== undefined ? { size: object.size } : {}),
-    })),
-  };
-}
-
-/**
- * List an account's stored skills' metadata. Mirrors core's `listAccountSkills`.
- * @param accountId account id owning the skills
- * @returns name/description/path for every readable skill
- */
-export async function listAccountSkills(
-  accountId: string,
-): Promise<SkillMetadata[]> {
-  const objects = await listS3Prefix(skillsBucketName(), `${accountId}/`);
-  const skillNames = new Set<string>();
-  for (const object of objects) {
-    const [, skillName] = object.key.split("/");
-    if (skillName) {
-      skillNames.add(skillName);
-    }
-  }
-
-  const skills = await Promise.all(
-    [...skillNames].map((skillName) =>
-      getSkillMetadata(accountId, skillName).catch(() => null),
-    ),
-  );
-
-  return skills.filter((skill): skill is SkillMetadata => skill !== null);
-}
-
-/**
- * Load only SKILL.md metadata for list endpoints.
- * @param accountId account id owning the skill
- * @param skillName the skill name (without account prefix)
- * @returns metadata, or null when SKILL.md is missing or malformed
- */
-async function getSkillMetadata(
-  accountId: string,
-  skillName: string,
-): Promise<SkillMetadata | null> {
-  validateSkillName(skillName);
-  const skillPath = `${accountId}/${skillName}`;
-  const markdown = await readS3Text(
-    skillsBucketName(),
-    `${skillPath}/${SKILL_FILE}`,
-  ).catch(() => null);
-  if (markdown == null) return null;
-  const metadata = parseSkillMarkdown(markdown);
-
-  return { ...metadata, path: skillPath };
-}
-
-/**
  * Delete a stored skill's objects.
  * @param accountId account id owning the skill
  * @param skillName the skill name
@@ -189,103 +157,8 @@ export async function deleteSkill(
 }
 
 /**
- * Read one stored skill file's raw bytes.
- * @param skillPath the `${accountId}/${skillName}` prefix
- * @param filePath the file path inside the skill
- * @returns the file contents
- */
-export async function readSkillFileBytes(
-  skillPath: string,
-  filePath: string,
-): Promise<Uint8Array> {
-  return readS3Bytes(
-    skillsBucketName(),
-    `${skillPath}/${normalizeBundlePath(filePath)}`,
-  );
-}
-
-/**
- * A validated skill bundle: parsed SKILL.md metadata plus normalized files.
- */
-export interface ValidatedSkillBundle {
-  metadata: Omit<SkillMetadata, "path">;
-  files: SkillBundleFile[];
-}
-
-/**
- * Validate bundle paths, sizes, and text-file rules, and parse SKILL.md.
- * Mirrors core's `validateSkillBundle`.
- * @param input bundle files
- * @returns parsed metadata and normalized files
- * @throws when a rule is violated or SKILL.md is missing
- */
-export function validateSkillBundle(
-  input: SkillBundleFile[],
-): ValidatedSkillBundle {
-  const files = input.map((file) => ({
-    ...file,
-    path: normalizeBundlePath(file.path),
-  }));
-  const seen = new Set<string>();
-  let totalBytes = 0;
-  for (const file of files) {
-    if (seen.has(file.path)) {
-      throw new Error(`Duplicate skill file path: ${file.path}`);
-    }
-    seen.add(file.path);
-    totalBytes += file.bytes.byteLength;
-    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
-      throw new Error(`Skill file is too large: ${file.path}`);
-    }
-    if (!isSupportedTextFile(file.path, file.bytes)) {
-      throw new Error(`Skill file must be a supported text file: ${file.path}`);
-    }
-  }
-  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
-    throw new Error("Skill bundle exceeds 30 MB");
-  }
-
-  const skillFile = files.find((file) => file.path === SKILL_FILE);
-  if (!skillFile) {
-    throw new Error("Skill bundle must include SKILL.md at the root");
-  }
-
-  return {
-    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
-    files: files,
-  };
-}
-
-/**
- * Build a JSON-source skill bundle: a single generated SKILL.md.
- * Mirrors core's `createJsonSkillFiles`.
- * @param name skill name
- * @param description skill description
- * @param content markdown skill instructions
- * @returns the single-file bundle
- */
-export function createJsonSkillFiles(
-  name: string,
-  description: string,
-  content: string,
-): SkillBundleFile[] {
-  validateSkillName(name);
-  validateSkillDescription(description);
-  const markdown = `---\nname: ${name}\ndescription: ${description}\n---\n\n${content.trim()}\n`;
-
-  return [
-    {
-      path: SKILL_FILE,
-      bytes: new TextEncoder().encode(markdown),
-      contentType: "text/markdown; charset=utf-8",
-    },
-  ];
-}
-
-/**
  * Download a GitHub tree URL's tarball and return the skill files under its
- * subdirectory. In-memory port of core's `createGitHubSkillFiles` (gunzip +
- * tar walk instead of Bun.Archive + tmpdir).
+ * subdirectory. Runs fully in memory (gunzip + tar walk, no tmpdir).
  * @param url GitHub tree URL (https://github.com/{owner}/{repo}/tree/{ref}/{path})
  * @returns the bundle files found under the URL's subdirectory
  * @throws when the download fails or the archive holds no files there
@@ -338,26 +211,150 @@ export async function fetchGitHubSkillFiles(
   return files;
 }
 
-const TEXT_EXTENSIONS = new Set([
-  ".css",
-  ".csv",
-  ".html",
-  ".js",
-  ".json",
-  ".md",
-  ".mjs",
-  ".py",
-  ".sh",
-  ".sql",
-  ".svg",
-  ".toml",
-  ".ts",
-  ".tsx",
-  ".txt",
-  ".xml",
-  ".yaml",
-  ".yml",
-]);
+/**
+ * Load a stored skill's metadata and file manifest.
+ * @param accountId account id owning the skill
+ * @param skillName the skill name (without the account prefix)
+ * @returns the stored skill, or null when it does not exist
+ */
+export async function getSkill(
+  accountId: string,
+  skillName: string,
+): Promise<StoredSkill | null> {
+  const metadata = await getSkillMetadata(accountId, skillName);
+  if (!metadata) return null;
+  const objects = await listS3Prefix(skillsBucketName(), `${metadata.path}/`);
+
+  return {
+    ...metadata,
+    files: objects.map((object) => ({
+      path: object.key.slice(`${metadata.path}/`.length),
+      ...(object.size !== undefined ? { size: object.size } : {}),
+    })),
+  };
+}
+
+/**
+ * List an account's stored skills' metadata.
+ * @param accountId account id owning the skills
+ * @returns name/description/path for every readable skill
+ */
+export async function listAccountSkills(
+  accountId: string,
+): Promise<SkillMetadata[]> {
+  const objects = await listS3Prefix(skillsBucketName(), `${accountId}/`);
+  const skillNames = new Set<string>();
+  for (const object of objects) {
+    const [, skillName] = object.key.split("/");
+    if (skillName) {
+      skillNames.add(skillName);
+    }
+  }
+
+  const skills = await Promise.all(
+    [...skillNames].map((skillName) =>
+      getSkillMetadata(accountId, skillName).catch(() => null),
+    ),
+  );
+
+  return skills.filter((skill): skill is SkillMetadata => skill !== null);
+}
+
+/**
+ * Read one stored skill file's raw bytes.
+ * @param skillPath the `${accountId}/${skillName}` prefix
+ * @param filePath the file path inside the skill
+ * @returns the file contents
+ */
+export async function readSkillFileBytes(
+  skillPath: string,
+  filePath: string,
+): Promise<Uint8Array> {
+  return readS3Bytes(
+    skillsBucketName(),
+    `${skillPath}/${normalizeBundlePath(filePath)}`,
+  );
+}
+
+/**
+ * Read the skills bucket name from the Convex deployment environment.
+ * @returns the bucket name
+ * @throws when SKILLS_BUCKET_NAME is not configured
+ */
+export function skillsBucketName(): string {
+  const bucket = process.env.SKILLS_BUCKET_NAME;
+  if (!bucket) {
+    throw new Error("SKILLS_BUCKET_NAME is required to store skills");
+  }
+
+  return bucket;
+}
+
+/**
+ * Validate bundle paths, sizes, and text-file rules, and parse SKILL.md.
+ * Mirrors core's `validateSkillBundle`.
+ * @param input bundle files
+ * @returns parsed metadata and normalized files
+ * @throws when a rule is violated or SKILL.md is missing
+ */
+export function validateSkillBundle(
+  input: SkillBundleFile[],
+): ValidatedSkillBundle {
+  const files = input.map((file) => ({
+    ...file,
+    path: normalizeBundlePath(file.path),
+  }));
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  for (const file of files) {
+    if (seen.has(file.path)) {
+      throw new Error(`Duplicate skill file path: ${file.path}`);
+    }
+    seen.add(file.path);
+    totalBytes += file.bytes.byteLength;
+    if (file.bytes.byteLength > MAX_SKILL_FILE_BYTES) {
+      throw new Error(`Skill file is too large: ${file.path}`);
+    }
+    if (!isSupportedTextFile(file.path, file.bytes)) {
+      throw new Error(`Skill file must be a supported text file: ${file.path}`);
+    }
+  }
+  if (totalBytes > MAX_SKILL_BUNDLE_BYTES) {
+    throw new Error("Skill bundle exceeds 30 MB");
+  }
+
+  const skillFile = files.find((file) => file.path === SKILL_FILE);
+  if (!skillFile) {
+    throw new Error("Skill bundle must include SKILL.md at the root");
+  }
+
+  return {
+    metadata: parseSkillMarkdown(new TextDecoder().decode(skillFile.bytes)),
+    files: files,
+  };
+}
+
+/**
+ * Load only SKILL.md metadata for list endpoints.
+ * @param accountId account id owning the skill
+ * @param skillName the skill name (without account prefix)
+ * @returns metadata, or null when SKILL.md is missing or malformed
+ */
+async function getSkillMetadata(
+  accountId: string,
+  skillName: string,
+): Promise<SkillMetadata | null> {
+  validateSkillName(skillName);
+  const skillPath = `${accountId}/${skillName}`;
+  const markdown = await readS3Text(
+    skillsBucketName(),
+    `${skillPath}/${SKILL_FILE}`,
+  ).catch(() => null);
+  if (markdown == null) return null;
+  const metadata = parseSkillMarkdown(markdown);
+
+  return { ...metadata, path: skillPath };
+}
 
 /**
  * Check a bundle file is an allowed text type with no NUL bytes.
@@ -373,6 +370,33 @@ function isSupportedTextFile(filePath: string, bytes: Uint8Array): boolean {
   }
 
   return !bytes.includes(0);
+}
+
+/**
+ * Pull the `path` record out of a pax extended header body.
+ * @param content the decoded pax header body ("len key=value\n" records)
+ * @returns the path override, or null when the header has none
+ */
+function parsePaxPath(content: string): string | null {
+  let rest = content;
+  while (rest.length > 0) {
+    const space = rest.indexOf(" ");
+    if (space < 0) {
+      break;
+    }
+    const length = Number(rest.slice(0, space));
+    if (!Number.isInteger(length) || length <= space + 1) {
+      break;
+    }
+    const record = rest.slice(space + 1, length - 1);
+    const equals = record.indexOf("=");
+    if (equals >= 0 && record.slice(0, equals) === "path") {
+      return record.slice(equals + 1);
+    }
+    rest = rest.slice(length);
+  }
+
+  return null;
 }
 
 /**
@@ -435,31 +459,4 @@ function readTarString(
   const nul = raw.indexOf("\0");
 
   return (nul >= 0 ? raw.slice(0, nul) : raw).trim();
-}
-
-/**
- * Pull the `path` record out of a pax extended header body.
- * @param content the decoded pax header body ("len key=value\n" records)
- * @returns the path override, or null when the header has none
- */
-function parsePaxPath(content: string): string | null {
-  let rest = content;
-  while (rest.length > 0) {
-    const space = rest.indexOf(" ");
-    if (space < 0) {
-      break;
-    }
-    const length = Number(rest.slice(0, space));
-    if (!Number.isInteger(length) || length <= space + 1) {
-      break;
-    }
-    const record = rest.slice(space + 1, length - 1);
-    const equals = record.indexOf("=");
-    if (equals >= 0 && record.slice(0, equals) === "path") {
-      return record.slice(equals + 1);
-    }
-    rest = rest.slice(length);
-  }
-
-  return null;
 }

@@ -20,7 +20,7 @@ import {
 } from "./model/accountTools";
 import { putToolBundle } from "./model/bundles";
 import { getOwnedStage } from "./model/ownership/stage";
-import { getOwnedProject } from "./model/ownership/project";
+import { getProjectForRole } from "./model/ownership/project";
 import { accountToolsFields } from "./schema";
 
 const MAX_TOOL_TIMEOUT_MS = 30_000;
@@ -47,7 +47,7 @@ export const getByNode = query({
 
     // Resolve ownership without throwing: a deleted project/stage should
     // yield null for this reactive query rather than crashing the canvas.
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) return null;
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) return null;
@@ -60,31 +60,6 @@ export const getByNode = query({
       .first();
 
     return tool?.status === "active" ? tool : null;
-  },
-});
-
-/** Every tool in a stage, CLI-synced and dashboard-authored alike. */
-export const listForStage = query({
-  args: {
-    projectId: v.id("projects"),
-    stageId: v.id("stages"),
-  },
-  returns: v.array(toolDoc),
-  handler: async (ctx, { projectId, stageId }) => {
-    const authUser = await authKit.getAuthUser(ctx);
-    if (!authUser) throw new Error("User not found or not authenticated");
-
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
-    if (!project) return [];
-    const stage = await getOwnedStage(ctx, authUser.id, stageId);
-    if (!stage || stage.projectId !== projectId) return [];
-
-    return await ctx.db
-      .query("accountTools")
-      .withIndex("by_stageId_and_status", (q) =>
-        q.eq("stageId", stageId).eq("status", "active"),
-      )
-      .collect();
   },
 });
 
@@ -200,7 +175,7 @@ export const bundleUrlForNode = action({
     });
     if (!tool) throw new Error("Tool configuration not found.");
 
-    return await ctx.runAction(internal.awsBundles.toolBundleUrl, {
+    return await ctx.runAction(internal.aws.bundles.toolBundleUrl, {
       bundleStorageKey: tool.bundleStorageKey,
     });
   },
@@ -315,7 +290,7 @@ export const nodeContext = internalQuery({
     const authUser = await authKit.getAuthUser(ctx);
     if (!authUser) throw new Error("User not found or not authenticated");
 
-    const project = await getOwnedProject(ctx, authUser.id, projectId);
+    const project = await getProjectForRole(ctx, authUser.id, projectId);
     if (!project) throw new Error("Project not found.");
     const stage = await getOwnedStage(ctx, authUser.id, stageId);
     if (!stage || stage.projectId !== projectId) {
@@ -411,26 +386,6 @@ export const upsertForNode = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-  },
-});
-
-/** Remove a canvas-authored tool when its node is deleted. */
-export const removeForNode = internalMutation({
-  args: {
-    stageId: v.id("stages"),
-    nodeId: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, { stageId, nodeId }) => {
-    const existing = await ctx.db
-      .query("accountTools")
-      .withIndex("by_stageId_and_nodeId", (q) =>
-        q.eq("stageId", stageId).eq("nodeId", nodeId),
-      )
-      .first();
-    if (existing) await ctx.db.delete(existing._id);
-
-    return null;
   },
 });
 

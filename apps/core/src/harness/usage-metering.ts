@@ -8,7 +8,7 @@
 import {
   canonicalModelProvider,
   PROVIDER_CACHE_WRITE_FIELDS,
-} from "@broods/convex/modelPricing";
+} from "@broods/convex/model/modelPricing";
 import type { LanguageModelUsage } from "ai";
 import { isPlainObject } from "../shared/object.ts";
 

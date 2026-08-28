@@ -61,12 +61,12 @@ export default function DashboardPage(): React.JSX.Element {
   // Fetch the active deployment to get projectSlug, stageSlug, and endpointId
   // for the observability WS and session-storage API key lookup.
   const activeDeployment = useQuery(
-    api.agentDeployments.getForStage,
+    api.agent.deployments.getForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
 
-  const ensureKey = useMutation(api.agentDeployments.ensureForStage);
-  const rotateKey = useMutation(api.agentDeployments.rotate);
+  const ensureKey = useMutation(api.agent.deployments.ensureForStage);
+  const rotateKey = useMutation(api.agent.deployments.rotate);
   // A key just minted in this view, scoped to its endpoint so switching
   // stages never serves the wrong stage's key.
   const [generated, setGenerated] = useState<{
@@ -88,7 +88,7 @@ export default function DashboardPage(): React.JSX.Element {
   // re-minting — logs/traces just stream. Null only when the stage has no
   // deployment yet (the prompt then mints one).
   const revealedKey = useQuery(
-    api.agentDeployments.revealKeyForStage,
+    api.agent.deployments.revealKeyForStage,
     activeStageId ? { projectId: projectId, stageId: activeStageId } : "skip",
   );
   const observabilityApiKey =

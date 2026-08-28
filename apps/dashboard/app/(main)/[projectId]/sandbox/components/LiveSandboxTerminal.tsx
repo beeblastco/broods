@@ -39,7 +39,7 @@ export function LiveSandboxTerminal({
   reservationKey,
   disabled,
 }: Props): React.JSX.Element {
-  const openTerminal = useAction(api.sandboxPublic.openTerminal);
+  const openTerminal = useAction(api.sandbox.public.openTerminal);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const termRef = useRef<{ dispose: () => void } | null>(null);

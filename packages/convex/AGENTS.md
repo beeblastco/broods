@@ -6,7 +6,7 @@ Convex skills sit in `.claude/skills/`; grab `convex-migration-helper` for any b
 
 ## Gotchas
 
-- **`args`/`returns` validators are runtime-only — `bun run check` cannot see them.** widening a TS type that a validator also describe pass typecheck, pass tests, then 500 in production the first time the function run. adding a CLI manifest resource kind mean four places, not one: `cliTypes.ts`, `resourceValidator`, `idsValidator`, and the sync itself. an extra key on a returned object is rejected just as hard as a missing one.
+- **`args`/`returns` validators are runtime-only — `bun run check` cannot see them.** widening a TS type that a validator also describe pass typecheck, pass tests, then 500 in production the first time the function run. adding a CLI manifest resource kind mean four places, not one: `cli/types.ts`, `resourceValidator`, `idsValidator`, and the sync itself. an extra key on a returned object is rejected just as hard as a missing one.
 
 ## Auth
 

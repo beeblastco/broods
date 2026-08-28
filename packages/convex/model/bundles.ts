@@ -19,7 +19,7 @@ export async function putToolBundle(
 ): Promise<string> {
   const storageId = await courier(ctx, options.bundle);
   try {
-    return await ctx.runAction(internal.awsBundles.putToolBundle, {
+    return await ctx.runAction(internal.aws.bundles.putToolBundle, {
       accountId: options.accountId,
       sha256: options.sha256,
       storageId: storageId,
@@ -36,7 +36,7 @@ export async function putHookBundle(
 ): Promise<string> {
   const storageId = await courier(ctx, options.bundle);
   try {
-    return await ctx.runAction(internal.awsBundles.putHookBundle, {
+    return await ctx.runAction(internal.aws.bundles.putHookBundle, {
       accountId: options.accountId,
       sha256: options.sha256,
       storageId: storageId,

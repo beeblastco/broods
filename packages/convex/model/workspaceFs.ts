@@ -1,6 +1,6 @@
 /**
- * S3-backed workspace filesystem operations for the Convex config plane
- * (epic #85 phase 9). Shared by the dashboard actions (workspaceFilesPublic)
+ * S3-backed workspace filesystem operations for the Convex config plane.
+ * Shared by the dashboard actions (workspaceFilesPublic)
  * and the public config HTTP surface (awsWorkspaceFiles). Buckets, namespaces
  * and limits match core's workdir mount exactly — including a workspace that
  * brings its own bucket. Node-runtime only — import exclusively from

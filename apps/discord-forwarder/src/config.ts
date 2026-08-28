@@ -16,6 +16,11 @@ const PLANES_ENV = "BROODS_CONFIG_PLANES";
 // the operator never wrote.
 const PLANE_NAME = /^[a-z0-9-]+$/i;
 
+/** A plane with the admin credential its config-plane read needs. */
+export interface ConfigPlane extends ConfigPlaneEntry {
+  deployKey: string;
+}
+
 /** A plane as written in `BROODS_CONFIG_PLANES`, before its key is attached. */
 export interface ConfigPlaneEntry {
   convexUrl: string;
@@ -23,11 +28,6 @@ export interface ConfigPlaneEntry {
   name: string;
   /** Gateway front door this plane's webhooks live behind, no trailing slash. */
   webhookBaseUrl: string;
-}
-
-/** A plane with the admin credential its config-plane read needs. */
-export interface ConfigPlane extends ConfigPlaneEntry {
-  deployKey: string;
 }
 
 export interface ForwarderConfig {
@@ -45,7 +45,6 @@ export interface ForwarderConfig {
    * planes is one socket fanning out to both webhooks.
    */
   planes: ConfigPlane[];
-  pollIntervalMs: number;
   port: number;
 }
 
@@ -55,7 +54,6 @@ export function forwarderConfigFromEnv(): ForwarderConfig {
     // Half of Discord's 1000, which leaves room for a restart to forget the count.
     identifyLimit: positiveIntegerEnv("DISCORD_IDENTIFY_LIMIT", 500),
     planes: configPlanesEnv(),
-    pollIntervalMs: positiveIntegerEnv("DISCORD_POLL_INTERVAL_MS", 30_000),
     port: positiveIntegerEnv("PORT", 3000),
   };
 }
@@ -100,7 +98,9 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
 
   // Two planes under one name read one deploy key and would forward every row of
   // that deployment twice, to the same webhook, from the same socket.
-  if (new Set(planes.map((plane) => plane.name)).size !== planes.length) {
+  if (
+    new Set(planes.map((plane): string => plane.name)).size !== planes.length
+  ) {
     throw new Error(`${PLANES_ENV} has duplicate plane names`);
   }
 
@@ -114,12 +114,14 @@ export function parseConfigPlanes(raw: string): ConfigPlaneEntry[] {
  * rather than a code change.
  */
 function configPlanesEnv(): ConfigPlane[] {
-  return parseConfigPlanes(requireEnv(PLANES_ENV)).map((plane) => ({
-    convexUrl: plane.convexUrl,
-    deployKey: requireEnv(deployKeyEnvName(plane.name)),
-    name: plane.name,
-    webhookBaseUrl: plane.webhookBaseUrl,
-  }));
+  return parseConfigPlanes(requireEnv(PLANES_ENV)).map(
+    (plane): ConfigPlane => ({
+      convexUrl: plane.convexUrl,
+      deployKey: requireEnv(deployKeyEnvName(plane.name)),
+      name: plane.name,
+      webhookBaseUrl: plane.webhookBaseUrl,
+    }),
+  );
 }
 
 /** Plane `dev` reads `CONVEX_DEPLOY_KEY_DEV`. */

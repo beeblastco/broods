@@ -1,11 +1,11 @@
 /** Upload-time runtime classification and bundle-size limits for account code. */
 
 import { describe, expect, it } from "vitest";
-import { normalizeAccountHookUpload } from "../model/accountHooks.ts";
+import { normalizeAccountHookUpload } from "../model/accountHooks";
 import {
   inferAccountToolRuntime,
   normalizeAccountToolUpload,
-} from "../model/accountTools.ts";
+} from "../model/accountTools";
 
 const MAX_ISOLATE_BUNDLE_BYTES = 1_000_000;
 const MAX_SANDBOX_BUNDLE_BYTES = 10_000_000;

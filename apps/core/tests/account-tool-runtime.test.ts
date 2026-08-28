@@ -124,45 +124,54 @@ describe("inferAccountToolRuntime", () => {
 });
 
 describe("per-tier bundle size bound", () => {
-  it("holds an isolate bundle to the tighter bound", () => {
-    expect(() => upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES))).not.toThrow();
-    expect(() => upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1))).toThrow(
+  it("holds an isolate bundle to the tighter bound", async () => {
+    await expect(
+      upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES)),
+    ).resolves.toBeDefined();
+    await expect(
+      upload(bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1)),
+    ).rejects.toThrow(
       `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
     );
   });
 
-  it("gives a sandbox bundle the larger bound", () => {
+  it("gives a sandbox bundle the larger bound", async () => {
     // A sandbox bundle streams from S3 into the runner instead of being inlined
     // into core's process, so the isolate's memory argument does not apply.
     const sandbox = (bytes: number): string =>
       `${bundleOfBytes(bytes)}\nimport "node:fs";`;
 
-    expect(() => upload(sandbox(MAX_ISOLATE_BUNDLE_BYTES + 1))).not.toThrow();
-    expect(() => upload(sandbox(MAX_SANDBOX_BUNDLE_BYTES + 1))).toThrow(
+    await expect(
+      upload(sandbox(MAX_ISOLATE_BUNDLE_BYTES + 1)),
+    ).resolves.toBeDefined();
+    await expect(upload(sandbox(MAX_SANDBOX_BUNDLE_BYTES + 1))).rejects.toThrow(
       `tool.bundle must be ${MAX_SANDBOX_BUNDLE_BYTES} bytes or smaller on the sandbox runtime`,
     );
   });
 
-  it("bounds a bundle-only PATCH by the stored tier, not the inferred one", () => {
+  it("bounds a bundle-only PATCH by the stored tier, not the inferred one", async () => {
     // A PATCH does not restate runtime, so the stored tier is the real one:
     // inferring here would let a multi-MB pure-JS bundle onto the isolate tier.
     const pure = bundleOfBytes(MAX_ISOLATE_BUNDLE_BYTES + 1);
 
-    expect(() => patch(pure, "sandbox")).not.toThrow();
-    expect(() => patch(pure, "isolate")).toThrow(
+    await expect(patch(pure, "sandbox")).resolves.toBeDefined();
+    await expect(patch(pure, "isolate")).rejects.toThrow(
       `tool.bundle must be ${MAX_ISOLATE_BUNDLE_BYTES} bytes or smaller on the isolate runtime`,
     );
   });
 });
 
-function patch(bundle: string, currentRuntime: "isolate" | "sandbox"): unknown {
+function patch(
+  bundle: string,
+  currentRuntime: "isolate" | "sandbox",
+): Promise<unknown> {
   return normalizeAccountToolUpload(
     { bundle: bundle },
     { requireBundle: false, currentRuntime: currentRuntime },
   );
 }
 
-function upload(bundle: string): unknown {
+function upload(bundle: string): Promise<unknown> {
   return normalizeAccountToolUpload(
     {
       name: "sized",

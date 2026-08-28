@@ -21,6 +21,8 @@ import {
 } from "./socket.ts";
 import { ThreadDirectory } from "./threads.ts";
 
+export type SocketFactory = (options: GatewaySocketOptions) => ForwarderSocket;
+
 /** The slice of `GatewaySocket` the supervisor drives, so tests can stub it. */
 export interface ForwarderSocket {
   readonly botIdentity: string | null;
@@ -28,8 +30,6 @@ export interface ForwarderSocket {
   start(): void;
   stop(): void;
 }
-
-export type SocketFactory = (options: GatewaySocketOptions) => ForwarderSocket;
 
 export interface ForwarderStatus {
   sockets: Array<{
@@ -52,7 +52,8 @@ export class Forwarder {
 
   constructor(
     config: ForwarderConfig,
-    createSocket: SocketFactory = (options) => new GatewaySocket(options),
+    createSocket: SocketFactory = (options): ForwarderSocket =>
+      new GatewaySocket(options),
   ) {
     this.budget = new IdentifyBudget(config.identifyLimit);
     this.config = config;
@@ -80,7 +81,8 @@ export class Forwarder {
       const urls = webhookUrls(targets);
       const existing = this.managed.get(botToken);
       if (existing) {
-        // reconcile runs on a timer, so warn only when the fan-out itself moved.
+        // reconcile runs on every config change, so warn only when the fan-out
+        // itself moved.
         if (webhookUrls(existing.targets).join(" ") !== urls.join(" ")) {
           warnOnSharedToken(botToken, urls);
         }
@@ -93,16 +95,21 @@ export class Forwarder {
   }
 
   status(): ForwarderStatus {
-    const sockets = [...this.managed].map(([botToken, entry]) => ({
-      botUserId: entry.socket.botIdentity,
-      state: entry.socket.state,
-      targets: entry.targets.length,
-      tokenHint: tokenHint(botToken),
-    }));
+    const sockets = [...this.managed].map(
+      ([botToken, entry]): ForwarderStatus["sockets"][number] => ({
+        botUserId: entry.socket.botIdentity,
+        state: entry.socket.state,
+        targets: entry.targets.length,
+        tokenHint: tokenHint(botToken),
+      }),
+    );
 
     return {
       sockets: sockets,
-      targets: sockets.reduce((total, socket) => total + socket.targets, 0),
+      targets: sockets.reduce(
+        (total, socket): number => total + socket.targets,
+        0,
+      ),
     };
   }
 
@@ -140,12 +147,14 @@ export class Forwarder {
       onMessageCreate: (data: MessageCreate): void => {
         // Nothing below is meant to reject, but an unhandled rejection here
         // takes the process down, and a restart is another IDENTIFY.
-        void this.deliver(botToken, threads, data).catch((error: unknown) => {
-          logError("Discord message could not be delivered", {
-            error: error instanceof Error ? error.message : String(error),
-            tokenHint: tokenHint(botToken),
-          });
-        });
+        void this.deliver(botToken, threads, data).catch(
+          (error: unknown): void => {
+            logError("Discord message could not be delivered", {
+              error: error instanceof Error ? error.message : String(error),
+              tokenHint: tokenHint(botToken),
+            });
+          },
+        );
       },
     });
     // Registered before the socket starts, so the first event to arrive always
@@ -197,5 +206,7 @@ function warnOnSharedToken(
 
 /** The distinct webhooks a token fans out to, in a stable order. */
 function webhookUrls(targets: readonly ForwardTarget[]): string[] {
-  return [...new Set(targets.map((target) => target.webhookUrl))].sort();
+  return [
+    ...new Set(targets.map((target): string => target.webhookUrl)),
+  ].sort();
 }
