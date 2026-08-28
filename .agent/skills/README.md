@@ -11,17 +11,17 @@ Both bundles pass the platform validator (name regex, `SKILL.md` at root, allowe
 
 The exploration behind this design (config plane, harness, auth) found the platform closer to done than the issue implies. The gap is almost entirely authorization, not capability.
 
-| Capability | Status |
-|---|---|
-| Cron pipeline (EventBridge → gateway → core `POST /v1/cron-runs`) | complete |
-| Agent self-scheduling tools (`schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`) | complete, gated on `config.scheduler.enabled`, fenced so a fired run cannot reschedule itself |
-| Config-plane CRUD for agents, crons, sandboxes, skills, tools, policies, env, workspaces | complete, account secret bearer |
-| SDK (`BroodsAccountClient`, ~60 methods) | complete |
-| Runtime policy engine (`agentPolicies`, OPA rego, `tool.call` / `skill.load` / etc.) | complete for in-run decisions |
-| Scoped or policied API keys | missing. Every credential is all-or-nothing |
-| Agent access to the config plane | missing. The stage runtime key (`fp_agent_`) is rejected by `configHttp.ts` (`kind:"deployment"` is stripped of scope and denied) |
-| `sandboxImages` on channel records | dead config. Validated and stored, read by nothing (`applyChannelRecord` never touches it) |
-| Dreaming / self-improvement | does not exist |
+| Capability                                                                                       | Status                                                                                                                            |
+| ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Cron pipeline (EventBridge → gateway → core `POST /v1/cron-runs`)                                | complete                                                                                                                          |
+| Agent self-scheduling tools (`schedule`, `list_schedules`, `update_schedule`, `cancel_schedule`) | complete, gated on `config.scheduler.enabled`, fenced so a fired run cannot reschedule itself                                     |
+| Config-plane CRUD for agents, crons, sandboxes, skills, tools, policies, env, workspaces         | complete, account secret bearer                                                                                                   |
+| SDK (`BroodsAccountClient`, ~60 methods)                                                         | complete                                                                                                                          |
+| Runtime policy engine (`agentPolicies`, OPA rego, `tool.call` / `skill.load` / etc.)             | complete for in-run decisions                                                                                                     |
+| Scoped or policied API keys                                                                      | missing. Every credential is all-or-nothing                                                                                       |
+| Agent access to the config plane                                                                 | missing. The stage runtime key (`fp_agent_`) is rejected by `configHttp.ts` (`kind:"deployment"` is stripped of scope and denied) |
+| `sandboxImages` on channel records                                                               | dead config. Validated and stored, read by nothing (`applyChannelRecord` never touches it)                                        |
+| Dreaming / self-improvement                                                                      | does not exist                                                                                                                    |
 
 ## Auth design: account roles and assume-role
 

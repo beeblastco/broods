@@ -82,6 +82,7 @@ const BASIC_SECRET_PATTERN = /\bBasic\s+[^\s,;]+/gi;
 const QUERY_SECRET_PATTERN =
   /([?&](?:access_token|api_key|apikey|key|secret|token)=)[^&#\s]+/gi;
 const RUNTIME_KEY_PATTERN = /\bfp_agent_[A-Za-z0-9_-]+\b/g;
+const ROLE_SESSION_TOKEN_PATTERN = /\bfp_sts_[A-Za-z0-9_-]+\b/g;
 
 function isSensitiveEnvName(name: string): boolean {
   const normalized = name.toLowerCase().replace(/[-_]/g, "");
@@ -130,6 +131,7 @@ function redactString(value: string, secretValues: readonly string[]): string {
   redacted = redacted.replace(BASIC_SECRET_PATTERN, "Basic [redacted]");
   redacted = redacted.replace(QUERY_SECRET_PATTERN, "$1[redacted]");
   redacted = redacted.replace(RUNTIME_KEY_PATTERN, "[redacted]");
+  redacted = redacted.replace(ROLE_SESSION_TOKEN_PATTERN, "[redacted]");
 
   return redacted;
 }

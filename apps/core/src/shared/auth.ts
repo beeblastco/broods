@@ -1,10 +1,12 @@
 /**
  * Bearer-token auth: admin secret, service token (for cherry-coke
- * server-side actions), and account-secret hash lookup. Persistence is
- * reached via `getStorage().accounts.*` so the auth path is identical
- * through the Convex-backed account store.
+ * server-side actions), assume-role session (fp_sts_), and account-secret
+ * hash lookup. Persistence is reached via `getStorage().accounts.*` so the
+ * auth path is identical through the Convex-backed account store.
  */
 
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv } from "./env.ts";
@@ -22,6 +24,13 @@ export type AuthContext =
       endpointId: string;
       projectSlug: string;
       stageSlug: string;
+    }
+  | {
+      // Short-lived assume-role session minted by the config plane. What it
+      // may do is decided per request by `authorize()` over `role.policy`.
+      kind: "role";
+      account: AccountRecord;
+      role: RolePrincipal;
     };
 
 export function extractBearerToken(
@@ -47,6 +56,11 @@ export async function resolveBearerAuth(
 ): Promise<AuthContext | null> {
   const token = extractBearerToken(headers.authorization);
   if (!token) return null;
+
+  // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
+  if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
+    return await resolveRoleSessionAuth(token);
+  }
 
   const adminSecret = optionalEnv("ADMIN_ACCOUNT_SECRET");
   if (adminSecret && timingSafeStringEqual(token, adminSecret)) {
@@ -92,6 +106,20 @@ export async function resolveBearerAuth(
     return null;
 
   return { kind: "account", account: account };
+}
+
+/** Resolve an fp_sts_ token to role auth via the config-plane session store. */
+async function resolveRoleSessionAuth(
+  token: string,
+): Promise<AuthContext | null> {
+  const principal = await getStorage().roleSessions.resolveByTokenHash(
+    sha256Hex(token),
+  );
+  if (!principal) return null;
+  const account = await getStorage().accounts.getById(principal.accountId);
+  if (!account || account.status !== "active") return null;
+
+  return { kind: "role", account: account, role: principal };
 }
 
 function sha256Hex(value: string): string {

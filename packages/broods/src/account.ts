@@ -15,8 +15,10 @@
  * server runtimes, as well as Node and Bun.
  *
  * Auth: every call sends `Authorization: Bearer {accountSecret}` to
- * `{baseUrl}/v1/...`. Secrets inside agent configs are encrypted at rest by
- * the platform and come back redacted (`********`) on reads.
+ * `{baseUrl}/v1/...` — or a short-lived `fp_sts_` role session token from
+ * `assumeRole()`, limited to what the role's policy allows. Secrets inside
+ * agent configs are encrypted at rest by the platform and come back redacted
+ * (`********`) on reads.
  */
 
 import type {
@@ -43,6 +45,12 @@ export interface BroodsAccountClientOptions {
   baseUrl?: string;
   /** Account secret used as the Bearer token. Falls back to `BROODS_ACCOUNT_SECRET`. */
   accountSecret?: string;
+  /**
+   * Short-lived `fp_sts_` role session token (from {@link BroodsAccountClient.assumeRole})
+   * used as the Bearer instead of the account secret. The session can only do
+   * what its role's policy allows. Falls back to `BROODS_SESSION_TOKEN`.
+   */
+  sessionToken?: string;
   fetch?: typeof fetch;
 }
 
@@ -141,6 +149,31 @@ export interface AccountPolicy {
   status: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Public account-role record returned by the roles routes. The policy uses the
+ * API action namespace (`"agents:read"`, `"crons:write"`, ...); `projectId` and
+ * `stageId` bound which stage runtime keys may assume the role.
+ */
+export interface AccountRole {
+  accountId: string;
+  roleId: string;
+  name: string;
+  projectId?: string;
+  stageId?: string;
+  status: "active" | "disabled";
+  policy: PolicyDocument;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Short-lived role session minted by `POST /v1/account/assume-role`. */
+export interface AssumeRoleResult {
+  /** `fp_sts_` bearer token; pass it as `sessionToken` to a new client. */
+  token: string;
+  /** ISO timestamp when the session stops working. */
+  expiresAt: string;
 }
 
 /**
@@ -314,23 +347,26 @@ function toolScopeQuery(scope: ToolScope): string {
  */
 export class BroodsAccountClient {
   private readonly baseUrl: string;
-  private readonly accountSecret: string;
+  private readonly bearerToken: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: BroodsAccountClientOptions = {}) {
     const baseUrl =
       options.baseUrl ?? envVar("BROODS_BASE_URL") ?? DEFAULT_ACCOUNT_BASE_URL;
-    const accountSecret =
-      options.accountSecret ?? envVar("BROODS_ACCOUNT_SECRET");
-    if (!accountSecret)
+    const bearerToken =
+      options.sessionToken ??
+      options.accountSecret ??
+      envVar("BROODS_SESSION_TOKEN") ??
+      envVar("BROODS_ACCOUNT_SECRET");
+    if (!bearerToken)
       throw new Error(
-        "BroodsAccountClient requires an accountSecret (or BROODS_ACCOUNT_SECRET).",
+        "BroodsAccountClient requires an accountSecret or sessionToken (or BROODS_ACCOUNT_SECRET / BROODS_SESSION_TOKEN).",
       );
     let baseUrlEnd = baseUrl.length;
     while (baseUrlEnd > 0 && baseUrl.charCodeAt(baseUrlEnd - 1) === 47)
       baseUrlEnd -= 1;
     this.baseUrl = baseUrl.slice(0, baseUrlEnd);
-    this.accountSecret = accountSecret;
+    this.bearerToken = bearerToken;
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -363,6 +399,37 @@ export class BroodsAccountClient {
     );
 
     return result?.account ?? null;
+  }
+
+  /**
+   * Exchange a role for a short-lived `fp_sts_` session token. Callable with
+   * the account secret, a CLI login token, or a stage runtime key (the latter
+   * only into roles scoped to the key's own project/stage). Construct a new
+   * client with `{ sessionToken: result.token }` to act as the role.
+   */
+  async assumeRole(
+    roleId: string,
+    options: { ttlSeconds?: number } = {},
+  ): Promise<AssumeRoleResult> {
+    const result = await this.request<AssumeRoleResult>(
+      "POST",
+      "/v1/account/assume-role",
+      {
+        roleId: roleId,
+        ...(options.ttlSeconds !== undefined
+          ? { ttlSeconds: options.ttlSeconds }
+          : {}),
+      },
+    );
+    if (!result)
+      throw new BroodsAccountApiError(
+        "POST",
+        "/v1/account/assume-role",
+        404,
+        "Role not found",
+      );
+
+    return result;
   }
 
   /** Rotate the account secret. The returned `secret` is shown once and the current secret stops working immediately, so persist it before the process exits. */
@@ -897,6 +964,62 @@ export class BroodsAccountClient {
     return result?.deleted ?? false;
   }
 
+  /** Roles are account-secret only: a session cannot list, mint, or edit roles. */
+  async listRoles(): Promise<AccountRole[]> {
+    const result = await this.request<{ roles: AccountRole[] }>(
+      "GET",
+      "/v1/roles",
+    );
+
+    return result?.roles ?? [];
+  }
+
+  /** Create a role whose policy uses the API action namespace. `projectId`/`stageId` must be provided together. */
+  async createRole(input: {
+    name: string;
+    policy: PolicyDocument;
+    projectId?: string;
+    stageId?: string;
+  }): Promise<AccountRole> {
+    const result = await this.request<AccountRole>("POST", "/v1/roles", input);
+    if (!result)
+      throw new BroodsAccountApiError("POST", "/v1/roles", 404, "Not found");
+
+    return result;
+  }
+
+  async getRole(roleId: string): Promise<AccountRole | null> {
+    return await this.request<AccountRole>(
+      "GET",
+      `/v1/roles/${encodeURIComponent(roleId)}`,
+    );
+  }
+
+  /** PATCH a role. `status: "disabled"` kills every live session of the role. Returns null when the role is gone. */
+  async updateRole(
+    roleId: string,
+    patch: {
+      name?: string;
+      policy?: PolicyDocument;
+      status?: "active" | "disabled";
+    },
+  ): Promise<AccountRole | null> {
+    return await this.request<AccountRole>(
+      "PATCH",
+      `/v1/roles/${encodeURIComponent(roleId)}`,
+      patch,
+    );
+  }
+
+  async deleteRole(roleId: string): Promise<boolean> {
+    const result = await this.request<{ deleted: boolean }>(
+      "DELETE",
+      `/v1/roles/${encodeURIComponent(roleId)}`,
+    );
+
+    return result?.deleted ?? false;
+  }
+
   async listChannels(): Promise<AccountChannel[]> {
     const result = await this.request<{ channels: AccountChannel[] }>(
       "GET",
@@ -1027,7 +1150,7 @@ export class BroodsAccountClient {
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method: method,
       headers: {
-        Authorization: `Bearer ${this.accountSecret}`,
+        Authorization: `Bearer ${this.bearerToken}`,
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

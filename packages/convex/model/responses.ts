@@ -129,6 +129,26 @@ export function toPublicChannelRecordResponse(
 }
 
 /**
+ * Map an accountRoles document to the public role shape. Accepts the bare
+ * fields so a create can respond without re-reading its own insert.
+ */
+export function toPublicRoleResponse(
+  doc: Omit<Doc<"accountRoles">, "_id" | "_creationTime">,
+): Record<string, unknown> {
+  return {
+    accountId: doc.accountId,
+    roleId: doc.roleId,
+    name: doc.name,
+    ...(doc.projectId ? { projectId: doc.projectId } : {}),
+    ...(doc.stageId ? { stageId: doc.stageId } : {}),
+    status: doc.status,
+    policy: doc.policy,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+/**
  * Map a sandboxConfigs document and decrypted config to the public response.
  * @param doc the sandboxConfigs document
  * @param config decrypted sandbox config

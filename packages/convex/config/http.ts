@@ -1,13 +1,21 @@
 /**
  * Public config-plane HTTP surface: agents, skills, tools, hooks, workspace
- * files, crons, workspaces, sandboxes, and policies served straight
+ * files, crons, workspaces, sandboxes, policies, and roles served straight
  * from Convex. The gateway forwards these paths here; response shapes match
  * the retired core handlers so the public API contract is unchanged. Auth is
- * the account Bearer secret. This file is the router; each resource family's
- * handlers live in `config/routes/`.
+ * the account Bearer secret, or an fp_sts_ role session checked against its
+ * role's policy at this funnel. This file is the router; each resource
+ * family's handlers live in `config/routes/`.
  */
 
-import { httpAction } from "../_generated/server";
+import { httpAction, type ActionCtx } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+import {
+  roleDenial,
+  rolePrincipal,
+  type ApiResource,
+} from "../model/apiAuthorization";
+import type { ConfigAuditActor } from "../model/auditEvents";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
   handleAgentChannelDirectoryRoute,
@@ -18,6 +26,7 @@ import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
 import { handlePolicyConfigRoute } from "./routes/policies";
+import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
 import { auditActorForAuth, json, requireAccount } from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
@@ -43,16 +52,27 @@ type ConfigRoute =
   | { kind: "channels"; channelId?: string }
   | { kind: "agents"; agentId?: string }
   | { kind: "agentChannelDirectory"; agentId: string; channelType: string }
-  | { kind: "env"; name?: string };
+  | { kind: "env"; name?: string }
+  | { kind: "roles"; roleId?: string };
+
+type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
 
 export const handle = httpAction(async (ctx, req) => {
   try {
-    const accountRoute = parseAccountRoute(new URL(req.url).pathname);
+    const pathname = new URL(req.url).pathname;
+
+    // The exchange authenticates its own caller kinds (account secret, CLI
+    // token, runtime key), so it runs before the shared bearer funnel.
+    if (pathname === "/v1/account/assume-role") {
+      return await handleAssumeRoleRoute(ctx, req);
+    }
+
+    const accountRoute = parseAccountRoute(pathname);
     if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
 
     // Redeeming a download token carries no Authorization header: the token in
     // the path is the whole credential, so it runs before requireAccount.
-    const downloadToken = parseDownloadRoute(new URL(req.url).pathname);
+    const downloadToken = parseDownloadRoute(pathname);
     if (downloadToken)
       return await handleDownloadRedeemRoute(ctx, req, downloadToken);
 
@@ -60,110 +80,32 @@ export const handle = httpAction(async (ctx, req) => {
     if (accountAuth instanceof Response) return accountAuth;
     const account = accountAuth.account;
     const actor = auditActorForAuth(accountAuth);
-    const route = parseRoute(new URL(req.url).pathname);
+    const route = parseRoute(pathname);
     if (!route) return json({ error: "Not found" }, 404);
 
-    switch (route.kind) {
-      case "skills":
-        return await handleSkillRoute(ctx, req, account._id, actor, route.name);
-      case "tools":
-        return await handleToolRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.toolId,
+    // Role management stays with the master credential: a session that could
+    // edit roles could grant itself anything.
+    if (route.kind === "roles") {
+      if (accountAuth.kind !== "account") {
+        return json(
+          { error: "Role management requires the account secret" },
+          403,
         );
-      case "hooks":
-        return await handleHookRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.hookId,
-        );
-      case "workspaceFiles":
-        return await handleWorkspaceFilesRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.workspaceId,
-        );
-      case "workspaceDownloadLinks":
-        return await handleWorkspaceDownloadLinkRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.workspaceId,
-        );
-      case "crons":
-        return await handleCronRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.cronId,
-          route.runs,
-        );
-      case "workspaces":
-        return await handleWorkspaceConfigRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.workspaceId,
-        );
-      case "sandboxes":
-        return await handleSandboxConfigRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.sandboxId,
-        );
-      case "policies":
-        return await handlePolicyConfigRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.policyId,
-        );
-      case "channels":
-        return await handleChannelRecordRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.channelId,
-        );
-      case "agents":
-        return await handleAgentConfigRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.agentId,
-        );
-      case "agentChannelDirectory":
-        return await handleAgentChannelDirectoryRoute(
-          ctx,
-          req,
-          account._id,
-          route.agentId,
-          route.channelType,
-        );
-      case "env":
-        return await handleAccountEnvVarRoute(
-          ctx,
-          req,
-          account._id,
-          actor,
-          route.name,
-        );
+      }
+
+      return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
     }
+
+    if (accountAuth.kind === "role") {
+      const denial = roleDenial(
+        rolePrincipal(accountAuth.role),
+        req.method,
+        apiResourceForRoute(route),
+      );
+      if (denial) return json({ error: denial }, 403);
+    }
+
+    return await dispatchResourceRoute(ctx, req, account._id, actor, route);
   } catch (err) {
     if (isClientInputError(err)) {
       return json({ error: err.message }, clientErrorStatus(err));
@@ -173,6 +115,146 @@ export const handle = httpAction(async (ctx, req) => {
     return json({ error: "Internal server error" }, 500);
   }
 });
+
+/** Build an `authorize()` resource, dropping an absent id. */
+function apiResource(
+  type: ApiResource["type"],
+  id: string | undefined,
+): ApiResource {
+  return { type: type, ...(id !== undefined ? { id: id } : {}) };
+}
+
+/**
+ * Map a parsed route onto the config-plane resource it addresses, for the
+ * role-session `authorize()` check. Workspace subresources authorize as their
+ * workspace; the agent channel directory authorizes as its agent.
+ */
+function apiResourceForRoute(route: ResourceRoute): ApiResource {
+  switch (route.kind) {
+    case "skills":
+      return apiResource("skills", route.name);
+    case "tools":
+      return apiResource("tools", route.toolId);
+    case "hooks":
+      return apiResource("hooks", route.hookId);
+    case "workspaceFiles":
+    case "workspaceDownloadLinks":
+    case "workspaces":
+      return apiResource("workspaces", route.workspaceId);
+    case "crons":
+      return apiResource("crons", route.cronId);
+    case "sandboxes":
+      return apiResource("sandboxes", route.sandboxId);
+    case "policies":
+      return apiResource("policies", route.policyId);
+    case "channels":
+      return apiResource("channels", route.channelId);
+    case "agents":
+    case "agentChannelDirectory":
+      return apiResource("agents", route.agentId);
+    case "env":
+      return apiResource("env", route.name);
+  }
+}
+
+/** Dispatch an authorized request to its resource family's handler. */
+async function dispatchResourceRoute(
+  ctx: ActionCtx,
+  req: Request,
+  accountId: Id<"accounts">,
+  actor: ConfigAuditActor,
+  route: ResourceRoute,
+): Promise<Response> {
+  switch (route.kind) {
+    case "skills":
+      return await handleSkillRoute(ctx, req, accountId, actor, route.name);
+    case "tools":
+      return await handleToolRoute(ctx, req, accountId, actor, route.toolId);
+    case "hooks":
+      return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
+    case "workspaceFiles":
+      return await handleWorkspaceFilesRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.workspaceId,
+      );
+    case "workspaceDownloadLinks":
+      return await handleWorkspaceDownloadLinkRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.workspaceId,
+      );
+    case "crons":
+      return await handleCronRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.cronId,
+        route.runs,
+      );
+    case "workspaces":
+      return await handleWorkspaceConfigRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.workspaceId,
+      );
+    case "sandboxes":
+      return await handleSandboxConfigRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.sandboxId,
+      );
+    case "policies":
+      return await handlePolicyConfigRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.policyId,
+      );
+    case "channels":
+      return await handleChannelRecordRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.channelId,
+      );
+    case "agents":
+      return await handleAgentConfigRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.agentId,
+      );
+    case "agentChannelDirectory":
+      return await handleAgentChannelDirectoryRoute(
+        ctx,
+        req,
+        accountId,
+        route.agentId,
+        route.channelType,
+      );
+    case "env":
+      return await handleAccountEnvVarRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.name,
+      );
+  }
+}
 
 /**
  * Map a client-input error to its HTTP status. Core returned 401 for
@@ -246,6 +328,11 @@ function isClientInputError(error: unknown): error is Error {
     "Policy document",
     "Policy rule",
     "Policy does not belong",
+    "roleId must",
+    "ttlSeconds must",
+    "projectId and stageId",
+    "projectId must",
+    "stageId must",
     "Sandbox config does not belong",
     "Workspace config does not belong",
     "events must",
@@ -323,6 +410,13 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
     return {
       kind: "policies",
       ...(policies[1] ? { policyId: decodeURIComponent(policies[1]) } : {}),
+    };
+
+  const roles = pathname.match(/^\/v1\/roles(?:\/([^/]+))?$/);
+  if (roles)
+    return {
+      kind: "roles",
+      ...(roles[1] ? { roleId: decodeURIComponent(roles[1]) } : {}),
     };
 
   const channels = pathname.match(/^\/v1\/channels(?:\/([^/]+))?$/);

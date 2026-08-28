@@ -3,6 +3,10 @@
  * Keep account orchestration here and shared records/persistence at their boundaries.
  */
 
+import {
+  roleDenial,
+  rolePrincipal,
+} from "@broods/convex/model/apiAuthorization";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import {
@@ -123,13 +127,9 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
       /^\/v1\/sandboxes\/([^/]+)\/(suspend|resume|terminate|snapshot|refresh|exec|terminal)$/,
     );
     if (selfSandboxLifecycleMatch?.[1] && selfSandboxLifecycleMatch[2]) {
-      // Driven by the dashboard via the sandboxPublic Convex actions, which
-      // authenticate with the shared service token.
-      const account = requireAccountAuth(auth, { allowServiceToken: true });
-
-      return await handleSandboxLifecycle(
+      return await handleSandboxLifecycleRoute(
+        auth,
         method,
-        account.accountId,
         selfSandboxLifecycleMatch[1],
         selfSandboxLifecycleMatch[2] as SandboxLifecycleAction,
         request,
@@ -177,6 +177,45 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
     return errorResponseForError(err);
   }
+}
+
+/**
+ * Auth gate for the sandbox lifecycle verbs: a role session must be allowed
+ * `sandboxes:write` by its own policy.
+ */
+async function handleSandboxLifecycleRoute(
+  auth: AuthContext,
+  method: string,
+  rawSandboxId: string,
+  action: SandboxLifecycleAction,
+  request: CoreRequest,
+): Promise<Response> {
+  if (auth.kind === "role") {
+    const denial = roleDenial(rolePrincipal(auth.role), method, {
+      type: "sandboxes",
+      id: decodeURIComponent(rawSandboxId),
+    });
+    if (denial) return errorResponse(403, denial);
+
+    return await handleSandboxLifecycle(
+      method,
+      auth.account.accountId,
+      rawSandboxId,
+      action,
+      request,
+    );
+  }
+  // Driven by the dashboard via the sandboxPublic Convex actions, which
+  // authenticate with the shared service token.
+  const account = requireAccountAuth(auth, { allowServiceToken: true });
+
+  return await handleSandboxLifecycle(
+    method,
+    account.accountId,
+    rawSandboxId,
+    action,
+    request,
+  );
 }
 
 async function handleSandboxLifecycle(
@@ -601,7 +640,7 @@ function requireAccountAuth(
   if (auth.kind === "deployment" && options.allowDeployment === true) {
     return auth.account;
   }
-  if (auth.kind === "deployment") {
+  if (auth.kind === "deployment" || auth.kind === "role") {
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {

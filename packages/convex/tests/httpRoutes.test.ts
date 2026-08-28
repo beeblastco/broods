@@ -5,6 +5,7 @@ import http from "../http";
 import { handle as cliHttp } from "../cli/http";
 import { httpHandle as cliProjectsHttp } from "../cli/projects";
 import { httpHandle as cliStagesHttp } from "../cli/stages";
+import { handle as configHttp } from "../config/http";
 
 // A handler that configHttp knows how to dispatch is still a 404 until the
 // router mounts it. That gap shipped once for /v1/channels and reached dev, so
@@ -36,6 +37,11 @@ const SURFACES: Array<{
   },
   {
     path: "/v1/policies",
+    collection: ["GET", "POST"],
+    item: ["GET", "PATCH", "DELETE"],
+  },
+  {
+    path: "/v1/roles",
     collection: ["GET", "POST"],
     item: ["GET", "PATCH", "DELETE"],
   },
@@ -122,5 +128,13 @@ describe("config-plane HTTP routes", () => {
   // bare GET. Convex serves HEAD from the same route.
   it("mounts download redemption for unauthenticated GET", () => {
     expect(http.lookup("/v1/downloads/abcdefghijklmnop", "GET")).toBeTruthy();
+  });
+
+  // The exchange sits beside the `/v1/account/projects/` pathPrefix mounts, so
+  // assert the config-plane handler wins rather than truthiness.
+  it("mounts assume-role on the config-plane handler", () => {
+    const route = http.lookup("/v1/account/assume-role", "POST");
+    expect(route, "POST /v1/account/assume-role").toBeTruthy();
+    expect(route?.[0], "POST /v1/account/assume-role").toBe(configHttp);
   });
 });

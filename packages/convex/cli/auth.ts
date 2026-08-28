@@ -19,7 +19,7 @@ import { getActiveOrgForUser, requireOrgMember } from "../model/ownership/org";
 
 const CLI_CODE_PREFIX = "fp_code_";
 const CLI_TOKEN_LAST_USED_WRITE_INTERVAL_MS = 5 * 60 * 1000;
-const CLI_TOKEN_PREFIX = "fp_cli_";
+export const CLI_TOKEN_PREFIX = "fp_cli_";
 const CODE_TTL_MS = 5 * 60 * 1000;
 const TOKEN_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 

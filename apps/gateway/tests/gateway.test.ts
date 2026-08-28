@@ -1161,6 +1161,9 @@ test("routes config-plane CRUD to Convex, not core", () => {
   expect(isConfigHttpPath("/v1/sandboxes/sbx_1")).toBe(true);
   expect(isConfigHttpPath("/v1/policies")).toBe(true);
   expect(isConfigHttpPath("/v1/policies/pol_1")).toBe(true);
+  expect(isConfigHttpPath("/v1/roles")).toBe(true);
+  expect(isConfigHttpPath("/v1/roles/fp_role_abc")).toBe(true);
+  expect(isConfigHttpPath("/v1/account/assume-role", "POST")).toBe(true);
   expect(isConfigHttpPath("/v1/channels")).toBe(true);
   expect(isConfigHttpPath("/v1/channels/chan_1")).toBe(true);
   expect(isConfigHttpPath("/v1/crons")).toBe(true);

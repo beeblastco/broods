@@ -12,7 +12,7 @@ info:
     > - Advanced integrations that need direct account-management access
     > - Admin operations using `AdminAccountSecret`
 
-    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, tools, workspace files, crons, workspaces, sandboxes, and policies are served by the config plane and have no admin path variants.
+    Account metadata and secret rotation are served by the config plane behind the same gateway host; account creation and delete stay in core for admin-controlled provisioning and runtime cleanup. Account creation, administration, and rotate-secret are reachable by admins with the `AdminAccountSecret` bearer token. Agent CRUD is account-authenticated under `/v1/agents*`. Account environment variables are write-only account secrets under `/v1/env*`, usable as `${NAME}` references in agent configs. Agents, env vars, skills, tools, workspace files, crons, workspaces, sandboxes, policies, and roles are served by the config plane and have no admin path variants. Account roles (`fp_role_...` ids under `/v1/roles*`) are exchanged at `/v1/account/assume-role` for short-lived `fp_sts_...` session tokens that authenticate like the account secret but are limited to the role's policy.
   version: 0.1.0
 
 servers:
@@ -49,6 +49,11 @@ tags:
     description: >-
       Account-owned channel records. One row per real place a team talks, binding
       it to an agent with its own instructions, workspaces, policies and roles.
+  - name: Roles
+    description: >-
+      Scoped API roles (`fp_role_...`). A role carries a policy over the
+      `<resource>:read`/`<resource>:write` API action namespace and is exchanged
+      via assume-role for a short-lived `fp_sts_...` session token.
 
 paths:
   /:
@@ -874,6 +879,53 @@ paths:
                       createdAt: "2026-05-01T00:00:00.000Z"
                       updatedAt: "2026-05-01T00:00:00.000Z"
                     secret: fp_acct_new...
+
+  /v1/account/assume-role:
+    post:
+      tags: [Roles]
+      summary: Assume a role
+      description: >-
+        Exchange a role for a short-lived `fp_sts_...` session token. Accepted
+        callers are the account secret (`fp_acct_...`), a CLI login token
+        (`fp_cli_...`), and a stage runtime key (`fp_agent_...`) — a runtime
+        key may only assume roles scoped to its own project/stage. Session
+        tokens cannot chain into new sessions. Default TTL 3600 seconds,
+        maximum 43200.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roleId]
+              properties:
+                roleId:
+                  type: string
+                ttlSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 43200
+      responses:
+        "200":
+          description: Session minted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                  expiresAt:
+                    type: string
+              examples:
+                minted:
+                  value:
+                    token: fp_sts_abc...
+                    expiresAt: "2026-05-01T01:00:00.000Z"
+        "403":
+          description: Role disabled, or not scoped to the caller's stage
+        "404": { description: Role not found }
 
   /v1/env:
     get:
@@ -1953,6 +2005,94 @@ paths:
         "200": { description: Deleted }
         "404": { description: Not found }
 
+  /v1/roles:
+    post:
+      tags: [Roles]
+      summary: Create role
+      description: >-
+        Create a scoped API role. The policy uses the API action namespace
+        (`agents:read`, `crons:write`, ...); `projectId` and `stageId` must be
+        provided together and bound which stage runtime keys may assume the
+        role. Role management accepts only the account secret — never a
+        session token.
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountRoleCreate"
+      responses:
+        "201":
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountRole"
+    get:
+      tags: [Roles]
+      summary: List roles
+      security: [{ BearerAuth: [] }]
+      responses:
+        "200":
+          description: Role list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AccountRole"
+
+  /v1/roles/{roleId}:
+    get:
+      tags: [Roles]
+      summary: Get role
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: roleId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountRole"
+        "404": { description: Not found }
+    patch:
+      tags: [Roles]
+      summary: Update role
+      description: >-
+        Patch a role's name, policy, or status. Setting `status: disabled`
+        immediately invalidates every live session of the role.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: roleId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountRoleUpdate"
+      responses:
+        "200":
+          description: Updated role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountRole"
+    delete:
+      tags: [Roles]
+      summary: Delete role
+      description: Delete a role and every session assumed from it.
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - { name: roleId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Deleted }
+        "404": { description: Not found }
+
   /v1/channels:
     post:
       tags: [Channels]
@@ -2386,7 +2526,12 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-      description: Account secret obtained from account creation or rotation
+      description: >-
+        Account secret (`fp_acct_...`) obtained from account creation or
+        rotation, or a short-lived role session token (`fp_sts_...`) minted by
+        `POST /v1/account/assume-role`. A session token authenticates the same
+        routes but is limited to its role's policy; role management under
+        `/v1/roles*` accepts only the account secret.
     AdminAuth:
       type: http
       scheme: bearer
@@ -3186,11 +3331,36 @@ components:
                 workspace.exec,
                 subagent.run,
                 skill.load,
+                account:read,
+                account:write,
+                agents:read,
+                agents:write,
+                channels:read,
+                channels:write,
+                crons:read,
+                crons:write,
+                env:read,
+                env:write,
+                hooks:read,
+                hooks:write,
+                policies:read,
+                policies:write,
+                sandboxes:read,
+                sandboxes:write,
+                skills:read,
+                skills:write,
+                tools:read,
+                tools:write,
+                workspaces:read,
+                workspaces:write,
               ]
             description: >-
-              agent.invoke gates the turn itself before any tool runs — "may this
-              person address the agent here?". The rest gate one action inside an
-              admitted turn.
+              Two namespaces on one shape. The dotted actions are agent runtime
+              actions: agent.invoke gates the turn itself before any tool runs —
+              "may this person address the agent here?" — and the rest gate one
+              action inside an admitted turn; agent policies accept only these.
+              The `<resource>:read`/`<resource>:write` actions are the config-plane
+              API namespace; account-role policies accept only those.
         resources:
           $ref: "#/components/schemas/PolicyResourceSelector"
         conditions:
@@ -3208,6 +3378,12 @@ components:
         filePaths: { type: array, items: { type: string } }
         subagentIds: { type: array, items: { type: string } }
         skillPaths: { type: array, items: { type: string } }
+        resourceIds:
+          type: array
+          items: { type: string }
+          description: >-
+            Config-plane resource ids for API-namespace rules; "*" matches
+            every id.
 
     PolicyCondition:
       type: object
@@ -3402,6 +3578,47 @@ components:
             status:
               type: string
               enum: [active, deleted]
+            createdAt:
+              type: string
+            updatedAt:
+              type: string
+
+    AccountRoleCreate:
+      type: object
+      required: [name, policy]
+      properties:
+        name:
+          type: string
+        policy:
+          $ref: "#/components/schemas/PolicyDocument"
+        projectId:
+          type: string
+        stageId:
+          type: string
+
+    AccountRoleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        policy:
+          $ref: "#/components/schemas/PolicyDocument"
+        status:
+          type: string
+          enum: [active, disabled]
+
+    AccountRole:
+      allOf:
+        - $ref: "#/components/schemas/AccountRoleCreate"
+        - type: object
+          properties:
+            accountId:
+              type: string
+            roleId:
+              type: string
+            status:
+              type: string
+              enum: [active, disabled]
             createdAt:
               type: string
             updatedAt:

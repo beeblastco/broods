@@ -35,6 +35,7 @@ import type {
   WorkspaceConfig,
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AgentDeploymentScope, Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
@@ -798,6 +799,17 @@ const accountHooks: Storage["accountHooks"] = {
   },
 };
 
+const roleSessions: Storage["roleSessions"] = {
+  resolveByTokenHash: async function (tokenHash) {
+    return (await getConvexClient().query(
+      internal.account.roles.resolveSession,
+      {
+        tokenHash: tokenHash,
+      },
+    )) as RolePrincipal | null;
+  },
+};
+
 export const convexStorage: Storage = {
   accounts: accounts,
   agents: agents,
@@ -809,5 +821,6 @@ export const convexStorage: Storage = {
   agentPolicies: agentPolicies,
   accountTools: accountTools,
   accountHooks: accountHooks,
+  roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

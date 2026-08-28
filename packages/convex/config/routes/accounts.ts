@@ -7,6 +7,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
 import { createAccountSecret, sha256Hex } from "../../model/accountSecrets";
+import { roleDenial, rolePrincipal } from "../../model/apiAuthorization";
 import {
   auditDetailsJson,
   type ConfigAuditActor,
@@ -53,6 +54,22 @@ export async function handleAccountRoute(
     if (accountAuth instanceof Response) return accountAuth;
     const account = accountAuth.account;
     const actor = auditActorForAuth(accountAuth);
+
+    if (accountAuth.kind === "role") {
+      // Rotating the master secret from a session would be privilege
+      // escalation, so no role policy can grant it.
+      if (route.kind === "selfRotate") {
+        return json(
+          { error: "Role sessions may not rotate the account secret" },
+          403,
+        );
+      }
+      const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
+        type: "account",
+        id: account._id,
+      });
+      if (denial) return json({ error: denial }, 403);
+    }
 
     if (route.kind === "self") {
       if (req.method === "GET")

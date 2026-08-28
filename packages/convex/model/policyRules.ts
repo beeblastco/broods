@@ -6,7 +6,7 @@
 
 import { isPlainObject } from "./objects";
 
-export const POLICY_ACTIONS = [
+export const AGENT_POLICY_ACTIONS = [
   // Gates the turn itself, before any tool runs: "may this person address the
   // agent here?". Everything below gates one action inside an admitted turn.
   "agent.invoke",
@@ -18,6 +18,36 @@ export const POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
+/**
+ * API action namespace for account roles: one read/write pair per config-plane
+ * resource route. Roles carry the same PolicyDocument shape as agent policies;
+ * each caller passes its action set to `normalizePolicyDocument`.
+ */
+export const API_POLICY_ACTIONS = [
+  "account:read",
+  "account:write",
+  "agents:read",
+  "agents:write",
+  "channels:read",
+  "channels:write",
+  "crons:read",
+  "crons:write",
+  "env:read",
+  "env:write",
+  "hooks:read",
+  "hooks:write",
+  "policies:read",
+  "policies:write",
+  "sandboxes:read",
+  "sandboxes:write",
+  "skills:read",
+  "skills:write",
+  "tools:read",
+  "tools:write",
+  "workspaces:read",
+  "workspaces:write",
+] as const;
+
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
   "toolIds",
@@ -26,9 +56,14 @@ const RESOURCE_SELECTOR_KEYS = [
   "filePaths",
   "subagentIds",
   "skillPaths",
+  "resourceIds",
 ] as const;
 
-export type PolicyAction = (typeof POLICY_ACTIONS)[number];
+export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
+
+export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
+
+export type PolicyAction = AgentPolicyAction | ApiPolicyAction;
 
 /**
  * One optional predicate on a policy rule.
@@ -70,6 +105,8 @@ export interface PolicyResourceSelector {
   filePaths?: string[];
   subagentIds?: string[];
   skillPaths?: string[];
+  /** Config-plane resource ids for API-action rules; "*" matches every id. */
+  resourceIds?: string[];
 }
 
 /**
@@ -106,11 +143,13 @@ export function normalizeCreatePolicyInput(value: unknown): {
 }
 
 /**
- * Validate and normalize a versioned policy document.
- * @param value candidate policy document
- * @returns normalized policy document
+ * Validate and normalize a versioned policy document. Agent policies accept
+ * the runtime action set by default; role policies pass `API_POLICY_ACTIONS`.
  */
-export function normalizePolicyDocument(value: unknown): PolicyDocument {
+export function normalizePolicyDocument(
+  value: unknown,
+  allowedActions: readonly PolicyAction[] = AGENT_POLICY_ACTIONS,
+): PolicyDocument {
   if (!isPlainObject(value))
     throw new Error("policy document must be an object");
   const document = value;
@@ -129,7 +168,7 @@ export function normalizePolicyDocument(value: unknown): PolicyDocument {
       ? { mode: document.mode as "enforce" | "audit" }
       : {}),
     rules: document.rules.map((rule, index) =>
-      normalizePolicyRule(rule, index),
+      normalizePolicyRule(rule, index, allowedActions),
     ),
   };
 }
@@ -261,7 +300,11 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   });
 }
 
-function normalizePolicyRule(value: unknown, index: number): PolicyRule {
+function normalizePolicyRule(
+  value: unknown,
+  index: number,
+  allowedActions: readonly PolicyAction[],
+): PolicyRule {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}] must be an object`);
   const rule = value;
@@ -280,7 +323,7 @@ function normalizePolicyRule(value: unknown, index: number): PolicyRule {
     assertOptionalEnum(
       action,
       `policy rules[${index}].actions[]`,
-      POLICY_ACTIONS,
+      allowedActions,
     );
   }
 

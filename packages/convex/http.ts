@@ -105,6 +105,16 @@ http.route({
   method: "POST",
   handler: configHttp,
 });
+http.route({
+  path: "/v1/account/assume-role",
+  method: "POST",
+  handler: configHttp,
+});
+http.route({ path: "/v1/roles", method: "GET", handler: configHttp });
+http.route({ path: "/v1/roles", method: "POST", handler: configHttp });
+http.route({ pathPrefix: "/v1/roles/", method: "GET", handler: configHttp });
+http.route({ pathPrefix: "/v1/roles/", method: "PATCH", handler: configHttp });
+http.route({ pathPrefix: "/v1/roles/", method: "DELETE", handler: configHttp });
 http.route({ path: "/accounts", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/accounts/", method: "GET", handler: configHttp });
 http.route({ pathPrefix: "/accounts/", method: "PATCH", handler: configHttp });
