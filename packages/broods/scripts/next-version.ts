@@ -1,9 +1,14 @@
 /**
  * Derives the next SDK version from the conventional-commit subjects landed
- * since the last version bump. `--write` applies it to package.json and the
- * root bun.lock (frozen installs check the workspace version, so both move
+ * since the last release. `--write` applies it to package.json and the root
+ * bun.lock (frozen installs check the workspace version, so both move
  * together). Prints one JSON line either way; `bump: "none"` means no commit
- * since the last bump touched the package.
+ * since the last release touched the package.
+ *
+ * The anchor is the newest `broods-v*` tag, which the publish workflow cuts on
+ * the commit it published. Nothing writes a bump back to `dev`, so the version
+ * in package.json is the last released one at best and stale at worst; asking
+ * the tags is asking what actually shipped.
  */
 
 const PACKAGE_PATH = "packages/broods/package.json";
@@ -19,15 +24,19 @@ const write = process.argv.includes("--write");
 // which workspace the script was invoked from.
 process.chdir(git(["rev-parse", "--show-toplevel"]));
 
-const current = JSON.parse(await Bun.file(PACKAGE_PATH).text())
+// What the file says, and what actually shipped. They are the same until a
+// release lands without a bump commit, and from then on only the tag is right.
+const declared = JSON.parse(await Bun.file(PACKAGE_PATH).text())
   .version as string;
+const released = lastReleaseTag();
+const current = released?.version ?? declared;
 const parsed = SEMVER.exec(current);
 if (!parsed) throw new Error(`Cannot bump a non-semver version: ${current}`);
 
 const major = Number(parsed[1]);
 const minor = Number(parsed[2]);
 const patch = Number(parsed[3]);
-const since = lastBumpCommit();
+const since = released?.tag ?? lastBumpCommit();
 const subjects = git([
   "log",
   "--no-merges",
@@ -45,14 +54,15 @@ const next = bump === "none" ? current : nextVersion(bump);
 if (write && bump !== "none") {
   // Textual edits, not a re-serialize: bun.lock is JSONC, and rewriting
   // package.json through JSON.stringify would churn its whole formatting.
+  // Replace what the files literally hold, which is `declared`, not the tag.
   await replace(
     PACKAGE_PATH,
-    `"version": "${current}"`,
+    `"version": "${declared}"`,
     `"version": "${next}"`,
   );
   await replace(
     LOCK_PATH,
-    `"name": "broods",\n      "version": "${current}",`,
+    `"name": "broods",\n      "version": "${declared}",`,
     `"name": "broods",\n      "version": "${next}",`,
   );
 }
@@ -60,6 +70,7 @@ if (write && bump !== "none") {
 console.log(
   JSON.stringify({
     current: current,
+    declared: declared,
     next: next,
     bump: bump,
     commits: subjects.length,
@@ -110,6 +121,18 @@ function lastBumpCommit(): string | undefined {
   }
 
   return undefined;
+}
+
+// The newest release the publish workflow tagged, or undefined before the first
+// one. Sorted by version rather than by date so a re-cut old tag cannot win.
+function lastReleaseTag(): { tag: string; version: string } | undefined {
+  const tag = git(["tag", "--list", "broods-v*", "--sort=-v:refname"])
+    .split("\n")
+    .filter(Boolean)[0];
+  if (!tag) return undefined;
+  const version = tag.slice("broods-v".length);
+
+  return SEMVER.test(version) ? { tag: tag, version: version } : undefined;
 }
 
 function nextVersion(bump: Exclude<Bump, "none">): string {
