@@ -3,7 +3,8 @@
 import { describe, expect, it } from "vitest";
 import { normalizePolicyDocument } from "../agent/policies";
 import {
-  POLICY_ACTIONS,
+  AGENT_POLICY_ACTIONS,
+  API_POLICY_ACTIONS,
   normalizeCreatePolicyInput,
   normalizePolicyDocument as normalizeRulesPolicyDocument,
 } from "../model/policyRules";
@@ -100,13 +101,31 @@ describe("normalizeCreatePolicyInput", () => {
 // one path and rejected by the other.
 describe("normalizePolicyDocument", () => {
   it("accepts every action the CRUD normalizer accepts", () => {
-    for (const action of POLICY_ACTIONS) {
+    for (const action of AGENT_POLICY_ACTIONS) {
       expect(() =>
         normalizePolicyDocument({
           version: 1,
           rules: [{ id: "r1", effect: "allow", actions: [action] }],
         }),
       ).not.toThrow();
+    }
+  });
+
+  // API actions belong to account roles; an agent policy carrying one would
+  // silently never fire in the runtime, so both write paths refuse them.
+  it("refuses API-namespace actions in agent policies", () => {
+    for (const normalize of [
+      normalizePolicyDocument,
+      normalizeRulesPolicyDocument,
+    ]) {
+      expect(() =>
+        normalize({
+          version: 1,
+          rules: [
+            { id: "r1", effect: "allow", actions: [API_POLICY_ACTIONS[0]] },
+          ],
+        }),
+      ).toThrow();
     }
   });
 

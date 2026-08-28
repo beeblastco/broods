@@ -10,6 +10,11 @@
 
 import { httpAction, type ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
+import {
+  roleDenial,
+  rolePrincipal,
+  type ApiResource,
+} from "../model/apiAuthorization";
 import type { ConfigAuditActor } from "../model/auditEvents";
 import { handleAccountRoute, parseAccountRoute } from "./routes/accounts";
 import {
@@ -20,21 +25,10 @@ import { handleChannelRecordRoute } from "./routes/channels";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
-import {
-  apiActionForRequest,
-  authorize,
-  type ApiResource,
-  type ApiResourceType,
-} from "../model/apiAuthorization";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
-import {
-  auditActorForAuth,
-  json,
-  requireAccount,
-  rolePrincipal,
-} from "./routes/shared";
+import { auditActorForAuth, json, requireAccount } from "./routes/shared";
 import { handleSkillRoute } from "./routes/skills";
 import { handleToolRoute } from "./routes/tools";
 import {
@@ -44,26 +38,6 @@ import {
   parseDownloadRoute,
 } from "./routes/workspaceFiles";
 import { handleWorkspaceConfigRoute } from "./routes/workspaces";
-
-/** Resource family each route kind authorizes as, for role sessions. */
-const API_RESOURCE_TYPE_BY_ROUTE_KIND: Record<
-  Exclude<ConfigRoute, { kind: "roles" }>["kind"],
-  ApiResourceType
-> = {
-  skills: "skills",
-  tools: "tools",
-  hooks: "hooks",
-  workspaceFiles: "workspaces",
-  workspaceDownloadLinks: "workspaces",
-  crons: "crons",
-  workspaces: "workspaces",
-  sandboxes: "sandboxes",
-  policies: "policies",
-  channels: "channels",
-  agents: "agents",
-  agentChannelDirectory: "agents",
-  env: "env",
-};
 
 type ConfigRoute =
   | { kind: "skills"; name?: string }
@@ -81,20 +55,24 @@ type ConfigRoute =
   | { kind: "env"; name?: string }
   | { kind: "roles"; roleId?: string };
 
+type ResourceRoute = Exclude<ConfigRoute, { kind: "roles" }>;
+
 export const handle = httpAction(async (ctx, req) => {
   try {
+    const pathname = new URL(req.url).pathname;
+
     // The exchange authenticates its own caller kinds (account secret, CLI
     // token, runtime key), so it runs before the shared bearer funnel.
-    if (new URL(req.url).pathname === "/v1/account/assume-role") {
+    if (pathname === "/v1/account/assume-role") {
       return await handleAssumeRoleRoute(ctx, req);
     }
 
-    const accountRoute = parseAccountRoute(new URL(req.url).pathname);
+    const accountRoute = parseAccountRoute(pathname);
     if (accountRoute) return await handleAccountRoute(ctx, req, accountRoute);
 
     // Redeeming a download token carries no Authorization header: the token in
     // the path is the whole credential, so it runs before requireAccount.
-    const downloadToken = parseDownloadRoute(new URL(req.url).pathname);
+    const downloadToken = parseDownloadRoute(pathname);
     if (downloadToken)
       return await handleDownloadRedeemRoute(ctx, req, downloadToken);
 
@@ -102,7 +80,7 @@ export const handle = httpAction(async (ctx, req) => {
     if (accountAuth instanceof Response) return accountAuth;
     const account = accountAuth.account;
     const actor = auditActorForAuth(accountAuth);
-    const route = parseRoute(new URL(req.url).pathname);
+    const route = parseRoute(pathname);
     if (!route) return json({ error: "Not found" }, 404);
 
     // Role management stays with the master credential: a session that could
@@ -118,15 +96,13 @@ export const handle = httpAction(async (ctx, req) => {
       return await handleRoleRoute(ctx, req, account._id, actor, route.roleId);
     }
 
-    // The decision funnel for role sessions: every other kind keeps its
-    // current behavior, a role must be allowed by its own policy.
     if (accountAuth.kind === "role") {
-      const resource = apiResourceForRoute(route);
-      const action = apiActionForRequest(req.method, resource.type);
-      const decision = authorize(rolePrincipal(accountAuth), action, resource);
-      if (!decision.allow) {
-        return json({ error: `Role is not allowed to ${action}` }, 403);
-      }
+      const denial = roleDenial(
+        rolePrincipal(accountAuth.role),
+        req.method,
+        apiResourceForRoute(route),
+      );
+      if (denial) return json({ error: denial }, 403);
     }
 
     return await dispatchResourceRoute(ctx, req, account._id, actor, route);
@@ -140,69 +116,54 @@ export const handle = httpAction(async (ctx, req) => {
   }
 });
 
+/** Build an `authorize()` resource, dropping an absent id. */
+function apiResource(
+  type: ApiResource["type"],
+  id: string | undefined,
+): ApiResource {
+  return { type: type, ...(id !== undefined ? { id: id } : {}) };
+}
+
 /**
  * Map a parsed route onto the config-plane resource it addresses, for the
  * role-session `authorize()` check. Workspace subresources authorize as their
  * workspace; the agent channel directory authorizes as its agent.
- * @param route parsed config route (role management is handled before this)
- * @returns the resource the request addresses
  */
-function apiResourceForRoute(
-  route: Exclude<ConfigRoute, { kind: "roles" }>,
-): ApiResource {
-  const id = apiResourceIdForRoute(route);
-
-  return {
-    type: API_RESOURCE_TYPE_BY_ROUTE_KIND[route.kind],
-    ...(id !== undefined ? { id: id } : {}),
-  };
-}
-
-/** The item id a parsed route addresses, when it addresses one. */
-function apiResourceIdForRoute(
-  route: Exclude<ConfigRoute, { kind: "roles" }>,
-): string | undefined {
+function apiResourceForRoute(route: ResourceRoute): ApiResource {
   switch (route.kind) {
     case "skills":
-    case "env":
-      return route.name;
+      return apiResource("skills", route.name);
     case "tools":
-      return route.toolId;
+      return apiResource("tools", route.toolId);
     case "hooks":
-      return route.hookId;
+      return apiResource("hooks", route.hookId);
     case "workspaceFiles":
     case "workspaceDownloadLinks":
     case "workspaces":
-      return route.workspaceId;
+      return apiResource("workspaces", route.workspaceId);
     case "crons":
-      return route.cronId;
+      return apiResource("crons", route.cronId);
     case "sandboxes":
-      return route.sandboxId;
+      return apiResource("sandboxes", route.sandboxId);
     case "policies":
-      return route.policyId;
+      return apiResource("policies", route.policyId);
     case "channels":
-      return route.channelId;
+      return apiResource("channels", route.channelId);
     case "agents":
     case "agentChannelDirectory":
-      return route.agentId;
+      return apiResource("agents", route.agentId);
+    case "env":
+      return apiResource("env", route.name);
   }
 }
 
-/**
- * Dispatch an authorized request to its resource family's handler.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @param accountId authenticated account
- * @param actor audit actor
- * @param route parsed config route (role management is handled before this)
- * @returns HTTP response
- */
+/** Dispatch an authorized request to its resource family's handler. */
 async function dispatchResourceRoute(
   ctx: ActionCtx,
   req: Request,
   accountId: Id<"accounts">,
   actor: ConfigAuditActor,
-  route: Exclude<ConfigRoute, { kind: "roles" }>,
+  route: ResourceRoute,
 ): Promise<Response> {
   switch (route.kind) {
     case "skills":
@@ -372,7 +333,6 @@ function isClientInputError(error: unknown): error is Error {
     "projectId and stageId",
     "projectId must",
     "stageId must",
-    "Role does not belong",
     "Sandbox config does not belong",
     "Workspace config does not belong",
     "events must",

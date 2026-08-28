@@ -3,23 +3,32 @@
  * Convex path uses to store a bearer token as a digest instead of plaintext.
  */
 
-const ACCOUNT_SECRET_PREFIX = "fp_acct_";
-const ACCOUNT_SECRET_BYTES = 32;
+export const ACCOUNT_SECRET_PREFIX = "fp_acct_";
 
 /**
  * Generate a one-time account secret with the public account prefix.
  * @returns plaintext secret to show once to the caller
  */
 export function createAccountSecret(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(ACCOUNT_SECRET_BYTES));
+  return randomToken(ACCOUNT_SECRET_PREFIX);
+}
+
+/**
+ * Generate a prefixed random bearer credential (base64url payload).
+ * @param prefix public token prefix, e.g. "fp_sts_"
+ * @param bytes entropy size
+ * @returns plaintext token to show once to the caller
+ */
+export function randomToken(prefix: string, bytes = 32): string {
+  const random = crypto.getRandomValues(new Uint8Array(bytes));
   let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
+  for (const byte of random) binary += String.fromCharCode(byte);
   const base64url = btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  return `${ACCOUNT_SECRET_PREFIX}${base64url}`;
+  return `${prefix}${base64url}`;
 }
 
 /**

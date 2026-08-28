@@ -8,7 +8,9 @@
 import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { sha256Hex } from "../../model/accountSecrets";
+import { ACCOUNT_SECRET_PREFIX, sha256Hex } from "../../model/accountSecrets";
+import { DEPLOYMENT_KEY_PREFIX } from "../../agent/deployments";
+import { CLI_TOKEN_PREFIX } from "../../cli/auth";
 import {
   auditDetailsJson,
   type ConfigAuditActor,
@@ -29,22 +31,15 @@ import {
   writeAudit,
 } from "./shared";
 
-const ACCOUNT_SECRET_TOKEN_PREFIX = "fp_acct_";
-const CLI_TOKEN_PREFIX = "fp_cli_";
-const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
-
 type AssumeRoleCaller = {
   accountId: Id<"accounts">;
   actor: ConfigAuditActor;
   deploymentScope?: { projectId: Id<"projects">; stageId: Id<"stages"> };
 };
 
-/**
- * Exchange a role for a short-lived fp_sts_ session token.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns `{ token, expiresAt }` or an error response
- */
+type CreatedRole = Omit<Doc<"accountRoles">, "_id" | "_creationTime">;
+
+/** Exchange a role for a short-lived fp_sts_ session token. */
 export async function handleAssumeRoleRoute(
   ctx: ActionCtx,
   req: Request,
@@ -76,22 +71,24 @@ export async function handleAssumeRoleRoute(
 
   const token = createRoleSessionToken();
   const expiresAt = Date.now() + input.ttlSeconds * 1000;
-  await ctx.runMutation(internal.account.roles.createSession, {
-    accountId: caller.accountId,
-    roleId: role.roleId,
-    tokenHash: await sha256Hex(token),
-    expiresAt: expiresAt,
-  });
-  await writeAudit(ctx, {
-    accountId: caller.accountId,
-    projectId: role.projectId,
-    stageId: role.stageId,
-    actor: caller.actor,
-    action: "role-assumed",
-    resource: { kind: "role", id: role.roleId, name: role.name },
-    summary: "Role session created",
-    detailsJson: auditDetailsJson({ ttlSeconds: input.ttlSeconds }),
-  });
+  await Promise.all([
+    ctx.runMutation(internal.account.roles.createSession, {
+      accountId: caller.accountId,
+      roleId: role.roleId,
+      tokenHash: await sha256Hex(token),
+      expiresAt: expiresAt,
+    }),
+    writeAudit(ctx, {
+      accountId: caller.accountId,
+      projectId: role.projectId,
+      stageId: role.stageId,
+      actor: caller.actor,
+      action: "role-assumed",
+      resource: { kind: "role", id: role.roleId, name: role.name },
+      summary: "Role session created",
+      detailsJson: auditDetailsJson({ ttlSeconds: input.ttlSeconds }),
+    }),
+  ]);
 
   return json({ token: token, expiresAt: new Date(expiresAt).toISOString() });
 }
@@ -99,12 +96,6 @@ export async function handleAssumeRoleRoute(
 /**
  * Account role CRUD: list/create on the collection, get/patch/delete by
  * public role id. Mirrors the policy route contract.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @param accountId authenticated account
- * @param actor audit actor
- * @param roleId public role id when addressing one role
- * @returns HTTP response
  */
 export async function handleRoleRoute(
   ctx: ActionCtx,
@@ -125,8 +116,8 @@ export async function handleRoleRoute(
       });
     }
     if (req.method === "POST") {
-      const input = normalizeCreateRoleInput(await req.json());
-      const created: Doc<"accountRoles"> = await ctx.runMutation(
+      const input = normalizeCreateRoleInput(await parseJsonRequest(req));
+      const created: CreatedRole = await ctx.runMutation(
         internal.account.roles.createInternal,
         {
           accountId: accountId,
@@ -164,62 +155,49 @@ export async function handleRoleRoute(
       : json({ error: "Role not found" }, 404);
   }
   if (req.method === "PATCH") {
-    const existing: Doc<"accountRoles"> | null = await ctx.runQuery(
-      internal.account.roles.getByRoleId,
-      { accountId: accountId, roleId: roleId },
-    );
-    if (!existing) return json({ error: "Role not found" }, 404);
-    const patch = normalizeUpdateRoleInput(await req.json());
-    await ctx.runMutation(internal.account.roles.updateInternal, {
-      accountId: accountId,
-      roleId: roleId,
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.policy !== undefined ? { policy: patch.policy } : {}),
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-    });
-    const updated: Doc<"accountRoles"> | null = await ctx.runQuery(
-      internal.account.roles.getByRoleId,
-      { accountId: accountId, roleId: roleId },
-    );
-    if (updated) {
-      await writeAudit(ctx, {
+    const patch = normalizeUpdateRoleInput(await parseJsonRequest(req));
+    const updated: Doc<"accountRoles"> | null = await ctx.runMutation(
+      internal.account.roles.updateInternal,
+      {
         accountId: accountId,
-        projectId: updated.projectId,
-        stageId: updated.stageId,
-        actor: actor,
-        action: "updated",
-        resource: { kind: "role", id: updated.roleId, name: updated.name },
-        summary: "Role updated",
-        detailsJson: auditDetailsJson({
-          roleId: updated.roleId,
-          changedFields: Object.keys(patch).sort(),
-        }),
-      });
-    }
-
-    return updated
-      ? json(toPublicRoleResponse(updated))
-      : json({ error: "Role not found" }, 404);
-  }
-  if (req.method === "DELETE") {
-    const existing: Doc<"accountRoles"> | null = await ctx.runQuery(
-      internal.account.roles.getByRoleId,
-      { accountId: accountId, roleId: roleId },
+        roleId: roleId,
+        ...(patch.name !== undefined ? { name: patch.name } : {}),
+        ...(patch.policy !== undefined ? { policy: patch.policy } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+      },
     );
-    if (!existing) return json({ error: "Role not found" }, 404);
-    await ctx.runMutation(internal.account.roles.removeInternal, {
-      accountId: accountId,
-      roleId: roleId,
-    });
+    if (!updated) return json({ error: "Role not found" }, 404);
     await writeAudit(ctx, {
       accountId: accountId,
-      projectId: existing.projectId,
-      stageId: existing.stageId,
+      projectId: updated.projectId,
+      stageId: updated.stageId,
+      actor: actor,
+      action: "updated",
+      resource: { kind: "role", id: updated.roleId, name: updated.name },
+      summary: "Role updated",
+      detailsJson: auditDetailsJson({
+        roleId: updated.roleId,
+        changedFields: Object.keys(patch).sort(),
+      }),
+    });
+
+    return json(toPublicRoleResponse(updated));
+  }
+  if (req.method === "DELETE") {
+    const removed: Doc<"accountRoles"> | null = await ctx.runMutation(
+      internal.account.roles.removeInternal,
+      { accountId: accountId, roleId: roleId },
+    );
+    if (!removed) return json({ error: "Role not found" }, 404);
+    await writeAudit(ctx, {
+      accountId: accountId,
+      projectId: removed.projectId,
+      stageId: removed.stageId,
       actor: actor,
       action: "deleted",
-      resource: { kind: "role", id: existing.roleId, name: existing.name },
+      resource: { kind: "role", id: removed.roleId, name: removed.name },
       summary: "Role deleted",
-      detailsJson: auditDetailsJson({ roleId: existing.roleId }),
+      detailsJson: auditDetailsJson({ roleId: removed.roleId }),
     });
 
     return json({ deleted: true });
@@ -241,7 +219,7 @@ async function resolveAssumeRoleCaller(
   if (!token) return null;
   const tokenHash = await sha256Hex(token);
 
-  if (token.startsWith(ACCOUNT_SECRET_TOKEN_PREFIX)) {
+  if (token.startsWith(ACCOUNT_SECRET_PREFIX)) {
     const account: Doc<"accounts"> | null = await ctx.runQuery(
       internal.account.accounts.getBySecretHash,
       { secretHash: tokenHash },

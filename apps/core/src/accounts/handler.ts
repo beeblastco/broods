@@ -3,6 +3,10 @@
  * Keep account orchestration here and shared records/persistence at their boundaries.
  */
 
+import {
+  roleDenial,
+  rolePrincipal,
+} from "@broods/convex/model/apiAuthorization";
 import { createSandboxExecutor } from "../harness/sandbox/index.ts";
 import { getSandboxExternalId } from "../harness/sandbox/instance-store.ts";
 import {
@@ -13,15 +17,7 @@ import {
   workdirConnection,
   workdirPtyUrl,
 } from "../harness/sandbox/workdir-executor.ts";
-import {
-  apiActionForRequest,
-  authorize,
-} from "@broods/convex/model/apiAuthorization";
-import {
-  resolveBearerAuth,
-  rolePrincipal,
-  type AuthContext,
-} from "../shared/auth.ts";
+import { resolveBearerAuth, type AuthContext } from "../shared/auth.ts";
 import {
   recordSandboxAuditEvent,
   type SandboxAuditActor,
@@ -185,8 +181,7 @@ async function handleAccountRequest(request: CoreRequest): Promise<Response> {
 
 /**
  * Auth gate for the sandbox lifecycle verbs: a role session must be allowed
- * `sandboxes:write` by its own policy, every other kind keeps its current
- * behavior (account secret, or the dashboard's service token).
+ * `sandboxes:write` by its own policy.
  */
 async function handleSandboxLifecycleRoute(
   auth: AuthContext,
@@ -196,21 +191,23 @@ async function handleSandboxLifecycleRoute(
   request: CoreRequest,
 ): Promise<Response> {
   if (auth.kind === "role") {
-    const apiAction = apiActionForRequest(method, "sandboxes");
-    const decision = authorize(rolePrincipal(auth), apiAction, {
+    const denial = roleDenial(rolePrincipal(auth.role), method, {
       type: "sandboxes",
       id: decodeURIComponent(rawSandboxId),
     });
-    if (!decision.allow) {
-      return errorResponse(403, `Role is not allowed to ${apiAction}`);
-    }
+    if (denial) return errorResponse(403, denial);
+
+    return await handleSandboxLifecycle(
+      method,
+      auth.account.accountId,
+      rawSandboxId,
+      action,
+      request,
+    );
   }
   // Driven by the dashboard via the sandboxPublic Convex actions, which
   // authenticate with the shared service token.
-  const account = requireAccountAuth(auth, {
-    allowServiceToken: true,
-    allowRole: true,
-  });
+  const account = requireAccountAuth(auth, { allowServiceToken: true });
 
   return await handleSandboxLifecycle(
     method,
@@ -638,20 +635,12 @@ async function deleteAccountCrons(accountId: string): Promise<number> {
 
 function requireAccountAuth(
   auth: AuthContext,
-  options: {
-    allowServiceToken?: boolean;
-    allowDeployment?: boolean;
-    allowRole?: boolean;
-  } = {},
+  options: { allowServiceToken?: boolean; allowDeployment?: boolean } = {},
 ): Extract<AuthContext, { kind: "account" }>["account"] {
   if (auth.kind === "deployment" && options.allowDeployment === true) {
     return auth.account;
   }
-  if (auth.kind === "deployment") {
-    throw new AccountEndpointUnauthorizedError();
-  }
-  if (auth.kind === "role") {
-    if (options.allowRole === true) return auth.account;
+  if (auth.kind === "deployment" || auth.kind === "role") {
     throw new AccountEndpointUnauthorizedError();
   }
   if (auth.kind !== "account") {

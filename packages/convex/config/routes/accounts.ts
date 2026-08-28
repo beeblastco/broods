@@ -7,7 +7,7 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc } from "../../_generated/dataModel";
 import { createAccountSecret, sha256Hex } from "../../model/accountSecrets";
-import { apiActionForRequest, authorize } from "../../model/apiAuthorization";
+import { roleDenial, rolePrincipal } from "../../model/apiAuthorization";
 import {
   auditDetailsJson,
   type ConfigAuditActor,
@@ -21,7 +21,6 @@ import {
   parseJsonRequest,
   requireAdminAuth,
   requireSelfAccount,
-  rolePrincipal,
   writeAudit,
 } from "./shared";
 
@@ -65,14 +64,11 @@ export async function handleAccountRoute(
           403,
         );
       }
-      const action = apiActionForRequest(req.method, "account");
-      const decision = authorize(rolePrincipal(accountAuth), action, {
+      const denial = roleDenial(rolePrincipal(accountAuth.role), req.method, {
         type: "account",
         id: account._id,
       });
-      if (!decision.allow) {
-        return json({ error: `Role is not allowed to ${action}` }, 403);
-      }
+      if (denial) return json({ error: denial }, 403);
     }
 
     if (route.kind === "self") {

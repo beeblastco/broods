@@ -1215,7 +1215,8 @@ export default defineSchema({
     .index("by_roleId", ["roleId"]),
   roleSessions: defineTable(roleSessionsFields)
     .index("by_tokenHash", ["tokenHash"])
-    .index("by_roleId", ["roleId"]),
+    .index("by_roleId", ["roleId"])
+    .index("by_expiresAt", ["expiresAt"]),
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])

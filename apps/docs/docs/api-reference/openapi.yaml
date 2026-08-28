@@ -3331,11 +3331,36 @@ components:
                 workspace.exec,
                 subagent.run,
                 skill.load,
+                account:read,
+                account:write,
+                agents:read,
+                agents:write,
+                channels:read,
+                channels:write,
+                crons:read,
+                crons:write,
+                env:read,
+                env:write,
+                hooks:read,
+                hooks:write,
+                policies:read,
+                policies:write,
+                sandboxes:read,
+                sandboxes:write,
+                skills:read,
+                skills:write,
+                tools:read,
+                tools:write,
+                workspaces:read,
+                workspaces:write,
               ]
             description: >-
-              agent.invoke gates the turn itself before any tool runs — "may this
-              person address the agent here?". The rest gate one action inside an
-              admitted turn.
+              Two namespaces on one shape. The dotted actions are agent runtime
+              actions: agent.invoke gates the turn itself before any tool runs —
+              "may this person address the agent here?" — and the rest gate one
+              action inside an admitted turn; agent policies accept only these.
+              The `<resource>:read`/`<resource>:write` actions are the config-plane
+              API namespace; account-role policies accept only those.
         resources:
           $ref: "#/components/schemas/PolicyResourceSelector"
         conditions:
@@ -3353,6 +3378,12 @@ components:
         filePaths: { type: array, items: { type: string } }
         subagentIds: { type: array, items: { type: string } }
         skillPaths: { type: array, items: { type: string } }
+        resourceIds:
+          type: array
+          items: { type: string }
+          description: >-
+            Config-plane resource ids for API-namespace rules; "*" matches
+            every id.
 
     PolicyCondition:
       type: object

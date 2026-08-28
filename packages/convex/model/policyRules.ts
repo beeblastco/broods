@@ -20,8 +20,8 @@ export const AGENT_POLICY_ACTIONS = [
 
 /**
  * API action namespace for account roles: one read/write pair per config-plane
- * resource route. Roles carry the same PolicyDocument shape as agent policies,
- * restricted to these actions (see model/roleRules.ts).
+ * resource route. Roles carry the same PolicyDocument shape as agent policies;
+ * each caller passes its action set to `normalizePolicyDocument`.
  */
 export const API_POLICY_ACTIONS = [
   "account:read",
@@ -48,11 +48,6 @@ export const API_POLICY_ACTIONS = [
   "workspaces:write",
 ] as const;
 
-export const POLICY_ACTIONS = [
-  ...AGENT_POLICY_ACTIONS,
-  ...API_POLICY_ACTIONS,
-] as const;
-
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
   "toolIds",
@@ -64,9 +59,11 @@ const RESOURCE_SELECTOR_KEYS = [
   "resourceIds",
 ] as const;
 
+export type AgentPolicyAction = (typeof AGENT_POLICY_ACTIONS)[number];
+
 export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
 
-export type PolicyAction = (typeof POLICY_ACTIONS)[number];
+export type PolicyAction = AgentPolicyAction | ApiPolicyAction;
 
 /**
  * One optional predicate on a policy rule.
@@ -146,11 +143,13 @@ export function normalizeCreatePolicyInput(value: unknown): {
 }
 
 /**
- * Validate and normalize a versioned policy document.
- * @param value candidate policy document
- * @returns normalized policy document
+ * Validate and normalize a versioned policy document. Agent policies accept
+ * the runtime action set by default; role policies pass `API_POLICY_ACTIONS`.
  */
-export function normalizePolicyDocument(value: unknown): PolicyDocument {
+export function normalizePolicyDocument(
+  value: unknown,
+  allowedActions: readonly PolicyAction[] = AGENT_POLICY_ACTIONS,
+): PolicyDocument {
   if (!isPlainObject(value))
     throw new Error("policy document must be an object");
   const document = value;
@@ -169,7 +168,7 @@ export function normalizePolicyDocument(value: unknown): PolicyDocument {
       ? { mode: document.mode as "enforce" | "audit" }
       : {}),
     rules: document.rules.map((rule, index) =>
-      normalizePolicyRule(rule, index),
+      normalizePolicyRule(rule, index, allowedActions),
     ),
   };
 }
@@ -301,7 +300,11 @@ function normalizeConditions(value: unknown, index: number): PolicyCondition[] {
   });
 }
 
-function normalizePolicyRule(value: unknown, index: number): PolicyRule {
+function normalizePolicyRule(
+  value: unknown,
+  index: number,
+  allowedActions: readonly PolicyAction[],
+): PolicyRule {
   if (!isPlainObject(value))
     throw new Error(`policy rules[${index}] must be an object`);
   const rule = value;
@@ -320,7 +323,7 @@ function normalizePolicyRule(value: unknown, index: number): PolicyRule {
     assertOptionalEnum(
       action,
       `policy rules[${index}].actions[]`,
-      POLICY_ACTIONS,
+      allowedActions,
     );
   }
 

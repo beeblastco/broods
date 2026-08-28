@@ -129,12 +129,11 @@ export function toPublicChannelRecordResponse(
 }
 
 /**
- * Map an accountRoles document to the public role shape.
- * @param doc the accountRoles document
- * @returns the public role record
+ * Map an accountRoles document to the public role shape. Accepts the bare
+ * fields so a create can respond without re-reading its own insert.
  */
 export function toPublicRoleResponse(
-  doc: Doc<"accountRoles">,
+  doc: Omit<Doc<"accountRoles">, "_id" | "_creationTime">,
 ): Record<string, unknown> {
   return {
     accountId: doc.accountId,

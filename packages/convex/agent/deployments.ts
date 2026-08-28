@@ -32,7 +32,7 @@ import { refreshAccountChannelEndpoints } from "../model/channelEndpoints";
 import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 
-const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
+export const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 
 /** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({

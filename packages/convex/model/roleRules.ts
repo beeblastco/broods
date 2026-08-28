@@ -5,6 +5,7 @@
  * the API action namespace.
  */
 
+import { randomToken } from "./accountSecrets";
 import { isPlainObject } from "./objects";
 import {
   API_POLICY_ACTIONS,
@@ -12,10 +13,8 @@ import {
   type PolicyDocument,
 } from "./policyRules";
 
-const API_POLICY_ACTION_SET = new Set<string>(API_POLICY_ACTIONS);
-const ROLE_ID_PREFIX = "fp_role_";
 const ROLE_ID_BYTES = 16;
-const ROLE_SESSION_TOKEN_BYTES = 32;
+const ROLE_ID_PREFIX = "fp_role_";
 
 export const ROLE_SESSION_DEFAULT_TTL_SECONDS = 60 * 60;
 export const ROLE_SESSION_MAX_TTL_SECONDS = 12 * 60 * 60;
@@ -39,27 +38,17 @@ export interface UpdateRoleInput {
   status?: "active" | "disabled";
 }
 
-/**
- * Generate a public role id.
- * @returns "fp_role_" + random base64url
- */
+/** Generate a public role id: "fp_role_" + random base64url. */
 export function createRoleId(): string {
-  return `${ROLE_ID_PREFIX}${randomBase64Url(ROLE_ID_BYTES)}`;
+  return randomToken(ROLE_ID_PREFIX, ROLE_ID_BYTES);
 }
 
-/**
- * Generate a one-time role session token. Only its SHA-256 hash is stored.
- * @returns "fp_sts_" + random base64url
- */
+/** Generate a one-time role session token. Only its SHA-256 hash is stored. */
 export function createRoleSessionToken(): string {
-  return `${ROLE_SESSION_TOKEN_PREFIX}${randomBase64Url(ROLE_SESSION_TOKEN_BYTES)}`;
+  return randomToken(ROLE_SESSION_TOKEN_PREFIX);
 }
 
-/**
- * Validate a `POST /v1/account/assume-role` request body.
- * @param value the raw request body
- * @returns roleId plus the clamped-in-range session TTL
- */
+/** Validate a `POST /v1/account/assume-role` request body. */
 export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const roleId = requireString(value.roleId, "roleId");
@@ -80,22 +69,13 @@ export function normalizeAssumeRoleInput(value: unknown): AssumeRoleInput {
   return { roleId: roleId, ttlSeconds: value.ttlSeconds };
 }
 
-/**
- * Validate a create-role request body.
- * @param value the raw request body
- * @returns normalized create fields
- */
+/** Validate a create-role request body. */
 export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const name = requireString(value.name, "name");
-  const policy = normalizeRolePolicyDocument(value.policy);
+  const policy = normalizePolicyDocument(value.policy, API_POLICY_ACTIONS);
   const projectId = optionalString(value.projectId, "projectId");
   const stageId = optionalString(value.stageId, "stageId");
-  // Structural scope is the deployKeys shape: a stage inside a project, or
-  // account-wide. Half a scope would silently widen what fp_agent_ can assume.
-  if ((projectId === undefined) !== (stageId === undefined)) {
-    throw new Error("projectId and stageId must be provided together");
-  }
 
   return {
     name: name,
@@ -105,38 +85,13 @@ export function normalizeCreateRoleInput(value: unknown): CreateRoleInput {
   };
 }
 
-/**
- * Validate a role policy document: the shared PolicyDocument shape, with every
- * rule action drawn from the API namespace.
- * @param value candidate policy document
- * @returns normalized policy document
- */
-export function normalizeRolePolicyDocument(value: unknown): PolicyDocument {
-  const document = normalizePolicyDocument(value);
-  for (const [index, rule] of document.rules.entries()) {
-    for (const action of rule.actions) {
-      if (!API_POLICY_ACTION_SET.has(action)) {
-        throw new Error(
-          `policy rules[${index}].actions[] must use the API namespace (e.g. "agents:read"); got "${action}"`,
-        );
-      }
-    }
-  }
-
-  return document;
-}
-
-/**
- * Validate an update-role request body.
- * @param value the raw request body
- * @returns normalized patch fields
- */
+/** Validate an update-role request body. */
 export function normalizeUpdateRoleInput(value: unknown): UpdateRoleInput {
   if (!isPlainObject(value)) throw new Error("Request body must be an object");
   const patch: UpdateRoleInput = {};
   if (value.name !== undefined) patch.name = requireString(value.name, "name");
   if (value.policy !== undefined) {
-    patch.policy = normalizeRolePolicyDocument(value.policy);
+    patch.policy = normalizePolicyDocument(value.policy, API_POLICY_ACTIONS);
   }
   if (value.status !== undefined) {
     if (value.status !== "active" && value.status !== "disabled") {
@@ -157,17 +112,6 @@ function optionalString(value: unknown, name: string): string | undefined {
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function randomBase64Url(byteLength: number): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
 }
 
 function requireString(value: unknown, name: string): string {

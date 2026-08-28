@@ -35,6 +35,13 @@ crons.interval(
   internal.runtime.pruneExpired,
   {},
 );
+// Expiry is checked inline on every session resolve; this only bounds growth.
+crons.interval(
+  "prune role sessions",
+  { hours: 24 },
+  internal.account.roles.pruneExpiredSessions,
+  {},
+);
 crons.interval(
   "prune task usage samples",
   { hours: 24 },

@@ -10,10 +10,10 @@ import {
   hashAccountSecret,
   type AccountRecord,
 } from "../src/shared/domain/accounts.ts";
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import {
   resetStorageForTests,
   setStorageForTests,
-  type RolePrincipalRecord,
   type Storage,
 } from "../src/shared/storage.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
@@ -36,22 +36,20 @@ const AGENT: AgentRecord = {
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
 const DEPLOYMENT_API_KEY = "fp_agent_known-key";
-const ROLE_PRINCIPAL: RolePrincipalRecord = {
+const ROLE_PRINCIPAL: RolePrincipal = {
   accountId: "acct_1",
   roleId: "fp_role_1",
-  name: "reader",
   policy: {
     version: 1,
     rules: [{ id: "r1", effect: "allow", actions: ["sandboxes:write"] }],
   },
-  expiresAt: Date.now() + 60_000,
 };
 const ROLE_SESSION_TOKEN = "fp_sts_known-session";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
 let agentsById: Record<string, AgentRecord>;
-let roleSessionsByTokenHash: Record<string, RolePrincipalRecord>;
+let roleSessionsByTokenHash: Record<string, RolePrincipal>;
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
@@ -152,7 +150,6 @@ describe("resolveBearerAuth", () => {
   });
 
   it("rejects unknown or foreign fp_sts_ tokens without falling through", async () => {
-    // A prefix match with no session must not reach the account-secret path.
     expect(
       await resolveBearerAuth({ authorization: "Bearer fp_sts_unknown" }),
     ).toBeNull();

@@ -6,15 +6,23 @@
  */
 
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import {
   internalMutation,
   internalQuery,
   type MutationCtx,
+  type QueryCtx,
 } from "../_generated/server";
 import { accountIdForProject } from "../model/auditEvents";
-import { createRoleId, normalizeRolePolicyDocument } from "../model/roleRules";
+import {
+  API_POLICY_ACTIONS,
+  normalizePolicyDocument,
+} from "../model/policyRules";
+import { createRoleId } from "../model/roleRules";
 import { accountRolesFields } from "../schema";
+
+const DEFAULT_PRUNE_BATCH_SIZE = 100;
 
 const roleDoc = v.object({
   ...accountRolesFields,
@@ -22,22 +30,25 @@ const roleDoc = v.object({
   _creationTime: v.number(),
 });
 
+const roleFields = v.object(accountRolesFields);
+
+const rolePolicyValidator = v.object({
+  version: v.number(),
+  mode: v.optional(v.union(v.literal("enforce"), v.literal("audit"))),
+  rules: v.array(v.any()),
+});
+
 const rolePrincipalValidator = v.object({
   accountId: v.id("accounts"),
   roleId: v.string(),
-  name: v.string(),
-  policy: v.any(),
+  policy: rolePolicyValidator,
   projectId: v.optional(v.id("projects")),
   stageId: v.optional(v.id("stages")),
-  expiresAt: v.number(),
 });
-
-const roleStatusValidator = v.union(v.literal("active"), v.literal("disabled"));
 
 /**
  * Create a role for an account. Scope ids arrive as strings from the HTTP
  * route and are validated against the account here.
- * @returns the created role document
  */
 export const createInternal = internalMutation({
   args: {
@@ -47,11 +58,9 @@ export const createInternal = internalMutation({
     projectId: v.optional(v.string()),
     stageId: v.optional(v.string()),
   },
-  returns: roleDoc,
+  returns: roleFields,
   handler: async (ctx, args) => {
-    const account = await ctx.db.get(args.accountId);
-    if (!account) throw new Error(`Account not found: ${args.accountId}`);
-    const policy = normalizeRolePolicyDocument(args.policy);
+    const policy = normalizePolicyDocument(args.policy, API_POLICY_ACTIONS);
     const scope = await resolveRoleScope(
       ctx,
       args.accountId,
@@ -59,29 +68,25 @@ export const createInternal = internalMutation({
       args.stageId,
     );
     const now = Date.now();
-    const createdId = await ctx.db.insert("accountRoles", {
+    const role = {
       accountId: args.accountId,
       ...(scope !== null
         ? { projectId: scope.projectId, stageId: scope.stageId }
         : {}),
       roleId: createRoleId(),
       name: args.name,
-      status: "active",
+      status: "active" as const,
       policy: policy,
       createdAt: now,
       updatedAt: now,
-    });
-    const created = await ctx.db.get(createdId);
-    if (!created) throw new Error("Failed to fetch created role");
+    };
+    await ctx.db.insert("accountRoles", role);
 
-    return created;
+    return role;
   },
 });
 
-/**
- * Record an assumed session. Only the SHA-256 hash of the token is stored.
- * @returns null
- */
+/** Record an assumed session. Only the SHA-256 hash of the token is stored. */
 export const createSession = internalMutation({
   args: {
     accountId: v.id("accounts"),
@@ -103,27 +108,16 @@ export const createSession = internalMutation({
   },
 });
 
-/**
- * Look up one role by its public id within an account.
- * @returns the role document, or null when unknown or foreign
- */
+/** Look up one role by its public id within an account. */
 export const getByRoleId = internalQuery({
   args: { accountId: v.id("accounts"), roleId: v.string() },
   returns: v.union(roleDoc, v.null()),
   handler: async (ctx, args) => {
-    const role = await ctx.db
-      .query("accountRoles")
-      .withIndex("by_roleId", (q) => q.eq("roleId", args.roleId))
-      .unique();
-
-    return role && role.accountId === args.accountId ? role : null;
+    return await getOwnedRole(ctx, args.accountId, args.roleId);
   },
 });
 
-/**
- * List an account's roles, active and disabled.
- * @returns role documents
- */
+/** List an account's roles, active and disabled. */
 export const list = internalQuery({
   args: { accountId: v.id("accounts") },
   returns: v.array(roleDoc),
@@ -136,14 +130,50 @@ export const list = internalQuery({
 });
 
 /**
- * Delete a role and every session assumed from it.
- * @returns null
+ * Delete expired role sessions. Expiry is already checked inline on every
+ * resolve, so this only bounds table growth.
  */
+export const pruneExpiredSessions = internalMutation({
+  args: {
+    now: v.optional(v.number()),
+    batchSize: v.optional(v.number()),
+  },
+  returns: v.object({ sessionsDeleted: v.number() }),
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const batchSize = Math.min(
+      Math.max(1, Math.floor(args.batchSize ?? DEFAULT_PRUNE_BATCH_SIZE)),
+      500,
+    );
+    const expired = await ctx.db
+      .query("roleSessions")
+      .withIndex("by_expiresAt", (q) => q.lt("expiresAt", now))
+      .take(batchSize);
+    for (const session of expired) {
+      await ctx.db.delete(session._id);
+    }
+    if (expired.length === batchSize) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.account.roles.pruneExpiredSessions,
+        {
+          now: now,
+          batchSize: batchSize,
+        },
+      );
+    }
+
+    return { sessionsDeleted: expired.length };
+  },
+});
+
+/** Delete a role and every session assumed from it. Null when unknown/foreign. */
 export const removeInternal = internalMutation({
   args: { accountId: v.id("accounts"), roleId: v.string() },
-  returns: v.null(),
+  returns: v.union(roleDoc, v.null()),
   handler: async (ctx, args) => {
-    const role = await requireOwnedRole(ctx, args.accountId, args.roleId);
+    const role = await getOwnedRole(ctx, args.accountId, args.roleId);
+    if (!role) return null;
     const sessions = await ctx.db
       .query("roleSessions")
       .withIndex("by_roleId", (q) => q.eq("roleId", args.roleId))
@@ -153,14 +183,14 @@ export const removeInternal = internalMutation({
     }
     await ctx.db.delete(role._id);
 
-    return null;
+    return role;
   },
 });
 
 /**
  * Resolve an fp_sts_ token hash to its role principal. Null for unknown or
- * expired sessions, disabled or deleted roles, and inactive accounts.
- * @returns the principal the session acts as, or null
+ * expired sessions and disabled or deleted roles; the caller loads the
+ * account and checks its status.
  */
 export const resolveSession = internalQuery({
   args: { tokenHash: v.string() },
@@ -171,50 +201,35 @@ export const resolveSession = internalQuery({
       .withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
       .unique();
     if (!session || session.expiresAt <= Date.now()) return null;
-    const role = await ctx.db
-      .query("accountRoles")
-      .withIndex("by_roleId", (q) => q.eq("roleId", session.roleId))
-      .unique();
-    if (
-      !role ||
-      role.accountId !== session.accountId ||
-      role.status !== "active"
-    ) {
-      return null;
-    }
-    const account = await ctx.db.get(role.accountId);
-    if (!account || account.status !== "active") return null;
+    const role = await getOwnedRole(ctx, session.accountId, session.roleId);
+    if (!role || role.status !== "active") return null;
 
     return {
       accountId: role.accountId,
       roleId: role.roleId,
-      name: role.name,
       policy: role.policy,
       ...(role.projectId !== undefined ? { projectId: role.projectId } : {}),
       ...(role.stageId !== undefined ? { stageId: role.stageId } : {}),
-      expiresAt: session.expiresAt,
     };
   },
 });
 
-/**
- * Patch a role's name, policy, or status.
- * @returns null
- */
+/** Patch a role's name, policy, or status. Null when unknown/foreign. */
 export const updateInternal = internalMutation({
   args: {
     accountId: v.id("accounts"),
     roleId: v.string(),
     name: v.optional(v.string()),
     policy: v.optional(v.any()),
-    status: v.optional(roleStatusValidator),
+    status: v.optional(v.union(v.literal("active"), v.literal("disabled"))),
   },
-  returns: v.null(),
+  returns: v.union(roleDoc, v.null()),
   handler: async (ctx, args) => {
-    const role = await requireOwnedRole(ctx, args.accountId, args.roleId);
+    const role = await getOwnedRole(ctx, args.accountId, args.roleId);
+    if (!role) return null;
     const policy =
       args.policy !== undefined
-        ? normalizeRolePolicyDocument(args.policy)
+        ? normalizePolicyDocument(args.policy, API_POLICY_ACTIONS)
         : undefined;
     await ctx.db.patch(role._id, {
       ...(args.name !== undefined ? { name: args.name } : {}),
@@ -223,24 +238,21 @@ export const updateInternal = internalMutation({
       updatedAt: Date.now(),
     });
 
-    return null;
+    return await ctx.db.get(role._id);
   },
 });
 
-async function requireOwnedRole(
-  ctx: MutationCtx,
+async function getOwnedRole(
+  ctx: QueryCtx,
   accountId: Id<"accounts">,
   roleId: string,
-): Promise<Doc<"accountRoles">> {
+): Promise<Doc<"accountRoles"> | null> {
   const role = await ctx.db
     .query("accountRoles")
     .withIndex("by_roleId", (q) => q.eq("roleId", roleId))
     .unique();
-  if (!role || role.accountId !== accountId) {
-    throw new Error("Role does not belong to the supplied accountId");
-  }
 
-  return role;
+  return role && role.accountId === accountId ? role : null;
 }
 
 async function resolveRoleScope(
@@ -250,6 +262,8 @@ async function resolveRoleScope(
   stageId: string | undefined,
 ): Promise<{ projectId: Id<"projects">; stageId: Id<"stages"> } | null> {
   if (projectId === undefined && stageId === undefined) return null;
+  // Structural scope is the deployKeys shape: a stage inside a project, or
+  // account-wide. Half a scope would silently widen what fp_agent_ can assume.
   if (projectId === undefined || stageId === undefined) {
     throw new Error("projectId and stageId must be provided together");
   }
@@ -258,8 +272,10 @@ async function resolveRoleScope(
   if (!normalizedProjectId || !normalizedStageId) {
     throw new Error("projectId and stageId must reference this account");
   }
-  const stage = await ctx.db.get(normalizedStageId);
-  const owningAccountId = await accountIdForProject(ctx, normalizedProjectId);
+  const [stage, owningAccountId] = await Promise.all([
+    ctx.db.get(normalizedStageId),
+    accountIdForProject(ctx, normalizedProjectId),
+  ]);
   if (
     !stage ||
     stage.projectId !== normalizedProjectId ||

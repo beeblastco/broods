@@ -8,30 +8,18 @@ import { type ActionCtx } from "../../_generated/server";
 import { internal } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { sha256Hex } from "../../model/accountSecrets";
+import type { RolePrincipal } from "../../model/apiAuthorization";
 import type {
   ConfigAuditActor,
   ConfigAuditResource,
 } from "../../model/auditEvents";
-import type { ApiPrincipal } from "../../model/apiAuthorization";
-import type { PolicyDocument } from "../../model/policyRules";
 import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
-
-/** The role identity an fp_sts_ session acts as. */
-export type RolePrincipalContext = {
-  accountId: Id<"accounts">;
-  roleId: string;
-  name: string;
-  policy: PolicyDocument;
-  projectId?: Id<"projects">;
-  stageId?: Id<"stages">;
-  expiresAt: number;
-};
 
 export type ConfigAuth =
   | { kind: "admin" }
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
   | { kind: "deployment" }
-  | { kind: "role"; account: Doc<"accounts">; role: RolePrincipalContext };
+  | { kind: "role"; account: Doc<"accounts">; role: RolePrincipal };
 
 /**
  * Convert resolved HTTP auth into audit actor metadata.
@@ -45,6 +33,14 @@ export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
   if (auth.viaServiceToken === true) return { kind: "service" };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
+}
+
+/** Extract a Bearer token from a request. */
+export function bearerToken(req: Request): string | null {
+  const header = req.headers.get("Authorization") ?? "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+
+  return match?.[1]?.trim() || null;
 }
 
 /** Read the account-config encryption secret, failing loudly when unset. */
@@ -110,37 +106,6 @@ export async function parseJsonRequest(req: Request): Promise<unknown> {
       `Invalid request JSON: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-}
-
-/**
- * Extract a Bearer token from a request. Exported for the assume-role route,
- * which resolves its own caller kinds (account secret, CLI token, runtime key).
- * @param req incoming HTTP request
- * @returns token string, or null when absent/malformed
- */
-export function bearerToken(req: Request): string | null {
-  const header = req.headers.get("Authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-
-  return match?.[1]?.trim() || null;
-}
-
-/**
- * Project role auth into the `authorize()` principal shape.
- * @param auth resolved role auth
- * @returns OPA-style principal document
- */
-export function rolePrincipal(
-  auth: Extract<ConfigAuth, { kind: "role" }>,
-): ApiPrincipal {
-  return {
-    kind: "role",
-    accountId: auth.role.accountId,
-    roleId: auth.role.roleId,
-    policy: auth.role.policy,
-    ...(auth.role.projectId ? { projectId: auth.role.projectId } : {}),
-    ...(auth.role.stageId ? { stageId: auth.role.stageId } : {}),
-  };
 }
 
 /**
@@ -253,6 +218,42 @@ export async function terminateReservedInstances(
 }
 
 /**
+ * Apply failed-auth rate limiting before returning a 401 for unknown credentials.
+ * @param ctx Convex action context
+ * @param req incoming HTTP request
+ * @returns 401 or 429 response
+ */
+export async function unauthorizedResponse(
+  ctx: ActionCtx,
+  req: Request,
+): Promise<Response> {
+  const result: { blocked: boolean; retryAfterMs?: number } =
+    await ctx.runMutation(internal.config.auditEvents.recordAuthFailure, {
+      key: await authFailureKey(req),
+      now: Date.now(),
+      windowMs: 5 * 60 * 1000,
+      maxFailures: 20,
+      blockMs: 15 * 60 * 1000,
+    });
+  if (!result.blocked) return json({ error: "Unauthorized" }, 401);
+  const retryAfterSeconds = Math.max(
+    1,
+    Math.ceil((result.retryAfterMs ?? 0) / 1000),
+  );
+
+  return new Response(
+    JSON.stringify({ error: "Too many unauthorized attempts" }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(retryAfterSeconds),
+      },
+    },
+  );
+}
+
+/**
  * Write one audit event through the internal mutation exposed for HTTP actions.
  * The config write has already committed by the time this runs, so audit
  * failures are logged and swallowed — they must not turn a committed change
@@ -347,7 +348,7 @@ async function resolveBearerAuth(
 
   // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
   if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
-    const principal: RolePrincipalContext | null = await ctx.runQuery(
+    const principal: RolePrincipal | null = await ctx.runQuery(
       internal.account.roles.resolveSession,
       { tokenHash: tokenHash },
     );
@@ -399,40 +400,4 @@ async function resolveBearerAuth(
   return account && account.status === "active"
     ? { kind: "account", account: account }
     : null;
-}
-
-/**
- * Apply failed-auth rate limiting before returning a 401 for unknown credentials.
- * @param ctx Convex action context
- * @param req incoming HTTP request
- * @returns 401 or 429 response
- */
-export async function unauthorizedResponse(
-  ctx: ActionCtx,
-  req: Request,
-): Promise<Response> {
-  const result: { blocked: boolean; retryAfterMs?: number } =
-    await ctx.runMutation(internal.config.auditEvents.recordAuthFailure, {
-      key: await authFailureKey(req),
-      now: Date.now(),
-      windowMs: 5 * 60 * 1000,
-      maxFailures: 20,
-      blockMs: 15 * 60 * 1000,
-    });
-  if (!result.blocked) return json({ error: "Unauthorized" }, 401);
-  const retryAfterSeconds = Math.max(
-    1,
-    Math.ceil((result.retryAfterMs ?? 0) / 1000),
-  );
-
-  return new Response(
-    JSON.stringify({ error: "Too many unauthorized attempts" }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfterSeconds),
-      },
-    },
-  );
 }

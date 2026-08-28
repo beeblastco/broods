@@ -2,8 +2,7 @@
  * The API authorization decision contract. Every enforcement point (the
  * config-plane HTTP funnel and core's directly-served routes) calls
  * `authorize(principal, action, resource)` and never reads the roles table
- * itself. The input shape matches an OPA query, so a central OPA service can
- * replace this in-process backing later without touching any caller.
+ * itself. The input shape matches an OPA query.
  */
 
 import type {
@@ -17,7 +16,6 @@ export type ApiResourceType = ApiPolicyAction extends `${infer T}:${string}`
   ? T
   : never;
 
-/** The decision, plus the rule ids that produced it for audit logs. */
 export interface ApiAuthorizationDecision {
   allow: boolean;
   matchedRuleIds: string[];
@@ -25,13 +23,8 @@ export interface ApiAuthorizationDecision {
 }
 
 /** The acting identity, as an OPA-style input document. */
-export interface ApiPrincipal {
+export interface ApiPrincipal extends RolePrincipal {
   kind: "role";
-  accountId: string;
-  roleId: string;
-  policy: PolicyDocument;
-  projectId?: string;
-  stageId?: string;
 }
 
 /** The config-plane resource a request addresses. */
@@ -40,12 +33,16 @@ export interface ApiResource {
   id?: string;
 }
 
-/**
- * Map an HTTP method onto the read/write half of a resource's action pair.
- * @param method HTTP request method
- * @param resourceType config-plane resource family
- * @returns the API action the request needs
- */
+/** The role identity an fp_sts_ session acts as, as stored and resolved. */
+export interface RolePrincipal {
+  accountId: string;
+  roleId: string;
+  policy: PolicyDocument;
+  projectId?: string;
+  stageId?: string;
+}
+
+/** Map an HTTP method onto the read/write half of a resource's action pair. */
 export function apiActionForRequest(
   method: string,
   resourceType: ApiResourceType,
@@ -57,36 +54,32 @@ export function apiActionForRequest(
 }
 
 /**
- * Decide whether a principal may perform an action on a resource. In-process
- * backing over the role's PolicyRule list: a matching deny wins, otherwise a
- * matching allow grants, otherwise default deny.
- * @param principal the acting identity
- * @param action the API action the request needs
- * @param resource the resource the request addresses
- * @returns allow/deny plus the rule ids that decided it
+ * Decide whether a principal may perform an action on a resource, over the
+ * role's PolicyRule list: a matching deny wins, otherwise a matching allow
+ * grants, otherwise default deny.
  */
 export function authorize(
   principal: ApiPrincipal,
   action: ApiPolicyAction,
   resource: ApiResource,
 ): ApiAuthorizationDecision {
-  const matched = principal.policy.rules.filter((rule) =>
-    ruleMatches(rule, action, resource),
-  );
-  const denies = matched.filter((rule) => rule.effect === "deny");
-  if (denies.length > 0) {
-    return {
-      allow: false,
-      matchedRuleIds: denies.map((rule) => rule.id),
-      reason: `denied by rule ${denies[0]!.id}`,
-    };
+  let allowing: PolicyRule | null = null;
+  for (const rule of principal.policy.rules) {
+    if (!ruleMatches(rule, action, resource)) continue;
+    if (rule.effect === "deny") {
+      return {
+        allow: false,
+        matchedRuleIds: [rule.id],
+        reason: `denied by rule ${rule.id}`,
+      };
+    }
+    if (!allowing) allowing = rule;
   }
-  const allows = matched.filter((rule) => rule.effect === "allow");
-  if (allows.length > 0) {
+  if (allowing) {
     return {
       allow: true,
-      matchedRuleIds: allows.map((rule) => rule.id),
-      reason: `allowed by rule ${allows[0]!.id}`,
+      matchedRuleIds: [allowing.id],
+      reason: `allowed by rule ${allowing.id}`,
     };
   }
 
@@ -94,6 +87,33 @@ export function authorize(
     allow: false,
     matchedRuleIds: [],
     reason: `no rule allows ${action}`,
+  };
+}
+
+/**
+ * The role gate every enforcement point shares: the 403 message when the
+ * request's action is denied, or null when it may proceed.
+ */
+export function roleDenial(
+  principal: ApiPrincipal,
+  method: string,
+  resource: ApiResource,
+): string | null {
+  const action = apiActionForRequest(method, resource.type);
+  const decision = authorize(principal, action, resource);
+
+  return decision.allow ? null : `Role is not allowed to ${action}`;
+}
+
+/** Project a stored role identity into the `authorize()` principal shape. */
+export function rolePrincipal(role: RolePrincipal): ApiPrincipal {
+  return {
+    kind: "role",
+    accountId: role.accountId,
+    roleId: role.roleId,
+    policy: role.policy,
+    ...(role.projectId ? { projectId: role.projectId } : {}),
+    ...(role.stageId ? { stageId: role.stageId } : {}),
   };
 }
 

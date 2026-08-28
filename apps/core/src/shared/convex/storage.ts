@@ -35,11 +35,8 @@ import type {
   WorkspaceConfig,
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
-import type {
-  AgentDeploymentScope,
-  RolePrincipalRecord,
-  Storage,
-} from "../storage.ts";
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
+import type { AgentDeploymentScope, Storage } from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
 
@@ -754,19 +751,6 @@ const agentPolicies: Storage["agentPolicies"] = {
   },
 };
 
-const roleSessions: Storage["roleSessions"] = {
-  resolveByTokenHash: async function (tokenHash) {
-    const doc = (await getConvexClient().query(
-      internal.account.roles.resolveSession,
-      {
-        tokenHash: tokenHash,
-      },
-    )) as RolePrincipalRecord | null;
-
-    return doc;
-  },
-};
-
 const accountTools: Storage["accountTools"] = {
   getById: async function (accountId, toolId) {
     const doc = await getConvexClient().query(internal.account.tools.getById, {
@@ -812,6 +796,17 @@ const accountHooks: Storage["accountHooks"] = {
     );
 
     return docs.length;
+  },
+};
+
+const roleSessions: Storage["roleSessions"] = {
+  resolveByTokenHash: async function (tokenHash) {
+    return (await getConvexClient().query(
+      internal.account.roles.resolveSession,
+      {
+        tokenHash: tokenHash,
+      },
+    )) as RolePrincipal | null;
   },
 };
 

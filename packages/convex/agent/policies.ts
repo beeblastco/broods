@@ -15,12 +15,12 @@ import { getOwnedStage } from "../model/ownership/stage";
 import { getProjectForRole } from "../model/ownership/project";
 import { resolveActiveAccountForAuthId } from "../model/agentSync";
 import { isPlainObject } from "../model/objects";
-import { POLICY_ACTIONS } from "../model/policyRules";
+import { AGENT_POLICY_ACTIONS } from "../model/policyRules";
 import { agentPoliciesFields } from "../schema";
 
 // Sourced from the CRUD normalizer rather than restated: this copy had gone
 // stale and silently refused every `agent.invoke` rule the runtime supports.
-const POLICY_ACTION_SET = new Set<string>(POLICY_ACTIONS);
+const POLICY_ACTION_SET = new Set<string>(AGENT_POLICY_ACTIONS);
 
 const policyDoc = v.object({
   ...agentPoliciesFields,

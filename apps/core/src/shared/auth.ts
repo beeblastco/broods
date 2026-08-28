@@ -5,12 +5,12 @@
  * auth path is identical through the Convex-backed account store.
  */
 
-import type { ApiPrincipal } from "@broods/convex/model/apiAuthorization";
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import { ROLE_SESSION_TOKEN_PREFIX } from "@broods/convex/model/roleRules";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { hashAccountSecret, type AccountRecord } from "./domain/accounts.ts";
 import { optionalEnv } from "./env.ts";
-import { getStorage, type RolePrincipalRecord } from "./storage.ts";
+import { getStorage } from "./storage.ts";
 
 export type AuthContext =
   | { kind: "admin" }
@@ -27,11 +27,10 @@ export type AuthContext =
     }
   | {
       // Short-lived assume-role session minted by the config plane. What it
-      // may do is decided per request by `authorize()` over `role.policy`;
-      // routes that never opted into roles reject the kind and stay closed.
+      // may do is decided per request by `authorize()` over `role.policy`.
       kind: "role";
       account: AccountRecord;
-      role: RolePrincipalRecord;
+      role: RolePrincipal;
     };
 
 export function extractBearerToken(
@@ -125,20 +124,6 @@ async function resolveRoleSessionAuth(
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
-}
-
-/** Project role auth into the `authorize()` principal shape. */
-export function rolePrincipal(
-  auth: Extract<AuthContext, { kind: "role" }>,
-): ApiPrincipal {
-  return {
-    kind: "role",
-    accountId: auth.role.accountId,
-    roleId: auth.role.roleId,
-    policy: auth.role.policy,
-    ...(auth.role.projectId ? { projectId: auth.role.projectId } : {}),
-    ...(auth.role.stageId ? { stageId: auth.role.stageId } : {}),
-  };
 }
 
 // Hashing both sides keeps the comparison constant-time regardless of length.

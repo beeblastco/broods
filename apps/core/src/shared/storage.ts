@@ -6,8 +6,9 @@
 import type { JSONValue } from "ai";
 import type { AccountHookRecord } from "./domain/account-hooks.ts";
 import type { AccountToolRecord } from "./domain/account-tools.ts";
+import type { RolePrincipal } from "@broods/convex/model/apiAuthorization";
 import type { AccountRecord, CreateAccountInput } from "./domain/accounts.ts";
-import type { PolicyDocument, PolicyRecord } from "./domain/policy.ts";
+import type { PolicyRecord } from "./domain/policy.ts";
 import type { AgentRecord } from "./domain/agents.ts";
 import type { ChannelRecord } from "./domain/channel-record.ts";
 import type {
@@ -26,17 +27,6 @@ export interface AgentDeploymentScope {
   endpointId: string;
   projectSlug: string;
   stageSlug: string;
-}
-
-/** The role identity an fp_sts_ session acts as (see model/apiAuthorization). */
-export interface RolePrincipalRecord {
-  accountId: string;
-  roleId: string;
-  name: string;
-  policy: PolicyDocument;
-  projectId?: string;
-  stageId?: string;
-  expiresAt: number;
 }
 
 /**
@@ -226,7 +216,7 @@ interface AgentPolicyStore {
 /** Assume-role sessions, keyed by fp_sts_ token hash. Minted by the config plane. */
 interface RoleSessionStore {
   /** Resolve a live session to its role principal; null when unknown/expired/disabled. */
-  resolveByTokenHash(tokenHash: string): Promise<RolePrincipalRecord | null>;
+  resolveByTokenHash(tokenHash: string): Promise<RolePrincipal | null>;
 }
 
 /**
