@@ -12,10 +12,7 @@ import {
   setSystemTime,
 } from "bun:test";
 import { createHmac } from "node:crypto";
-import type {
-  ChannelAdapter,
-  InboundMessage,
-} from "../src/shared/channels.ts";
+import type { ChannelAdapter, InboundMessage } from "../src/shared/channels.ts";
 import {
   createSlackChannel,
   toSlackStream,
@@ -896,7 +893,10 @@ async function parseFileShare(
   return parsed.message;
 }
 
-async function parseChannelMention(adapter: ChannelAdapter, threadTs?: string) {
+async function parseChannelMention(
+  adapter: ChannelAdapter,
+  threadTs?: string,
+): Promise<InboundMessage> {
   const parsed = await adapter.parse(
     createEventRequest({
       type: "event_callback",

@@ -29,6 +29,17 @@ import { PANCAKE_INTEGRATION_PREFIX } from "./runtime-keys.ts";
 
 const PANCAKE_API_BASE = "https://pages.fm/api/public_api/v1/";
 
+/**
+ * What a Pancake endpoint answers with: the id of whatever it just created, and
+ * a message worth quoting back when it did not. Only the fields this adapter
+ * reads are modelled; `parseJsonBody` is the one place they are checked.
+ */
+interface PancakeApiResponse {
+  id?: string;
+  success?: boolean;
+  message?: string;
+}
+
 interface PancakeConversation {
   id?: string;
   type?: string;
@@ -121,7 +132,7 @@ export function createPancakeActions(
     // what to preview, so one body serves each.
     sendFiles: sendAttachments,
     sendImages: sendAttachments,
-    sendTyping: async function() {
+    sendTyping: async function () {
       return;
     },
     reactToMessage: async function () {
@@ -248,8 +259,7 @@ async function uploadPancakeContent(
   const body = parseJsonBody(bodyText);
   // The upload answers with a top-level id; anything else is a failed upload
   // whatever the status code says.
-  const contentId =
-    typeof body?.id === "string" && body.id ? body.id : undefined;
+  const contentId = body?.id;
   if (!response.ok || !contentId) {
     throw new Error(
       `Pancake upload of ${name} failed (${response.status}): ${formatPancakeError(body, bodyText)}`,
@@ -317,7 +327,7 @@ function pancakeApiUrl(path: string, pageAccessToken: string): URL {
 }
 
 function formatPancakeError(
-  body: { message?: string } | null,
+  body: PancakeApiResponse | null,
   bodyText: string,
 ): string {
   return body?.message ?? (bodyText || "unknown_error");
@@ -391,19 +401,26 @@ function normalizePancakeTagIds(value: unknown): string[] {
   });
 }
 
-function parseJsonBody(
-  text: string,
-): { id?: unknown; success?: boolean; message?: string } | null {
+// Narrowed at the boundary rather than at each call site, so a Pancake reply
+// with a numeric `id`, or an `id` the upload never actually minted, reads as
+// "no id" everywhere instead of once here and differently there.
+function parseJsonBody(text: string): PancakeApiResponse | null {
   if (!text) {
     return null;
   }
 
   try {
-    const parsed = JSON.parse(text) as unknown;
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    const body = parsed as Record<string, unknown>;
 
-    return parsed && typeof parsed === "object"
-      ? (parsed as { id?: unknown; success?: boolean; message?: string })
-      : null;
+    return {
+      ...(typeof body.id === "string" && body.id ? { id: body.id } : {}),
+      ...(typeof body.success === "boolean" ? { success: body.success } : {}),
+      ...(typeof body.message === "string" ? { message: body.message } : {}),
+    };
   } catch {
     return null;
   }
