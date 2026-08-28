@@ -11,6 +11,7 @@
 import type * as account_accounts from "../account/accounts.js";
 import type * as account_envVars from "../account/envVars.js";
 import type * as account_hooks from "../account/hooks.js";
+import type * as account_mcpServers from "../account/mcpServers.js";
 import type * as account_roles from "../account/roles.js";
 import type * as account_tools from "../account/tools.js";
 import type * as agent_agents from "../agent/agents.js";
@@ -42,6 +43,7 @@ import type * as config_routes_channels from "../config/routes/channels.js";
 import type * as config_routes_crons from "../config/routes/crons.js";
 import type * as config_routes_envVars from "../config/routes/envVars.js";
 import type * as config_routes_hooks from "../config/routes/hooks.js";
+import type * as config_routes_mcpServers from "../config/routes/mcpServers.js";
 import type * as config_routes_policies from "../config/routes/policies.js";
 import type * as config_routes_roles from "../config/routes/roles.js";
 import type * as config_routes_sandboxes from "../config/routes/sandboxes.js";
@@ -80,6 +82,7 @@ import type * as model_cliSyncResources from "../model/cliSyncResources.js";
 import type * as model_configValues from "../model/configValues.js";
 import type * as model_cronRules from "../model/cronRules.js";
 import type * as model_environmentValues from "../model/environmentValues.js";
+import type * as model_mcpServers from "../model/mcpServers.js";
 import type * as model_modelPricing from "../model/modelPricing.js";
 import type * as model_modelProviders from "../model/modelProviders.js";
 import type * as model_objects from "../model/objects.js";
@@ -133,6 +136,7 @@ declare const fullApi: ApiFromModules<{
   "account/accounts": typeof account_accounts;
   "account/envVars": typeof account_envVars;
   "account/hooks": typeof account_hooks;
+  "account/mcpServers": typeof account_mcpServers;
   "account/roles": typeof account_roles;
   "account/tools": typeof account_tools;
   "agent/agents": typeof agent_agents;
@@ -164,6 +168,7 @@ declare const fullApi: ApiFromModules<{
   "config/routes/crons": typeof config_routes_crons;
   "config/routes/envVars": typeof config_routes_envVars;
   "config/routes/hooks": typeof config_routes_hooks;
+  "config/routes/mcpServers": typeof config_routes_mcpServers;
   "config/routes/policies": typeof config_routes_policies;
   "config/routes/roles": typeof config_routes_roles;
   "config/routes/sandboxes": typeof config_routes_sandboxes;
@@ -202,6 +207,7 @@ declare const fullApi: ApiFromModules<{
   "model/configValues": typeof model_configValues;
   "model/cronRules": typeof model_cronRules;
   "model/environmentValues": typeof model_environmentValues;
+  "model/mcpServers": typeof model_mcpServers;
   "model/modelPricing": typeof model_modelPricing;
   "model/modelProviders": typeof model_modelProviders;
   "model/objects": typeof model_objects;

@@ -36,6 +36,8 @@ export const API_POLICY_ACTIONS = [
   "env:write",
   "hooks:read",
   "hooks:write",
+  "mcp-servers:read",
+  "mcp-servers:write",
   "policies:read",
   "policies:write",
   "sandboxes:read",

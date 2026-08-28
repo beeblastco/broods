@@ -25,6 +25,7 @@ import { handleChannelRecordRoute } from "./routes/channels";
 import { handleCronRoute } from "./routes/crons";
 import { handleAccountEnvVarRoute } from "./routes/envVars";
 import { handleHookRoute } from "./routes/hooks";
+import { handleMcpServerRoute } from "./routes/mcpServers";
 import { handlePolicyConfigRoute } from "./routes/policies";
 import { handleAssumeRoleRoute, handleRoleRoute } from "./routes/roles";
 import { handleSandboxConfigRoute } from "./routes/sandboxes";
@@ -43,6 +44,7 @@ type ConfigRoute =
   | { kind: "skills"; name?: string }
   | { kind: "tools"; toolId?: string }
   | { kind: "hooks"; hookId?: string }
+  | { kind: "mcpServers"; serverId?: string }
   | { kind: "workspaceFiles"; workspaceId: string }
   | { kind: "workspaceDownloadLinks"; workspaceId: string }
   | { kind: "crons"; cronId?: string; runs: boolean }
@@ -137,6 +139,8 @@ function apiResourceForRoute(route: ResourceRoute): ApiResource {
       return apiResource("tools", route.toolId);
     case "hooks":
       return apiResource("hooks", route.hookId);
+    case "mcpServers":
+      return apiResource("mcp-servers", route.serverId);
     case "workspaceFiles":
     case "workspaceDownloadLinks":
     case "workspaces":
@@ -172,6 +176,14 @@ async function dispatchResourceRoute(
       return await handleToolRoute(ctx, req, accountId, actor, route.toolId);
     case "hooks":
       return await handleHookRoute(ctx, req, accountId, actor, route.hookId);
+    case "mcpServers":
+      return await handleMcpServerRoute(
+        ctx,
+        req,
+        accountId,
+        actor,
+        route.serverId,
+      );
     case "workspaceFiles":
       return await handleWorkspaceFilesRoute(
         ctx,
@@ -317,6 +329,13 @@ function isClientInputError(error: unknown): error is Error {
     "Workspace path not found",
     "name must",
     "username must",
+    "url must",
+    "headers must",
+    "headers names",
+    "headers values",
+    "allowedTools",
+    "disabled must",
+    "MCP server",
     "agentId must",
     "Agent config ",
     "description must",
@@ -389,6 +408,13 @@ function parseCollectionRoute(pathname: string): ConfigRoute | null {
     return {
       kind: "tools",
       ...(tools[1] ? { toolId: decodeURIComponent(tools[1]) } : {}),
+    };
+
+  const mcpServers = pathname.match(/^\/v1\/mcp-servers(?:\/([^/]+))?$/);
+  if (mcpServers)
+    return {
+      kind: "mcpServers",
+      ...(mcpServers[1] ? { serverId: decodeURIComponent(mcpServers[1]) } : {}),
     };
 
   const hooks = pathname.match(/^\/v1\/hooks(?:\/([^/]+))?$/);
