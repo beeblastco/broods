@@ -253,6 +253,35 @@ describe("ingestInboundAttachments", () => {
     expect(writeS3ObjectMock).not.toHaveBeenCalled();
   });
 
+  it("says an attachment reached nobody rather than calling it available for the turn", async () => {
+    const parts = await ingestInboundAttachments(
+      [
+        {
+          type: "audio",
+          name: "voice.aac",
+          mimeType: "audio/aac",
+          fetchData: async (): Promise<Buffer> => Buffer.from("audio-bytes"),
+        },
+      ],
+      {
+        accountId: ACCOUNT,
+        channelName: "zalo",
+        eventId: "evt-9",
+        // Anthropic will not take audio, and with no workspace there is no
+        // stored file to send the agent to instead.
+        provider: "anthropic",
+      },
+    );
+
+    expect(
+      [...parts.durable, ...parts.transient].filter(
+        (part) => part.type !== "text",
+      ),
+    ).toEqual([]);
+    expect(noteText(parts)).toContain("could not be shown");
+    expect(noteText(parts)).not.toContain("is available for this message only");
+  });
+
   it("names the attachments it left with the provider rather than pretending they arrived", async () => {
     const parts = await ingestInboundAttachments(
       Array.from({ length: 12 }, () => imageAttachment()),
@@ -339,5 +368,39 @@ describe("readAttachmentBytes URL guard", () => {
       readAttachmentBytes({ type: "file", url: "http://93.184.216.34/a.png" }),
     ).rejects.toThrow(/169\.254\.169\.254/);
     expect(calls).toEqual(["http://93.184.216.34/a.png"]);
+  });
+
+  it("stops reading a body that outgrows the cap instead of buffering it whole", async (): Promise<void> => {
+    // No Content-Length, so the size is knowable only from the bytes: the read
+    // has to be the thing that stops, not a header check before it.
+    const chunk = new Uint8Array(5 * 1024 * 1024);
+    let sent = 0;
+    let cancelled = false;
+    globalThis.fetch = mock(
+      async (): Promise<Response> =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull: (controller): void => {
+              sent += 1;
+              if (sent > 8) {
+                controller.close();
+
+                return;
+              }
+              controller.enqueue(chunk);
+            },
+            cancel: (): void => {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { "content-type": "image/png" } },
+        ),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      readAttachmentBytes({ type: "file", url: "http://93.184.216.34/a.png" }),
+    ).rejects.toThrow(/larger than/);
+    expect(cancelled).toBe(true);
+    expect(sent).toBeLessThan(8);
   });
 });

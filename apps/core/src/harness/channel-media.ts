@@ -128,15 +128,19 @@ export async function ingestInboundAttachments(
     ),
   );
 
+  const ingested = stored.map((item): IngestedAttachment => ({
+    stored: item,
+    part: nativePart(item, context.provider),
+  }));
+
   const durable: UserContentPart[] = [];
   const transient: UserContentPart[] = [];
-  for (const item of stored) {
-    const part = nativePart(item, context.provider);
+  for (const { stored: item, part } of ingested) {
     if (part) {
       (item.url ? durable : transient).push(part);
     }
   }
-  const note = attachmentNote(stored, overflow, context.channelName);
+  const note = attachmentNote(ingested, overflow, context.channelName);
   if (note) {
     durable.push({ type: "text", text: note });
   }
@@ -206,23 +210,34 @@ interface StoredAttachment {
   failure?: string;
 }
 
+// One attachment paired with the part it produced. A null part means nothing
+// about it reached the model, which the note has to say rather than imply the
+// file is there to look at.
+interface IngestedAttachment {
+  stored: StoredAttachment;
+  part: UserContentPart | null;
+}
+
 // The line the agent reads: what arrived, where it landed, and what to do with
 // the parts the model cannot see for itself. The "read it yourself" wording is
 // deliberate — told only that a file exists, models ask the sender to paste it.
 function attachmentNote(
-  stored: StoredAttachment[],
+  ingested: IngestedAttachment[],
   overflow: number,
   channelName: string,
 ): string | null {
-  const lines = stored.map((item): string => {
+  const lines = ingested.map(({ stored: item, part }): string => {
     if (item.failure) {
       return `- ${item.name} (${item.mediaType}) could not be read: ${item.failure}`;
     }
-    if (!item.path) {
+    if (item.path) {
+      return `- ${item.name} (${item.mediaType}) saved to ${item.path}`;
+    }
+    if (part) {
       return `- ${item.name} (${item.mediaType}) is available for this message only; no workspace is attached to store it.`;
     }
 
-    return `- ${item.name} (${item.mediaType}) saved to ${item.path}`;
+    return `- ${item.name} (${item.mediaType}) could not be shown: this model does not accept the type, and there is no workspace to store it in.`;
   });
   if (overflow > 0) {
     lines.push(
@@ -305,13 +320,42 @@ async function fetchAttachmentUrl(raw: string): Promise<Buffer> {
         `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
       );
     }
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = await readCappedBody(response);
     assertWithinLimit(bytes.byteLength, response.headers.get("content-type"));
 
     return bytes;
   }
 
   throw new Error(`attachment redirected more than ${REDIRECT_LIMIT} times`);
+}
+
+// Counts the bytes as they arrive rather than calling `arrayBuffer()`, which
+// takes whatever the provider chooses to send before anyone can measure it: a
+// missing or lying Content-Length is otherwise enough on its own to exhaust the
+// pod, ten attachments at a time.
+async function readCappedBody(response: Response): Promise<Buffer> {
+  if (!response.body) {
+    throw new Error("provider answered without a body");
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    total += value.byteLength;
+    if (total > MAX_ATTACHMENT_BYTES) {
+      await reader.cancel();
+      throw new Error(
+        `file is larger than ${formatBytes(MAX_ATTACHMENT_BYTES)}`,
+      );
+    }
+    chunks.push(value);
+  }
+
+  return Buffer.concat(chunks);
 }
 
 function assertWithinLimit(size: number, mediaType: string | null): void {
