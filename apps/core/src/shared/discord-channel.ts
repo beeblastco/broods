@@ -434,7 +434,7 @@ function createDiscordActions(
     // and no upload — so the model names one the bot can reach: a sticker from
     // a guild the bot is in, or a standard pack. The Chat SDK's postMessage has
     // no field for it, which is why this is the one send that goes direct.
-    sendSticker: async function(sticker): Promise<void> {
+    sendSticker: async function (sticker): Promise<void> {
       const value = sticker.trim();
       if (!/^\d+$/.test(value)) {
         throw new Error("Discord sendSticker needs a numeric sticker id");
@@ -452,7 +452,7 @@ function createDiscordActions(
       });
     },
 
-    sendText: async function(text) {
+    sendText: async function (text) {
       if (!source.interactionToken) {
         await discord.postMessage(threadId, { markdown: text });
 
@@ -536,7 +536,9 @@ function discordAttachments(data: DiscordGatewayMessageData): Attachment[] {
           ...(attachment.filename ? { name: attachment.filename } : {}),
           ...(mimeType ? { mimeType: mimeType } : {}),
           ...(attachment.size !== undefined ? { size: attachment.size } : {}),
-          ...(attachment.width !== undefined ? { width: attachment.width } : {}),
+          ...(attachment.width !== undefined
+            ? { width: attachment.width }
+            : {}),
           ...(attachment.height !== undefined
             ? { height: attachment.height }
             : {}),
@@ -574,8 +576,7 @@ function discordAttachmentType(
 // codec, and the label is the part that is wrong.
 function discordMediaType(attachment: DiscordAttachment): string | undefined {
   const isVoice =
-    attachment.duration_secs !== undefined ||
-    attachment.waveform !== undefined;
+    attachment.duration_secs !== undefined || attachment.waveform !== undefined;
 
   return isVoice ? undefined : attachment.content_type;
 }

@@ -72,14 +72,14 @@ Telegram resolves a file id through `getFile` and signs the download with the
 bot token, and Slack sends a bearer header, with the host checked before the
 token is attached and the auth stripped if a redirect leaves Slack.
 
-| Channel | Inbound media |
-| --- | --- |
+| Channel  | Inbound media                                                              |
+| -------- | -------------------------------------------------------------------------- |
 | Telegram | photos, video, audio, voice notes, documents, video notes, static stickers |
-| Slack | every file on a message, including voice clips |
-| Discord | uploads, voice messages, stickers |
-| Pancake | photos and videos |
-| Zalo | photos, stickers, voice notes |
-| GitHub | none — an image pasted into a comment stays a markdown URL in its text |
+| Slack    | every file on a message, including voice clips                             |
+| Discord  | uploads, voice messages, stickers                                          |
+| Pancake  | photos and videos                                                          |
+| Zalo     | photos, stickers, voice notes                                              |
+| GitHub   | none — an image pasted into a comment stays a markdown URL in its text     |
 
 What reaches the model depends on what the provider will read. Pictures always
 go over as pictures. Anything else — a PDF, a voice note, a video — goes over as

@@ -194,7 +194,6 @@ export function createZaloChannel(
         return ignoreZaloUpdate(update, "missing_sender_id");
       }
       if (!media) {
-
         return ignoreZaloUpdate(update, missingContentReason);
       }
       if (!isZaloChatType(chatType)) {
@@ -523,8 +522,8 @@ function zaloMessageMedia(
       // Zalo deals in one audio format. Anything else is a link it has given us
       // a name for but no content type, so it goes over as text and the turn
       // survives instead of failing at the provider.
-      const isVoiceNote = new URL(voice)
-        .pathname.toLowerCase()
+      const isVoiceNote = new URL(voice).pathname
+        .toLowerCase()
         .endsWith(ZALO_VOICE_EXTENSION);
 
       return isVoiceNote

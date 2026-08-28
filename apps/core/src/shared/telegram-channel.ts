@@ -277,13 +277,13 @@ function extractInboundMessage(update: TelegramUpdate): TelegramMessage | null {
 function hasTelegramMedia(message: TelegramMessage): boolean {
   return Boolean(
     message.photo?.length ||
-      message.audio ||
-      message.document ||
-      message.rich_message ||
-      message.sticker ||
-      message.video ||
-      message.video_note ||
-      message.voice,
+    message.audio ||
+    message.document ||
+    message.rich_message ||
+    message.sticker ||
+    message.video ||
+    message.video_note ||
+    message.voice,
   );
 }
 

@@ -495,12 +495,17 @@ describe("discord channel adapter", () => {
   });
 
   it("carries a sticker as the picture Discord serves for it", async () => {
-    const message = await parseGatewayMedia("message-media-3", "nice", [], [
-      { id: "555", name: "party-blob", format_type: 1 },
-      // Lottie is a JSON animation with no raster form, so there is nothing
-      // worth fetching.
-      { id: "666", name: "spinny", format_type: 3 },
-    ]);
+    const message = await parseGatewayMedia(
+      "message-media-3",
+      "nice",
+      [],
+      [
+        { id: "555", name: "party-blob", format_type: 1 },
+        // Lottie is a JSON animation with no raster form, so there is nothing
+        // worth fetching.
+        { id: "666", name: "spinny", format_type: 3 },
+      ],
+    );
 
     expect(message.attachments).toEqual([
       expect.objectContaining({

@@ -536,7 +536,9 @@ async function parseTelegram(
   );
   const parsed = await adapter.parse(createRequest(payload));
   if (parsed.kind !== "message") {
-    throw new Error(`Expected an accepted Telegram message, got ${parsed.kind}`);
+    throw new Error(
+      `Expected an accepted Telegram message, got ${parsed.kind}`,
+    );
   }
 
   return parsed.message;
