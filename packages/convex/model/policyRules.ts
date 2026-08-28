@@ -6,7 +6,7 @@
 
 import { isPlainObject } from "./objects";
 
-export const POLICY_ACTIONS = [
+export const AGENT_POLICY_ACTIONS = [
   // Gates the turn itself, before any tool runs: "may this person address the
   // agent here?". Everything below gates one action inside an admitted turn.
   "agent.invoke",
@@ -18,6 +18,41 @@ export const POLICY_ACTIONS = [
   "skill.load",
 ] as const;
 
+/**
+ * API action namespace for account roles: one read/write pair per config-plane
+ * resource route. Roles carry the same PolicyDocument shape as agent policies,
+ * restricted to these actions (see model/roleRules.ts).
+ */
+export const API_POLICY_ACTIONS = [
+  "account:read",
+  "account:write",
+  "agents:read",
+  "agents:write",
+  "channels:read",
+  "channels:write",
+  "crons:read",
+  "crons:write",
+  "env:read",
+  "env:write",
+  "hooks:read",
+  "hooks:write",
+  "policies:read",
+  "policies:write",
+  "sandboxes:read",
+  "sandboxes:write",
+  "skills:read",
+  "skills:write",
+  "tools:read",
+  "tools:write",
+  "workspaces:read",
+  "workspaces:write",
+] as const;
+
+export const POLICY_ACTIONS = [
+  ...AGENT_POLICY_ACTIONS,
+  ...API_POLICY_ACTIONS,
+] as const;
+
 const RESOURCE_SELECTOR_KEYS = [
   "toolNames",
   "toolIds",
@@ -26,7 +61,10 @@ const RESOURCE_SELECTOR_KEYS = [
   "filePaths",
   "subagentIds",
   "skillPaths",
+  "resourceIds",
 ] as const;
+
+export type ApiPolicyAction = (typeof API_POLICY_ACTIONS)[number];
 
 export type PolicyAction = (typeof POLICY_ACTIONS)[number];
 
@@ -70,6 +108,8 @@ export interface PolicyResourceSelector {
   filePaths?: string[];
   subagentIds?: string[];
   skillPaths?: string[];
+  /** Config-plane resource ids for API-action rules; "*" matches every id. */
+  resourceIds?: string[];
 }
 
 /**

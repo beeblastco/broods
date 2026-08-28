@@ -137,6 +137,8 @@ describe("stage runtime key wire", () => {
 
     expect(scope).toEqual({
       accountId: seeded.accountId,
+      projectId: seeded.projectId,
+      stageId: seeded.stageId,
       endpointId: `stage-${seeded.stageId.slice(-8)}`,
       projectSlug: "demo-app",
       stageSlug: "production",

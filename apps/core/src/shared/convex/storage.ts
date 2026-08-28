@@ -35,7 +35,11 @@ import type {
   WorkspaceConfig,
   WorkspaceConfigRecord,
 } from "../domain/workspace-config.ts";
-import type { AgentDeploymentScope, Storage } from "../storage.ts";
+import type {
+  AgentDeploymentScope,
+  RolePrincipalRecord,
+  Storage,
+} from "../storage.ts";
 import { getConvexClient } from "./client.ts";
 import { taskUsage } from "./usage.ts";
 
@@ -750,6 +754,19 @@ const agentPolicies: Storage["agentPolicies"] = {
   },
 };
 
+const roleSessions: Storage["roleSessions"] = {
+  resolveByTokenHash: async function (tokenHash) {
+    const doc = (await getConvexClient().query(
+      internal.account.roles.resolveSession,
+      {
+        tokenHash: tokenHash,
+      },
+    )) as RolePrincipalRecord | null;
+
+    return doc;
+  },
+};
+
 const accountTools: Storage["accountTools"] = {
   getById: async function (accountId, toolId) {
     const doc = await getConvexClient().query(internal.account.tools.getById, {
@@ -809,5 +826,6 @@ export const convexStorage: Storage = {
   agentPolicies: agentPolicies,
   accountTools: accountTools,
   accountHooks: accountHooks,
+  roleSessions: roleSessions,
   taskUsage: taskUsage,
 };

@@ -1401,6 +1401,7 @@ function storageWithCronStore(crons: Partial<Storage["crons"]>): Storage {
     agentPolicies: {} as never,
     accountTools: {} as never,
     accountHooks: {} as never,
+    roleSessions: {} as never,
     taskUsage: {} as never,
   };
 }
@@ -1436,6 +1437,7 @@ function storageWithAccountTool(accountTool: AccountToolRecord): Storage {
       removeAllForAccount: mock() as never,
     },
     accountHooks: {} as never,
+    roleSessions: {} as never,
     taskUsage: { record: async function () {} },
   } as Storage;
 }

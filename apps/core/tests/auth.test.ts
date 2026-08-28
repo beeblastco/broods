@@ -1,6 +1,6 @@
 /**
  * Bearer auth tests: admin secret, service-token path, deployment API keys,
- * and account lookup.
+ * role sessions, and account lookup.
  */
 
 import { createHash } from "node:crypto";
@@ -13,6 +13,7 @@ import {
 import {
   resetStorageForTests,
   setStorageForTests,
+  type RolePrincipalRecord,
   type Storage,
 } from "../src/shared/storage.ts";
 import { extractBearerToken, resolveBearerAuth } from "../src/shared/auth.ts";
@@ -35,10 +36,22 @@ const AGENT: AgentRecord = {
   updatedAt: "2026-06-01T00:00:00.000Z",
 };
 const DEPLOYMENT_API_KEY = "fp_agent_known-key";
+const ROLE_PRINCIPAL: RolePrincipalRecord = {
+  accountId: "acct_1",
+  roleId: "fp_role_1",
+  name: "reader",
+  policy: {
+    version: 1,
+    rules: [{ id: "r1", effect: "allow", actions: ["sandboxes:write"] }],
+  },
+  expiresAt: Date.now() + 60_000,
+};
+const ROLE_SESSION_TOKEN = "fp_sts_known-session";
 
 let accountsById: Record<string, AccountRecord>;
 let accountsBySecretHash: Record<string, AccountRecord>;
 let agentsById: Record<string, AgentRecord>;
+let roleSessionsByTokenHash: Record<string, RolePrincipalRecord>;
 
 beforeEach(() => {
   process.env.ADMIN_ACCOUNT_SECRET = "admin-secret";
@@ -46,6 +59,9 @@ beforeEach(() => {
   accountsById = { [ACCOUNT.accountId]: ACCOUNT };
   accountsBySecretHash = { [ACCOUNT.secretHash]: ACCOUNT };
   agentsById = { [AGENT.agentId]: AGENT };
+  roleSessionsByTokenHash = {
+    [sha256Hex(ROLE_SESSION_TOKEN)]: ROLE_PRINCIPAL,
+  };
   setStorageForTests({
     accounts: {
       getById: async (accountId: string) => accountsById[accountId] ?? null,
@@ -66,6 +82,10 @@ beforeEach(() => {
               stageSlug: "development",
             }
           : null,
+    },
+    roleSessions: {
+      resolveByTokenHash: async (tokenHash: string) =>
+        roleSessionsByTokenHash[tokenHash] ?? null,
     },
   } as unknown as Storage);
 });
@@ -118,6 +138,33 @@ describe("resolveBearerAuth", () => {
       projectSlug: "demo",
       stageSlug: "development",
     });
+  });
+
+  it("resolves an fp_sts_ role session to role auth", async () => {
+    const auth = await resolveBearerAuth({
+      authorization: `Bearer ${ROLE_SESSION_TOKEN}`,
+    });
+    expect(auth).toMatchObject({
+      kind: "role",
+      account: { accountId: "acct_1" },
+      role: { roleId: "fp_role_1" },
+    });
+  });
+
+  it("rejects unknown or foreign fp_sts_ tokens without falling through", async () => {
+    // A prefix match with no session must not reach the account-secret path.
+    expect(
+      await resolveBearerAuth({ authorization: "Bearer fp_sts_unknown" }),
+    ).toBeNull();
+  });
+
+  it("rejects role sessions whose account is disabled", async () => {
+    accountsById.acct_1 = { ...ACCOUNT, status: "disabled" };
+    expect(
+      await resolveBearerAuth({
+        authorization: `Bearer ${ROLE_SESSION_TOKEN}`,
+      }),
+    ).toBeNull();
   });
 
   it("rejects unknown tokens", async () => {

@@ -37,6 +37,8 @@ const DEPLOYMENT_KEY_PREFIX = "fp_agent_";
 /** Safe runtime deployment scope returned to core without stored credentials. */
 const agentDeploymentScopeValidator = v.object({
   accountId: v.id("accounts"),
+  projectId: v.id("projects"),
+  stageId: v.id("stages"),
   endpointId: v.string(),
   projectSlug: v.string(),
   stageSlug: v.string(),
@@ -245,6 +247,8 @@ export const getByAgentId = internalQuery({
 
     return {
       accountId: deployment.accountId,
+      projectId: deployment.projectId,
+      stageId: deployment.stageId,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,
@@ -268,6 +272,8 @@ export const getByApiKeyHash = internalQuery({
 
     return {
       accountId: deployment.accountId,
+      projectId: deployment.projectId,
+      stageId: deployment.stageId,
       endpointId: deployment.endpointId,
       projectSlug: deployment.projectSlug,
       stageSlug: deployment.stageSlug,

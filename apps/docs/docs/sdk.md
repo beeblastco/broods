@@ -311,8 +311,9 @@ product — use `BroodsAccountClient` from the separate `broods/account` entry
 point with your **account secret** (not the runtime API key). It is the complete
 typed client for the account config plane: agents, sandboxes (config +
 suspend/resume/terminate/snapshot/terminal), workspaces (config + file
-upload/rename/delete/download), tools, policies, skills, crons (+ run history),
-and the account itself (metadata, secret rotation, deletion).
+upload/rename/delete/download), tools, policies, roles (+ `assumeRole()`
+session minting), skills, crons (+ run history), and the account itself
+(metadata, secret rotation, deletion).
 
 The entry point is dependency-free and built on plain `fetch`, so it works in
 edge runtimes (Convex actions, Cloudflare Workers) where the main `broods`
@@ -359,6 +360,17 @@ await account.createSkill({
   description: "Triage flow",
   content: "# Triage",
 });
+
+// Roles: hand a tool less than the full secret. See the Account Roles page.
+const role = await account.createRole({
+  name: "agents-reader",
+  policy: {
+    version: 1,
+    rules: [{ id: "r1", effect: "allow", actions: ["agents:read"] }],
+  },
+});
+const session = await account.assumeRole(role.roleId, { ttlSeconds: 900 });
+const scoped = new BroodsAccountClient({ sessionToken: session.token });
 
 // Account self-management: metadata, one-time secret rotation, deletion.
 const { secret } = await account.rotateSecret();

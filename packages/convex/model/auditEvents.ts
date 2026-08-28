@@ -16,7 +16,8 @@ export type ConfigAuditActor = {
     | "admin"
     | "service"
     | "cli"
-    | "deployKey";
+    | "deployKey"
+    | "role";
   id?: string;
   email?: string;
   name?: string;
@@ -45,6 +46,7 @@ export type ConfigAuditResource = {
     | "cron"
     | "sandbox"
     | "policy"
+    | "role"
     | "channel"
     | "environmentVariable"
     | "deployment"

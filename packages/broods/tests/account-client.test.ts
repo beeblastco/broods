@@ -342,6 +342,58 @@ test("policies: list/create unwrap and get returns null on 404", async () => {
   expect(await client.getPolicy("pol_missing")).toBeNull();
 });
 
+test("roles: list/create unwrap, assumeRole posts the exchange body", async () => {
+  const { client, calls } = mockClient([
+    { status: 200, body: { roles: [{ roleId: "fp_role_1", name: "reader" }] } },
+    { status: 201, body: { roleId: "fp_role_2", name: "writer" } },
+    {
+      status: 200,
+      body: { token: "fp_sts_abc", expiresAt: "2026-08-28T00:00:00.000Z" },
+    },
+  ]);
+
+  expect((await client.listRoles())[0]?.roleId).toBe("fp_role_1");
+  expect(
+    (
+      await client.createRole({
+        name: "writer",
+        policy: { version: 1, rules: [] } as never,
+      })
+    ).roleId,
+  ).toBe("fp_role_2");
+
+  const session = await client.assumeRole("fp_role_2", { ttlSeconds: 900 });
+  expect(session.token).toBe("fp_sts_abc");
+  expect(calls[2]?.url).toBe(
+    "https://gateway.example.com/v1/account/assume-role",
+  );
+  expect(calls[2]?.method).toBe("POST");
+  expect(JSON.parse(calls[2]?.body ?? "{}")).toEqual({
+    roleId: "fp_role_2",
+    ttlSeconds: 900,
+  });
+});
+
+test("a sessionToken is accepted as the bearer instead of the account secret", async () => {
+  const calls: Call[] = [];
+  const client = new BroodsAccountClient({
+    baseUrl: "https://gateway.example.com",
+    sessionToken: "fp_sts_session-1",
+    fetch: async (input, init) => {
+      calls.push({
+        url: String(input),
+        method: init?.method ?? "GET",
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      });
+
+      return new Response(JSON.stringify({ agents: [] }), { status: 200 });
+    },
+  });
+
+  await client.listAgents();
+  expect(calls[0]?.headers.Authorization).toBe("Bearer fp_sts_session-1");
+});
+
 test("skills: list unwraps, upload uses PUT, delete returns the flag", async () => {
   const { client, calls } = mockClient([
     {

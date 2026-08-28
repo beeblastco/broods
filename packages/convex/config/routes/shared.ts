@@ -12,11 +12,26 @@ import type {
   ConfigAuditActor,
   ConfigAuditResource,
 } from "../../model/auditEvents";
+import type { ApiPrincipal } from "../../model/apiAuthorization";
+import type { PolicyDocument } from "../../model/policyRules";
+import { ROLE_SESSION_TOKEN_PREFIX } from "../../model/roleRules";
+
+/** The role identity an fp_sts_ session acts as. */
+export type RolePrincipalContext = {
+  accountId: Id<"accounts">;
+  roleId: string;
+  name: string;
+  policy: PolicyDocument;
+  projectId?: Id<"projects">;
+  stageId?: Id<"stages">;
+  expiresAt: number;
+};
 
 export type ConfigAuth =
   | { kind: "admin" }
   | { kind: "account"; account: Doc<"accounts">; viaServiceToken?: boolean }
-  | { kind: "deployment" };
+  | { kind: "deployment" }
+  | { kind: "role"; account: Doc<"accounts">; role: RolePrincipalContext };
 
 /**
  * Convert resolved HTTP auth into audit actor metadata.
@@ -26,6 +41,7 @@ export type ConfigAuth =
 export function auditActorForAuth(auth: ConfigAuth): ConfigAuditActor {
   if (auth.kind === "admin") return { kind: "admin" };
   if (auth.kind === "deployment") return { kind: "deployKey" };
+  if (auth.kind === "role") return { kind: "role", id: auth.role.roleId };
   if (auth.viaServiceToken === true) return { kind: "service" };
 
   return { kind: "apiAccountSecret", id: auth.account._id };
@@ -97,18 +113,50 @@ export async function parseJsonRequest(req: Request): Promise<unknown> {
 }
 
 /**
- * Resolve the Bearer token to an account.
+ * Extract a Bearer token from a request. Exported for the assume-role route,
+ * which resolves its own caller kinds (account secret, CLI token, runtime key).
+ * @param req incoming HTTP request
+ * @returns token string, or null when absent/malformed
+ */
+export function bearerToken(req: Request): string | null {
+  const header = req.headers.get("Authorization") ?? "";
+  const match = header.match(/^Bearer\s+(.+)$/i);
+
+  return match?.[1]?.trim() || null;
+}
+
+/**
+ * Project role auth into the `authorize()` principal shape.
+ * @param auth resolved role auth
+ * @returns OPA-style principal document
+ */
+export function rolePrincipal(
+  auth: Extract<ConfigAuth, { kind: "role" }>,
+): ApiPrincipal {
+  return {
+    kind: "role",
+    accountId: auth.role.accountId,
+    roleId: auth.role.roleId,
+    policy: auth.role.policy,
+    ...(auth.role.projectId ? { projectId: auth.role.projectId } : {}),
+    ...(auth.role.stageId ? { stageId: auth.role.stageId } : {}),
+  };
+}
+
+/**
+ * Resolve the Bearer token to an account or a role session.
  * @param ctx the action context
  * @param req the incoming request
- * @returns the account document, or null when the token is missing or unknown
+ * @returns account or role auth, or an error response
  */
 export async function requireAccount(
   ctx: ActionCtx,
   req: Request,
-): Promise<Extract<ConfigAuth, { kind: "account" }> | Response> {
+): Promise<Extract<ConfigAuth, { kind: "account" | "role" }> | Response> {
   const auth = await resolveBearerAuth(ctx, req);
   if (!auth) return await unauthorizedResponse(ctx, req);
   if (auth.kind === "account" && auth.viaServiceToken !== true) return auth;
+  if (auth.kind === "role") return auth;
 
   return json({ error: "Unauthorized" }, 401);
 }
@@ -131,20 +179,22 @@ export async function requireAdminAuth(
 }
 
 /**
- * Require account-secret auth for `/v1/account*` routes with core parity.
+ * Require account-secret or role-session auth for `/v1/account*` routes with
+ * core parity. Callers decide what a role session may do on the route.
  * @param ctx Convex action context
  * @param req incoming HTTP request
- * @returns active account or an error response
+ * @returns active account or role auth, or an error response
  */
 export async function requireSelfAccount(
   ctx: ActionCtx,
   req: Request,
-): Promise<Extract<ConfigAuth, { kind: "account" }> | Response> {
+): Promise<Extract<ConfigAuth, { kind: "account" | "role" }> | Response> {
   const auth = await resolveBearerAuth(ctx, req);
   if (!auth) return await unauthorizedResponse(ctx, req);
   if (auth.kind === "admin")
     return json({ error: "Admin must use account-specific endpoints" }, 400);
   if (auth.kind === "deployment") return json({ error: "Unauthorized" }, 401);
+  if (auth.kind === "role") return auth;
   if (auth.viaServiceToken === true) {
     return json(
       { error: "Service token is not allowed for this account endpoint" },
@@ -265,18 +315,6 @@ async function authFailureKey(req: Request): Promise<string> {
 }
 
 /**
- * Extract a Bearer token from a request.
- * @param req incoming HTTP request
- * @returns token string, or null when absent/malformed
- */
-function bearerToken(req: Request): string | null {
-  const header = req.headers.get("Authorization") ?? "";
-  const match = header.match(/^Bearer\s+(.+)$/i);
-
-  return match?.[1]?.trim() || null;
-}
-
-/**
  * Compare two already-hashed secrets without comparing plaintext values.
  * @param left first hex digest
  * @param right second hex digest
@@ -293,7 +331,8 @@ function digestEqual(left: string, right: string): boolean {
 }
 
 /**
- * Resolve Bearer auth into admin, account, service-account, or deployment auth.
+ * Resolve Bearer auth into admin, account, service-account, deployment, or
+ * role-session auth.
  * @param ctx Convex action context
  * @param req incoming HTTP request
  * @returns auth context or null for missing/unknown/disabled credentials
@@ -305,6 +344,23 @@ async function resolveBearerAuth(
   const token = bearerToken(req);
   if (!token) return null;
   const tokenHash = await sha256Hex(token);
+
+  // fp_sts_ is prefix-routed: a role session resolves as a role or not at all.
+  if (token.startsWith(ROLE_SESSION_TOKEN_PREFIX)) {
+    const principal: RolePrincipalContext | null = await ctx.runQuery(
+      internal.account.roles.resolveSession,
+      { tokenHash: tokenHash },
+    );
+    if (!principal) return null;
+    const account: Doc<"accounts"> | null = await getAccountById(
+      ctx,
+      principal.accountId,
+    );
+
+    return account && account.status === "active"
+      ? { kind: "role", account: account, role: principal }
+      : null;
+  }
 
   const adminSecret = process.env.ADMIN_ACCOUNT_SECRET;
   if (adminSecret && digestEqual(tokenHash, await sha256Hex(adminSecret))) {
@@ -351,7 +407,7 @@ async function resolveBearerAuth(
  * @param req incoming HTTP request
  * @returns 401 or 429 response
  */
-async function unauthorizedResponse(
+export async function unauthorizedResponse(
   ctx: ActionCtx,
   req: Request,
 ): Promise<Response> {

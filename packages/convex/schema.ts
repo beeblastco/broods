@@ -301,6 +301,39 @@ export const agentPoliciesFields = {
 };
 
 /**
+ * Scoped API role assumed via `POST /v1/account/assume-role`. The policy is a
+ * version-1 PolicyDocument over the `<resource>:read`/`<resource>:write` API
+ * action namespace (model/roleRules.ts validates it). `projectId`/`stageId`
+ * bound which stage runtime keys may assume the role, same shape as deployKeys.
+ */
+export const accountRolesFields = {
+  accountId: v.id("accounts"),
+  projectId: v.optional(v.id("projects")),
+  stageId: v.optional(v.id("stages")),
+  /** Public role id: "fp_role_" + random. */
+  roleId: v.string(),
+  name: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+  /** PolicyDocument (version 1) over the API action namespace. */
+  policy: v.any(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
+/**
+ * Short-lived assume-role session backing an `fp_sts_` bearer token. Only the
+ * SHA-256 hash is stored, same pattern as cliTokens. Rows die by `expiresAt`;
+ * revocation is disabling or deleting the role.
+ */
+export const roleSessionsFields = {
+  tokenHash: v.string(),
+  roleId: v.string(),
+  accountId: v.id("accounts"),
+  expiresAt: v.number(),
+  createdAt: v.number(),
+};
+
+/**
  * One row per real place a team talks — a Slack channel, a Discord channel, a
  * repository. Binds that place to an agent and carries the instructions,
  * workspaces, policies and roles scoped to it. `config.channels` on an agent
@@ -667,6 +700,7 @@ export const configAuditActorKindValidator = v.union(
   v.literal("service"),
   v.literal("cli"),
   v.literal("deployKey"),
+  v.literal("role"),
 );
 
 /** Resource types recorded in the account-visible configuration audit feed. */
@@ -681,6 +715,7 @@ export const configAuditResourceKindValidator = v.union(
   v.literal("cron"),
   v.literal("sandbox"),
   v.literal("policy"),
+  v.literal("role"),
   v.literal("channel"),
   v.literal("environmentVariable"),
   v.literal("deployment"),
@@ -1175,6 +1210,12 @@ export default defineSchema({
     .index("by_accountId_and_status", ["accountId", "status"])
     .index("by_stageId_and_name", ["stageId", "name"])
     .index("by_stageId_and_status_and_name", ["stageId", "status", "name"]),
+  accountRoles: defineTable(accountRolesFields)
+    .index("by_accountId", ["accountId"])
+    .index("by_roleId", ["roleId"]),
+  roleSessions: defineTable(roleSessionsFields)
+    .index("by_tokenHash", ["tokenHash"])
+    .index("by_roleId", ["roleId"]),
   channelRecords: defineTable(channelRecordsFields)
     .index("by_accountId", ["accountId"])
     .index("by_accountId_and_status", ["accountId", "status"])

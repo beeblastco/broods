@@ -129,6 +129,27 @@ export function toPublicChannelRecordResponse(
 }
 
 /**
+ * Map an accountRoles document to the public role shape.
+ * @param doc the accountRoles document
+ * @returns the public role record
+ */
+export function toPublicRoleResponse(
+  doc: Doc<"accountRoles">,
+): Record<string, unknown> {
+  return {
+    accountId: doc.accountId,
+    roleId: doc.roleId,
+    name: doc.name,
+    ...(doc.projectId ? { projectId: doc.projectId } : {}),
+    ...(doc.stageId ? { stageId: doc.stageId } : {}),
+    status: doc.status,
+    policy: doc.policy,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    updatedAt: new Date(doc.updatedAt).toISOString(),
+  };
+}
+
+/**
  * Map a sandboxConfigs document and decrypted config to the public response.
  * @param doc the sandboxConfigs document
  * @param config decrypted sandbox config

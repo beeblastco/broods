@@ -174,6 +174,11 @@ const sidebars: SidebarsConfig = {
           label: "Skills",
         },
         {
+          type: "doc",
+          id: "roles",
+          label: "Account Roles",
+        },
+        {
           type: "category",
           label: "Channels",
           collapsed: true,
