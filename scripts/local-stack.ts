@@ -19,6 +19,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -188,8 +189,8 @@ async function down(options: { purge: boolean }): Promise<void> {
     return;
   }
 
-  stopProcess(state.pids.gateway, "gateway");
-  stopProcess(state.pids.core, "core");
+  await stopProcess(state.pids.gateway, "gateway");
+  await stopProcess(state.pids.core, "core");
   state.pids = {};
   saveState(state);
 
@@ -559,14 +560,41 @@ function spawnDetached(options: {
   return child.pid;
 }
 
-function stopProcess(pid: number | undefined, name: string): void {
+/**
+ * SIGTERM, then wait for the process to actually exit so a follow-up `up`
+ * never races a dying process for its port. SIGKILL after the grace period.
+ */
+async function stopProcess(
+  pid: number | undefined,
+  name: string,
+): Promise<void> {
   if (!isProcessAlive(pid)) return;
   try {
     process.kill(pid as number, "SIGTERM");
-    console.log(`stopped ${name} (pid ${pid})`);
   } catch {
     // Already gone between the liveness check and the signal.
+
+    return;
   }
+  const graceDeadline = Date.now() + 5_000;
+  while (Date.now() < graceDeadline) {
+    if (!isProcessAlive(pid)) {
+      console.log(`stopped ${name} (pid ${pid})`);
+
+      return;
+    }
+    await sleep(100);
+  }
+  try {
+    process.kill(pid as number, "SIGKILL");
+  } catch {
+    // Exited between the last check and the kill.
+  }
+  await sleep(200);
+  if (isProcessAlive(pid)) {
+    throw new Error(`${name} (pid ${pid}) survived SIGKILL`);
+  }
+  console.log(`stopped ${name} (pid ${pid}, forced)`);
 }
 
 // --- docker helpers -----------------------------------------------------
@@ -617,6 +645,7 @@ async function httpJson(
 ): Promise<{ body: unknown; status: number }> {
   const response = await fetch(url, {
     method: options.method,
+    signal: AbortSignal.timeout(15_000),
     headers: {
       Authorization: `Bearer ${options.token}`,
       "Content-Type": "application/json",
@@ -642,12 +671,16 @@ async function pollRunStatus(
 ): Promise<{ status?: string }> {
   const deadline = Date.now() + RUN_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const response = await httpJson(statusUrl, {
-      method: "GET",
-      token: token,
-    });
-    const doc = response.body as { status?: string };
-    if (doc.status === "completed" || doc.status === "failed") return doc;
+    try {
+      const response = await httpJson(statusUrl, {
+        method: "GET",
+        token: token,
+      });
+      const doc = response.body as { status?: string };
+      if (doc.status === "completed" || doc.status === "failed") return doc;
+    } catch {
+      // Transient poll failure (timeout, refused): retry until the deadline.
+    }
     await sleep(1500);
   }
 
@@ -846,10 +879,16 @@ function loadState(instanceId: string): InstanceState | null {
   return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
 }
 
+/**
+ * state.json carries the admin and encryption secrets, so the instance dir is
+ * owner-only. chmod repairs paths created before the modes were enforced —
+ * mkdir/write modes only apply on creation.
+ */
 function saveState(state: InstanceState): void {
-  mkdirSync(instanceDir(state.instanceId), { recursive: true });
-  writeFileSync(
-    join(instanceDir(state.instanceId), "state.json"),
-    JSON.stringify(state, null, 2),
-  );
+  const dir = instanceDir(state.instanceId);
+  const path = join(dir, "state.json");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  writeFileSync(path, JSON.stringify(state, null, 2), { mode: 0o600 });
+  chmodSync(path, 0o600);
 }
