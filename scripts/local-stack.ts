@@ -1,19 +1,13 @@
 /**
- * Local stack orchestrator. Spins up the whole Broods runtime on this machine:
- * a self-hosted Convex backend in docker, core and gateway as watched bun
- * processes, and a smoke verification that exercises the chain end to end.
+ * Local Broods stack: self-hosted Convex in docker plus core and gateway as
+ * watched bun processes. Instances are keyed by worktree, so parallel
+ * checkouts get isolated stacks on disjoint port blocks. State (secrets,
+ * ports, pids, logs, perf) lives under ~/.broods-local/<instance>/.
  *
- * Instances are keyed by the repo checkout (worktree) that runs the command, so
- * parallel worktrees get isolated stacks on disjoint port blocks. State lives
- * under ~/.broods-local/<instance>/ — secrets, ports, pids, logs. A warm re-run
- * of `up` is idempotent and fast: the container restarts instead of recreating,
- * and `convex deploy` is skipped while packages/convex is unchanged.
+ * A warm `up` is idempotent: the container restarts in place and
+ * `convex deploy` is skipped while packages/convex is unchanged.
  *
- * Usage:
- *   bun scripts/local-stack.ts up [--fresh]
- *   bun scripts/local-stack.ts down [--purge]
- *   bun scripts/local-stack.ts status
- *   bun scripts/local-stack.ts verify
+ * Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]
  */
 
 import { execFileSync, spawn } from "node:child_process";
@@ -53,6 +47,17 @@ interface InstanceSecrets {
   serviceAuth: string;
 }
 
+interface InstanceState {
+  adminKey?: string;
+  convexSourceHash?: string;
+  deploymentEnvConfigured?: boolean;
+  instanceId: string;
+  instanceSecret: string;
+  pids: { core?: number; gateway?: number };
+  ports: InstancePorts;
+  secrets: InstanceSecrets;
+}
+
 interface PerfRecord {
   at: string;
   command: string;
@@ -63,17 +68,6 @@ interface PerfRecord {
 interface PerfStep {
   ms: number;
   step: string;
-}
-
-interface InstanceState {
-  adminKey?: string;
-  convexSourceHash?: string;
-  deploymentEnvConfigured?: boolean;
-  instanceId: string;
-  instanceSecret: string;
-  pids: { core?: number; gateway?: number };
-  ports: InstancePorts;
-  secrets: InstanceSecrets;
 }
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -98,89 +92,6 @@ switch (command) {
       "Usage: bun scripts/local-stack.ts <up|down|status|verify> [--fresh|--purge]",
     );
     process.exit(2);
-}
-
-async function up(fresh: boolean): Promise<void> {
-  const startedAt = Date.now();
-  const perf: PerfStep[] = [];
-  if (fresh) {
-    await down(true);
-  }
-  const state = loadOrCreateState();
-  console.log(
-    `[${state.instanceId}] gateway :${state.ports.gateway} core :${state.ports.core} convex :${state.ports.convexApi}/${state.ports.convexSite}`,
-  );
-
-  await measureStep(perf, "convex container", async () => {
-    ensureConvexContainer(state);
-    await waitForHttp(
-      `http://127.0.0.1:${state.ports.convexApi}/version`,
-      "convex backend",
-    );
-  });
-
-  if (!state.adminKey) {
-    await measureStep(perf, "admin key", async () => {
-      state.adminKey = generateConvexAdminKey(state);
-      saveState(state);
-    });
-  }
-
-  if (!state.deploymentEnvConfigured) {
-    await measureStep(perf, "deployment env", async () => {
-      configureDeploymentEnv(state);
-      state.deploymentEnvConfigured = true;
-      saveState(state);
-    });
-  }
-
-  const sourceHash = await measureStep(perf, "convex source hash", async () =>
-    convexSourceHash(),
-  );
-  if (state.convexSourceHash !== sourceHash) {
-    console.log("deploying convex functions (packages/convex changed)...");
-    await measureStep(perf, "convex deploy", async () => {
-      runConvexCli(state, ["deploy", "-y"]);
-      state.convexSourceHash = sourceHash;
-      saveState(state);
-    });
-  } else {
-    console.log("convex functions unchanged, skipping deploy");
-  }
-
-  await measureStep(perf, "start core + gateway", async () => {
-    startCore(state);
-    startGateway(state);
-    saveState(state);
-  });
-
-  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
-  await measureStep(perf, "health checks", async () => {
-    await Promise.all([
-      waitForHttp(`${gatewayUrl}/healthz`, "gateway"),
-      waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
-    ]);
-    // The gateway answers /healthz itself, so prove the proxied chain too: any
-    // HTTP status from /v1/agents means gateway -> convex round-tripped (401 is
-    // the expected unauthenticated answer); only a network error is a failure.
-    await waitForHttp(
-      `${gatewayUrl}/v1/agents`,
-      "config plane via gateway",
-      true,
-    );
-  });
-
-  const totalMs = Date.now() - startedAt;
-  recordPerf(state.instanceId, "up", perf, totalMs);
-  printPerfBreakdown(perf, totalMs);
-  console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
-  console.log(`  gateway   ${gatewayUrl}`);
-  console.log(`  admin     Bearer ${state.secrets.adminAccount}`);
-  console.log(`  logs      ${join(instanceDir(state.instanceId), "logs")}`);
-  console.log(
-    `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
-  );
-  console.log(`\nnext: bun scripts/local-stack.ts verify`);
 }
 
 async function down(purge: boolean): Promise<void> {
@@ -255,11 +166,95 @@ async function status(): Promise<void> {
   }
 }
 
+async function up(fresh: boolean): Promise<void> {
+  const startedAt = Date.now();
+  const perf: PerfStep[] = [];
+  if (fresh) {
+    await down(true);
+  }
+  const state = loadOrCreateState();
+  console.log(
+    `[${state.instanceId}] gateway :${state.ports.gateway} core :${state.ports.core} convex :${state.ports.convexApi}/${state.ports.convexSite}`,
+  );
+
+  await measureStep(perf, "convex container", async () => {
+    ensureConvexContainer(state);
+    await waitForHttp(
+      `http://127.0.0.1:${state.ports.convexApi}/version`,
+      "convex backend",
+    );
+  });
+
+  if (!state.adminKey) {
+    await measureStep(perf, "admin key", () => {
+      state.adminKey = generateConvexAdminKey(state);
+      saveState(state);
+    });
+  }
+
+  if (!state.deploymentEnvConfigured) {
+    await measureStep(perf, "deployment env", () => {
+      configureDeploymentEnv(state);
+      state.deploymentEnvConfigured = true;
+      saveState(state);
+    });
+  }
+
+  const sourceHash = await measureStep(
+    perf,
+    "convex source hash",
+    convexSourceHash,
+  );
+  if (state.convexSourceHash !== sourceHash) {
+    console.log("deploying convex functions (packages/convex changed)...");
+    await measureStep(perf, "convex deploy", () => {
+      runConvexCli(state, ["deploy", "-y"]);
+      state.convexSourceHash = sourceHash;
+      saveState(state);
+    });
+  } else {
+    console.log("convex functions unchanged, skipping deploy");
+  }
+
+  await measureStep(perf, "start core + gateway", () => {
+    startCore(state);
+    startGateway(state);
+    saveState(state);
+  });
+
+  const gatewayUrl = `http://127.0.0.1:${state.ports.gateway}`;
+  await measureStep(perf, "health checks", async () => {
+    await Promise.all([
+      waitForHttp(`${gatewayUrl}/healthz`, "gateway"),
+      waitForHttp(`http://127.0.0.1:${state.ports.core}/healthz`, "core"),
+    ]);
+    // /healthz is answered by the gateway itself; any status from /v1/agents
+    // (401 expected) proves the proxied gateway -> convex chain.
+    await waitForHttp(
+      `${gatewayUrl}/v1/agents`,
+      "config plane via gateway",
+      true,
+    );
+  });
+
+  const totalMs = Date.now() - startedAt;
+  recordPerf(state.instanceId, "up", perf, totalMs);
+  printPerfBreakdown(perf, totalMs);
+  console.log(`\nstack up in ${(totalMs / 1000).toFixed(1)}s`);
+  console.log(`  gateway   ${gatewayUrl}`);
+  console.log(`  admin     Bearer ${state.secrets.adminAccount}`);
+  console.log(`  logs      ${join(instanceDir(state.instanceId), "logs")}`);
+  console.log(
+    `  perf      ${join(instanceDir(state.instanceId), "perf.jsonl")}`,
+  );
+  console.log(`\nnext: bun scripts/local-stack.ts verify`);
+}
+
 /**
  * End-to-end smoke: mint an account with the admin secret, create an agent,
  * fire an async run through the gateway, poll its status. Without a model key
- * the run is expected to fail at the provider call — reaching that failure
- * still proves routing, auth, config encrypt/decrypt, and Convex round-trips.
+ * the run fails at the provider call — reaching that failure still proves
+ * routing, auth, config encrypt/decrypt, and Convex round-trips.
  */
 async function verify(): Promise<void> {
   const state = loadState(currentInstanceId());
@@ -347,20 +342,13 @@ async function verify(): Promise<void> {
   await measureStep(perf, "run to terminal state", async () => {
     const statusUrl = `${gatewayUrl}/status/${encodeURIComponent(eventId)}?agentId=${encodeURIComponent(agentId)}`;
     const finalStatus = await pollRunStatus(statusUrl, accountSecret);
-    if (modelKey) {
-      assertStep(
-        "run completed with a real model key",
-        finalStatus.status === "completed",
-        JSON.stringify(finalStatus),
-      );
-
-      return;
-    }
-    assertStep(
-      "run reached a terminal state without a model key (chain proven; set ANTHROPIC_API_KEY for a full green run)",
-      finalStatus.status === "completed" || finalStatus.status === "failed",
-      JSON.stringify(finalStatus),
-    );
+    const expected = modelKey
+      ? finalStatus.status === "completed"
+      : finalStatus.status === "completed" || finalStatus.status === "failed";
+    const label = modelKey
+      ? "run completed with a real model key"
+      : "run reached a terminal state (no model key; set ANTHROPIC_API_KEY for a full run)";
+    assertStep(label, expected, JSON.stringify(finalStatus));
   });
 
   const totalMs = Date.now() - startedAt;
@@ -371,12 +359,10 @@ async function verify(): Promise<void> {
 
 // --- convex backend -----------------------------------------------------
 
+// AuthKit validates WORKOS_* at import time, so dummies must exist before the
+// first deploy. BROODS_ACCOUNT_MANAGE_URL points at core on the host (the
+// backend runs inside docker). One batched `env set` beats a CLI boot per var.
 function configureDeploymentEnv(state: InstanceState): void {
-  // The config plane reads these from the deployment env; AuthKit validates
-  // the WORKOS_* values at import time, so dummies must exist before the first
-  // deploy. BROODS_ACCOUNT_MANAGE_URL points back at core on the host — the
-  // backend runs inside docker, hence host.docker.internal. The config plane
-  // reads only the BROODS_-prefixed service secret; the bare name is core's.
   const entries: Record<string, string> = {
     ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
     ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
@@ -387,8 +373,6 @@ function configureDeploymentEnv(state: InstanceState): void {
     WORKOS_WEBHOOK_SECRET: "whsec_local_dummy",
   };
   console.log("configuring convex deployment env...");
-  // One batched `env set --from-file` instead of one ~0.4s CLI boot per
-  // variable. --force keeps a retry after a partially applied first run going.
   const envFile = join(instanceDir(state.instanceId), "deployment.env");
   writeFileSync(
     envFile,
@@ -490,61 +474,6 @@ function runConvexCli(state: InstanceState, args: string[]): void {
 
 // --- host processes -----------------------------------------------------
 
-function startCore(state: InstanceState): void {
-  if (isProcessAlive(state.pids.core)) {
-    console.log("core already running");
-
-    return;
-  }
-
-  const coreDir = join(repoRoot, "apps", "core");
-  // Mirrors apps/core "serve" (compaction prompt, then server), with --watch
-  // added; keep in sync with that package script. The prompt is generated once
-  // here because watch mode restarts only server.ts.
-  execFileSync("bun", ["run", "scripts/compaction-prompt.ts"], {
-    cwd: coreDir,
-    stdio: "inherit",
-  });
-  state.pids.core = spawnDetached({
-    args: ["--watch", "src/server.ts"],
-    cwd: coreDir,
-    logName: "core",
-    instanceId: state.instanceId,
-    env: {
-      ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
-      ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
-      CONVEX_DEPLOY_KEY: state.adminKey ?? "",
-      CONVEX_URL: `http://127.0.0.1:${state.ports.convexApi}`,
-      PORT: String(state.ports.core),
-      PUBLIC_BASE_URL: `http://127.0.0.1:${state.ports.gateway}`,
-      SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
-      SERVICE_NAME: `local-${state.instanceId}-core`,
-    },
-  });
-}
-
-function startGateway(state: InstanceState): void {
-  if (isProcessAlive(state.pids.gateway)) {
-    console.log("gateway already running");
-
-    return;
-  }
-
-  // Mirrors apps/gateway "dev"; keep in sync with that package script. Spawned
-  // directly (not via `bun run`) so the recorded pid is the server itself.
-  state.pids.gateway = spawnDetached({
-    args: ["--watch", "src/main.ts"],
-    cwd: join(repoRoot, "apps", "gateway"),
-    logName: "gateway",
-    instanceId: state.instanceId,
-    env: {
-      BROODS_CONFIG_URL: `http://127.0.0.1:${state.ports.convexSite}`,
-      BROODS_CORE_URLS: `http://127.0.0.1:${state.ports.core}`,
-      PORT: String(state.ports.gateway),
-    },
-  });
-}
-
 function isProcessAlive(pid: number | undefined): pid is number {
   if (!pid) return false;
   try {
@@ -583,10 +512,63 @@ function spawnDetached(options: {
   return child.pid;
 }
 
-/**
- * SIGTERM, then wait for the process to actually exit so a follow-up `up`
- * never races a dying process for its port. SIGKILL after the grace period.
- */
+// Mirrors apps/core "serve" with --watch added; keep in sync with that package
+// script. The compaction prompt runs once here because watch mode restarts
+// only server.ts.
+function startCore(state: InstanceState): void {
+  if (isProcessAlive(state.pids.core)) {
+    console.log("core already running");
+
+    return;
+  }
+
+  const coreDir = join(repoRoot, "apps", "core");
+  execFileSync("bun", ["run", "scripts/compaction-prompt.ts"], {
+    cwd: coreDir,
+    stdio: "inherit",
+  });
+  state.pids.core = spawnDetached({
+    args: ["--watch", "src/server.ts"],
+    cwd: coreDir,
+    env: {
+      ACCOUNT_CONFIG_ENCRYPTION_SECRET: state.secrets.accountConfigEncryption,
+      ADMIN_ACCOUNT_SECRET: state.secrets.adminAccount,
+      CONVEX_DEPLOY_KEY: state.adminKey ?? "",
+      CONVEX_URL: `http://127.0.0.1:${state.ports.convexApi}`,
+      PORT: String(state.ports.core),
+      PUBLIC_BASE_URL: `http://127.0.0.1:${state.ports.gateway}`,
+      SERVICE_AUTH_SECRET: state.secrets.serviceAuth,
+      SERVICE_NAME: `local-${state.instanceId}-core`,
+    },
+    instanceId: state.instanceId,
+    logName: "core",
+  });
+}
+
+// Mirrors apps/gateway "dev"; keep in sync with that package script. Spawned
+// directly (not via `bun run`) so the recorded pid is the server itself.
+function startGateway(state: InstanceState): void {
+  if (isProcessAlive(state.pids.gateway)) {
+    console.log("gateway already running");
+
+    return;
+  }
+
+  state.pids.gateway = spawnDetached({
+    args: ["--watch", "src/main.ts"],
+    cwd: join(repoRoot, "apps", "gateway"),
+    env: {
+      BROODS_CONFIG_URL: `http://127.0.0.1:${state.ports.convexSite}`,
+      BROODS_CORE_URLS: `http://127.0.0.1:${state.ports.core}`,
+      PORT: String(state.ports.gateway),
+    },
+    instanceId: state.instanceId,
+    logName: "gateway",
+  });
+}
+
+// SIGTERM then wait for the exit so a follow-up `up` never races a dying
+// process for its port; SIGKILL after the grace period.
 async function stopProcess(
   pid: number | undefined,
   name: string,
@@ -595,9 +577,7 @@ async function stopProcess(
   try {
     process.kill(pid, "SIGTERM");
   } catch {
-    // Already gone between the liveness check and the signal.
-
-    return;
+    return; // already gone
   }
   const exited = await pollUntil(
     { initialIntervalMs: 50, maxIntervalMs: 100, timeoutMs: 5_000 },
@@ -611,7 +591,7 @@ async function stopProcess(
   try {
     process.kill(pid, "SIGKILL");
   } catch {
-    // Exited between the last check and the kill.
+    // already exited
   }
   const reaped = await pollUntil(
     { initialIntervalMs: 20, maxIntervalMs: 50, timeoutMs: 300 },
@@ -623,7 +603,16 @@ async function stopProcess(
   console.log(`stopped ${name} (pid ${pid}, forced)`);
 }
 
-// --- docker helpers -----------------------------------------------------
+// --- docker -------------------------------------------------------------
+
+function containerMemory(name: string): string | null {
+  const output = docker(
+    ["stats", "--no-stream", "--format", "{{.MemUsage}}", name],
+    { allowFailure: true },
+  ).trim();
+
+  return output || null;
+}
 
 function containerName(instanceId: string): string {
   return `broods-convex-${instanceId}`;
@@ -653,7 +642,7 @@ function dockerContainerState(name: string): string | null {
   return output || null;
 }
 
-// --- http helpers -------------------------------------------------------
+// --- http ---------------------------------------------------------------
 
 function assertStep(step: string, ok: boolean, detail: string): asserts ok {
   if (ok) {
@@ -683,7 +672,7 @@ async function httpJson(
   try {
     body = JSON.parse(text);
   } catch {
-    // Keep the raw text when the answer is not JSON.
+    // not JSON, keep the raw text
   }
 
   return { body: body, status: response.status };
@@ -711,9 +700,7 @@ async function pollRunStatus(
           ? body
           : null;
       } catch {
-        // Transient poll failure (timeout, refused): retry until the deadline.
-
-        return null;
+        return null; // transient poll failure, retry until the deadline
       }
     },
   );
@@ -721,10 +708,8 @@ async function pollRunStatus(
   return doc ?? { status: "poll-timeout" };
 }
 
-/**
- * Repeats attempt() until it returns non-null or timeoutMs passes, sleeping
- * with doubling backoff between tries. Returns null on timeout.
- */
+// Repeats attempt() with doubling backoff until it returns non-null or
+// timeoutMs passes. Returns null on timeout.
 async function pollUntil<T>(
   options: {
     initialIntervalMs: number;
@@ -738,7 +723,7 @@ async function pollUntil<T>(
   while (Date.now() < deadline) {
     const result = await attempt();
     if (result !== null) return result;
-    await sleep(Math.min(interval, Math.max(deadline - Date.now(), 0)));
+    await Bun.sleep(Math.min(interval, Math.max(deadline - Date.now(), 0)));
     interval = Math.min(interval * 2, options.maxIntervalMs);
   }
 
@@ -755,10 +740,6 @@ async function probeHttp(url: string): Promise<number | null> {
   } catch {
     return null;
   }
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
 async function waitForHttp(
@@ -790,21 +771,12 @@ async function waitForHttp(
 
 // --- perf recording -----------------------------------------------------
 
-function containerMemory(name: string): string | null {
-  const output = docker(
-    ["stats", "--no-stream", "--format", "{{.MemUsage}}", name],
-    { allowFailure: true },
-  ).trim();
-
-  return output || null;
-}
-
+// The log is append-only, so walk from the end and stop at the first record
+// of each command instead of parsing the whole file.
 function lastPerfSummaries(instanceId: string): string[] {
   const path = perfLogPath(instanceId);
   if (!existsSync(path)) return [];
 
-  // The log is append-only and unbounded, so walk from the end and stop at the
-  // first record of each command instead of parsing the whole file.
   const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
   const commands = ["up", "verify"];
   const latest = new Map<string, PerfRecord>();
@@ -819,19 +791,23 @@ function lastPerfSummaries(instanceId: string): string[] {
     }
   }
 
-  return commands.flatMap((command) => {
-    const last = latest.get(command);
+  const summaries: string[] = [];
+  for (const command of commands) {
+    const record = latest.get(command);
+    if (record) {
+      summaries.push(
+        `last ${command} ${(record.totalMs / 1000).toFixed(1)}s (${record.at})`,
+      );
+    }
+  }
 
-    return last
-      ? [`last ${command} ${(last.totalMs / 1000).toFixed(1)}s (${last.at})`]
-      : [];
-  });
+  return summaries;
 }
 
 async function measureStep<T>(
   perf: PerfStep[],
   step: string,
-  fn: () => Promise<T>,
+  fn: () => T | Promise<T>,
 ): Promise<T> {
   const start = Date.now();
   const result = await fn();
@@ -869,7 +845,7 @@ function processRssMb(pids: (number | undefined)[]): Map<number, number> {
       if (pid && kb) rss.set(Number(pid), Math.round(Number(kb) / 1024));
     }
   } catch {
-    // A pid that died mid-call just drops out of the map.
+    // a pid that died mid-call just drops out of the map
   }
 
   return rss;
@@ -956,11 +932,8 @@ function loadState(instanceId: string): InstanceState | null {
   return JSON.parse(readFileSync(path, "utf8")) as InstanceState;
 }
 
-/**
- * state.json carries the admin and encryption secrets, so the instance dir is
- * owner-only. chmod repairs paths created before the modes were enforced —
- * mkdir/write modes only apply on creation.
- */
+// state.json carries the admin and encryption secrets, so the instance dir is
+// owner-only. chmod repairs paths created before the modes were enforced.
 function saveState(state: InstanceState): void {
   const dir = instanceDir(state.instanceId);
   const path = join(dir, "state.json");
