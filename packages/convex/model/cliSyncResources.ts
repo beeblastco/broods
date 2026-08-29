@@ -211,6 +211,7 @@ export async function syncAgentResources(
     sandboxIds: Record<string, string>;
     policyIds: Record<string, string>;
     toolIds: Record<string, string>;
+    mcpIds: Record<string, string>;
     envValues: Record<string, string>;
     missingPolicies: Set<string>;
   },
@@ -224,6 +225,7 @@ export async function syncAgentResources(
     sandboxIds,
     policyIds,
     toolIds,
+    mcpIds,
     envValues,
     missingPolicies,
   } = options;
@@ -275,6 +277,7 @@ export async function syncAgentResources(
       sandboxIds,
       policyIds,
       toolIds,
+      mcpIds,
     );
     const flat = fromNestedAgentConfig(nested);
     const runtimeVariables = [...envNames].map((envNameEntry) => ({

@@ -80,6 +80,7 @@ export type ResourceKind =
   | "cron"
   | "skill"
   | "tool"
+  | "mcp"
   | "policy"
   | "channelRecord";
 
@@ -195,6 +196,25 @@ export interface ToolDefinitionConfig<Input = Record<string, unknown>> {
 export type PolicyDefinitionConfig = Omit<PolicyDocument, "version"> & {
   version?: PolicyDocument["version"];
 };
+
+/**
+ * External MCP server registration (#331). Core connects over the stateless
+ * HTTP transport (spec 2026-07-28) at agent registration time and offers the
+ * server's tools as `<name>__<tool>`. The name namespaces those tools, so it
+ * must be 1-32 lowercase letters, digits, or hyphens, starting with a letter.
+ */
+export interface McpServerDefinitionConfig {
+  /** The server's MCP endpoint; http(s), no embedded credentials. */
+  url: string;
+  /**
+   * Extra request headers. Credential-bearing headers (Authorization,
+   * X-Api-Key, ...) must reference an account env var — e.g.
+   * `Bearer ${env("TOKEN")}` — never carry an inline secret.
+   */
+  headers?: Record<string, string>;
+  /** Tool names agents may use from this server; omit to allow all. */
+  allowedTools?: string[];
+}
 
 export type ChannelType =
   | "telegram"
@@ -580,7 +600,10 @@ export type ProviderConfigInput = Partial<
 >;
 
 export type AgentDefinitionConfig = EnvRefString<
-  Pick<AgentConfig, "agent" | "model" | "scheduler" | "session" | "tools">
+  Pick<
+    AgentConfig,
+    "agent" | "model" | "scheduler" | "session" | "tools" | "mcpServers"
+  >
 > & { provider?: ProviderConfigInput } & {
   harness?: HarnessDefinition;
   hooks?: AgentHooks & {
@@ -638,6 +661,8 @@ export type ToolResource<Name extends string = string> = ResourceDefinition<
   Name,
   ToolDefinitionConfig
 >;
+export type McpServerResource<Name extends string = string> =
+  ResourceDefinition<"mcp", Name, McpServerDefinitionConfig>;
 export type PolicyResource<Name extends string = string> = ResourceDefinition<
   "policy",
   Name,
@@ -662,6 +687,7 @@ export type AnyResource =
   | CronResource
   | SkillResource
   | ToolResource
+  | McpServerResource
   | PolicyResource
   | ChannelResource;
 
@@ -938,6 +964,19 @@ export function defineTool<
     name,
     undefined,
     config as ToolDefinitionConfig,
+  );
+}
+
+export function defineMcpServer<const Name extends string>(
+  input: ResourceInput<Name, McpServerDefinitionConfig>,
+): McpServerResource<Name> {
+  const { name, description, ...config } = input;
+
+  return defineResource(
+    "mcp",
+    name,
+    description,
+    config as McpServerDefinitionConfig,
   );
 }
 

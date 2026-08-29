@@ -92,7 +92,12 @@ async function seedUploadedTool(
     project: PROJECT,
     stage: STAGE,
     resources: [toolResource],
-    ids: { skills: {}, tools: { [TOOL_NAME]: toolId }, hooks: {} },
+    ids: {
+      skills: {},
+      tools: { [TOOL_NAME]: toolId },
+      hooks: {},
+      mcpServers: {},
+    },
   });
 
   return toolId;

@@ -7,7 +7,9 @@ Core ships **no built-in external tools**. Every `config.tools` key is one of tw
 - **A provider-defined tool** — a tool the configured AI SDK provider executes itself, named exactly as the provider exposes it on its `tools` namespace. Core resolves the name against the live provider at registry build, so any provider-executed tool the AI SDK ships works with no core change.
 - **An uploaded custom tool** — keyed by its account-scoped `toolId`, with the uploaded manifest supplying the model-facing name, description, and input schema. Pure-compute / fetch-only bundles execute in the in-core V8 isolate tier; bundles that need Node, npm, or native modules execute in the platform tool-runner Lambda (the sandbox tier). Only detached-async execution is still deferred (#82).
 
-Anything the provider does not execute itself belongs in an uploaded custom tool that calls the service through the isolate's SSRF-guarded `ctx.fetch` (isolate tier) or native `fetch` (sandbox tier).
+A third source lives under its own key: **connected MCP servers** (`config.mcpServers`, see [MCP Servers](#connected-mcp-servers) below) resolve a registered external server's tools at registration time and offer each as `<server>__<tool>`.
+
+Anything the provider does not execute itself belongs in an uploaded custom tool that calls the service through the isolate's SSRF-guarded `ctx.fetch` (isolate tier) or native `fetch` (sandbox tier) — or, when the service already speaks MCP, in a connected MCP server.
 
 ```mermaid
 flowchart LR
@@ -369,3 +371,42 @@ export default function exampleLookupTool(context: ToolContext): ToolSet {
 - Use SST secrets only for service-wide fallback credentials; per-account tool credentials belong in encrypted agent config.
 - Return structured data from `execute` instead of pre-formatting prose for the model, use the `ToolSet` interface from vercel-ai sdk.
 - Add approval support through `needsApproval`, not by asking inside the tool implementation. [Implement from vercel=ai sdk](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#tool-execution-approval)
+
+## Connected MCP Servers
+
+An external [MCP](https://modelcontextprotocol.io) server (spec **2026-07-28**, stateless Streamable HTTP only) can be registered per project stage and enabled per agent. Core is the MCP client: at agent registration it connects, lists the server's tools (cached per the listing's own `ttlMs`), and offers each as `<server>__<tool>` alongside every other tool kind. `tools/call` is request/response — one POST per call, no session.
+
+Register a server through the config plane (`POST /v1/mcp?project=&stage=`), the SDK (`defineMcpServer` synced by `broods deploy`, or `account.createMcpServer`), then enable it on an agent:
+
+```jsonc
+{
+  "mcpServers": {
+    "<serverId>": { "enabled": true, "needsApproval": false },
+  },
+}
+```
+
+In a `broods/` project the key is the server's name; the sync rewrites it to the row id:
+
+```ts
+import { defineAgent, defineMcpServer, env } from "broods";
+
+export const search = defineMcpServer({
+  name: "search",
+  url: "https://mcp.example.com/mcp",
+  headers: { Authorization: `Bearer ${env("SEARCH_TOKEN")}` },
+});
+
+export const agent = defineAgent({
+  name: "assistant",
+  // ...model/provider...
+  mcpServers: { [search.name]: { enabled: true } },
+});
+```
+
+Rules that follow from the transport and the policy layer:
+
+- The server name namespaces its tools (`search__query`), so it is 1-32 lowercase letters, digits, or hyphens; unique per stage.
+- Credential-bearing headers (`Authorization`, `X-Api-Key`, ...) must reference an account env var (`Bearer ${NAME}`); inline secrets and URL userinfo are rejected at registration, and a header still carrying an unresolved ref refuses to connect.
+- Per-server OPA rules use the `mcpServerIds` selector on `tool.call`; `needsApproval` on the entry applies to every tool the server exposes; the row's `allowedTools` filters what registers at all.
+- `subscriptions/listen` (server-push list changes) is deliberately unsupported: tool lists refresh when their `ttlMs` expires. MRTR `input_required` results surface as tool errors.

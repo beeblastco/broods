@@ -389,6 +389,7 @@ export function rewriteIdsToNames(
   skillNames: Record<string, string> = {},
   toolNames: Record<string, string> = {},
   hookNames: Record<string, string> = {},
+  mcpNames: Record<string, string> = {},
   policyNames: Record<string, string> = {},
 ): Record<string, unknown> {
   const result = { ...config };
@@ -446,6 +447,14 @@ export function rewriteIdsToNames(
       ]),
     );
   }
+  if (isPlainObject(result.mcpServers)) {
+    result.mcpServers = Object.fromEntries(
+      Object.entries(result.mcpServers).map(([key, value]) => [
+        mcpNames[key] ?? key,
+        value,
+      ]),
+    );
+  }
   if (isPlainObject(result.hooks) && Array.isArray(result.hooks.code)) {
     result.hooks = {
       ...result.hooks,
@@ -480,6 +489,7 @@ export function rewriteResourceRefs(
   sandboxIds: Record<string, string>,
   policyIds: Record<string, string>,
   toolIds: Record<string, string>,
+  mcpIds: Record<string, string> = {},
 ): Record<string, unknown> {
   const result = { ...config };
   if (typeof result.sandbox === "string" && sandboxIds[result.sandbox]) {
@@ -520,6 +530,16 @@ export function rewriteResourceRefs(
     result.tools = Object.fromEntries(
       Object.entries(result.tools).map(([key, value]) => [
         toolIds[key] ?? key,
+        value,
+      ]),
+    );
+  }
+  // `config.mcpServers` keys must end up as mcp row ids; a name that fails to
+  // map fails normalizeMcpServersConfig loudly rather than being left behind.
+  if (isPlainObject(result.mcpServers)) {
+    result.mcpServers = Object.fromEntries(
+      Object.entries(result.mcpServers).map(([key, value]) => [
+        mcpIds[key] ?? key,
         value,
       ]),
     );

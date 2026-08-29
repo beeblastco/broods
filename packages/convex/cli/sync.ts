@@ -76,6 +76,7 @@ const resourceValidator = v.object({
     v.literal("skill"),
     v.literal("tool"),
     v.literal("hook"),
+    v.literal("mcp"),
     v.literal("policy"),
     v.literal("channelRecord"),
   ),
@@ -99,6 +100,7 @@ const idsValidator = v.object({
   skills: v.record(v.string(), v.string()),
   tools: v.record(v.string(), v.string()),
   hooks: v.record(v.string(), v.string()),
+  mcpServers: v.record(v.string(), v.string()),
   policies: v.record(v.string(), v.string()),
   channelRecords: v.record(v.string(), v.string()),
 });
@@ -276,6 +278,7 @@ export const syncManifestBySecretHash = internalMutation({
       sandboxIds: sandboxIds,
       policyIds: policyIds,
       toolIds: externalIds.tools,
+      mcpIds: externalIds.mcpServers,
       envValues: envValues,
       missingPolicies: missingPolicies,
     });
@@ -316,6 +319,7 @@ export const syncManifestBySecretHash = internalMutation({
       skills: externalIds.skills,
       tools: externalIds.tools,
       hooks: externalIds.hooks,
+      mcpServers: externalIds.mcpServers,
       policies: policyIds,
       channelRecords: channelRecordIds,
     };
@@ -467,6 +471,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       skills: v.record(v.string(), v.string()),
       tools: v.record(v.string(), v.string()),
       hooks: v.record(v.string(), v.string()),
+      mcpServers: v.record(v.string(), v.string()),
     }),
     prune: v.optional(v.boolean()),
   },
@@ -486,7 +491,8 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       (entry) =>
         entry.kind === "skill" ||
         entry.kind === "tool" ||
-        entry.kind === "hook",
+        entry.kind === "hook" ||
+        entry.kind === "mcp",
     );
     const desiredKeys = new Set(
       desired.map((entry) => `${entry.kind}:${resourceName(entry.name)}`),
@@ -494,7 +500,7 @@ export const recordExternalResourcesBySecretHash = internalMutation({
 
     for (const resource of desired) {
       const name = resourceName(resource.name);
-      let kind: "skill" | "tool" | "hook";
+      let kind: "skill" | "tool" | "hook" | "mcp";
       let externalId: string | undefined;
       if (resource.kind === "skill") {
         kind = "skill";
@@ -502,6 +508,9 @@ export const recordExternalResourcesBySecretHash = internalMutation({
       } else if (resource.kind === "tool") {
         kind = "tool";
         externalId = args.ids.tools[name];
+      } else if (resource.kind === "mcp") {
+        kind = "mcp";
+        externalId = args.ids.mcpServers[name];
       } else {
         kind = "hook";
         externalId = args.ids.hooks[name];
