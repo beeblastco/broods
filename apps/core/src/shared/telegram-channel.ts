@@ -36,6 +36,10 @@ const TELEGRAM_REQUEST_TIMEOUT_MS = 10_000;
 const TELEGRAM_MEDIA_GROUP_MAX = 10;
 // Telegram serves every static sticker as WebP whatever the set was built from.
 const TELEGRAM_STICKER_MEDIA_TYPE = "image/webp";
+// The answered message is context for this turn, not the turn itself, and
+// Telegram allows 4096 characters, so a long one is quoted only as far as it
+// takes to recognise which message it is.
+const TELEGRAM_REPLY_QUOTE_MAX = 500;
 
 export interface TelegramChannelOptions {
   botUsername?: string;
@@ -159,7 +163,10 @@ export function createTelegramChannel(
           eventId: `${TELEGRAM_INTEGRATION_PREFIX}${update.update_id}`,
           conversationKey: `${TELEGRAM_INTEGRATION_PREFIX}${message.chat.id}`,
           channelName: "telegram",
-          content: parsed.text || skippedStickerText(message.sticker),
+          content: withReplyQuote(
+            parsed.text || skippedStickerText(message.sticker),
+            parsed.replyTo,
+          ),
           ...(attachments.length > 0 ? { attachments: attachments } : {}),
           identity: {
             channelId: String(message.chat.id),
@@ -534,4 +541,28 @@ function verifyWebhookSecret(
   if (a.length !== b.length) return false;
 
   return timingSafeEqual(a, b);
+}
+
+/**
+ * Prefixes the message with the one it answers, the way Telegram shows a reply.
+ *
+ * Telegram draws a reply as a quote of the answered message, but the
+ * conversation the model reads is a flat list in time order, so that quote is
+ * not in it. "and with margin?" then arrives with nothing to attach it to, and
+ * the model has to guess, exactly like a person who scrolled past the quote.
+ *
+ * A reply to a message with no text of its own (a bare photo, a sticker) is
+ * left alone: an empty quote says less than no quote.
+ */
+function withReplyQuote(text: string, repliedTo: Message | undefined): string {
+  const quoted = repliedTo?.text.trim();
+  if (!repliedTo || !quoted) {
+    return text;
+  }
+  const shortened =
+    quoted.length > TELEGRAM_REPLY_QUOTE_MAX
+      ? `${quoted.slice(0, TELEGRAM_REPLY_QUOTE_MAX).trimEnd()}...`
+      : quoted;
+
+  return `> ${repliedTo.author.fullName}: ${shortened.replaceAll("\n", "\n> ")}\n${text}`;
 }

@@ -302,6 +302,81 @@ describe("telegram channel adapter", () => {
     expect(toPerson.kind).toBe("context");
   });
 
+  it("quotes the message a reply answers, and leaves a plain message alone", async () => {
+    const adapter = createGatedAdapter();
+
+    const reply = await adapter.parse(
+      createRequest({
+        update_id: 21,
+        message: createMessage({
+          text: "and with margin?",
+          chat: GROUP_CHAT,
+          reply_to_message: createMessage({
+            text: "here is the template",
+            chat: GROUP_CHAT,
+            from: {
+              id: 99,
+              first_name: "Tracy",
+              username: "tracy_bot",
+              is_bot: true,
+            },
+          }),
+        }),
+      }),
+    );
+
+    if (reply.kind !== "message") {
+      throw new Error("Expected a reply to the bot to be accepted");
+    }
+    expect(reply.message.content).toBe(
+      "> Tracy: here is the template\nand with margin?",
+    );
+
+    const plain = await adapter.parse(
+      createRequest({
+        update_id: 22,
+        message: createMessage({ text: "hello" }),
+      }),
+    );
+
+    if (plain.kind !== "message") {
+      throw new Error("Expected a private message to be accepted");
+    }
+    expect(plain.message.content).toBe("hello");
+  });
+
+  it("truncates a long quote instead of replaying the whole message", async () => {
+    const adapter = createGatedAdapter();
+    const long = "x".repeat(600);
+
+    const parsed = await adapter.parse(
+      createRequest({
+        update_id: 23,
+        message: createMessage({
+          text: "and with margin?",
+          chat: GROUP_CHAT,
+          reply_to_message: createMessage({
+            text: long,
+            chat: GROUP_CHAT,
+            from: {
+              id: 99,
+              first_name: "Tracy",
+              username: "tracy_bot",
+              is_bot: true,
+            },
+          }),
+        }),
+      }),
+    );
+
+    if (parsed.kind !== "message") {
+      throw new Error("Expected a reply to the bot to be accepted");
+    }
+    expect(parsed.message.content).toBe(
+      `> Tracy: ${"x".repeat(500)}...\nand with margin?`,
+    );
+  });
+
   it("answers a bare slash command and one aimed at it, not one aimed elsewhere", async () => {
     const adapter = createGatedAdapter();
 
