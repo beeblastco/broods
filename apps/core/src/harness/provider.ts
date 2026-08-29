@@ -164,48 +164,46 @@ export function modelSettingsFromModelConfig(
 }
 
 /**
- * Account provider options, with the prompt-cache defaults each provider needs
- * to not pay full price for a prefix it already holds. OpenAI caches
- * automatically but routes by `promptCacheKey`, and from GPT-5.6 on the key is
- * required for the match to be dependable; it is hashed because a conversation
- * key names the account, agent and chat it came from. Anthropic caches only
- * when asked, so the top-level `cacheControl` is defaulted on — the system
- * prompt, tools and history are stable across steps, the ideal cache shape.
- * Explicit account config always wins over either default.
+ * Prompt-cache defaults for a conversation run: Anthropic gets an ephemeral
+ * cacheControl (caching there is opt-in per request), OpenAI a promptCacheKey
+ * hashed from the conversation key (prefix routing, required from GPT-5.6 on).
+ * A call without a conversation, like compaction, gets neither: a one-shot
+ * request pays the cache write and never reads it back. Explicit account
+ * config wins over both defaults.
  */
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
   conversationKey?: string,
 ): AgentModelProviderOptions | undefined {
-  let options = agentConfig.model?.providerOptions;
+  const configured = agentConfig.model?.providerOptions;
   const providerName = agentConfig.model?.provider;
-  if (
-    providerName === "anthropic" &&
-    options?.anthropic?.cacheControl === undefined
-  ) {
-    options = {
-      ...options,
+  if (conversationKey === undefined || providerName === undefined) {
+    return configured;
+  }
+  if (providerName === "anthropic") {
+    if (configured?.anthropic?.cacheControl !== undefined) {
+      return configured;
+    }
+
+    return {
+      ...configured,
       anthropic: {
-        ...options?.anthropic,
+        ...configured?.anthropic,
         cacheControl: { type: "ephemeral" },
       },
     };
   }
-  if (
-    conversationKey === undefined ||
-    providerName === undefined ||
-    !STORED_ITEM_PROVIDERS.has(providerName)
-  ) {
-    return options;
+  if (!STORED_ITEM_PROVIDERS.has(providerName)) {
+    return configured;
   }
 
-  const openaiOptions = options?.openai;
+  const openaiOptions = configured?.openai;
   if (openaiOptions?.promptCacheKey !== undefined) {
-    return options;
+    return configured;
   }
 
   return {
-    ...options,
+    ...configured,
     openai: {
       ...openaiOptions,
       promptCacheKey: createHash("sha256")
