@@ -375,6 +375,44 @@ describe("sandbox tool set", () => {
     );
   });
 
+  it("prefixes a fatal setup failure once, not once per catch", async () => {
+    microvmFetchMock.mockImplementationOnce(microvmFetchResponse);
+    microvmFetchMock.mockImplementationOnce(
+      async (_url: string, init: { body: string }) => {
+        const payload = JSON.parse(init.body);
+
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            runtime: payload.runtime,
+            exit_code: null,
+            timed_out: false,
+            duration_ms: 8,
+            stdout: "",
+            stderr: "invalid namespace: must match fs-[a-f0-9]{40}",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+    const write = await tool("write", workspaceCtx());
+
+    // toolError throws, so a `return toolError(...)` inside the try lands in the
+    // tool's own catch. Re-running it there used to prefix the message twice.
+    const message = await write
+      .execute({
+        file_path: "notes.txt",
+        content: "hi",
+      })
+      .then(
+        () => "",
+        (error: Error) => error.message,
+      );
+
+    expect(message).toContain("invalid namespace");
+    expect(message.split("Sandbox setup failed:").length - 1).toBe(1);
+  });
+
   it("mounts the workspace regardless of the deny-all network mode", async () => {
     const bash = await tool(
       "bash",

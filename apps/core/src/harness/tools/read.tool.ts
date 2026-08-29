@@ -11,11 +11,11 @@ import {
   runSandbox,
   s3ReadNumbered,
   sandboxRunMetadata,
-  shellQuote,
   toWorkspaceRelative,
   workspaceParamSchema,
   type SandboxToolContext,
 } from "./filesystem-utils.ts";
+import { shellQuote } from "../sandbox/utils.ts";
 import { toolError, toolText } from "./utils.ts";
 
 interface ReadInput {
@@ -97,9 +97,9 @@ Usage notes:
 
           return toolText(result.stdout);
         } catch (cause) {
-          return toolError(
-            cause instanceof Error ? cause.message : String(cause),
-          );
+          // toolError throws, so an in-try call already landed here. Feeding its
+          // message back through would prefix a fatal setup error a second time.
+          throw cause instanceof Error ? cause : new Error(String(cause));
         }
       },
     }),
