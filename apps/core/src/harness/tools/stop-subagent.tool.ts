@@ -40,6 +40,7 @@ export default function stopSubagentTool(
           accountId: context.accountId,
           agentId: input.agentId,
           conversationKey: record.conversationKey,
+          expectedOwnerTaskId: input.taskId,
         });
 
         return {

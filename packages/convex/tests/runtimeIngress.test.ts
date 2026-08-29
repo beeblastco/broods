@@ -37,6 +37,8 @@ function conversationKeyFor(accountId: string): string {
 /** Builds the common admission arguments for one candidate. */
 function admission(options: {
   activeOwnerOnly?: boolean;
+  expectedOwnerTaskId?: string;
+  ownerTaskId?: string;
   accountId: Id<"accounts">;
   conversationKey: string;
   eventId: string;
@@ -48,6 +50,12 @@ function admission(options: {
   return {
     ...(options.activeOwnerOnly !== undefined
       ? { activeOwnerOnly: options.activeOwnerOnly }
+      : {}),
+    ...(options.expectedOwnerTaskId !== undefined
+      ? { expectedOwnerTaskId: options.expectedOwnerTaskId }
+      : {}),
+    ...(options.ownerTaskId !== undefined
+      ? { ownerTaskId: options.ownerTaskId }
       : {}),
     accountId: options.accountId,
     agentId: "test-agent",
@@ -330,6 +338,7 @@ describe("runtime ingress", () => {
         conversationKey: conversationKey,
         eventId: "owner",
         mode: "reject",
+        ownerTaskId: "owner-task",
       }),
     );
     expect(
@@ -340,6 +349,7 @@ describe("runtime ingress", () => {
           accountId: accountId,
           conversationKey: conversationKey,
           eventId: "active-control",
+          expectedOwnerTaskId: "owner-task",
           mode: "steer",
         }),
       ),
@@ -347,6 +357,20 @@ describe("runtime ingress", () => {
       outcome: "queued",
       status: "queued",
     });
+
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          activeOwnerOnly: true,
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "stale-task-control",
+          expectedOwnerTaskId: "previous-task",
+          mode: "steer",
+        }),
+      ),
+    ).toEqual({ outcome: "not_running" });
 
     const drainedConversationKey = `acct:${accountId}:agent:test-agent:api:drained-conversation`;
     const drainedOwner = await t.mutation(
@@ -383,6 +407,79 @@ describe("runtime ingress", () => {
         accountId: accountId,
         agentId: "test-agent",
         eventId: "after-drain-control",
+      }),
+    ).toBeNull();
+  });
+
+  test("recovers queued work before rejecting control for an expired owner", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "expired-owner",
+        mode: "reject",
+        ownerTaskId: "task-a",
+      }),
+    );
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "queued-followup",
+        mode: "followup",
+        ownerTaskId: "task-a",
+      }),
+    );
+    await t.run(async (ctx) => {
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      await ctx.db.patch(coordinator!._id, { leaseExpiresAt: Date.now() - 1 });
+    });
+
+    expect(
+      await t.mutation(
+        internal.runtimeIngress.accept,
+        admission({
+          activeOwnerOnly: true,
+          accountId: accountId,
+          conversationKey: conversationKey,
+          eventId: "late-control",
+          expectedOwnerTaskId: "task-a",
+          mode: "steer",
+        }),
+      ),
+    ).toMatchObject({
+      outcome: "not_running",
+      recovered: {
+        eventId: "queued-followup",
+        ownerGeneration: 2,
+      },
+    });
+    // Promotion hands the owner slot, task identity included, to the queued work.
+    await t.run(async (ctx) => {
+      const coordinator = await ctx.db
+        .query("runtimeConversationCoordinators")
+        .withIndex("by_conversationKey", (q) =>
+          q.eq("conversationKey", conversationKey),
+        )
+        .unique();
+      expect(coordinator?.ownerEventId).toBe("queued-followup");
+      expect(coordinator?.ownerTaskId).toBe("task-a");
+    });
+    expect(
+      await t.query(internal.runtimeIngress.getStatus, {
+        accountId: accountId,
+        agentId: "test-agent",
+        eventId: "late-control",
       }),
     ).toBeNull();
   });
@@ -637,6 +734,47 @@ describe("runtime ingress", () => {
       error: "Stopped by user at the model boundary",
       stoppedByUser: true,
     });
+  });
+
+  test("does not stop a newer owner for an older task", async () => {
+    const t = runtimeTest();
+    const accountId = await createActiveAccount(t);
+    const conversationKey = conversationKeyFor(accountId);
+    await t.mutation(
+      internal.runtimeIngress.accept,
+      admission({
+        accountId: accountId,
+        conversationKey: conversationKey,
+        eventId: "new-owner",
+        mode: "reject",
+        ownerTaskId: "task-b",
+      }),
+    );
+
+    expect(
+      await t.mutation(internal.runtimeIngress.stopOwner, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        expectedOwnerTaskId: "task-a",
+      }),
+    ).toEqual({ stopped: false, queuedCount: 0 });
+    expect(
+      await t.mutation(internal.runtimeIngress.renewOwner, {
+        conversationKey: conversationKey,
+        ownerEventId: "new-owner",
+        ownerGeneration: 1,
+        leaseTtlMs: 60_000,
+      }),
+    ).toBe("renewed");
+    expect(
+      await t.mutation(internal.runtimeIngress.stopOwner, {
+        accountId: accountId,
+        agentId: "test-agent",
+        conversationKey: conversationKey,
+        expectedOwnerTaskId: "task-b",
+      }),
+    ).toEqual({ stopped: true, queuedCount: 0 });
   });
 
   test("a genuine failure is not flagged stoppedByUser", async () => {

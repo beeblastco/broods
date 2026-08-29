@@ -87,6 +87,8 @@ export type IngressDelivery =
 
 export interface IngressCandidate {
   activeOwnerOnly?: boolean;
+  expectedOwnerTaskId?: string;
+  ownerTaskId?: string;
   accountId: string;
   agentId: string;
   eventId: string;
@@ -175,6 +177,8 @@ export async function acceptIngress(
       requestedMode: candidate.requestedMode,
       deliveryKind: candidate.delivery.kind,
       activeOwnerOnly: candidate.activeOwnerOnly,
+      expectedOwnerTaskId: candidate.expectedOwnerTaskId,
+      ownerTaskId: candidate.ownerTaskId,
       agentConfig: candidate.agentConfig,
       ephemeralSystem: candidate.ephemeralSystem,
     }),

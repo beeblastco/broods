@@ -4,13 +4,30 @@
  */
 
 import { jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
-import { scopedDirectEventId } from "../../shared/runtime-keys.ts";
-import { acceptIngress, type IngressMode } from "../ingress.ts";
+import type { AgentConfig } from "../../shared/domain/agent-config.ts";
+import { logError } from "../../shared/log.ts";
+import {
+  publicConversationKeyFromScoped,
+  scopedDirectEventId,
+} from "../../shared/runtime-keys.ts";
+import { getStorage } from "../../shared/storage.ts";
+import {
+  acceptIngress,
+  type AppliedIngress,
+  type IngressMode,
+} from "../ingress.ts";
+import type {
+  DispatchAppliedIngress,
+  IngressDispatchScope,
+} from "../integrations.ts";
+import type { Session } from "../session.ts";
 import {
   getOwnedSubagent,
   SUBAGENT_TOOL_PROPERTIES,
   subagentNotFound,
   toolError,
+  VIRTUAL_AGENT_PREFIX,
+  withoutNestedSubagents,
   type SubagentToolContext,
   type SubagentToolInput,
 } from "./utils.ts";
@@ -20,8 +37,14 @@ interface UpdateSubagentInput extends SubagentToolInput {
   message: string;
 }
 
+interface UpdateSubagentContext extends SubagentToolContext {
+  agentConfig: AgentConfig;
+  dispatchAppliedIngress?: DispatchAppliedIngress;
+  session: Session;
+}
+
 export default function updateSubagentTool(
-  context: SubagentToolContext,
+  context: UpdateSubagentContext,
 ): ToolSet {
   return {
     update_subagent: tool({
@@ -67,6 +90,8 @@ export default function updateSubagentTool(
           accountId: context.accountId,
           agentId: input.agentId,
           eventId: controlEventId,
+          expectedOwnerTaskId: input.taskId,
+          ownerTaskId: input.taskId,
           conversationKey: record.conversationKey,
           events: events,
           requestedMode: requestedMode,
@@ -78,6 +103,14 @@ export default function updateSubagentTool(
             statusUrl: "",
           },
         });
+        if (admission.recovered) {
+          await dispatchRecoveredSubagentWork(
+            context,
+            input,
+            record.conversationKey,
+            admission.recovered,
+          );
+        }
         if (admission.outcome === "not_running") {
           return { status: "not_running" };
         }
@@ -90,5 +123,75 @@ export default function updateSubagentTool(
         return { status: "queued", mode: input.mode };
       },
     }),
+  };
+}
+
+/**
+ * Best-effort dispatch of the queued work that admission recovered from an
+ * expired child owner. Never throws: the control's own answer must win, and a
+ * stranded envelope re-recovers on the next admission after its lease lapses.
+ */
+async function dispatchRecoveredSubagentWork(
+  context: UpdateSubagentContext,
+  input: UpdateSubagentInput,
+  conversationKey: string,
+  recovered: AppliedIngress,
+): Promise<void> {
+  try {
+    if (!context.dispatchAppliedIngress) {
+      throw new Error("No applied-ingress dispatcher is wired for this run");
+    }
+    const agentConfig = await resolveSubagentAgentConfig(context, input);
+    if (!agentConfig) {
+      throw new Error(`No agent config found for ${input.agentId}`);
+    }
+    await context.dispatchAppliedIngress(
+      subagentDispatchScope(context, input, conversationKey, agentConfig),
+      recovered,
+    );
+  } catch (error) {
+    logError("Recovered subagent ingress dispatch failed", {
+      conversationKey: conversationKey,
+      eventId: recovered.eventId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function resolveSubagentAgentConfig(
+  context: UpdateSubagentContext,
+  input: UpdateSubagentInput,
+): Promise<AgentConfig | null> {
+  if (input.agentId === `${VIRTUAL_AGENT_PREFIX}${input.taskId}`) {
+    return withoutNestedSubagents(context.agentConfig);
+  }
+
+  const agent = await getStorage().agents.getById(
+    context.accountId,
+    input.agentId,
+  );
+
+  return agent ? withoutNestedSubagents(agent.config) : null;
+}
+
+function subagentDispatchScope(
+  context: UpdateSubagentContext,
+  input: UpdateSubagentInput,
+  conversationKey: string,
+  agentConfig: AgentConfig,
+): IngressDispatchScope {
+  return {
+    accountId: context.accountId,
+    agentId: input.agentId,
+    agentConfig: agentConfig,
+    conversationKey: conversationKey,
+    publicConversationKey: publicConversationKeyFromScoped(
+      conversationKey,
+      context.accountId,
+      input.agentId,
+    ),
+    endpointId: context.session.endpointId,
+    projectSlug: context.session.projectSlug,
+    stageSlug: context.session.stageSlug,
   };
 }

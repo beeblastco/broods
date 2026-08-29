@@ -902,6 +902,7 @@ export const runtimeConversationCoordinatorsFields = {
   nextSequence: v.number(),
   ownerGeneration: v.number(),
   ownerEventId: v.optional(v.string()),
+  ownerTaskId: v.optional(v.string()),
   stopRequestedGeneration: v.optional(v.number()),
   leaseExpiresAt: v.optional(v.number()),
   queuedCount: v.number(),
@@ -921,6 +922,7 @@ export const runtimeIngressEnvelopesFields = {
   events: v.array(v.any()),
   delivery: v.any(),
   requestedMode: ingressModeValidator,
+  ownerTaskId: v.optional(v.string()),
   // Per-request execution context so a queued envelope runs with its own
   // resolved config and one-turn system, never the previous owner's.
   agentConfig: v.optional(v.any()),

@@ -3,6 +3,7 @@
  */
 
 import { afterEach, expect, it, mock } from "bun:test";
+import type { Session } from "../src/harness/session.ts";
 import { runtime } from "../src/shared/convex/runtime.ts";
 import {
   createSubagentTaskId,
@@ -93,9 +94,12 @@ it("checks, steers, continues, and stops its own persistent child", async () => 
   ]);
   expect(mutations[0]?.args.requestedMode).toBe("steer");
   expect(mutations[0]?.args.activeOwnerOnly).toBe(true);
+  expect(mutations[0]?.args.expectedOwnerTaskId).toBe(taskId);
   expect(mutations[1]?.args.requestedMode).toBe("followup");
   expect(mutations[1]?.args.activeOwnerOnly).toBe(true);
+  expect(mutations[1]?.args.expectedOwnerTaskId).toBe(taskId);
   expect(mutations[2]?.args.conversationKey).toBe(conversationKey);
+  expect(mutations[2]?.args.expectedOwnerTaskId).toBe(taskId);
 });
 
 it("preserves a completed subagent response as structured output", async () => {
@@ -157,6 +161,60 @@ it("does not take ownership when a child finishes during an update", async () =>
       message: "change direction",
     }),
   ).resolves.toEqual({ status: "not_running" });
+});
+
+it("dispatches recovered queued work while rejecting a late update", async () => {
+  const taskId = createSubagentTaskId(PARENT_EVENT_ID);
+  const agentId = `virtual_subagent_${taskId}`;
+  const childEventId = scopedDirectEventId(ACCOUNT_ID, agentId, taskId);
+  const conversationKey = scopedDirectConversationKey(
+    ACCOUNT_ID,
+    agentId,
+    "subagent-persistent-test",
+  );
+  const recovered = {
+    eventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
+    events: [{ role: "user", content: "queued" }],
+    delivery: {
+      kind: "async",
+      publicEventId: "queued",
+      publicConversationKey: "subagent-persistent-test",
+      statusUrl: "",
+    },
+    requestedMode: "followup",
+    appliedMode: "followup",
+    appliedToEventId: scopedDirectEventId(ACCOUNT_ID, agentId, "queued"),
+    contributingEventIds: [scopedDirectEventId(ACCOUNT_ID, agentId, "queued")],
+    ownerGeneration: 2,
+  } as const;
+  runtime.query = mock(async () => ({
+    accountId: ACCOUNT_ID,
+    eventId: childEventId,
+    conversationKey: conversationKey,
+    status: "processing",
+    createdAt: "2026-08-13T00:00:00.000Z",
+    updatedAt: "2026-08-13T00:00:00.000Z",
+    expiresAt: Date.now() + 1_000,
+  })) as never;
+  runtime.mutate = mock(async () => ({
+    outcome: "not_running",
+    recovered: recovered,
+  })) as never;
+  const dispatchAppliedIngress = mock(
+    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
+  );
+  const tools = await subagentTools(PARENT_EVENT_ID, dispatchAppliedIngress);
+
+  await expect(
+    execute(tools.update_subagent, {
+      taskId: taskId,
+      agentId: agentId,
+      mode: "continue",
+      message: "continue",
+    }),
+  ).resolves.toEqual({ status: "not_running" });
+  expect(dispatchAppliedIngress).toHaveBeenCalledTimes(1);
+  expect(dispatchAppliedIngress.mock.calls[0]?.[1]).toEqual(recovered);
 });
 
 it("reports a late stop as not running without trusting stale task status", async () => {
@@ -266,14 +324,30 @@ it("rejects a durable record with a mismatched account", async () => {
   ).rejects.toThrow(`Error: no subagent task found for ${taskId}`);
 });
 
-async function subagentTools(parentEventId: string) {
+async function subagentTools(
+  parentEventId: string,
+  dispatchAppliedIngress = mock(
+    async (_scope: unknown, _ingress: unknown): Promise<void> => {},
+  ),
+) {
   const [{ default: getStatus }, { default: update }, { default: stop }] =
     await Promise.all([
       import("../src/harness/tools/get-subagent-status.tool.ts"),
       import("../src/harness/tools/update-subagent.tool.ts"),
       import("../src/harness/tools/stop-subagent.tool.ts"),
     ]);
-  const context = { accountId: ACCOUNT_ID, eventId: parentEventId };
+  const context = {
+    accountId: ACCOUNT_ID,
+    agentConfig: {},
+    dispatchAppliedIngress: dispatchAppliedIngress,
+    eventId: parentEventId,
+    // The update tool reads only the session's dispatch scope fields.
+    session: {
+      endpointId: undefined,
+      projectSlug: undefined,
+      stageSlug: undefined,
+    } as unknown as Session,
+  };
 
   return {
     get_subagent_status: getStatus(context).get_subagent_status!,

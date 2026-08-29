@@ -105,6 +105,7 @@ import {
 } from "./async-agent-result.ts";
 import {
   getIngressStatus,
+  type AppliedIngress,
   type IngressMode,
   type IngressStatusRecord,
   type PublicDeploymentIngress,
@@ -177,6 +178,11 @@ export type IngressDispatchScope = Pick<
   | "projectSlug"
   | "stageSlug"
 >;
+
+export type DispatchAppliedIngress = (
+  scope: IngressDispatchScope,
+  ingress: AppliedIngress,
+) => Promise<void>;
 
 export interface AsyncDirectInboundEvent extends DirectInboundEvent {
   statusUrl: string;

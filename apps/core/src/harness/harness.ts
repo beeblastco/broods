@@ -61,6 +61,7 @@ import {
 import { recordTaskUsage } from "../shared/telemetry.ts";
 import type { RunAsyncToolDispatch } from "./async-tools.ts";
 import type { RunSessionMessageDispatch } from "./ingress.ts";
+import type { DispatchAppliedIngress } from "./integrations.ts";
 import {
   applyMessageSendingHook,
   createAgentHookDispatcher,
@@ -194,6 +195,7 @@ export interface SubagentParentContext {
 
 // Optional per-run wiring owned by the request handler.
 export interface AgentLoopOptions {
+  dispatchAppliedIngress?: DispatchAppliedIngress;
   dispatchSubagents?: RunSubagentDispatch;
   dispatchAsyncTools?: RunAsyncToolDispatch;
   dispatchSessionMessage?: RunSessionMessageDispatch;
@@ -494,6 +496,7 @@ export async function runAgentLoop(
         modelProvider: configuredModel.provider,
         session: session,
         dispatchAsyncTools: options.dispatchAsyncTools,
+        dispatchAppliedIngress: options.dispatchAppliedIngress,
         dispatchSessionMessage: options.dispatchSessionMessage,
         onSandboxCpu: recordSandboxCpu,
         approvalRequirements: configuredApprovals,

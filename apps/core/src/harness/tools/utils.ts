@@ -6,6 +6,7 @@
 import type { JSONValue } from "@ai-sdk/provider";
 import type { ToolResultOutput } from "@ai-sdk/provider-utils";
 import type { JSONSchema7, UserContent } from "ai";
+import type { AgentConfig } from "../../shared/domain/agent-config.ts";
 import {
   parseAccountAgentScopedKey,
   scopedDirectEventId,
@@ -15,6 +16,8 @@ import {
   getAsyncAgentResult,
   type AsyncAgentResultRecord,
 } from "../async-agent-result.ts";
+
+export const VIRTUAL_AGENT_PREFIX = "virtual_subagent_";
 
 export interface SubagentToolContext {
   accountId: string;
@@ -157,6 +160,17 @@ export function normalizeToolResultOutput(output: unknown): ToolResultOutput {
   throw new TypeError(
     "Tool output must be a string, a JSON-compatible value, or a valid ToolResultOutput",
   );
+}
+
+/** Child agents never spawn their own subagents, whatever the base config says. */
+export function withoutNestedSubagents(config: AgentConfig): AgentConfig {
+  return {
+    ...config,
+    subagent: {
+      ...config.subagent,
+      enabled: false,
+    },
+  };
 }
 
 function formatJSONValue(value: JSONValue): string {

@@ -120,6 +120,8 @@ type PublicDeploymentIngress = {
 export const accept = internalMutation({
   args: {
     activeOwnerOnly: v.optional(v.boolean()),
+    expectedOwnerTaskId: v.optional(v.string()),
+    ownerTaskId: v.optional(v.string()),
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
@@ -158,10 +160,9 @@ export const accept = internalMutation({
     const prepared = await prepareAdmissionCoordinator(ctx, args, now);
     let coordinator = prepared.coordinator;
     const queue = prepared.queue;
-
-    if (args.activeOwnerOnly === true && !hasActiveOwner(coordinator, now)) {
-      return { outcome: "not_running" as const };
-    }
+    // Fenced before recovery: a late control must not claim the owner slot
+    // that recovery is about to hand to already-queued work.
+    const lateControl = isLateControl(args, coordinator, now);
 
     // Durable FIFO recovery: when the owner lease expired with work still
     // queued, the oldest queued group must run before this new arrival.
@@ -177,6 +178,13 @@ export const accept = internalMutation({
       if (recovered) {
         coordinator = (await ctx.db.get(coordinator._id))!;
       }
+    }
+
+    if (lateControl) {
+      return {
+        outcome: "not_running" as const,
+        ...(recovered ? { recovered: recovered } : {}),
+      };
     }
 
     const busy = hasActiveOwner(coordinator, now);
@@ -234,6 +242,7 @@ export const accept = internalMutation({
       nextSequence: sequence + 1,
       ownerGeneration: ownerGeneration,
       ownerEventId: args.eventId,
+      ownerTaskId: args.ownerTaskId,
       stopRequestedGeneration: undefined,
       leaseExpiresAt: now + args.leaseTtlMs,
       updatedAt: now,
@@ -751,6 +760,7 @@ export const stopOwner = internalMutation({
     accountId: v.id("accounts"),
     agentId: v.string(),
     conversationKey: v.string(),
+    expectedOwnerTaskId: v.optional(v.string()),
   },
   returns: v.object({ stopped: v.boolean(), queuedCount: v.number() }),
   handler: async (
@@ -761,7 +771,12 @@ export const stopOwner = internalMutation({
     assertConversationScope(args.accountId, args.agentId, args.conversationKey);
     const now = Date.now();
     const coordinator = await getCoordinator(ctx, args.conversationKey);
-    if (!coordinator || !hasActiveOwner(coordinator, now)) {
+    if (
+      !coordinator ||
+      !hasActiveOwner(coordinator, now) ||
+      (args.expectedOwnerTaskId !== undefined &&
+        coordinator.ownerTaskId !== args.expectedOwnerTaskId)
+    ) {
       return { stopped: false, queuedCount: coordinator?.queuedCount ?? 0 };
     }
     await ctx.db.patch(coordinator._id, {
@@ -800,6 +815,7 @@ export const takeNext = internalMutation({
       await ctx.db.patch(coordinator._id, {
         ...queue,
         ownerEventId: undefined,
+        ownerTaskId: undefined,
         stopRequestedGeneration: undefined,
         leaseExpiresAt: undefined,
         updatedAt: now,
@@ -846,6 +862,7 @@ function buildAdmissionEnvelope(
     events: unknown[];
     delivery: unknown;
     requestedMode: Infer<typeof ingressModeValidator>;
+    ownerTaskId?: string;
     agentConfig?: unknown;
     ephemeralSystem?: unknown[];
     sizeBytes: number;
@@ -868,6 +885,9 @@ function buildAdmissionEnvelope(
     events: args.events,
     delivery: args.delivery,
     requestedMode: args.requestedMode,
+    ...(args.ownerTaskId !== undefined
+      ? { ownerTaskId: args.ownerTaskId }
+      : {}),
     ...(args.agentConfig !== undefined
       ? { agentConfig: args.agentConfig }
       : {}),
@@ -1067,6 +1087,24 @@ function hasActiveOwner(
 }
 
 /**
+ * An `activeOwnerOnly` admission is late when the conversation has no live
+ * owner, or the live owner is not the task the control was aimed at.
+ */
+function isLateControl(
+  args: { activeOwnerOnly?: boolean; expectedOwnerTaskId?: string },
+  coordinator: Doc<"runtimeConversationCoordinators">,
+  now: number,
+): boolean {
+  if (args.activeOwnerOnly !== true) return false;
+  if (!hasActiveOwner(coordinator, now)) return true;
+
+  return (
+    args.expectedOwnerTaskId !== undefined &&
+    coordinator.ownerTaskId !== args.expectedOwnerTaskId
+  );
+}
+
+/**
  * Coordinator stage of `accept`: loads or creates the conversation
  * coordinator, verifies its scope, pins the latest channel target, and
  * reconciles queue counters after expiring stale queued work and a stale
@@ -1201,6 +1239,7 @@ async function promoteQueuedGroup(
   );
   await ctx.db.patch(coordinator._id, {
     ownerEventId: appliedToEventId,
+    ownerTaskId: first.ownerTaskId,
     ownerGeneration: options.ownerGeneration,
     stopRequestedGeneration: undefined,
     queuedCount: Math.max(0, queue.queuedCount - selected.length),
