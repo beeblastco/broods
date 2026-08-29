@@ -164,34 +164,48 @@ export function modelSettingsFromModelConfig(
 }
 
 /**
- * Account provider options, with a prompt cache key derived from the caller's
- * conversation when the provider needs one. OpenAI routes a request to the
- * machine holding a matching prefix by this key, and from GPT-5.6 on it is
- * required for that match to be dependable — without it a conversation pays
- * full price for a prefix the provider already has. The key is hashed because
- * a conversation key names the account, agent and chat it came from.
+ * Account provider options, with the prompt-cache defaults each provider needs
+ * to not pay full price for a prefix it already holds. OpenAI caches
+ * automatically but routes by `promptCacheKey`, and from GPT-5.6 on the key is
+ * required for the match to be dependable; it is hashed because a conversation
+ * key names the account, agent and chat it came from. Anthropic caches only
+ * when asked, so the top-level `cacheControl` is defaulted on — the system
+ * prompt, tools and history are stable across steps, the ideal cache shape.
+ * Explicit account config always wins over either default.
  */
 export function providerOptionsFromModelConfig(
   agentConfig: AgentConfig,
   conversationKey?: string,
 ): AgentModelProviderOptions | undefined {
-  const configured = agentConfig.model?.providerOptions;
+  let options = agentConfig.model?.providerOptions;
   const providerName = agentConfig.model?.provider;
+  if (
+    providerName === "anthropic" &&
+    options?.anthropic?.cacheControl === undefined
+  ) {
+    options = {
+      ...options,
+      anthropic: {
+        ...options?.anthropic,
+        cacheControl: { type: "ephemeral" },
+      },
+    };
+  }
   if (
     conversationKey === undefined ||
     providerName === undefined ||
     !STORED_ITEM_PROVIDERS.has(providerName)
   ) {
-    return configured;
+    return options;
   }
 
-  const openaiOptions = configured?.openai;
+  const openaiOptions = options?.openai;
   if (openaiOptions?.promptCacheKey !== undefined) {
-    return configured;
+    return options;
   }
 
   return {
-    ...configured,
+    ...options,
     openai: {
       ...openaiOptions,
       promptCacheKey: createHash("sha256")
