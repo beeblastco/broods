@@ -47,7 +47,9 @@ and **workspace scoping** (a run can only touch its own files).
   outlive the reservation. So the mount is still the only storage that survives the sandbox
   itself — the gate is about that, not about how long the machine happens to stick around.
   (A workspace-less `sandbox: true` run has no namespace to key a reservation on, so it
-  reserves on a key derived per agent — or on the `options.reservationKey` you pin.)
+  reserves on a key derived per agent — or on the `options.reservationKey` you pin. Both
+  forms are account-scoped before they reach the reservation registry, so no key an
+  author writes can name another account's machine.)
   See [Network](./lambda.md) for the egress boundary, which is a genuine security control.
 - The workspace and skills S3 buckets **block public access**.
 

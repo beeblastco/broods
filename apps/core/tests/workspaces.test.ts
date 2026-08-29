@@ -9,6 +9,7 @@ import {
   agentSandboxReservation,
   agentSandboxReservationKey,
   isolatedWorkspaceNamespace,
+  pinnedSandboxReservationKey,
   resolveAgentRuntime,
   workspaceNamespace,
 } from "../src/shared/workspaces.ts";
@@ -122,14 +123,31 @@ describe("agentSandboxReservation", () => {
     );
   });
 
-  it("returns the pinned key rather than a derived one", () => {
+  it("scopes a pinned key to its account rather than passing it raw", () => {
     const pinned = {
       ...persistent,
       options: { reservationKey: "team-shared" },
     };
     expect(agentSandboxReservation(pinned, "acct_1", "ag_1", "sb_1")).toBe(
+      pinnedSandboxReservationKey("acct_1", "team-shared"),
+    );
+    // Raw pinned text must never reach the registry: the lookup is not
+    // account-checked, so an unscoped key could name another account's machine.
+    expect(agentSandboxReservation(pinned, "acct_1", "ag_1", "sb_1")).not.toBe(
       "team-shared",
     );
+    expect(pinnedSandboxReservationKey("acct_1", "team-shared")).not.toBe(
+      pinnedSandboxReservationKey("acct_2", "team-shared"),
+    );
+    // Nor may a pinned string collide with a key the runtime derives itself.
+    expect(
+      agentSandboxReservation(
+        { ...persistent, options: { reservationKey: "ag_1:sb_1" } },
+        "acct_1",
+        "ag_1",
+        "sb_1",
+      ),
+    ).not.toBe(agentSandboxReservationKey("acct_1", "ag_1", "sb_1"));
   });
 
   it("reserves nothing without persistence or an identity to derive from", () => {
@@ -403,7 +421,7 @@ describe("resolveAgentRuntime", () => {
     expect(resolved.workspaces[0]?.sandbox?.options).toBeUndefined();
   });
 
-  it("leaves a pinned reservation key and a non-persistent sandbox alone", async () => {
+  it("stamps a pinned key in account-scoped form and leaves a non-persistent sandbox alone", async () => {
     setStorageForTests({
       sandboxConfigs: {
         getById: async (_accountId: string, id: string) => ({
@@ -426,8 +444,11 @@ describe("resolveAgentRuntime", () => {
       { sandbox: "sb_pinned" },
       { accountId: "acct_1", agentId: "ag_1" },
     );
-    // A pinned key deliberately names the machine; derivation must not overwrite it.
-    expect(pinned.sandbox?.options?.reservationKey).toBe("team-shared");
+    // A pinned key deliberately names the machine; derivation must not replace
+    // it, but the registry only ever sees it in account-scoped form.
+    expect(pinned.sandbox?.options?.reservationKey).toBe(
+      pinnedSandboxReservationKey("acct_1", "team-shared"),
+    );
 
     const ephemeral = await resolveAgentRuntime(
       { sandbox: "sb_plain" },

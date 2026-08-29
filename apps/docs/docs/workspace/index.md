@@ -168,7 +168,8 @@ than one built from the old record's image.
 
 Set `options.reservationKey` to name the reservation yourself. Two sandboxes carrying the
 same key share one machine, which is the way to put several agents on one deliberately.
-Either way the workspace mount is the only storage that outlives the sandbox.
+Keys are scoped to your account: the same string on another account names a different
+machine. Either way the workspace mount is the only storage that outlives the sandbox.
 
 ## permissionMode
 

@@ -108,6 +108,7 @@ export type ResourceInput<Name extends string, Config> = {
  * Provider-specific sandbox knobs. `reservationKey` names the reserved machine a
  * `persistent` sandbox reconnects to when no workspace is mounted; unset, each
  * agent gets its own, and pinning one string on two sandboxes shares a machine.
+ * Keys are scoped to the account, so they cannot reach another account's machine.
  */
 export type SandboxDefinitionOptions = Record<string, unknown> & {
   reservationKey?: string;

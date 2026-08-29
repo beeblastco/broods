@@ -91,14 +91,14 @@ export function agentSandboxReservation(
   agentId: string | undefined,
   sandboxId: string,
 ): string | undefined {
-  if (sandbox.persistent !== true) {
+  if (sandbox.persistent !== true || !accountId) {
     return undefined;
   }
   const pinned = sandbox.options?.reservationKey;
   if (typeof pinned === "string" && pinned.trim().length > 0) {
-    return pinned;
+    return pinnedSandboxReservationKey(accountId, pinned.trim());
   }
-  if (!accountId || !agentId) {
+  if (!agentId) {
     return undefined;
   }
 
@@ -117,6 +117,19 @@ export function agentSandboxReservationKey(
   sandboxId: string,
 ): string {
   return normalizeFilesystemNamespace(`${accountId}:${agentId}:${sandboxId}`);
+}
+
+/**
+ * Scope an author-pinned reservation key to its account. The registry lookup is
+ * keyed by reservation key alone, so raw pinned text must never reach it: an
+ * unscoped key could name, and reconnect to, another account's reserved machine.
+ * The same string within one account still maps to one machine.
+ */
+export function pinnedSandboxReservationKey(
+  accountId: string,
+  reservationKey: string,
+): string {
+  return normalizeFilesystemNamespace(`${accountId}:pinned:${reservationKey}`);
 }
 
 /** Derive the shared filesystem namespace for a workspace record. */
