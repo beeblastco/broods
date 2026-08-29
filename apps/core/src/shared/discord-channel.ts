@@ -201,6 +201,10 @@ export function createDiscordChannel(
   return {
     name: "discord",
 
+    rehydrateAttachment: function (attachment) {
+      return discord.rehydrateAttachment(attachment);
+    },
+
     canHandle: function (req) {
       return (
         "x-signature-ed25519" in req.headers ||

@@ -158,6 +158,13 @@ export interface ChannelAdapter {
     source: Record<string, unknown>,
     replyIn: ChannelReplyIn,
   ): Record<string, unknown>;
+  /**
+   * Rebuild the reader for an attachment named only by its `fetchMetadata`,
+   * so a picture can be downloaded again on a later turn. Providers whose SDK
+   * adapter implements it delegate straight to the transport; the rest omit it
+   * and their attachments are re-read from the URL they arrived with.
+   */
+  rehydrateAttachment?(attachment: Attachment): Attachment;
 }
 
 /**

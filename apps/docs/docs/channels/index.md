@@ -98,8 +98,19 @@ sniff only identifies a container, since a `.docx` really is a zip. An
 attachment that cannot be read becomes a line of text saying so, so one failed
 download costs a picture rather than the message.
 
-An agent with no workspace attached still sees its attachments for the turn they
-arrive in, but nothing is stored and the note says so.
+An agent with no workspace attached stores nothing, and still handles media.
+The bytes reach the model on the turn they arrive, and the message keeps a
+reference to the copy the channel itself holds, so a later turn reads the file
+again through that channel with its own credentials. Nothing is written to
+storage and no bucket appears behind the owner's back — the trade is that how
+long media keeps working is the channel's answer: a Telegram file id lasts
+indefinitely, a Discord link expires within a day. A file the channel no longer
+serves becomes a line of text saying so, in the message where the picture was.
+
+Attach a workspace when media has to outlive the channel's own retention, or
+when the agent needs to open the file rather than look at it: only a stored file
+can be read with `read` or `bash`, which is what turns a voice note into a
+transcription job or a spreadsheet into something to compute over.
 
 The URL names no agent. Whichever of the account's agents holds credentials
 that verify the request receives it — that agent's adapter parses the request

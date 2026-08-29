@@ -38,7 +38,11 @@ import {
   type ResolvedWorkspace,
 } from "../shared/workspaces.ts";
 import type { AsyncToolDelivery } from "./async-tool-result.ts";
-import { ingestInboundAttachments } from "./channel-media.ts";
+import {
+  ingestInboundAttachments,
+  MEDIA_REFERENCE_SCHEME,
+  rehydrateStoredMedia,
+} from "./channel-media.ts";
 import {
   compactSessionContext,
   isCompactionSummaryMessage,
@@ -459,9 +463,15 @@ export class Session {
     // harness passes this through prepareStep so long-running tool loops can
     // refresh system prompt parts without duplicating old system rows.
     const systemContextSnapshot = createSystemContextSnapshot(entries);
-    let messages = projectEntriesToMessages(
-      activeEntries,
-      modelIdentityFromModelConfig(this.agentConfig),
+    // Media the row only points at is read back before anything else looks at
+    // the history: compaction, the system prompt and the model all see the
+    // same messages, and none of them should have to know how it got there.
+    let messages = await rehydrateStoredMedia(
+      projectEntriesToMessages(
+        activeEntries,
+        modelIdentityFromModelConfig(this.agentConfig),
+      ),
+      this.agentConfig,
     );
     const system = await this.buildSystemPromptParts(
       systemContextSnapshot.messages,
@@ -1012,17 +1022,16 @@ export async function ingestChannelAttachments(
     // write to when the model names none.
     workspace: runtimeConfig.workspaces[0],
   });
-  const durable =
-    parts.durable.length > 0
-      ? appendToLatestUserEvent(events, parts.durable)
-      : events;
 
   return {
-    events: durable,
+    events:
+      parts.stored.length > 0
+        ? appendToLatestUserEvent(events, parts.stored)
+        : events,
     turnEvents:
-      parts.transient.length > 0
-        ? appendToLatestUserEvent(durable, parts.transient)
-        : durable,
+      parts.turn.length > 0
+        ? appendToLatestUserEvent(events, parts.turn)
+        : events,
   };
 }
 
@@ -1558,7 +1567,10 @@ function isStorableMediaReference(
     return isStorableMediaReference(value.url);
   }
 
-  return typeof value === "string" && /^https?:\/\//i.test(value);
+  return (
+    typeof value === "string" &&
+    (/^https?:\/\//i.test(value) || value.startsWith(MEDIA_REFERENCE_SCHEME))
+  );
 }
 
 function toStoredConversationEvent<

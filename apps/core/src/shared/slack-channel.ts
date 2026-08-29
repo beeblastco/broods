@@ -398,6 +398,10 @@ export function createSlackChannel(
   return {
     name: "slack",
 
+    rehydrateAttachment: function (attachment) {
+      return slack.rehydrateAttachment(attachment);
+    },
+
     canHandle: function (req) {
       return "x-slack-signature" in req.headers;
     },

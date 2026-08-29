@@ -86,6 +86,10 @@ export function createTelegramChannel(
   return {
     name: "telegram",
 
+    rehydrateAttachment: function (attachment) {
+      return transport.rehydrateAttachment(attachment);
+    },
+
     canHandle: function (req) {
       return "x-telegram-bot-api-secret-token" in req.headers;
     },

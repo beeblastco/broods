@@ -12,11 +12,19 @@
  * Whatever the model cannot read natively still arrives. It becomes a saved
  * workspace file the agent can open with `read` or `bash`, so a voice note is a
  * transcription job rather than a failed turn.
+ *
+ * An agent with no workspace stores nothing and keeps the media anyway: the
+ * message row holds a reference to the file the channel still hosts, and the
+ * bytes are read from the channel again whenever a later turn replays that
+ * message. How long that keeps working is the channel's answer, not ours —
+ * Telegram serves a file id forever, a Discord link dies within a day.
  */
 
 import { detectMediaType, mediaTypeToExtension } from "@ai-sdk/provider-utils";
-import type { UserContent } from "ai";
+import type { ModelMessage, UserContent } from "ai";
 import type { Attachment } from "chat";
+import type { AgentConfig } from "../shared/domain/agent-config.ts";
+import { channelAdapterFromConfig } from "./integrations.ts";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import type { AccountModelProviderName } from "@broods/convex/model/modelProviders";
@@ -36,6 +44,19 @@ import {
 
 /** Where an inbound attachment lands, relative to the workspace root. */
 const MEDIA_DIRECTORY = "media";
+
+/**
+ * The scheme naming a file the channel still holds. Its own scheme, not
+ * `https:`, because nothing but this module may resolve it: the model provider
+ * would fetch a bare URL itself, without the bot token it needs and without a
+ * way to fail softly when the file is gone.
+ */
+export const MEDIA_REFERENCE_SCHEME = "broods-media:";
+
+// Bytes read back from a channel, kept so the same picture is not downloaded
+// again for every turn that replays it. Small on purpose: core's pod has a
+// gigabyte for everything, and the cache is a courtesy, not the storage.
+const MEDIA_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 
 // One ceiling for everything stored, matching the public media route: past it
 // the route answers 413 and the link the model was handed would be dead.
@@ -81,16 +102,32 @@ const PROVIDER_NATIVE_MEDIA: Partial<
 
 type UserContentPart = Exclude<UserContent, string>[number];
 
+// Least-recently-used first, which is the order `cacheMedia` evicts in.
+const mediaCache = new Map<string, Buffer>();
+let mediaCacheBytes = 0;
+
 /**
- * The two halves of an ingested message, split by what may be persisted.
- * Durable parts are sealed links and text — safe in the queue and the stored
- * conversation. Transient parts carry raw bytes for an agent with no workspace:
- * the live turn sees them, but they must never be written into a queued or
- * stored record, where a 6 MB picture becomes an 8 MB JSON row.
+ * One ingested message in its two forms. `turn` is what the model reads now:
+ * sealed links, and raw bytes for an agent with no workspace. `stored` is what
+ * the row keeps: the same sealed links, or a reference that reads the bytes
+ * again later. Bytes never appear in `stored`, where a 6 MB picture would
+ * become an 8 MB JSON row.
  */
 export interface IngestedMediaParts {
-  durable: UserContentPart[];
-  transient: UserContentPart[];
+  stored: UserContentPart[];
+  turn: UserContentPart[];
+}
+
+/** A file a channel still holds, named well enough to ask for it again. */
+interface MediaReference {
+  channelName: string;
+  mediaType: string;
+  name: string;
+  /** What the channel's own adapter needs: a Telegram file id, a Slack URL. */
+  metadata: Record<string, string>;
+  type: Attachment["type"];
+  /** The reference as stored, which is also what the byte cache is keyed by. */
+  url: string;
 }
 
 export interface InboundMediaContext {
@@ -114,6 +151,8 @@ interface StoredAttachment {
   data?: Buffer;
   /** Set once the bytes are in the workspace. */
   path?: string;
+  /** How to ask the channel for these bytes again, when nothing stored them. */
+  reference?: string;
   /** The sealed link the model is handed. Absent when there is no workspace. */
   url?: string;
   /** Why the bytes are not available, for the note the agent reads. */
@@ -141,34 +180,45 @@ export async function ingestInboundAttachments(
   context: InboundMediaContext,
 ): Promise<IngestedMediaParts> {
   if (attachments.length === 0) {
-    return { durable: [], transient: [] };
+    return { stored: [], turn: [] };
   }
   const accepted = attachments.slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
   const overflow = attachments.length - accepted.length;
-  const stored = await Promise.all(
+  const read = await Promise.all(
     accepted.map((attachment, index): Promise<StoredAttachment> =>
       storeAttachment(attachment, index, context),
     ),
   );
 
-  const ingested = stored.map((item): IngestedAttachment => ({
+  const ingested = read.map((item): IngestedAttachment => ({
     stored: item,
-    part: nativePart(item, context.provider),
+    part: nativePart(item, context.provider, item.url ?? item.data),
   }));
 
-  const durable: UserContentPart[] = [];
-  const transient: UserContentPart[] = [];
+  const stored: UserContentPart[] = [];
+  const turn: UserContentPart[] = [];
   for (const { stored: item, part } of ingested) {
-    if (part) {
-      (item.url ? durable : transient).push(part);
+    if (!part) {
+      continue;
+    }
+    turn.push(part);
+    // A sealed link is already the same part in both. Bytes are not: the row
+    // keeps the reference that reads them again, or keeps no media at all.
+    const kept = item.url
+      ? part
+      : nativePart(item, context.provider, item.reference);
+    if (kept) {
+      stored.push(kept);
     }
   }
   const note = attachmentNote(ingested, overflow, context.channelName);
   if (note) {
-    durable.push({ type: "text", text: note });
+    const text: UserContentPart = { type: "text", text: note };
+    stored.push(text);
+    turn.push(text);
   }
 
-  return { durable: durable, transient: transient };
+  return { stored: stored, turn: turn };
 }
 
 /**
@@ -193,6 +243,34 @@ export async function readAttachmentBytes(
   }
 
   return await fetchAttachmentUrl(attachment.url);
+}
+
+/**
+ * Reads the media a stored conversation only points at, so a picture sent last
+ * week is still a picture this turn.
+ *
+ * Every reference is resolved through the channel that delivered it, with that
+ * channel's own credentials. One the channel no longer serves becomes a line of
+ * text saying so: a photo the sender deleted must cost that message its picture,
+ * not cost the conversation every turn from here on.
+ */
+export async function rehydrateStoredMedia(
+  messages: ModelMessage[],
+  agentConfig: AgentConfig,
+): Promise<ModelMessage[]> {
+  const referenced = messages.some(
+    (message) =>
+      message.role === "user" &&
+      typeof message.content !== "string" &&
+      message.content.some((part) => mediaReferenceOf(part) !== null),
+  );
+  if (!referenced) {
+    return messages;
+  }
+
+  return await Promise.all(
+    messages.map((message) => rehydrateMessage(message, agentConfig)),
+  );
 }
 
 /**
@@ -256,6 +334,37 @@ function assertWithinLimit(size: number, mediaType: string | null): void {
   }
 }
 
+// Bytes for a reference, if this pod still holds them. Re-inserting on a hit
+// keeps the Map in least-recently-used order, which is the order eviction wants.
+function cachedMedia(reference: string): Buffer | undefined {
+  const bytes = mediaCache.get(reference);
+  if (!bytes) {
+    return undefined;
+  }
+  mediaCache.delete(reference);
+  mediaCache.set(reference, bytes);
+
+  return bytes;
+}
+
+// Keeps bytes for the next turn that replays this message, evicting the least
+// recently used until the cache is back under its ceiling.
+function cacheMedia(reference: string, bytes: Buffer): void {
+  if (bytes.byteLength > MEDIA_CACHE_MAX_BYTES) {
+    return;
+  }
+  mediaCache.delete(reference);
+  mediaCache.set(reference, bytes);
+  mediaCacheBytes += bytes.byteLength;
+  for (const [key, value] of mediaCache) {
+    if (mediaCacheBytes <= MEDIA_CACHE_MAX_BYTES) {
+      break;
+    }
+    mediaCache.delete(key);
+    mediaCacheBytes -= value.byteLength;
+  }
+}
+
 // The line the agent reads: what arrived, where it landed, and what to do with
 // the parts the model cannot see for itself. The "read it yourself" wording is
 // deliberate — told only that a file exists, models ask the sender to paste it.
@@ -270,6 +379,9 @@ function attachmentNote(
     }
     if (item.path) {
       return `- ${item.name} (${item.mediaType}) saved to ${item.path}`;
+    }
+    if (item.reference) {
+      return `- ${item.name} (${item.mediaType}) is read from ${channelName} whenever it is needed; it lasts as long as ${channelName} keeps the file.`;
     }
     if (part) {
       return `- ${item.name} (${item.mediaType}) is available for this message only; no workspace is attached to store it.`;
@@ -357,6 +469,47 @@ function mediaFileName(
   return `${attachment.type}-${index + 1}${extension ? `.${extension}` : ""}`;
 }
 
+// The reference a part carries, when it carries one. Only a plain string is
+// ever ours: everything this module writes into a stored row is written here.
+function mediaReferenceOf(part: UserContentPart): MediaReference | null {
+  if (part.type === "image") {
+    return parseMediaReference(part.image);
+  }
+  if (part.type === "file") {
+    return parseMediaReference(part.data);
+  }
+
+  return null;
+}
+
+// How to ask this channel for these bytes again. The chat SDK already names
+// what each provider needs in `fetchMetadata` — a Telegram file id, a Slack
+// private URL — so that map is carried verbatim rather than re-derived, and a
+// provider that names nothing but a URL falls back to it.
+function mediaReferenceUrl(
+  attachment: Attachment,
+  mediaType: string,
+  name: string,
+  channelName: string,
+): string | undefined {
+  const metadata =
+    attachment.fetchMetadata ??
+    (attachment.url ? { url: attachment.url } : undefined);
+  if (!metadata || Object.keys(metadata).length === 0) {
+    return undefined;
+  }
+  const url = new URL(
+    `${MEDIA_REFERENCE_SCHEME}//${channelName}/${encodeURIComponent(name)}`,
+  );
+  for (const [key, value] of Object.entries(metadata)) {
+    url.searchParams.set(key, value);
+  }
+  url.searchParams.set("mediaType", mediaType);
+  url.searchParams.set("type", attachment.type);
+
+  return url.toString();
+}
+
 // A workspace path an agent can read back, and a shell will not fight over.
 // The hash keeps two messages that both carry `image.jpg` apart without making
 // the name unreadable.
@@ -379,8 +532,8 @@ function mediaPath(name: string, eventId: string, index: number): string {
 function nativePart(
   item: StoredAttachment,
   provider: AccountModelProviderName | undefined,
+  source: string | Buffer | undefined,
 ): UserContentPart | null {
-  const source = item.url ?? item.data;
   if (!source) {
     return null;
   }
@@ -398,6 +551,35 @@ function nativePart(
     data: source,
     mediaType: item.mediaType,
     filename: item.name,
+  };
+}
+
+// The reference a stored part points at, or null for anything else — bytes, a
+// sealed workspace link, an ordinary URL the model provider reads for itself.
+function parseMediaReference(value: unknown): MediaReference | null {
+  if (
+    typeof value !== "string" ||
+    !value.startsWith(`${MEDIA_REFERENCE_SCHEME}//`)
+  ) {
+    return null;
+  }
+  const url = new URL(value);
+  const metadata: Record<string, string> = {};
+  for (const [key, entry] of url.searchParams) {
+    if (key !== "mediaType" && key !== "type") {
+      metadata[key] = entry;
+    }
+  }
+  const kind = url.searchParams.get("type");
+
+  return {
+    channelName: url.hostname,
+    mediaType: url.searchParams.get("mediaType") ?? "application/octet-stream",
+    name: decodeURIComponent(url.pathname.slice(1)),
+    metadata: metadata,
+    type:
+      kind === "image" || kind === "audio" || kind === "video" ? kind : "file",
+    url: value,
   };
 }
 
@@ -430,6 +612,84 @@ async function readCappedBody(response: Response): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+// One stored message with its references read back. A reference the channel
+// will not serve becomes text in the same position, so the turn still says a
+// file was there and the model stops waiting to be shown it.
+async function rehydrateMessage(
+  message: ModelMessage,
+  agentConfig: AgentConfig,
+): Promise<ModelMessage> {
+  if (message.role !== "user" || typeof message.content === "string") {
+    return message;
+  }
+  const content = await Promise.all(
+    message.content.map(async (part): Promise<UserContentPart> => {
+      if (part.type !== "image" && part.type !== "file") {
+        return part;
+      }
+      const reference = mediaReferenceOf(part);
+      if (!reference) {
+        return part;
+      }
+      const bytes = await resolveMediaReference(reference, agentConfig);
+      if (!bytes) {
+        return {
+          type: "text",
+          text: `[${reference.name} is no longer available from ${reference.channelName}]`,
+        };
+      }
+
+      return part.type === "image"
+        ? { ...part, image: bytes }
+        : { ...part, data: bytes };
+    }),
+  );
+
+  return { ...message, content: content };
+}
+
+// The bytes behind one reference, read through the channel that delivered it so
+// the provider's own credentials are used. Null rather than a throw: this runs
+// while a turn is being assembled, and one unreadable picture must not take the
+// conversation with it.
+async function resolveMediaReference(
+  reference: MediaReference,
+  agentConfig: AgentConfig,
+): Promise<Buffer | null> {
+  const cached = cachedMedia(reference.url);
+  if (cached) {
+    return cached;
+  }
+  try {
+    const attachment: Attachment = {
+      type: reference.type,
+      name: reference.name,
+      mimeType: reference.mediaType,
+      fetchMetadata: reference.metadata,
+      ...(reference.metadata.url ? { url: reference.metadata.url } : {}),
+    };
+    const adapter = channelAdapterFromConfig(
+      agentConfig,
+      reference.channelName,
+    );
+    const bytes = await readAttachmentBytes(
+      adapter?.rehydrateAttachment?.(attachment) ?? attachment,
+    );
+    assertWithinLimit(bytes.byteLength, reference.mediaType);
+    cacheMedia(reference.url, bytes);
+
+    return bytes;
+  } catch (err) {
+    logWarn("Stored attachment could not be read again", {
+      channel: reference.channelName,
+      name: reference.name,
+      error: err instanceof Error ? err.message : String(err),
+    });
+
+    return null;
+  }
+}
+
 // Read the bytes, put them in the workspace, and seal the link. Every failure
 // is caught and described rather than thrown: the caller's contract is that one
 // unreadable picture costs a line of text, not the message.
@@ -454,10 +714,26 @@ async function storeAttachment(
     assertWithinLimit(bytes.byteLength, mediaType);
     const name = mediaFileName(attachment, mediaType, index);
     const workspace = context.workspace;
-    // Without a durable link the bytes ride along for the current turn only —
-    // persistence drops them, which is exactly the documented behaviour.
+    // With nothing to store the bytes in, the row keeps a reference to the copy
+    // the channel already has. The bytes just read are cached under it, so the
+    // turns that follow this one do not go back out for the same picture.
     if (!workspace || !context.accountId) {
-      return { name: name, mediaType: mediaType, data: bytes };
+      const reference = mediaReferenceUrl(
+        attachment,
+        mediaType,
+        name,
+        context.channelName,
+      );
+      if (reference) {
+        cacheMedia(reference, bytes);
+      }
+
+      return {
+        name: name,
+        mediaType: mediaType,
+        data: bytes,
+        ...(reference ? { reference: reference } : {}),
+      };
     }
     const path = mediaPath(name, context.eventId, index);
     const url = await writeMediaObject(

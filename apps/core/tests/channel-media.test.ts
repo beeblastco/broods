@@ -5,7 +5,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import type { ModelMessage } from "ai";
 import type { Attachment } from "chat";
+import type { AgentConfig } from "../src/shared/domain/agent-config.ts";
 import type { WorkspaceConfig } from "../src/shared/domain/workspace-config.ts";
 import type { ResolvedWorkspace } from "../src/shared/workspaces.ts";
 
@@ -35,10 +37,15 @@ mock.module("../src/shared/s3.ts", () => ({
   isMissingS3Error: () => false,
 }));
 
-const { ingestInboundAttachments, readAttachmentBytes, resolveMediaType } =
-  await import("../src/harness/channel-media.ts");
+const {
+  ingestInboundAttachments,
+  readAttachmentBytes,
+  rehydrateStoredMedia,
+  resolveMediaType,
+} = await import("../src/harness/channel-media.ts");
 
 const ORIGINAL_ENV = { ...process.env };
+const ORIGINAL_FETCH = globalThis.fetch;
 const ACCOUNT = "acct_1";
 // A one-pixel PNG, so the sniffer has a real signature to read.
 const PNG_BYTES = Buffer.from(
@@ -56,6 +63,7 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
+  globalThis.fetch = ORIGINAL_FETCH;
 });
 
 describe("resolveMediaType", () => {
@@ -99,7 +107,7 @@ describe("ingestInboundAttachments", () => {
       workspace: workspace(),
     });
 
-    const image = parts.durable.find((part) => part.type === "image");
+    const image = parts.stored.find((part) => part.type === "image");
     expect(image).toBeDefined();
     if (image?.type !== "image") throw new Error("expected an image part");
     // A sealed media link, never a base64 payload: the conversation is stored
@@ -151,9 +159,7 @@ describe("ingestInboundAttachments", () => {
     );
 
     expect(
-      [...parts.durable, ...parts.transient].filter(
-        (part) => part.type !== "text",
-      ),
+      [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
     ).toEqual([]);
     expect(noteText(parts)).toContain("voice.aac");
     expect(writeS3ObjectMock).toHaveBeenCalledTimes(1);
@@ -178,7 +184,7 @@ describe("ingestInboundAttachments", () => {
       },
     );
 
-    const file = parts.durable.find((part) => part.type === "file");
+    const file = parts.stored.find((part) => part.type === "file");
     if (file?.type !== "file") throw new Error("expected a file part");
     expect(String(file.data)).toStartWith("https://core.example/media/");
     expect(file.mediaType).toBe("audio/aac");
@@ -242,13 +248,12 @@ describe("ingestInboundAttachments", () => {
       eventId: "evt-6",
     });
 
-    // The picture still reaches the model — as bytes, marked transient so
-    // nothing persisted or queued ever carries them.
-    const image = parts.transient.find((part) => part.type === "image");
-    if (image?.type !== "image")
-      throw new Error("expected a transient image part");
+    // The picture still reaches the model as bytes, and the row keeps none
+    // of them: this attachment names no file the channel could serve again.
+    const image = parts.turn.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected an image part");
     expect(image.image).toEqual(PNG_BYTES);
-    expect(parts.durable.filter((part) => part.type !== "text")).toEqual([]);
+    expect(parts.stored.filter((part) => part.type !== "text")).toEqual([]);
     expect(noteText(parts)).toContain("no workspace is attached");
     expect(writeS3ObjectMock).not.toHaveBeenCalled();
   });
@@ -274,9 +279,7 @@ describe("ingestInboundAttachments", () => {
     );
 
     expect(
-      [...parts.durable, ...parts.transient].filter(
-        (part) => part.type !== "text",
-      ),
+      [...parts.stored, ...parts.turn].filter((part) => part.type !== "text"),
     ).toEqual([]);
     expect(noteText(parts)).toContain("could not be shown");
     expect(noteText(parts)).not.toContain("is available for this message only");
@@ -305,7 +308,82 @@ describe("ingestInboundAttachments", () => {
         eventId: "evt-8",
         workspace: workspace(),
       }),
-    ).toEqual({ durable: [], transient: [] });
+    ).toEqual({ stored: [], turn: [] });
+  });
+});
+
+describe("rehydrateStoredMedia", () => {
+  it("keeps a reference to the channel's own copy when nothing stored the bytes", async () => {
+    const parts = await ingestInboundAttachments(
+      [{ ...imageAttachment(), fetchMetadata: { fileId: "file-42" } }],
+      {
+        accountId: ACCOUNT,
+        channelName: "telegram",
+        eventId: "evt-10",
+      },
+    );
+
+    // The turn reads the bytes that just arrived; the row keeps the file id,
+    // which is a few dozen bytes rather than a megabyte of base64.
+    const turn = parts.turn.find((part) => part.type === "image");
+    if (turn?.type !== "image") throw new Error("expected an image part");
+    expect(turn.image).toEqual(PNG_BYTES);
+
+    const stored = parts.stored.find((part) => part.type === "image");
+    if (stored?.type !== "image") throw new Error("expected an image part");
+    expect(stored.image).toBe(
+      "broods-media://telegram/photo.png?fileId=file-42&mediaType=image%2Fpng&type=image",
+    );
+    expect(noteText(parts)).toContain("read from telegram");
+  });
+
+  it("reads the bytes back through the channel that delivered them", async () => {
+    const fetchMock = telegramFetch();
+    const messages = await rehydrateStoredMedia(
+      [storedMessage("file-77")],
+      telegramConfig(),
+    );
+
+    const content = messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected message parts");
+    const image = content.find((part) => part.type === "image");
+    if (image?.type !== "image") throw new Error("expected an image part");
+    expect(image.image).toEqual(PNG_BYTES);
+    // The bot token is what makes the file readable, so the download has to go
+    // through Telegram rather than straight at a URL.
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("getFile")),
+    ).toBe(true);
+  });
+
+  it("says a file the channel dropped is gone instead of failing the turn", async () => {
+    telegramFetch({ ok: false });
+    const messages = await rehydrateStoredMedia(
+      [storedMessage("file-gone")],
+      telegramConfig(),
+    );
+
+    const content = messages[0]?.content;
+    if (!Array.isArray(content)) throw new Error("expected message parts");
+    expect(content).toEqual([
+      {
+        type: "text",
+        text: "[photo.png is no longer available from telegram]",
+      },
+    ]);
+  });
+
+  it("leaves a conversation with no references untouched", async () => {
+    const messages = [
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "hi" }],
+      },
+    ];
+
+    expect(await rehydrateStoredMedia(messages, telegramConfig())).toBe(
+      messages,
+    );
   });
 });
 
@@ -321,7 +399,7 @@ function imageAttachment(): Attachment {
 function noteText(
   parts: Awaited<ReturnType<typeof ingestInboundAttachments>>,
 ): string {
-  return parts.durable
+  return parts.stored
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
@@ -404,3 +482,51 @@ describe("readAttachmentBytes URL guard", () => {
     expect(sent).toBeLessThan(8);
   });
 });
+
+function storedMessage(fileId: string): ModelMessage {
+  return {
+    role: "user",
+    content: [
+      {
+        type: "image",
+        image: `broods-media://telegram/photo.png?fileId=${fileId}&mediaType=image%2Fpng&type=image`,
+        mediaType: "image/png",
+      },
+    ],
+  };
+}
+
+function telegramConfig(): AgentConfig {
+  return {
+    channels: {
+      telegram: {
+        botToken: "bot-token",
+        webhookSecret: "hook-secret",
+        apiUrl: "https://telegram.test",
+      },
+    },
+  };
+}
+
+// Stands in for Telegram: `getFile` names the path, the next call serves it.
+function telegramFetch(
+  options: { ok?: boolean } = {},
+): ReturnType<typeof mock> {
+  const fetchMock = mock(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (!(options.ok ?? true)) {
+      return new Response("gone", { status: 404 });
+    }
+    if (url.includes("getFile")) {
+      return Response.json({
+        ok: true,
+        result: { file_id: "f", file_path: "photos/photo.png" },
+      });
+    }
+
+    return new Response(PNG_BYTES);
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  return fetchMock;
+}
