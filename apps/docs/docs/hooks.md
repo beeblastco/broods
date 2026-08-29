@@ -71,18 +71,18 @@ State is resilient within the run but never outlives it: a hook that throws or r
 
 ## Hooks
 
-| Hook                | Lifecycle event            | May return                                                                                      |
-| ------------------- | -------------------------- | ----------------------------------------------------------------------------------------------- |
-| `onStart`           | `agent.started`            | `{ system?, messages? }` — `system` appends to the prompt, `messages` replaces the conversation |
-| `onToolCall`        | `tool.call.started`        | `{ decision: "allow"｜"deny", args?, denyReason? }`                                             |
-| `onToolResult`      | `tool.result`              | `{ output? }` — transform the tool result                                                       |
-| `onFinish`          | `agent.finished`           | `{ output? }` — transform the final response                                                    |
-| `onStepFinish`      | `agent.step.finished`      | — (observe: logging, side effects)                                                              |
-| `onError`           | `agent.failed`             | — (observe)                                                                                     |
-| `onApproval`        | `agent.approval.required`  | — (observe; `{ approve }` auto-resolve is not yet honored)                                      |
-| `onSubagentFinish`  | `subagent.task.finished`   | `{ visibleResult? }` — shape what the parent sees                                               |
-| `onMessageReceived` | `channel.message.received` | `{ drop?, text? }` — drop discards the message; text rewrites what the agent sees               |
-| `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                              |
+| Hook                | Lifecycle event            | May return                                                                                                                                                                   |
+| ------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onStart`           | `agent.started`            | `{ system?, messages? }` — `system` appends to the prompt, `messages` replaces the conversation                                                                              |
+| `onToolCall`        | `tool.call.started`        | `{ decision: "allow"｜"deny", args?, denyReason? }`                                                                                                                          |
+| `onToolResult`      | `tool.result`              | `{ output? }` — transform the tool result                                                                                                                                    |
+| `onFinish`          | `agent.finished`           | `{ output? }` — transform the final response                                                                                                                                 |
+| `onStepFinish`      | `agent.step.finished`      | — (observe: logging, side effects)                                                                                                                                           |
+| `onError`           | `agent.failed`             | — (observe)                                                                                                                                                                  |
+| `onApproval`        | `agent.approval.required`  | — (observe; `{ approve }` auto-resolve is not yet honored)                                                                                                                   |
+| `onSubagentFinish`  | `subagent.task.finished`   | `{ visibleResult? }` — shape what the parent sees                                                                                                                            |
+| `onMessageReceived` | `channel.message.received` | `{ drop?, text?, metadata? }` — drop discards the message; text rewrites what the agent sees; metadata persists with the stored message and resurfaces on onStart's messages |
+| `onMessageSending`  | `channel.message.sending`  | `{ drop?, text? }`                                                                                                                                                           |
 
 `onMessageReceived` sees `event.text` only, so a message that arrives as an attachment (a Zalo picture or voice note) reads as its caption, or as an empty string when it has none. `drop` still discards the whole message, and a `text` rewrite replaces only the text — the attachment stays on the message.
 
